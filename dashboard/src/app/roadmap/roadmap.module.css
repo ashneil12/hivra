@@ -1,0 +1,288 @@
+/* /roadmap: four stages on one rail, then the archive note, how to read progress and the close.
+   Typography and colour come from secondary-site.module.css. Selectors that sit inside
+   .articleBody carry a second class so they win over the shared ".articleBody p / li / h2 / h3" rules. */
+
+.masthead > p {
+  max-width: 680px;
+}
+
+.masthead > p:first-of-type {
+  font-size: clamp(19px, 1.8vw, 22px);
+}
+
+.masthead > p + p {
+  margin-top: 18px;
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.masthead strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* The rail: a thin line from stage to stage, with a square for each. Filled is something you can
+   use now, outlined is next, dotted is later, dashed is still a question. */
+.stages {
+  position: relative;
+}
+
+.stage {
+  position: relative;
+  padding-left: 76px;
+}
+
+.stage::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 0;
+  bottom: -56px;
+  width: 1px;
+  background: var(--etched-border);
+}
+
+.stage:first-child::before {
+  top: 26px;
+}
+
+/* The last stage only needs the stub that joins the line above to its marker. */
+.stage:last-child::before {
+  bottom: auto;
+  height: 26px;
+}
+
+.stages .stage > h2 {
+  margin: 0;
+  max-width: 24ch;
+  font-size: clamp(30px, 3.6vw, 46px);
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.marker {
+  position: absolute;
+  left: 0;
+  top: calc(0.575em - 12px);
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--gold-leaf);
+  background: var(--public-bg, var(--vellum-bg, transparent));
+}
+
+.stage[data-stage="today"] .marker {
+  background: var(--gold-leaf);
+}
+
+.stage[data-stage="then"] .marker {
+  border-color: color-mix(in srgb, var(--gold-leaf) 55%, transparent);
+}
+
+.stage[data-stage="research"] .marker {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--gold-leaf) 70%, transparent);
+}
+
+.stageBody {
+  margin-top: 36px;
+}
+
+.stageBody > .prose:first-child {
+  margin-top: 0;
+}
+
+/* Prose that stands on its own inside a stage. The measure is 56ch: in this light face that is
+   about 72 characters a line, where 68ch ran to 85 and more. */
+.stageBody > .prose {
+  max-width: 56ch;
+  margin: 0 0 24px;
+}
+
+.stage[data-stage="research"] .stageBody > .prose:first-child {
+  color: var(--ink-black);
+  font-size: clamp(20px, 2vw, 24px);
+  line-height: 1.55;
+}
+
+/* A topic: its name in a left column, what it is beside it. */
+.topic {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 12px clamp(32px, 5vw, 72px);
+  padding: 30px 0 18px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.topic:last-child {
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.stageBody .topic > h3 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+div.topic p {
+  max-width: 56ch;
+}
+
+/* "Then": a name and what it is for, one per row. The columns are the topic rows' columns, so the
+   definitions start where the paragraphs above them start. */
+.stageBody ul.terms {
+  max-width: none;
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+.stageBody ul.terms > li {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 8px clamp(32px, 5vw, 72px);
+  margin: 0;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.stageBody ul.terms strong {
+  color: var(--gold-leaf);
+  font-weight: 500;
+}
+
+/* The notes under the stages: the same left-heading row as /security. */
+.after {
+  margin-top: 24px;
+}
+
+/* The notes sit at the page edge, not inside a stage's 76px indent, so their name column is 76px
+   wider: the paragraph column then starts at the same x as every stage's. */
+.row {
+  display: grid;
+  grid-template-columns: calc(76px + 280px) minmax(0, 1fr);
+  gap: 20px clamp(32px, 5vw, 72px);
+  padding-top: 40px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.row > .rowTitle {
+  margin: 0;
+  font-size: clamp(24px, 2.4vw, 30px);
+}
+
+.rowBody {
+  min-width: 0;
+}
+
+div.rowBody > p {
+  max-width: 56ch;
+}
+
+.rowBody > p:last-of-type {
+  margin-bottom: 0;
+}
+
+/* The original plan sits in a dashed frame: history, not the current map. */
+.archive {
+  grid-template-columns: calc(76px + 280px - 40px) minmax(0, 1fr);
+  padding: 40px;
+  border: 1px dashed var(--etched-border);
+  background: color-mix(in srgb, var(--public-surface) 55%, transparent);
+  margin-bottom: 56px;
+}
+
+/* The close: a rule above and below, the call to action at the end of the row. */
+.closing {
+  padding-block: 48px 48px;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+/* The page ends 64px under the closing rule, not 120px. */
+main.end {
+  padding-bottom: 64px;
+}
+
+.rowBody [data-action-links] {
+  margin-top: 32px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .topic,
+    .stageBody > .prose,
+    .stageBody ul.terms,
+    .row {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 30%;
+    }
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 1000px) {
+  .topic,
+  .row,
+  .archive {
+    grid-template-columns: 1fr;
+  }
+
+  .stageBody ul.terms > li {
+    grid-template-columns: minmax(130px, 200px) minmax(0, 1fr);
+  }
+
+  .archive {
+    padding: 28px;
+  }
+}
+
+@media (max-width: 700px) {
+  .stage {
+    padding-left: 0;
+  }
+
+  .stage::before {
+    display: none;
+  }
+
+  .marker {
+    position: static;
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 12px;
+    vertical-align: 0.12em;
+  }
+
+  .stage > h2 {
+    font-size: 30px;
+  }
+
+  .stageBody {
+    margin-top: 24px;
+  }
+
+  /* A name and its definition read as one line of prose: "Vault: stronger protection ...". */
+  .stageBody ul.terms > li {
+    display: block;
+  }
+
+  .archive {
+    padding: 20px;
+  }
+}

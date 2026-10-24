@@ -7,6 +7,10 @@ import {
   localeToHtmlLang,
   resolveRequestLocale,
 } from "../i18n";
+import { MONEY_BACK_GUARANTEE } from "../blog/plan-facts";
+import { AGENT_SLOTS } from "../subscription/agent-slots";
+import { PLANS } from "../subscription/plans";
+import { REQUALIFICATION_COOLDOWN_DAYS, REQUALIFICATION_GRACE_HOURS } from "../billing/tier-thresholds";
 
 describe("i18n locale support", () => {
   const expandedLocales = ["es", "pt-BR", "fr", "de", "ja", "ko"] as const;
@@ -357,5 +361,92 @@ describe("i18n public copy truth", () => {
     expect(MARKETING_COPY.en.stats.page.cta.subtitle).toBe(
       "Open source, on Hivra Cloud or your own server",
     );
+  });
+});
+
+describe("i18n refund, plan and token-access promises", () => {
+  // The refund is a 7-day guarantee on card payments only (lib/blog/plan-facts.ts MONEY_BACK_GUARANTEE, the Terms).
+  // Each language says "card payments" in its own words, in every place the guarantee is stated.
+  const CARD_PAYMENTS: Record<string, string> = {
+    "zh-CN": "银行卡付款",
+    es: "pagos con tarjeta",
+    "pt-BR": "pagamentos com cartão",
+    fr: "paiements par carte",
+    de: "Kartenzahlung",
+    ja: "カード決済",
+    ko: "카드 결제",
+  };
+  const DASH = /[\u2013\u2014]/;
+
+  type Copy = (typeof MARKETING_COPY)[typeof DEFAULT_LOCALE];
+  const guaranteeStrings = (copy: Copy): string[] => [
+    copy.getStarted.badges.paid,
+    copy.getStarted.guarantee.paid,
+    copy.getStarted.createAccountIntroPaid,
+    copy.dashboard.billing.switcher.guarantee,
+  ];
+
+  it("states the English guarantee as the plan-facts phrase everywhere it appears", () => {
+    const en = MARKETING_COPY[DEFAULT_LOCALE];
+    expect(en.getStarted.badges.paid).toBe(MONEY_BACK_GUARANTEE);
+    expect(en.getStarted.guarantee.paid).toBe(MONEY_BACK_GUARANTEE);
+    expect(en.getStarted.createAccountIntroPaid).toContain(MONEY_BACK_GUARANTEE);
+    // The billing strip keeps its second half, the upgrade-only rule, in every language.
+    expect(en.dashboard.billing.switcher.guarantee).toBe(`${MONEY_BACK_GUARANTEE} · Upgrade-only plans`);
+  });
+
+  it.each(Object.keys(CARD_PAYMENTS))("%s: limits the 7-day guarantee to card payments, as the English page does", (locale) => {
+    const copy = MARKETING_COPY[locale as keyof typeof MARKETING_COPY];
+    for (const text of guaranteeStrings(copy)) {
+      expect({ locale, text, qualified: text.includes(CARD_PAYMENTS[locale]) }).toEqual({ locale, text, qualified: true });
+      expect(text).not.toMatch(DASH);
+    }
+  });
+
+  it.each(Object.keys(CARD_PAYMENTS))("%s: describes the two plans by name and size, not by the billing names", (locale) => {
+    const guidance = MARKETING_COPY[locale as keyof typeof MARKETING_COPY].getStarted.planGuidance;
+    for (const text of [guidance.free, guidance.operator, guidance.fleet]) {
+      expect(text).not.toMatch(/\b(?:Pro|Power|Command|Starter)\b/);
+      expect(text).not.toMatch(DASH);
+    }
+    expect(guidance.operator).toContain("Hivra Cloud");
+    // The larger size is read from the plan, so a size change fails here instead of leaving seven languages stale.
+    expect(guidance.fleet).toMatch(new RegExp(`\\b${PLANS.fleet.totalCpu} vCPU`));
+    expect(guidance.fleet).toMatch(new RegExp(`\\b${PLANS.fleet.totalRam / 1024} (?:GB|Go)`));
+  });
+
+  // "room for three agents" in each language. AGENT_SLOTS.operator is the count the text states; if it changes, this
+  // assertion fails first and the words below must be rewritten in every language.
+  const THREE_AGENTS: Record<string, RegExp> = {
+    en: /three agents/,
+    "zh-CN": /三个 Agent/,
+    es: /tres agentes/,
+    "pt-BR": /três agentes/,
+    fr: /trois agents/,
+    de: /drei Agenten/,
+    ja: /3 つのエージェント/,
+    ko: /에이전트 3개/,
+  };
+
+  it.each(Object.keys(THREE_AGENTS))("%s: the entry plan guidance states the real agent slot count", (locale) => {
+    expect(AGENT_SLOTS.operator).toBe(3);
+    const guidance = MARKETING_COPY[locale as keyof typeof MARKETING_COPY].getStarted.planGuidance;
+    expect(guidance.operator).toMatch(THREE_AGENTS[locale]);
+  });
+
+  it("explains the token-access cut-off with the real windows and no promise that the machine keeps running", () => {
+    // tier-thresholds.ts decides both numbers: the grace window after a breach, and the wait before a suspended tier
+    // can be earned again. The text must move with them.
+    for (const locale of SUPPORTED_LOCALES) {
+      const text = MARKETING_COPY[locale].dashboard.billing.tokenAccess.description;
+      expect({ locale, grace: text.includes(String(REQUALIFICATION_GRACE_HOURS)) }).toEqual({ locale, grace: true });
+      expect({ locale, cooldown: text.includes(String(REQUALIFICATION_COOLDOWN_DAYS)) }).toEqual({ locale, cooldown: true });
+      expect(text).not.toMatch(DASH);
+      // The old text promised that agents "keep running for a grace period, then pause". Nothing pauses a Hivra computer on
+      // this route, so no language may say it.
+      expect(text).not.toMatch(
+        /keep running|then pause|grace period|宽限期|periodo de gracia|período de carência|période de grâce|Kulanzfrist|猶予期間|유예 기간|se pausan|pausam|se mettent en pause|pausieren|一時停止|일시 중지|暂停/i,
+      );
+    }
   });
 });

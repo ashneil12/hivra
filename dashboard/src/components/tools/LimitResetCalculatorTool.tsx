@@ -4,7 +4,7 @@
 //
 // Answers one question: you hit "session limit", so when can you work again.
 // Anthropic describes the session limit as a rolling five-hour window. It does
-// not document what opens the window; the widely reported behavior, which this
+// not document what opens the window; the widely reported behaviour, which this
 // tool assumes and says so on the page, is that the first message of a session
 // opens it. The weekly limit is a separate limit that resets at a fixed time each
 // week assigned to the account, and waiting out the five-hour window does not
@@ -219,6 +219,7 @@ export default function LimitResetCalculatorTool() {
             value={weeklyTime}
             onChange={(e) => setWeeklyTime(e.target.value)}
             disabled={weeklyDay === "unknown"}
+            title={weeklyDay === "unknown" ? "Choose a weekly reset day first" : undefined}
           />
         </div>
       </div>
@@ -275,7 +276,7 @@ export default function LimitResetCalculatorTool() {
 
       {schedule.length > 0 && (
         <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="The next three windows">
-          <table className={styles.table}>
+          <table className={[styles.table, styles.tableCompact].join(" ")}>
             <thead>
               <tr>
                 <th scope="col">Window</th>
@@ -299,8 +300,8 @@ export default function LimitResetCalculatorTool() {
       )}
 
       <p className={styles.note}>
-        How this works. Anthropic describes the session limit as a rolling {LIMITS.windowHours} hour window and does
-        not document what opens it. This calculator assumes the widely reported behavior: the first message of a
+        <strong className={styles.noteLead}>How this works.</strong> Anthropic describes the session limit as a rolling {LIMITS.windowHours} hour window and does
+        not document what opens it. This calculator assumes the widely reported behaviour: the first message of a
         session opens the window, and it closes {LIMITS.windowHours} hours later whether you keep working or step
         away. The reset time in Claude Code&apos;s limit message and in /usage is the authority; trust it over this
         page. Weekly limits sit on top and reset at a fixed time each week assigned to your account. Your allowance
@@ -323,7 +324,7 @@ export default function LimitResetCalculatorTool() {
           Hosting does not change your limits. The quota follows your Anthropic account, so it is the same on a
           laptop or a server. What a server changes is whether the window gets used: Claude Code can pick a task back
           up after a reset only while its session stays open. Hivra runs Claude Code on its own computer with your
-          own Anthropic login, and paid plans are not paused for inactivity. A session you start inside tmux in its
+          own Anthropic login (subject to the provider&apos;s terms), and paid plans are not paused for inactivity. A session you start inside tmux in its
           Terminal tab stays open after you close the laptop, so it is still there when the window resets. See{" "}
           <Link href={TOOLS_CTA.secondaryHref}>the pricing page</Link> for plans.
         </p>

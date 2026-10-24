@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
+import { ActionLinks, type ActionLink } from "@/components/public-editorial/ActionLinks";
+import styles from "./status-page.module.css";
+
 // Public, signed-out surfaces whose liveness this page reflects. Paths are
-// same-origin so the checks are plain relative fetches — no cross-origin, no
+// same-origin so the checks are plain relative fetches: no cross-origin, no
 // CORS, and (with credentials omitted below) no authenticated request.
 const SURFACES = [
   { key: "website", label: "Website", path: "/", hint: "hivra.cloud" },
-  { key: "sign-in", label: "Sign-in", path: "/sign-in", hint: "/sign-in" },
+  { key: "sign-in", label: "Sign-in page", path: "/sign-in", hint: "/sign-in" },
   { key: "get-started", label: "Get started", path: "/get-started", hint: "/get-started" },
   { key: "changelog", label: "Changelog", path: "/changelog", hint: "/changelog" },
 ] as const;
@@ -16,7 +19,7 @@ const SURFACES = [
 type SurfaceKey = (typeof SURFACES)[number]["key"];
 type Status = "checking" | "operational" | "degraded" | "down";
 
-// A check that takes longer than this is healthy-but-slow → Degraded; one that
+// A check that takes longer than this is healthy but slow, so Degraded; one that
 // blows the hard timeout (or errors) is Down.
 const SLOW_MS = 2_500;
 const TIMEOUT_MS = 8_000;
@@ -34,12 +37,22 @@ const STATUS_META: Record<Status, { label: string; fg: string; dot: string }> = 
   checking: { label: "Checking…", fg: "var(--text-muted)", dot: "var(--text-muted)" },
 };
 
+// The checks load four public pages from the visitor's browser. They say nothing about agents, computers,
+// provisioning, billing or whether signing in works, so the headline names pages, not "systems" or an outage.
 const OVERALL_COPY: Record<Status, { title: string; body: string }> = {
-  operational: { title: "All systems operational", body: "Every public surface responded normally." },
-  degraded: { title: "Some systems degraded", body: "A public surface is slow or returning errors." },
-  down: { title: "Major outage", body: "A public surface is unreachable right now." },
-  checking: { title: "Checking systems…", body: "Pinging each public surface from your browser." },
+  operational: {
+    title: "Public pages operational",
+    body: "The public pages listed below responded normally. This does not check agents, computers or whether sign-in works.",
+  },
+  degraded: { title: "Some public pages degraded", body: "A public page is slow or returning errors." },
+  down: { title: "A public page is not responding", body: "A public page is unreachable right now." },
+  checking: { title: "Checking public pages…", body: "Pinging each public page from your browser." },
 };
+
+const LINKS: readonly ActionLink[] = [
+  { label: "Return to Hivra", href: "/", kind: "primary" },
+  { label: "Security reporting", href: "/security", kind: "secondary" },
+];
 
 // Read-only liveness probe: a successful, prompt response is Operational; a
 // non-2xx or slow response is Degraded; a network failure or timeout is Down.
@@ -116,7 +129,7 @@ export default function StatusPageContent() {
   // The website surface hint is the current host so it reads correctly on
   // canary/preview deployments (not a hardcoded prod domain). useSyncExternalStore
   // serves the SURFACES literal for SSR + the initial hydration render, then swaps
-  // to window.location.host on the client — no hydration mismatch and no
+  // to window.location.host on the client: no hydration mismatch and no
   // synchronous setState inside an effect.
   const websiteHint = useSyncExternalStore(
     subscribeNoop,
@@ -166,240 +179,122 @@ export default function StatusPageContent() {
   const overallCopy = OVERALL_COPY[overall];
 
   return (
-    <main
-      style={{
-        maxWidth: 760,
-        margin: "0 auto",
-        padding: "clamp(3rem, 8vw, 6rem) 2rem 6rem",
-      }}
-    >
-      <header style={{ textAlign: "center", marginBottom: "3rem" }}>
-        <span
-          className="mono"
-          style={{
-            display: "block",
-            fontSize: 9,
-            textTransform: "uppercase",
-            letterSpacing: "0.2em",
-            color: "var(--gold-leaf)",
-            fontWeight: 700,
-            marginBottom: "1.25rem",
-          }}
-        >
-          System status
-        </span>
+    <main id="main-content">
+      <header className={styles.masthead}>
+        <h1>How Hivra is running.</h1>
+        <p>
+          This page reflects the current health of Hivra&rsquo;s public pages, checked live from your browser. The
+          summary below comes from those checks, not from a fixed message.
+        </p>
+      </header>
 
+      <div className={styles.live}>
         <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: "0.85rem",
-          }}
+          className={styles.summary}
+          role="status"
+          aria-live="polite"
+          data-state={overall}
+          style={{ "--state-dot": overallMeta.dot } as CSSProperties}
         >
           <motion.span
             aria-hidden="true"
+            className={styles.dot}
             animate={
               reduceMotion || overall === "operational"
                 ? undefined
                 : { opacity: [0.35, 1, 0.35] }
             }
             transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-            style={{
-              width: 12,
-              height: 12,
-              borderRadius: "50%",
-              background: overallMeta.dot,
-              boxShadow: `0 0 10px ${overallMeta.dot}`,
-              display: "inline-block",
-              flexShrink: 0,
-            }}
           />
-          <h1
-            className="serif"
-            style={{
-              fontSize: "clamp(1.6rem, 4vw, 2.5rem)",
-              fontWeight: 300,
-              lineHeight: 1.15,
-              color: "var(--ink-black)",
-              margin: 0,
-            }}
-          >
-            {overallCopy.title}
-          </h1>
+          <div>
+            <p className={styles.summaryTitle}>{overallCopy.title}</p>
+            <p className={styles.summaryBody}>{overallCopy.body}</p>
+          </div>
         </div>
 
-        <p
-          style={{
-            fontSize: "1rem",
-            lineHeight: 1.6,
-            color: "var(--text-secondary)",
-            maxWidth: 480,
-            margin: "0 auto",
-          }}
-        >
-          {overallCopy.body}
+        <p className={styles.behaviour}>
+          A page that answers slowly or with an error is marked Degraded, and one that does not answer is marked Down.
+          The summary above follows the worst result.
         </p>
-      </header>
 
-      <section
-        aria-label="Public surface status"
-        style={{
-          borderTop: "1px solid var(--etched-border)",
-          borderBottom: "1px solid var(--etched-border)",
-          marginBottom: "1.75rem",
-        }}
-      >
-        {SURFACES.map((surface, i) => {
-          const state = states[surface.key];
-          const meta = STATUS_META[state.status];
-          return (
-            <div
-              key={surface.key}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 16,
-                padding: "1.1rem 1rem",
-                borderTop: i === 0 ? "none" : "1px solid var(--etched-border)",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div
-                  className="serif"
-                  style={{
-                    fontSize: "1.05rem",
-                    color: "var(--ink-black)",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {surface.label}
+        <section aria-label="Public surface status" className={styles.checks}>
+          {SURFACES.map((surface) => {
+            const state = states[surface.key];
+            const meta = STATUS_META[state.status];
+            return (
+              <div key={surface.key} className={styles.row}>
+                <div className={styles.rowName}>
+                  <div className={`serif ${styles.surface}`}>{surface.label}</div>
+                  <div className={`mono ${styles.surfaceMeta}`}>
+                    {surface.key === "website" ? websiteHint : surface.hint}
+                    {state.checkedAt != null && (
+                      <>
+                        {" · "}
+                        <span className={styles.checkedAt}>
+                          {"checked "}
+                          <time dateTime={new Date(state.checkedAt).toISOString()}>
+                            {new Date(state.checkedAt).toLocaleTimeString()}
+                          </time>
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div
-                  className="mono"
-                  style={{
-                    fontSize: 10,
-                    letterSpacing: "0.04em",
-                    color: "var(--text-muted)",
-                    marginTop: 3,
-                  }}
-                >
-                  {surface.key === "website" ? websiteHint : surface.hint}
-                  {state.checkedAt != null && (
-                    <>
-                      {" · checked "}
-                      <time dateTime={new Date(state.checkedAt).toISOString()}>
-                        {new Date(state.checkedAt).toLocaleTimeString()}
-                      </time>
-                    </>
-                  )}
-                </div>
-              </div>
 
-              <span
-                role="status"
-                aria-label={`${surface.label}: ${meta.label}`}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  flexShrink: 0,
-                }}
-              >
                 <span
-                  aria-hidden="true"
-                  style={{
-                    width: 9,
-                    height: 9,
-                    borderRadius: "50%",
-                    background: meta.dot,
-                    display: "inline-block",
-                  }}
-                />
-                <span
-                  className="mono"
-                  style={{
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                    fontWeight: 700,
-                    color: meta.fg,
-                  }}
+                  role="status"
+                  aria-label={`${surface.label}: ${meta.label}`}
+                  className={styles.state}
                 >
-                  {meta.label}
+                  <span aria-hidden="true" className={styles.stateDot} style={{ background: meta.dot }} />
+                  <span className={`mono ${styles.stateLabel}`} style={{ color: meta.fg }}>
+                    {meta.label}
+                  </span>
                 </span>
-              </span>
-            </div>
-          );
-        })}
-      </section>
+              </div>
+            );
+          })}
+        </section>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <p
-          className="mono"
-          style={{
-            fontSize: 10,
-            textTransform: "uppercase",
-            letterSpacing: "0.14em",
-            color: "var(--text-muted)",
-            fontWeight: 600,
-            margin: 0,
-          }}
-        >
-          {lastRun != null ? (
-            <>
-              Last checked{" "}
-              <time dateTime={new Date(lastRun).toISOString()}>
-                {new Date(lastRun).toLocaleTimeString()}
-              </time>
-            </>
-          ) : (
-            "Checking…"
-          )}
+        <div className={styles.controls}>
+          <p className={`mono ${styles.lastChecked}`}>
+            {lastRun != null ? (
+              <>
+                Last checked{" "}
+                <time dateTime={new Date(lastRun).toISOString()}>
+                  {new Date(lastRun).toLocaleTimeString()}
+                </time>
+              </>
+            ) : (
+              "Checking…"
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={handleRerun}
+            disabled={isChecking}
+            className={`mono ${styles.rerun}`}
+          >
+            {isChecking ? "Checking…" : "Re-run checks"}
+          </button>
+        </div>
+
+        <p className={styles.method}>
+          Checks run in your browser against public pages only. No account data is
+          read and nothing is stored.
         </p>
-        <button
-          type="button"
-          onClick={handleRerun}
-          disabled={isChecking}
-          className="mono"
-          style={{
-            border: "1px solid var(--etched-border)",
-            background: "transparent",
-            color: "var(--text-secondary)",
-            cursor: isChecking ? "default" : "pointer",
-            opacity: isChecking ? 0.5 : 1,
-            padding: "8px 16px",
-            fontSize: 10,
-            textTransform: "uppercase",
-            letterSpacing: "0.12em",
-            fontWeight: 700,
-          }}
-        >
-          {isChecking ? "Checking…" : "Re-run checks"}
-        </button>
       </div>
 
-      <p
-        style={{
-          marginTop: "2.5rem",
-          fontSize: 12,
-          lineHeight: 1.6,
-          color: "var(--text-muted)",
-          textAlign: "center",
-        }}
-      >
-        Checks run in your browser against public pages only. No account data is
-        read and nothing is stored.
+      <p className={styles.prose}>
+        We would rather explain a disruption plainly than hide it behind a vague uptime percentage.
       </p>
+      <p className={styles.prose}>
+        Need help with a specific agent? Contact <a href="mailto:info@hivra.cloud">info@hivra.cloud</a> and include
+        the identifier of the agent or computer and the approximate time of the problem. Never include credentials or
+        private keys in a support message.
+      </p>
+
+      <ActionLinks items={LINKS} />
     </main>
   );
 }

@@ -1,0 +1,221 @@
+/* /status. The masthead (header, h1, intro) is styled by the .liveContent rules in
+   public-editorial/secondary-site.module.css; this file lays out what follows. */
+
+.masthead h1 {
+  margin: 0 0 22px;
+}
+
+/* The working part of the page (summary, the four checks, the controls) sits in one readable
+   column; the masthead rule above it and the prose below it keep their own widths. */
+.live {
+  max-width: 860px;
+}
+
+/* The live summary: one panel, coloured by the worst of the four checks. */
+.summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 26px 28px;
+  margin-bottom: 20px;
+  border: 1px solid var(--etched-border);
+  border-left: 4px solid var(--state-dot, var(--text-muted));
+  background: var(--public-surface, transparent);
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 10px;
+  border-radius: 50%;
+  background: var(--state-dot, var(--text-muted));
+  box-shadow: 0 0 10px var(--state-dot, transparent);
+}
+
+.summaryTitle {
+  margin: 0 0 6px;
+  font-size: clamp(24px, 3.2vw, 34px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.04em;
+  color: var(--ink-black);
+}
+
+.summaryBody {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.behaviour {
+  max-width: 62ch;
+  margin: 0 0 40px;
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text-secondary);
+}
+
+/* One row per public page: its name and last check on the left, its state on the right. */
+.checks {
+  margin-bottom: 20px;
+  border-block: 1px solid var(--etched-border);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--etched-border);
+}
+
+.rowName {
+  min-width: 0;
+}
+
+.surface {
+  font-size: 22px;
+  line-height: 1.2;
+  color: var(--ink-black);
+}
+
+.surfaceMeta {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* "checked 1:20:59 AM" wraps as one piece, not between the time and AM. */
+.checkedAt {
+  white-space: nowrap;
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.stateDot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.stateLabel {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.lastChecked {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.rerun {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--etched-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.rerun:hover:not(:disabled) {
+  border-color: var(--ink-black);
+  color: var(--ink-black);
+}
+
+.rerun:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.rerun:focus-visible {
+  outline: 2px solid var(--gold-leaf);
+  outline-offset: 4px;
+}
+
+.method {
+  margin: 28px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+.prose {
+  max-width: 62ch;
+  margin: 56px 0 0;
+  font-size: 17px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+
+.prose + .prose {
+  margin-top: 20px;
+}
+
+.prose a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.prose a:hover {
+  color: var(--gold-leaf);
+}
+
+@media (max-width: 700px) {
+  .summary {
+    padding: 20px 18px;
+    gap: 14px;
+  }
+
+  .behaviour {
+    margin-bottom: 28px;
+  }
+
+  .row {
+    padding: 20px 0;
+  }
+
+  .surface {
+    font-size: 20px;
+  }
+
+  .prose {
+    margin-top: 40px;
+    font-size: 16px;
+  }
+}

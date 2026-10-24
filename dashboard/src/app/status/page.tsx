@@ -5,7 +5,7 @@ import { cookies, headers } from "next/headers";
 
 import StructuredData from "@/components/StructuredData";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import { buildWebsiteMetadata } from "@/lib/metadata";
+import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { OG_IMAGE } from "@/lib/og-meta";
 import { SITE_URL } from "@/lib/seo-urls";
 import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
@@ -13,12 +13,14 @@ import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
 import StatusPageContent from "@/components/status/StatusPageContent.client";
 
 const PATH = "/status";
-const TITLE = "Status: Hivra platform health";
+// No incident source exists behind this page (it runs four live checks of public pages), so the
+// title promises a status and nothing more. Ash's pack title added "Current Incidents and Updates".
+const TITLE = "Hivra Service Status";
 const DESCRIPTION =
   "Live status of Hivra's public pages: the website, sign-in, get started and the changelog, checked from your browser in real time.";
 
 export const metadata: Metadata = {
-  title: TITLE,
+  title: absoluteTitle(TITLE),
   description: DESCRIPTION,
   ...buildWebsiteMetadata({
     path: PATH,
@@ -51,9 +53,9 @@ async function getLandingLocale() {
 }
 
 // Public, signed-out-accessible status page. Mirrors the /stats scaffold
-// (LandingHeader + Footer + StructuredData + InteractiveBackground), but deals
-// in zero account data: the live checks run client-side and read only the
-// platform's own public surfaces. No auth/Clerk, no DB, no schema.
+// (LandingHeader + Footer + StructuredData), but deals in zero account data: the
+// live checks run client-side and read only the platform's own public surfaces.
+// No auth/Clerk, no DB, no schema.
 export default async function StatusPage() {
   const locale = await getLandingLocale();
 
@@ -62,11 +64,9 @@ export default async function StatusPage() {
       <PublicSite className={styles.livePage} data-page="status">
         <StructuredData schema={schema} />
 
-
         <div className={styles.liveContent}>
           <StatusPageContent />
         </div>
-
       </PublicSite>
     </LocaleProvider>
   );

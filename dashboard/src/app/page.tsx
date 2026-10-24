@@ -6,7 +6,8 @@ import { redirect } from "next/navigation";
 import PublicSite from "@/components/public-site/PublicSite";
 import StructuredData from "@/components/StructuredData";
 import { SITE_DESCRIPTION } from "@/lib/brand-description";
-import { buildWebsiteMetadata } from "@/lib/metadata";
+import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
+import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { OG_IMAGE } from "@/lib/og-meta";
 import { officialProfileLinks } from "@/lib/public-project-links";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -26,26 +27,30 @@ import Faq from "@/components/landing/home/Faq";
 import Closing from "@/components/landing/home/Closing";
 import StickyCta from "@/components/landing/home/StickyCta";
 import HomeAnalytics from "@/components/landing/home/HomeAnalytics";
-import { AGENT_LAUNCH_HREF, HOMEPAGE_FAQ, SHOW_FOUNDER_SECTION, STICKY } from "@/components/landing/home/content";
+import { getHomeAgentsDeployed } from "@/components/landing/home/agents-deployed";
+import { AGENT_LAUNCH_HREF, SHOW_FOUNDER_SECTION, STICKY, homepageFaq } from "@/components/landing/home/content";
 import styles from "@/components/landing/home/home.module.css";
 
-// "Hermes OS" stays at the front of the homepage title and description: in
-// Search Console (Jun-Sep 2026) about three quarters of hivra.cloud's clicks came
-// from "hermes os" / "hermes agent os" / "hermesos" searches landing here, and
-// the retired site's "Hermes OS is now Hivra" title earned 20-26% CTR at
-// positions 1-3. Dropping the old name at the cutover would put that at risk.
-const homepageTitle = "Hermes OS is now Hivra | A computer for you and your agents";
-const homepageDescription = "Hermes OS is now Hivra. Run Claude Code, Codex, Hermes and more on a computer of their own, or launch Ubuntu, Windows or Omarchy for yourself.";
+// "Hermes OS" stays at the front of the homepage title: in Search Console
+// (Jun-Sep 2026) about three quarters of hivra.cloud's clicks came from
+// "hermes os" / "hermes agent os" / "hermesos" searches landing here, and the
+// retired site's "Hermes OS is now Hivra" title earned 20-26% CTR at positions
+// 1-3. The tagline and description are the website pack's (01-homepage.md);
+// the description leaves out its keep-running sentence, which is not true of
+// every run (lib/blog/runtime-facts.ts). The title is written finished, so
+// the root layout's " | Hivra" template is not added a second time.
+const HOME_TITLE = "Hermes OS is now Hivra | Give your AI agent a computer of its own";
+const HOME_DESCRIPTION = `Run Claude Code, Codex, Hermes and other AI agents on separate computers. Open-source Hivra, hosted from ${ENTRY_PLAN_PRICE} a month or self-hosted.`;
 
 export const metadata: Metadata = {
-  title: homepageTitle,
-  description: homepageDescription,
+  title: absoluteTitle(HOME_TITLE),
+  description: HOME_DESCRIPTION,
   ...buildWebsiteMetadata({
     path: "/",
-    title: homepageTitle,
-    description: homepageDescription,
-    twitterTitle: homepageTitle,
-    twitterDescription: homepageDescription,
+    title: HOME_TITLE,
+    description: HOME_DESCRIPTION,
+    twitterTitle: HOME_TITLE,
+    twitterDescription: HOME_DESCRIPTION,
     images: [OG_IMAGE.home],
   }),
 };
@@ -61,94 +66,98 @@ export const metadata: Metadata = {
 // - The logo is the square 512x512 brand mark, not the 1200x630 social banner.
 // - sameAs lists only profiles Hivra controls (officialProfileLinks()).
 // homepage-structured-data.test.tsx scans this graph for forbidden strings.
-const homepageSchema = {
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "Organization",
-      "@id": `${SITE_URL}/#organization`,
-      name: "Hivra",
-      alternateName: ["HermesOS", "Hermes OS"],
-      description: SITE_DESCRIPTION,
-      url: SITE_URL,
-      logo: {
-        "@type": "ImageObject",
-        url: `${SITE_URL}/brand/hivra-icon-512.png`,
-        width: 512,
-        height: 512,
+// The FAQPage node is built from the same list the page shows, so the visible
+// answers and the structured ones are the same strings.
+function buildHomepageSchema(faq: readonly { q: string; a: string }[]) {
+  return {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": `${SITE_URL}/#organization`,
+        name: "Hivra",
+        alternateName: ["HermesOS", "Hermes OS"],
+        description: SITE_DESCRIPTION,
+        url: SITE_URL,
+        logo: {
+          "@type": "ImageObject",
+          url: `${SITE_URL}/brand/hivra-icon-512.png`,
+          width: 512,
+          height: 512,
+        },
+        sameAs: officialProfileLinks(),
       },
-      sameAs: officialProfileLinks(),
-    },
-    {
-      "@type": "WebSite",
-      "@id": `${SITE_URL}/#website`,
-      url: SITE_URL,
-      name: "Hivra",
-      alternateName: ["hivra.cloud"],
-      description: SITE_DESCRIPTION,
-      publisher: { "@id": `${SITE_URL}/#organization` },
-    },
-    {
-      "@type": "SoftwareApplication",
-      "@id": `${SITE_URL}/#softwareapp`,
-      name: "Hivra",
-      applicationCategory: "DeveloperApplication",
-      operatingSystem: "Ubuntu",
-      description: SITE_DESCRIPTION,
-      url: SITE_URL,
-      offers: [
-        {
-          "@type": "Offer",
-          name: "Self-host Hivra",
-          price: "0",
-          priceCurrency: "USD",
-          description: "Run the whole platform yourself from the open source code. You provide the server and pay for it and for your AI usage.",
-          url: `${SITE_URL}/#pricing`,
-        },
-        ...HOSTED_SIZES.map(size => ({
-          "@type": "Offer",
-          name: `Hivra Cloud, ${size.cpu} vCPU and ${size.ramGb} GB`,
-          price: (size.price === ENTRY_PLAN_PRICE ? ENTRY_PLAN_PRICE : LARGER_PLAN_PRICE).replace("$", ""),
-          priceCurrency: "USD",
-          priceSpecification: {
-            "@type": "UnitPriceSpecification",
-            price: size.price.replace("$", ""),
+      {
+        "@type": "WebSite",
+        "@id": `${SITE_URL}/#website`,
+        url: SITE_URL,
+        name: "Hivra",
+        alternateName: ["hivra.cloud"],
+        description: SITE_DESCRIPTION,
+        publisher: { "@id": `${SITE_URL}/#organization` },
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": `${SITE_URL}/#softwareapp`,
+        name: "Hivra",
+        applicationCategory: "DeveloperApplication",
+        operatingSystem: "Ubuntu",
+        description: SITE_DESCRIPTION,
+        url: SITE_URL,
+        offers: [
+          {
+            "@type": "Offer",
+            name: "Self-host Hivra",
+            price: "0",
             priceCurrency: "USD",
-            billingDuration: "P1M",
+            description: "Run the whole platform yourself from the open source code. You provide the server and pay for it and for your AI usage.",
+            url: `${SITE_URL}/#pricing`,
           },
-          url: `${SITE_URL}/#pricing`,
+          ...HOSTED_SIZES.map(size => ({
+            "@type": "Offer",
+            name: `Hivra Cloud, ${size.cpu} vCPU and ${size.ramGb} GB`,
+            price: (size.price === ENTRY_PLAN_PRICE ? ENTRY_PLAN_PRICE : LARGER_PLAN_PRICE).replace("$", ""),
+            priceCurrency: "USD",
+            priceSpecification: {
+              "@type": "UnitPriceSpecification",
+              price: size.price.replace("$", ""),
+              priceCurrency: "USD",
+              billingDuration: "P1M",
+            },
+            url: `${SITE_URL}/#pricing`,
+          })),
+        ],
+        featureList: [
+          "Launch a computer with or without an agent",
+          "Ubuntu, Omarchy (prepared computer) or Windows on your own server with a licensed image",
+          "Terminal and graphical interfaces",
+          "Persistent files, tools and settings",
+          "Use Hivra Cloud or your own infrastructure",
+          "Bring your own AI key",
+        ],
+      },
+      {
+        "@type": "FAQPage",
+        mainEntity: faq.map(({ q, a }) => ({
+          "@type": "Question",
+          name: q,
+          acceptedAnswer: { "@type": "Answer", text: a },
         })),
-      ],
-      featureList: [
-        "Launch a computer with or without an agent",
-        "Ubuntu, Windows or Omarchy",
-        "Terminal and graphical interfaces",
-        "Persistent files, tools and settings",
-        "Use Hivra Cloud or your own infrastructure",
-        "Bring your own AI key",
-      ],
-    },
-    {
-      "@type": "FAQPage",
-      mainEntity: HOMEPAGE_FAQ.map(({ q, a }) => ({
-        "@type": "Question",
-        name: q,
-        acceptedAnswer: { "@type": "Answer", text: a },
-      })),
-    },
-    {
-      "@type": "BreadcrumbList",
-      itemListElement: [
-        {
-          "@type": "ListItem",
-          position: 1,
-          name: "Home",
-          item: SITE_URL,
-        },
-      ],
-    },
-  ],
-};
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          {
+            "@type": "ListItem",
+            position: 1,
+            name: "Home",
+            item: SITE_URL,
+          },
+        ],
+      },
+    ],
+  };
+}
 
 /**
  * Header and footer links such as /#pricing come from this site. A signed-in
@@ -181,12 +190,20 @@ export default async function LandingPage(_props: { searchParams?: Promise<{ lan
     redirect("/dashboard");
   }
 
+  // Both reads come after the redirect, so a signed-in direct visit does no
+  // extra work. The count is cached and comes back null when it cannot be read.
+  const [tokenView, agentsDeployed] = await Promise.all([getTokenSurfaceView(userId), getHomeAgentsDeployed()]);
+  // The visible questions and the FAQPage JSON-LD are one list. The only
+  // sentence on the page about tokens is in it, and only when the token
+  // surfaces are on and this viewer is not geo-blocked.
+  const faq = homepageFaq(tokenSurfacesVisible(tokenView));
+
   return (
-    <PublicSite variant="home" isSignedIn={userId ? true : undefined}>
-      <StructuredData schema={homepageSchema} />
+    <PublicSite variant="home" isSignedIn={userId ? true : undefined} tokenSurfaces={tokenSurfacesVisible(tokenView)}>
+      <StructuredData schema={buildHomepageSchema(faq)} />
       <main id="main-content" className={styles.home}>
         <HomeMotion>
-          <Hero />
+          <Hero agentsDeployed={agentsDeployed} />
           <Reach />
           <Fit />
           <Agents />
@@ -194,7 +211,7 @@ export default async function LandingPage(_props: { searchParams?: Promise<{ lan
           <OpenSource />
           <Pricing />
           {SHOW_FOUNDER_SECTION ? <Founder /> : null}
-          <Faq />
+          <Faq items={faq} />
           <Closing />
           <StickyCta href={AGENT_LAUNCH_HREF} label={STICKY.cta} note={STICKY.note} />
           <HomeAnalytics />

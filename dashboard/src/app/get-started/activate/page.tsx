@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Loader2, ArrowRight } from "lucide-react";
 import { captureClient } from "@/lib/telemetry/posthog-client";
-import { ACTIVE_PLAN_KEYS, PLANS, type Cadence, type PlanKey } from "@/lib/subscription";
+import { ACTIVE_PLAN_KEYS, type Cadence, type PlanKey } from "@/lib/subscription";
+import { FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 import { redirectToCheckoutUrl, requestSubscriptionCheckout } from "@/lib/billing/client";
 import { BILLING_SUBSCRIBE_REASON } from "@/lib/billing/subscribe-errors";
 import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
@@ -26,6 +27,32 @@ function captureActivationEvent(event: string, properties: Record<string, unknow
     route: ACTIVATION_ROUTE,
     ...properties,
   });
+}
+
+// Ash's words for this page (10-get-started-activate.md). The page hands a signed-in visitor straight on to
+// checkout (or free activation), so there are no account steps to complete here: each state says what is
+// really happening, under the same heading.
+const ACTIVATE_HEADING = "Finish setting up your Hivra account.";
+// A paid plan is about to run a computer. A free account is not: it works with a computer or server the
+// person connects, and Hivra runs none for it (owner decision, 21 Oct 2026), so it must not be promised one.
+const ACTIVATE_LEAD_PAID = "You\u2019re nearly ready to run your first computer.";
+const ACTIVATE_LEAD_FREE = "Your free account is nearly ready.";
+
+function ActivateHeading() {
+  return (
+    <h1 className="serif" style={{ fontSize: "1.75rem", fontWeight: 400, lineHeight: 1.2, marginBottom: "0.75rem" }}>
+      {ACTIVATE_HEADING}
+    </h1>
+  );
+}
+
+function ActivateSmallPrint() {
+  return (
+    <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, margin: "1.75rem 0 0", textWrap: "pretty" }}>
+      If an activation link has expired, request a new one through the <span style={{ whiteSpace: "nowrap" }}>sign-in</span>{" "}
+      flow. Never share activation codes or links with somebody else.
+    </p>
+  );
 }
 
 /**
@@ -69,7 +96,7 @@ function ActivatePageContent() {
     searchParams?.get("cadence") === "yearly" && planKey !== "free" ? "yearly" : "monthly";
   const agentTypeKey = resolveWelcomeAgentTypeKey(searchParams?.get("agentType"));
   const agentTypeQuery = buildAgentTypeQuery(agentTypeKey);
-  const plan = PLANS[planKey];
+  const lead = planKey === "free" ? ACTIVATE_LEAD_FREE : ACTIVATE_LEAD_PAID;
 
   // When Stripe cancel_url brings us back, ?canceled=true is set
   const wasCanceled = searchParams?.get("canceled") === "true";
@@ -209,11 +236,13 @@ function ActivatePageContent() {
     );
   }
 
-  // Not signed in — send back to get-started
+  // Not signed in: send back to get-started
   if (!isSignedIn) {
     return (
-      <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
-        <div style={{ textAlign: "center", maxWidth: 400 }}>
+      <main id="main-content" style={{ minHeight: "100dvh", display: "grid", placeItems: "center", padding: "2rem" }}>
+        <div style={{ textAlign: "center", maxWidth: 440 }}>
+          <ActivateHeading />
+          <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: "0.75rem", lineHeight: 1.6 }}>{lead}</p>
           <p style={{ fontSize: 14, marginBottom: "1rem" }}>Please sign in to continue.</p>
           <a
             href={`/get-started?plan=${planKey}${cadence === "yearly" ? "&cadence=yearly" : ""}${agentTypeQuery}`}
@@ -227,10 +256,11 @@ function ActivatePageContent() {
               letterSpacing: "0.12em",
             }}
           >
-            Sign Up <ArrowRight size={14} />
+            Return to sign in <ArrowRight size={14} aria-hidden="true" />
           </a>
+          <ActivateSmallPrint />
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -255,7 +285,7 @@ function ActivatePageContent() {
     return (
       <>
         <InteractiveBackground />
-        <div className={funnelStyles.funnelPage} style={{
+        <main id="main-content" className={funnelStyles.funnelPage} style={{
           minHeight: "100dvh",
           display: "grid",
           placeItems: "center",
@@ -276,12 +306,15 @@ function ActivatePageContent() {
             {/* Gold bar */}
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "var(--gold-leaf)" }} />
 
-            <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.75rem" }}>
-              You&apos;re activating the <em>{plan.name}</em> plan
+            <ActivateHeading />
+            <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: "1.5rem", lineHeight: 1.6 }}>{lead}</p>
+
+            <h2 className="serif" style={{ fontSize: "1.15rem", fontWeight: 400, marginBottom: "0.75rem" }}>
+              You&rsquo;re setting up a <em>free account</em>
             </h2>
 
-            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
-              We didn&apos;t see a plan selection, so we&apos;ve defaulted to <strong>{plan.name}</strong>.
+            <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
+              We didn&rsquo;t see a plan selection, so we&rsquo;ve defaulted to a free account. {FREE_ACCOUNT_SENTENCE}{" "}
               Confirm to continue, or choose a paid plan instead.
             </p>
 
@@ -300,7 +333,7 @@ function ActivatePageContent() {
                   letterSpacing: "0.12em",
                 }}
               >
-                Continue with {plan.name}
+                Continue with a free account
               </button>
               <a
                 href={`/get-started${agentTypeQuery ? `?${agentTypeQuery.replace(/^&/, "")}` : ""}`}
@@ -314,11 +347,12 @@ function ActivatePageContent() {
                   letterSpacing: "0.12em",
                 }}
               >
-                Choose a plan <ArrowRight size={14} />
+                Choose a plan <ArrowRight size={14} aria-hidden="true" />
               </a>
             </div>
+            <ActivateSmallPrint />
           </div>
-        </div>
+        </main>
       </>
     );
   }
@@ -326,7 +360,7 @@ function ActivatePageContent() {
   return (
     <>
       <InteractiveBackground />
-      <div className={funnelStyles.funnelPage} style={{
+      <main id="main-content" className={funnelStyles.funnelPage} style={{
         minHeight: "100dvh",
         display: "grid",
         placeItems: "center",
@@ -350,18 +384,19 @@ function ActivatePageContent() {
           {/* ── ERROR STATE ── */}
           {status === "error" && (
             <>
+              <ActivateHeading />
               <div style={{
                 width: 48, height: 48, margin: "0 auto 1.5rem",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 border: "1px solid rgba(239,68,68,0.3)",
                 background: "rgba(239,68,68,0.05)",
               }}>
-                <span style={{ fontSize: 20 }}>×</span>
+                <span aria-hidden="true" style={{ fontSize: 20 }}>×</span>
               </div>
-              <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.75rem" }}>
+              <h2 className="serif" style={{ fontSize: "1.15rem", fontWeight: 400, marginBottom: "0.75rem" }}>
                 Something went wrong
               </h2>
-              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
+              <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
                 {error}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
@@ -376,15 +411,16 @@ function ActivatePageContent() {
                     letterSpacing: "0.12em",
                   }}
                 >
-                  Try Again
+                  Try again
                 </button>
                 <a
                   href="/dashboard/billing"
-                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none" }}
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minHeight: 44, padding: "0 8px", fontSize: 13, color: "var(--text-secondary)", textDecoration: "none" }}
                 >
-                  or go to billing page →
+                  or go to billing page <span aria-hidden="true">→</span>
                 </a>
               </div>
+              <ActivateSmallPrint />
             </>
           )}
 
@@ -400,19 +436,22 @@ function ActivatePageContent() {
                 <Loader2 size={32} style={{ animation: "spin 1.5s linear infinite", color: "var(--gold-leaf)" }} />
               </div>
 
-              <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.75rem" }}>
-                Setting up your <em>{plan.name}</em> plan...
-              </h2>
+              <ActivateHeading />
 
-              <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "2rem", lineHeight: 1.6 }}>
-                {planKey === "free"
-                  ? "Setting up your free account. Launch opens next, where you can connect your own computer or choose a plan."
-                  : "Preparing secure checkout. You'll choose what to launch once your plan is active."}
+              <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: "0.75rem", lineHeight: 1.6 }}>
+                {lead}
               </p>
+
+              <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: "0.5rem", lineHeight: 1.6 }}>
+                {planKey === "free"
+                  ? `Launch opens next, where you can connect your own computer or server. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`
+                  : "Preparing secure checkout. You\u2019ll choose what to launch once your plan is active."}
+              </p>
+              <ActivateSmallPrint />
             </>
           )}
         </div>
-      </div>
+      </main>
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "ai-agent-vps",
@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Most AI agents run comfortably on 2 vCPU and 4GB of RAM. Specs by agent type, prices at Hetzner, DigitalOcean, Vultr and Linode, and how to lock it down.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 10,
   author: "Hivra team",
   tagline: "Most agents need a smaller server and a bigger firewall than the listicles tell you.",
@@ -28,7 +28,7 @@ export const article: BlogArticle = {
     {
       heading: "Provider comparison: Hetzner, DigitalOcean, Vultr, Linode",
       paragraphs: [
-        "For the 2 vCPU / 4GB class that most agents want, here's where prices sat in September 2026:\n\n| Provider | Plan | vCPU | RAM | SSD | Price/mo |\n|----------|------|------|-----|-----|----------|\n| Hetzner | CX23 | 2 | 4 GB | 40 GB | €5.49 |\n| Hetzner | CX33 | 4 | 8 GB | 80 GB | €8.49 |\n| Vultr | Regular Cloud Compute | 2 | 4 GB | 80 GB | $20 |\n| Linode | Shared 4GB | 2 | 4 GB | 80 GB | $24 |\n| DigitalOcean | Basic | 2 | 4 GB | 80 GB | $24 |\n\nHetzner prices are for its Germany and Finland locations, excluding VAT, after its 15 June 2026 price change. Prices move, so check before you buy. The gap stays put, though: Hetzner costs roughly a quarter to a third of the US-brand trio for the same agent workload.",
+        "For the 2 vCPU / 4GB class that most agents want, here's where prices sat in September 2026:\n\n| Provider | Plan | vCPU | RAM | SSD | Price/mo |\n|----------|------|------|-----|-----|----------|\n| Hetzner | CX23 | 2 | 4 GB | 40 GB | €5.49 |\n| Hetzner | CX33 | 4 | 8 GB | 80 GB | €8.49 |\n| Vultr | Regular Cloud Compute | 2 | 4 GB | 80 GB | $20 |\n| Linode | Shared 4GB | 2 | 4 GB | 80 GB | $24 |\n| DigitalOcean | Basic | 2 | 4 GB | 80 GB | $24 |\n\nHetzner prices are for its Germany and Finland locations, excluding VAT and IPv4, after its 15 June 2026 price change. An IPv4 address adds to the bill: Hetzner's cost-optimised page shows €5.99 and €8.99 with one, as of October 2026. Hetzner says the number of servers in this range is limited, and that page showed both plans as unavailable in October 2026, so check stock before you plan around them. Prices move, so check before you buy. The gap stays put, though: Hetzner costs roughly a quarter to a third of the US-brand trio for the same agent workload.",
         "What the price gap does and doesn't buy:\n\n- **Hetzner** is the community default for agent hosting for a reason. The catch list is short but real: its cheapest shared plans are priced for its EU datacenters, signup verification is stricter, and its support culture assumes you know Linux.\n- **DigitalOcean** has the best documentation and tutorials in the business. If this is your first server, that's worth something, though not nearly four times the price forever.\n- **Vultr** has the widest location spread, useful if you need the box near a specific region. Pricing is otherwise DigitalOcean-shaped.\n- **Linode (Akamai)** is solid and boring in the good sense. Long-running boxes, predictable network. Same pricing problem as the other US brands.\n\nFor a personal agent where a few hours of downtime is annoying rather than fatal, take the Hetzner CX23 or CX33 and spend the savings on your API budget. To compare the full monthly picture including API costs, run your numbers through the [AI agent hosting cost calculator](/tools/ai-agent-hosting-cost-calculator).",
       ],
     },
@@ -62,7 +62,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "The DIY route above works. Counted properly, it costs $5-10/month in server rent, 1-3 hours of setup, and a slow drip of maintenance: OS patches, agent updates, disk cleanup, and the occasional evening lost to a gateway that stopped restarting. If you enjoy that work, nothing here needs improving. (And if you're still deciding whether a VPS is even the right shape, the [AI agent hosting guide](/blog/ai-agent-hosting-guide) compares all four options: own hardware, VPS, serverless, and managed.)",
         "[Hivra](/) is the version where most of the checklist above is someone else's job. Each agent runs on its own private VM, and Claude Code and Codex are the vendors' official CLIs. Claude Code uses your own Anthropic login and Codex uses your own ChatGPT login, so usage bills through those accounts with no Hivra markup. Hivra is independent and is not affiliated with Anthropic or OpenAI. You get a browser view of the running session instead of a bare SSH terminal.",
-        `The plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}, shared across the agents you run. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero all launch on Hivra. OpenClaw and Agent Zero need a paid plan. Full details on the [pricing page](/pricing).`,
+        `The plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}, shared across the agents you run. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero all launch on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${FREE_ACCOUNT_SENTENCE} Full details on the [pricing page](/pricing).`,
         `A reasonable decision rule: if you were going to buy one Hetzner box for one agent and follow this guide carefully, the DIY route saves a few dollars and teaches you things. If you want several agents, want them reachable from your phone, or don't want to own the security section personally, managed is cheaper than your time. If you're not sure your usage justifies always-on hosting at all, the [agent survival check](/tools/agent-survival-check) is a two-minute sanity test.`,
       ],
     },
@@ -74,7 +74,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What is the cheapest VPS that can run an AI agent well?",
-      a: "Hetzner's CX23 (2 vCPU, 4GB RAM, 40GB NVMe) at €5.49/month excluding VAT is the community standard. Equivalent plans at DigitalOcean, Vultr, or Linode run $20-24/month. The premium buys better docs and more locations, not better agent performance.",
+      a: "Hetzner's CX23 (2 vCPU, 4GB RAM, 40GB NVMe) at €5.49/month excluding VAT and IPv4 is the community standard. Equivalent plans at DigitalOcean, Vultr, or Linode run $20-24/month. The premium buys better docs and more locations, not better agent performance.",
     },
     {
       q: "Is it safe to put my API keys on a VPS?",

@@ -60,7 +60,7 @@ export default function RepoCard({ owner, name, clone }: { owner: string; name: 
         </div>
         <p className={styles.repoLicense}>
           <Scale size={15} aria-hidden="true" />
-          Open source license
+          Open source licence
         </p>
         <ul className={styles.repoFiles} aria-label="Top of the repository">
           {FILES.map(file => (

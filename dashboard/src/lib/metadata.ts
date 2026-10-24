@@ -97,6 +97,50 @@ export function buildWebsiteMetadata({
   };
 }
 
+/** A page title that skips the root layout's "%s | Hivra" template. */
+export interface AbsoluteTitle {
+  absolute: string;
+}
+
+/**
+ * The page title exactly as written, with no " | Hivra" added after it.
+ *
+ * The root layout sets `title.template = "%s | Hivra"`, so a plain string title
+ * gets the brand appended. Copy that arrives with its own finished browser title
+ * (for example "Pricing | Hivra", or a title with no brand at all) uses this
+ * instead. Open Graph and Twitter titles are never templated (the layout gives them
+ * no template), so `buildWebsiteMetadata` already passes the same string to both.
+ *
+ * Static pages keep the shape that app/__tests__/metadata-titles.test.ts and
+ * static-copy-safety.test.ts parse:
+ *
+ *   export const metadata = {
+ *     title: absoluteTitle(TITLE),
+ *     description: DESCRIPTION,
+ *     ...buildWebsiteMetadata({ path: "/pricing", title: TITLE, description: DESCRIPTION }),
+ *   };
+ *
+ * app/__tests__/absolute-title-metadata.test.ts scans the literal for dashes and banned claims.
+ * Slug pages call `buildAbsoluteTitleMetadata` from generateMetadata().
+ */
+export function absoluteTitle(title: string): AbsoluteTitle {
+  return { absolute: title };
+}
+
+/**
+ * Whole page metadata for generateMetadata(): the title exactly as written (no
+ * template), the description, canonical, Open Graph and Twitter, all from one
+ * title and one description. Takes what `buildWebsiteMetadata` takes, including
+ * `images`.
+ */
+export function buildAbsoluteTitleMetadata(input: WebsiteMetadataInput): Metadata {
+  return {
+    title: absoluteTitle(input.title),
+    description: input.description,
+    ...buildWebsiteMetadata(input),
+  };
+}
+
 export function buildArticleMetadata({
   path,
   title,

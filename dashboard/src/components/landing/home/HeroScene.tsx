@@ -5,6 +5,9 @@ import { m, useMotionValue, useScroll, useSpring, useTransform } from "framer-mo
 import { Cpu, KeyRound, Power, RotateCcw } from "lucide-react";
 import { EASE_OUT, useMotionPref, usePageVisible, useRange, useTypedLines, useVisible } from "./motion";
 import styles from "./home.module.css";
+import { planSizeParts } from "@/lib/blog/plan-facts";
+
+const ENTRY_SIZE_CHIP = planSizeParts("entry");
 
 /** An illustration of an agent session on a Hivra computer, not a recording. */
 const SESSION = [
@@ -124,7 +127,7 @@ export default function HeroScene() {
           <m.span {...float(5, 7.2, 0.8)}><KeyRound size={13} />Your login</m.span>
         </m.div>
         <m.div className={`${styles.floatChip} ${styles.chipC}`} {...enter(1.45, { y: 30, z: 40 })}>
-          <m.span {...float(6, 8, 1.4)}><Cpu size={13} />2 vCPU · 4 GB</m.span>
+          <m.span {...float(6, 8, 1.4)}><Cpu size={13} />{ENTRY_SIZE_CHIP.cpu} · {ENTRY_SIZE_CHIP.ram}</m.span>
         </m.div>
       </m.div>
       <div className={styles.sceneMeta}>

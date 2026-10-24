@@ -5,6 +5,17 @@ import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
 import { SHOW_FOUNDER_SECTION } from "./home/content";
 import styles from "../public-site/public-site.module.css";
 
+/**
+ * The /download page says "Public download coming soon" while there is no installer, so the link
+ * must not promise one. It reads the same record as that page (PUBLIC_PROJECT_LINKS.desktop.macos)
+ * and says "Download the app" only once a release is published.
+ */
+export function downloadLinkLabel(status: "pending" | "published"): string {
+  return status === "published" ? "Download the app" : "Mac app (coming soon)";
+}
+
+const DOWNLOAD_LABEL = downloadLinkLabel(PUBLIC_PROJECT_LINKS.desktop.macos.status);
+
 const COLUMNS = [
   { title: "Product", links: [
     { label: "Agents", href: "/agents" },
@@ -23,7 +34,7 @@ const COLUMNS = [
     { label: "Litepaper", href: LITEPAPER_HREF, tokenSurface: true },
     { label: "Blog", href: "/blog" },
     { label: "Free tools", href: "/tools" },
-    { label: "Download the app", href: "/download" },
+    { label: DOWNLOAD_LABEL, href: "/download" },
     { label: "Ecosystem", href: "/ecosystem" },
     { label: "Token", href: "/token", tokenSurface: true },
   ] },

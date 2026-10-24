@@ -1,5 +1,5 @@
 // The call to action beside the keep-awake result. It changes with the result:
-// when a plugged-in laptop with the command is enough, the page says so and
+// when a plugged-in laptop with the command may be enough, the page says so and
 // only points at the survival check. When the laptop would have to stay open
 // and plugged in to keep the run alive, it offers a computer that stays on.
 
@@ -30,7 +30,7 @@ export function keepAwakeCta(result: KeepAwakeResult): KeepAwakeCta {
     return {
       state: "enough",
       agent,
-      text: "A laptop that stays plugged in, with this command running, is enough for a run you can keep an eye on. It costs nothing. The limits below still apply.",
+      text: "For a run you can supervise, a plugged-in laptop with this command may be enough. It costs nothing. The limits below still apply.",
       button: null,
       survivalCheck,
     };

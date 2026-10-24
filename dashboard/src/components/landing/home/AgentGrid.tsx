@@ -11,6 +11,8 @@ export interface GridAgent {
   name: string;
   role: string;
   line: string;
+  /** A limit worth seeing before the click. */
+  note?: string;
   href: string;
   screen: readonly string[];
 }
@@ -78,11 +80,12 @@ function Card({ agent, index, inView }: { agent: GridAgent; index: number; inVie
         <span className={styles.cardEdge} aria-hidden="true" />
         <span className={styles.cardTop}>
           <span className={styles.cardDot} aria-hidden="true" />
-          <span className={styles.cardRole}>{agent.role}</span>
           <ArrowUpRight className={styles.cardArrow} size={18} aria-hidden="true" />
         </span>
         <span className={styles.cardName}>{agent.name}</span>
+        <span className={styles.cardRole}>{agent.role}</span>
         <span className={styles.cardLine}>{agent.line}</span>
+        {agent.note ? <em className={styles.cardNote}>{agent.note}</em> : null}
         <Screen lines={agent.screen} running={inView} delay={500 + index * 260} />
       </m.a>
     </m.div>

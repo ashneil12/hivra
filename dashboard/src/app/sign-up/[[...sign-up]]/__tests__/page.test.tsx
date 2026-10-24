@@ -1,9 +1,10 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { redirect } from "next/navigation";
 
+import { findBannedClaims } from "@/lib/tools/copy-rules";
 import SignUpPage from "../page";
 
 jest.mock("next/link", () => {
@@ -113,6 +114,57 @@ describe("SignUpPage", () => {
     // Launch has the only step counter; a count here contradicted it.
     expect(screen.queryByText(/step \d+ of \d+/i)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/");
+  });
+
+  // 11-reserve.md. /reserve and /reserved are redirects to this page, so their words live here.
+  it("opens with Ash's heading and introduction above the account form", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    const heading = screen.getByRole("heading", { level: 1, name: "Create your Hivra account." });
+    const lead = screen.getByText(
+      "Run a supported AI agent on a persistent computer, use a computer without an agent or bring your own infrastructure.",
+    );
+    const form = screen.getByTestId("mock-sign-up");
+    expect(heading.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(lead.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("main")).toContainElement(heading);
+  });
+
+  // Owner decision, 21 October 2026: Hivra runs no free computer. Someone who creates an account is told so
+  // before the form, instead of meeting a paywall in Launch after sign-up.
+  it("says under the introduction that a Hivra Cloud computer is paid and a free account works with your own", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+    const rule =
+      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
+    const note = screen.getByText(rule);
+    expect(note).toBeInTheDocument();
+    const lead = screen.getByText(
+      "Run a supported AI agent on a persistent computer, use a computer without an agent or bring your own infrastructure.",
+    );
+    expect(lead.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.compareDocumentPosition(screen.getByTestId("mock-sign-up")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("ends on the consent line with working Terms and Privacy links", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+    const line = screen.getByText(/^By continuing, you agree to the/);
+    expect(line).toHaveTextContent(
+      "By continuing, you agree to the Terms of Service and acknowledge the Privacy Policy.",
+    );
+    expect(within(line).getByRole("link", { name: "Terms of Service" })).toHaveAttribute("href", "/terms");
+    expect(within(line).getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "/privacy");
+    expect(screen.getByTestId("mock-sign-up").compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("uses no dash and makes no banned claim", async () => {
+    const { container } = render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+    const words = container.textContent ?? "";
+    expect(words).not.toMatch(/[\u2013\u2014]/);
+    expect(findBannedClaims(words)).toEqual([]);
   });
 
   it("sends a new account straight to Launch, not the retired welcome flow", async () => {

@@ -1,659 +1,409 @@
-interface RoadmapCard {
-  label?: string;
-  title: string;
-  body: string;
-}
+// Copy for /roadmap, from the approved page copy: what exists today, what comes next,
+// what comes after that, and what is still research. It is a map of direction, not a
+// release calendar, so nothing here carries a date or a promise of one.
+//
+// Inline marks use the grammar in lib/inline-copy.tsx (**bold**, [label](href)); a
+// {name} link target is resolved by the page (the start link, the litepaper, the
+// repository).
+//
+// Token copy. The page is shown to everyone, and the token surfaces are off for most
+// viewers (the HIVRA_NEW_TOKEN_SURFACES switch, and the UK geo list when it is on). So a
+// sentence about the tokens, the migration, the snapshot, the litepaper or the launchpad
+// is written as `{ token, plain? }`: `token` shows only when the surfaces are visible,
+// and `plain` (when there is one) is what everyone else reads in its place. A block marked
+// `token: true` is left out entirely for everyone else. `resolveRoadmap(false)` is what a
+// hidden viewer gets, and roadmap-content.restricted.test.ts reads it word by word.
+//
+// The only token words a hidden viewer can read are the short "you do not need a token"
+// negations listed in ROADMAP_NEGATIONS.
+//
+// Product definitions. What this page says Arena, Signal, Vault, Challenges, Experience, Foundry,
+// Interchange and the Orchestrator are follows the ecosystem map (lib/ecosystem-map.ts, which a test pins to
+// the litepaper; the Orchestrator sentence is app/ecosystem/ecosystem-content.ts). Use the map's
+// words, shortened, never a different idea of the product. app/roadmap/__tests__/ecosystem-alignment.test.ts
+// reads both and fails when they drift apart.
 
-interface RoadmapFeature {
-  name: string;
-  description: string;
-}
+/** The public repository. The page says "open source" and links here; it never names the licence. */
+export const ROADMAP_REPOSITORY_URL = "https://github.com/ashneil12/hivra";
 
-interface RoadmapRow {
-  number: string;
-  title: string;
-  body: string;
-}
+export type Sentence = string | { readonly token: string; readonly plain?: string };
+/** A paragraph, or a list of sentences joined with a space (so one can be token copy). */
+export type Paragraph = Sentence | readonly Sentence[];
 
-export interface RoadmapMetadataItem {
+export interface RoadmapAction {
   label: string;
-  value: string;
-  href?: string;
+  /** A route, or a {start} / {litepaper} placeholder the page resolves. */
+  href: string;
+  kind: "primary" | "secondary";
+  /** Shown only when the token surfaces are visible. */
+  token?: true;
 }
 
-type RoadmapUtilityIcon =
-  | "server"
-  | "gateway"
-  | "clock"
-  | "market"
-  | "loop"
-  | "network"
-  | "exchange"
-  | "settlement"
-  | "governance";
+export type RoadmapBlock =
+  | { kind: "text"; text: Paragraph }
+  | { kind: "terms"; items: readonly string[] }
+  | { kind: "topic"; id: string; heading: string; token?: true; paragraphs: readonly Paragraph[] };
 
-export interface RoadmapUtilityCard {
-  number: string;
-  icon: RoadmapUtilityIcon;
-  title: string;
-  description: string;
-}
+export type RoadmapStageId = "today" | "next" | "then" | "research";
 
-interface RoadmapPhaseSection {
+export interface RoadmapStage {
+  id: RoadmapStageId;
   heading: string;
-  intro?: string;
-  paragraphs?: readonly string[];
-  bullets?: readonly string[];
-  callout?: string;
+  blocks: readonly RoadmapBlock[];
 }
 
-export interface RoadmapPhase {
+export interface RoadmapSection {
   id: string;
-  tag: string;
-  name: string;
-  timeline: string;
-  descriptor: string;
-  sections: readonly RoadmapPhaseSection[];
+  heading: string;
+  paragraphs: readonly Paragraph[];
+  actions?: readonly RoadmapAction[];
 }
 
-export const roadmapContent = {
-  // The chapter links under the progress bar.
-  navLinks: [{ label: "Token verification", href: "/token" }],
-  metadata: {
-    // People searching "hermes agent roadmap" land here. The title and description
-    // say whose roadmap this is (Hivra, formerly HermesOS) and what it is not, so
-    // nobody mistakes it for the roadmap of Nous Research's Hermes Agent.
-    title: "Hivra Roadmap: the April 2026 Plan and What Is Live",
-    description:
-      "The Hivra roadmap (hivra.cloud, formerly HermesOS): the April 2026 plan, kept for the record, and what is live today. Not the Hermes Agent roadmap.",
-    canonicalPath: "/roadmap",
-  },
-  hero: {
-    eyebrow: "APRIL 2026 · HIVRA.CLOUD",
-    title: "Hivra Product Roadmap 2026",
-    subtitle: "The operating system for autonomous agents.",
-    note:
-      "This is Hivra's April 2026 roadmap, kept for the record. Hivra has since become agent computers, and parts of this plan have changed. What is live today is kept current below. The current plan is in the litepaper and on the ecosystem page. Anything here that is not live is a plan or a proposal, not a commitment. This is the roadmap for Hivra (hivra.cloud, formerly HermesOS), not for Hermes Agent, which is a Nous Research project. This is not a financial document and makes no investment claims about $HermesOS or any other asset.",
-    scrollLabel: "Scroll to explore",
-  },
-  whatIsHermesOS: {
-    eyebrow: "01 · WHAT IS HIVRA",
-    title: "What Is Hivra",
+/**
+ * The three sentences that say a token is not needed. They are the one token wording a viewer
+ * who cannot see the token surfaces still reads; they use "a token", never a ticker.
+ */
+export const ROADMAP_NEGATIONS = [
+  "Self-hosting does not require a Hivra account or a token.",
+  "Neither using a card nor trying the self-host preview requires you to participate in a token.",
+  "You can inspect the work, try the self-host preview, report problems and contribute ideas without having to buy a token.",
+] as const;
+
+// UNVERIFIED: this sentence says the snapshot has been taken. It has not been taken yet, so it
+// is token copy (hidden while the surfaces are off) and must be checked, or reworded, on the day
+// the HIVRA_NEW_TOKEN_SURFACES switch is turned on.
+const SNAPSHOT_SENTENCE =
+  "The snapshot has already been completed as of 20 October 2026; qualifying holders claim through Sablier, pay the applicable claim fee and are not required to burn legacy tokens.";
+
+export interface RoadmapContent {
+  masthead: { heading: string; paragraphs: readonly Paragraph[]; actions: readonly RoadmapAction[] };
+  stages: readonly RoadmapStage[];
+  history: RoadmapSection;
+  progress: RoadmapSection;
+  closing: RoadmapSection;
+}
+
+export const roadmapContent: RoadmapContent = {
+  masthead: {
+    heading: "The Hivra roadmap.",
     paragraphs: [
-      "Hivra gives AI agents computers of their own. Launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu, Windows or Omarchy computer and use it yourself.",
-      "Run it on Hivra Cloud, on your own cloud account or server, or self-host the whole platform with no Hivra account and no token. You bring your own model key.",
+      "Hivra started with a simple problem: useful AI agents need somewhere reliable to work. A laptop that goes to sleep, a terminal you cannot safely leave running or a server you have to configure yourself can turn a promising agent into another maintenance task.",
+      "We began by making it easier to give an agent its own computer. Now we're working towards the infrastructure those agents will need as they become more capable, connected and useful.",
+      "This roadmap separates **what you can use**, **what we're building towards** and **what we're still researching**. It isn't a release calendar. Research directions can change, projects can be dropped and some things will take longer than we'd like.",
     ],
-    callout:
-      "The privacy and cost transparency of self-hosting, with the reliability and speed of a managed service.",
+    actions: [
+      { label: "Get started", href: "{start}", kind: "primary" },
+      { label: "Explore the ecosystem", href: "/ecosystem", kind: "secondary" },
+      { label: "Read the litepaper", href: "{litepaper}", kind: "secondary", token: true },
+    ],
   },
-  audience: {
-    eyebrow: "02 · WHO IS HIVRA FOR",
-    title: "Who Is Hivra For",
+  stages: [
+    {
+      id: "today",
+      heading: "Available today",
+      blocks: [
+        {
+          kind: "topic",
+          id: "agent-computers",
+          heading: "Agent Computers",
+          paragraphs: [
+            "Deploy a computer for an AI agent or for your own use. Choose from supported agent experiences including Hermes, Claude Code, Codex, Agent Zero and OpenClaw, or begin with a general-purpose computer.",
+            "A persistent computer gives your tools, files and sessions somewhere to live between connections. It doesn't make individual agent tasks infallible, and each framework still has its own capabilities and limitations.",
+          ],
+        },
+        {
+          kind: "topic",
+          id: "choose-where-it-runs",
+          heading: "Choose where it runs",
+          paragraphs: [
+            [
+              // Hivra Cloud and connecting a server you already have are plainly available: a free account is defined
+              // as "bring your own computer", so it needs the connect flow to be a working product. That is true only
+              // if the release that ships this copy includes the connect flow. ROADMAP.md still lists it as "On
+              // Canary, not yet on hivra.cloud" (the "Where things stand" paragraph, lines 22 to 24, and the Slice 3
+              // row), so ecosystem-alignment.test.ts keeps reading that line: when it changes, confirm this sentence.
+              // Self-hosting the whole platform stays a preview (README.md headlines "Self-host preview"), as does
+              // every other mention of it on this page, including ROADMAP_NEGATIONS.
+              "Hivra Cloud is where Hivra runs computers for you, on a paid plan. You can also connect a server you already have, and a free account is enough for that. Self-hosting the whole platform is a preview.",
+              ROADMAP_NEGATIONS[0],
+            ],
+          ],
+        },
+        {
+          kind: "topic",
+          id: "tools-around-the-computer",
+          heading: "The tools around the computer",
+          paragraphs: [
+            "Depending on the framework and configuration, existing capabilities include terminals, agent interfaces, logs, monitoring, skills, memory, scheduled tasks and provider-key configuration. Check each [agent page](/agents) for what is actually supported.",
+          ],
+        },
+        {
+          kind: "topic",
+          id: "a-straightforward-way-to-pay",
+          heading: "A straightforward way to pay",
+          paragraphs: [
+            [
+              {
+                token: "Hivra Cloud has ordinary subscription pricing as well as the token-related access arrangements described on the billing and token pages.",
+                plain: "Hivra Cloud has ordinary subscription pricing.",
+              },
+              ROADMAP_NEGATIONS[1],
+            ],
+            [
+              { token: "During the migration from $HermesOS to $HIVRA, eligibility and claim instructions belong on the dedicated token pages." },
+              { token: SNAPSHOT_SENTENCE },
+            ],
+          ],
+        },
+      ],
+    },
+    {
+      id: "next",
+      heading: "Next: make the computer easier to trust and easier to use",
+      blocks: [
+        {
+          kind: "topic",
+          id: "gate",
+          heading: "Gate: clearer authority for agents",
+          paragraphs: [
+            "An agent should be able to do its job without holding unlimited access to everything you own. Gate is the proposed layer for understanding and controlling permissions, approving consequential actions and making boundaries easier to manage.",
+            "This is a product direction, not a claim that every agent action is already governed by Gate.",
+          ],
+        },
+        {
+          kind: "topic",
+          id: "exchange",
+          heading: "Exchange: find and share what works",
+          paragraphs: [
+            "A place to discover, distribute and eventually publish agents, tools, skills and working configurations. The goal is to make getting value from an agent easier than assembling the same setup from scratch.",
+          ],
+        },
+        {
+          kind: "topic",
+          id: "arena",
+          heading: "Arena: test before you trust",
+          paragraphs: [
+            "Agents can be impressive in demonstrations and disappointing in real use. Arena is intended as a controlled place to put agents and tools under pressure: difficult or adversarial tasks, a check on whether their boundaries hold and evidence of what happened, rather than a polished demo.",
+          ],
+        },
+        {
+          kind: "topic",
+          id: "signal",
+          heading: "Signal: security warnings you can act on",
+          paragraphs: [
+            "Security information isn't much use when it sits in a scattered chat thread or arrives after people have installed the affected tool. Signal aims to collect, verify and share actionable notices about unsafe tools, broken integrations and relevant threats. The goal is useful evidence, not an endless feed of unverified alarms.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "then",
+      heading: "Then: the supporting pieces",
+      blocks: [
+        {
+          kind: "text",
+          text: "These areas extend the same idea, but they need more design, testing and prioritisation before they become product commitments.",
+        },
+        {
+          kind: "terms",
+          items: [
+            "**Vault:** narrowly scoped answers to a question, without opening the whole account behind it.",
+            "**Passport:** portable identity and provenance for agents and their work.",
+            "**Seal:** evidence and assurance around what a tool or agent has actually been tested for.",
+            "**Rescue:** recovery paths when an agent breaks its environment or makes a mess.",
+            "**Challenges:** could reward authorised security research, giving researchers permission to find real weaknesses and a clear route for reporting them.",
+            "**Experience:** explores how to share lessons an agent has learned, with their assumptions, limits and provenance, so another agent or person can decide whether they apply.",
+          ],
+        },
+        { kind: "text", text: "These concepts are connected, but they do not all have to launch together." },
+      ],
+    },
+    {
+      id: "research",
+      heading: "Research: where this could lead",
+      blocks: [
+        { kind: "text", text: "Some of the most interesting questions are still open." },
+        {
+          kind: "text",
+          text: "**Missions** explores giving agents complex objectives with clear scope and accountability. **Foundry** looks at how agents could run useful services while humans remain responsible for what those services do, what they spend and what happens when they fail. **Colony** considers what happens when several agents cooperate rather than simply coexist. **Interchange** explores scoped allowances for a defined job, with limits, records and the ability for the owner to revoke them. **Ports** considers connections with tools and services beyond Hivra.",
+        },
+        {
+          kind: "text",
+          text: "We also intend to explore an Orchestrator, a single place to talk to all your agents and hand work between them, alongside additional computer images including macOS where technically and legally feasible, and custom images. These are planned additions, not presently supported configurations. Availability, licensing, cost and safety are unresolved considerations.",
+        },
+        {
+          kind: "topic",
+          id: "launchpad",
+          heading: "A possible launchpad and builder programme",
+          token: true,
+          paragraphs: [
+            "We are researching a separate concept that would let creators launch AI-backed characters and projects, potentially alongside their own tokens. Hivra could provide the actual computing infrastructure behind those launches, with revenue from launch services helping support further development and, eventually, promising AI builders.",
+            "It is **not a live product or committed launch**. The mechanics, funding model, safeguards and legal requirements still need substantial work. We plan to revisit it after the current launch.",
+          ],
+        },
+      ],
+    },
+  ],
+  history: {
+    id: "original-plan",
+    heading: "What happened to the original 2026 plan?",
     paragraphs: [
-      "Hivra is built for anyone who wants to deploy and run autonomous AI agents without managing infrastructure. That includes developers, operators, researchers, businesses, and teams across every background.",
-      "The platform is designed to be accessible from two directions:",
+      [
+        {
+          token:
+            "The first roadmap, written in April 2026 when the project was moving out of HermesOS, described a wider agent operating system, operator packs, a Hive Mind intelligence layer, token payments and an agent marketplace.",
+          plain:
+            "The first roadmap, written in April 2026 when the project was moving out of HermesOS, described a wider agent operating system, operator packs, a Hive Mind intelligence layer and an agent marketplace.",
+        },
+      ],
+      [
+        "Some of those ideas evolved into the current architecture.",
+        {
+          token:
+            "Others remain research questions, and some original token assumptions no longer apply. In particular, the April roadmap's Bankr-linked token descriptions are **historical**, not instructions for the present migration.",
+          plain: "Others remain research questions.",
+        },
+      ],
+      "We are keeping that earlier document as part of the project's history rather than pretending the plan never changed.",
     ],
-    cards: [
-      {
-        title: "Standard access",
-        body: "Get started with a standard subscription using a credit card. No wallet required, no crypto knowledge needed. Credits remain available for usage and top-ups, but compute tier access comes from your plan.",
-      },
-      {
-        title: "Token-based access",
-        body: "Hold $HermesOS in a connected wallet to qualify for a compute tier instead of paying by card. The billing page shows the current requirements.",
-      },
-    ] satisfies RoadmapCard[],
-    summary:
-      "Both paths give access to the same platform.",
-    detail:
-      "Card users never need a wallet or a token. Self-hosting needs neither a token nor a Hivra account.",
   },
-  liveToday: {
-    eyebrow: "03 · WHAT IS LIVE TODAY",
-    title: "What Is Live Today",
-    intro: "What you can use on Hivra now. This section is kept current.",
-    features: [
-      {
-        name: "Agents on their own computers",
-        description:
-          "Launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon. Agents with their own interface keep it, and you can work in the terminal too.",
-      },
-      {
-        name: "Computers without an agent",
-        description:
-          "Launch an Ubuntu, Windows or Omarchy computer and use it yourself.",
-      },
-      {
-        name: "Your choice of where it runs",
-        description:
-          "Hivra Cloud, your own cloud account or server, or the whole platform self-hosted.",
-      },
-      {
-        name: "Prompt library",
-        description:
-          "Deploy agents with pre-configured system prompts. Start with a working operator immediately.",
-      },
-      {
-        name: "Skill viewer",
-        description: "View the skills your agent has available at a glance.",
-      },
-      {
-        name: "Hermes scheduled tasks and memory",
-        description:
-          "Hermes agents keep their scheduled tasks and their memory across sessions.",
-      },
-      {
-        name: "API keys",
-        description:
-          "Store provider keys once, encrypted at rest, and choose which agents use them.",
-      },
-      {
-        name: "Logs and monitoring",
-        description:
-          "Real-time streaming logs, health status, and resource usage visible in the dashboard.",
-      },
-      {
-        name: "Token access",
-        description:
-          "Holding $HermesOS can qualify you for a compute tier. The billing page shows the current requirements.",
-      },
-    ] satisfies RoadmapFeature[],
-  },
-  vision: {
-    eyebrow: "04 · PRODUCT VISION",
-    title: "Product Vision",
-    callout:
-      "Hivra is evolving from a deployment tool into the operating system for autonomous agent businesses.",
+  progress: {
+    id: "how-to-read-progress",
+    heading: "How to read progress",
     paragraphs: [
-      "The next wave of AI is not about chat interfaces. It is about persistent operators: agents that run continuously, take real-world actions, learn from experience, improve over time, and fund their own compute. Most people cannot build this infrastructure themselves. Hivra closes that gap.",
+      "A feature belongs in the 'available' category only when people can actually use it. Research, prototype work and design documents are not the same as a released product.",
+      [
+        "For shipped changes, visit the [changelog](/changelog). For the live state of Hivra's public pages, visit [status](/status).",
+        { token: "For the broader reasoning and longer-term vision, read the [litepaper]({litepaper})." },
+      ],
     ],
-    directionLead: "The platform is moving in three directions simultaneously:",
-  },
-  visionSticky: {
-    states: [
-      {
-        text: "A single Hivra agent is useful.",
-      },
-      {
-        text: "A network of thousands of Hivra agents, all learning from each other...",
-      },
-      {
-        textLead: "...accessible through a ",
-        textHighlight: "shared token layer",
-        textTail: ", is something categorically different.",
-      },
-    ],
-  },
-  visionDirection: {
-    rows: [
-      {
-        number: "01",
-        title: "From deployment to operators",
-        body: "Today, deploying on Hivra gives you a powerful but blank canvas. You get the full agent framework, but what you do with it is up to you. The next step is changing that: pre-configured, job-ready operators that arrive knowing their role, with every tool they need already installed. A working agent, not just a starting point, from the moment it deploys.",
-      },
-      {
-        number: "02",
-        title: "From isolated agents to a connected network",
-        body: "Every agent on the platform contributes to and draws from a shared intelligence layer called Hive Mind. Agents get better over time not just from what they individually learn, but from what the whole network learns. This is what makes the platform different as it scales.",
-      },
-      {
-        number: "03",
-        title: "From platform to economy",
-        body: "Proposed: agents that earn from their work, pay for their own compute, and transact with each other through the token. The current proposal is in the tokenomics.",
-      },
-    ] satisfies RoadmapRow[],
-  },
-  token: {
-    eyebrow: "05 · $HERMESOS TOKEN",
-    title: "Fair launch. Community owned.",
-    originParagraphs: [
-      "$HermesOS launched as a community fair launch on Bankr on Base. There was no team pre-mint, no private allocation, and no VC distribution. The total supply is 100,000,000,000 tokens, fixed, fully in circulation from launch, held entirely by the community.",
-      "The token came to exist because the project got real attention. When Erik Voorhees, founder of Venice AI, publicly engaged with Hivra and the community responded, someone launched the token through Bankr before an official one existed. Hivra embraced it. The community had already shown what they thought of the project. The work now is to build the utility that makes the token genuinely useful inside a real platform.",
-    ],
-    metadata: [
-      { label: "Total supply", value: "100,000,000,000 (100 billion), fixed" },
-      { label: "Launch type", value: "Community fair launch via Bankr on Base" },
-      { label: "Team allocation", value: "None" },
-      { label: "VC / private allocation", value: "None" },
-      {
-        label: "Contract",
-        value: "Verify at hivra.cloud/token only",
-        href: "/token",
-      },
-    ] satisfies RoadmapMetadataItem[],
-    utilityHeading: "TOKEN UTILITY",
-    utilityIntro:
-      "Compute access (01) is live today. The other uses below were proposals in April 2026. Some have changed since, and none is a commitment. The current proposal is in the tokenomics.",
-    utilities: [
-      {
-        number: "01",
-        icon: "server",
-        title: "Compute Access",
-        description:
-          "Live today. Hold $HermesOS in a connected wallet to qualify for a compute tier. The billing page shows the current requirements.",
-      },
-      {
-        number: "02",
-        icon: "gateway",
-        title: "LLM Gateway Credits",
-        description:
-          "Proposed: LLM access through Bankr's gateway: Claude, GPT, Gemini, and more, at cost with no markup. Credits purchased through Bankr, payable in any cryptocurrency including $HermesOS.",
-      },
-      {
-        number: "03",
-        icon: "clock",
-        title: "Pay-As-You-Go Compute",
-        description:
-          "Proposed: Rolling hourly billing. Pay only for the hours your server is online. Delete the server and billing stops immediately. Agents can spin up their own servers autonomously via x402 payment rails.",
-      },
-      {
-        number: "04",
-        icon: "market",
-        title: "Marketplace Access & Creator Earnings",
-        description:
-          "Proposed: Token holdings determine which marketplace content is available without individual purchase. Creators earn from usage and can withdraw through supported payout options, including token-based settlement.",
-      },
-      {
-        number: "05",
-        icon: "loop",
-        title: "Agent Self-Sustainability",
-        description:
-          "Proposed: Agents hold their own token balance and pay for services autonomously. Agents operate independently without needing constant human top-ups.",
-      },
-      {
-        number: "06",
-        icon: "network",
-        title: "Hive Mind Network Access",
-        description:
-          "Proposed: Platform users access the collective Hive Mind intelligence layer at no additional cost. External agents from other networks can query it by paying in $HermesOS per request.",
-      },
-      {
-        number: "07",
-        icon: "exchange",
-        title: "Agent-to-Agent Payments",
-        description:
-          "Proposed: Agents pay each other for services settled in $HermesOS. A research operator sells intelligence to a trading research operator. All settled in token, no human in the loop.",
-      },
-      {
-        number: "08",
-        icon: "settlement",
-        title: "Marketplace Settlement",
-        description:
-          "Proposed: Marketplace transactions are settled using $HermesOS as the underlying layer. Users and creators do not need to interact with this layer directly.",
-      },
-      {
-        number: "09",
-        icon: "governance",
-        title: "Governance",
-        description:
-          "Not decided. No governance model has been chosen, and holding the token does not give anyone a vote on ecosystem direction.",
-      },
-    ] satisfies RoadmapUtilityCard[],
-    utilityNote: "Official token information is published only at hivra.cloud/token.",
-  },
-  roadmap: {
-    eyebrow: "06 · ROADMAP",
-    title: "Roadmap",
-    intro:
-      "The four phases as planned in April 2026. The timelines are from then and have moved, and some items have changed. The current plan is in the litepaper.",
-    phases: [
-      {
-        id: "phase-1",
-        tag: "Phase 1",
-        name: "Operator Foundations + Economic Infrastructure",
-        timeline: "Planned for 6 weeks from April 2026",
-        descriptor:
-          "Ship flagship operators, Bankr integration, token-gated compute, and subscription-backed compute rails.",
-        sections: [
-          {
-            heading: "What Are Operator Packs",
-            paragraphs: [
-              "Operator packs are pre-configured, job-ready agent deployments. They are not skills or plugins. When you deploy an operator pack, everything it needs is installed and configured automatically: tools, capabilities, integrations, memory setup, and system prompts. There are no dependencies to manage, no configuration files to write, and no setup steps to follow.",
-              "A skill teaches an agent how to do one thing. An operator pack deploys an agent that already knows its job, has everything it needs to do that job, and is ready to run from the moment it goes live. You connect any API keys the operator requires and it works.",
-              "Looking further ahead, the platform is exploring token-based access to operator endpoints via x402 micropayments. Instead of managing API keys yourself, the operator pays for what it needs autonomously using $HermesOS. This is exploratory and will be detailed when it is ready to ship.",
-            ],
-          },
-          {
-            heading: "Flagship Operator Packs",
-            intro:
-              "Phase 1 ships three operator packs, each designed for a specific job and ready to run from the moment it deploys.",
-            bullets: [
-              "Research Operator: continuous web research, source monitoring, automated summaries, and recurring intelligence briefs. Deploy a research agent that works around the clock in the background.",
-              "Trading Research Operator: market monitoring, watchlists, signal tracking, thesis documentation, and real-time alerts. A serious intelligence and awareness layer for crypto and financial markets.",
-              "Growth Operator: lead research, contact enrichment, outreach preparation, content repurposing, and workflow automation for business development and marketing operations.",
-            ],
-          },
-          {
-            heading: "Platform Foundations",
-            bullets: [
-              "Skill management: add, remove, and curate the skills available to your agent. Full control over what your operator can do.",
-              "File explorer: browse and manage files your agent has created, downloaded, or is working with directly from the dashboard.",
-            ],
-          },
-          {
-            heading: "Bankr Integration",
-            bullets: [
-              "Proposed: Deep integration with Bankr as the financial infrastructure layer. Bankr handles wallet provisioning, LLM gateway, and on-chain payment rails. Hivra handles agent infrastructure.",
-              "Proposed: Crypto-native users get a provisioned Bankr wallet at account creation, enabling on-chain activity, token-based access, and LLM gateway usage from day one.",
-              "Proposed: Credit-based users do not receive a Bankr wallet. They interact with a simple credits balance only. The platform handles all underlying settlement on their behalf.",
-              "Proposed: LLM gateway credits purchasable through Bankr for token users, or via standard card top-up for credit users. Usable across Claude, GPT, and Gemini at cost with no markup.",
-            ],
-          },
-          {
-            heading: "Compute Access",
-            intro:
-              "Compute access comes from an active subscription or verified token holding. Credits are kept separate so top-ups do not accidentally change a user's compute tier.",
-            bullets: [
-              "Token path: hold $HermesOS in your connected wallet to qualify for a compute tier. The billing page shows the current requirements.",
-              "Subscription path: card users choose a plan, and that plan defines the compute tier. Credit balances do not unlock or upgrade compute by themselves.",
-              "If your subscription or token holding falls out of eligibility, there is a grace period before compute pauses. Restoring eligibility during that window keeps the agent recoverable.",
-            ],
-          },
-          {
-            heading: "Usage Credits",
-            bullets: [
-              "Credits are reserved for usage, future top-ups, LLM gateway spend, and premium platform actions.",
-              "Keeping credits separate from compute tiers prevents a topped-up balance from being mistaken for Free or paid compute access.",
-            ],
-          },
-          {
-            heading: "Card and Token Access",
-            paragraphs: [
-              "The April 2026 plan was to move from card plans to token-based access. That changed: card plans and token access both continue.",
-            ],
-          },
-        ],
-      },
-      {
-        id: "phase-2",
-        tag: "Phase 2",
-        name: "Platform Controls + Deeper Token Integration",
-        timeline: "Planned for 1 to 3 months from April 2026",
-        descriptor:
-          "Add team features, agent wallets, expanded token utility, and an expanded operator pack library.",
-        sections: [
-          {
-            heading: "Platform Controls",
-            bullets: [
-              "Pack builder: create, save, and version your own operator configurations. Turn a working setup into a reusable template.",
-              "Approval controls: agent approval functionality exists today and is being significantly deepened: richer controls, tighter security boundaries, and more granular per-action configuration before agents send messages, execute purchases, or take actions with real-world consequences.",
-              "Memory viewer: see what your agent has learned, edit stored context, and control what persists across sessions.",
-              "Organisation workspaces: team accounts with shared agents, shared memory, and shared workflows.",
-              "Role-based permissions: control who can modify, deploy, or approve actions across a workspace.",
-              "Benchmarking and evals: measure how well your operators perform against defined tasks. Track improvement over time.",
-            ],
-          },
-          {
-            heading: "Agent Wallets",
-            bullets: [
-              "Proposed: agents hold their own token balance with defined spending limits and hard guardrails on autonomous transactions.",
-              "Proposed: agents pay for their own model calls, compute and services within approved boundaries.",
-              "Proposed: Spending approval controls: agents request user confirmation for actions above defined thresholds.",
-            ],
-          },
-          {
-            heading: "Expanded Operator Packs",
-            paragraphs: [
-              "Phase 2 expands the operator pack library beyond the three flagship operators shipped in Phase 1. Additional packs are added based on community demand and platform priorities, covering new use cases and workflows.",
-            ],
-          },
-          {
-            heading: "Expanded Token Utility",
-            bullets: [
-              "Proposed: usage credits, with the token spendable on model access and premium features.",
-              "Proposed: groundwork for agent-to-agent payments.",
-            ],
-          },
-        ],
-      },
-      {
-        id: "phase-3",
-        tag: "Phase 3",
-        name: "Marketplace + Hive Mind",
-        timeline: "Planned for 3 to 6 months from April 2026",
-        descriptor:
-          "Open the ecosystem. Community builds, publishes, and earns. Collective agent intelligence introduced.",
-        sections: [
-          {
-            heading: "Operator Marketplace",
-            bullets: [
-              "Browse, install, and deploy community-built operator packs.",
-              "Verified publisher programme for trusted creators with accountability and track records.",
-              "Flexible publishing options: release packs with open access, attach a price for individual purchase, or offer revenue share. Creators choose their own model.",
-              "Community templates: free packs contributed by the community, ready to deploy.",
-              "Private company packs: organisations maintain their own internal operator libraries, never publicly visible.",
-              "Proposed: token-based marketplace access, where token holdings determine which community packs and skills are available without individual purchase.",
-              "Proposed: Users can build and publish their own operators and agents. Creators earn from usage and can withdraw through supported payout options, including token-based settlement. Additional payout methods will be introduced over time.",
-            ],
-          },
-          {
-            heading: "Agent Endpoints",
-            intro:
-              "One of the most powerful features of the marketplace: dedicated agent endpoints. Instead of sharing your prompts or tooling, you expose your agent as a callable service. Other users and agents can send tasks to your endpoint and receive results, without ever seeing how your agent works under the hood.",
-            bullets: [
-              "Publish your agent as a private endpoint with a public interface. Keep your prompts, tools, and configuration completely private.",
-              "Proposed: Other agents and users call your endpoint to run tasks. You set the terms: open access, token-gated, or per-call pricing.",
-              "High-demand endpoints scale through managed plan capacity. Hivra manages the scaling infrastructure.",
-              "Agent endpoint operators generate revenue from every call while their underlying agent logic stays entirely protected.",
-            ],
-          },
-          {
-            heading: "Hive Mind Mode: Early Access",
-            callout: "The most significant long-term capability on this roadmap.",
-            paragraphs: [
-              "Hive Mind Mode is a collective intelligence layer across the Hivra network. Every agent on the platform contributes to and benefits from a shared knowledge base: learned skills, successful workflows, and refined strategies accumulate at the network level, making every agent smarter over time without any individual user needing to do anything extra.",
-              "The April 2026 plan was to introduce Hive Mind in early access in Phase 3, with a full release in Phase 4. It has not shipped, and there is no early-access commitment.",
-            ],
-            bullets: [
-              "Proposed: external agents from other networks could query the Hive Mind and pay per request in the token.",
-              "Agents share learned capability, not private data. Security and isolation are foundational to the design.",
-            ],
-          },
-        ],
-      },
-      {
-        id: "phase-4",
-        tag: "Phase 4",
-        name: "Agent Economy + Infrastructure Layer",
-        timeline: "Planned for 6 to 12 months from April 2026",
-        descriptor:
-          "Full autonomous agent economy. Hivra as foundation for other platforms.",
-        sections: [
-          {
-            heading: "Full Agent Economy",
-            bullets: [
-              "Proposed: agent-to-agent payments at scale, where agents pay each other for services in the token.",
-              "Hive Mind full release: the collective intelligence layer opens to the full network after early access.",
-              "Proposed: Hive Mind external access, where agents from other networks pay per query in the token.",
-              "Proposed: on-chain marketplace settlement for pack purchases, creator payouts and platform fees.",
-              "Governance is not decided. Any model will be published before it takes effect, and none is promised to token holders.",
-            ],
-          },
-          {
-            heading: "Hivra as Infrastructure Layer",
-            intro:
-              "Phase 4 opens Hivra to developers and companies who want to build their own agent-powered products on top of the platform.",
-            bullets: [
-              "API access for third-party products: companies build their own consumer-facing agent services using Hivra as the underlying infrastructure.",
-              "Operators as a service: teams wanting their own branded agent platform build on Hivra without managing the infrastructure themselves.",
-            ],
-          },
-        ],
-      },
-    ] satisfies RoadmapPhase[],
-  },
-  outOfScope: {
-    eyebrow: "07 · OUT OF SCOPE",
-    title: "What Is Not on This Roadmap",
-    intro: "Being explicit about boundaries is as important as the roadmap itself.",
-    items: [
-      {
-        title: "Autonomous trading with user funds",
-        description:
-          "Hivra does not create, operate, or endorse bots that autonomously manage or execute trades on behalf of users.",
-      },
-      {
-        title: "Yield products or lending returns",
-        description:
-          "Hivra is an agent infrastructure platform, not a financial services product.",
-      },
-      {
-        title: "MEV strategies, liquidation bots, or front-running tools",
-        description: "not operator categories Hivra ships as first-party products.",
-      },
-      {
-        title: "Financial advice",
-        description:
-          "nothing produced by this platform constitutes investment, trading, or financial advice.",
-      },
-    ],
-    note:
-      "Users who build their own agents on Hivra infrastructure are building their own products. Hivra provides the platform, not the endorsement.",
   },
   closing: {
-    eyebrow: "08 · WHERE THIS IS HEADING",
-    title: "Where This Is Heading",
-    quote:
-      "Deploy an agent that gets smarter over time, pays for its own compute, connects to a network of other agents, and operates autonomously at any scale.",
+    id: "build-with-us",
+    heading: "Build with us",
     paragraphs: [
-      "Hivra is building infrastructure for deployable agent businesses. The roadmap moves from deployment to operators, from operators to ecosystem, and from ecosystem to a network where agents and users interact through shared infrastructure and token-based access.",
-      "That was the plan in April 2026. What has shipped since is on the homepage and the ecosystem page, and the current plan is in the litepaper.",
+      ["Hivra is [open source]({repository}).", ROADMAP_NEGATIONS[2]],
     ],
-    metadata: [
-      { label: "Platform", value: "hivra.cloud", href: "/" },
-      { label: "Token verification", value: "hivra.cloud/token", href: "/token" },
-      { label: "Blog", value: "hivra.cloud/blog", href: "/blog" },
-      { label: "Twitter / X", value: "x.com/Wayland_Six", href: "https://x.com/Wayland_Six" },
-      { label: "Token launched via", value: "bankr.bot", href: "https://bankr.bot" },
-    ] satisfies RoadmapMetadataItem[],
-    disclaimer:
-      "This document describes planned product direction. Timelines are targets, not guarantees. Features are subject to change. Nothing here constitutes financial advice, a financial promotion, or an invitation to purchase any asset. For official token information, use hivra.cloud/token only.",
+    actions: [
+      { label: "Explore Hivra", href: "/about", kind: "secondary" },
+      { label: "Start a computer", href: "{start}", kind: "primary" },
+    ],
   },
-} as const;
-
-type Widen<T> = T extends string
-  ? string
-  : T extends readonly (infer U)[]
-    ? readonly Widen<U>[]
-    : T extends object
-      ? { -readonly [K in keyof T]: Widen<T[K]> }
-      : T;
-
-type FullRoadmapContent = Widen<typeof roadmapContent>;
-
-/**
- * What the roadmap page renders: the whole April 2026 plan, or the restricted
- * copy for a viewer the token geo-policy blocks, which has no `token` section.
- * The client component takes this as a prop and imports only types from this
- * file, so a blocked viewer's browser is never sent the token copy.
- */
-export type RoadmapPageContent = Omit<FullRoadmapContent, "token" | "roadmap"> & {
-  token:
-    | (Omit<FullRoadmapContent["token"], "utilities"> & { utilities: readonly RoadmapUtilityCard[] })
-    | null;
-  roadmap: Omit<FullRoadmapContent["roadmap"], "phases"> & { phases: readonly RoadmapPhase[] };
 };
 
-/**
- * The words that make a line token copy. The restricted roadmap leaves out any
- * list item, card, row or heading that has one of them, so a token line added
- * to the full roadmap later is kept off the restricted page without anyone
- * having to remember it. docs/litepaper/restrict.py uses the same idea for the
- * static documents; this adds the wallet and payment-rail words the roadmap uses.
- */
-const ROADMAP_TOKEN_TERMS = /\$HIVRA|\$HermesOS|\btokens?\b|tokenomics|Bankr|wallets?|x402|on-chain/i;
-
-/**
- * Exact phrases cut or reworded for the restricted page. Each one only removes
- * a token mention from a line that is otherwise true for everyone, or renumbers
- * the sections the removal leaves. A phrase that is not found is skipped, and
- * roadmap-content.test.ts fails if any token word is left anywhere.
- */
-const RESTRICTED_REWRITES: ReadonlyArray<readonly [string, string]> = [
-  [" This is not a financial document and makes no investment claims about $HermesOS or any other asset.", ""],
-  [" with no Hivra account and no token.", " with no Hivra account."],
-  [" No wallet required, no crypto knowledge needed.", ""],
-  ["Card users never need a wallet or a token. Self-hosting needs neither a token nor a Hivra account.", "Self-hosting needs no Hivra account."],
-  ["The platform is moving in three directions simultaneously:", "The platform is moving in two directions simultaneously:"],
-  ["shared token layer", "shared intelligence layer"],
-  ["06 · ROADMAP", "05 · ROADMAP"],
-  ["07 · OUT OF SCOPE", "06 · OUT OF SCOPE"],
-  ["08 · WHERE THIS IS HEADING", "07 · WHERE THIS IS HEADING"],
-  ["Ship flagship operators, Bankr integration, token-gated compute, and subscription-backed compute rails.", "Ship flagship operators and subscription-backed compute rails."],
-  ["Compute access comes from an active subscription or verified token holding.", "Compute access comes from an active subscription."],
-  ["If your subscription or token holding falls out of eligibility", "If your subscription falls out of eligibility"],
-  [" + Deeper Token Integration", ""],
-  ["Add team features, agent wallets, expanded token utility, and an expanded operator pack library.", "Add team features and an expanded operator pack library."],
-  [", including token-based settlement", ""],
-  [": open access, token-gated, or per-call pricing", ": open access or per-call pricing"],
-  ["Full Agent Economy", "Hive Mind Full Release"],
-  [" and token-based access.", "."],
-  [" Nothing here constitutes financial advice, a financial promotion, or an invitation to purchase any asset. For official token information, use hivra.cloud/token only.", ""],
-];
-
-function rewriteRestricted<T>(value: T): T {
-  if (typeof value === "string") {
-    let text: string = value;
-    for (const [from, to] of RESTRICTED_REWRITES) text = text.split(from).join(to);
-    return text as T;
-  }
-  if (Array.isArray(value)) return value.map(rewriteRestricted) as T;
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, rewriteRestricted(entry)])) as T;
-  }
-  return value;
+export interface ResolvedTopic {
+  id: string;
+  heading: string;
+  paragraphs: string[];
 }
 
-const isClean = (...texts: Array<string | undefined>) => texts.every((text) => !text || !ROADMAP_TOKEN_TERMS.test(text));
+export type ResolvedBlock =
+  | { kind: "text"; text: string }
+  | { kind: "terms"; items: string[] }
+  | ({ kind: "topic" } & ResolvedTopic);
+
+export interface ResolvedStage {
+  id: RoadmapStageId;
+  heading: string;
+  blocks: ResolvedBlock[];
+}
+
+export interface ResolvedSection {
+  id: string;
+  heading: string;
+  paragraphs: string[];
+  actions: RoadmapAction[];
+}
+
+export interface ResolvedRoadmap {
+  masthead: { heading: string; paragraphs: string[]; actions: RoadmapAction[] };
+  stages: ResolvedStage[];
+  history: ResolvedSection;
+  progress: ResolvedSection;
+  closing: ResolvedSection;
+}
+
+function isSentenceList(value: Paragraph): value is readonly Sentence[] {
+  return Array.isArray(value);
+}
+
+function resolveSentence(sentence: Sentence, visible: boolean): string | null {
+  if (typeof sentence === "string") return sentence;
+  return visible ? sentence.token : (sentence.plain ?? null);
+}
+
+function resolveParagraph(paragraph: Paragraph, visible: boolean): string | null {
+  const sentences = isSentenceList(paragraph) ? paragraph : [paragraph as Sentence];
+  const kept = sentences.map((sentence) => resolveSentence(sentence, visible)).filter((text): text is string => text !== null);
+  return kept.length ? kept.join(" ") : null;
+}
+
+function resolveParagraphs(paragraphs: readonly Paragraph[], visible: boolean): string[] {
+  return paragraphs.map((paragraph) => resolveParagraph(paragraph, visible)).filter((text): text is string => text !== null);
+}
+
+function resolveActions(actions: readonly RoadmapAction[] | undefined, visible: boolean): RoadmapAction[] {
+  return (actions ?? []).filter((action) => visible || !action.token).map((action) => ({ ...action }));
+}
+
+function resolveSection(section: RoadmapSection, visible: boolean): ResolvedSection {
+  return {
+    id: section.id,
+    heading: section.heading,
+    paragraphs: resolveParagraphs(section.paragraphs, visible),
+    actions: resolveActions(section.actions, visible),
+  };
+}
 
 /**
- * The roadmap for a viewer the token geo-policy blocks: the same April 2026
- * plan without the token section, the token-access cards, bullets and phase
- * sections, the token links and the token disclaimer. Everything else is the
- * full roadmap's text, so the two never drift apart.
+ * The roadmap as one viewer may read it. `visible` is tokenSurfacesVisible(view): the switch is on
+ * and the viewer is not in a listed country. When it is false every token sentence is replaced by its
+ * plain wording or left out, and a token-only block is dropped.
  */
-export function restrictedRoadmapContent(): RoadmapPageContent {
-  const base = rewriteRestricted(JSON.parse(JSON.stringify(roadmapContent)) as RoadmapPageContent);
-
-  const cards = base.audience.cards.filter((card) => isClean(card.title, card.body));
-  const phases = base.roadmap.phases.map((phase) => ({
-    ...phase,
-    sections: phase.sections
-      .filter((section) => isClean(section.heading))
-      .map((section) => ({
-        ...section,
-        ...(section.intro !== undefined && isClean(section.intro) ? {} : { intro: undefined }),
-        ...(section.callout !== undefined && isClean(section.callout) ? {} : { callout: undefined }),
-        ...(section.paragraphs ? { paragraphs: section.paragraphs.filter((text) => isClean(text)) } : {}),
-        ...(section.bullets ? { bullets: section.bullets.filter((text) => isClean(text)) } : {}),
-      }))
-      .filter((section) => section.intro || section.callout || section.paragraphs?.length || section.bullets?.length),
+export function resolveRoadmap(visible: boolean): ResolvedRoadmap {
+  const stages: ResolvedStage[] = roadmapContent.stages.map((stage) => ({
+    id: stage.id,
+    heading: stage.heading,
+    blocks: stage.blocks.flatMap((block): ResolvedBlock[] => {
+      if (block.kind === "terms") return [{ kind: "terms", items: [...block.items] }];
+      if (block.kind === "text") {
+        const text = resolveParagraph(block.text, visible);
+        return text === null ? [] : [{ kind: "text", text }];
+      }
+      if (block.token && !visible) return [];
+      const paragraphs = resolveParagraphs(block.paragraphs, visible);
+      return paragraphs.length ? [{ kind: "topic", id: block.id, heading: block.heading, paragraphs }] : [];
+    }),
   }));
 
   return {
-    ...base,
-    navLinks: base.navLinks.filter((link) => isClean(link.label, link.href)),
-    audience: {
-      ...base.audience,
-      // One way in is left, so the "two directions" lead and the "both paths" summary go.
-      paragraphs: base.audience.paragraphs.slice(0, 1),
-      cards,
-      summary: cards.length > 1 ? base.audience.summary : "",
+    masthead: {
+      heading: roadmapContent.masthead.heading,
+      paragraphs: resolveParagraphs(roadmapContent.masthead.paragraphs, visible),
+      actions: resolveActions(roadmapContent.masthead.actions, visible),
     },
-    liveToday: {
-      ...base.liveToday,
-      features: base.liveToday.features.filter((feature) => isClean(feature.name, feature.description)),
-    },
-    visionDirection: {
-      ...base.visionDirection,
-      rows: base.visionDirection.rows.filter((row) => isClean(row.title, row.body)),
-    },
-    token: null,
-    roadmap: { ...base.roadmap, phases },
-    closing: {
-      ...base.closing,
-      paragraphs: base.closing.paragraphs.filter((text) => isClean(text)),
-      metadata: base.closing.metadata.filter((item) => isClean(item.label, item.value, item.href)),
-    },
+    stages: stages.filter((stage) => stage.blocks.length > 0),
+    history: resolveSection(roadmapContent.history, visible),
+    progress: resolveSection(roadmapContent.progress, visible),
+    closing: resolveSection(roadmapContent.closing, visible),
   };
+}
+
+/** Every string the resolved roadmap shows or links to, for scans. */
+export function roadmapStrings(roadmap: ResolvedRoadmap): string[] {
+  const out: string[] = [roadmap.masthead.heading, ...roadmap.masthead.paragraphs];
+  const actions = (list: RoadmapAction[]) => list.flatMap((action) => [action.label, action.href]);
+  out.push(...actions(roadmap.masthead.actions));
+  for (const stage of roadmap.stages) {
+    out.push(stage.heading);
+    for (const block of stage.blocks) {
+      if (block.kind === "text") out.push(block.text);
+      else if (block.kind === "terms") out.push(...block.items);
+      else out.push(block.heading, ...block.paragraphs);
+    }
+  }
+  for (const section of [roadmap.history, roadmap.progress, roadmap.closing]) {
+    out.push(section.heading, ...section.paragraphs, ...actions(section.actions));
+  }
+  return out;
 }
