@@ -679,4 +679,26 @@ describe("the translated sign-up pages follow the English page", () => {
     const termsLinks = Array.from(container.querySelectorAll('a[href="/terms"]'));
     expect(termsLinks.some((link) => (link.textContent ?? "").includes(CARD_PAYMENTS[locale]))).toBe(false);
   });
+
+  it("themes the Clerk card from tokens, so it stays legible in dark mode", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+    render(<GetStartedPage />);
+
+    const { elements, variables } = mockSignUp.mock.calls[0][0].appearance;
+    expect(variables).toMatchObject({ colorBackground: "var(--bg-surface)", colorPrimaryForeground: "var(--vellum-bg)" });
+    expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
+  });
+
+  it("keeps the language switcher when a desktop app hides the funnel brand", () => {
+    mockUseAuth.mockReturnValue({ isLoaded: true, isSignedIn: false });
+    mockGet.mockImplementation((key: string) => (key === "plan" ? "operator" : null));
+    render(<GetStartedPage />);
+
+    const brand = screen.getByRole("link", { name: "Hivra home" });
+    expect(brand).toHaveAttribute("data-web-chrome");
+    // The bar still carries a tool (the language switcher), so only the brand goes.
+    expect(brand.closest("header")).not.toHaveAttribute("data-web-chrome");
+  });
 });
+

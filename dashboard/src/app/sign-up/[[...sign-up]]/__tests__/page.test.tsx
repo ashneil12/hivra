@@ -182,4 +182,17 @@ describe("SignUpPage", () => {
       fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1&profile=hermes",
     }));
   });
+
+  it("themes the Clerk card from tokens, so it stays legible in dark mode", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+    const { elements, variables } = mockSignUp.mock.calls[0][0].appearance;
+    expect(variables).toMatchObject({ colorBackground: "var(--bg-surface)", colorPrimaryForeground: "var(--vellum-bg)" });
+    expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
+  });
+
+  it("marks the funnel bar as web chrome that a desktop app replaces", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole("link", { name: "Hivra home" }).closest("header")).toHaveAttribute("data-web-chrome");
+  });
 });
+

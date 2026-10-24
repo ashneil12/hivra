@@ -5,6 +5,8 @@ import type { ComponentProps, ComponentType, ReactNode } from 'react';
 
 import { clerkAssetScriptUrls, clerkAssetVersions } from '@/lib/clerk-assets';
 
+import { HIVRA_CLERK_LOCALIZATION } from './clerk-localization';
+
 function envOrDefault(value: string | undefined, fallback: string): string {
   return value?.trim() || fallback;
 }
@@ -42,6 +44,7 @@ export function AuthClerkProviderClient({
       __internal_clerkJSVersion={clerkJSVersion}
       __internal_clerkUIUrl={clerkUIUrl}
       __internal_clerkUIVersion={clerkUIVersion}
+      localization={HIVRA_CLERK_LOCALIZATION}
     >
       {children}
     </InternalClerkProvider>
