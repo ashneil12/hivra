@@ -32,3 +32,7 @@ While `HIVRA_TOKEN_LAUNCH.contractAddress` is empty these run on $HermesOS alone
 
 Canary keeps the switch ON for Ash (set in the `hermesos-canary` project env by Ash; the code default is OFF everywhere).
 Tests run with it ON (`jest.setup.tsx`) and set it per case in `src/lib/__tests__/token-surfaces-switch.test.ts`.
+
+## Current state
+
+- 2026-10-24: `HIVRA_NEW_TOKEN_SURFACES=true` was set on the production project (owner decision). It reaches the site only on a build made after it was set, so the production candidate was rebuilt through a normal merge. Canary's switch is still off. UK review of the token copy remains open before Promote.
