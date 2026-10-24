@@ -22,7 +22,7 @@ WAIT_SECONDS=120
 CHRONY_DROPIN="/etc/chrony/conf.d/hermes-hetzner-ntp.conf"
 CHRONY_CONF="/etc/chrony/chrony.conf"
 NFT_CONF="/etc/nftables.conf"
-VM_SUBNET_ALLOW="allow 10.250.0.0/16"
+VM_SUBNET_ALLOWS=("allow 10.250.0.0/16" "allow 10.251.0.0/16")
 NTP_RULE='        iifname "vmbr1" udp dport 123 accept'
 NTP_SOURCES=(
   "server 213.239.239.165 iburst"
@@ -82,10 +82,34 @@ for cmd in awk grep sed systemctl chronyc; do
   require_command "$cmd"
 done
 
+# vmbr1's guest subnet differs per host and must not be hardcoded in this
+# public script. Detect the bridge's IPv4 address at runtime and allow its /16
+# in chrony alongside the documentation-only defaults above.
+detect_vmbr1_subnet_allow() {
+  local addr=""
+  if command -v ip >/dev/null 2>&1; then
+    addr="$(ip -4 -o addr show dev vmbr1 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1 || true)"
+  fi
+  if [ -z "$addr" ]; then
+    addr="$(grep -h '10\.' /etc/network/interfaces.d/vmbr1 "$NFT_CONF" 2>/dev/null |
+      grep -oE '\b10(\.[0-9]{1,3}){3}\b' | head -n1 || true)"
+  fi
+  [[ "$addr" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 0
+  local detected="allow ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0.0/16"
+  local existing
+  for existing in "${VM_SUBNET_ALLOWS[@]}"; do
+    [ "$existing" = "$detected" ] && return 0
+  done
+  VM_SUBNET_ALLOWS+=("$detected")
+  log "detected vmbr1 guest subnet ${detected#allow }"
+}
+
+detect_vmbr1_subnet_allow
+
 chrony_dropin_is_correct() {
   [ -f "$CHRONY_DROPIN" ] || return 1
   local expected
-  for expected in "${NTP_SOURCES[@]}" "$VM_SUBNET_ALLOW"; do
+  for expected in "${NTP_SOURCES[@]}" "${VM_SUBNET_ALLOWS[@]}"; do
     grep -Fxq "$expected" "$CHRONY_DROPIN" || return 1
   done
 }
@@ -100,13 +124,10 @@ write_chrony_dropin() {
   if [ -f "$CHRONY_DROPIN" ] && ! chrony_dropin_is_correct; then
     cp "$CHRONY_DROPIN" "$CHRONY_DROPIN.bak-hermes-$(date -u +%Y%m%dT%H%M%SZ)"
   fi
-  cat > "$CHRONY_DROPIN" <<'EOF'
-server 213.239.239.165 iburst
-server ntp1.hetzner.de iburst
-server ntp2.hetzner.de iburst
-server ntp3.hetzner.de iburst
-allow 10.250.0.0/16
-EOF
+  {
+    printf '%s\n' "${NTP_SOURCES[@]}"
+    printf '%s\n' "${VM_SUBNET_ALLOWS[@]}"
+  } > "$CHRONY_DROPIN"
 }
 
 disable_debian_pool() {
@@ -207,7 +228,7 @@ if [ "$MODE" = "apply" ]; then
   insert_nft_rule
   validate_and_apply_nftables
 else
-  chrony_dropin_is_correct || fatal "$CHRONY_DROPIN missing required Hetzner NTP sources or allow 10.250.0.0/16"
+  chrony_dropin_is_correct || fatal "$CHRONY_DROPIN missing required Hetzner NTP sources or VM subnet allow lines"
   if chrony_has_active_debian_pool; then
     fatal "$CHRONY_CONF still has active unreachable Debian pool NTP"
   fi
