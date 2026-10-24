@@ -101,6 +101,12 @@ export const TOKEN_LAUNCH_STATUS = {
     },
   },
 
+  /** The main call to action: free to start. Prices live on /pricing only. */
+  start: {
+    signUpUrl: "/sign-up",
+    pricingUrl: "/pricing",
+  },
+
   links: {
     xUrl: "https://x.com/HivraOS",
     xHandle: "@HivraOS",

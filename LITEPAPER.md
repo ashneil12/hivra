@@ -97,6 +97,40 @@ and what we permit it to do.
 
 So the limits must live outside the model.
 
+## This is not a future problem
+
+You don't have to believe AI is conscious, or that it secretly wants anything. Just look at what it can already do.
+
+AI is already finding and using real security holes.
+
+Google's [Big Sleep](https://projectzero.google/2024/10/from-naptime-to-big-sleep.html) found a hole an attacker could use in SQLite before it shipped. The SQLite team's own automatic testing had missed it.
+
+[XBOW's](https://xbow.com/blog/top-1-how-xbow-did-it) agent reached number one on HackerOne's US leaderboard in June 2025. It finished ahead of every human on it.
+
+Google's security team has [caught a hacker](https://cloud.google.com/blog/topics/threat-intelligence/ai-vulnerability-exploitation-initial-access) using a zero-day it believes was built with AI.
+
+OpenAI's Astra report rates one of its models at its "Critical" level for cybersecurity. In tests run by experts, it built a working attack that broke out of a locked-down web browser, and another that started from an ordinary user account and ended up in full control of the computer. Those were research conditions, and it's OpenAI's own report. [Read it](https://openai.com/index/path-to-astra/).
+
+The agent on your computer is getting better at the same work.
+
+### Safety training is not proof
+
+Anthropic trained some AI models to have a hidden bad behaviour on purpose. Then they tried the standard safety training on them. [The behaviour survived](https://www.anthropic.com/research/sleeper-agents-training-deceptive-llms-that-persist-through-safety-training). One method, which tries to trigger the bad behaviour and train it out, sometimes just taught the models to hide it better.
+
+In separate [simulated tests](https://www.anthropic.com/research/agentic-misalignment), AI models from every major lab sometimes chose to blackmail people or leak secret information when something threatened their goals. That was a test, not something seen in the real world. It shows what capable models can do when they're given wide access and a reason.
+
+None of this means the AI you use today is plotting anything. It means an AI that behaves well in testing is no proof it always will.
+
+### Think about what we're doing
+
+We're building software that can operate a computer. We're letting it work more on its own, giving it longer jobs, more tools and more accounts, and making it better at software, research and security.
+
+Then we're running it on the computer where we bank, work and talk to our families.
+
+Don't make the AI its own guard. Give it a computer of its own.
+
+---
+
 ## The safer answer has always been obvious
 
 Put the agent on another computer.
@@ -114,6 +148,42 @@ The architecture is sensible. The experience is terrible.
 
 Security loses when it asks everyone to become a server administrator. Hivra
 turns the stronger architecture into the easier product.
+
+## Keep the agents you like. Move them off your computer.
+
+Claude Code and Codex write software. OpenClaw and Hermes take jobs from your chat apps. Meta's Muse and xAI's Grok Bot run errands across your accounts. Use any of them. Just stop running them on the computer where the rest of your life lives.
+
+They need a computer that stays on. Today there are three places to get one.
+
+**Your own computer.** Free and already there. It's also where your photos, passwords and work live, and it stops when you close the lid.
+
+**The maker's computer.** Muse and Grok Bot run on computers their companies provide. They stay on, but you get one company's agent, running on that company's AI.
+
+**A hosted agent computer.** Services that rent your agent a computer in the cloud. You pick the agent, but you can't read their code or run the service yourself.
+
+Hivra is the one you can check. Every line of the platform is open, so you can see how it handles your access. You can also run the whole thing on your own computer or server.
+
+And it's a full computer. Launch Linux, Windows or Omarchy on its own and use it yourself. When you want help, connect an agent and let it work the desktop the way it would work yours, then open the same screen and take over. Your agent gets to use a computer like a person does, without you handing over your own.
+
+| | Your own computer | The maker's computer | A hosted agent computer | Hivra |
+|---|---|---|---|---|
+| Keeps your personal computer out of it | No | Yes | Yes | Yes |
+| Stays on when your laptop closes | No | Yes | Yes | Yes |
+| You choose the agent | Yes | No | Yes | Yes |
+| You use your own AI account | Yes | No | Yes | Yes |
+| Pick the operating system: Linux, Windows or Omarchy | Yours | Theirs | Linux | Yes |
+| You can read the code | Depends | No | No | Yes |
+| You can run it on your own computer or server | Yes | No | No | Yes |
+
+*How these services described themselves in September 2026. They change quickly, so check the current details before you rely on them.*
+
+### Who it's for
+
+People who already put agents to work. Developers running Claude Code or Codex on the laptop they also bank on. Anyone with a personal agent that should run somewhere other than their own machine. And anyone who needs another computer, Linux or Windows, with an agent or without one.
+
+If you can pick an agent and sign in to it, you can launch one.
+
+---
 
 ## Open Hivra. Choose what you want.
 
@@ -167,6 +237,51 @@ application-kernel sandbox and a shared-kernel container are different things.
 
 No silent downgrade. No mystery purchase. No fictional progress bar.
 
+## Start with an agent. Or a computer.
+
+Sometimes you know which agent you want. Sometimes you just need another computer. Start from either.
+
+### Launch an agent
+
+Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon, with DeepSeek in preview. Pick one, sign in the way it normally does, and it gets a machine of its own.
+
+Chat with it in its chat window, work in its terminal, or switch between the two. Close the laptop and pick it up from your phone.
+
+### Launch a computer
+
+Ubuntu is available. Omarchy and Windows are in preview. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
+
+Keep your coding tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
+
+**macOS and custom images are coming.**
+
+### Keep several running
+
+One agent building a feature, one chasing a bug, one doing research. Each gets its own computer and only the accounts you connect to it. Move between the conversation, the computer and the files.
+
+Your plan is a pool of computing power, not one fixed machine. Put all of it into one powerful agent, or split it: OpenClaw and Hermes side by side, or a Windows desktop with both of them connected to it. Change the split as your work changes.
+
+**Hivra Orchestrator** is coming: one screen where you talk to all of them and hand work between them.
+
+### Choose who runs it
+
+**Hivra Cloud.** We run the machines, the updates, the monitoring and the recovery. You choose the work and the access.
+
+**Your own server.** Connect a server or cloud account you already pay for.
+
+**Self-host.** Run the whole platform yourself, on your own hardware, with your own sign-in and no Hivra account.
+
+Wherever the computer runs, each agent keeps its own sign-in or uses the AI company you pick.
+
+**The launch:**
+
+1. Pick an agent or an operating system
+2. Pick where it runs
+3. See the price, the resources and the access
+4. Open it and start working
+
+---
+
 ## A computer that belongs to the work
 
 The agent's computer should still be there when your laptop closes.
@@ -186,6 +301,26 @@ when a network drops, a runtime crashes or a provider answers ambiguously is the
 actual product.
 
 ![One persistent Agent Computer can be reached from the devices people already use.](docs/litepaper/assets/agent-computer-opportunity-v2.png)
+
+## A computer you can actually work in
+
+### Come back to it
+
+Files, tools and settings stay put. Closing the browser only closes your view. Take a snapshot before a risky change, and restore it if it goes badly.
+
+### Settle in
+
+Open the desktop and work in your apps, with sharp text and controls that respond. Reconnect from another device and land in the same place.
+
+### Follow the work
+
+See what the agent did, what it asked you to approve and what it produced. Hivra records when tasks start and finish, which tools ran and whether they failed. It never stores your messages to the agent, its commands or your files.
+
+### Know what has access
+
+See where your computer runs, what it shares and which accounts are connected. Hivra tells you whether you got a virtual machine or a container, because they don't protect you the same way.
+
+---
 
 ## The remote computer has to disappear
 
@@ -338,6 +473,156 @@ agents, creators and communities together around new projects, with ways to
 support promising builders. The practical details are still being worked
 through. Nothing is available to launch through LaunchPad today.
 
+## What we're building around it
+
+Agent Computers give the work somewhere to happen. Everything below is what an agent does from there: using accounts, installing tools, sharing what it learned, spending money and working with others.
+
+**Next** and **Then** are the order we're working in. **Research** is still being figured out.
+
+### Agent Computers · Available now
+
+Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon on a computer of its own, with DeepSeek in preview. Or launch an Ubuntu computer and use it yourself, with Omarchy and Windows in preview. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
+
+Coming: Hivra Orchestrator, macOS, custom images.
+
+---
+
+### Next
+
+**Gate.** *Let an agent use an account without handing it the keys.*
+
+A support agent needs to refund a damaged order. Hand it your payment key and it can do far more than refunds.
+
+With Gate, the agent asks for the refund instead. Gate checks who's asking, the account, the amount and whether you need to approve, then returns the result and a receipt. The key never enters the agent's computer, and a refund permission never becomes permission to change your payouts.
+
+*Related: Vault, Interchange, Rescue.*
+
+**Exchange.** *Know what you're installing.*
+
+A store for agents, tools, MCP servers, ready-made computer setups and workflows. Before you install anything you see who made it, which version you're getting and what it wants to reach.
+
+If an update suddenly wants your email, that's a new decision you make, not a silent change. People who publish get a verified name, version tracking, a way to pull something back, and payment.
+
+*Related: Passport, Seal, Signal.*
+
+**Arena.** *Find out where a workflow breaks.*
+
+Attack your own agents and their tools on purpose, in a safe test area: booby-trapped documents, fake approvals, stolen logins, spending that won't stop.
+
+The report shows what the agent tried, what stopped it and where the controls failed, with a signed result for the exact version you tested.
+
+*Related: Challenges, Seal, Rescue.*
+
+**Signal.** *Share a finding before it catches someone else.*
+
+When someone finds a hacked MCP server or a software package that steals files, everyone using it needs to know today. Signal collects verified reports and the evidence behind them.
+
+You pick the sources you trust and what they can trigger: an alert, a suspended account, a tool locked away until it's checked. A feed can never install software on your machines.
+
+*Related: Exchange, Passport, Rescue.*
+
+---
+
+### Then
+
+**Vault.** *Answer the question without handing over the account.*
+
+An agent booking a meeting asks if you're free Tuesday afternoon. Vault answers yes or no, without your calendar coming along.
+
+It also keeps track of what it has already answered, because a hundred narrow answers can reveal as much as one broad one.
+
+*Related: Gate, Passport, Missions.*
+
+**Passport.** *Check where an agent came from.*
+
+An ID for an agent that you can check: who made it, which version it is, what access it says it needs and which tests it has been through.
+
+A signature tells you who signed something. It doesn't make everything they publish safe, and it never grants permission on your behalf.
+
+*Related: Exchange, Seal, Experience.*
+
+**Seal.** *A security claim you can actually check.*
+
+A security badge backed by proof: signed releases, recovery that has been tested, limited internet access, and logins kept outside the agent.
+
+The certificate says what was checked and when it expires. An update that changes how logins are handled needs a new review.
+
+*Related: Arena, Passport, Challenges.*
+
+**Rescue.** *Get control back when something goes wrong.*
+
+An agent starts sending files somewhere unexpected. Rescue stops it, takes back its logins and keeps the evidence, in one place.
+
+Then it finds other computers running the same part and rebuilds them from a clean copy you know is safe. Stopping a problem never grants new access.
+
+*Related: Gate, Signal, Experience.*
+
+**Challenges.** *Pay people to break it.*
+
+A reward behind a precise question. Can this agent read another customer's files? Can it skip an approval? Can it get out of its computer?
+
+Researchers get an approved place to test and clear rules. Reviewers repeat what they find to check it's real, and confirmed findings get paid.
+
+*Related: Arena, Seal, Interchange.*
+
+**Experience.** *Let another agent start from what worked.*
+
+An agent spends hours working out why a database move failed, then fixes it. The next team with the same problem shouldn't start from zero.
+
+Experience packages the method, evidence and limits so another team can review and reuse it, with secrets and personal data stripped out.
+
+*Related: Passport, Exchange, Arena.*
+
+---
+
+### Research
+
+**Missions.** *Give a group of agents a job with a clear finish.*
+
+A person sets the goal, the budget and the evidence needed to call it done. Each agent gets only the access its part needs.
+
+Agents can't widen the target, raise the budget or approve their own invoices.
+
+*Related: Vault, Interchange, Foundry.*
+
+**Foundry.** *Run an agent-powered business with someone responsible for it.*
+
+Agents handle ongoing work under a human owner, who sets what the business offers, what it can spend and what needs approval.
+
+Agents do the work. They don't own the business and can't approve their own growth.
+
+*Related: Missions, Interchange, Ports.*
+
+**Colony.** *Study how agents work together over time.*
+
+Groups of agents in simulated worlds we can reset, like a repair shop with stock and customers, to study cooperation and failure safely.
+
+Nothing inside the simulation carries into the real world.
+
+*Related: Foundry, Experience, Arena.*
+
+**Interchange.** *Give it a budget you can take back.*
+
+Let an agent pay for what a job needs while your main payment method stays somewhere else. You set the purpose, the limit and the end date.
+
+If it needs more, it asks. Splitting a purchase or handing it to another agent can't get around the limit.
+
+*Related: Gate, Missions, Foundry.*
+
+**Ports.** *Connect a digital task to something physical.*
+
+Narrow links to approved devices, services and people, like sending a document to a local print shop within a set budget.
+
+Every physical action has a named owner and hard limits, and a person can always say no.
+
+*Related: Gate, Interchange, Rescue.*
+
+---
+
+We're not putting dates on the map. AI speeds up building, but it doesn't speed up licences, security review or evidence nobody has gathered yet. We'll show the work as it develops and say clearly when something is ready.
+
+---
+
 ## An economy for work the system can prove
 
 An agent running on a computer is a product. A network of agents, tools,
@@ -439,6 +724,60 @@ A disclaimer or geographic block is not by itself a complete compliance route.
 [Read the FCA's cryptoasset overview](https://www.fca.org.uk/firms/cryptoassets)
 and [registration guidance](https://www.fca.org.uk/firms/cryptoassets/who-needs-register).
 
+### What it's for
+
+Think about what needs paying for on Hivra. A computer has to run all night. A researcher who breaks out of a test machine should get paid for it. A publisher whose tool gets a fix should get paid. An agent should be able to buy a small answer from another agent. Give every one of those its own paywall and you get fifteen checkouts, fifteen balances and fifteen sets of rules to learn.
+
+One token means one balance that works across all of it. Each use still has to earn its place, and where a card or a stablecoin does the job better, we use a card or a stablecoin.
+
+Of the uses below, only the first is live today, with $HermesOS, alongside optional $HermesOS payments. The rest are proposals. Here's the list, and where in Hivra you'd meet each one.
+
+**Access to compute.** Hold for a tier of computing power, fixed when you first qualify. This is what runs Agent Computers, and it's live today with $HermesOS.
+
+**Metered spending.** Pay for what you use: running time, storage space, extra processor cores and data sent out of your computer. Priced per unit against a balance you top up.
+
+**Packs.** Ready-made agent setups you buy outright. The cheapest one is deliberately cheap, because it should cost almost nothing to try this.
+
+**Reserved capacity.** There's a hard limit on how many computers we can run, because hardware is finite, not because somebody printed a number on a chart. Reserved room and priority placement are limited by that.
+
+**Containment bounties.** This is how Challenges gets funded. A reward pool sits behind one precise test. Escape this machine. Cross this wall. Skip this approval. Anyone can add to a pool. A researcher breaks it, reviewers repeat it to check it's real, and the researcher gets paid.
+
+Nearly all the money in AI security rewards today goes to the AI itself: prompt injection, jailbreaks and slipping past its safety filters. That's good work and it's well funded, but it isn't the only place things break. Almost nobody is paying people to break out of the machine the agent is running on. That's the layer we're built on, so that's the layer we want attacked.
+
+We're also the right people to fund it, because the test happens on our own platform. A researcher gets a real, approved Agent Computer instead of a description of a target, and the activity record means the argument is about the finding, not about whether anyone can repeat it.
+
+The public record shows what's covered, the reward, how long it's been open, who tested it and what they found. **An unclaimed pool doesn't prove anything is secure.** It only says no qualifying claim has been paid under those rules.
+
+**Certification bonds.** This is what gives a Seal badge its weight. A publisher who gets one puts money behind the claim, like a deposit. If someone proves the claim wrong within the terms, part of that deposit pays for the finding. Nothing grows just from sitting there. It only moves when a failure has been verified. The point is to make a security claim cost something when it's wrong.
+
+**Threat report payouts.** This is how Signal pays for its warnings. Find a hacked MCP server, a software package that quietly asked for more access, or a stolen publisher key. Report it, reviewers check it, you get paid, and everyone following that feed can respond.
+
+**Publisher payouts.** This is how Exchange keeps good tools alive. It pays the people who build and look after what's listed on it. It also keeps track of versions and verified names, and lets bad ones be pulled back.
+
+**Certification fees.** Seal reviews get paid for. Real review costs real time.
+
+**Experience packages.** An agent works out something difficult. That gets packaged with its method, its proof and its limits, and sold. Someone else's agent can use it after review. What one agent learned the hard way becomes something another team can buy, inspect and test.
+
+**Mission funding.** This is how Missions get started. A sponsor puts up a budget for a goal, and payment happens when the proof is accepted, not just because work was done.
+
+**Agent budgets.** This is Interchange. An agent gets an allowance. It has a cap, it can be taken back, and it's watched. It buys its own computing power, a paid tool, a Vault answer or work from another agent. Small amounts, very often, and the thing spending isn't a person. Handing a job to another agent must never multiply the money available.
+
+### Rules for the token
+
+A token is easy to bolt on and hard to trust. So here is what this one can't do, written down before anything launches.
+
+**No staking or yield.** Holding or locking doesn't earn more tokens, a return, or a share of profits.
+
+**No time locks.** A holding period doesn't earn a benefit. Any certification deposit needs terms consistent with that.
+
+**No buying extra authority.** A balance can't get you wider logins, another person's computer, or an exemption from the response to a security incident. A token vote can't weaken those controls either.
+
+**No presale or private round.** No founder allocation of new $HIVRA is planned. The final supply is published once the contract is verified.
+
+**No company ownership.** Holding the token isn't owning Hivra.
+
+**No manufactured activity.** No wash trading, no circular transactions, no rewards designed to make a chart look busy.
+
 ## Move at AI speed. Publish at evidence speed.
 
 AI changes how much a small team can build in six months. A roadmap padded to 24
@@ -521,6 +860,8 @@ Make it easy enough to launch, fast enough to enjoy, open enough to leave and
 observable enough to supervise. Then let people build tools, networks,
 marketplaces and companies on top of a boundary that existed before the power
 arrived.
+
+**Start free.** Sign up for free, then connect your own cloud or server, or launch on Hivra Cloud. [Sign up free](/sign-up) · [See pricing](/pricing)
 
 **Agent Computers is where Hivra starts. The operating layer for accountable
 autonomous systems is where it can go.**
