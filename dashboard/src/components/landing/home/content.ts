@@ -70,8 +70,9 @@ export const HERO = {
   primary: "Launch an agent",
   secondary: "Start with a computer",
   proof: [
+    "Free to start. Sign up, connect your own server or cloud, or self-host the platform.",
     "Use your own Claude or ChatGPT login, subject to the provider's terms, or bring an AI API key.",
-    "Let Hivra host it on a paid plan, connect your own server with a free account, or self-host the platform.",
+    "Prefer not to run a server? Hivra can host it for you on a paid plan.",
     "Read the code. Hivra is open source.",
   ],
 } as const;
@@ -307,14 +308,18 @@ export const PRICING = {
   },
   server: {
     name: "Connect your server",
+    price: "Free",
+    per: "account",
+    size: "Your own cloud or server",
     body: "Use infrastructure you already rent and pay that provider directly. A free account is enough.",
-    cta: "Connect a server",
+    cta: "Sign up free and connect",
     href: PUBLIC_START_HREF,
   },
   selfHost: {
     name: "Self-host the platform",
     price: "$0",
     per: "software cost",
+    size: "Open source, on your own hardware",
     body: "Run Hivra's open-source platform yourself. Your own server and AI usage still cost money.",
     cta: "See the repository",
     href: SELF_HOST_SOURCE_URL,

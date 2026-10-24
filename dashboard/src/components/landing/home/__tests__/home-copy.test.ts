@@ -185,7 +185,7 @@ describe("homepage copy", () => {
     expect(PRICING.aiUsage).toContain(
       "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
     );
-    expect(HERO.proof[0]).toContain("subject to the provider's terms");
+    expect(HERO.proof[1]).toContain("subject to the provider's terms");
     const cards = Object.fromEntries(HOME_AGENTS.map(agent => [agent.id, agent]));
     expect(cards["claude-code"].line).toContain("subject to the provider's terms");
     expect(cards.codex.line).toContain("subject to the provider's terms");
@@ -269,7 +269,8 @@ describe("homepage copy", () => {
     expect(COMPUTERS.body).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
     // The hero names the paid route and the free one without a price (the hero test above keeps prices off the first screen).
-    expect(HERO.proof[1]).toBe("Let Hivra host it on a paid plan, connect your own server with a free account, or self-host the platform.");
+    expect(HERO.proof[0]).toBe("Free to start. Sign up, connect your own server or cloud, or self-host the platform.");
+    expect(HERO.proof[2]).toBe("Prefer not to run a server? Hivra can host it for you on a paid plan.");
     expect(PRICING.server.body).toBe("Use infrastructure you already rent and pay that provider directly. A free account is enough.");
     const hasRule = HOMEPAGE_FAQ.find(({ q }) => q === "Do I have to use Hivra Cloud?");
     expect(hasRule?.a).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
