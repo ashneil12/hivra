@@ -1,19 +1,17 @@
 import { TOKEN_PHASE_COPY, getTokenPhaseCopy, type TokenPhaseCopy } from "../token-phase-copy";
 
 /**
- * The dormant copy is the site's copy from before the phase copy existed,
- * byte for byte. Nothing visible may change until the activation PR fills in
- * hivra-token-launch.ts, so this literal must only change together with a
- * reviewed copy change.
+ * The dormant copy is the current prelaunch copy, pinned byte for byte.
+ * Change this literal only together with an explicitly reviewed copy change.
  */
 const DORMANT: TokenPhaseCopy = {
   tokenPage: {
     metadataTitle: "Hivra token: current access and proposals",
     metadataDescription:
-      "Verify the existing $HermesOS contract, understand current holder access, and read the plan for $HIVRA and the $HermesOS migration. A wallet is optional.",
+      "Existing $HermesOS compute access and available token payment options, official contracts, and the planned $HIVRA launch and migration.",
     heroTitle: "$HermesOS and Hivra.",
     heroLead:
-      "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the planned $HIVRA token. The launch is in preparation and nothing is trading yet.",
+      "Existing $HermesOS holdings can qualify for compute access, with token payment options where available. $HIVRA is the planned successor. It has not launched and is not trading.",
     migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
     migrationHeading: "The planned $HIVRA migration",
     migrationParagraphs: [
@@ -60,7 +58,7 @@ function strings(value: unknown): string[] {
 const PROMOTIONAL = /\b(buy|buying|bought|purchase|price|prices|priced|discount|discounts|cheap|cheaper|costs? less|bonus|return|returns|profit|profits|yield|invest|investment|gain|gains|early|hurry|now|today only|limited|grab|moon|pump|opportunity|don't miss)\b/i;
 
 describe("token phase copy", () => {
-  it("keeps the dormant copy byte-identical to the copy from before", () => {
+  it("pins the current prelaunch copy byte for byte", () => {
     expect(getTokenPhaseCopy("dormant")).toEqual(DORMANT);
   });
 

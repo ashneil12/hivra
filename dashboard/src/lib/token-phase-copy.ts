@@ -1,13 +1,14 @@
 /**
  * Token-facing copy that depends on the $HIVRA phase (token-registry.ts):
  *
- *   dormant    hivra-token-launch.ts has no address. Every string here is
- *              exactly the copy the site showed before this module existed,
- *              so nothing visible changes until the activation PR merges.
+ *   dormant    hivra-token-launch.ts has no address. The current prelaunch
+ *              copy describes existing access and the proposed successor.
  *              token-phase-copy.test.ts pins these strings byte for byte.
  *   scheduled  the address is set and activatesAt is still in the future
  *              ("launching"): $HIVRA exists on Base, Hivra has not switched.
  *   active     activatesAt has passed.
+ *
+ * NEEDS UK FINANCIAL-PROMOTION / LEGAL REVIEW BEFORE PUBLISHING.
  *
  * The scheduled and active strings are FACTUAL ONLY: no price, discount,
  * returns, urgency or invitation to buy. They are token-facing copy and need
@@ -87,10 +88,10 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
     tokenPage: {
       metadataTitle: "Hivra token: current access and proposals",
       metadataDescription:
-        "Verify the existing $HermesOS contract, understand current holder access, and read the plan for $HIVRA and the $HermesOS migration. A wallet is optional.",
+        "Existing $HermesOS compute access and available token payment options, official contracts, and the planned $HIVRA launch and migration.",
       heroTitle: "$HermesOS and Hivra.",
       heroLead:
-        "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the planned $HIVRA token. The launch is in preparation and nothing is trading yet.",
+        "Existing $HermesOS holdings can qualify for compute access, with token payment options where available. $HIVRA is the planned successor. It has not launched and is not trading.",
       migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
       migrationHeading: "The planned $HIVRA migration",
       migrationParagraphs: [
