@@ -90,3 +90,28 @@ describe("formatLaunchInstantUtc", () => {
     expect(formatLaunchInstantUtc("not a date")).toBe("not a date");
   });
 });
+
+
+describe("TokenPageClient current access before launch", () => {
+  it("puts existing holder access before contracts and the proposed successor", () => {
+    const { container } = render(<TokenPageClient entries={getTokenPageEntries()} />);
+    const sections = [...container.querySelectorAll("main > section")].map(section => section.id);
+    expect(sections[0]).toBe("live-now");
+    expect(screen.getByRole("link", { name: "Open Billing" })).toHaveAttribute("href", "/dashboard/billing");
+    const hero = container.querySelector("header");
+    expect(hero).toHaveTextContent("Existing $HermesOS holdings can qualify for compute access");
+    expect(hero).toHaveTextContent("$HIVRA is the planned successor. It has not launched and is not trading.");
+    expect(container.textContent).not.toMatch(/nothing is trading yet|two platform tokens on Base/);
+    expect(container.textContent?.match(/optional/gi)).toHaveLength(1);
+    expect(container).toHaveTextContent("Card billing and self-hosting do not require tokens.");
+    expect(screen.getByRole("heading", { name: "Token launch in preparation" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open the official claim" })).not.toBeInTheDocument();
+  });
+
+  it("keeps utility and launch proposals hidden for a restricted viewer", () => {
+    const { container } = render(<TokenPageClient entries={getTokenPageEntries()} geoNotice="Token features aren't available here." />);
+    expect(container.textContent).not.toMatch(/holdings can qualify|one way to qualify|planned successor/);
+    expect(screen.queryByRole("heading", { name: "What $HIVRA is" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Existing holder access" })).toBeInTheDocument();
+  });
+});

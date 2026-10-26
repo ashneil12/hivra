@@ -96,15 +96,25 @@ export default function TokenPageClient({
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
       <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>
-        <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>{restricted ? restricted.eyebrow : "OPTIONAL TOKEN"}</p>
+        <p className="mono" style={{ color: "var(--public-accent)", fontSize: 11 }}>{restricted ? restricted.eyebrow : "TOKEN ACCESS"}</p>
         <h1 style={{ fontSize: "clamp(2.8rem, 7vw, 5rem)", lineHeight: 1.05, margin: "1rem 0" }}>{copy.heroTitle}</h1>
         <p style={{ fontSize: "1.2rem", color: "var(--public-muted)" }}>{copy.heroLead}</p>
         <p data-testid="token-risk-line" style={{ color: "var(--public-muted)" }}>{riskLine}</p>
       </header>
       {geoNotice ? <TokenGeoNotice notice={geoNotice} /> : null}
+      <section id="live-now" aria-labelledby="access-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
+        <p className="mono" style={{ fontSize: 11 }}>CURRENT ACCESS</p>
+        <h2 id="access-title">Existing holder access</h2>
+        {restricted
+          ? <p>{restricted.accessParagraph}</p>
+          : <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>}
+        <p>Open Billing to check your plan or manage an existing entitlement.</p>
+        <Link href="/dashboard/billing">Open Billing</Link>
+        <p style={{ color: "var(--public-muted)" }}>A wallet is optional. Card billing and self-hosting do not require tokens. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
+      </section>
       <section id="verify" aria-labelledby="verify-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
         <h2 id="verify-title">Verify the token contracts</h2>
-        <p>Hivra has two platform tokens on Base. Compare the full contract address before using either.</p>
+        <p>{phase === "dormant" ? "The existing $HermesOS contract is on Base. Compare the full address before using it. $HIVRA contract details will appear here once verified." : "Hivra has two platform tokens on Base. Compare the full contract address before using either."}</p>
         {entries.map((entry) => (
           <div key={entry.key} data-token={entry.key} style={{ margin: "1.5rem 0" }}>
             <h3 style={{ marginBottom: "0.5rem" }}>
@@ -144,16 +154,6 @@ export default function TokenPageClient({
           ))}
         </ul>
         <p><strong>{noTelegram}</strong></p>
-      </section>
-      <section id="live-now" aria-labelledby="access-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
-        <p className="mono" style={{ fontSize: 11 }}>CURRENT ACCESS</p>
-        <h2 id="access-title">Existing holder access</h2>
-        {restricted
-          ? <p>{restricted.accessParagraph}</p>
-          : <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>}
-        <p>Open Billing to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
-        <Link href="/dashboard/billing">Open Billing</Link>
-        <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
       {geoNotice || phase !== "dormant" ? null : <PrelaunchSections />}
       {geoNotice || phase === "dormant" ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
