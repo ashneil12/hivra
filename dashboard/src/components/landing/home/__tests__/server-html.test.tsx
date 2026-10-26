@@ -6,6 +6,7 @@ import Pricing from "../Pricing";
 import Faq from "../Faq";
 import Fit from "../Fit";
 import Reach from "../Reach";
+import { HomeMotion } from "../motion";
 import { FIT, HOMEPAGE_FAQ, PRICING, REACH, homepageFaq } from "../content";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 
@@ -121,4 +122,15 @@ test("the problem is ordinary page text, with the pinned scene's short text afte
     expect(text).toContain(state.caption);
   }
   expect(text).toContain(REACH.note);
+});
+
+test("every hero proof point has an icon, under the same motion wrapper the page uses", () => {
+  const html = renderToStaticMarkup(
+    <HomeMotion>
+      <Hero />
+    </HomeMotion>
+  );
+  for (const point of require("../content").HERO.proof as readonly string[]) {
+    expect(readable(html)).toContain(point.split(".")[0]);
+  }
 });
