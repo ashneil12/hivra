@@ -41,6 +41,11 @@ describe("readHoldAmounts", () => {
     });
   });
 
+  it("names the token the server priced the amounts in", () => {
+    expect(readHoldAmounts(eligibility)?.tokenUnit).toBe("$HermesOS");
+    expect(readHoldAmounts({ ...eligibility, tokenSymbol: "HIVRA" })?.tokenUnit).toBe("$HIVRA");
+  });
+
   it("keeps the verified balance when there is one", () => {
     expect(readHoldAmounts({ ...eligibility, balance: { balanceDisplay: "12,000" } })?.balanceDisplay).toBe("12,000");
   });

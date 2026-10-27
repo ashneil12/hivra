@@ -11,6 +11,23 @@
  */
 
 import { GET } from "../route";
+import { computeUserTokenAccess } from "@/lib/billing/token-access";
+
+// Token access is dormant ($HermesOS for everyone) unless a test says otherwise.
+const mockResolveAccess = jest.fn();
+jest.mock("@/lib/billing/token-access", () => ({
+  ...jest.requireActual("@/lib/billing/token-access"),
+  resolveUserTokenAccess: (...args: unknown[]) => mockResolveAccess(...args),
+}));
+const mockIsHivraUsable = jest.fn(async () => true);
+jest.mock("@/lib/billing/hivra-readiness", () => {
+  const actual = jest.requireActual("@/lib/billing/hivra-readiness");
+  return {
+    ...actual,
+    newHivraTiersAllowed: async (access: { phase: string; grandfathered: boolean }) =>
+      actual.accessDependsOnHivraReadiness(access) ? mockIsHivraUsable() : true,
+  };
+});
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -158,6 +175,13 @@ describe("GET /api/billing/wallet/eligibility", () => {
     mockCaptureColumnUsage.orderArgs = [];
     mockBoostState.row = null;
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
+    mockResolveAccess.mockReset();
+    mockResolveAccess.mockImplementation(async () =>
+      computeUserTokenAccess({ phase: "dormant", cohort: null, now: new Date() })
+    );
+    mockIsHivraUsable.mockReset();
+    mockIsHivraUsable.mockResolvedValue(true);
+    mockQualResponse.data = [];
     mockGetLive.mockReset();
     mockGetLive.mockResolvedValue({
       epoch: "launch" as const,
@@ -172,6 +196,46 @@ describe("GET /api/billing/wallet/eligibility", () => {
   afterEach(() => {
     consoleWarnSpy.mockRestore();
     consoleErrorSpy.mockRestore();
+  });
+
+  it("answers 'not available yet' for a new $HIVRA tier readout while $HIVRA is not usable", async () => {
+    mockResolveAccess.mockResolvedValue(computeUserTokenAccess({ phase: "active", cohort: null, now: new Date() }));
+    mockIsHivraUsable.mockResolvedValue(false);
+    const response = await GET();
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.error).toBe("Token payments aren't available yet.");
+    expect(body.reason).toBe("hivra_not_ready");
+    expect(mockGetLive).not.toHaveBeenCalled();
+  });
+
+  it("keeps the readout of a tier already held, whether or not $HIVRA is usable", async () => {
+    mockResolveAccess.mockResolvedValue(computeUserTokenAccess({ phase: "active", cohort: null, now: new Date() }));
+    mockIsHivraUsable.mockResolvedValue(false);
+    (mockQualResponse as { data: unknown[] }).data = [
+      {
+        tier: "pro",
+        token_key: "hermesos",
+        qualifying_quantity: "200000",
+        threshold_at_qualification: "200000",
+        qualified_at: "2026-04-01T00:00:00.000Z",
+        currently_eligible: true,
+        last_balance_seen: "200000",
+        last_evaluated_at: null,
+        last_breach_at: null,
+      },
+    ];
+    const response = await GET();
+    expect(response.status).toBe(200);
+    // The page is told not to offer a new price lock.
+    expect((await response.json()).data.tokenAccess.newTiersAvailable).toBe(false);
+  });
+
+  it("never consults readiness before $HIVRA is active", async () => {
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(mockIsHivraUsable).not.toHaveBeenCalled();
+    expect((await response.json()).data.tokenAccess.newTiersAvailable).toBe(true);
   });
 
   it("queries token_holding_snapshots by checked_at (NOT captured_at — that column does not exist)", async () => {

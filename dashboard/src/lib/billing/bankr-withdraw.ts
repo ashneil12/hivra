@@ -36,10 +36,13 @@ import {
   HERMESOS_TOKEN_DECIMALS,
   HERMESOS_TOKEN_SYMBOL,
   fetchHermesTokenBalance,
+  fetchTokenBalance,
   formatRawTokenBalance,
   getHermesLockWallet,
   normalizeEvmAddress,
+  platformTokenBalanceConfig,
 } from "./token-holdings";
+import { getActiveHivraToken } from "./token-registry";
 import { getBankrPartnerConfig } from "./bankr-wallets";
 import { getBankrDepositWalletCredentialForUser } from "./bankr-deposit-wallets";
 import { getUserWithdrawAddress } from "./withdraw-address";
@@ -68,7 +71,8 @@ export interface WithdrawResult {
     | "not_configured"
     | "transfer_failed"
     | "already_in_flight"
-    | "no_verified_wallet";
+    | "no_verified_wallet"
+    | "asset_unavailable";
   txHash?: string | null;
   /**
    * Set when the destination is still inside its cooldown: when it can first
@@ -245,8 +249,21 @@ export async function submitBankrTransfer(params: SubmitTransferParams): Promise
 // Public API
 // ────────────────────────────────────────────────────────────────────
 
+/**
+ * Which token a lock-wallet withdraw sends. "HERMESOS" is the original (and
+ * default) lane. "HIVRA" exists only once $HIVRA is live in the registry: a lock
+ * wallet can end up holding $HIVRA (the holder claim is made on Sablier from a
+ * wallet the holder connects, not pushed to wallets), and this is how its owner
+ * takes it out.
+ */
+export type LockWalletWithdrawAsset = "HERMESOS" | "HIVRA";
+
 interface WithdrawParams {
   userId: string;
+  /** Token to send. Defaults to HERMESOS; HIVRA is refused until it is live. */
+  asset?: LockWalletWithdrawAsset;
+  /** Clock for the $HIVRA live check (tests). */
+  now?: Date;
   /**
    * Optional client-side echo of the destination address. When supplied,
    * the value MUST match the user's stored withdraw address — otherwise
@@ -326,6 +343,17 @@ export async function withdrawAllHermesTokensForUser(
     };
   }
 
+  // $HIVRA is only withdrawable once the registry says it is live (not while
+  // dormant or only scheduled); its contract comes from the registry, never a
+  // copy. Checked before anything is read, claimed, minted or sent.
+  const hivraToken = params.asset === "HIVRA" ? getActiveHivraToken(params.now) : null;
+  if (params.asset === "HIVRA" && !hivraToken) {
+    return {
+      status: "asset_unavailable",
+      errorMessage: "$HIVRA withdrawals open once $HIVRA is live.",
+    };
+  }
+
   const wallet = await getHermesLockWallet(params.userId);
   if (!wallet) {
     return { status: "no_wallet" };
@@ -390,12 +418,20 @@ export async function withdrawAllHermesTokensForUser(
 
   // Read live on-chain balance — never trust DB-cached values for a
   // financial operation.
-  const balance = await fetchHermesTokenBalance({
-    walletAddress: wallet.address,
-    rpcUrl: params.rpcUrl,
-    fetchImpl: params.fetchImpl,
-    env: params.env,
-  });
+  const balance = hivraToken
+    ? await fetchTokenBalance({
+        token: platformTokenBalanceConfig(hivraToken),
+        walletAddress: wallet.address,
+        rpcUrl: params.rpcUrl,
+        fetchImpl: params.fetchImpl,
+        env: params.env,
+      })
+    : await fetchHermesTokenBalance({
+        walletAddress: wallet.address,
+        rpcUrl: params.rpcUrl,
+        fetchImpl: params.fetchImpl,
+        env: params.env,
+      });
   if (BigInt(balance.balanceRaw) === 0n) {
     return { status: "no_balance" };
   }
@@ -432,6 +468,16 @@ export async function withdrawAllHermesTokensForUser(
         status: "in_flight",
         amount_raw: balance.balanceRaw,
         recipient,
+        // $HERMESOS rows keep their original shape; a $HIVRA row names its
+        // token so the ledger never reads it as $HermesOS.
+        ...(hivraToken
+          ? {
+              chain: "base",
+              token_symbol: hivraToken.symbol,
+              token_address: hivraToken.address,
+              token_decimals: hivraToken.decimals,
+            }
+          : {}),
       })
       .select("id")
       .single();
@@ -557,7 +603,7 @@ export async function withdrawAllHermesTokensForUser(
   try {
     txHash = await submitBankrTransfer({
       apiKey,
-      tokenAddress: HERMESOS_TOKEN_ADDRESS,
+      tokenAddress: hivraToken ? hivraToken.address : HERMESOS_TOKEN_ADDRESS,
       recipientAddress: recipient,
       amountDisplay: balance.balanceDisplay,
       env: params.env,

@@ -36,6 +36,7 @@ import {
   isRecord,
   lockedQuantityForTier,
   lockedThresholdFor,
+  lockWalletHivraToShow,
   nextSelfCustodyLockTier,
   readChallengeData,
   readWalletAccounts,
@@ -100,6 +101,23 @@ interface WalletApiPayload {
   depositWallet: BankrDepositWalletSummary | null;
   creditDepositWallet: BankrDepositWalletSummary | null;
   tokenLockWallet: BankrDepositWalletSummary | null;
+  /**
+   * The lock wallet's live $HIVRA balance. Present only once $HIVRA is live
+   * (null when the wallet holds none); absent while it is dormant.
+   */
+  tokenLockHivra?: {
+    tokenSymbol: string;
+    tokenAddress: string;
+    tokenDecimals: number;
+    balanceRaw: string;
+    balanceDisplay: string;
+  } | null;
+  /**
+   * Whether the lock wallet holds any $HermesOS. Present only once $HIVRA is
+   * live; false for a lock wallet that holds only $HIVRA, which then shows its
+   * $HIVRA withdraw and none of the $HermesOS panels.
+   */
+  tokenLockHoldsHermes?: boolean;
 }
 
 
@@ -332,6 +350,10 @@ export default function WalletPage() {
   const [data, setData] = useState<WalletApiPayload | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityPayload | null>(null);
   const [priceUnavailable, setPriceUnavailable] = useState(false);
+  // New $HIVRA tiers are off for this account until $HIVRA passes the price
+  // gate (eligibility answers reason "hivra_not_ready", or reports
+  // newTiersAvailable: false for a tier already held). Not a price outage.
+  const [hivraNotReady, setHivraNotReady] = useState(false);
   const [status, setStatus] = useState<WalletStatus>('loading');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -496,13 +518,21 @@ export default function WalletPage() {
             const nextWalletAddress = walletAddressFromEligibility(nextEligibility);
             if (nextWalletAddress) setVerifiedWalletAddress(nextWalletAddress);
             setPriceUnavailable(false);
+            setHivraNotReady(nextEligibility.tokenAccess?.newTiersAvailable === false);
           }
         } catch {
           // ignore — eligibility section just won't render
         }
       } else if (eligibilityResponse.status === 503) {
+        const failure = await eligibilityResponse.json().catch(() => ({}));
         setEligibility(null);
-        setPriceUnavailable(true);
+        if (failure?.reason === 'hivra_not_ready') {
+          setHivraNotReady(true);
+          setPriceUnavailable(false);
+        } else {
+          setHivraNotReady(false);
+          setPriceUnavailable(true);
+        }
       }
     } catch (err) {
       setStatus('error');
@@ -761,8 +791,18 @@ export default function WalletPage() {
   }, []);
 
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
-  const isLegacyCustody = Boolean(data?.custodyMode === 'legacy_custody' || data?.tokenLockWallet);
+  // Legacy custody follows the lock wallet's $HermesOS. A lock wallet that holds
+  // only $HIVRA (tokenLockHoldsHermes false, sent only once $HIVRA is live) is
+  // not legacy custody: it gets its $HIVRA withdraw and no $HermesOS panels.
+  const isLegacyCustody = Boolean(
+    data?.custodyMode === 'legacy_custody' || (data?.tokenLockWallet && data?.tokenLockHoldsHermes !== false)
+  );
   const isSelfCustody = Boolean(data?.custodyMode === 'self_custody' || (status === 'ready' && !isLegacyCustody));
+  // The lock wallet's $HIVRA, shown only when the server reports a non-zero
+  // balance of the token this build knows as live $HIVRA.
+  const lockWalletHivra = lockWalletHivraToShow(data?.tokenLockHivra);
+  // The withdraw rows: $HermesOS for legacy custody, $HIVRA whenever the lock wallet holds it.
+  const showLockWalletActions = isLegacyCustody || Boolean(lockWalletHivra && tokenLockAddress);
   // Token geo-policy: the panels that invite a NEW token action (verify a wallet to
   // qualify, lock a price, tier thresholds, the hold-to-unlock prompt, deposit) are
   // for a viewer the server allows and for a blocked user who already holds token
@@ -807,9 +847,15 @@ export default function WalletPage() {
       return;
     }
 
-    setWithdrawAddress(null);
-    setWithdrawAddressLoading(false);
-    setWithdrawAddressFormOpen(false);
+    if (showLockWalletActions) {
+      // A lock wallet holding only $HIVRA still withdraws to the saved address.
+      setWithdrawAddressLoading(true);
+      void loadWithdrawAddress();
+    } else {
+      setWithdrawAddress(null);
+      setWithdrawAddressLoading(false);
+      setWithdrawAddressFormOpen(false);
+    }
     setQuoteError(null);
 
     if (isSelfCustody && connectedSelfCustodyAddress) {
@@ -818,7 +864,7 @@ export default function WalletPage() {
     }
 
     setQuotes({ pro: null, power: null });
-  }, [connectedSelfCustodyAddress, isLegacyCustody, isSelfCustody, loadWithdrawAddress, loadQuotes]);
+  }, [connectedSelfCustodyAddress, isLegacyCustody, isSelfCustody, showLockWalletActions, loadWithdrawAddress, loadQuotes]);
 
   // Auto-refresh eligibility + quotes on a 5-min cadence so the live-priced
   // threshold and the lock countdown stay current without a manual refresh
@@ -993,11 +1039,13 @@ export default function WalletPage() {
           error={walletConnectError}
           success={walletConnectSuccess}
           onConnect={handleConnectWallet}
-          onLockPrice={handleLockPrice}
+          onLockPrice={hivraNotReady ? undefined : handleLockPrice}
         />
       )}
 
-      {tokenPanels && isReady && isLegacyCustody && (
+      {/* While new $HIVRA tiers are off, no new price lock is offered; a
+          quote already locked stays visible. */}
+      {tokenPanels && isReady && isLegacyCustody && (!hivraNotReady || quotes.pro || quotes.power) && (
         <QuotePanel
           proQuote={quotes.pro}
           powerQuote={quotes.power}
@@ -1014,6 +1062,27 @@ export default function WalletPage() {
         <p style={{ fontSize: 12, color: '#dc2626', marginTop: '-0.5rem', marginBottom: '1rem' }}>
           {quoteError}
         </p>
+      )}
+
+      {tokenPanels && hivraNotReady && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            border: '1px solid var(--etched-border)',
+            background: 'var(--bg-surface)',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <AlertTriangle size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span>{walletCopy.tokenPaymentsNotReady}</span>
+        </div>
       )}
 
       {tokenPanels && !eligibility && priceUnavailable && (
@@ -1079,7 +1148,7 @@ export default function WalletPage() {
         <p style={{ fontSize: 12, color: '#dc2626', margin: '0 0 1rem' }}>{error}</p>
       )}
 
-      {isLegacyCustody && (
+      {showLockWalletActions && (
         <section aria-label="Wallet actions" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.5rem' }}>
           <WithdrawDestinationCard
             address={withdrawAddress}
@@ -1087,34 +1156,52 @@ export default function WalletPage() {
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
-          {tokenPanels && (
+          {tokenPanels && isLegacyCustody && (
             <ActionRow
               icon={<ArrowDownToLine size={14} />}
               label="Deposit"
               description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
             />
           )}
-          <WithdrawSection
-            tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
-            balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
-            withdrawAddress={withdrawAddress}
-            withdrawAvailableAt={withdrawAvailableAt}
-            onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
-            onWithdrew={() => {
-              // Refresh once now (the post-withdraw eligibility re-check
-              // already wrote a fresh snapshot) and again 60s later — by
-              // which time Base has definitely confirmed the tx and the
-              // chain read is authoritative.
-              void load({ silent: true });
-              window.setTimeout(() => {
+          {isLegacyCustody && (
+            <WithdrawSection
+              tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
+              balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
+              withdrawAddress={withdrawAddress}
+              withdrawAvailableAt={withdrawAvailableAt}
+              onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
+              onWithdrew={() => {
+                // Refresh once now (the post-withdraw eligibility re-check
+                // already wrote a fresh snapshot) and again 60s later — by
+                // which time Base has definitely confirmed the tx and the
+                // chain read is authoritative.
                 void load({ silent: true });
-              }, 60_000);
-            }}
-          />
+                window.setTimeout(() => {
+                  void load({ silent: true });
+                }, 60_000);
+              }}
+            />
+          )}
+          {lockWalletHivra && (
+            <WithdrawSection
+              asset="HIVRA"
+              tokenSymbol={lockWalletHivra.tokenSymbol}
+              balanceDisplay={lockWalletHivra.balanceDisplay}
+              withdrawAddress={withdrawAddress}
+              withdrawAvailableAt={withdrawAvailableAt}
+              onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
+              onWithdrew={() => {
+                void load({ silent: true });
+                window.setTimeout(() => {
+                  void load({ silent: true });
+                }, 60_000);
+              }}
+            />
+          )}
         </section>
       )}
 
-      {isLegacyCustody && withdrawAddressFormOpen && (
+      {showLockWalletActions && withdrawAddressFormOpen && (
         <WithdrawAddressForm
           initialAddress={withdrawAddress}
           onCancel={() => setWithdrawAddressFormOpen(false)}

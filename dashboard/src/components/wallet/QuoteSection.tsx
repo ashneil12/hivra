@@ -212,7 +212,8 @@ export function SelfCustodyVerificationPanel({
   error: string | null;
   success: string | null;
   onConnect: () => void;
-  onLockPrice: () => void;
+  /** Absent while no new price lock can be offered: the button is hidden. */
+  onLockPrice?: () => void;
 }) {
   const { copy } = useLocale();
   const verificationCopy = copy.dashboard.wallet.verification;
@@ -251,6 +252,7 @@ export function SelfCustodyVerificationPanel({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {connected ? (
             <>
+              {onLockPrice && (
               <button
                 type="button"
                 onClick={onLockPrice}
@@ -276,6 +278,7 @@ export function SelfCustodyVerificationPanel({
                 {locking ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={12} />}
                 {locking ? verificationCopy.checking : lockButtonLabel}
               </button>
+              )}
               <button
                 type="button"
                 onClick={onConnect}
