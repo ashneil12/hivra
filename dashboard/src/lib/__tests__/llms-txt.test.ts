@@ -46,7 +46,8 @@ describe("buildLlmsTxt", () => {
   });
 
   it("separates what is available now from preview, coming and proposed work", () => {
-    const txt = buildLlmsTxt({ siteUrl: SITE });
+    // Dormant explicitly: the committed launch block is filled in, and the launched sentence is checked below.
+    const txt = buildLlmsTxt({ siteUrl: SITE, phase: "dormant" });
     expect(txt).toContain("Available now on Hivra Cloud:");
     // Windows and Omarchy are listed as available, with the real Windows condition,
     // because the homepage, its meta description and the roadmap say so (owner copy
@@ -58,6 +59,14 @@ describe("buildLlmsTxt", () => {
     expect(txt).toContain("$HIVRA is a proposed new token and does not exist yet.");
     expect(txt).not.toMatch(/one click|Free tier is live/i);
     // No em or en dashes in the public machine-readable map.
+    expect(txt).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it.each(["scheduled", "active"] as const)("says $HIVRA is live, and no longer that it does not exist, once launched (%s)", (phase) => {
+    const txt = buildLlmsTxt({ siteUrl: SITE, phase });
+    expect(txt).toContain("$HIVRA is live on Base.");
+    expect(txt).toContain("$HermesOS is the legacy token, and its holders keep their existing access.");
+    expect(txt).not.toContain("does not exist yet");
     expect(txt).not.toMatch(/[\u2013\u2014]/);
   });
 

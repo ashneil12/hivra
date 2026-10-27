@@ -5,10 +5,12 @@ import path from "node:path";
 import { render, screen } from "@testing-library/react";
 import TokenomicsSection from "../FullTokenomicsSection";
 
+// These cases cover the dormant section, so they pass the phase explicitly (the committed launch block is filled
+// in). The launched section is covered in src/components/token/__tests__/TokenomicsLaunchedView.test.tsx.
 const litepaper = readFileSync(path.resolve(__dirname, "../../../../../LITEPAPER.md"), "utf8");
 
 test("token access is distinct from an optional claim and does not promise a conversion ratio", () => {
-  render(<TokenomicsSection />);
+  render(<TokenomicsSection phase="dormant" />);
   expect(screen.getByText(/The amount you need is fixed when your holding first qualifies/)).toBeVisible();
   expect(screen.getByText(/as long as you keep holding it/)).toBeVisible();
   expect(screen.getByText(/a year of Pro is \$49 in the token against \$79 by card/)).toBeVisible();
@@ -30,7 +32,7 @@ test("the full founder source retains the faith, accountability and reference pa
  expect(litepaper).toContain(scripture);
 });
 test("proposed uses and treasury retain their boundaries and direct reading links", () => {
-  render(<TokenomicsSection />);
+  render(<TokenomicsSection phase="dormant" />);
   expect(screen.getByText(/migration, new uses and treasury plans are proposals/)).toBeVisible();
   expect(screen.getByText(/Contributors choose stablecoin or \$HIVRA at equivalent value/)).toBeVisible();
   expect(screen.getByText(/Purchases, sales and payments would all be published/)).toBeVisible();
@@ -48,7 +50,7 @@ test("proposed uses and treasury retain their boundaries and direct reading link
   });
 });
 test("the pre-launch tokenomics paraphrase stays inside the Litepaper's current wording, and keeps only the retired Bankr proposal the Litepaper no longer carries", () => {
-  const { container } = render(<TokenomicsSection />);
+  const { container } = render(<TokenomicsSection phase="dormant" />);
   for (const sentence of [
     "The amount you need is fixed when your holding first qualifies.",
     "Nothing here is an offer or an inducement to buy any asset.",

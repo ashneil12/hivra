@@ -7,7 +7,7 @@ import {
   normalizeLookupAddress,
   parseHivraAirdropData,
 } from "../hivra-airdrop-lookup";
-import { getOpenHivraAirdrop } from "../hivra-airdrop-data";
+import { getOpenHivraAirdrop, getServedHivraAirdrop } from "../hivra-airdrop-data";
 import type { HivraAirdropConfig } from "../hivra-airdrop-config";
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
@@ -154,8 +154,25 @@ describe("getOpenHivraAirdrop", () => {
     claim: { campaignUrl: null, opensAt: null, closesAt: null },
   };
 
-  it("is closed with the committed launch block, config and list (dormant)", () => {
-    expect(getOpenHivraAirdrop()).toBeNull();
+  it("opens with the committed launch block, config and final list, for the snapshot block", () => {
+    const open = getOpenHivraAirdrop({ now: new Date("2026-10-27T12:00:00Z") });
+    expect(open).not.toBeNull();
+    expect(open?.snapshot).toEqual({
+      block: 53005062,
+      url: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
+      takenAt: "2026-10-23T23:51:11.000Z",
+    });
+    expect(open?.airdrop.data.final).toBe(true);
+    expect(open?.airdrop.data.snapshotBlock).toBe(53005062);
+    expect(open?.airdrop.data.totals.holders).toBe(open?.airdrop.data.holders.length);
+    expect(open?.senderAddress).toBe("0x3B954866d4329E19C1B9165774c88508f2fefA0c");
+    // No Sablier campaign is configured yet, so there is no claim link.
+    expect(open?.claim.phase).toBe("unpublished");
+  });
+
+  it("is not served from the committed config while the new token surfaces are off", () => {
+    expect(getServedHivraAirdrop({ env: {}, now: new Date("2026-10-27T12:00:00Z") })).toBeNull();
+    expect(getServedHivraAirdrop({ env: { HIVRA_NEW_TOKEN_SURFACES: "true" }, now: new Date("2026-10-27T12:00:00Z") })).not.toBeNull();
   });
 
   it("is closed while $HIVRA is dormant, the snapshot is unpublished or the list is absent", () => {

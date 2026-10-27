@@ -19,6 +19,12 @@ import {
   VVV_TOKEN_ADDRESS,
 } from "@/lib/billing/token-holdings";
 
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 function buildSingleQuery(data: unknown, error: unknown = null) {
   type MockQuery = {
     select: jest.Mock;

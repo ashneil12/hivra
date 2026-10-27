@@ -60,6 +60,7 @@ import TokenPageClient from "@/components/token/TokenPageClient";
 import { validateHivraLaunchConfig } from "@/lib/billing/token-registry";
 import { resolveConversionState } from "@/lib/claim/conversion-state";
 import { getTokenPageEntries } from "@/lib/token-verification-content";
+import { dormantTokenPageEntries } from "@/test-utils/token-entries";
 
 const HERMESOS_PUBLISHED = "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3";
 
@@ -279,10 +280,17 @@ describe("/token page content", () => {
     expect(main.queryByRole("link", { name: /litepaper/i })).not.toBeInTheDocument();
   });
 
-  it("has no notice and keeps the proposals for an allowed viewer", () => {
-    render(<TokenPageClient entries={getTokenPageEntries()} />);
+  it("has no notice and keeps the proposals for an allowed viewer while $HIVRA is dormant", () => {
+    render(<TokenPageClient entries={dormantTokenPageEntries()} />);
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
+  });
+
+  it("has no notice and shows the launched page for an allowed viewer with the committed launch", () => {
+    render(<TokenPageClient entries={getTokenPageEntries()} />);
+    expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "$HIVRA and $HermesOS" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "The proposed $HIVRA migration" })).not.toBeInTheDocument();
   });
 });
 

@@ -17,6 +17,7 @@ import {
 import { displayTokenUnit } from "@/lib/billing/token-plan-prices";
 import { HERMESOS_TOKEN_ADDRESS, HERMESOS_TOKEN_SYMBOL } from "@/lib/billing/token-holdings";
 import { getTokenPageEntries } from "@/lib/token-verification-content";
+import { dormantTokenPageEntries } from "@/test-utils/token-entries";
 
 const TEST_HIVRA = {
   contractAddress: "0x1111111111111111111111111111111111111111",
@@ -119,10 +120,27 @@ describe("displayTokenUnit", () => {
 
 describe("/token page entries", () => {
   it("lists $HermesOS and a not-launched $HIVRA while dormant", () => {
-    const entries = getTokenPageEntries(AFTER);
+    // The entries read the committed launch block, so build them from an empty one.
+    const entries = dormantTokenPageEntries(AFTER);
     expect(entries.map((entry) => [entry.label, entry.status, entry.contractAddress])).toEqual([
       ["$HermesOS", "live", HERMESOS_TOKEN.publishedAddress],
       ["$HIVRA", "not_launched", null],
     ]);
+  });
+
+  it("lists the committed launch: $HIVRA scheduled after $HermesOS before its instant, then live and first", () => {
+    const activatesAt = new Date(HIVRA_TOKEN_LAUNCH.activatesAt);
+    expect(Number.isNaN(activatesAt.getTime())).toBe(false);
+    const before = getTokenPageEntries(new Date(activatesAt.getTime() - 1000));
+    expect(before.map((entry) => [entry.label, entry.status, entry.contractAddress])).toEqual([
+      ["$HermesOS", "live", HERMESOS_TOKEN.publishedAddress],
+      ["$HIVRA", "scheduled", HIVRA_TOKEN_LAUNCH.contractAddress],
+    ]);
+    const after = getTokenPageEntries(activatesAt);
+    expect(after.map((entry) => [entry.label, entry.status, entry.contractAddress])).toEqual([
+      ["$HIVRA", "live", HIVRA_TOKEN_LAUNCH.contractAddress],
+      ["$HermesOS", "legacy", HERMESOS_TOKEN.publishedAddress],
+    ]);
+    expect(after[0].basescanUrl).toBe(`https://basescan.org/token/${HIVRA_TOKEN_LAUNCH.contractAddress}`);
   });
 });

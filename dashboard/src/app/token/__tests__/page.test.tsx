@@ -6,6 +6,12 @@ import { render, screen, within } from "@testing-library/react";
 
 import TokenVerificationPage from "../page";
 
+// This suite covers the dormant /token page; the committed launch block is filled in, so pin an empty one.
+// The launched page is covered in page.dual-token.test.tsx, page.client-props.test.tsx and TokenLaunchedView.test.tsx.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("next/link", () => {
   const MockLink = ({
     href,
@@ -94,7 +100,7 @@ jest.mock("framer-motion", () => {
 });
 
 describe("/token page", () => {
-  it("separates the verified existing contract and current access from proposals", () => {
+  it("separates the verified existing contract and current access from proposals while $HIVRA is dormant", () => {
     render(<TokenVerificationPage />);
     const main = within(screen.getByRole("main"));
     expect(main.getByRole("heading", { name: "$HermesOS and Hivra." })).toBeInTheDocument();

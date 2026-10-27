@@ -60,14 +60,25 @@ function inputs(overrides: Partial<ConversionInputs> = {}): ConversionInputs {
 }
 
 describe("committed configuration", () => {
-  it("ships with the airdrop wallet only: no snapshot, no snapshot time and no claim", () => {
+  it("ships with the airdrop wallet and the published snapshot, and no claim yet", () => {
     expect(HIVRA_AIRDROP).toEqual({
       senderAddress: "0x3B954866d4329E19C1B9165774c88508f2fefA0c",
-      snapshotBlock: null,
-      snapshotTakenAt: null,
-      snapshotUrl: null,
+      snapshotBlock: 53005062,
+      snapshotTakenAt: "2026-10-23T23:51:11Z",
+      snapshotUrl: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
       claim: { campaignUrl: null, opensAt: null, closesAt: null },
     });
+  });
+
+  it("the committed snapshot passes its own checks: an allowed URL, a real past instant and a positive block", () => {
+    const facts = resolveAirdropFacts(HIVRA_AIRDROP, TEST_HIVRA, new Date("2026-10-27T00:00:00Z"));
+    expect(facts.problems).toEqual([]);
+    expect(facts.snapshot).toEqual({
+      block: 53005062,
+      url: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
+      takenAt: "2026-10-23T23:51:11.000Z",
+    });
+    expect(facts.claim?.phase).toBe("unpublished");
   });
 
   it("the committed airdrop wallet passes its EIP-55 checksum and is not a token contract", () => {
@@ -77,9 +88,27 @@ describe("committed configuration", () => {
     expect(sender.toLowerCase()).not.toBe(HERMESOS_TOKEN.address);
   });
 
-  it("stays dormant from the committed registry, whatever the airdrop config says", () => {
-    const state = resolveConversionState(readConversionInputs({ grandfathered: true, convertedAt: null, conversionGraceEndsAt: null }));
-    // Holds until the $HIVRA launch block is filled in.
+  it("is launched from the committed registry, with the snapshot shown and no claim or switch offered yet", () => {
+    const access = { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null };
+    const before = resolveConversionState(readConversionInputs(access, new Date("2026-10-27T12:00:00Z")));
+    if (before.status !== "launched") throw new Error(`expected launched, got ${before.status}`);
+    expect(before.hivraPublishedAddress).toBe("0xe3a1F26440A9FDf5d17b6B3F12F5ebB290080871");
+    expect(before.snapshot?.block).toBe(53005062);
+    expect(before.claim.phase).toBe("unpublished");
+    expect(before.access).toEqual({ kind: "unknown" });
+    expect(before.problems).toEqual([]);
+    // After activation a grandfathered holder keeps $HermesOS: the claim has not closed, so no switch is offered.
+    const after = resolveConversionState(readConversionInputs(access, new Date("2026-11-01T12:00:00Z")));
+    if (after.status !== "launched") throw new Error(`expected launched, got ${after.status}`);
+    expect(after.access).toEqual({ kind: "hermesos" });
+  });
+
+  it("stays dormant while the registry has no $HIVRA, whatever the committed airdrop config says", () => {
+    const state = resolveConversionState({
+      ...readConversionInputs({ grandfathered: true, convertedAt: null, conversionGraceEndsAt: null }),
+      hivra: null,
+      phase: "dormant",
+    });
     expect(state.status).toBe("dormant");
   });
 
