@@ -3,7 +3,7 @@
  *
  * Source: DEXScreener's free /latest/dex/tokens/{address} endpoint.
  * It returns every Uniswap pair the token appears in, with priceUsd
- * already de-quoted through DEXScreener's WETH/USD oracle. We pick the
+ * already de-quoted through DEXScreener's ETH/USD oracle. We pick the
  * pair with the highest USD liquidity — the same pair DEXScreener's UI
  * surfaces by default — so a tiny, stale satellite pool can't poison
  * the price.
@@ -17,19 +17,27 @@
  * No auth required. Rate-limited to 300 req/min/IP — well above
  * anything we'd push from the deposit-quote flow even with no caching.
  *
- * Platform tokens ($HermesOS, $HIVRA) are priced with two gates, and every
- * quote or live threshold fails closed when either fails:
+ * Platform tokens ($HermesOS, $HIVRA) are priced only from a pool quoted in
+ * ETH: native ETH (a Uniswap v4 pool with currency0 = address(0), which both
+ * DEXScreener and GeckoTerminal report as quote "ETH" at 0x000...000) or WETH.
+ * $HermesOS trades against WETH; $HIVRA launches into a Doppler v4 pool against
+ * native ETH. A pool quoted in anything else fails closed as a misconfigured
+ * pool. Then two gates apply, and every quote or live threshold fails closed
+ * when either fails:
  *
  *   1. Liquidity floor: the pricing pool (the registry's canonical pool when
  *      set, else the highest-liquidity Base pair) must hold at least the
  *      token's minPriceLiquidityUsd. A thin pool is what makes
- *      pump-quote-dump profitable.
+ *      pump-quote-dump profitable. When the token sets minQuoteLiquidityUsd
+ *      ($HIVRA), the pool's ETH side alone must also hold that much: a Doppler
+ *      pool starts nearly all token, and DEXScreener's total counts the token
+ *      side at the pool's own price.
  *   2. Median cross-check: the reference is the median price over the last
  *      PLATFORM_PRICE_MEDIAN_WINDOW_MINUTES of wall-clock time, from the
  *      pool's completed 5-minute candles on GeckoTerminal (an independent
  *      indexer). Each 5-minute bucket carries the last traded close forward,
  *      so a quiet pool still has a reference (its last price). Both sides are
- *      compared in the pool's paired token (WETH), so an ETH move while the
+ *      compared in the pool's paired token (ETH), so an ETH move while the
  *      pool is quiet is not mistaken for a token move. The median is only
  *      trusted once the pool has a full window of history and at least
  *      PLATFORM_PRICE_MIN_TRADED_CANDLES traded 5-minute periods: a young
@@ -47,7 +55,7 @@
  */
 
 import { VVV_TOKEN_ADDRESS } from "./token-holdings";
-import { HERMESOS_TOKEN, type PlatformToken, type PlatformTokenKey } from "./token-registry";
+import { HERMESOS_TOKEN, isEthQuoteAddress, type PlatformToken, type PlatformTokenKey } from "./token-registry";
 
 export interface HermesPriceQuote {
   /**
@@ -90,9 +98,10 @@ interface DexScreenerPair {
   baseToken: { address: string; symbol?: string };
   quoteToken: { address: string; symbol?: string };
   priceUsd?: string;
-  /** Price in the pair's quote token (WETH for the platform pools). */
+  /** Price in the pair's quote token (ETH or WETH for the platform pools). */
   priceNative?: string;
-  liquidity?: { usd?: number };
+  /** usd = both sides at the pool's price; base and quote = each side in its own token. */
+  liquidity?: { usd?: number; base?: number; quote?: number };
 }
 
 interface DexScreenerTokensResponse {
@@ -352,7 +361,7 @@ interface GeckoOhlcvResponse {
 }
 
 interface PoolReference {
-  /** Median price in the pool's paired token (WETH). */
+  /** Median price in the pool's paired token (ETH or WETH). */
   priceNative: number;
   /** Completed candles with trades inside the window (the rest carry a close forward). */
   candles: number;
@@ -448,6 +457,13 @@ async function readPoolMedianCloseNative(
       observed: { stage: "reference", poolId },
     });
   }
+  const quote = payload.meta?.quote?.address?.toLowerCase();
+  if (quote && !isEthQuoteAddress(quote)) {
+    // Candles in another quote token cannot be compared with the ETH spot.
+    throw new PlatformTokenPriceGateError("pool_missing", `GeckoTerminal prices pool ${poolId} in ${quote}, not ETH`, {
+      observed: { stage: "reference", poolId, quoteAddress: quote },
+    });
+  }
   const list = Array.isArray(payload.data?.attributes?.ohlcv_list) ? (payload.data!.attributes!.ohlcv_list as unknown[]) : [];
   const nowSec = Math.floor(nowMs / 1000);
   const candles = list
@@ -526,6 +542,7 @@ export async function fetchPlatformTokenPriceUsd(
   }
   const { pair, ...quote } = spot;
   const poolId = pair.pairAddress ?? token.poolId;
+  assertEthQuoted(token, pair, poolId);
   const liquidityUsd = pair.liquidity?.usd ?? 0;
   if (!(liquidityUsd >= token.minPriceLiquidityUsd)) {
     throw new PlatformTokenPriceGateError(
@@ -541,6 +558,27 @@ export async function fetchPlatformTokenPriceUsd(
       token,
       observed: { stage: "spot", poolId, liquidityUsd },
     });
+  }
+  if (token.minQuoteLiquidityUsd !== null) {
+    // The ETH side at ETH's USD rate (the spot's own rate). A missing side counts as empty.
+    const quoteLiquidity = Number(pair.liquidity?.quote ?? 0);
+    const quoteLiquidityUsd = Number.isFinite(quoteLiquidity) && quoteLiquidity > 0 ? quoteLiquidity * (spotUsd / spotNative) : 0;
+    if (!(quoteLiquidityUsd >= token.minQuoteLiquidityUsd)) {
+      throw new PlatformTokenPriceGateError(
+        "liquidity",
+        `${token.displayUnit} pricing pool holds $${Math.floor(quoteLiquidityUsd)} of ETH, below the $${token.minQuoteLiquidityUsd} ETH-side floor`,
+        {
+          token,
+          observed: {
+            quoteLiquidityUsd,
+            minQuoteLiquidityUsd: token.minQuoteLiquidityUsd,
+            liquidityUsd,
+            minLiquidityUsd: token.minPriceLiquidityUsd,
+            poolId,
+          },
+        }
+      );
+    }
   }
   const reference = await referenceFor(token, pair, options);
   // Positive = spot above the median (the direction a pump pushes).
@@ -585,6 +623,21 @@ export async function fetchPlatformTokenPriceUsd(
       },
     },
   };
+}
+
+/**
+ * The pricing pair must be quoted in ETH (native or WETH): the median is read
+ * in the pool's quote token and converted at ETH's USD rate. Anything else is a
+ * misconfigured pool, not an outage.
+ */
+function assertEthQuoted(token: PlatformToken, pair: DexScreenerPair, poolId: string | null) {
+  const quoteAddress = pair.quoteToken?.address?.toLowerCase() ?? null;
+  if (isEthQuoteAddress(quoteAddress)) return;
+  throw new PlatformTokenPriceGateError(
+    "pool_missing",
+    `${token.displayUnit} pricing pool ${poolId ?? "(none)"} is quoted in ${quoteAddress ?? "an unknown token"}, not ETH or WETH`,
+    { token, observed: { stage: "spot", poolId, quoteAddress } }
+  );
 }
 
 async function referenceFor(
@@ -638,6 +691,7 @@ export async function fetchPlatformTokenPriceCrossCheck(
       { token, observed: withHttpStatus({ stage: "spot", poolId: token.poolId }, error) }
     );
   }
+  assertEthQuoted(token, pair, pair.pairAddress ?? token.poolId);
   const usdPerNative = Number(pair.priceUsd) / Number(pair.priceNative);
   if (!(usdPerNative > 0) || !Number.isFinite(usdPerNative)) {
     throw new PlatformTokenPriceGateError("spot_unavailable", `${token.displayUnit} pool has no native price`, {

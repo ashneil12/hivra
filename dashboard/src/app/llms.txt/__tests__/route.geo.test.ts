@@ -12,6 +12,8 @@ jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/com
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 
 import { TOKEN_GEO_POLICY } from "@/lib/compliance/token-geo-policy";
+import { getHivraTokenPhase } from "@/lib/billing/token-registry";
+import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import { GET } from "../route";
 
 // The project's own token words (docs/litepaper/restrict.py).
@@ -24,6 +26,9 @@ function requestFrom(country?: string) {
 }
 
 afterEach(() => jest.restoreAllMocks());
+
+// The token status sentence for the committed launch block at the time the suite runs.
+const tokenStatus = () => getTokenPhaseCopy(getHivraTokenPhase()).llmsTxt.tokenStatus;
 
 describe("with the committed country list (GB)", () => {
   it("is what the route reads: GB is listed", () => {
@@ -47,7 +52,7 @@ describe("with the committed country list (GB)", () => {
   it("gives another country, and a request with no country, the full map", async () => {
     for (const country of ["FR", undefined]) {
       const body = await (await GET(requestFrom(country))).text();
-      expect(body).toContain("$HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.");
+      expect(body).toContain(tokenStatus());
       expect(body).toContain("/TOKENOMICS.md");
       expect(body).toContain("/token)");
     }
@@ -69,7 +74,7 @@ describe("with no country listed", () => {
     const response = await GET(requestFrom("GB"));
     expect(response.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=3600, stale-while-revalidate=86400");
     const body = await response.text();
-    expect(body).toContain("$HermesOS is the live token.");
+    expect(body).toContain(tokenStatus());
     expect(body).toContain("/TOKENOMICS.md");
   });
 });

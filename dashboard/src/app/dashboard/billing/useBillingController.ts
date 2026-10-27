@@ -10,6 +10,8 @@ import {
 } from "@/lib/billing/client";
 import { isPlanKey } from "@/lib/billing/plan-display";
 import { readHoldAmounts, type HoldAmounts } from "@/lib/billing/hold-amounts";
+import { HIVRA_DISPLAY_UNIT, getHivraTokenPhase } from "@/lib/billing/token-registry";
+import { HERMESOS_DISPLAY_UNIT } from "@/lib/billing/token-plan-prices";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
@@ -204,6 +206,41 @@ function planReturnDestination(
 ): string | null {
   const returnTo = safeReturnPath(params?.get("returnTo"));
   return returnTo ? withReturnParams(returnTo, planReturnParams(isPlanKey(planKey) ? planKey : null)) : null;
+}
+
+/**
+ * What Billing may offer in tokens. See the token-payments comment in
+ * useBillingController. Exported for tests.
+ */
+export function resolveTokenPaymentsView(params: {
+  hivraPhaseActive: boolean;
+  answer: { available: boolean; displayUnit: string } | "failed" | null;
+  eligibilityAccess:
+    | { phase: string; grandfathered: boolean; paymentToken: string; newTiersAvailable?: boolean }
+    | "not_ready"
+    | null;
+  /** The eligibility request has answered, failed, or will not be made. */
+  eligibilitySettled: boolean;
+}): { available: boolean; displayUnit: string; pending: boolean } {
+  const { answer, eligibilityAccess } = params;
+  if (answer && answer !== "failed") return { ...answer, pending: false };
+  // Before activation every account pays in $HermesOS, exactly as before.
+  if (!params.hivraPhaseActive) return { available: true, displayUnit: HERMESOS_DISPLAY_UNIT, pending: false };
+  if (answer === null || (!params.eligibilitySettled && eligibilityAccess === null)) {
+    return { available: false, displayUnit: HERMESOS_DISPLAY_UNIT, pending: true };
+  }
+  // The request failed: fall back to the access the eligibility API reported.
+  if (eligibilityAccess && eligibilityAccess !== "not_ready") {
+    const hivra = eligibilityAccess.paymentToken === "hivra";
+    const gated = eligibilityAccess.phase === "active" && !eligibilityAccess.grandfathered;
+    return {
+      available: !gated || eligibilityAccess.newTiersAvailable === true,
+      displayUnit: hivra ? HIVRA_DISPLAY_UNIT : HERMESOS_DISPLAY_UNIT,
+      pending: false,
+    };
+  }
+  // Nothing says this account is grandfathered: fail closed.
+  return { available: false, displayUnit: HERMESOS_DISPLAY_UNIT, pending: false };
 }
 
 export function useBillingController() {
@@ -424,6 +461,62 @@ export function useBillingController() {
       });
   }, []);
 
+  // Whether token payments and new holder tiers can be offered to this
+  // account, and in which token (GET /api/billing/token-payments). After
+  // $HIVRA launches, accounts outside the $HermesOS grandfather cohort get
+  // them only once $HIVRA passes the price gate; the server enforces the same
+  // rule on every quote.
+  //
+  // Before activation nothing changes and nothing waits. After it, until the
+  // answer arrives the page holds its first-load spinner (tokenPayments.pending)
+  // so neither a grandfathered nor a gated account sees token options flash.
+  // If the request fails, the token access the eligibility API reports decides:
+  // a grandfathered account keeps its $HermesOS options, and only an account
+  // that depends on $HIVRA readiness loses them.
+  const [tokenPaymentsState, setTokenPaymentsState] = useState<
+    { available: boolean; displayUnit: string } | "failed" | null
+  >(null);
+  const [eligibilityAccess, setEligibilityAccess] = useState<
+    { phase: string; grandfathered: boolean; paymentToken: string; newTiersAvailable?: boolean } | "not_ready" | null
+  >(null);
+  const [eligibilitySettled, setEligibilitySettled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/billing/token-payments", { cache: "no-store" })
+      .then(readApiPayload)
+      .then((payload) => {
+        if (cancelled) return;
+        const data = apiSuccessData(payload);
+        if (!data || typeof data.available !== "boolean") {
+          setTokenPaymentsState("failed");
+          return;
+        }
+        setTokenPaymentsState({
+          available: data.available,
+          displayUnit:
+            typeof data.displayUnit === "string" && data.displayUnit.trim() ? data.displayUnit : HERMESOS_DISPLAY_UNIT,
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) setTokenPaymentsState("failed");
+        clientLog.warn("Billing token payment availability fetch failed", {
+          source: "billing-page",
+          failureType: "billing_token_payments_fetch_failed",
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const hivraPhaseActive = getHivraTokenPhase() === "active";
+  const tokenPayments = resolveTokenPaymentsView({
+    hivraPhaseActive,
+    answer: tokenPaymentsState,
+    eligibilityAccess,
+    eligibilitySettled: !cryptoBillingEnabled || eligibilitySettled,
+  });
+
   // Per-plan hold amounts for this user (epoch- and founders-aware), from the
   // wallet eligibility API. Refetched when the verified balance changes.
   const [holdAmounts, setHoldAmounts] = useState<HoldAmounts | null>(null);
@@ -434,7 +527,23 @@ export function useBillingController() {
     fetch("/api/billing/wallet/eligibility", { cache: "no-store" })
       .then(readApiPayload)
       .then((payload) => {
-        if (!cancelled) setHoldAmounts(readHoldAmounts(apiSuccessData(payload)));
+        if (cancelled) return;
+        const data = apiSuccessData(payload);
+        setHoldAmounts(readHoldAmounts(data));
+        const access = isRecord(data?.tokenAccess) ? data.tokenAccess : null;
+        if (access && typeof access.phase === "string" && typeof access.grandfathered === "boolean") {
+          setEligibilityAccess({
+            phase: access.phase,
+            grandfathered: access.grandfathered,
+            paymentToken: typeof access.paymentToken === "string" ? access.paymentToken : "hermesos",
+            ...(typeof access.newTiersAvailable === "boolean" ? { newTiersAvailable: access.newTiersAvailable } : {}),
+          });
+        } else if (payload?.reason === "hivra_not_ready") {
+          setEligibilityAccess("not_ready");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEligibilitySettled(true);
       })
       .catch((err) => {
         clientLog.warn("Billing hold amounts fetch failed", {
@@ -1174,6 +1283,8 @@ export function useBillingController() {
       selfServeDowngradeEnabled,
     },
     tokenGeo,
+    /** Token payments and new holder tiers for this account, and their token. */
+    tokenPayments,
     status: { loading, confirming },
     /** The page a plan change returns to, when one started elsewhere. */
     returnTo,

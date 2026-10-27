@@ -4,7 +4,7 @@
  * Server pages under the token geo-policy. Dormant: every page renders
  * synchronously as before, without reading the request. With ['GB']: a GB
  * viewer gets the factual token information plus the notice, never a
- * promotion or the conversion link.
+ * promotion or the airdrop details.
  */
 import "@testing-library/jest-dom";
 import React from "react";
@@ -46,7 +46,7 @@ jest.mock("@/components/landing/Footer", () => function MockFooter() {
   return <footer>Footer</footer>;
 });
 jest.mock("@/lib/claim/conversion-access.server", () => ({ readConversionAccessGate: jest.fn() }));
-// A live $HIVRA with published links, so only the geo-policy can close conversion.
+// A live $HIVRA with a published airdrop snapshot, so only the geo-policy can hide it.
 jest.mock("@/lib/billing/hivra-token-launch", () => ({
   HIVRA_TOKEN_LAUNCH: {
     contractAddress: "0x1111111111111111111111111111111111111111",
@@ -55,9 +55,15 @@ jest.mock("@/lib/billing/hivra-token-launch", () => ({
     activatesAt: "2026-01-01T00:00:00Z",
   },
 }));
-jest.mock("@/lib/claim/conversion-links-config", () => ({
-  ...jest.requireActual("@/lib/claim/conversion-links-config"),
-  CONVERSION_LINKS: { termsUrl: "https://hivra.cloud/terms", conversionUrl: "https://bankr.bot/convert" },
+jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
+  ...jest.requireActual("@/lib/claim/hivra-airdrop-config"),
+  HIVRA_AIRDROP: {
+    senderAddress: "0x3333333333333333333333333333333333333333",
+    snapshotBlock: 36000000,
+    snapshotTakenAt: null,
+    snapshotUrl: "https://hivra.cloud/token/airdrop-snapshot",
+    claim: { campaignUrl: null, opensAt: null, closesAt: null },
+  },
 }));
 
 import { auth } from "@clerk/nextjs/server";
@@ -73,6 +79,8 @@ import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-
 import { TOKEN_GEO_POLICY } from "../token-geo-policy";
 
 const GB_NOTICE = "Token features aren't available to people in the United Kingdom.";
+// This file's mocked launch block puts $HIVRA in a live phase, so an unblocked viewer reads Ash's launched /tokenomics.
+const TOKENOMICS_LAUNCHED_HEADING = "A snapshot has been taken. Eligible holders can claim.";
 const gate = jest.mocked(readConversionAccessGate);
 
 function viewerFrom(country: string | null) {
@@ -109,19 +117,20 @@ describe("dormant policy", () => {
     viewerFrom("GB");
     // This file's mocked launch config puts $HIVRA in a live phase, so read the copy for that phase.
     const copy = getTokenPhaseCopy(getHivraTokenPhase());
-    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle });
+    // Launched /token sets its title as absolute, past the root "%s | Hivra" template.
+    expect(await tokenMetadata()).toMatchObject({ title: { absolute: copy.tokenPage.metadataTitle } });
     expect(await tokenomicsMetadata()).toMatchObject({ title: copy.tokenomics.metadataTitle });
     expect(mockHeaders).not.toHaveBeenCalled();
   });
 
-  it("keeps a GB viewer's /tokenomics, /why-hivra/evolution and convert link exactly as today", async () => {
+  it("keeps a GB viewer's /tokenomics, /why-hivra/evolution and airdrop details exactly as today", async () => {
     viewerFrom("GB");
     await renderPage(TokenomicsPage);
-    expect(screen.getByText(/a year of Pro is \$49 in the token against \$79 by card/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: TOKENOMICS_LAUNCHED_HEADING })).toBeInTheDocument();
     await renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
     await renderPage(ConvertPage);
-    expect(screen.getByRole("link", { name: "Go to conversion" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
     expect(mockHeaders).not.toHaveBeenCalled();
   });
@@ -137,7 +146,8 @@ describe("the committed country list (GB)", () => {
     await renderPage(TokenVerificationPage);
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
     expect(screen.getByText("0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "The proposed $HIVRA migration" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "$HIVRA for $HermesOS holders" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("token-airdrop-details")).not.toBeInTheDocument();
   });
 
   it("/tokenomics shows a GB viewer the contracts and the notice, with no discount or bonus copy", async () => {
@@ -170,7 +180,7 @@ describe("the committed country list (GB)", () => {
   it("the head of /token and /tokenomics is unchanged for a viewer from elsewhere", async () => {
     viewerFrom("FR");
     const copy = getTokenPhaseCopy(getHivraTokenPhase());
-    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
+    expect(await tokenMetadata()).toMatchObject({ title: { absolute: copy.tokenPage.metadataTitle }, description: copy.tokenPage.metadataDescription });
     expect(await tokenomicsMetadata()).toMatchObject({ title: copy.tokenomics.metadataTitle, description: copy.tokenomics.metadataDescription });
   });
 
@@ -181,7 +191,7 @@ describe("the committed country list (GB)", () => {
     expect(screen.queryByText(/discount/)).not.toBeInTheDocument();
   });
 
-  it("the convert page offers a GB viewer no conversion link, but still shows their switch deadline", async () => {
+  it("the convert page shows a GB viewer no airdrop details, but still the contracts, the warning and their switch deadline", async () => {
     viewerFrom("GB");
     gate.mockResolvedValue({
       grandfathered: true,
@@ -190,7 +200,9 @@ describe("the committed country list (GB)", () => {
     });
     await renderPage(ConvertPage);
     expect(screen.getByTestId("token-geo-notice")).toHaveTextContent(GB_NOTICE);
-    expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View the published snapshot" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("convert-claim-safety")).toBeInTheDocument();
+    expect(screen.getByText("0x1111111111111111111111111111111111111111")).toBeInTheDocument();
     expect(screen.getByText(/holding either token keeps your tier/)).toBeInTheDocument();
     expect(gate).toHaveBeenCalledWith(null, expect.any(Date));
   });
@@ -212,11 +224,11 @@ describe("the committed country list (GB)", () => {
     it("sees every token page as an unblocked viewer does", async () => {
       viewerFrom("GB");
       await renderPage(TokenomicsPage);
-      expect(screen.getByText(/a year of Pro is \$49 in the token/)).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: TOKENOMICS_LAUNCHED_HEADING })).toBeInTheDocument();
       await renderPage(WhyHivraEvolutionPage);
       expect(screen.getByText(/Pay for a plan, with the discount for paying in the token/)).toBeInTheDocument();
       await renderPage(ConvertPage);
-      expect(screen.getByRole("link", { name: "Go to conversion" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
       expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
     });
 
@@ -231,9 +243,9 @@ describe("the committed country list (GB)", () => {
   it("pages are unchanged for a viewer from elsewhere", async () => {
     viewerFrom("FR");
     await renderPage(TokenomicsPage);
-    expect(screen.getByText(/a year of Pro is \$49 in the token/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: TOKENOMICS_LAUNCHED_HEADING })).toBeInTheDocument();
     await renderPage(ConvertPage);
-    expect(screen.getByRole("link", { name: "Go to conversion" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View the published snapshot" })).toBeInTheDocument();
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
   });
 });

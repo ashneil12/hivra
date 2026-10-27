@@ -43,7 +43,15 @@ jest.mock("@/lib/billing/token-access", () => {
   };
 });
 
+// $HIVRA readiness reads the gated price here: passing unless a test says otherwise.
+const mockGatedPrice = jest.fn();
+jest.mock("@/lib/billing/live-thresholds", () => ({
+  ...jest.requireActual("@/lib/billing/live-thresholds"),
+  getGatedPlatformTokenPrice: (...args: unknown[]) => mockGatedPrice(...args),
+}));
+
 import { POST } from "../route";
+import { _resetHivraReadinessForTests } from "@/lib/billing/hivra-readiness";
 import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 
@@ -91,6 +99,8 @@ const ORIGINAL_ENV = process.env;
 beforeEach(() => {
   jest.clearAllMocks();
   process.env = { ...ORIGINAL_ENV, CRON_SECRET: "cron-secret" };
+  _resetHivraReadinessForTests();
+  mockGatedPrice.mockResolvedValue({ price: { priceUsd: "0.05" }, fetchedAt: new Date() });
 });
 afterAll(() => {
   process.env = ORIGINAL_ENV;
@@ -124,6 +134,40 @@ it("a new user's $HermesOS balance does not grant the token base tier; $HIVRA do
   expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "new_hivra", newTier: "token_base" }));
   // The $HermesOS-only new user stays on credit_base (no change applied).
   expect(applyTierChange).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "new_hermesos" }));
+});
+
+describe("while $HIVRA is not usable (its pool fails the price gate)", () => {
+  beforeEach(() => {
+    mockGatedPrice.mockRejectedValue(new Error("pool below the ETH-side floor"));
+  });
+
+  it("grants no new base tier on $HIVRA, not even for one whole token", async () => {
+    mockTables({
+      instances: [{ user_id: "new_hivra", resource_tier: "credit_base" }],
+      snapshots: [{ user_id: "new_hivra", token_address: HIVRA, balance_raw: ONE }],
+    });
+    await POST(request());
+    expect(applyTierChange).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "new_hivra" }));
+  });
+
+  it("keeps a base tier the account already has on $HIVRA", async () => {
+    mockTables({
+      instances: [{ user_id: "new_held", resource_tier: "token_base" }],
+      snapshots: [{ user_id: "new_held", token_address: HIVRA, balance_raw: ONE }],
+    });
+    await POST(request());
+    // Already on token_base and still qualifying: nothing to change.
+    expect(applyTierChange).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "new_held" }));
+  });
+
+  it("leaves a grandfathered user's $HermesOS base tier alone", async () => {
+    mockTables({
+      instances: [{ user_id: "old_1", resource_tier: "credit_base" }],
+      snapshots: [{ user_id: "old_1", token_address: HERMESOS, balance_raw: ONE }],
+    });
+    await POST(request());
+    expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "old_1", newTier: "token_base" }));
+  });
 });
 
 it("a grandfathered user keeps the base tier on $HermesOS alone", async () => {

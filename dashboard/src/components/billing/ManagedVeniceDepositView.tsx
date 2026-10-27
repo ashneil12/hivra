@@ -13,6 +13,7 @@ import { ManagedVeniceTokenQuotePanel } from '@/components/billing/ManagedVenice
 import { ManagedVeniceTopUpCalculator } from '@/components/billing/ManagedVeniceTopUpCalculator';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import type { ManagedVeniceTokenQuotePayload } from '@/lib/billing/managed-venice-client';
+import { HERMESOS_DISPLAY_UNIT } from '@/lib/billing/token-plan-prices';
 import {
   formatManagedVeniceUsd,
   getManagedVeniceTopUpQuote,
@@ -55,6 +56,7 @@ export function ManagedVeniceDepositView({
   walletRefreshStatus,
   onRefreshWallet,
   onClose,
+  tokenUnit = HERMESOS_DISPLAY_UNIT,
 }: {
   title: string;
   description: string;
@@ -79,6 +81,8 @@ export function ManagedVeniceDepositView({
   walletRefreshStatus: 'idle' | 'refreshed' | 'failed';
   onRefreshWallet: () => void;
   onClose: () => void;
+  /** The token a token top-up is paid in, e.g. "$HIVRA". */
+  tokenUnit?: string;
 }) {
   const topUpQuote = getManagedVeniceTopUpQuote(amountUsd, walletType);
   const hermes = walletType === 'hermesos';
@@ -134,7 +138,7 @@ export function ManagedVeniceDepositView({
               ) : (
                 <CreditCard size={14} aria-hidden="true" />
               )}
-              {loading ? 'Starting...' : hermes ? 'Start $HermesOS top-up' : 'Start card checkout'}
+              {loading ? 'Starting...' : hermes ? `Start ${tokenUnit} top-up` : 'Start card checkout'}
               {!loading && !hermes && <ArrowRight size={14} aria-hidden="true" />}
             </button>
           )}
@@ -154,7 +158,7 @@ export function ManagedVeniceDepositView({
             >
               <span className={styles.choiceHead}>
                 {option.icon}
-                {option.label}
+                {value === 'hermesos' ? `Pay with ${tokenUnit}` : option.label}
               </span>
               <span className={styles.choiceBody}>{option.description}</span>
             </button>
@@ -174,7 +178,7 @@ export function ManagedVeniceDepositView({
           {hermes ? (
             <>
               <strong>$250 lifetime launch bonus cap.</strong>{' '}
-              That is about $1,250 of $HermesOS top-ups at the full 20% launch bonus. After that, $HermesOS top-ups continue at the 10% standard bonus.
+              That is about $1,250 of {tokenUnit} top-ups at the full 20% launch bonus. After that, {tokenUnit} top-ups continue at the 10% standard bonus.
             </>
           ) : (
             <>

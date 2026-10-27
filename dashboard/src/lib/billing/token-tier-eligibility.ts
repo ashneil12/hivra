@@ -86,6 +86,7 @@ import {
   type TierKey,
 } from "./tier-thresholds";
 import { getLiveActiveThresholds, type LiveTierThresholds } from "./live-thresholds";
+import { accessDependsOnHivraReadiness, isHivraUsable } from "./hivra-readiness";
 import {
   consumeDepositQuote,
   getActiveDepositQuotes,
@@ -1058,13 +1059,24 @@ export async function evaluateAndRecordTokenTierEligibility(
     let pending = liveByToken.get(key);
     if (!pending) {
       const token = platformTokenByKey(key);
-      pending = token
-        ? getLiveActiveThresholds({ now, forceLaunchEpoch, token }).catch((error) => {
-            const reason = error instanceof Error ? error.message : String(error);
-            warnings.push(`Live ${token.displayUnit} price unavailable; new thresholds skipped: ${reason}`);
-            return null;
-          })
-        : Promise.resolve(null);
+      const live = (t: NonNullable<typeof token>) =>
+        getLiveActiveThresholds({ now, forceLaunchEpoch, token: t }).catch((error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          warnings.push(`Live ${t.displayUnit} price unavailable; new thresholds skipped: ${reason}`);
+          return null;
+        });
+      pending = !token
+        ? Promise.resolve(null)
+        : key === "hivra" && accessDependsOnHivraReadiness(access)
+          ? // A new $HIVRA tier (first qualification, re-qualification) needs
+            // $HIVRA usable. While it is not, this is handled exactly like a
+            // price outage: existing rows keep their fixed quantities.
+            isHivraUsable({ now }).then((usable) => {
+              if (usable) return live(token);
+              warnings.push(`${token.displayUnit} is not usable yet; new thresholds skipped.`);
+              return null;
+            })
+          : live(token);
       liveByToken.set(key, pending);
     }
     return pending;

@@ -11,29 +11,61 @@
  *
  * The scheduled and active strings are FACTUAL ONLY: no price, discount,
  * returns, urgency or invitation to buy. They are token-facing copy and need
- * UK financial-promotion / legal review before any Promote.
+ * UK financial-promotion / legal review before any Promote. The launched /token
+ * and /tokenomics bodies are Ash's website pack (01-token.md, 04-tokenomics.md),
+ * applied verbatim in components/token/TokenLaunchedView.tsx and
+ * TokenomicsLaunchedView.tsx. A scheduled and an active $HIVRA read the same
+ * launched copy: the pack does not say when Hivra starts to use the token, only
+ * that new $HIVRA-based access and payments follow published activation conditions.
  *
  * Client-safe: no server imports.
  */
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
 
-export interface TokenPagePhaseCopy {
+/** /token head copy, in every phase. */
+export interface TokenPageMetadataCopy {
   metadataTitle: string;
   metadataDescription: string;
+}
+
+/**
+ * The dormant /token body copy (TokenPageClient). Launched phases render Ash's
+ * website pack page (TokenLaunchedView.tsx) instead, so they carry only the head copy.
+ */
+export interface TokenPagePhaseCopy extends TokenPageMetadataCopy {
   heroTitle: string;
   heroLead: string;
   migrationEyebrow: string;
   migrationHeading: string;
   migrationParagraphs: readonly [string, string];
+  /** "Existing holder access" paragraph for a viewer the token geo-policy does not block. */
+  accessParagraph: string;
 }
 
-export interface TokenomicsPhaseCopy {
+/** /tokenomics head copy, in every phase. */
+export interface TokenomicsMetadataCopy {
   metadataTitle: string;
   metadataDescription: string;
+}
+
+/**
+ * The dormant /tokenomics body copy (FullTokenomicsSection). Launched phases render
+ * Ash's website pack page (TokenomicsLaunchedView.tsx) instead, so they carry only the head copy.
+ */
+export interface TokenomicsPhaseCopy extends TokenomicsMetadataCopy {
   /** FullTokenomicsSection header paragraph. */
   headerLead: string;
-  /** The migration article's two paragraphs. */
+  /** The migration article's eyebrow, heading and two paragraphs. */
+  migrationEyebrow: string;
+  migrationHeading: string;
   migrationParagraphs: readonly [string, string];
+  /** The three steps drawn between the migration paragraphs, and their list label. */
+  flowLabel: string;
+  flowSteps: readonly [string, string, string];
+  /** The note above the uses. */
+  proposalNote: string;
+  /** The closing line about supply. */
+  supplyLine: string;
 }
 
 export interface EvolutionPhaseCopy {
@@ -55,60 +87,123 @@ export interface LlmsTxtPhaseCopy {
 }
 
 export interface TokenPhaseCopy {
-  tokenPage: TokenPagePhaseCopy;
-  tokenomics: TokenomicsPhaseCopy;
+  tokenPage: TokenPageMetadataCopy;
+  tokenomics: TokenomicsMetadataCopy;
   evolution: EvolutionPhaseCopy;
   llmsTxt: LlmsTxtPhaseCopy;
 }
 
-const HOLDERS_KEEP_ACCESS =
-  "Holders of $HermesOS keep their existing access. Conversion terms are published before conversion opens.";
-const LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL =
-  "contract addresses on Base and understand current holder access. A wallet is optional.";
-const LAUNCHED_TOKENOMICS_DESCRIPTION =
-  "$HIVRA is live on Base. Existing token access, optional conversion from $HermesOS, and the proposed uses and treasury. Final terms are published before proposals take effect.";
-const LAUNCHED_TOKEN_PAGE_MIGRATION = {
-  migrationEyebrow: "OPTIONAL. NOT OFFERED ON THIS PAGE.",
-  migrationHeading: "Converting from $HermesOS",
-  migrationParagraphs: [
-    "Holders of $HermesOS keep their existing access. Keeping access and converting tokens are separate decisions, and converting is optional.",
-    "Conversion terms are published before conversion opens, including its steps, rate, fees and risks. No conversion action is offered on this page.",
-  ],
-} as const;
-const LAUNCHED_TOKENOMICS_MIGRATION_INTRO =
-  "$HIVRA is live on Base, launched through Doppler. Eligible $HermesOS holders can claim $HIVRA 1:1 through Sablier, within a 90-day window. You pay the claim and network fees, and you do not burn or surrender your $HermesOS.";
+const DORMANT_ACCESS_PARAGRAPH =
+  "Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.";
+const DORMANT_PROPOSAL_NOTE =
+  "The migration, new uses and treasury plans are proposals. Their final terms get published before they take effect. Nothing here is an offer or an inducement to buy any asset.";
+const DORMANT_SUPPLY_LINE =
+  "No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.";
 const DORMANT_TOKENOMICS_MIGRATION_TERMS =
   "Existing holders keep their access. Claims are not open yet. The claim link, start and end times and the exact steps are published here once verified.";
-const LAUNCHED_TOKENOMICS_MIGRATION_TERMS =
-  "Existing holders keep their access. The claim runs for 90 days from its verified opening. The steps, fees and risks are on this page.";
+
+/**
+ * The /token copy before $HIVRA launches, byte for byte as the site showed it
+ * (token-phase-copy.test.ts pins it). TokenPageClient renders it while $HIVRA
+ * is dormant.
+ */
+export const DORMANT_TOKEN_PAGE_COPY: TokenPagePhaseCopy = {
+  metadataTitle: "Hivra token: current access and proposals",
+  metadataDescription:
+    "Verify the existing $HermesOS contract, understand current holder access, and read the plan for $HIVRA and the $HermesOS migration. A wallet is optional.",
+  heroTitle: "$HermesOS and Hivra.",
+  heroLead:
+    "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the planned $HIVRA token. The launch is in preparation and nothing is trading yet.",
+  migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
+  migrationHeading: "The planned $HIVRA migration",
+  migrationParagraphs: [
+    "$HIVRA is planned for Base, launched through Doppler. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, without burning anything. Keeping access and claiming are separate decisions.",
+    "The eligibility snapshot is complete. Claims are not open yet, and the contract, claim link and times are published here once verified. No migration action is offered on this page.",
+  ],
+  accessParagraph: DORMANT_ACCESS_PARAGRAPH,
+};
+
+/**
+ * The /tokenomics copy before $HIVRA launches, byte for byte as the site showed it
+ * (token-phase-copy.test.ts pins it). FullTokenomicsSection renders it while $HIVRA is dormant.
+ */
+export const DORMANT_TOKENOMICS_COPY: TokenomicsPhaseCopy = {
+  metadataTitle: "Proposed $HIVRA tokenomics",
+  metadataDescription:
+    "Existing token access and the proposed migration, uses and treasury. Final terms are published before proposals take effect.",
+  headerLead:
+    "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.",
+  migrationEyebrow: "Proposed migration",
+  migrationHeading: "Keeping access and converting tokens are separate decisions.",
+  migrationParagraphs: [
+    "The plan is $HIVRA on Base, launched through Doppler. The eligibility snapshot is complete. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, within a 90-day window that starts when claims open. You pay the claim and network fees, and you do not burn or surrender your $HermesOS.",
+    `${DORMANT_TOKENOMICS_MIGRATION_TERMS} Once $HIVRA launches, new users hold and pay with $HIVRA.`,
+  ],
+  flowLabel: "Proposed claim flow",
+  flowSteps: ["$HermesOS", "ETH proceeds", "$HIVRA"],
+  proposalNote: DORMANT_PROPOSAL_NOTE,
+  supplyLine: DORMANT_SUPPLY_LINE,
+};
+
+/**
+ * The /token head once $HIVRA is launched (scheduled or active), verbatim from
+ * Ash's website pack, 01-token.md (v3, 20 October 2026). The page sets the title
+ * as absolute, so the root layout's "%s | Hivra" template does not add a second "Hivra".
+ */
+const LAUNCHED_TOKEN_PAGE_METADATA: TokenPageMetadataCopy = {
+  metadataTitle: "Hivra tokens | Official contracts, migration and holder access",
+  metadataDescription:
+    "Verify the official $HIVRA and legacy $HermesOS contracts on Base. Understand the snapshot-based Sablier claim, existing access and proposed token uses.",
+};
+
+/**
+ * The /tokenomics head once $HIVRA is launched, verbatim from Ash's website pack,
+ * 04-tokenomics.md. The pack's browser title ends in "| Hivra", which the root
+ * layout's "%s | Hivra" template adds, so the title here stops before it.
+ */
+const LAUNCHED_TOKENOMICS_METADATA: TokenomicsMetadataCopy = {
+  metadataTitle: "$HIVRA tokenomics: access, migration and future uses",
+  metadataDescription:
+    "How Hivra's token access works, how eligible $HermesOS holders claim $HIVRA, and what token-based services Hivra is considering next.",
+};
+
+/**
+ * The /why-hivra/evolution lines once $HIVRA is launched, from Ash's website pack
+ * (token-related/why-hivra--evolution.md) word for word: the status, the two lines
+ * under it (the pack's replacement paragraphs) and the relationship line.
+ */
+const LAUNCHED_EVOLUTION: EvolutionPhaseCopy = {
+  hivraStatus: "$HIVRA is live on Base. Its contract address is on the token page.",
+  hivraDetails: [
+    "New $HIVRA-based access and payments become available only once the published activation conditions have been met.",
+    "Holders of legacy $HermesOS keep their existing access. Eligible snapshot holders can claim $HIVRA through the official Sablier campaign. The claimant pays the applicable claim and network fees; no legacy-token burn is required.",
+  ],
+  addressNote: "Check contract addresses only on the",
+  relationship: "$HIVRA is the live token. $HermesOS is the legacy token, and its holders keep their existing access.",
+};
+
+/**
+ * The /llms.txt token lines once $HIVRA is launched. Not a page of the pack: the note
+ * is the pack's /tokenomics search description, and the status joins the pack's own
+ * evolution-page sentences, so a crawler reads the same facts as a visitor.
+ */
+const LAUNCHED_LLMS_TXT: LlmsTxtPhaseCopy = {
+  tokenomicsNote: LAUNCHED_TOKENOMICS_METADATA.metadataDescription,
+  tokenStatus:
+    "$HIVRA is live on Base. New $HIVRA-based access and payments become available only once the published activation conditions have been met. $HermesOS is the legacy token, and its holders keep their existing access. Eligible snapshot holders can claim $HIVRA through the official Sablier campaign. The claimant pays the applicable claim and network fees; no legacy-token burn is required.",
+};
+
+const LAUNCHED_PHASE_COPY: TokenPhaseCopy = {
+  tokenPage: LAUNCHED_TOKEN_PAGE_METADATA,
+  tokenomics: LAUNCHED_TOKENOMICS_METADATA,
+  evolution: LAUNCHED_EVOLUTION,
+  llmsTxt: LAUNCHED_LLMS_TXT,
+};
 
 export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>> = {
   dormant: {
-    tokenPage: {
-      metadataTitle: "Hivra token: current access and proposals",
-      metadataDescription:
-        "Verify the existing $HermesOS contract, understand current holder access, and read the plan for $HIVRA and the $HermesOS migration. A wallet is optional.",
-      heroTitle: "$HermesOS and Hivra.",
-      heroLead:
-        "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the planned $HIVRA token. The launch is in preparation and nothing is trading yet.",
-      migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
-      migrationHeading: "The planned $HIVRA migration",
-      migrationParagraphs: [
-        "$HIVRA is planned for Base, launched through Doppler. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, without burning anything. Keeping access and claiming are separate decisions.",
-        "The eligibility snapshot is complete. Claims are not open yet, and the contract, claim link and times are published here once verified. No migration action is offered on this page.",
-      ],
-    },
-    tokenomics: {
-      metadataTitle: "Proposed $HIVRA tokenomics",
-      metadataDescription:
-        "Existing token access and the proposed migration, uses and treasury. Final terms are published before proposals take effect.",
-      headerLead:
-        "$HermesOS is the existing token. $HIVRA is the proposed new token as HermesOS evolves into Hivra. This page explains existing compute access, the optional migration and the uses being planned.",
-      migrationParagraphs: [
-        "The plan is $HIVRA on Base, launched through Doppler. The eligibility snapshot is complete. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, within a 90-day window that starts when claims open. You pay the claim and network fees, and you do not burn or surrender your $HermesOS.",
-        `${DORMANT_TOKENOMICS_MIGRATION_TERMS} Once $HIVRA launches, new users hold and pay with $HIVRA.`,
-      ],
-    },
+    tokenPage: DORMANT_TOKEN_PAGE_COPY,
+    tokenomics: DORMANT_TOKENOMICS_COPY,
     evolution: {
       hivraStatus: "$HIVRA is a planned new token on Base, to be launched through Doppler. Launch is in preparation and it does not exist yet.",
       hivraDetails: [
@@ -125,75 +220,8 @@ export const TOKEN_PHASE_COPY: Readonly<Record<HivraTokenPhase, TokenPhaseCopy>>
       tokenStatus: "$HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.",
     },
   },
-  scheduled: {
-    tokenPage: {
-      metadataTitle: "Hivra token: official contracts and current access",
-      metadataDescription: `Verify the official $HermesOS and $HIVRA ${LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL}`,
-      heroTitle: "$HermesOS and $HIVRA.",
-      heroLead:
-        "Use Hivra and pay by card without connecting a wallet. $HIVRA is live on Base. Its contract address is listed on this page, with the time Hivra starts using it.",
-      ...LAUNCHED_TOKEN_PAGE_MIGRATION,
-    },
-    tokenomics: {
-      metadataTitle: "$HIVRA tokenomics",
-      metadataDescription: LAUNCHED_TOKENOMICS_DESCRIPTION,
-      headerLead:
-        "$HIVRA is live on Base, and Hivra starts using it at the launch time on the token page. $HermesOS is the existing token, and its holders keep their existing access. This page explains existing compute access, the optional conversion and the uses being planned.",
-      migrationParagraphs: [
-        LAUNCHED_TOKENOMICS_MIGRATION_INTRO,
-        `${LAUNCHED_TOKENOMICS_MIGRATION_TERMS} From the launch time on the token page, new users hold and pay with $HIVRA.`,
-      ],
-    },
-    evolution: {
-      hivraStatus:
-        "$HIVRA is live on Base, launched through Doppler. Its contract address is on the token page, and Hivra starts using it at the launch time shown there.",
-      hivraDetails: [
-        "From the launch time, new accounts use $HIVRA for token access and token payment.",
-        HOLDERS_KEEP_ACCESS,
-      ],
-      addressNote: "Check contract addresses only on the",
-      relationship:
-        "$HermesOS is the live token today. $HIVRA is live on Base, and Hivra starts using it at the launch time on the token page.",
-    },
-    llmsTxt: {
-      tokenomicsNote:
-        "Existing token access, optional conversion from $HermesOS to $HIVRA, and the proposed uses and treasury (proposals, not final terms)",
-      tokenStatus:
-        "$HIVRA is live on Base, and Hivra starts using it at the launch time on the token page. $HermesOS is the existing token, and its holders keep their existing access.",
-    },
-  },
-  active: {
-    tokenPage: {
-      metadataTitle: "Hivra token: official contracts and current access",
-      metadataDescription: `Verify the official $HIVRA and $HermesOS ${LAUNCHED_TOKEN_PAGE_DESCRIPTION_TAIL}`,
-      heroTitle: "$HIVRA and $HermesOS.",
-      heroLead:
-        "Use Hivra and pay by card without connecting a wallet. $HIVRA is live on Base. Its contract address is listed on this page.",
-      ...LAUNCHED_TOKEN_PAGE_MIGRATION,
-    },
-    tokenomics: {
-      metadataTitle: "$HIVRA tokenomics",
-      metadataDescription: LAUNCHED_TOKENOMICS_DESCRIPTION,
-      headerLead:
-        "$HIVRA is live on Base, and new Hivra accounts use it for token access and token payment. $HermesOS is the earlier token, and its holders keep their existing access. This page explains existing compute access, the optional conversion and the uses being planned.",
-      migrationParagraphs: [
-        LAUNCHED_TOKENOMICS_MIGRATION_INTRO,
-        `${LAUNCHED_TOKENOMICS_MIGRATION_TERMS} New users hold and pay with $HIVRA.`,
-      ],
-    },
-    evolution: {
-      hivraStatus: "$HIVRA is live on Base, launched through Doppler. Its contract address is on the token page.",
-      hivraDetails: ["New accounts use $HIVRA for token access and token payment.", HOLDERS_KEEP_ACCESS],
-      addressNote: "Check contract addresses only on the",
-      relationship: "$HIVRA is the live token. $HermesOS is the earlier token, and its holders keep their existing access.",
-    },
-    llmsTxt: {
-      tokenomicsNote:
-        "Existing token access, optional conversion from $HermesOS to $HIVRA, and the proposed uses and treasury (proposals, not final terms)",
-      tokenStatus:
-        "$HIVRA is live on Base, and new Hivra accounts use it for token access and token payment. $HermesOS is the earlier token, and its holders keep their existing access.",
-    },
-  },
+  scheduled: LAUNCHED_PHASE_COPY,
+  active: LAUNCHED_PHASE_COPY,
 };
 
 export function getTokenPhaseCopy(phase: HivraTokenPhase): TokenPhaseCopy {

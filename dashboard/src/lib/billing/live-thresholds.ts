@@ -89,7 +89,12 @@ interface GetLivePriceOptions {
   forceLaunchEpoch?: boolean;
 }
 
-async function getCachedOrFreshPrice(
+/**
+ * The gated price from the in-process cache while it is fresh, else one shared
+ * live fetch (concurrent callers dedupe through a single in-flight Promise).
+ * Throws the fetch's error as is: no stale fallback here.
+ */
+async function getFreshOrFetchedPrice(
   options: GetLivePriceOptions
 ): Promise<{ price: HermesPriceQuote; fetchedAt: Date }> {
   const now = options.now ?? new Date();
@@ -123,9 +128,33 @@ async function getCachedOrFreshPrice(
     inFlightByToken.set(cacheKey, inFlight);
   }
 
+  const price = await inFlight;
+  return { price, fetchedAt: cachedByToken.get(cacheKey)?.fetchedAt ?? now };
+}
+
+/**
+ * The token's live gated price (liquidity floors, candle history, deviation
+ * band: fetchPlatformTokenPriceUsd), served from the same cache the live
+ * thresholds use while it is fresh (LIVE_TTL_MS). Unlike the thresholds it
+ * never falls back to an older price: any failure throws, so a caller asking
+ * "does the gate pass right now?" fails closed. Every cached entry was written
+ * by a fetch whose gates passed.
+ */
+export async function getGatedPlatformTokenPrice(
+  options: GetLivePriceOptions & { token: PlatformToken }
+): Promise<{ price: HermesPriceQuote; fetchedAt: Date }> {
+  return getFreshOrFetchedPrice(options);
+}
+
+async function getCachedOrFreshPrice(
+  options: GetLivePriceOptions
+): Promise<{ price: HermesPriceQuote; fetchedAt: Date }> {
+  const now = options.now ?? new Date();
+  const token = options.token ?? HERMESOS_TOKEN;
+  const cacheKey = token.address;
+
   try {
-    const price = await inFlight;
-    return { price, fetchedAt: cachedByToken.get(cacheKey)?.fetchedAt ?? now };
+    return await getFreshOrFetchedPrice(options);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const stale = cachedByToken.get(cacheKey);
