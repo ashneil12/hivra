@@ -134,7 +134,7 @@ It checks, and `--write` refuses unless every FAIL-level check passes:
 | `address.checksum` | a mixed-case address has a valid EIP-55 checksum (a lowercase one is written in its EIP-55 form) |
 | `activatesAt.format`, `activatesAt.future` | a real UTC instant to the second, in the future |
 | `chain.code`, `chain.name`, `chain.symbol`, `chain.decimals`, `chain.total_supply` | contract code on Base, `name()` is `Hivra`, `symbol()` is `HIVRA`, `decimals()` is 18, `totalSupply()` is 100,000,000,000 whole tokens |
-| `chain.implementation` | the token is an EIP-1167 clone of the DopplerERC20V1 implementation on Base: a clone cannot be upgraded, and DopplerERC20V1 mints only at launch |
+| `chain.implementation` | the token is an EIP-1167 clone of a DopplerERC20V1 implementation on Base (`0xdb7b…be87` from Doppler's Deployments.md, or `0xedf3…50f8`, the current one in doppler-sdk that the Airlock-whitelisted factory `0xf154…2ce5` clones and $HIVRA uses): a clone cannot be upgraded, and DopplerERC20V1 mints only at launch |
 | `chain.no_mint` | the code that runs has no mint entry point (`mint(address,uint256)`, `mint(uint256)`, `mintTo(address,uint256)`, `mintInflation()`) |
 | `chain.inflation` | there is no `yearlyMintRate()`, or it is 0 |
 | `doppler.state` | Doppler's `DopplerHookInitializer` holds a pool for this token that is `Initialized` or `Locked` (not missing, not `Graduated` or `Exited`) |

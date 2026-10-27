@@ -66,7 +66,17 @@ export const HERMESOS_ADDRESS = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
  * no yearly inflation), so its supply can never grow after launch.
  */
 export const DOPPLER_HOOK_INITIALIZER = "0xbdf938149ac6a781f94faa0ed45e6a0e984c6544";
-export const DOPPLER_ERC20_V1_IMPLEMENTATIONS = Object.freeze(["0xdb7b520bb5c3a2c5d4871198081911359f93be87"]);
+// Two DopplerERC20V1 deployments are accepted, both read on Base on 2026-10-27:
+// - 0xdb7b…be87: the one in doppler's Deployments.md, cloned by DopplerERC20V1Factory 0x89c2…5292.
+// - 0xedf3…50f8: the current one in doppler-sdk's deployments.generated.ts for chain 8453, cloned by
+//   DopplerERC20V1Factory 0xf154…2ce5, which the Airlock 0x660e…8d12 whitelists as a token factory
+//   (getModuleState = 1). $HIVRA was created through that factory. Its dispatcher is 0xdb7b's 57
+//   selectors plus getPastTotalSupply(uint256) and 0x46758fc9 (no public name); it keeps the vesting
+//   functions (vestingStart, vestingOf, vestingSchedules, release, releaseFor) and has no mint entry point.
+export const DOPPLER_ERC20_V1_IMPLEMENTATIONS = Object.freeze([
+  "0xdb7b520bb5c3a2c5d4871198081911359f93be87",
+  "0xedf3f3981e98077591c1b909bccff0e572bd50f8",
+]);
 
 /** Entry points that would let a token mint after launch. The older Doppler DERC20 has mintInflation() and yearlyMintRate(). */
 export const MINT_FUNCTIONS = Object.freeze(["mint(address,uint256)", "mint(uint256)", "mintTo(address,uint256)", "mintInflation()"]);

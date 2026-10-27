@@ -258,6 +258,31 @@ test("refuses a token whose supply could grow: not the DopplerERC20V1 clone, a m
   assert.match(zeroRate.detail("chain.inflation"), /yearlyMintRate\(\) is 0/);
 });
 
+test("accepts the $HIVRA launch: a clone of the current DopplerERC20V1 0xedf3…50f8, and still the earlier 0xdb7b…be87", async () => {
+  const current = "0xedf3f3981e98077591c1b909bccff0e572bd50f8";
+  assert.deepEqual([...DOPPLER_ERC20_V1_IMPLEMENTATIONS], ["0xdb7b520bb5c3a2c5d4871198081911359f93be87", current]);
+  // Runtime code of $HIVRA (0xe3a1F26440A9FDf5d17b6B3F12F5ebB290080871), recorded live on Base on 2026-10-27.
+  const hivraClone = "0x3d3d3d3d363d3d37363d73edf3f3981e98077591c1b909bccff0e572bd50f85af43d3d93803e602a57fd5bf3";
+  assert.equal(cloneImplementation(hivraClone), current);
+  // The current implementation's dispatcher: the ERC-20 and votes reads, burn, and the vesting functions; no mint.
+  const currentCode = codeWith([
+    "name()", "symbol()", "decimals()", "totalSupply()", "burn(uint256)", "release(uint256)", "release(uint256,uint256)",
+    "releaseFor(address,uint256)", "vestingStart()", "vestingOf(address,uint256)", "getPastTotalSupply(uint256)",
+  ]);
+  const launched = await evaluate({ chain: chainFixture({ code: hivraClone, implementationCodeAt: { [current]: currentCode } }) });
+  assert.deepEqual(launched.failed, []);
+  assert.match(launched.detail("chain.implementation"), new RegExp(`clone of DopplerERC20V1 ${current}`));
+  assert.ok(launched.result.checks.some((c) => c.id === "chain.no_mint" && c.ok));
+  // A clone of the accepted address that has no code there is still refused.
+  const empty = await evaluate({ chain: chainFixture({ code: hivraClone, implementationCodeAt: { [current]: "0x" } }) });
+  assert.deepEqual(empty.failed, ["chain.implementation"]);
+  // The same implementation with a mint entry point would still fail chain.no_mint.
+  const minting = await evaluate({
+    chain: chainFixture({ code: hivraClone, implementationCodeAt: { [current]: codeWith(["totalSupply()", "mint(address,uint256)"]) } }),
+  });
+  assert.deepEqual(minting.failed, ["chain.no_mint"]);
+});
+
 test("reads clones and selectors the way they appear on Base", () => {
   // Runtime code of a DopplerERC20V1 clone, recorded live on Base (token 0x72092daf...0eba3).
   const recorded = "0x3d3d3d3d363d3d37363d73db7b520bb5c3a2c5d4871198081911359f93be875af43d3d93803e602a57fd5bf3";
