@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Code2, KeyRound, Server } from "lucide-react";
+import { ArrowRight, Code2, Gift, KeyRound, Server } from "lucide-react";
 import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
 import type { AgentsDeployedSnapshot } from "./agents-deployed-format";
 import { AGENT_LAUNCH_HREF, HERO } from "./content";
@@ -7,7 +7,9 @@ import HeroScene from "./HeroScene";
 import styles from "./home.module.css";
 import { glossify } from "@/components/gloss/glossify";
 
-const PROOF_ICONS = [KeyRound, Server, Code2];
+// One icon per HERO.proof line, in the same order. A missing entry renders the
+// homepage as a 500 once it sits inside HomeMotion (the element is undefined).
+const PROOF_ICONS = [Gift, KeyRound, Server, Code2];
 
 /**
  * The first screen. The headline, subhead and call to action are plain server
