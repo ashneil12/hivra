@@ -4,6 +4,8 @@ import FullTokenomicsSection from "@/components/landing/FullTokenomicsSection";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
+import { hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
+import { hivraMigrationHref } from "@/lib/claim/hivra-migration";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { OG_IMAGE } from "@/lib/og-meta";
 import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-copy";
@@ -28,12 +30,22 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function TokenomicsPage() {
   const phase = getHivraTokenPhase();
   // No country is listed (the list is empty, so the policy is dormant): render as before, without reading the request country.
-  if (!isTokenGeoPolicyActive()) return <PublicSite><main id="main-content"><FullTokenomicsSection headingLevel={1} phase={phase} /></main></PublicSite>;
+  if (!isTokenGeoPolicyActive()) {
+    return <PublicSite><main id="main-content"><FullTokenomicsSection headingLevel={1} phase={phase} {...launchedLinks(phase)} /></main></PublicSite>;
+  }
   // A country is listed (GB today): render per request; a blocked viewer gets the facts and the notice only.
   return renderForViewer(phase);
+}
+// Once $HIVRA is launched, the page links /token/airdrop and /token/migration, each only when it is
+// actually served. Dormant, it reads neither (the page is as it was before).
+function launchedLinks(phase: HivraTokenPhase) {
+  if (phase === "dormant") return {};
+  return { airdropLookupHref: hivraAirdropLookupHref(), migrationHref: hivraMigrationHref() };
 }
 async function renderForViewer(phase: HivraTokenPhase) {
   const geo = await resolveTokenGeoBlockForPage();
   const geoRestriction = geo.blocked ? { notice: geo.message, entries: getTokenPageEntries() } : null;
-  return <PublicSite><main id="main-content"><FullTokenomicsSection headingLevel={1} phase={phase} geoRestriction={geoRestriction} /></main></PublicSite>;
+  // A blocked viewer gets no link to the airdrop lookup or the migration page.
+  const links = geo.blocked ? {} : launchedLinks(phase);
+  return <PublicSite><main id="main-content"><FullTokenomicsSection headingLevel={1} phase={phase} geoRestriction={geoRestriction} {...links} /></main></PublicSite>;
 }

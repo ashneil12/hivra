@@ -199,6 +199,7 @@ export function TokenHoldingPanel({
   error,
   variants,
   embedded = false,
+  readOnly = false,
   onRefresh,
   onConnectWallet,
 }: {
@@ -210,6 +211,8 @@ export function TokenHoldingPanel({
   variants?: Variants;
   /** Render without its own frame and title, inside another section. */
   embedded?: boolean;
+  /** Show the holding and let it refresh, but offer no wallet verification. */
+  readOnly?: boolean;
   onRefresh: () => void;
   onConnectWallet: () => void;
 }) {
@@ -281,6 +284,7 @@ export function TokenHoldingPanel({
       )}
 
       <div className={styles.actions}>
+        {!readOnly && (
         <button
           type="button"
           className={`${styles.button} ${styles.primary}`}
@@ -294,6 +298,7 @@ export function TokenHoldingPanel({
           )}
           {connectingWallet ? tokenCopy.connecting : wallet ? tokenCopy.verifyDifferent : tokenCopy.connectWallet}
         </button>
+        )}
         <button type="button" className={styles.button} onClick={() => onRefresh()} disabled={busy}>
           {refreshing ? (
             <Loader2 size={14} className={styles.spin} aria-hidden="true" />

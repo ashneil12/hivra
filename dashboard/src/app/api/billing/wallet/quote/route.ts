@@ -28,6 +28,8 @@ import {
 } from "@/lib/billing/crypto-payment-sessions";
 import { getTokenVerificationWallet } from "@/lib/billing/token-holdings";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
+import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
@@ -172,6 +174,14 @@ export async function POST(req: NextRequest) {
 
     return apiSuccess(serializeQuote(quote));
   } catch (error) {
+    if (error instanceof HivraNotReadyError) {
+      return hivraNotReadyResponse({
+        source: "billing/wallet-quote",
+        route: "/api/billing/wallet/quote",
+        method: "POST",
+        userId: userIdForLog,
+      });
+    }
     if (error instanceof PlatformTokenPriceGateError) {
       // The rate-limited gate log and ops alert are the signal; the per-request
       // line stays at info so a gate that holds for hours cannot flood the logs.

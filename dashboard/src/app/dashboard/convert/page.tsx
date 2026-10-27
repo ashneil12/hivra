@@ -3,14 +3,18 @@ import { auth } from "@clerk/nextjs/server";
 
 import { ConvertPanel } from "@/components/claim/ConvertPanel";
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
+import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { readConversionAccessGate } from "@/lib/claim/conversion-access.server";
+import { hivraAirdropLookupHref } from "@/lib/claim/hivra-airdrop-data";
+import { hivraMigrationHref } from "@/lib/claim/hivra-migration";
 import { resolveTokenGeoBlockForPage } from "@/lib/compliance/token-geo-page";
 import { readConversionInputs, resolveConversionState } from "@/lib/claim/conversion-state";
 import { log } from "@/lib/logger";
 
-export const metadata: Metadata = {
-  title: "Convert $HermesOS",
-};
+// The title follows the $HIVRA phase: dormant, it is the title from before launch.
+export function generateMetadata(): Metadata {
+  return { title: getHivraTokenPhase() === "dormant" ? "Convert $HermesOS" : "$HIVRA for $HermesOS holders" };
+}
 
 // $HIVRA's phase and the user's access change over time, so never serve a cached render.
 export const dynamic = "force-dynamic";
@@ -18,21 +22,29 @@ export const dynamic = "force-dynamic";
 export default async function ConvertPage() {
   const now = new Date();
   const { userId } = await auth();
-  // Token geo-policy: a blocked viewer gets the notice and no switch step or
-  // conversion link; their access (and any post-switch deadline) still shows.
+  // Token geo-policy: a blocked viewer gets the notice and no claim details or
+  // switch step; the contracts, the claim-safety lines and their access (and any
+  // post-switch deadline) still show.
   // With the dormant policy this reads nothing.
   const geo = await resolveTokenGeoBlockForPage(userId ?? null);
   const access = await readConversionAccessGate(userId ?? null, now);
   const state = resolveConversionState(readConversionInputs(access, now));
-  if ((state.status === "dormant" || state.status === "announced") && state.problems.length > 0) {
-    // A set but invalid launch value is a release defect: surface it instead of
-    // silently showing the page as if conversion had not been configured.
-    log.warn("HIVRA conversion links rejected", { source: "dashboard/convert", problems: state.problems.join("; ") });
+  if (state.problems.length > 0) {
+    // A set but invalid airdrop value is a release defect: surface it instead of
+    // silently showing the page as if it had not been configured.
+    log.warn("HIVRA airdrop config rejected", { source: "dashboard/convert", problems: state.problems.join("; ") });
   }
 
   return (
     <DashboardPageShell maxWidth={900}>
-      <ConvertPanel state={state} geoNotice={geo.blocked ? geo.message : null} />
+      <ConvertPanel
+        state={state}
+        geoNotice={geo.blocked ? geo.message : null}
+        // Only when /token/airdrop is served (the page's own check), never for a blocked viewer.
+        airdropLookupHref={geo.blocked ? null : hivraAirdropLookupHref({ now })}
+        // Same rule for /token/migration: only when that page is served.
+        migrationHref={geo.blocked ? null : hivraMigrationHref({ now })}
+      />
     </DashboardPageShell>
   );
 }

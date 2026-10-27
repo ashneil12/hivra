@@ -75,6 +75,8 @@ const NOT_A_NEW_TOKEN_ACTION: Record<string, string> = {
     "Provisions a deposit address and reports wallet status. No payment starts here, and every payment that uses the address is gated. TOKEN-GEO-POLICY.md lists it under Not covered.",
   "billing/entitlements": "Reads the compute entitlement a user already has. It starts no payment.",
   "billing/withdrawals": "Read-only withdrawal history. Exits are never gated.",
+  "billing/token-payments":
+    "Read-only: says whether the page may offer token payments to this account ($HIVRA readiness). It starts no payment, and the routes that do are gated.",
   "cron/reconcile-crypto-topups": "Settles crypto top-ups that were already started. Settlement never consults the policy.",
   "internal/billing/crypto/top-up/settle":
     "Settles one crypto top-up that was already started, called by the internal settlement job. Settlement never consults the policy.",

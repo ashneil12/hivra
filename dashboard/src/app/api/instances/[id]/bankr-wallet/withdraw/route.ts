@@ -2,6 +2,7 @@ import {
   withdrawBaseEthForInstance,
   withdrawBaseTokenForInstance,
   withdrawHermesTokensForInstance,
+  withdrawHivraTokensForInstance,
 } from "@/lib/billing/bankr-instance-withdraw";
 import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { createBankrWithdrawHandler } from "@/lib/billing/bankr-withdraw-route";
@@ -75,7 +76,14 @@ export const POST = createBankrWithdrawHandler({
         },
       });
     }
-    const withdraw = body.asset === "ETH" ? withdrawBaseEthForInstance : withdrawHermesTokensForInstance;
+    // HIVRA reaches here only once it is live (the body schema refuses it
+    // while dormant), and withdrawHivraTokensForInstance re-checks.
+    const withdraw =
+      body.asset === "ETH"
+        ? withdrawBaseEthForInstance
+        : body.asset === "HIVRA"
+          ? withdrawHivraTokensForInstance
+          : withdrawHermesTokensForInstance;
     return withdraw({
       instanceId: id,
       userId,

@@ -51,6 +51,19 @@ jest.mock("@/lib/billing/token-access", () => {
   };
 });
 
+// $HIVRA readiness: usable unless a test says otherwise.
+const mockIsHivraUsable = jest.fn(async () => true);
+const mockHasExistingTokenTier = jest.fn(async () => false);
+jest.mock("@/lib/billing/hivra-readiness", () => {
+  const actual = jest.requireActual("@/lib/billing/hivra-readiness");
+  return {
+    ...actual,
+    newHivraTiersAllowed: async (access: { phase: string; grandfathered: boolean }) =>
+      actual.accessDependsOnHivraReadiness(access) ? mockIsHivraUsable() : true,
+    hasExistingTokenTier: () => mockHasExistingTokenTier(),
+  };
+});
+
 describe("/api/billing/token-holding", () => {
   const userId = "user_123";
   const originalNodeEnv = process.env.NODE_ENV;
@@ -106,6 +119,72 @@ describe("/api/billing/token-holding", () => {
     expect(auth).not.toHaveBeenCalled();
     expect(getTokenVerificationWallet).not.toHaveBeenCalled();
     expect(getLatestHermesTokenHoldingSnapshot).not.toHaveBeenCalled();
+  });
+
+  describe("after $HIVRA activation, for an account outside the $HermesOS cohort", () => {
+    const { computeUserTokenAccess, resolveUserTokenAccess } = jest.requireMock("@/lib/billing/token-access");
+    beforeEach(() => {
+      (resolveUserTokenAccess as jest.Mock).mockResolvedValue(
+        computeUserTokenAccess({ phase: "active", cohort: null, now: new Date() })
+      );
+    });
+    afterEach(() => {
+      (resolveUserTokenAccess as jest.Mock).mockImplementation(async () =>
+        computeUserTokenAccess({ phase: "dormant", cohort: null, now: new Date() })
+      );
+    });
+
+    it("GET answers 'not available yet' while $HIVRA is not usable, reading nothing", async () => {
+      mockIsHivraUsable.mockResolvedValueOnce(false);
+      const response = await GET();
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.error).toBe("Token payments aren't available yet.");
+      expect(body.reason).toBe("hivra_not_ready");
+      expect(getTokenVerificationWallet).not.toHaveBeenCalled();
+    });
+
+    it("POST answers 'not available yet' while $HIVRA is not usable, without a chain read", async () => {
+      mockIsHivraUsable.mockResolvedValueOnce(false);
+      const response = await POST(createPostRequest());
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.reason).toBe("hivra_not_ready");
+      expect(refreshPrimaryHermesTokenHolding).not.toHaveBeenCalled();
+    });
+
+    it("still shows and refreshes the holding of an account that already holds a token tier", async () => {
+      mockIsHivraUsable.mockResolvedValue(false);
+      mockHasExistingTokenTier.mockResolvedValue(true);
+      // $HIVRA is dormant in this file's registry, so the held snapshot names
+      // a registered token; the route only reads it.
+      (getLatestHermesTokenHoldingSnapshot as jest.Mock).mockResolvedValue({
+        id: "snapshot_held",
+        tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
+        balanceDisplay: "1",
+        qualifiesBaseTier: true,
+        checkedAt: "2026-04-24T12:01:00.000Z",
+      });
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(getTokenVerificationWallet).toHaveBeenCalled();
+      mockIsHivraUsable.mockResolvedValue(true);
+      mockHasExistingTokenTier.mockResolvedValue(false);
+    });
+
+    it("never consults readiness for a grandfathered account", async () => {
+      (resolveUserTokenAccess as jest.Mock).mockResolvedValue(
+        computeUserTokenAccess({
+          phase: "active",
+          cohort: { user_id: userId, converted_at: null, conversion_grace_ends_at: null, metadata: {} },
+          now: new Date(),
+        })
+      );
+      mockIsHivraUsable.mockClear();
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(mockIsHivraUsable).not.toHaveBeenCalled();
+    });
   });
 
   it("returns the current verified wallet and latest token snapshot", async () => {

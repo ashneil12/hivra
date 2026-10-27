@@ -50,7 +50,8 @@ describe("buildLlmsTxt", () => {
   });
 
   it("separates what is available now from conditional, preview, coming and proposed work", () => {
-    const txt = buildLlmsTxt({ siteUrl: SITE });
+    // Dormant explicitly: the committed launch block is filled in, and the launched lines are checked below.
+    const txt = buildLlmsTxt({ siteUrl: SITE, phase: "dormant" });
     expect(txt).toContain("Available now on Hivra Cloud:");
     // Omarchy and Windows are never listed as plainly available. The code runs Omarchy as a
     // prepared computer and refuses a launch when no prepared slot exists, and Windows runs on
@@ -188,6 +189,23 @@ describe("buildLlmsTxt", () => {
     expect(txt.endsWith("\n")).toBe(true);
     expect(txt.endsWith("\n\n")).toBe(false);
   });
+});
+
+describe("buildLlmsTxt once $HIVRA is launched", () => {
+  it.each(["scheduled", "active"] as const)(
+    "states the holder-paid Sablier claim and the activation conditions, never an automatic airdrop or new accounts using $HIVRA (%s)",
+    (phase) => {
+      const txt = buildLlmsTxt({ siteUrl: SITE, phase });
+      expect(txt).toContain(
+        "$HIVRA is live on Base. New $HIVRA-based access and payments become available only once the published activation conditions have been met. $HermesOS is the legacy token, and its holders keep their existing access. Eligible snapshot holders can claim $HIVRA through the official Sablier campaign. The claimant pays the applicable claim and network fees; no legacy-token burn is required.",
+      );
+      expect(txt).toContain(
+        `[Tokenomics](${SITE}/TOKENOMICS.md): How Hivra's token access works, how eligible $HermesOS holders claim $HIVRA, and what token-based services Hivra is considering next`,
+      );
+      expect(txt).not.toMatch(/airdrop|automatically|nothing to claim|new accounts use|new Hivra accounts use|new users hold|starts using it|launch time|proposed new token|does not exist yet/i);
+      expect(txt).not.toMatch(/[–—]/);
+    },
+  );
 });
 
 describe("buildLlmsTxt while the new token surfaces are off", () => {

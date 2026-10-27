@@ -17,7 +17,17 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { decodeFunctionResult, encodeFunctionData, erc20Abi, getAddress, isAddress } from "viem";
+import {
+  decodeFunctionResult,
+  encodeAbiParameters,
+  encodeFunctionData,
+  erc20Abi,
+  getAddress,
+  isAddress,
+  keccak256,
+  parseAbi,
+  toFunctionSelector,
+} from "viem";
 
 export const DEFAULT_ENDPOINTS = Object.freeze({
   rpcUrl: "https://mainnet.base.org",
@@ -25,7 +35,7 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
   geckoterminalUrl: "https://api.geckoterminal.com/api/v2",
 });
 
-/** What the Bankr launch must have produced. The platform code expects exactly these. */
+/** What the $HIVRA launch must have produced. The platform code expects exactly these. */
 export const EXPECTED_TOKEN = Object.freeze({
   name: "Hivra",
   symbol: "HIVRA",
@@ -33,10 +43,53 @@ export const EXPECTED_TOKEN = Object.freeze({
   totalSupplyWhole: 100_000_000_000n,
 });
 
-/** WETH on Base: the paired token of the pool that prices $HIVRA. */
+/**
+ * The pool that prices $HIVRA is quoted in ETH. $HIVRA launches into a Doppler
+ * Uniswap v4 pool against native ETH (currency0 = address(0)), which DEXScreener
+ * and GeckoTerminal both report as quote "ETH" at the zero address. WETH is the
+ * other form of ETH the price feed accepts (token-registry.ts isEthQuoteAddress).
+ */
+export const NATIVE_ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const BASE_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
+export const ETH_QUOTE_ADDRESSES = Object.freeze([NATIVE_ETH_ADDRESS, BASE_WETH_ADDRESS]);
+/** What the launch plan uses as the pool's numeraire. A WETH pool is accepted with a warning. */
+export const EXPECTED_NUMERAIRE = NATIVE_ETH_ADDRESS;
 /** The legacy $HermesOS contract (token-registry.ts), never a valid $HIVRA address. */
 export const HERMESOS_ADDRESS = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
+
+/**
+ * Doppler on Base (whetstoneresearch/doppler, Deployments.md). The Multicurve
+ * launch creates the pool through DopplerHookInitializer, which is also the
+ * pool's v4 hook and records the pool key per token (getState). The token is
+ * an EIP-1167 clone of the DopplerERC20V1 implementation: a clone cannot be
+ * upgraded, and DopplerERC20V1 mints only inside initialize() (no mint function,
+ * no yearly inflation), so its supply can never grow after launch.
+ */
+export const DOPPLER_HOOK_INITIALIZER = "0xbdf938149ac6a781f94faa0ed45e6a0e984c6544";
+// Two DopplerERC20V1 deployments are accepted, both read on Base on 2026-10-27:
+// - 0xdb7b…be87: the one in doppler's Deployments.md, cloned by DopplerERC20V1Factory 0x89c2…5292.
+// - 0xedf3…50f8: the current one in doppler-sdk's deployments.generated.ts for chain 8453, cloned by
+//   DopplerERC20V1Factory 0xf154…2ce5, which the Airlock 0x660e…8d12 whitelists as a token factory
+//   (getModuleState = 1). $HIVRA was created through that factory. Its dispatcher is 0xdb7b's 57
+//   selectors plus getPastTotalSupply(uint256) and 0x46758fc9 (no public name); it keeps the vesting
+//   functions (vestingStart, vestingOf, vestingSchedules, release, releaseFor) and has no mint entry point.
+export const DOPPLER_ERC20_V1_IMPLEMENTATIONS = Object.freeze([
+  "0xdb7b520bb5c3a2c5d4871198081911359f93be87",
+  "0xedf3f3981e98077591c1b909bccff0e572bd50f8",
+]);
+
+/** Entry points that would let a token mint after launch. The older Doppler DERC20 has mintInflation() and yearlyMintRate(). */
+export const MINT_FUNCTIONS = Object.freeze(["mint(address,uint256)", "mint(uint256)", "mintTo(address,uint256)", "mintInflation()"]);
+export const YEARLY_MINT_RATE_FUNCTION = "yearlyMintRate()";
+
+/** DopplerHookInitializer PoolStatus: Uninitialized, Initialized, Locked, Graduated, Exited. */
+const DOPPLER_POOL_STATUS = Object.freeze(["Uninitialized", "Initialized", "Locked", "Graduated", "Exited"]);
+export const DOPPLER_STATE_ABI = parseAbi([
+  "function getState(address asset) view returns (address numeraire, uint256 totalTokensOnBondingCurve, address dopplerHook, bytes graduationDopplerHookCalldata, uint8 status, (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, int24 farTick)",
+]);
+const POOL_KEY_PARAMS = [{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }];
+/** Uniswap v4 LPFeeLibrary.DYNAMIC_FEE_FLAG: the hook sets the fee (Doppler's 1.58%). */
+export const V4_DYNAMIC_FEE_FLAG = 0x800000;
 
 // These mirror token-registry.ts (POOL_ID, UTC_INSTANT) and price-feed.ts. The
 // jest test __tests__/prepare-hivra-activation.test.ts fails if they drift.
@@ -85,7 +138,7 @@ export class UsageError extends Error {}
 const USAGE = `Usage: node scripts/token/prepare-hivra-activation.mjs --address 0x... --activates-at 2026-10-01T16:00:00Z [--pool-id 0x...] [--write] [--json]
 
 Read-only check of the $HIVRA launch on Base, DEXScreener and GeckoTerminal.
---pool-id  use this HIVRA/WETH pool instead of the deepest one
+--pool-id  use this ETH-quoted HIVRA pool instead of the Doppler pool (or the deepest one)
 --write    when every check passes, fill in src/lib/billing/hivra-token-launch.ts
 --json     print the result as JSON`;
 
@@ -95,6 +148,13 @@ Read-only check of the $HIVRA launch on Base, DEXScreener and GeckoTerminal.
 export function readMinPriceLiquidityUsd(registrySource) {
   const match = /export const HIVRA_MIN_PRICE_LIQUIDITY_USD = ([\d_]+);/.exec(registrySource);
   if (!match) throw new Error("HIVRA_MIN_PRICE_LIQUIDITY_USD not found in token-registry.ts");
+  return Number(match[1].replace(/_/g, ""));
+}
+
+/** The $HIVRA ETH-side floor, read from token-registry.ts like the total floor. */
+export function readMinQuoteLiquidityUsd(registrySource) {
+  const match = /export const HIVRA_MIN_QUOTE_LIQUIDITY_USD = ([\d_]+);/.exec(registrySource);
+  if (!match) throw new Error("HIVRA_MIN_QUOTE_LIQUIDITY_USD not found in token-registry.ts");
   return Number(match[1].replace(/_/g, ""));
 }
 
@@ -152,6 +212,37 @@ async function rpc(fetchImpl, rpcUrl, method, params) {
   return body.result;
 }
 
+// Runtime code of a minimal proxy: the classic EIP-1167 form, and Solady
+// LibClone's PUSH0 form (what DopplerERC20V1Factory deploys; read live on Base).
+const CLONE_PATTERNS = [
+  /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3$/,
+  /^0x3d3d3d3d363d3d37363d73([0-9a-f]{40})5af43d3d93803e602a57fd5bf3$/,
+];
+
+/** The implementation a minimal-proxy clone delegates to, or null for any other code. */
+export function cloneImplementation(code) {
+  const normalized = String(code ?? "").toLowerCase();
+  for (const pattern of CLONE_PATTERNS) {
+    const match = pattern.exec(normalized);
+    if (match) return `0x${match[1]}`;
+  }
+  return null;
+}
+
+/**
+ * Whether runtime code dispatches `signature` (a PUSH4 of its selector, as the
+ * Solidity dispatcher emits). A byte pattern that happens to match in data reads
+ * as present, so the check errs toward refusing.
+ */
+export function codeHasFunction(code, signature) {
+  return String(code ?? "").toLowerCase().includes(`63${toFunctionSelector(signature).slice(2)}`);
+}
+
+/** The Uniswap v4 PoolId of a pool key: keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks)). */
+export function v4PoolId(key) {
+  return keccak256(encodeAbiParameters(POOL_KEY_PARAMS, [key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]));
+}
+
 async function readErc20(fetchImpl, rpcUrl, address) {
   const call = async (functionName) => {
     const data = encodeFunctionData({ abi: erc20Abi, functionName });
@@ -166,7 +257,48 @@ async function readErc20(fetchImpl, rpcUrl, address) {
     call("decimals"),
     call("totalSupply"),
   ]);
-  return { hasCode: true, name, symbol, decimals: Number(decimals), totalSupply: BigInt(totalSupply) };
+
+  // Can the supply ever grow? Read the code that actually runs (the clone's
+  // implementation) for a mint entry point, and an inflation rate if it has one.
+  const implementation = cloneImplementation(code);
+  const runCode = implementation ? await rpc(fetchImpl, rpcUrl, "eth_getCode", [implementation, "latest"]) : code;
+  const mintFunctions = MINT_FUNCTIONS.filter((signature) => codeHasFunction(runCode, signature));
+  let yearlyMintRate = null;
+  if (codeHasFunction(runCode, YEARLY_MINT_RATE_FUNCTION)) {
+    const result = await rpc(fetchImpl, rpcUrl, "eth_call", [{ to: address, data: toFunctionSelector(YEARLY_MINT_RATE_FUNCTION) }, "latest"]);
+    yearlyMintRate = BigInt(result);
+  }
+  return {
+    hasCode: true,
+    name,
+    symbol,
+    decimals: Number(decimals),
+    totalSupply: BigInt(totalSupply),
+    implementation,
+    implementationHasCode: Boolean(runCode && runCode !== "0x"),
+    mintFunctions,
+    yearlyMintRate,
+  };
+}
+
+/** The pool DopplerHookInitializer recorded for this token, with its v4 PoolId. */
+async function readDopplerState(fetchImpl, rpcUrl, address) {
+  const data = encodeFunctionData({ abi: DOPPLER_STATE_ABI, functionName: "getState", args: [address] });
+  const result = await rpc(fetchImpl, rpcUrl, "eth_call", [{ to: DOPPLER_HOOK_INITIALIZER, data }, "latest"]);
+  const [numeraire, , , , status, poolKey] = decodeFunctionResult({ abi: DOPPLER_STATE_ABI, functionName: "getState", data: result });
+  const key = {
+    currency0: poolKey.currency0.toLowerCase(),
+    currency1: poolKey.currency1.toLowerCase(),
+    fee: Number(poolKey.fee),
+    tickSpacing: Number(poolKey.tickSpacing),
+    hooks: poolKey.hooks.toLowerCase(),
+  };
+  return {
+    numeraire: numeraire.toLowerCase(),
+    status: DOPPLER_POOL_STATUS[Number(status)] ?? `unknown(${status})`,
+    poolKey: key,
+    poolId: Number(status) === 0 ? null : v4PoolId(key),
+  };
 }
 
 /**
@@ -175,12 +307,29 @@ async function readErc20(fetchImpl, rpcUrl, address) {
  */
 export async function collectObservations({ address, poolId = null, fetchImpl = fetch, endpoints = DEFAULT_ENDPOINTS }) {
   const token = address.toLowerCase();
-  const observations = { chain: null, chainError: null, pools: null, poolsError: null, candles: null, candlesError: null };
+  const observations = {
+    chain: null,
+    chainError: null,
+    doppler: null,
+    dopplerError: null,
+    pools: null,
+    poolsError: null,
+    candles: null,
+    candlesError: null,
+  };
 
   try {
     observations.chain = await readErc20(fetchImpl, endpoints.rpcUrl, token);
   } catch (error) {
     observations.chainError = errorText(error);
+  }
+
+  if (observations.chain?.hasCode) {
+    try {
+      observations.doppler = await readDopplerState(fetchImpl, endpoints.rpcUrl, token);
+    } catch (error) {
+      observations.dopplerError = errorText(error);
+    }
   }
 
   try {
@@ -198,13 +347,15 @@ export async function collectObservations({ address, poolId = null, fetchImpl = 
         quoteAddress: String(pair.quoteToken?.address ?? "").toLowerCase(),
         quoteSymbol: pair.quoteToken?.symbol ?? null,
         liquidityUsd: Number(pair.liquidity?.usd ?? 0),
+        // The ETH side in USD at the pool's own ETH rate; 0 when DEXScreener does not report it.
+        quoteLiquidityUsd: quoteSideUsd(pair),
         priceNative: pair.priceNative == null ? null : Number(pair.priceNative),
       }));
   } catch (error) {
     observations.poolsError = errorText(error);
   }
 
-  const chosen = choosePool(observations.pools ?? [], poolId);
+  const chosen = choosePool(observations.pools ?? [], poolId, observations.doppler?.poolId ?? null);
   if (chosen) {
     try {
       const url =
@@ -214,6 +365,7 @@ export async function collectObservations({ address, poolId = null, fetchImpl = 
       const list = Array.isArray(payload?.data?.attributes?.ohlcv_list) ? payload.data.attributes.ohlcv_list : [];
       observations.candles = {
         baseAddress: payload?.meta?.base?.address?.toLowerCase() ?? null,
+        quoteAddress: payload?.meta?.quote?.address?.toLowerCase() ?? null,
         list: list
           .filter((candle) => Array.isArray(candle) && candle.length >= 5)
           .map((candle) => ({ at: Number(candle[0]), close: Number(candle[4]) }))
@@ -230,20 +382,39 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-// ── Checks (pure: no network, no clock) ─────────────────────────────────
-
-/** The HIVRA/WETH pools on Base, deepest first. */
-export function wethPools(pools) {
-  return pools
-    .filter((pool) => pool.quoteAddress === BASE_WETH_ADDRESS)
-    .sort((a, b) => b.liquidityUsd - a.liquidityUsd);
+function quoteSideUsd(pair) {
+  const quote = Number(pair.liquidity?.quote ?? 0);
+  const usdPerQuote = Number(pair.priceUsd) / Number(pair.priceNative);
+  const value = quote * usdPerQuote;
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-/** The pinned pool when --pool-id is given, else the deepest HIVRA/WETH pool. */
-export function choosePool(pools, poolId = null) {
-  const candidates = wethPools(pools);
-  if (poolId) return candidates.find((pool) => pool.poolId.toLowerCase() === poolId.toLowerCase()) ?? null;
-  return candidates[0] ?? null;
+// ── Checks (pure: no network, no clock) ─────────────────────────────────
+
+export function isEthQuote(address) {
+  return ETH_QUOTE_ADDRESSES.includes(String(address ?? "").toLowerCase());
+}
+
+/**
+ * The ETH-quoted (native ETH or WETH) $HIVRA pools on Base, deepest ETH side
+ * first: a Doppler pool's total "liquidity" is mostly $HIVRA, so the ETH side
+ * is the depth that counts.
+ */
+export function ethPools(pools) {
+  return pools
+    .filter((pool) => isEthQuote(pool.quoteAddress))
+    .sort((a, b) => (b.quoteLiquidityUsd ?? 0) - (a.quoteLiquidityUsd ?? 0) || b.liquidityUsd - a.liquidityUsd);
+}
+
+/**
+ * The pinned pool when --pool-id is given; else the pool Doppler recorded for
+ * the token, when DEXScreener lists it; else the deepest ETH-quoted pool.
+ */
+export function choosePool(pools, poolId = null, dopplerPoolId = null) {
+  const candidates = ethPools(pools);
+  const byId = (id) => candidates.find((pool) => pool.poolId.toLowerCase() === id.toLowerCase()) ?? null;
+  if (poolId) return byId(poolId);
+  return (dopplerPoolId && byId(dopplerPoolId)) || candidates[0] || null;
 }
 
 /**
@@ -278,7 +449,7 @@ function check(results, id, level, ok, detail) {
  * Every check, from the inputs and what was observed. `ok` is true when no
  * error-level check failed; `config` is then the block to write.
  */
-export function evaluateActivation({ address, activatesAt, poolId = null, nowMs, minLiquidityUsd, observations }) {
+export function evaluateActivation({ address, activatesAt, poolId = null, nowMs, minLiquidityUsd, minQuoteLiquidityUsd, observations }) {
   const checks = [];
 
   // Address
@@ -355,28 +526,119 @@ export function evaluateActivation({ address, activatesAt, poolId = null, nowMs,
       chain.totalSupply === expectedSupply,
       `totalSupply() is ${formatWhole(chain.totalSupply, chain.decimals)}, expected ${formatWhole(expectedSupply, chain.decimals)}`
     );
+
+    // Fixed supply: an immutable DopplerERC20V1 clone, no mint entry point, no inflation.
+    const knownImplementation = DOPPLER_ERC20_V1_IMPLEMENTATIONS.includes(chain.implementation ?? "");
+    check(
+      checks,
+      "chain.implementation",
+      "error",
+      knownImplementation && chain.implementationHasCode,
+      knownImplementation
+        ? chain.implementationHasCode
+          ? `an EIP-1167 clone of DopplerERC20V1 ${chain.implementation}: it cannot be upgraded, and DopplerERC20V1 mints only at launch`
+          : `a clone of ${chain.implementation}, which has no code on Base`
+        : chain.implementation
+          ? `a clone of ${chain.implementation}, not the DopplerERC20V1 implementation on Base (${DOPPLER_ERC20_V1_IMPLEMENTATIONS.join(", ")})`
+          : "not a minimal-proxy clone of the DopplerERC20V1 implementation on Base: its code could mint or be upgraded"
+    );
+    const mintFunctions = chain.mintFunctions ?? [];
+    check(
+      checks,
+      "chain.no_mint",
+      "error",
+      mintFunctions.length === 0,
+      mintFunctions.length === 0
+        ? `no mint entry point (${MINT_FUNCTIONS.join(", ")}) in the code that runs`
+        : `the token's code has ${mintFunctions.join(", ")}: its supply could grow after launch`
+    );
+    check(
+      checks,
+      "chain.inflation",
+      "error",
+      chain.yearlyMintRate === null || chain.yearlyMintRate === undefined || chain.yearlyMintRate === 0n,
+      chain.yearlyMintRate === null || chain.yearlyMintRate === undefined
+        ? "no yearlyMintRate(): no inflation schedule"
+        : chain.yearlyMintRate === 0n
+          ? "yearlyMintRate() is 0"
+          : `yearlyMintRate() is ${chain.yearlyMintRate} (WAD per year): the supply inflates`
+    );
+  }
+
+  // The Doppler pool, as DopplerHookInitializer recorded it on Base
+  const doppler = observations.doppler;
+  if (observations.dopplerError) {
+    check(checks, "doppler.state", "error", false, `could not read DopplerHookInitializer.getState: ${observations.dopplerError}`);
+  } else if (doppler) {
+    const live = doppler.status === "Initialized" || doppler.status === "Locked";
+    check(
+      checks,
+      "doppler.state",
+      "error",
+      live,
+      live
+        ? `DopplerHookInitializer ${DOPPLER_HOOK_INITIALIZER} holds this token's pool (${doppler.status}); expected Doppler pool ${doppler.poolId}`
+        : doppler.status === "Uninitialized"
+          ? `DopplerHookInitializer ${DOPPLER_HOOK_INITIALIZER} has no pool for this token: not a Doppler Multicurve launch`
+          : `the Doppler pool is ${doppler.status}: its liquidity has left the pool`
+    );
+    if (live) {
+      const numeraireOk = isEthQuote(doppler.numeraire);
+      check(
+        checks,
+        "doppler.numeraire",
+        numeraireOk ? "warn" : "error",
+        doppler.numeraire === EXPECTED_NUMERAIRE,
+        doppler.numeraire === EXPECTED_NUMERAIRE
+          ? "numeraire is native ETH (currency0 = address(0))"
+          : numeraireOk
+            ? `numeraire is WETH (${doppler.numeraire}), not native ETH as planned; the price feed accepts it`
+            : `numeraire is ${doppler.numeraire}: the price feed prices $HIVRA only against ETH`
+      );
+    }
   }
 
   // Pricing pool
-  const pool = choosePool(observations.pools ?? [], poolId);
+  const pool = choosePool(observations.pools ?? [], poolId, doppler?.poolId ?? null);
   let poolIdOk = false;
+  let poolKeyOk = false;
   if (observations.poolsError) {
     check(checks, "pool.read", "error", false, `could not read DEXScreener: ${observations.poolsError}`);
   } else {
-    const all = wethPools(observations.pools ?? []);
+    const all = ethPools(observations.pools ?? []);
     const found = check(
       checks,
       "pool.found",
       "error",
       Boolean(pool),
       pool
-        ? `${pool.poolId} (${[pool.dexId, ...pool.labels].filter(Boolean).join(" ")}, ${pool.baseSymbol ?? "?"}/${pool.quoteSymbol ?? "WETH"})`
+        ? `${pool.poolId} (${[pool.dexId, ...pool.labels].filter(Boolean).join(" ")}, ${pool.baseSymbol ?? "?"}/${pool.quoteSymbol ?? "ETH"})`
         : poolId
-          ? `DEXScreener lists no HIVRA/WETH pool on Base with id ${poolId}`
-          : "DEXScreener lists no HIVRA/WETH pool on Base for this address"
+          ? `DEXScreener lists no ETH-quoted HIVRA pool on Base with id ${poolId}`
+          : "DEXScreener lists no ETH-quoted (native ETH or WETH) HIVRA pool on Base for this address"
     );
     if (found) {
       poolIdOk = check(checks, "pool.id_format", "error", POOL_ID_PATTERN.test(pool.poolId), "a Uniswap v4 pool id (0x + 64 hex) or pair address (0x + 40 hex), as token-registry.ts accepts");
+      // The written pool must be the Doppler pool itself: its id is the hash of the key Doppler recorded.
+      // (Without a Doppler read the chain checks have already failed; poolKeyOk stays false.)
+      const key = doppler?.poolKey;
+      const keyMatches =
+        Boolean(doppler?.poolId) &&
+        doppler.poolId === pool.poolId.toLowerCase() &&
+        key.hooks === DOPPLER_HOOK_INITIALIZER &&
+        (key.currency1 === address.toLowerCase() || key.currency0 === address.toLowerCase());
+      if (doppler || observations.dopplerError) poolKeyOk = check(
+        checks,
+        "pool.doppler_key",
+        "error",
+        keyMatches,
+        keyMatches
+          ? `the Doppler pool: currency0 ${key.currency0 === NATIVE_ETH_ADDRESS ? "native ETH" : key.currency0}, currency1 ${key.currency1}, ` +
+              `fee ${key.fee === V4_DYNAMIC_FEE_FLAG ? "dynamic (set by the Doppler hook)" : `${key.fee / 10_000}%`}, tickSpacing ${key.tickSpacing}, hook ${key.hooks}`
+          : doppler?.poolId
+            ? `not the pool Doppler recorded for this token (${doppler.poolId}); pass --pool-id ${doppler.poolId} once DEXScreener lists it`
+            : "no Doppler pool on record to compare this pool with (see doppler.state)"
+      );
       const others = all.filter((candidate) => candidate !== pool);
       check(
         checks,
@@ -384,8 +646,8 @@ export function evaluateActivation({ address, activatesAt, poolId = null, nowMs,
         "warn",
         others.length === 0,
         others.length === 0
-          ? "the only HIVRA/WETH pool on Base"
-          : `${others.length} other HIVRA/WETH pool(s): ${others.map((other) => `${other.poolId} ($${Math.floor(other.liquidityUsd)})`).join(", ")}. The price feed will accept only the one written.`
+          ? "the only ETH-quoted HIVRA pool on Base"
+          : `${others.length} other ETH-quoted HIVRA pool(s): ${others.map((other) => `${other.poolId} ($${Math.floor(other.quoteLiquidityUsd ?? 0)} of ETH)`).join(", ")}. The price feed will accept only the one written.`
       );
       check(
         checks,
@@ -393,6 +655,15 @@ export function evaluateActivation({ address, activatesAt, poolId = null, nowMs,
         "error",
         pool.liquidityUsd >= minLiquidityUsd,
         `$${Math.floor(pool.liquidityUsd).toLocaleString("en-US")} of liquidity; the floor is $${minLiquidityUsd.toLocaleString("en-US")} (HIVRA_MIN_PRICE_LIQUIDITY_USD). Below it every $HIVRA quote fails closed.`
+      );
+      const quoteUsd = pool.quoteLiquidityUsd ?? 0;
+      check(
+        checks,
+        "pool.eth_liquidity",
+        "error",
+        quoteUsd >= minQuoteLiquidityUsd,
+        `$${Math.floor(quoteUsd).toLocaleString("en-US")} of ETH in the pool; the ETH-side floor is $${minQuoteLiquidityUsd.toLocaleString("en-US")} ` +
+          "(HIVRA_MIN_QUOTE_LIQUIDITY_USD). A Doppler pool starts almost all $HIVRA; below this floor every $HIVRA quote fails closed."
       );
     }
   }
@@ -405,6 +676,16 @@ export function evaluateActivation({ address, activatesAt, poolId = null, nowMs,
       const candles = observations.candles ?? { baseAddress: null, list: [] };
       const baseOk = !candles.baseAddress || candles.baseAddress === address.toLowerCase();
       check(checks, "candles.pool_token", "error", baseOk, baseOk ? "GeckoTerminal prices this pool for this address" : `GeckoTerminal prices this pool for ${candles.baseAddress}, not this address`);
+      const quoteOk = !candles.quoteAddress || isEthQuote(candles.quoteAddress);
+      check(
+        checks,
+        "candles.quote",
+        "error",
+        quoteOk,
+        quoteOk
+          ? `GeckoTerminal prices the candles in ETH${candles.quoteAddress === NATIVE_ETH_ADDRESS ? " (native)" : candles.quoteAddress ? " (WETH)" : ""}`
+          : `GeckoTerminal prices the candles in ${candles.quoteAddress}, not ETH: the price feed refuses this pool`
+      );
       const median = medianCloseNative(candles.list, nowMs);
       const hasCandle = check(
         checks,
@@ -443,7 +724,7 @@ export function evaluateActivation({ address, activatesAt, poolId = null, nowMs,
 
   const ok = checks.every((result) => result.ok || result.level !== "error");
   const config =
-    ok && publishedAddress && pool && poolIdOk && instantOk && observations.chain?.hasCode
+    ok && publishedAddress && pool && poolIdOk && poolKeyOk && instantOk && observations.chain?.hasCode
       ? {
           contractAddress: publishedAddress,
           decimals: observations.chain.decimals,
@@ -502,7 +783,9 @@ export async function main(argv, { fetchImpl = fetch, nowMs = Date.now(), stdout
     return 0;
   }
 
-  const minLiquidityUsd = readMinPriceLiquidityUsd(readFileSync(REGISTRY_FILE, "utf8"));
+  const registrySource = readFileSync(REGISTRY_FILE, "utf8");
+  const minLiquidityUsd = readMinPriceLiquidityUsd(registrySource);
+  const minQuoteLiquidityUsd = readMinQuoteLiquidityUsd(registrySource);
   const addressShapeOk = EVM_ADDRESS.test(args.address);
   const observations = addressShapeOk
     ? await collectObservations({ address: args.address, poolId: args.poolId, fetchImpl })
@@ -513,11 +796,12 @@ export async function main(argv, { fetchImpl = fetch, nowMs = Date.now(), stdout
     poolId: args.poolId,
     nowMs,
     minLiquidityUsd,
+    minQuoteLiquidityUsd,
     observations,
   });
 
   if (args.json) {
-    stdout(JSON.stringify({ ...result, minLiquidityUsd }, (_key, value) => (typeof value === "bigint" ? value.toString() : value), 2));
+    stdout(JSON.stringify({ ...result, minLiquidityUsd, minQuoteLiquidityUsd },(_key, value) => (typeof value === "bigint" ? value.toString() : value), 2));
   } else {
     stdout(formatReport(result, args));
   }

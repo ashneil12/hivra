@@ -154,7 +154,13 @@ export function MachineCard({
 }) {
   const plan = PLANS[planKey];
   const badge = planCardBadge(planKey, currentPlanKey);
-  const price = planPriceDisplay(planKey, { path, cadence, tokenMode, holdAmounts: c.holdAmounts });
+  const price = planPriceDisplay(planKey, {
+    path,
+    cadence,
+    tokenMode,
+    holdAmounts: c.holdAmounts,
+    tokenUnit: c.tokenPayments.displayUnit,
+  });
   const diff = currentPlanKey && currentPlanKey !== planKey ? getPlanDiff(currentPlanKey, planKey) : null;
   const isPopular = "popular" in plan && plan.popular === true;
   const isCurrent = planKey === currentPlanKey;
@@ -271,10 +277,14 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
   // $HermesOS plan payment is offered only to people who don't already pay
   // for a plan by card or through Apple, and only where the token geo-policy
   // allows token features (this hides the chip and the token path with it).
+  // After $HIVRA launches, accounts that pay in $HIVRA see the token path
+  // only once $HIVRA is usable (c.tokenPayments).
   const canPayWithToken =
     c.flags.cryptoBillingEnabled &&
     c.tokenGeo.status === "allowed" &&
+    c.tokenPayments.available &&
     !hasPaidCardOrAppleSubscription({ planKey: currentPlanKey, source });
+  const tokenUnit = c.tokenPayments.displayUnit;
   const path: PlanPaymentPath = canPayWithToken && c.paidPath === "crypto" ? "token" : "card";
   const tokenMode: TokenPlanMode = c.cryptoMode === "permanent" ? "hold" : "yearly";
   const ladder = plansForLadder({ currentPlanKey, path });
@@ -288,6 +298,7 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
       cadence,
       selfServeDowngradeEnabled: c.flags.selfServeDowngradeEnabled,
       changePlanRequiresCheckout: c.changePlanRequiresCheckout,
+      tokenUnit,
     });
 
   // Cadence only matters when a card goes through checkout: in-place plan
@@ -326,7 +337,7 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
                 onChange={(next) => c.setPaidPath(next)}
                 options={[
                   { value: "card", label: "Card", icon: <CreditCard size={14} aria-hidden="true" /> },
-                  { value: "crypto", label: "$HermesOS", icon: <Coins size={14} aria-hidden="true" /> },
+                  { value: "crypto", label: tokenUnit, icon: <Coins size={14} aria-hidden="true" /> },
                 ]}
               />
             </div>
@@ -352,10 +363,10 @@ export function PlansTab({ c, heading }: { c: BillingController; heading: string
 
           {path === "token" && (
             <div className={styles.control}>
-              <span className={styles.controlLabel}>$HermesOS option</span>
+              <span className={styles.controlLabel}>{tokenUnit} option</span>
               <div className={styles.controlRow}>
                 <ChoiceGroup
-                  label="$HermesOS option"
+                  label={`${tokenUnit} option`}
                   value={c.cryptoMode}
                   onChange={(next) => c.setCryptoMode(next)}
                   options={[

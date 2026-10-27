@@ -1,22 +1,41 @@
+import { isAddress } from "viem";
+
 import { HERMESOS_TOKEN, validateHivraLaunchConfig, type PlatformToken } from "@/lib/billing/token-registry";
 
 import {
   checkTokenAddress,
   readAllowedUrl,
   readConversionInputs,
+  resolveAirdropFacts,
   resolveConversionState,
   type ConversionInputs,
 } from "../conversion-state";
-import {
-  CONVERSION_LINKS,
-  CONVERSION_URL_ALLOWED_HOSTS,
-  TERMS_URL_ALLOWED_HOSTS,
-} from "../conversion-links-config";
+import { HIVRA_AIRDROP, SNAPSHOT_URL_ALLOWED_LOCATIONS, type HivraAirdropConfig } from "../hivra-airdrop-config";
 
-// Stand-in address for tests only. It is not, and must never be treated as, $HIVRA.
+// Stand-in addresses for tests only. They are not, and must never be treated as, $HIVRA or Hivra's wallet.
 const TEST_HIVRA = "0x1111111111111111111111111111111111111111";
-const TERMS = "https://hivra.cloud/token/conversion-terms";
-const CONVERT = "https://bankr.bot/convert/hivra";
+const TEST_SENDER = "0x3333333333333333333333333333333333333333";
+const SNAPSHOT_URL = "https://hivra.cloud/token/airdrop-snapshot";
+const CAMPAIGN_URL = "https://app.sablier.com/airdrops/campaign/0xabc123/";
+const NOW = new Date("2026-10-03T12:00:00Z");
+
+const PUBLISHED: HivraAirdropConfig = {
+  senderAddress: TEST_SENDER,
+  snapshotBlock: 36_000_000,
+  snapshotTakenAt: null,
+  snapshotUrl: SNAPSHOT_URL,
+  claim: { campaignUrl: null, opensAt: null, closesAt: null },
+};
+// The claim opened on 1 October and closed on 2 October, before NOW.
+const CLOSED: HivraAirdropConfig = {
+  ...PUBLISHED,
+  claim: { campaignUrl: CAMPAIGN_URL, opensAt: "2026-10-01T00:00:00Z", closesAt: "2026-10-02T18:00:00Z" },
+};
+// The claim is open at NOW and closes later.
+const OPEN: HivraAirdropConfig = {
+  ...PUBLISHED,
+  claim: { campaignUrl: CAMPAIGN_URL, opensAt: "2026-10-01T00:00:00Z", closesAt: "2026-10-31T18:00:00Z" },
+};
 
 function testHivraToken(): PlatformToken {
   const validation = validateHivraLaunchConfig({
@@ -33,114 +52,244 @@ function inputs(overrides: Partial<ConversionInputs> = {}): ConversionInputs {
   return {
     hivra: testHivraToken(),
     phase: "active",
-    links: { termsUrl: TERMS, conversionUrl: CONVERT },
+    airdrop: CLOSED,
     access: { grandfathered: false, convertedAt: null, conversionGraceEndsAt: null },
+    now: NOW,
     ...overrides,
   };
 }
 
 describe("committed configuration", () => {
-  it("ships with no conversion link, so the committed state can never be open", () => {
-    expect(CONVERSION_LINKS).toEqual({ termsUrl: null, conversionUrl: null });
-    // Holds before and after the registry's $HIVRA launch block is filled in.
-    expect(resolveConversionState(readConversionInputs({ grandfathered: false, convertedAt: null, conversionGraceEndsAt: null })).status).not.toBe("open");
+  it("ships with the airdrop wallet and the published snapshot, and no claim yet", () => {
+    expect(HIVRA_AIRDROP).toEqual({
+      senderAddress: "0x3B954866d4329E19C1B9165774c88508f2fefA0c",
+      snapshotBlock: 53005062,
+      snapshotTakenAt: "2026-10-23T23:51:11Z",
+      snapshotUrl: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
+      claim: { campaignUrl: null, opensAt: null, closesAt: null },
+    });
   });
 
-  it("pins the exact hosts conversion and terms links may use", () => {
-    expect(CONVERSION_URL_ALLOWED_HOSTS).toEqual(["bankr.bot"]);
-    expect(TERMS_URL_ALLOWED_HOSTS).toEqual(["hivra.cloud", "canary.hermesos.cloud"]);
+  it("the committed snapshot passes its own checks: an allowed URL, a real past instant and a positive block", () => {
+    const facts = resolveAirdropFacts(HIVRA_AIRDROP, TEST_HIVRA, new Date("2026-10-27T00:00:00Z"));
+    expect(facts.problems).toEqual([]);
+    expect(facts.snapshot).toEqual({
+      block: 53005062,
+      url: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
+      takenAt: "2026-10-23T23:51:11.000Z",
+    });
+    expect(facts.claim?.phase).toBe("unpublished");
+  });
+
+  it("the committed airdrop wallet passes its EIP-55 checksum and is not a token contract", () => {
+    const sender = HIVRA_AIRDROP.senderAddress;
+    if (!sender) return;
+    expect(isAddress(sender, { strict: true })).toBe(true);
+    expect(sender.toLowerCase()).not.toBe(HERMESOS_TOKEN.address);
+  });
+
+  it("is launched from the committed registry, with the snapshot shown and no claim or switch offered yet", () => {
+    const access = { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null };
+    const before = resolveConversionState(readConversionInputs(access, new Date("2026-10-27T12:00:00Z")));
+    if (before.status !== "launched") throw new Error(`expected launched, got ${before.status}`);
+    expect(before.hivraPublishedAddress).toBe("0xe3a1F26440A9FDf5d17b6B3F12F5ebB290080871");
+    expect(before.snapshot?.block).toBe(53005062);
+    expect(before.claim.phase).toBe("unpublished");
+    expect(before.access).toEqual({ kind: "unknown" });
+    expect(before.problems).toEqual([]);
+    // After activation a grandfathered holder keeps $HermesOS: the claim has not closed, so no switch is offered.
+    const after = resolveConversionState(readConversionInputs(access, new Date("2026-11-01T12:00:00Z")));
+    if (after.status !== "launched") throw new Error(`expected launched, got ${after.status}`);
+    expect(after.access).toEqual({ kind: "hermesos" });
+  });
+
+  it("stays dormant while the registry has no $HIVRA, whatever the committed airdrop config says", () => {
+    const state = resolveConversionState({
+      ...readConversionInputs({ grandfathered: true, convertedAt: null, conversionGraceEndsAt: null }),
+      hivra: null,
+      phase: "dormant",
+    });
+    expect(state.status).toBe("dormant");
+  });
+
+  it("pins the exact locations the snapshot may be published on", () => {
+    expect(SNAPSHOT_URL_ALLOWED_LOCATIONS).toEqual([
+      { host: "hivra.cloud", pathPrefix: "/" },
+      { host: "canary.hermesos.cloud", pathPrefix: "/" },
+      { host: "github.com", pathPrefix: "/ashneil12/hivra/" },
+    ]);
   });
 });
 
 describe("resolveConversionState", () => {
-  it("is dormant while the registry has no $HIVRA, even with links and access", () => {
-    expect(resolveConversionState(inputs({ hivra: null, phase: "dormant" })).status).toBe("dormant");
+  it("is dormant while the registry has no $HIVRA, even with a published snapshot and a closed claim", () => {
+    expect(resolveConversionState(inputs({ hivra: null, phase: "dormant" }))).toEqual({ status: "dormant", problems: [] });
   });
 
-  it("opens when $HIVRA is live, both links are valid and the user's tier counts $HIVRA", () => {
+  it("shows the published claim facts once $HIVRA is live", () => {
     expect(resolveConversionState(inputs())).toEqual({
-      status: "open",
+      status: "launched",
       hivraAddress: TEST_HIVRA,
       hivraPublishedAddress: TEST_HIVRA,
-      termsUrl: TERMS,
-      conversionUrl: CONVERT,
-      graceEndsAt: null,
+      senderAddress: TEST_SENDER,
+      snapshot: { block: 36_000_000, url: SNAPSHOT_URL, takenAt: null },
+      claim: { phase: "closed", campaignUrl: CAMPAIGN_URL, opensAt: "2026-10-01T00:00:00.000Z", closesAt: "2026-10-02T18:00:00.000Z" },
+      access: { kind: "hivra", graceEndsAt: null },
+      problems: [],
+    });
+  });
+
+  it("shows the contract and sender but no snapshot until both the block and the list are set", () => {
+    for (const airdrop of [
+      { ...PUBLISHED, snapshotBlock: null },
+      { ...PUBLISHED, snapshotUrl: null },
+    ]) {
+      const state = resolveConversionState(inputs({ airdrop }));
+      expect(state).toMatchObject({ status: "launched", senderAddress: TEST_SENDER, snapshot: null, claim: { phase: "unpublished" }, problems: [] });
+    }
+  });
+
+  it("carries the snapshot time only when it is a real instant that is not in the future", () => {
+    expect(resolveConversionState(inputs({ airdrop: { ...PUBLISHED, snapshotTakenAt: "2026-10-02T16:30:00Z" } }))).toMatchObject({
+      snapshot: { block: 36_000_000, takenAt: "2026-10-02T16:30:00.000Z" },
+      problems: [],
+    });
+    expect(resolveConversionState(inputs({ airdrop: { ...PUBLISHED, snapshotTakenAt: "2026-10-04T00:00:00Z" } }))).toMatchObject({
+      snapshot: { block: 36_000_000, takenAt: null },
+      problems: ["snapshotTakenAt is in the future"],
+    });
+  });
+
+  describe("the optional switch for a grandfathered holder", () => {
+    const grandfathered = { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null };
+
+    it("is offered only once the claim window has closed", () => {
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: CLOSED }))).toMatchObject({ access: { kind: "switch-available" } });
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: OPEN }))).toMatchObject({ claim: { phase: "open" }, access: { kind: "hermesos" } });
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: PUBLISHED }))).toMatchObject({ claim: { phase: "unpublished" }, access: { kind: "hermesos" } });
+    });
+
+    it("waits for a claim that has not opened yet", () => {
+      const notOpen = { ...OPEN, claim: { ...OPEN.claim, opensAt: "2026-10-10T00:00:00Z" } };
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: notOpen }))).toMatchObject({ claim: { phase: "not_open" }, access: { kind: "hermesos" } });
+    });
+
+    it("never counts a claim that closes after the current instant, or a closed claim without a published snapshot", () => {
+      const closesLater = { ...CLOSED, claim: { ...CLOSED.claim, closesAt: "2026-10-03T12:00:01Z" } };
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: closesLater }))).toMatchObject({ claim: { phase: "open" }, access: { kind: "hermesos" } });
+      const noSnapshot = { ...CLOSED, snapshotUrl: null };
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: noSnapshot }))).toMatchObject({ snapshot: null, claim: { phase: "closed" }, access: { kind: "hermesos" } });
+    });
+
+    it("is opened by the instant the claim closes, to the second", () => {
+      const closesNow = { ...CLOSED, claim: { ...CLOSED.claim, closesAt: "2026-10-03T12:00:00Z" } };
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: closesNow }))).toMatchObject({ access: { kind: "switch-available" } });
+    });
+
+    it("stays hidden when the claim config is invalid, even if its closing time has passed", () => {
+      const badLink = { ...CLOSED, claim: { ...CLOSED.claim, campaignUrl: "https://evil.example/x" } };
+      expect(resolveConversionState(inputs({ access: grandfathered, airdrop: badLink }))).toMatchObject({
+        claim: { phase: "unpublished" },
+        access: { kind: "hermesos" },
+        problems: ["claim.campaignUrl must be a plain https link on app.sablier.com"],
+      });
     });
   });
 
   it.each<[string, Partial<ConversionInputs>]>([
     ["$HIVRA is scheduled but not live", { phase: "scheduled" }],
-    ["the terms are not published", { links: { termsUrl: null, conversionUrl: CONVERT } }],
-    ["there is no conversion link", { links: { termsUrl: TERMS, conversionUrl: null } }],
     ["the user's access can't be read", { access: null }],
-  ])("stays closed (announced) when %s", (_label, overrides) => {
-    const state = resolveConversionState(inputs(overrides));
-    expect(state.status).toBe("announced");
-    expect(state.status === "announced" && state.hivraPublishedAddress).toBe(TEST_HIVRA);
+  ])("says nothing about the user's tier when %s", (_label, overrides) => {
+    expect(resolveConversionState(inputs(overrides))).toMatchObject({ status: "launched", access: { kind: "unknown" } });
   });
 
-  it("asks a grandfathered holder who hasn't switched to switch their access first, with no swap link", () => {
-    expect(resolveConversionState(inputs({ access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } }))).toEqual({
-      status: "switch-access",
-      hivraAddress: TEST_HIVRA,
-      hivraPublishedAddress: TEST_HIVRA,
-      termsUrl: TERMS,
-    });
-  });
-
-  it("opens for a grandfathered holder who has switched their access, carrying their grace end", () => {
+  it("carries a switched holder's grace end", () => {
     expect(
       resolveConversionState(
         inputs({
-          access: {
-            grandfathered: true,
-            convertedAt: "2026-10-02T00:00:00.000Z",
-            conversionGraceEndsAt: "2026-10-05T00:00:00.000Z",
-          },
+          access: { grandfathered: true, convertedAt: "2026-10-02T00:00:00.000Z", conversionGraceEndsAt: "2026-10-05T00:00:00.000Z" },
         }),
       ),
-    ).toMatchObject({ status: "open", graceEndsAt: "2026-10-05T00:00:00.000Z" });
+    ).toMatchObject({ access: { kind: "hivra", graceEndsAt: "2026-10-05T00:00:00.000Z" } });
   });
 
-  it("never asks for the switch while links are missing", () => {
-    expect(
-      resolveConversionState(
-        inputs({ links: { termsUrl: TERMS, conversionUrl: null }, access: { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } }),
-      ).status,
-    ).toBe("announced");
+  it.each<[string, Partial<HivraAirdropConfig>, string]>([
+    ["a snapshot list on an unapproved host", { snapshotUrl: "https://hivra-cloud.io/snapshot" }, "snapshotUrl must be https on an allowed Hivra location"],
+    ["a GitHub list outside Hivra's repository", { snapshotUrl: "https://github.com/someone/hivra/snapshot.csv" }, "snapshotUrl must be https on an allowed Hivra location"],
+    ["a block that is not a whole positive number", { snapshotBlock: 12.5 }, "snapshotBlock must be a positive whole block number"],
+    ["a snapshot time without seconds or zone", { snapshotTakenAt: "2026-10-02 18:00" }, "snapshotTakenAt must be a real UTC instant to the second, e.g. 2026-10-20T16:00:00Z"],
+    ["a snapshot time that is not a real date", { snapshotTakenAt: "2026-02-30T16:00:00Z" }, "snapshotTakenAt must be a real UTC instant to the second, e.g. 2026-10-20T16:00:00Z"],
+    ["a malformed sender", { senderAddress: "0x1234" }, "senderAddress must be a non-zero 0x-prefixed 20-byte address"],
+    ["the $HIVRA contract as the sender", { senderAddress: TEST_HIVRA }, "senderAddress is a token contract, not the airdrop wallet"],
+    ["the $HermesOS contract as the sender", { senderAddress: HERMESOS_TOKEN.publishedAddress }, "senderAddress is a token contract, not the airdrop wallet"],
+    ["a claim link on another host", { claim: { ...CLOSED.claim, campaignUrl: "https://app.sablier.com.evil.example/x" } }, "claim.campaignUrl must be a plain https link on app.sablier.com"],
+    ["a claim opening time without seconds", { claim: { ...CLOSED.claim, opensAt: "2026-10-01T00:00Z" } }, "claim.opensAt must be a real UTC instant to the second, e.g. 2026-10-21T16:00:00Z"],
+    ["a claim window that closes before it opens", { claim: { ...CLOSED.claim, opensAt: "2026-10-02T18:00:00Z", closesAt: "2026-10-01T00:00:00Z" } }, "claim.opensAt must be before claim.closesAt"],
+  ])("leaves out and reports %s", (_label, change, problem) => {
+    const state = resolveConversionState(inputs({ airdrop: { ...CLOSED, ...change } }));
+    expect(state.problems).toContain(problem);
   });
 
-  it("keeps conversion closed and reports a conversion link on an unapproved host", () => {
-    const state = resolveConversionState(inputs({ links: { termsUrl: TERMS, conversionUrl: "https://bankr-bot.xyz/convert" } }));
-    expect(state).toMatchObject({ status: "announced", problems: ["conversionUrl must be https on an allowed host"] });
-  });
-
-  it("keeps conversion closed and reports terms on an unapproved host", () => {
-    const state = resolveConversionState(inputs({ links: { termsUrl: "https://hivra-cloud.io/terms", conversionUrl: CONVERT } }));
-    expect(state).toMatchObject({ status: "announced", problems: ["termsUrl must be https on an allowed Hivra host"] });
+  it("reads a config without the new fields (an older mock or snapshot) as nothing published", () => {
+    const old = { senderAddress: TEST_SENDER, snapshotBlock: 36_000_000, snapshotUrl: SNAPSHOT_URL } as unknown as HivraAirdropConfig;
+    expect(resolveConversionState(inputs({ airdrop: old }))).toMatchObject({
+      snapshot: { block: 36_000_000, takenAt: null },
+      claim: { phase: "unpublished" },
+      problems: [],
+    });
   });
 });
 
+describe("resolveAirdropFacts", () => {
+  it("skips the clock-dependent facts (the claim, the future check) when no clock is given", () => {
+    expect(resolveAirdropFacts({ ...CLOSED, snapshotTakenAt: "2026-10-02T16:30:00Z" }, TEST_HIVRA, null)).toEqual({
+      senderAddress: TEST_SENDER,
+      snapshot: { block: 36_000_000, url: SNAPSHOT_URL, takenAt: "2026-10-02T16:30:00.000Z" },
+      claim: null,
+      problems: [],
+    });
+  });
+
+  it("still rejects a malformed snapshot time without a clock", () => {
+    expect(resolveAirdropFacts({ ...PUBLISHED, snapshotTakenAt: "yesterday" }, TEST_HIVRA, null)).toMatchObject({
+      snapshot: { takenAt: null },
+      problems: ["snapshotTakenAt must be a real UTC instant to the second, e.g. 2026-10-20T16:00:00Z"],
+    });
+  });
+
+  it("resolves the claim at the given instant", () => {
+    expect(resolveAirdropFacts(OPEN, TEST_HIVRA, NOW).claim?.phase).toBe("open");
+    expect(resolveAirdropFacts(OPEN, TEST_HIVRA, new Date("2026-11-01T00:00:00Z")).claim?.phase).toBe("closed");
+  });
+});
+
+
 describe("readAllowedUrl", () => {
-  const allowed = ["bankr.bot"];
+  const allowed = [
+    { host: "hivra.cloud", pathPrefix: "/" },
+    { host: "github.com", pathPrefix: "/ashneil12/hivra/" },
+  ];
 
   it.each([
-    ["https://bankr.bot/x", "https://bankr.bot/x"],
-    ["https://BANKR.bot/x", "https://bankr.bot/x"],
-    ["https://bankr.bot:443/x", "https://bankr.bot/x"],
+    ["https://hivra.cloud/x", "https://hivra.cloud/x"],
+    ["https://HIVRA.cloud/x", "https://hivra.cloud/x"],
+    ["https://hivra.cloud:443/x", "https://hivra.cloud/x"],
+    ["https://github.com/ashneil12/hivra/blob/main/snapshot.csv", "https://github.com/ashneil12/hivra/blob/main/snapshot.csv"],
   ])("accepts %s", (input, expected) => {
     expect(readAllowedUrl(input, allowed)).toBe(expected);
   });
 
   it.each([
-    "http://bankr.bot/x",
-    "https://evilbankr.bot/x",
-    "https://swap.bankr.bot/x",
-    "https://bankr.bot./x",
-    "https://bankr.bot:8443/x",
-    "https://xn--bnkr-8na.bot/x",
-    "https://bankr.bot.evil.example/x",
-    "https://user:pass@bankr.bot/x",
+    "http://hivra.cloud/x",
+    "https://evilhivra.cloud/x",
+    "https://www.hivra.cloud/x",
+    "https://hivra.cloud./x",
+    "https://hivra.cloud:8443/x",
+    "https://hivra.cloud.evil.example/x",
+    "https://user:pass@hivra.cloud/x",
+    "https://github.com/ashneil12/hivra-fake/x",
+    "https://github.com/ashneil12/hivra/../evil/x",
+    "https://github.com/ashneil12/hivra/%2e%2e/evil/x",
     "javascript:alert(1)",
     "not a url",
     "",
@@ -151,7 +300,7 @@ describe("readAllowedUrl", () => {
 
 describe("checkTokenAddress", () => {
   const dormant = resolveConversionState(inputs({ hivra: null, phase: "dormant" }));
-  const announced = resolveConversionState(inputs({ phase: "scheduled" }));
+  const launched = resolveConversionState(inputs({ phase: "scheduled" }));
 
   it("recognises the $HermesOS contract in any case", () => {
     expect(checkTokenAddress(` ${HERMESOS_TOKEN.publishedAddress.toUpperCase().replace("0X", "0x")} `, dormant)).toEqual({
@@ -159,19 +308,21 @@ describe("checkTokenAddress", () => {
     });
   });
 
-  it("says any other token is not Hivra's while $HIVRA has not launched", () => {
+  it("says any other token is not Hivra's while $HIVRA has not launched, even the airdrop wallet", () => {
     expect(checkTokenAddress(TEST_HIVRA, dormant)).toEqual({ kind: "hivra-not-launched" });
+    expect(checkTokenAddress(TEST_SENDER, dormant)).toEqual({ kind: "hivra-not-launched" });
   });
 
-  it("recognises the registry $HIVRA contract once announced", () => {
-    expect(checkTokenAddress(TEST_HIVRA, announced)).toEqual({ kind: "hivra" });
+  it("recognises the registry $HIVRA contract and the airdrop wallet once launched", () => {
+    expect(checkTokenAddress(TEST_HIVRA, launched)).toEqual({ kind: "hivra" });
+    expect(checkTokenAddress(TEST_SENDER.toUpperCase().replace("0X", "0x"), launched)).toEqual({ kind: "airdrop-sender" });
   });
 
-  it("flags a lookalike once $HIVRA is announced", () => {
-    expect(checkTokenAddress("0x2222222222222222222222222222222222222222", announced)).toEqual({ kind: "not-official" });
+  it("flags a lookalike once $HIVRA is launched", () => {
+    expect(checkTokenAddress("0x2222222222222222222222222222222222222222", launched)).toEqual({ kind: "not-official" });
   });
 
   it("rejects partial input", () => {
-    expect(checkTokenAddress("0x1111", announced)).toEqual({ kind: "invalid" });
+    expect(checkTokenAddress("0x1111", launched)).toEqual({ kind: "invalid" });
   });
 });

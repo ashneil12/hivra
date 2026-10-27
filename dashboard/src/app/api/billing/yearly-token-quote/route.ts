@@ -41,6 +41,8 @@ import { LivePriceUnavailableError } from "@/lib/billing/live-thresholds";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
 import { reportPriceGateRefusal } from "@/lib/billing/price-gate-alerts";
 import { TokenNotAllowedError } from "@/lib/billing/token-access";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
+import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 import { isPlatformTokenKey } from "@/lib/billing/token-registry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -322,6 +324,14 @@ export async function POST(req: NextRequest) {
           failureType: "token_not_allowed",
           token: error.tokenKey,
           allowedTokens: error.allowedTokens,
+        });
+      }
+      if (error instanceof HivraNotReadyError) {
+        return hivraNotReadyResponse({
+          source: "billing/yearly-token-quote",
+          route: "/api/billing/yearly-token-quote",
+          method: "POST",
+          userId,
         });
       }
       if (error instanceof LivePriceUnavailableError || error instanceof PlatformTokenPriceGateError) {
