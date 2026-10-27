@@ -1,6 +1,6 @@
 import { parseChangelog } from "../changelog";
 
-const SAMPLE = `# Hermes Deploy — Changelog
+const SAMPLE = `# Hivra Changelog
 
 > Last updated: 2026-06-10
 

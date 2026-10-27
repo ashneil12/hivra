@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { animate, m, useMotionValue, useMotionValueEvent, useScroll, useTransform, type MotionValue } from "framer-motion";
 import { Check, GitBranch, Image as ImageIcon, KeyRound, Landmark, Lock, RefreshCw, TerminalSquare, X, type LucideIcon } from "lucide-react";
 import { useMotionPref, usePageVisible, useRange, useTypedLines, useVisible, useWideScreen } from "./motion";
@@ -13,6 +13,9 @@ export interface HowCopy {
   blocked: readonly string[];
   note: string;
 }
+
+/** The pinned scene needs room for the steps and the picture side by side. */
+const PIN_QUERY = "(min-width: 1000px) and (min-height: 700px)";
 
 /** An illustration of a tmux session, not a recording. */
 const TMUX_LINES = [
@@ -135,23 +138,60 @@ const LANES = [120, 210, 300];
 const OK_ICONS: LucideIcon[] = [GitBranch, KeyRound, TerminalSquare];
 const NO_ICONS: LucideIcon[] = [ImageIcon, Lock, Landmark];
 
-function AllowLine({ t, lane }: { t: MotionValue<number>; lane: number }) {
+/*
+ * On a phone the three chips on each side do not fit beside the ring, so the
+ * same picture is drawn the other way up: what it gets across the top, what
+ * stays out across the bottom, the ring in the middle. Both drawings are in
+ * the page; CSS shows the one that fits (the chips are shared and move).
+ */
+const TALL = { w: 360, h: 500, cx: 180, cy: 250, r: 82, allowY: 40, blockY: 460, cols: [62, 180, 298], boxHalfH: 33 };
+
+/** Where a chip sits: the wide drawing reads --lane-y, the tall one reads --col-x and --tall-y. */
+function chipStyle(lane: number, side: "allow" | "block"): CSSProperties {
+  return {
+    "--lane-y": `${(LANES[lane] / 420) * 100}%`,
+    "--col-x": `${(TALL.cols[lane] / TALL.w) * 100}%`,
+    "--tall-y": `${((side === "allow" ? TALL.allowY : TALL.blockY) / TALL.h) * 100}%`,
+  } as CSSProperties;
+}
+
+function AllowLine({ t, lane, tall }: { t: MotionValue<number>; lane: number; tall?: boolean }) {
   const start = 0.26 + lane * 0.08;
   const draw = useTransform(t, [start, start + 0.14], [0, 1]);
+  if (tall) {
+    const x = TALL.cols[lane];
+    const endX = TALL.cx + (lane - 1) * 28;
+    const endY = TALL.cy - TALL.boxHalfH;
+    return <m.path d={`M ${x} ${TALL.allowY + 22} C ${x} 130, ${endX} 136, ${endX} ${endY}`} className={styles.allowLine} style={{ pathLength: draw }} filter="url(#how-glow-tall)" />;
+  }
   const y = LANES[lane];
   return <m.path d={`M 150 ${y} C 205 ${y}, 205 ${RING.cy}, ${RING.cx - 62} ${RING.cy}`} className={styles.allowLine} style={{ pathLength: draw }} filter="url(#how-glow)" />;
 }
 
-function BlockLine({ t, lane }: { t: MotionValue<number>; lane: number }) {
+function BlockLine({ t, lane, tall }: { t: MotionValue<number>; lane: number; tall?: boolean }) {
   const start = 0.5 + lane * 0.1;
   const reach = useTransform(t, [start, start + 0.08, start + 0.1, start + 0.2], [0, 1, 1, 0]);
   const flash = useTransform(t, [start + 0.07, start + 0.1, start + 0.2], [0, 1, 0]);
   const flashScale = useTransform(flash, [0, 1], [0.5, 1.6]);
+  // A zero-length line still draws its round cap, so hide it until it starts.
+  const shown = useTransform(reach, v => (v > 0.001 ? 1 : 0));
+  if (tall) {
+    const x1 = TALL.cols[lane];
+    const y1 = TALL.blockY - 22;
+    const x2 = TALL.cx + (x1 - TALL.cx) * 0.42;
+    const y2 = TALL.cy + Math.sqrt(Math.max(0, TALL.r * TALL.r - (x2 - TALL.cx) * (x2 - TALL.cx))) + 4;
+    return (
+      <g>
+        <m.line x1={x1} y1={y1} x2={x2} y2={y2} className={styles.blockLine} style={{ pathLength: reach, opacity: shown }} />
+        <m.circle cx={x2} cy={y2} r={14} className={styles.blockFlash} style={{ opacity: flash, scale: flashScale }} />
+      </g>
+    );
+  }
   const y = LANES[lane];
   const x2 = RING.cx + Math.sqrt(Math.max(0, RING.r * RING.r - (y - RING.cy) * (y - RING.cy))) + 4;
   return (
     <g>
-      <m.line x1={450} y1={y} x2={x2} y2={y} className={styles.blockLine} style={{ pathLength: reach }} />
+      <m.line x1={450} y1={y} x2={x2} y2={y} className={styles.blockLine} style={{ pathLength: reach, opacity: shown }} />
       <m.circle cx={x2} cy={y} r={14} className={styles.blockFlash} style={{ opacity: flash, scale: flashScale }} />
     </g>
   );
@@ -161,7 +201,7 @@ function AllowItem({ t, lane, label }: { t: MotionValue<number>; lane: number; l
   const Icon = OK_ICONS[lane];
   const on = useTransform(t, [0.34 + lane * 0.08, 0.4 + lane * 0.08], [0, 1]);
   return (
-    <li style={{ top: `${(LANES[lane] / 420) * 100}%` }}>
+    <li style={chipStyle(lane, "allow")}>
       <Icon size={14} />
       {label}
       <m.span className={styles.okMark} style={{ opacity: on, scale: on }}><Check size={11} /></m.span>
@@ -173,7 +213,7 @@ function BlockItem({ t, lane, label }: { t: MotionValue<number>; lane: number; l
   const Icon = NO_ICONS[lane];
   const hit = useTransform(t, [0.58 + lane * 0.1, 0.64 + lane * 0.1], [0, 1]);
   return (
-    <li style={{ top: `${(LANES[lane] / 420) * 100}%` }}>
+    <li style={chipStyle(lane, "block")}>
       <Icon size={14} />
       <span className={styles.blockLabel}>{label}<m.i style={{ scaleX: hit }} /></span>
       <m.span className={styles.noMark} style={{ opacity: hit, scale: hit }}><X size={11} /></m.span>
@@ -188,7 +228,7 @@ function Boundary({ t, copy }: { t: MotionValue<number>; copy: HowCopy }) {
   const boxScale = useTransform(box, [0, 1], [0.7, 1]);
   return (
     <div className={`${styles.howVisual} ${styles.boundaryVisual}`} aria-hidden="true">
-      <svg className={styles.boundarySvg} viewBox="0 0 600 420">
+      <svg className={`${styles.boundarySvg} ${styles.boundaryWide}`} viewBox="0 0 600 420">
         <defs>
           <filter id="how-glow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="5" result="b" />
@@ -199,6 +239,18 @@ function Boundary({ t, copy }: { t: MotionValue<number>; copy: HowCopy }) {
         {copy.blocked.map((label, lane) => <BlockLine key={label} t={t} lane={lane} />)}
         <m.circle cx={RING.cx} cy={RING.cy} r={RING.r} className={styles.ring} style={{ pathLength: ring, rotate: -90 }} filter="url(#how-glow)" />
         <circle cx={RING.cx} cy={RING.cy} r={RING.r + 16} className={styles.ringOuter} />
+      </svg>
+      <svg className={`${styles.boundarySvg} ${styles.boundaryTall}`} viewBox={`0 0 ${TALL.w} ${TALL.h}`}>
+        <defs>
+          <filter id="how-glow-tall" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        {copy.allowed.map((label, lane) => <AllowLine key={label} t={t} lane={lane} tall />)}
+        {copy.blocked.map((label, lane) => <BlockLine key={label} t={t} lane={lane} tall />)}
+        <m.circle cx={TALL.cx} cy={TALL.cy} r={TALL.r} className={styles.ring} style={{ pathLength: ring, rotate: -90 }} filter="url(#how-glow-tall)" />
+        <circle cx={TALL.cx} cy={TALL.cy} r={TALL.r + 14} className={styles.ringOuter} />
       </svg>
       <m.div className={styles.boundaryBox} style={{ opacity: box, scale: boxScale }}>
         <b>agent-01</b>
@@ -243,7 +295,7 @@ function StackedStep({ index, step, copy }: { index: number; step: HowCopy["step
       <div className={styles.howStepText} data-active="">
         <span className={styles.howNum}>{step.n}</span>
         <h3>{step.title}</h3>
-        <p>{glossify(step.body)}</p>
+        <div className={styles.howBody}><p>{glossify(step.body)}</p></div>
       </div>
       <div className={styles.howStage}>
         {index === 0 ? <StayOn t={t} live={inView && pageShown} /> : index === 1 ? <Handoff t={t} /> : <Boundary t={t} copy={copy} />}
@@ -256,7 +308,7 @@ export default function HowScene({ copy }: { copy: HowCopy }) {
   const outer = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const { off } = useMotionPref();
-  const wide = useWideScreen();
+  const wide = useWideScreen(PIN_QUERY);
   const pinned = wide && !off;
   const pageShown = usePageVisible();
   const stageVisible = useVisible(stageRef, { amount: 0.3, key: pinned });
@@ -284,7 +336,7 @@ export default function HowScene({ copy }: { copy: HowCopy }) {
               <li key={step.n} className={styles.howStepText} data-active={active === index ? "" : undefined}>
                 <span className={styles.howNum}>{step.n}</span>
                 <h3>{step.title}</h3>
-                <p>{glossify(step.body)}</p>
+                <div className={styles.howBody}><p>{glossify(step.body)}</p></div>
               </li>
             ))}
           </ol>

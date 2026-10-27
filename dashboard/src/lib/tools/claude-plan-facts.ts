@@ -11,6 +11,11 @@
 // Every value was read on 2026-09-30 on Anthropic's own pages (the URLs in
 // `sources`) and checked against them a second time that day. Update
 // `lastVerified` only when every value and every changelog row is re-checked.
+// The API rates in `api` were read again on 2026-10-21 against the model pricing
+// table at platform.claude.com/docs/en/about-claude/pricing (`apiRatesRead`).
+// That read corrected two rows: Sonnet 5.5 cache hits are $0.10 (0.05x its input
+// price, as for Opus 5.5), not $0.20, and the Haiku row is Haiku 5.5, which
+// Anthropic prices by prompt length.
 //
 // What Anthropic does NOT publish is deliberately absent: message or token
 // counts per window, Pro's absolute allowance, any weekly multiple for Max, how
@@ -32,6 +37,8 @@ export interface ClaudeSource {
 
 export const CLAUDE_PLAN_FACTS = {
   lastVerified: "2026-09-30",
+  /** The day the `api` rates were last read on Anthropic's pricing table. */
+  apiRatesRead: "2026-10-21",
   /** The session limit resets on a rolling window of this many hours. */
   windowHours: 5,
   // Days Anthropic changed Claude Code's limits (each is a row in the changelog
@@ -66,12 +73,25 @@ export const CLAUDE_PLAN_FACTS = {
   enterpriseSeatUsd: 20,
   /** Claude Code's default model on Pro, Max, Team and Enterprise since this day (v2.1.280). */
   defaultModel: { label: "Opus 5.5", since: "2026-09-22" },
-  /** USD per million tokens at API list price. Cache write is the 5-minute rate. */
+  /**
+   * USD per million tokens at API list price. Cache write is the 5-minute rate.
+   * Haiku 5.5 is the one model priced by prompt length: the first row is for
+   * prompts up to `longPrompt.overTokens` tokens, and `longPrompt` holds the higher
+   * rates for a request whose prompt is longer (cache reads and writes count
+   * towards the prompt). The calculator does not model Haiku.
+   */
   api: {
     fable: { label: "Fable 5.1", input: 10, output: 50, cacheRead: 0.25, cacheWrite5m: 12.5 },
     opus: { label: "Opus 5.5", input: 4, output: 20, cacheRead: 0.2, cacheWrite5m: 5 },
-    sonnet: { label: "Sonnet 5.5", input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5 },
-    haiku: { label: "Haiku 4.5", input: 1, output: 5, cacheRead: 0.1, cacheWrite5m: 1.25 },
+    sonnet: { label: "Sonnet 5.5", input: 2, output: 10, cacheRead: 0.1, cacheWrite5m: 2.5 },
+    haiku: {
+      label: "Haiku 5.5",
+      input: 0.1,
+      output: 0.5,
+      cacheRead: 0.01,
+      cacheWrite5m: 0.125,
+      longPrompt: { overTokens: 100000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite5m: 0.625 },
+    },
   },
   // Anthropic's own planning figures for API-billed Claude Code. "Active day" is
   // a day the developer used it. The $13 and the $150 to $250 are averages across
@@ -88,10 +108,13 @@ export const CLAUDE_PLAN_FACTS = {
     inputToOutputRatioBefore: 189,
   },
   // HIVRA'S ESTIMATE, not Anthropic's. Anthropic publishes neither an hourly
-  // token volume nor how much of the input is cache reads. These two numbers are
-  // set so that a normal three-hour Sonnet day lands within about 5% of
-  // Anthropic's $13 average, and a heavy Opus day lands above its $30 line
-  // (both held by claude-plan-calc.test.ts).
+  // token volume nor how much of the input is cache reads. These two numbers were
+  // chosen on 2026-09-30, when the Sonnet 5.5 cache-read rate above was entered as
+  // $0.20, to put a normal three-hour Sonnet day within about 5% of Anthropic's $13
+  // average. At the real $0.10 that day comes out well below $13 and a normal Opus
+  // day above it, so the assumptions were left alone and the pages no longer call
+  // the Sonnet day close to $13. A heavy Opus day still lands above Anthropic's
+  // $30 line (held by claude-plan-calc.test.ts).
   estimate: {
     outputMPerHour: { normal: 0.05, heavy: 0.1 },
     cacheReadShare: 0.98,
@@ -258,9 +281,15 @@ export const CLAUDE_PLAN_CHANGELOG: readonly ClaudePlanChange[] = [
   { date: "2025-04-09", text: "Max launched at $100 a month for 5x Pro's usage and $200 a month for 20x.", source: S.maxLaunchArchived },
 ];
 
-/** "$20", "$0.20", "$12.50": whole dollars without cents, anything else with two decimals. */
+/**
+ * "$20", "$0.20", "$12.50": whole dollars without cents, anything else with two
+ * decimals. A rate that needs a third decimal keeps it ("$0.125"), so a price is
+ * never rounded to a different one.
+ */
 export function usd(value: number): string {
-  return Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`;
+  if (Number.isInteger(value)) return `$${value}`;
+  const cents = value * 100;
+  return Math.abs(cents - Math.round(cents)) < 1e-9 ? `$${value.toFixed(2)}` : `$${value.toFixed(3)}`;
 }
 
 /**

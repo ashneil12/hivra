@@ -383,7 +383,7 @@ class SudoersContractTests(unittest.TestCase):
 
     def test_provisioning_and_update_grant_the_same_exact_commands(self):
         provisioning = self.sudoers_commands("provision-claude-code-box.sh")
-        update = self.sudoers_commands("hivra-update-guest-runtime.sh")
+        update = self.sudoers_commands("hivra-guest-runtime-update.sh")
         self.assertEqual(provisioning, update)
         self.assertEqual(provisioning, [["status"], ["install"], ["mode", "app"], ["mode", "desktop"], ["remove"]])
 
@@ -402,7 +402,7 @@ class SudoersContractTests(unittest.TestCase):
             # The job's own verb exists, but only root's transient unit runs it.
             with mock.patch.object(app, "verb_install_run", return_value=0):
                 self.assertEqual(app.main(["x", "install-run"]), 0)
-        for script in ("provision-claude-code-box.sh", "hivra-update-guest-runtime.sh"):
+        for script in ("provision-claude-code-box.sh", "hivra-guest-runtime-update.sh"):
             self.assertNotIn("install-run", [part for command in self.sudoers_commands(script) for part in command])
 
     def test_the_helper_refuses_to_run_without_root(self):

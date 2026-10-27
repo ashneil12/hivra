@@ -4,10 +4,14 @@ import type { ChangelogEntry } from "@/lib/changelog";
 // can be unit-tested without a Next runtime; the route handler at
 // app/changelog/rss.xml/route.ts wires readChangelog() into this. (#changelog-rss-feed)
 
-/** Channel-level copy, mirrored from the /changelog page so the feed reads the same. */
-export const CHANGELOG_FEED_TITLE = "Changelog: what shipped on Hivra";
-const CHANGELOG_FEED_DESCRIPTION =
-  "Dated entries for every notable change to Hermes Deploy: bug fixes, feature ships, upstream syncs, and infrastructure work.";
+/**
+ * Channel-level copy, mirrored from the /changelog page so the feed reads the same: the title is the
+ * page's name without its " | Product Updates and Fixes" strapline, and the description is the page's
+ * search description word for word (app/changelog/__tests__/page.test.tsx holds the two together).
+ */
+export const CHANGELOG_FEED_TITLE = "Hivra Changelog";
+export const CHANGELOG_FEED_DESCRIPTION =
+  "Read what has changed on Hivra, from agent memory and browser sessions to reliability improvements and dashboard updates.";
 
 export interface BuildChangelogRssOptions {
   /** Parsed entries, already newest-first (the order readChangelog returns). */

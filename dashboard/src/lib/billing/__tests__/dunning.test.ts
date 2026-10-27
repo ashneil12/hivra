@@ -168,15 +168,14 @@ describe("maybeSendPaymentFailedRecoveryEmail", () => {
     );
   });
 
-  it("stays silent on the first failed attempt so Smart Retries get one shot", async () => {
+  it("emails from the first failed attempt, because the window it promises starts there", async () => {
+    mockInvoicesRetrieve.mockResolvedValue(invoiceFixture({ attempt_count: 1 }));
     const outcome = await maybeSendPaymentFailedRecoveryEmail({
       invoice: invoiceFixture({ attempt_count: 1 }),
       userId: "user_1",
     });
-    expect(outcome).toEqual({ sent: false, reason: "first_attempt" });
-    expect(mockInvoicesRetrieve).not.toHaveBeenCalled();
-    expect(mockSend).not.toHaveBeenCalled();
-    expect(mockUpsertCalls).toHaveLength(0);
+    expect(outcome).toEqual({ sent: true });
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
   it("dedupes a webhook redelivery (and later attempts) via the ledger", async () => {

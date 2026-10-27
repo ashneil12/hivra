@@ -80,10 +80,10 @@ function offerForReason(reason: ChurnSurveyReason, plan: string | null | undefin
     }
     case "not_using":
       return {
-        title: "You could pause instead",
-        body: "If you're just busy, email us and we'll pause your billing instead of losing your agent's setup and memory — picking back up later takes one reply.",
-        ctaLabel: "Email us about pausing",
-        ctaHref: supportMailto("Pause my subscription"),
+        title: "Just busy?",
+        body: "You can cancel now and choose a plan again later. Your files are kept, and we email you before anything is deleted. Once a plan is active, press Start to carry on.",
+        ctaLabel: "Email us a question",
+        ctaHref: supportMailto("A question before I cancel"),
       };
     case "missing_feature":
       return {
@@ -163,7 +163,7 @@ export function CancelSaveFlow({
       ariaLabel="Before you cancel"
       eyebrow="Before you cancel"
       title={<>What&rsquo;s making you cancel?</>}
-      description="One question, then you can cancel either way."
+      description="One question, then you can cancel either way. When your plan ends, Hivra stops running your computers. Their files are kept, and we email you before anything is deleted."
       size="sm"
       onClose={onClose}
       footer={

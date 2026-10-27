@@ -1,10 +1,10 @@
 "use client";
 
-// UpgradePaywallModal — the shared "this feature needs Pro" surface.
+// UpgradePaywallModal: the shared "this feature needs a paid plan" surface.
 //
 // Replaces the raw 403 banners / dead-end buttons that locked features used to
 // render. Tells the user what the feature actually does (one concrete example),
-// shows the Free vs Pro line, and routes to billing with attribution params.
+// shows the Free vs paid line, and routes to billing with attribution params.
 // Quiet dismiss everywhere — backdrop, X, and a "Not now" link. No dark patterns.
 //
 // Analytics: `paywall_viewed` fires once on mount, `upgrade_clicked` on the CTA
@@ -53,14 +53,14 @@ const FEATURE_CONTENT: Record<PaywallFeature, {
   agents: {
     icon: <Layers size={18} />,
     title: "Run a fleet of agents",
-    body: "Free includes one agent. Pro runs three at once, each with its own memory, tools, and job. Real work happening in parallel while you sleep.",
+    body: "The free account includes one agent on your own computer. A paid plan runs three at once, each with its own memory, tools, and job. Real work happening in parallel while you sleep.",
     example: "e.g. one agent triaging your inbox, one tracking competitors, one shipping code, all at the same time.",
   },
   generic: {
     icon: <Lock size={18} />,
-    title: "This feature needs Pro",
-    body: "This capability isn’t included on the Free plan. Pro unlocks browsing, persistent memory, scheduled tasks, and 4× the compute.",
-    example: "e.g. your agent goes always-on (never paused for inactivity) and gains browsing, memory, and scheduled tasks.",
+    title: "This feature needs a paid plan",
+    body: "This capability isn’t included on the free account. A paid plan adds browsing, persistent memory, scheduled tasks, and a computer that Hivra runs for you.",
+    example: "e.g. Hivra runs a computer that stays on, and your agent gains browsing, memory, and scheduled tasks.",
   },
 };
 
@@ -101,7 +101,7 @@ export function UpgradePaywallModal({
     <BillingDialog
       ariaLabel={content.title}
       icon={content.icon}
-      eyebrow="Pro feature"
+      eyebrow="Paid feature"
       title={content.title}
       size="sm"
       onClose={onClose}
@@ -126,7 +126,7 @@ export function UpgradePaywallModal({
             }}
             className={`mono ${styles.button} ${styles.primary}`}
           >
-            Upgrade to Pro, {PRO_PRICE}
+            See plans, from {PRO_PRICE}
           </a>
         </>
       }
@@ -138,10 +138,10 @@ export function UpgradePaywallModal({
       <dl className={styles.ledger}>
         <div className={styles.ledgerRow}>
           <dt>Free</dt>
-          <dd>Not included</dd>
+          <dd>{feature === "agents" ? "1 agent, on your own computer" : "Not included"}</dd>
         </div>
         <div className={styles.ledgerRow}>
-          <dt>Pro · {PRO_PRICE}</dt>
+          <dt>Paid plan · from {PRO_PRICE}</dt>
           <dd>
             Included · {PLANS.operator.specs.cpu} · {PLANS.operator.specs.agents}
           </dd>

@@ -1,18 +1,22 @@
 import { Plus } from "lucide-react";
-import { HOMEPAGE_FAQ } from "./content";
+import { FAQ_TITLE, HOMEPAGE_FAQ } from "./content";
 import styles from "./home.module.css";
 import { glossify } from "@/components/gloss/glossify";
 
-/** Native disclosure: works without script, animates where the browser can. */
-export default function Faq() {
+/**
+ * Native disclosure: works without script, animates where the browser can.
+ * `items` is the list the page also publishes as FAQPage JSON-LD, so the
+ * visible answers and the structured ones are the same strings.
+ */
+export default function Faq({ items = HOMEPAGE_FAQ }: { items?: readonly { q: string; a: string }[] }) {
   return (
     <section id="faq" className={styles.faq} aria-labelledby="faq-heading">
       <header className={styles.faqHead}>
-        <span className={styles.eyebrow}>Questions</span>
-        <h2 id="faq-heading" className={styles.sectionTitle}>Common questions</h2>
+        <span className={styles.eyebrow} aria-hidden="true" />
+        <h2 id="faq-heading" className={styles.sectionTitle}>{FAQ_TITLE}</h2>
       </header>
       <div className={styles.faqList}>
-        {HOMEPAGE_FAQ.map(({ q, a }, index) => (
+        {items.map(({ q, a }, index) => (
           <details key={q} className={styles.faqItem} open={index === 0}>
             <summary>
               <h3>{q}</h3>

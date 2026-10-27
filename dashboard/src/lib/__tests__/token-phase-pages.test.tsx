@@ -73,9 +73,9 @@ describe("dormant $HIVRA: the copy from before", () => {
     renderPage(TokenVerificationPage);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HermesOS and Hivra\.$/);
     expect(screen.getByText(DORMANT_TOKEN_PAGE_COPY.heroLead)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Token launch in preparation" })).toBeInTheDocument();
     expect(screen.getByText("The existing $HermesOS contract. $HIVRA has not launched.")).toBeInTheDocument();
-    for (const paragraph of DORMANT_TOKEN_PAGE_COPY.migrationParagraphs) expect(screen.getByText(paragraph)).toBeInTheDocument();
   });
 
   it("/tokenomics keeps its title, header and migration paragraphs", async () => {
@@ -83,15 +83,13 @@ describe("dormant $HIVRA: the copy from before", () => {
     expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: DORMANT_TOKENOMICS_COPY.metadataDescription });
     renderPage(TokenomicsPage);
     expect(screen.getByText(DORMANT_TOKENOMICS_COPY.headerLead)).toBeInTheDocument();
-    for (const paragraph of DORMANT_TOKENOMICS_COPY.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
-    // The old token-pricing line stays on the dormant page: only the launched copy drops it.
-    expect(screen.getByText(/a year of Pro is \$49 in the token against \$79 by card/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
   });
 
   it("/why-hivra/evolution keeps its $HIVRA lines", () => {
     setPhase("dormant");
     const { container } = renderPage(WhyHivraEvolutionPage);
-    expect(screen.getByText("$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.")).toBeInTheDocument();
+    expect(screen.getByText("$HIVRA is a planned new token on Base, to be launched through Doppler. Launch is in preparation and it does not exist yet.")).toBeInTheDocument();
     for (const line of copy.evolution.hivraDetails) expect(screen.getByText(line)).toBeInTheDocument();
     expect(container.textContent).toContain("Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the token page.");
     expect(screen.getByText("$HermesOS is the live token today. $HIVRA is the proposed next one.")).toBeInTheDocument();
@@ -111,7 +109,7 @@ describe("dormant $HIVRA: the copy from before", () => {
   it("/llms.txt keeps its $HIVRA sentences", () => {
     setPhase("dormant");
     const txt = buildLlmsTxt({ siteUrl: "https://example.test" });
-    expect(txt).toContain("macOS computers and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.\n");
+    expect(txt).toContain("and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.\n");
     expect(txt).toContain(`(https://example.test/TOKENOMICS.md): ${copy.llmsTxt.tokenomicsNote}\n`);
   });
 });

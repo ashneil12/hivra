@@ -1,14 +1,30 @@
 /**
  * Competitor prices and terms quoted on /compare, each read from the vendor's
- * own pages on COMPETITOR_FACTS_CHECKED and cross-checked by a second pass.
+ * own pages and cross-checked by a second pass. COMPETITOR_FACTS_CHECKED is the
+ * day of the latest re-read, not a claim that every vendor was read that day:
+ * the refresh notes below say which vendors were read on which day.
  * Pages and the shared price table both read from here, so a vendor change is a
  * one-file edit plus a new date. Anything a vendor does not publish is left out
  * rather than guessed; see `notPublished` for what was looked for and not found.
  *
  * Refresh rule: re-read the sources below before changing a number, then bump
  * the date. The monthly SEO routine flags this file when the date is 90 days old.
+ *
+ * 2026-10-21 refresh. Re-read on the vendors' own pages that day: Hostinger (managed plan $4.99,
+ * KVM 2 $8.79, renewals unchanged; hostinger.com/managed-hermes-agent and
+ * hostinger.com/vps/docker/openclaw), Agent 37 (plans now run to $99.99 for teams; SOC 2 Type I
+ * stated, Type II in progress, and its trust centre lists SOC 2 as in progress;
+ * agent37.com/personal and trust.agent37.com), xCloud (xcloud.host/pricing, /openclaw-hosting,
+ * /paperclip-hosting, the OpenClaw deploy docs and the refund policy: figures, beta label and
+ * refund terms unchanged, and Paperclip hosting is sold on the same sizes) and the Nous $2
+ * minimum credit (portal.nousresearch.com/cloud). Nous no longer shows per-size prices without a
+ * Portal sign-in, so its per-size figures are the last published ones, not read on the check
+ * date, and every place that quotes them says so.
+ * Not re-read on that day, last matched against the vendors' pages in the 2026-10-20 claim
+ * audit: Railway, Render, Hetzner, DigitalOcean, Fly Sprites, E2B, Orgo and Cloudways, and the
+ * Agent 37 metered rates ($4.76, $9.34) and refund terms.
  */
-export const COMPETITOR_FACTS_CHECKED = "2026-10-02";
+export const COMPETITOR_FACTS_CHECKED = "2026-10-21";
 
 /**
  * "October 2026", for reader-facing freshness stamps ("Prices as of October 2026").
@@ -47,7 +63,7 @@ export const COMPETITOR_FACTS: Record<CompetitorSlug, CompetitorFacts> = {
       { label: "Agent 37 terms", href: "https://agent37.com/terms" },
       { label: "Agent 37 docs", href: "https://agent37.com/docs" },
     ],
-    keyFigures: ["$4.76", "$9.34", "$3.99", "$29.99", "30 days asleep"],
+    keyFigures: ["$4.76", "$9.34", "$3.99", "$29.99", "$99.99", "30 days asleep"],
     notPublished: ["hosting regions or data centre locations"],
   },
   "vs-hostinger": {
@@ -59,7 +75,7 @@ export const COMPETITOR_FACTS: Record<CompetitorSlug, CompetitorFacts> = {
       { label: "Hostinger VPS plans for agents", href: "https://www.hostinger.com/vps/docker/openclaw" },
       { label: "Hostinger refund policy", href: "https://www.hostinger.com/legal/refund-policy" },
     ],
-    keyFigures: ["$5.99", "$11.99", "$8.99", "$143.76"],
+    keyFigures: ["$4.99", "$11.99", "$8.79", "$119.76"],
     notPublished: [
       "vCPU, RAM or disk for the managed plan",
       "the amount of bundled AI credit",
@@ -73,6 +89,7 @@ export const COMPETITOR_FACTS: Record<CompetitorSlug, CompetitorFacts> = {
       { label: "xCloud pricing", href: "https://xcloud.host/pricing/" },
       { label: "xCloud OpenClaw hosting", href: "https://xcloud.host/openclaw-hosting/" },
       { label: "xCloud Hermes Agent hosting", href: "https://xcloud.host/hermes-agent-hosting/" },
+      { label: "xCloud Paperclip hosting", href: "https://xcloud.host/paperclip-hosting/" },
       { label: "xCloud refund policy", href: "https://xcloud.host/docs/refund-policy/" },
     ],
     keyFigures: ["$9.99", "100 GB", "4 vCPU", "10%"],
@@ -88,7 +105,11 @@ export const COMPETITOR_FACTS: Record<CompetitorSlug, CompetitorFacts> = {
       { label: "Hermes Agent on GitHub", href: "https://github.com/NousResearch/hermes-agent" },
     ],
     keyFigures: ["$0.56", "$1.09", "$0.03", "$16.80", "$2"],
-    notPublished: ["disk size per instance", "how unspent prepaid credit is refunded"],
+    notPublished: [
+      "per-size instance prices without a Portal sign-in",
+      "disk size per instance",
+      "how unspent prepaid credit is refunded",
+    ],
   },
 };
 
@@ -118,14 +139,14 @@ export const PRICE_TABLE: PriceRow[] = [
   },
   {
     provider: "Hostinger managed AI apps",
-    price: "$5.99/mo, size not published",
-    terms: "Paid upfront for 24 months ($143.76, our arithmetic). Renews at $11.99/mo. Bundled AI credit amount not published.",
+    price: "$4.99/mo, size not published",
+    terms: "Paid upfront for 24 months ($119.76, our arithmetic). Shown as a sale price. Renews at $11.99/mo. Bundled AI credit amount not published.",
     source: COMPETITOR_FACTS["vs-hostinger"].sources[0],
   },
   {
     provider: "Hostinger KVM 2 VPS",
-    price: "$8.99/mo for 2 vCPU and 8 GB RAM, self-managed",
-    terms: "24-month term paid upfront. Renews at $14.99/mo. You run the updates and backups.",
+    price: "$8.79/mo for 2 vCPU and 8 GB RAM, self-managed",
+    terms: "24-month term paid upfront, shown as a sale price. Renews at $14.99/mo. You run the updates and backups.",
     source: COMPETITOR_FACTS["vs-hostinger"].sources[2],
   },
   {
@@ -142,9 +163,12 @@ export const PRICE_TABLE: PriceRow[] = [
     source: COMPETITOR_FACTS["vs-xcloud"].sources[0],
   },
   {
-    provider: "Nous Hermes Cloud Medium",
-    price: "$0.56/day running for 4 vCPU and 2 GB RAM, about $16.80 over 30 days",
-    terms: "Prepaid Nous credit, charged daily in arrears. Stopped costs $0.03/day. Model usage is extra. Hermes only.",
+    // Not "Medium": Nous shows its sizes only after sign-in and a rival's blog names its tiers differently,
+    // so the tier name cannot be confirmed (audit 2026-10-20). /compare/vs-nous-hermes-cloud does not use it either.
+    // The figures are the last ones Nous published; its page no longer shows per-size prices (re-checked 2026-10-21).
+    provider: "Nous Hermes Cloud",
+    price: "Last published: $0.56/day running for 4 vCPU and 2 GB RAM, about $16.80 over 30 days",
+    terms: "Prepaid Nous credit, charged daily in arrears. Stopped costs $0.03/day. Model usage is extra. Hermes only. The linked page no longer lists per-size prices: Nous now shows them only after you sign in to its Portal.",
     source: COMPETITOR_FACTS["vs-nous-hermes-cloud"].sources[0],
   },
   {

@@ -120,7 +120,7 @@ export type PlanHold = { reason: "payment_overdue" | "no_slots"; planName: strin
 export function planHoldMessage(hold: PlanHold, subject: string | null = null): string {
   const run = subject ? `to run ${subject} on Hivra Cloud` : "to launch on Hivra Cloud";
   if (hold.reason === "payment_overdue") {
-    return `Your ${hold.planName} plan is on hold because a payment didn't go through. Update your payment in Billing ${run}.`;
+    return `Your plan is on hold because a payment didn't go through, so your Hivra Cloud computers are stopped. Update your payment in Billing ${run}.`;
   }
   return `Your ${hold.planName} plan has no agent slots right now. Check it in Billing ${run}.`;
 }

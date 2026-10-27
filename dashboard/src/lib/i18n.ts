@@ -126,7 +126,7 @@ const BASE_MARKETING_COPY = {
       loadingCheckout: "Redirecting to checkout...",
       badges: {
         free: "Free account",
-        paid: "7-Day Money-Back Guarantee",
+        paid: "7-day money-back guarantee on card payments",
       },
       yourPlan: "Your Plan",
       perMonth: "/mo",
@@ -137,10 +137,9 @@ const BASE_MARKETING_COPY = {
         saveLabel: "save ~{percent}%",
         saveDollarsLabel: "Save ~${dollars}/yr",
       },
-      // Generic, true market anchor for the paid cards. The competitor's entry
-      // paid tier starts at $19/mo — we keep it generic (no competitor name) and
-      // honest. Edit this single string to change the anchor everywhere.
-      marketAnchor: "Comparable agent platforms start around $19/mo",
+      // No locale shows a market anchor: a competitor price is not a claim the site
+      // can keep current. An empty string hides the block.
+      marketAnchor: "",
       mostPopular: "Most popular",
       freeGap: "No computer run by Hivra · connect your own computer or server",
       specs: {
@@ -150,7 +149,7 @@ const BASE_MARKETING_COPY = {
       },
       guarantee: {
         free: "No checkout required",
-        paid: "7-day money-back guarantee",
+        paid: "7-day money-back guarantee on card payments",
       },
       switchPlan: "Switch Plan",
       bestFit: "Best Fit",
@@ -158,17 +157,15 @@ const BASE_MARKETING_COPY = {
         free:
           "A free account is best if you have your own computer or server to connect. It includes no computer run by Hivra; choose a plan when you want Hivra to run one.",
         operator:
-          "Pro is best for solo builders and daily drivers — your agent stays always-on (never paused for inactivity) with room for three running at once.",
+          "Hivra Cloud is best for solo builders and daily drivers, with room for three agents running at once.",
         fleet:
-          "Power is best for multi-agent workflows, heavier browsing, and teams that want more compute headroom immediately.",
-        command:
-          "Command is best for the biggest workloads, the fastest scaling path, and maximum compute per deployment.",
+          "The larger size, 4 vCPU and 8 GB of RAM, is best for multi-agent workflows, heavier browsing and teams that want more compute headroom immediately.",
       },
       createAccountTitle: "Create your account.",
       createAccountIntroFree:
         "Your account details become your login credentials. After signup, we'll set up your free account and take you to Launch, where you can connect your own computer or choose a plan.",
       createAccountIntroPaid:
-        "Your account details become your login credentials. After signup, you'll continue to secure checkout. Protected by our 7-day money-back guarantee.",
+        "Your account details become your login credentials. After signup, you'll continue to secure checkout. Protected by our 7-day money-back guarantee on card payments.",
       legalPrefix: "By continuing, you agree to our",
       terms: "Terms of Service",
       and: "and",
@@ -470,7 +467,7 @@ const BASE_MARKETING_COPY = {
           eyebrow: "Token Access",
           title: "$HermesOS Holding",
           description:
-            "Hold at least the minimum $HermesOS in a verified wallet to unlock a basic machine. If your balance drops below the minimum, agents on that machine keep running for a grace period, then pause until you hold enough again.",
+            "Hold at least the minimum $HermesOS in a verified wallet to unlock a basic machine. If your balance stays below the minimum for 24 hours, you lose this access. After a 7-day waiting period, you can get it back by holding enough again.",
           checking: "Checking",
           unavailable: "Unavailable",
           ready: "Minimum met",
@@ -518,7 +515,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "Unlimited",
           agents: "agents",
           active: "Active",
-          guarantee: "7-day money-back guarantee · Upgrade-only plans",
+          guarantee: "7-day money-back guarantee on card payments · Upgrade-only plans",
         },
         noSubscription: {
           title: "No plan yet",
@@ -634,7 +631,7 @@ const BASE_MARKETING_COPY = {
     stats: {
       hero: {
         eyebrow: "Live · agents on Hivra",
-        label: "agents launched on Hivra",
+        label: "agents and computers launched on Hivra",
         fullStats: "Full stats →",
       },
       page: {
@@ -644,7 +641,7 @@ const BASE_MARKETING_COPY = {
         headlineSuffix: "on Hivra",
         body: "Every time someone successfully deploys an agent, this counter ticks up.",
         allTimeLabel: "All-time successful deploys",
-        ariaTotal: "agents deployed all-time",
+        ariaTotal: "agents and computers launched all-time",
         cards: {
           last24h: "Last 24 hours",
           last7d: "Last 7 days",
@@ -693,7 +690,7 @@ const BASE_MARKETING_COPY = {
       loadingCheckout: "正在跳转到结账...",
       badges: {
         free: "免费账户",
-        paid: "7 天退款保证",
+        paid: "银行卡付款享 7 天退款保证",
       },
       yourPlan: "你的计划",
       perMonth: "/月",
@@ -704,7 +701,7 @@ const BASE_MARKETING_COPY = {
         saveLabel: "省约 {percent}%",
         saveDollarsLabel: "每年省约 ${dollars}",
       },
-      marketAnchor: "同类智能体平台起价约 $19/月",
+      marketAnchor: "",
       mostPopular: "最受欢迎",
       freeGap: "不含由 Hivra 运行的计算机 · 连接你自己的电脑或服务器",
       specs: {
@@ -714,7 +711,7 @@ const BASE_MARKETING_COPY = {
       },
       guarantee: {
         free: "无需结账",
-        paid: "7 天退款保证",
+        paid: "银行卡付款享 7 天退款保证",
       },
       switchPlan: "切换计划",
       bestFit: "最佳适合",
@@ -722,17 +719,15 @@ const BASE_MARKETING_COPY = {
         free:
           "如果你有自己的电脑或服务器可以连接，免费账户最合适。它不包含由 Hivra 运行的计算机；想让 Hivra 来运行时，请选择一个套餐。",
         operator:
-          "Pro 适合独立开发者、黑客松项目，以及想快速上线一个 Agent 的用户。",
+          "Hivra Cloud 最适合独立开发者和日常使用，有余量同时运行三个 Agent。",
         fleet:
-          "Power 适合多 Agent 工作流、更重的浏览任务，以及希望立刻获得更多算力余量的团队。",
-        command:
-          "Command 适合最大工作负载、最快扩容路径，以及单次部署需要最大算力的场景。",
+          "较大的规格（4 vCPU 和 8 GB 内存）最适合多 Agent 工作流、更重的浏览任务，以及希望立刻获得更多算力余量的团队。",
       },
       createAccountTitle: "创建你的账户。",
       createAccountIntroFree:
         "账户信息将成为你的登录凭据。注册后，我们会为你设置免费账户并带你进入启动页，你可以在那里连接自己的电脑或选择套餐。",
       createAccountIntroPaid:
-        "账户信息将成为你的登录凭据。注册后，你会继续进入安全结账流程，并受到 7 天退款保证保护。",
+        "账户信息将成为你的登录凭据。注册后，你会继续进入安全结账流程，银行卡付款受我们的 7 天退款保证保护。",
       legalPrefix: "继续即表示你同意我们的",
       terms: "服务条款",
       and: "和",
@@ -1021,7 +1016,7 @@ const BASE_MARKETING_COPY = {
         tokenAccess: {
           eyebrow: "代币访问",
           title: "$HermesOS 持仓",
-          description: "在已验证钱包中持有不少于最低数量的 $HermesOS，即可解锁一台基础机器。如果余额低于最低数量，该机器上的 Agent 会在宽限期内继续运行，之后暂停，直到你再次持有足够数量。",
+          description: "在已验证钱包中持有不少于最低数量的 $HermesOS，即可解锁一台基础机器。如果余额连续 24 小时低于最低数量，你将失去这项权限。经过 7 天的等待期后，只要再次持有足够数量，即可重新获得。",
           checking: "检查中",
           unavailable: "不可用",
           ready: "已达最低要求",
@@ -1067,7 +1062,7 @@ const BASE_MARKETING_COPY = {
           unlimited: "无限",
           agents: "个 Agent",
           active: "已启用",
-          guarantee: "7 天退款政策 · 仅支持升级",
+          guarantee: "银行卡付款享 7 天退款保证 · 仅支持升级",
         },
         noSubscription: {
           title: "没有有效订阅",
@@ -1287,7 +1282,7 @@ const LOCALE_COPY_OVERRIDES = {
       "loadingCheckout": "Redirigiendo al pago...",
       "badges": {
         "free": "Cuenta gratuita",
-        "paid": "Garantía de devolución de 7 días"
+        "paid": "Garantía de devolución de 7 días en pagos con tarjeta"
       },
       "yourPlan": "Tu plan",
       "perMonth": "/mes",
@@ -1298,7 +1293,7 @@ const LOCALE_COPY_OVERRIDES = {
         "saveLabel": "ahorra ~{percent}%",
         "saveDollarsLabel": "Ahorra ~${dollars}/año"
       },
-      "marketAnchor": "Plataformas de agentes comparables cuestan desde unos $19/mes",
+      "marketAnchor": "",
       "mostPopular": "Más popular",
       "freeGap": "Sin computadora gestionada por Hivra · conecta tu propia computadora o servidor",
       "specs": {
@@ -1308,19 +1303,18 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "guarantee": {
         "free": "No requiere pago",
-        "paid": "Garantía de devolución de 7 días"
+        "paid": "Garantía de devolución de 7 días en pagos con tarjeta"
       },
       "switchPlan": "Cambiar plan",
       "bestFit": "Mejor opción",
       "planGuidance": {
         "free": "Una cuenta gratuita es ideal si tienes tu propia computadora o servidor para conectar. No incluye ninguna computadora gestionada por Hivra; elige un plan cuando quieras que Hivra gestione una.",
-        "operator": "Pro es ideal para builders en solitario, proyectos de hackathon y poner en marcha un agente rápidamente.",
-        "fleet": "Power es ideal para flujos multi-agente, navegación más intensa y equipos que quieren más capacidad de cómputo de inmediato.",
-        "command": "Command es ideal para las cargas de trabajo más grandes, el camino de escalado más rápido y el máximo cómputo por despliegue."
+        "operator": "Hivra Cloud es ideal para builders en solitario y para el uso diario, con espacio para tres agentes funcionando a la vez.",
+        "fleet": "El tamaño mayor, de 4 vCPU y 8 GB de RAM, es ideal para flujos multi-agente, navegación más intensa y equipos que quieren más capacidad de cómputo de inmediato."
       },
       "createAccountTitle": "Crea tu cuenta.",
       "createAccountIntroFree": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, configuraremos tu cuenta gratuita y te llevaremos a Launch, donde puedes conectar tu propia computadora o elegir un plan.",
-      "createAccountIntroPaid": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, continuarás al checkout seguro. Protegido por nuestra garantía de devolución de 7 días.",
+      "createAccountIntroPaid": "Los datos de tu cuenta se convierten en tus credenciales de acceso. Tras el registro, continuarás al checkout seguro. Protegido por nuestra garantía de devolución de 7 días en pagos con tarjeta.",
       "legalPrefix": "Al continuar, aceptas nuestros",
       "terms": "Términos de servicio",
       "and": "y",
@@ -1607,7 +1601,7 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Acceso por token",
           "title": "Tenencia de $HermesOS",
-          "description": "Mantén al menos el mínimo de $HermesOS en una billetera verificada para desbloquear una máquina básica. Si tu saldo baja del mínimo, los agentes de esa máquina siguen funcionando durante un periodo de gracia y luego se pausan hasta que vuelvas a tener suficiente.",
+          "description": "Mantén al menos el mínimo de $HermesOS en una billetera verificada para desbloquear una máquina básica. Si tu saldo se mantiene por debajo del mínimo durante 24 horas, pierdes este acceso. Tras un periodo de espera de 7 días, puedes recuperarlo volviendo a tener suficiente.",
           "checking": "Verificando",
           "unavailable": "No disponible",
           "ready": "Mínimo alcanzado",
@@ -1653,7 +1647,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Activo",
-          "guarantee": "Política de reembolso de 7 días · Solo actualizaciones"
+          "guarantee": "Garantía de devolución de 7 días en pagos con tarjeta · Solo actualizaciones"
         },
         "noSubscription": {
           "title": "Sin suscripción activa"
@@ -1826,7 +1820,7 @@ const LOCALE_COPY_OVERRIDES = {
       "loadingCheckout": "Redirecionando para o checkout...",
       "badges": {
         "free": "Conta gratuita",
-        "paid": "Garantia de 7 Dias"
+        "paid": "Garantia de reembolso de 7 dias em pagamentos com cartão"
       },
       "yourPlan": "Seu Plano",
       "perMonth": "/mês",
@@ -1837,7 +1831,7 @@ const LOCALE_COPY_OVERRIDES = {
         "saveLabel": "economize ~{percent}%",
         "saveDollarsLabel": "Economize ~${dollars}/ano"
       },
-      "marketAnchor": "Plataformas de agentes comparáveis começam em torno de $19/mês",
+      "marketAnchor": "",
       "mostPopular": "Mais popular",
       "freeGap": "Sem computador gerenciado pela Hivra · conecte seu próprio computador ou servidor",
       "specs": {
@@ -1847,19 +1841,18 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "guarantee": {
         "free": "Sem checkout necessário",
-        "paid": "Garantia de reembolso em 7 dias"
+        "paid": "Garantia de reembolso de 7 dias em pagamentos com cartão"
       },
       "switchPlan": "Trocar Plano",
       "bestFit": "Melhor Opção",
       "planGuidance": {
         "free": "Uma conta gratuita é ideal se você tem um computador ou servidor próprio para conectar. Ela não inclui computador gerenciado pela Hivra; escolha um plano quando quiser que a Hivra rode um.",
-        "operator": "O Pro é ideal para desenvolvedores solo, projetos de hackathon e para colocar um agente no ar rapidamente.",
-        "fleet": "O Power é ideal para workflows multi-agente, navegação mais intensa e equipes que querem mais margem de compute imediatamente.",
-        "command": "O Command é ideal para as maiores cargas de trabalho, o caminho de escalonamento mais rápido e o máximo de compute por deploy."
+        "operator": "O Hivra Cloud é ideal para desenvolvedores solo e para o uso diário, com espaço para três agentes rodando ao mesmo tempo.",
+        "fleet": "O tamanho maior, com 4 vCPU e 8 GB de RAM, é ideal para workflows multi-agente, navegação mais intensa e equipes que querem mais margem de compute imediatamente."
       },
       "createAccountTitle": "Crie sua conta.",
       "createAccountIntroFree": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, vamos configurar sua conta gratuita e levar você ao Launch, onde você pode conectar seu próprio computador ou escolher um plano.",
-      "createAccountIntroPaid": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, você prosseguirá para o checkout seguro. Protegido pela nossa garantia de reembolso em 7 dias.",
+      "createAccountIntroPaid": "Seus dados de conta se tornam suas credenciais de login. Após o cadastro, você prosseguirá para o checkout seguro. Protegido pela nossa garantia de reembolso de 7 dias em pagamentos com cartão.",
       "legalPrefix": "Ao continuar, você concorda com nossos",
       "terms": "Termos de Serviço",
       "and": "e",
@@ -2146,7 +2139,7 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Acesso por token",
           "title": "Holding de $HermesOS",
-          "description": "Mantenha pelo menos o mínimo de $HermesOS em uma carteira verificada para liberar uma máquina básica. Se o saldo cair abaixo do mínimo, os agentes dessa máquina continuam rodando por um período de carência e depois pausam até você voltar a ter o suficiente.",
+          "description": "Mantenha pelo menos o mínimo de $HermesOS em uma carteira verificada para liberar uma máquina básica. Se o saldo ficar abaixo do mínimo por 24 horas, você perde esse acesso. Depois de um período de espera de 7 dias, você pode recuperá-lo ao voltar a ter o suficiente.",
           "checking": "Verificando",
           "unavailable": "Indisponível",
           "ready": "Mínimo atingido",
@@ -2192,7 +2185,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Ilimitado",
           "agents": "agentes",
           "active": "Ativo",
-          "guarantee": "Política de reembolso em 7 dias · Planos somente com upgrade"
+          "guarantee": "Garantia de reembolso de 7 dias em pagamentos com cartão · Planos somente com upgrade"
         },
         "noSubscription": {
           "title": "Sem assinatura ativa"
@@ -2365,7 +2358,7 @@ const LOCALE_COPY_OVERRIDES = {
       "loadingCheckout": "Redirection vers le paiement...",
       "badges": {
         "free": "Compte gratuit",
-        "paid": "Garantie satisfait ou remboursé 7 jours"
+        "paid": "Garantie satisfait ou remboursé 7 jours pour les paiements par carte"
       },
       "yourPlan": "Votre plan",
       "perMonth": "/mois",
@@ -2376,7 +2369,7 @@ const LOCALE_COPY_OVERRIDES = {
         "saveLabel": "économisez ~{percent}%",
         "saveDollarsLabel": "Économisez ~${dollars}/an"
       },
-      "marketAnchor": "Les plateformes d'agents comparables démarrent autour de 19 $/mois",
+      "marketAnchor": "",
       "mostPopular": "Le plus populaire",
       "freeGap": "Aucun ordinateur géré par Hivra · connectez votre propre ordinateur ou serveur",
       "specs": {
@@ -2386,19 +2379,18 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "guarantee": {
         "free": "Aucune étape de paiement requise",
-        "paid": "Garantie satisfait ou remboursé 7 jours"
+        "paid": "Garantie satisfait ou remboursé 7 jours pour les paiements par carte"
       },
       "switchPlan": "Changer de plan",
       "bestFit": "Meilleur choix",
       "planGuidance": {
         "free": "Un compte gratuit convient si vous avez votre propre ordinateur ou serveur à connecter. Il n'inclut aucun ordinateur géré par Hivra ; choisissez un plan quand vous voulez que Hivra en fasse tourner un.",
-        "operator": "Pro est idéal pour les développeurs solos, les projets de hackathon et la mise en ligne rapide d'un agent.",
-        "fleet": "Power est idéal pour les workflows multi-agents, la navigation intensive et les équipes qui veulent plus de marge de compute immédiatement.",
-        "command": "Command est idéal pour les charges les plus importantes, la voie de montée en charge la plus rapide et le maximum de compute par déploiement."
+        "operator": "Hivra Cloud est idéal pour les développeurs solos et l'usage quotidien, avec de la place pour trois agents en même temps.",
+        "fleet": "La taille supérieure, 4 vCPU et 8 Go de RAM, est idéale pour les workflows multi-agents, la navigation intensive et les équipes qui veulent plus de marge de compute immédiatement."
       },
       "createAccountTitle": "Créez votre compte.",
       "createAccountIntroFree": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, nous configurerons votre compte gratuit et vous emmènerons vers Launch, où vous pourrez connecter votre propre ordinateur ou choisir un plan.",
-      "createAccountIntroPaid": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, vous continuerez vers le paiement sécurisé. Protégé par notre garantie satisfait ou remboursé 7 jours.",
+      "createAccountIntroPaid": "Vos informations de compte deviennent vos identifiants de connexion. Après l'inscription, vous continuerez vers le paiement sécurisé. Protégé par notre garantie satisfait ou remboursé 7 jours pour les paiements par carte.",
       "legalPrefix": "En continuant, vous acceptez nos",
       "terms": "Conditions d'utilisation",
       "and": "et",
@@ -2685,7 +2677,7 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Accès par token",
           "title": "Détention $HermesOS",
-          "description": "Détenez au moins le minimum de $HermesOS dans un portefeuille vérifié pour débloquer une machine de base. Si votre solde passe sous le minimum, les agents de cette machine continuent de tourner pendant une période de grâce, puis se mettent en pause jusqu'à ce que vous déteniez de nouveau assez.",
+          "description": "Détenez au moins le minimum de $HermesOS dans un portefeuille vérifié pour débloquer une machine de base. Si votre solde reste sous le minimum pendant 24 heures, vous perdez cet accès. Après une période d'attente de 7 jours, vous pouvez le retrouver en détenant de nouveau assez.",
           "checking": "Vérification",
           "unavailable": "Indisponible",
           "ready": "Minimum atteint",
@@ -2731,7 +2723,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Illimité",
           "agents": "agents",
           "active": "Actif",
-          "guarantee": "Politique de remboursement sous 7 jours · Plans avec upgrade uniquement"
+          "guarantee": "Garantie satisfait ou remboursé 7 jours pour les paiements par carte · Plans avec upgrade uniquement"
         },
         "noSubscription": {
           "title": "Aucun abonnement actif"
@@ -2904,7 +2896,7 @@ const LOCALE_COPY_OVERRIDES = {
       "loadingCheckout": "Weiterleitung zum Checkout...",
       "badges": {
         "free": "Kostenloses Konto",
-        "paid": "7-Tage-Geld-zurück-Garantie"
+        "paid": "7-Tage-Geld-zurück-Garantie bei Kartenzahlung"
       },
       "yourPlan": "Dein Plan",
       "perMonth": "/Monat",
@@ -2915,7 +2907,7 @@ const LOCALE_COPY_OVERRIDES = {
         "saveLabel": "spare ~{percent}%",
         "saveDollarsLabel": "Spare ~${dollars}/Jahr"
       },
-      "marketAnchor": "Vergleichbare Agent-Plattformen beginnen bei rund 19 $/Monat",
+      "marketAnchor": "",
       "mostPopular": "Am beliebtesten",
       "freeGap": "Kein von Hivra betriebener Computer · verbinde deinen eigenen Computer oder Server",
       "specs": {
@@ -2925,19 +2917,18 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "guarantee": {
         "free": "Kein Checkout erforderlich",
-        "paid": "7-Tage-Geld-zurück-Garantie"
+        "paid": "7-Tage-Geld-zurück-Garantie bei Kartenzahlung"
       },
       "switchPlan": "Plan wechseln",
       "bestFit": "Beste Wahl",
       "planGuidance": {
         "free": "Ein kostenloses Konto passt, wenn du einen eigenen Computer oder Server zum Verbinden hast. Es enthält keinen von Hivra betriebenen Computer; wähle einen Plan, wenn Hivra einen für dich betreiben soll.",
-        "operator": "Pro ist ideal für Solo-Entwickler, Hackathon-Projekte und den schnellen Start mit einem Agenten.",
-        "fleet": "Power ist optimal für Multi-Agent-Workflows, intensiveres Browsen und Teams, die sofort mehr Compute-Headroom benötigen.",
-        "command": "Command eignet sich am besten für die größten Workloads, den schnellsten Skalierungspfad und maximales Compute pro Deployment."
+        "operator": "Hivra Cloud ist ideal für Solo-Entwickler und den täglichen Einsatz, mit Platz für drei Agenten, die gleichzeitig laufen.",
+        "fleet": "Die größere Variante mit 4 vCPU und 8 GB RAM ist optimal für Multi-Agent-Workflows, intensiveres Browsen und Teams, die sofort mehr Compute-Headroom benötigen."
       },
       "createAccountTitle": "Konto erstellen.",
       "createAccountIntroFree": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung richten wir dein kostenloses Konto ein und leiten dich zu Launch weiter, wo du deinen eigenen Computer verbinden oder einen Plan wählen kannst.",
-      "createAccountIntroPaid": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung geht es zum sicheren Checkout. Geschützt durch unsere 7-Tage-Geld-zurück-Garantie.",
+      "createAccountIntroPaid": "Deine Kontodaten werden zu deinen Login-Zugangsdaten. Nach der Registrierung geht es zum sicheren Checkout. Geschützt durch unsere 7-Tage-Geld-zurück-Garantie bei Kartenzahlung.",
       "legalPrefix": "Mit dem Fortfahren stimmst du unseren",
       "terms": "Nutzungsbedingungen",
       "and": "und der",
@@ -3224,7 +3215,7 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "Token-Zugang",
           "title": "$HermesOS Holding",
-          "description": "Halte mindestens das Minimum an $HermesOS in einer verifizierten Wallet, um eine Basis-Maschine freizuschalten. Fällt dein Guthaben unter das Minimum, laufen die Agents auf dieser Maschine für eine Kulanzfrist weiter und pausieren dann, bis du wieder genug hältst.",
+          "description": "Halte mindestens das Minimum an $HermesOS in einer verifizierten Wallet, um eine Basis-Maschine freizuschalten. Bleibt dein Guthaben 24 Stunden lang unter dem Minimum, verlierst du diesen Zugang. Nach einer Wartezeit von 7 Tagen kannst du ihn zurückerhalten, indem du wieder genug hältst.",
           "checking": "Wird geprüft",
           "unavailable": "Nicht verfügbar",
           "ready": "Minimum erreicht",
@@ -3270,7 +3261,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "Unbegrenzt",
           "agents": "Agenten",
           "active": "Aktiv",
-          "guarantee": "7-Tage-Rückerstattungsrichtlinie · Nur Upgrade-Pläne"
+          "guarantee": "7-Tage-Geld-zurück-Garantie bei Kartenzahlung · Nur Upgrade-Pläne"
         },
         "noSubscription": {
           "title": "Kein aktives Abo"
@@ -3443,7 +3434,7 @@ const LOCALE_COPY_OVERRIDES = {
       "loadingCheckout": "チェックアウトへ移動中...",
       "badges": {
         "free": "無料アカウント",
-        "paid": "7 日間返金保証"
+        "paid": "カード決済は 7 日間返金保証"
       },
       "yourPlan": "あなたのプラン",
       "perMonth": "/月",
@@ -3454,7 +3445,7 @@ const LOCALE_COPY_OVERRIDES = {
         "saveLabel": "約{percent}%お得",
         "saveDollarsLabel": "年間 約${dollars} お得"
       },
-      "marketAnchor": "同等のエージェントプラットフォームは月額 $19 程度から",
+      "marketAnchor": "",
       "mostPopular": "一番人気",
       "freeGap": "Hivra が運用するコンピューターは含まれません · ご自身のコンピューターまたはサーバーを接続",
       "specs": {
@@ -3464,19 +3455,18 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "guarantee": {
         "free": "チェックアウト不要",
-        "paid": "7 日間返金保証"
+        "paid": "カード決済は 7 日間返金保証"
       },
       "switchPlan": "プランを変更",
       "bestFit": "おすすめ",
       "planGuidance": {
         "free": "接続できる自分のコンピューターやサーバーがあるなら、無料アカウントが最適です。Hivra が運用するコンピューターは含まれません。Hivra に運用してほしいときは、プランを選んでください。",
-        "operator": "Pro は個人ビルダー、ハッカソンプロジェクト、1 つのエージェントを素早く立ち上げたい方に最適です。",
-        "fleet": "Power はマルチエージェントのワークフロー、ヘビーなブラウジング、すぐに多くのコンピュートが必要なチームに最適です。",
-        "command": "Command は最大規模のワークロード、最速のスケーリング、デプロイあたりの最大コンピュートが必要な方に最適です。"
+        "operator": "Hivra Cloud は個人ビルダーや日常使いに最適で、3 つのエージェントを同時に動かせる余裕があります。",
+        "fleet": "より大きなサイズ（4 vCPU と 8 GB の RAM）は、マルチエージェントのワークフロー、ヘビーなブラウジング、すぐに多くのコンピュートが必要なチームに最適です。"
       },
       "createAccountTitle": "アカウントを作成してください。",
       "createAccountIntroFree": "入力したアカウント情報がログイン認証情報になります。サインアップ後、無料アカウントを設定して Launch に進みます。そこでご自身のコンピューターを接続するか、プランを選べます。",
-      "createAccountIntroPaid": "入力したアカウント情報がログイン認証情報になります。サインアップ後、安全なチェックアウトへ進みます。7 日間返金保証付き。",
+      "createAccountIntroPaid": "入力したアカウント情報がログイン認証情報になります。サインアップ後、安全なチェックアウトへ進みます。カード決済には 7 日間返金保証が付きます。",
       "legalPrefix": "続行することで、以下に同意したものとみなされます：",
       "terms": "利用規約",
       "and": "および",
@@ -3763,7 +3753,7 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "トークンアクセス",
           "title": "$HermesOS 保有",
-          "description": "認証済みウォレットで最低数量以上の $HermesOS を保有すると、ベーシックマシンが使えるようになります。残高が最低数量を下回ると、そのマシンのエージェントは猶予期間中は動き続け、その後は十分な量を再び保有するまで一時停止します。",
+          "description": "認証済みウォレットで最低数量以上の $HermesOS を保有すると、ベーシックマシンが使えるようになります。残高が 24 時間にわたって最低数量を下回ったままの場合、このアクセスは失われます。7 日間の待機期間が過ぎたあと、再び十分な量を保有すれば取り戻せます。",
           "checking": "確認中",
           "unavailable": "利用不可",
           "ready": "最低数量を満たしています",
@@ -3809,7 +3799,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "無制限",
           "agents": "エージェント",
           "active": "有効",
-          "guarantee": "7 日間返金ポリシー · アップグレード専用プラン"
+          "guarantee": "カード決済は 7 日間返金保証 · アップグレード専用プラン"
         },
         "noSubscription": {
           "title": "有効なサブスクリプションなし"
@@ -3982,7 +3972,7 @@ const LOCALE_COPY_OVERRIDES = {
       "loadingCheckout": "결제 페이지로 이동 중...",
       "badges": {
         "free": "무료 계정",
-        "paid": "7일 환불 보장"
+        "paid": "카드 결제 7일 환불 보장"
       },
       "yourPlan": "내 플랜",
       "perMonth": "/월",
@@ -3993,7 +3983,7 @@ const LOCALE_COPY_OVERRIDES = {
         "saveLabel": "약 {percent}% 절약",
         "saveDollarsLabel": "연 약 ${dollars} 절약"
       },
-      "marketAnchor": "비슷한 에이전트 플랫폼은 월 $19 정도부터 시작합니다",
+      "marketAnchor": "",
       "mostPopular": "가장 인기",
       "freeGap": "Hivra가 운영하는 컴퓨터 없음 · 내 컴퓨터나 서버를 연결",
       "specs": {
@@ -4003,19 +3993,18 @@ const LOCALE_COPY_OVERRIDES = {
       },
       "guarantee": {
         "free": "결제 불필요",
-        "paid": "7일 환불 보장"
+        "paid": "카드 결제 7일 환불 보장"
       },
       "switchPlan": "플랜 변경",
       "bestFit": "최적 선택",
       "planGuidance": {
         "free": "연결할 내 컴퓨터나 서버가 있다면 무료 계정이 가장 잘 맞습니다. Hivra가 운영하는 컴퓨터는 포함되지 않으며, Hivra가 운영해 주기를 원하면 플랜을 선택하세요.",
-        "operator": "Pro는 개인 빌더, 해커톤 프로젝트, 에이전트를 빠르게 가동하는 데 가장 적합합니다.",
-        "fleet": "Power는 멀티 에이전트 워크플로, 무거운 브라우징, 즉각적으로 더 많은 컴퓨팅 여유를 원하는 팀에 가장 적합합니다.",
-        "command": "Command는 최대 규모의 워크로드, 가장 빠른 확장 경로, 배포당 최대 컴퓨팅에 가장 적합합니다."
+        "operator": "Hivra Cloud는 개인 빌더와 일상적인 사용에 가장 적합하며, 에이전트 3개를 동시에 실행할 여유가 있습니다.",
+        "fleet": "더 큰 사양(4 vCPU와 8 GB RAM)은 멀티 에이전트 워크플로, 무거운 브라우징, 즉각적으로 더 많은 컴퓨팅 여유를 원하는 팀에 가장 적합합니다."
       },
       "createAccountTitle": "계정을 만드세요.",
       "createAccountIntroFree": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 무료 계정을 설정하고 Launch로 이동합니다. 거기서 내 컴퓨터를 연결하거나 플랜을 선택할 수 있습니다.",
-      "createAccountIntroPaid": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 안전한 결제 단계로 진행됩니다. 7일 환불 보장이 적용됩니다.",
+      "createAccountIntroPaid": "계정 정보가 로그인 자격 증명이 됩니다. 가입 후 안전한 결제 단계로 진행됩니다. 카드 결제에는 7일 환불 보장이 적용됩니다.",
       "legalPrefix": "계속 진행하면 다음에 동의하는 것입니다:",
       "terms": "이용약관",
       "and": "및",
@@ -4302,7 +4291,7 @@ const LOCALE_COPY_OVERRIDES = {
         "tokenAccess": {
           "eyebrow": "토큰 접근",
           "title": "$HermesOS 보유",
-          "description": "검증된 지갑에 최소 수량 이상의 $HermesOS를 보유하면 기본 머신이 열립니다. 잔액이 최소 수량 아래로 내려가면 해당 머신의 에이전트는 유예 기간 동안 계속 실행된 뒤, 다시 충분히 보유할 때까지 일시 중지됩니다.",
+          "description": "검증된 지갑에 최소 수량 이상의 $HermesOS를 보유하면 기본 머신이 열립니다. 잔액이 24시간 동안 최소 수량 아래로 유지되면 이 접근 권한을 잃습니다. 7일의 대기 기간이 지난 뒤 다시 충분히 보유하면 권한을 되찾을 수 있습니다.",
           "checking": "확인 중",
           "unavailable": "이용 불가",
           "ready": "최소 수량 충족",
@@ -4348,7 +4337,7 @@ const LOCALE_COPY_OVERRIDES = {
           "unlimited": "무제한",
           "agents": "에이전트",
           "active": "활성",
-          "guarantee": "7일 환불 정책 · 업그레이드 전용 플랜"
+          "guarantee": "카드 결제 7일 환불 보장 · 업그레이드 전용 플랜"
         },
         "noSubscription": {
           "title": "활성 구독 없음"

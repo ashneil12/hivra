@@ -461,14 +461,17 @@ describe("POST /api/instances/[id]", () => {
     );
     const json = await response.json();
 
+    const suspendedMessage =
+      "This agent is suspended because a payment didn't go through or your plan ended. Pay the open invoice, update your card or choose a plan in Billing, then start it again.";
+
     expect(response.status).toBe(402);
-    expect(json.error).toMatch(/compute is suspended/i);
+    expect(json.error).toBe(suspendedMessage);
     expect(sshExec).not.toHaveBeenCalled();
     expect(powerOnServer).not.toHaveBeenCalled();
     expect(startProxmoxInstance).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
     expect(apiError).toHaveBeenCalledWith(
-      expect.stringMatching(/compute is suspended/i),
+      suspendedMessage,
       402,
       expect.objectContaining({
         failureType: "instance_entitlement_suspended",

@@ -22,8 +22,14 @@ import {
   GRACE_RECONCILER_LOG_SOURCE,
   reconcileSubscriptionGrace,
 } from "@/lib/billing/subscription-grace-reconciler";
+import { sweepBillingSuspendedCompute } from "@/lib/recovery/dunning-grace-enforce";
+import { runHivraLapseSweep } from "@/lib/recovery/hivra-lapse-enforce";
 
 export const dynamic = "force-dynamic";
+// Two sweeps share this run. The lapse sweep may stop up to 5 computers one
+// after another (120 s each); the cancelled-computer sweep stops starting new
+// users after 60 s and gives up on a single shutdown after 90 s.
+export const maxDuration = 800;
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -97,6 +103,31 @@ export async function GET(req: NextRequest) {
           skipped: result.skipped,
           errors: result.errors,
         },
+      });
+    }
+
+    // Shut down the computers of cancelled or unpaid customers whose row is already
+    // suspended but whose VM still runs (dark until DUNNING_GRACE_ENFORCE_LIVE is
+    // "true"). A failure here never breaks this route.
+    try {
+      await sweepBillingSuspendedCompute();
+    } catch (err) {
+      log.error("billing-suspended compute sweep failed", err, {
+        source: "dunning-grace-enforce",
+        route: "/api/cron/reconcile-subscription-grace",
+        failureType: "billing_sweep_failed",
+      });
+    }
+
+    // Stop Hivra Cloud computers whose owner has no paid plan (dark until
+    // HIVRA_LAPSE_ENFORCE_LIVE is "true"). A failure here never breaks this route.
+    try {
+      await runHivraLapseSweep();
+    } catch (err) {
+      log.error("hivra lapse sweep failed", err, {
+        source: "hivra-lapse-enforce",
+        route: "/api/cron/reconcile-subscription-grace",
+        failureType: "hivra_lapse_sweep_failed",
       });
     }
 

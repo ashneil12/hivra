@@ -14,10 +14,17 @@ import { findBannedClaims } from "../copy-rules";
 
 const F = CLAUDE_PLAN_FACTS;
 
-describe("the estimate is held to Anthropic's own cost figures", () => {
-  it("puts a normal three-hour Sonnet day within 5% of Anthropic's $13 average", () => {
-    const day = apiCostPerActiveHour("sonnet", false) * 3;
-    expect(Math.abs(day - F.anthropicCost.perActiveDayUsd) / F.anthropicCost.perActiveDayUsd).toBeLessThan(0.05);
+describe("the estimate against Anthropic's own cost figures", () => {
+  it("puts a normal three-hour day on Sonnet below Anthropic's $13 average and a normal one on Opus above it", () => {
+    // The assumptions were first chosen with Sonnet 5.5's cache read entered as $0.20, which put the Sonnet
+    // day within 5% of $13. At the published $0.10 it is $8.69 and the Opus day is $17.39; the pages print
+    // both, so they are pinned here to the cent.
+    const sonnetDay = apiCostPerActiveHour("sonnet", false) * 3;
+    const opusDay = apiCostPerActiveHour("opus", false) * 3;
+    expect(sonnetDay).toBeCloseTo(8.69, 2);
+    expect(opusDay).toBeCloseTo(17.39, 2);
+    expect(sonnetDay).toBeLessThan(F.anthropicCost.perActiveDayUsd);
+    expect(opusDay).toBeGreaterThan(F.anthropicCost.perActiveDayUsd);
   });
 
   it("puts a heavy Opus day above Anthropic's $30 line and a heavy Sonnet day below it", () => {
@@ -98,7 +105,7 @@ describe("computePlanResult", () => {
 
   it("says the API is cheaper only when the estimate is below the cheapest plan that fits", () => {
     const light = computePlanResult({ ...PLAN_DEFAULTS, daysPerWeek: 1, hoursPerDay: 1, opusPct: 0, proHit: "never" });
-    expect(light.verdict).toBe("Pro at $20/month is the cheapest plan that fits, but at this volume API billing is estimated cheaper: about $19.42/month.");
+    expect(light.verdict).toBe("Pro at $20/month is the cheapest plan that fits, but at this volume API billing is estimated cheaper: about $12.55/month.");
     const lightOpus = computePlanResult({ ...PLAN_DEFAULTS, daysPerWeek: 1, hoursPerDay: 1, opusPct: 100, proHit: "never" });
     expect(lightOpus.verdict).toMatch(/^Pro at \$20\/month is the cheapest plan that fits\. The same usage at API list price is an estimated \$25\.09\/month\.$/);
   });

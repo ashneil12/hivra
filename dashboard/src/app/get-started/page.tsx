@@ -17,11 +17,22 @@ import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-a
 import InteractiveBackground from "@/components/InteractiveBackground";
 import { LanguageSwitcher, LocaleProvider, useLocale } from "@/components/i18n/LocaleProvider";
 import { FunnelHeader } from "@/components/layout/LandingHeader";
+import { ActionLinks, type ActionLink } from "@/components/public-editorial/ActionLinks";
+import { authCardAppearance } from "@/components/auth/auth-card-appearance";
 import funnelStyles from "@/components/public-site/public-site.module.css";
+import { DEFAULT_LOCALE } from "@/lib/i18n";
+import styles from "./get-started.module.css";
+import { PLAN_FEATURES, planLabel, planSizeLine } from "./plan-card-copy";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 const GET_STARTED_ROUTE = "/get-started";
+
+// The English words for this page (09-get-started.md). Another language keeps its translated page.
+const CLOSING_LINKS: readonly ActionLink[] = [
+  { label: "See pricing", href: "/pricing", kind: "secondary" },
+  { label: "Explore agents", href: "/agents", kind: "secondary" },
+];
 
 // Named funnel events for the /get-started -> /get-started/activate onboarding
 // flow (canary #131). Each step emits a distinct, named event so the drop-off
@@ -46,8 +57,8 @@ function resolvePlanParam(planParam: string | null): PlanKey {
   if (planParam && (ACTIVE_PLAN_KEYS as string[]).includes(planParam)) {
     return planParam as PlanKey;
   }
-  // No explicit plan intent → lead with Pro (the "Most popular" pick). Free
-  // stays one click away in the switcher below — no dark patterns.
+  // No explicit plan intent: lead with the entry plan (the "Most popular" pick).
+  // Free stays one click away in the switcher below, with no dark patterns.
   return "operator";
 }
 
@@ -80,15 +91,16 @@ function GetStartedPageContent() {
   const router = useRouter();
   const { isSignedIn, isLoaded } = useAuth();
   const selfHosted = isLocalAuthMode();
-  const { copy } = useLocale();
+  const { copy, locale } = useLocale();
   const setup = copy.getStarted;
+  const englishPage = locale === DEFAULT_LOCALE;
 
   const planParam = searchParams?.get("plan") ?? null;
   const agentTypeKey = resolveWelcomeAgentTypeKey(searchParams?.get("agentType"));
   const agentTypeQuery = buildAgentTypeQuery(agentTypeKey);
   // A Free link is no plan choice to make: it joins every other new account
-  // at sign-up, which lands in Launch. Launch turns Free on, with its own
-  // button, only for a launch on Hivra Cloud.
+  // at sign-up, which lands in Launch. A free account has no computer run by
+  // Hivra, so Launch asks it to connect its own computer or choose a plan.
   const freeIntent = planParam === "free";
   const startHref = agentTypeQuery ? `${PUBLIC_START_HREF}?${agentTypeQuery.replace(/^&/, "")}` : PUBLIC_START_HREF;
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>(
@@ -107,6 +119,11 @@ function GetStartedPageContent() {
   const signInUrl = `/sign-in?plan=${selectedPlan}${cadenceQuery}${agentTypeQuery}`;
 
   const plan = PLANS[selectedPlan];
+  // Every language names a plan by what it costs and how big it is, and lists the same bullets
+  // (plan-card-copy.ts). The billing names and the billing bullets stay in checkout.
+  const label = planLabel(selectedPlan, plan.name);
+  const sizeLine = planSizeLine(selectedPlan);
+  const features = PLAN_FEATURES[selectedPlan] ?? plan.features;
   const savePercent = hasYearly
     ? Math.round((1 - selectedYearlyPrice / (plan.price * 12)) * 100)
     : 0;
@@ -205,10 +222,25 @@ function GetStartedPageContent() {
     <>
       <InteractiveBackground />
       <FunnelHeader homeHref={selfHosted ? undefined : "/"} trailing={<LanguageSwitcher />} />
-      <div className={funnelStyles.funnelPage} style={{
+      <main id="main-content" className={funnelStyles.funnelPage} style={{
         padding: "2rem",
         position: "relative",
       }}>
+        {englishPage ? (
+          <header className={styles.intro}>
+            <h1>Get started with Hivra.</h1>
+            <p>
+              Create your account, then choose what you want to run: an AI agent on a computer of its own, or a
+              computer you can set up yourself.
+            </p>
+            <p>
+              You can start with Hivra Cloud or explore supported options for bringing your own infrastructure. The
+              plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with
+              Hivra credits.
+            </p>
+          </header>
+        ) : null}
+
         {/* Main container */}
         <div className="get-started-grid" style={{
           maxWidth: 1100,
@@ -229,14 +261,18 @@ function GetStartedPageContent() {
             {/* Phones get the form first; this line keeps the plan in view. */}
             <div className="get-started-summary">
               <span className="mono">
-                {plan.name} · {formatPrice(isYearly ? selectedYearlyPrice : plan.price)}{isYearly ? setup.perYear : setup.perMonth}
+                {label} · {formatPrice(isYearly ? selectedYearlyPrice : plan.price)}{isYearly ? setup.perYear : setup.perMonth}{sizeLine ? ` · ${sizeLine}` : ""}
               </span>
               <button type="button" className="mono" onClick={showPlanSwitcher}>{setup.switchPlan}</button>
             </div>
             <div style={{ marginBottom: "1.25rem" }}>
-              <h3 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.4rem" }}>
-                {setup.createAccountTitle}
-              </h3>
+              {/* English opens with Ash's own "Create your account, then choose..." above, and Clerk's card
+                  carries its own heading, so a third one would only repeat them. */}
+              {englishPage ? null : (
+                <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 400, marginBottom: "0.4rem" }}>
+                  {setup.createAccountTitle}
+                </h2>
+              )}
               <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
                 {selectedPlan === "free" ? setup.createAccountIntroFree : setup.createAccountIntroPaid}
               </p>
@@ -247,40 +283,12 @@ function GetStartedPageContent() {
               forceRedirectUrl={activationUrl}
               fallbackRedirectUrl={activationUrl}
               signInUrl={signInUrl}
-              appearance={{
-                elements: {
-                  rootBox: "w-full",
-                  cardBox: "w-full max-w-full",
-                  card: "rounded-none border border-[var(--etched-border)] shadow-[0_24px_80px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-xl p-8 pb-10",
-                  headerTitle: "serif text-[2rem] font-light text-[var(--ink-black)] leading-none mb-2",
-                  headerSubtitle: "mono text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)] mt-0",
-                  formButtonPrimary: "rounded-none bg-[var(--ink-black)] text-white hover:bg-black font-mono uppercase tracking-[0.15em] text-[11px] font-bold py-3.5 transition-all mt-2",
-                  formFieldInput: "rounded-none border-[var(--etched-border)] focus:border-[var(--ink-black)] focus:ring-1 focus:ring-[var(--ink-black)] text-sm py-2.5 bg-transparent",
-                  formFieldLabel: "mono text-[9px] uppercase tracking-[0.15em] font-bold text-[var(--text-secondary)] mb-1.5",
-                  footerActionLink: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] font-bold transition-colors",
-                  identityPreview: "rounded-none border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-4 py-3",
-                  identityPreviewEditButton: "text-[var(--gold-leaf)] hover:text-[var(--ink-black)] transition-colors",
-                  dividerLine: "bg-[var(--etched-border)]",
-                  dividerText: "mono text-[9px] uppercase tracking-[0.15em] text-[var(--text-muted)] bg-transparent",
-                  socialButtonsBlockButton: "rounded-none border border-[var(--etched-border)] hover:bg-[var(--bg-elevated)] hover:border-[var(--ink-black)] text-[var(--ink-black)] transition-all",
-                  socialButtonsBlockButtonText: "mono text-[11px] font-semibold tracking-wider uppercase",
-                  footer: "!bg-transparent !bg-none border-none rounded-none mt-2",
-                  footerActionText: "text-xs text-[var(--text-secondary)]",
-                  main: "gap-6",
-                },
-                variables: {
-                  borderRadius: 0,
-                  colorPrimary: "var(--ink-black)",
-                  colorBackground: "transparent",
-                  colorText: "var(--ink-black)",
-                  colorInputBackground: "transparent",
-                  colorInputText: "var(--ink-black)",
-                  fontFamily: "inherit",
-                },
-              }}
+              appearance={authCardAppearance({
+                headerTitle: "serif text-[2rem] font-light text-[var(--ink-black)] leading-none mb-2",
+              })}
             />
 
-            <div className="mt-6 text-center text-[var(--text-muted)] font-mono text-[9px] uppercase tracking-wider">
+            <div className="mt-6 text-center text-[var(--text-secondary)] font-mono text-[11px] leading-relaxed uppercase tracking-wider">
               {setup.legalPrefix} <br className="hidden sm:block" />
               <Link href="/terms" className="underline hover:text-[var(--ink-black)] transition-colors">{setup.terms}</Link> {setup.and} <Link href="/privacy" className="underline hover:text-[var(--ink-black)] transition-colors">{setup.privacy}</Link>
             </div>
@@ -310,12 +318,26 @@ function GetStartedPageContent() {
                   background: "rgba(22,163,106,0.08)",
                   border: "1px solid rgba(22,163,106,0.2)",
                 }}>
-                  <span className="mono" style={{
-                    fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
-                    fontWeight: 700, color: "#16a36a",
-                  }}>
-                    {selectedPlan === "free" ? setup.badges.free : setup.badges.paid}
-                  </span>
+                  {selectedPlan === "free" ? (
+                    <span className="mono" style={{
+                      fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em",
+                      fontWeight: 700, color: "#16a36a",
+                    }}>
+                      {setup.badges.free}
+                    </span>
+                  ) : (
+                    // The guarantee is a promise made in the terms, so the badge that states it links there.
+                    <Link
+                      href="/terms"
+                      className="mono"
+                      style={{
+                        fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em",
+                        fontWeight: 700, color: "#15803d", textDecoration: "underline", textUnderlineOffset: 3,
+                      }}
+                    >
+                      {setup.badges.paid}
+                    </Link>
+                  )}
                 </div>
 
                 {/* Monthly / Yearly toggle — only for plans that sell yearly */}
@@ -358,7 +380,7 @@ function GetStartedPageContent() {
                     {setup.yourPlan}
                   </span>
                   <h2 className="serif" style={{ fontSize: "2rem", fontWeight: 700, marginTop: 4 }}>
-                    {plan.name}
+                    {label}
                   </h2>
                 </div>
                 <div style={{ textAlign: "right" }}>
@@ -371,6 +393,11 @@ function GetStartedPageContent() {
                   {isYearly ? (
                     <span className="mono" style={{ fontSize: 9, fontWeight: 700, color: "#16a36a", letterSpacing: "0.04em" }}>
                       {saveDollarsLabel}
+                    </span>
+                  ) : null}
+                  {sizeLine ? (
+                    <span className="mono" style={{ display: "block", marginTop: 4, fontSize: 10, opacity: 0.55 }}>
+                      {sizeLine}
                     </span>
                   ) : null}
                 </div>
@@ -388,8 +415,8 @@ function GetStartedPageContent() {
               </div>
 
               {/* Features */}
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.55rem", marginBottom: selectedPlan === "free" ? "0.9rem" : "1.5rem" }}>
-                {plan.features.slice(0, 5).map((f) => (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.55rem", marginBottom: selectedPlan === "free" ? "0.9rem" : setup.marketAnchor ? "1.5rem" : 0 }}>
+                {features.slice(0, 5).map((f) => (
                   <li key={f} style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "flex-start", gap: 8 }}>
                     <CheckCircle size={12} style={{ color: "var(--gold-leaf)", flexShrink: 0, marginTop: 2 }} />
                     {f}
@@ -411,9 +438,9 @@ function GetStartedPageContent() {
 
               {/* Honest market anchor — generic, true (no competitor named, no
                   fabricated "was $X"). Paid cards only. */}
-              {selectedPlan !== "free" ? (
+              {selectedPlan !== "free" && setup.marketAnchor ? (
                 <div style={{
-                  padding: "9px 12px", marginBottom: "1.5rem",
+                  padding: "9px 12px",
                   border: "1px dashed var(--etched-border)", background: "var(--bg-elevated)",
                 }}>
                   <span className="mono" style={{ fontSize: 10, letterSpacing: "0.04em", color: "var(--text-muted)", lineHeight: 1.6, display: "block" }}>
@@ -422,16 +449,18 @@ function GetStartedPageContent() {
                 </div>
               ) : null}
 
-              {/* Guarantee */}
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "10px 14px", border: "1px solid var(--etched-border)",
-              }}>
-                <Shield size={12} style={{ opacity: 0.4 }} />
-                <span className="mono" style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, fontWeight: 600 }}>
-                  {selectedPlan === "free" ? setup.guarantee.free : setup.guarantee.paid}
-                </span>
-              </div>
+              {/* Free has no checkout, so it says so; the paid guarantee is the linked badge at the top. */}
+              {selectedPlan === "free" ? (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "10px 14px", border: "1px solid var(--etched-border)",
+                }}>
+                  <Shield size={12} style={{ opacity: 0.4 }} aria-hidden="true" />
+                  <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {setup.guarantee.free}
+                  </span>
+                </div>
+              ) : null}
             </div>
 
             {/* Plan switcher */}
@@ -493,10 +522,17 @@ function GetStartedPageContent() {
                           {setup.mostPopular}
                         </span>
                       ) : null}
-                      <span className="serif" style={{ fontSize: 13, fontWeight: 700, display: "block" }}>{p.name}</span>
+                      <span className="serif" style={{ fontSize: 13, fontWeight: 700, display: "block" }}>
+                        {planLabel(key, p.name)}
+                      </span>
                       <span className="mono" style={{ fontSize: 10, opacity: 0.5 }}>
                         {showYearly ? `${formatPrice(optionYearly)}${setup.perYear}` : `${formatPrice(p.price)}${setup.perMonth}`}
                       </span>
+                      {planSizeLine(key) ? (
+                        <span className="mono" style={{ display: "block", marginTop: 2, fontSize: 9, opacity: 0.55 }}>
+                          {planSizeLine(key)}
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -513,11 +549,17 @@ function GetStartedPageContent() {
                 {setup.bestFit}
               </div>
               <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-                {setup.planGuidance[selectedPlan]}
+                {selectedPlan === "command" ? null : setup.planGuidance[selectedPlan]}
               </p>
             </div>
           </div>
         </div>
+
+        {englishPage ? (
+          <div className={styles.closing}>
+            <ActionLinks items={CLOSING_LINKS} />
+          </div>
+        ) : null}
 
         {/* Responsive styles */}
         <style>{`
@@ -601,7 +643,7 @@ function GetStartedPageContent() {
             }
           }
         `}</style>
-      </div>
+      </main>
     </>
   );
 }

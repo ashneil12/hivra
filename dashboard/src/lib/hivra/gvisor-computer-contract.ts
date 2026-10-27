@@ -1,6 +1,15 @@
 import { z } from "zod";
 
-export const HIVRA_GVISOR_ADAPTER_VERSION = "2026.09.15.1" as const;
+export const HIVRA_GVISOR_ADAPTER_VERSION = "2026.10.20.1" as const;
+/**
+ * Earlier adapter releases this one replaces on a host and keeps managing: a
+ * sandbox created by one of them runs on its host's current adapter after
+ * the host is set up again, and its owner's Update moves it to that adapter
+ * (its row is re-pinned) and to HIVRA_GVISOR_IMAGE, keeping /workspace.
+ */
+export const HIVRA_GVISOR_PREVIOUS_ADAPTERS = [
+  { version: "2026.09.15.1", sha256: "2bb8ce761b72a5fc5054b8dbf9f7c79684da478b74c5f1127a212c489539695d" },
+] as const;
 export const HIVRA_GVISOR_IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285" as const;
 export const HIVRA_GVISOR_DRIVER = "gvisor-runsc" as const;
 export const HIVRA_GVISOR_ISOLATION_CLASS = "application-kernel" as const;
@@ -57,7 +66,7 @@ const UuidSchema = z.string().uuid();
 const DigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const GvisorComputerRequestSchema = z.object({
-  operation: z.enum(["create", "status", "start", "stop", "resize", "exec", "delete"]),
+  operation: z.enum(["create", "status", "start", "stop", "resize", "exec", "delete", "update"]),
   ownerHash: DigestSchema,
   computerId: UuidSchema,
   sandboxId: UuidSchema,
@@ -70,7 +79,7 @@ export const GvisorComputerRequestSchema = z.object({
     && (value.cpu === undefined || value.memoryMb === undefined)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Resource limits are required" });
   }
-  if ((value.operation === "create" || value.operation === "start" || value.operation === "resize")
+  if ((value.operation === "create" || value.operation === "start" || value.operation === "resize" || value.operation === "update")
     && value.hostMemoryReserveMb === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Host memory reserve is required" });
   }
@@ -81,7 +90,7 @@ export const GvisorComputerRequestSchema = z.object({
 
 export const GvisorComputerReceiptSchema = z.object({
   version: z.literal(1),
-  adapterVersion: z.literal(HIVRA_GVISOR_ADAPTER_VERSION).optional(),
+  adapterVersion: z.enum(["2026.09.15.1", HIVRA_GVISOR_ADAPTER_VERSION]).optional(),
   computerId: UuidSchema,
   sandboxId: UuidSchema,
   state: z.enum(["running", "stopped", "absent"]),

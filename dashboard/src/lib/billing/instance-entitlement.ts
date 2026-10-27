@@ -32,10 +32,12 @@
  * chance before the Free defaults apply.
  *
  * Grace period note: the eligibility evaluator in token-tier-eligibility
- * keeps `currently_eligible = true` until breach + grace expires, then
- * flips to false on suspend. That matches how the wallet UI displays
- * "Eligible" vs "Not yet eligible," so this helper checks the strict
- * boolean and stays consistent. No special grace handling here.
+ * sets `currently_eligible = false` at the breach (balance below the
+ * qualifying quantity) and stamps `last_breach_at`; the tier is suspended
+ * REQUALIFICATION_GRACE_HOURS (24) later. This resolver checks the strict
+ * boolean, so a tier inside its grace does not resolve here. The lapse check
+ * adds the grace back with hasTokenTierInGrace, because the breach email
+ * promises the tier for the whole grace.
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
@@ -48,6 +50,7 @@ import {
   yearlyTierPlanKey,
   type YearlyEntitlementRow,
 } from "@/lib/billing/yearly-entitlement";
+import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
 import { log } from "@/lib/logger";
 
 export interface EffectiveSubscription {
@@ -113,6 +116,23 @@ export interface ResolveEffectiveSubscriptionOptions {
    * row can still read active or past_due.
    */
   excludeStripe?: boolean;
+  /**
+   * Throw when a read fails instead of treating it as "no row". By default a
+   * failed read looks like a missing plan, which is right for showing a page
+   * but wrong for stopping a computer: the lapse check passes true so a
+   * database error can never make a paying owner look unpaid.
+   */
+  throwOnQueryError?: boolean;
+}
+
+function failOnQueryError(
+  options: ResolveEffectiveSubscriptionOptions,
+  table: string,
+  error: { message?: string } | null | undefined
+): void {
+  if (options.throwOnQueryError && error) {
+    throw new Error(`${table} could not be read: ${error.message ?? "unknown error"}`);
+  }
 }
 
 /**
@@ -129,13 +149,14 @@ export async function resolveEffectiveSubscription(
 ): Promise<EffectiveSubscription | null> {
   if (!supabaseAdmin) return null;
 
-  const { data: subRow } = options.excludeStripe
-    ? { data: null }
+  const { data: subRow, error: subError } = options.excludeStripe
+    ? { data: null, error: null }
     : await supabaseAdmin
         .from("hermes_subscriptions")
         .select("plan, status, instance_limit, total_cpu_budget, total_ram_budget, current_period_end, stripe_subscription_id, grace_period_ends_at")
         .eq("user_id", userId)
         .maybeSingle<SubscriptionRow>();
+  failOnQueryError(options, "hermes_subscriptions", subError);
 
   // Dunning cutoff: a `past_due` Stripe sub only grants access WHILE it is
   // still inside its grace window. Once `grace_period_ends_at` has elapsed, the
@@ -198,12 +219,13 @@ export async function resolveEffectiveSubscription(
   // while Apple retries the card). 'past_due' (billing retry with NO grace),
   // 'expired' and 'revoked' fall through to the token/free sources exactly
   // like a lapsed Stripe row does.
-  const { data: appleRow } = await supabaseAdmin
+  const { data: appleRow, error: appleError } = await supabaseAdmin
     .from("apple_iap_subscriptions")
     .select("plan, status, current_period_end")
     .eq("user_id", userId)
     .in("status", APPLE_ACCESS_STATUSES as unknown as string[])
     .maybeSingle<{ plan: string; status: string; current_period_end: string | null }>();
+  failOnQueryError(options, "apple_iap_subscriptions", appleError);
 
   if (appleRow && appleRow.plan in PLANS) {
     const applePlan = PLANS[appleRow.plan as keyof typeof PLANS];
@@ -236,11 +258,12 @@ export async function resolveEffectiveSubscription(
   // renewal inserts a fresh row while a paid Power year is still running.
   // The ranking lives in lib/billing/yearly-entitlement, shared with the
   // refresh-token-tiers cron so the two can never disagree.
-  const { data: yearlyRows } = await supabaseAdmin
+  const { data: yearlyRows, error: yearlyError } = await supabaseAdmin
     .from("yearly_token_subscriptions")
     .select("tier, status, expires_at, paid_at")
     .eq("user_id", userId)
     .in("status", [...YEARLY_LIVE_STATUSES]);
+  failOnQueryError(options, "yearly_token_subscriptions", yearlyError);
 
   const yearly = pickEntitledYearlySubscription(
     Array.isArray(yearlyRows) ? (yearlyRows as YearlyEntitlementRow[]) : []
@@ -263,11 +286,12 @@ export async function resolveEffectiveSubscription(
     };
   }
 
-  const { data: qualRows } = await supabaseAdmin
+  const { data: qualRows, error: qualError } = await supabaseAdmin
     .from("token_tier_qualifications")
     .select("tier, currently_eligible")
     .eq("user_id", userId)
     .eq("currently_eligible", true);
+  failOnQueryError(options, "token_tier_qualifications", qualError);
 
   const quals = (qualRows as QualificationRow[] | null) ?? [];
   if (quals.length > 0) {
@@ -319,6 +343,30 @@ export async function resolveEffectiveSubscription(
   }
 
   return null;
+}
+
+/**
+ * True while a token tier is inside its grace: the balance fell below the
+ * qualifying quantity less than REQUALIFICATION_GRACE_HOURS ago and the tier
+ * has not been suspended. The evaluator sets currently_eligible = false at the
+ * breach, so resolveEffectiveSubscription no longer counts such a row; the
+ * lapse check uses this to keep the computer running until the grace ends,
+ * as the breach email says. Same cut-off as the evaluator's suspend step
+ * (now >= last_breach_at + grace). Throws when the row cannot be read, so the
+ * caller can treat that as "don't know".
+ */
+export async function hasTokenTierInGrace(userId: string, now: Date = new Date()): Promise<boolean> {
+  if (!supabaseAdmin) throw new Error("Database not configured");
+  const graceStart = new Date(now.getTime() - REQUALIFICATION_GRACE_HOURS * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("token_tier_qualifications")
+    .select("tier")
+    .eq("user_id", userId)
+    .is("last_suspend_at", null)
+    .gt("last_breach_at", graceStart)
+    .limit(1);
+  if (error) throw new Error(`Token tier grace could not be read: ${error.message}`);
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**

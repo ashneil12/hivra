@@ -178,6 +178,109 @@ function agentCliUpdateRefusal() {
   return null;
 }
 
+// The hosted agent app (the Aeon dashboard, OpenClaw, Agent Zero) and the
+// version of it this computer runs, reported on /api/meta (authenticated
+// callers only) so the dashboard can compare it with the release's tested pin
+// (agent-app-versions.json). hivra-agent-app-update moves it to that pin; it
+// reads `activity` (when the app was last used through this gateway and how
+// many of its WebSockets are open) to wait until nobody is using it, and while
+// it swaps the app it holds the app's surface here with the lock file. OpenClaw
+// is asked for its version like the CLIs (the agent's user owns its npm
+// prefix); Aeon's dashboard build and Agent Zero's image are only ever changed
+// by root, which records them in a root-owned file.
+const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
+  : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
+  : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] } : null;
+const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
+const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
+const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
+const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
+const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/ };
+// A gateway start counts as use: nothing is known about the minutes before it.
+let agentAppLastUsedAt = Date.now();
+let agentAppOpenConnections = 0;
+let openclawVersion;
+let openclawProbedKey = null;
+let openclawProbing = false;
+function probeOpenclaw() {
+  if (!AGENT_APP || AGENT_APP.name !== "openclaw" || openclawProbing) return;
+  let key = "missing";
+  try { const st = fs.statSync(OPENCLAW_BIN); key = st.ino + ":" + st.size + ":" + st.mtimeMs; } catch {}
+  if (key === openclawProbedKey) return;
+  openclawProbing = true;
+  const done = (version, detail) => {
+    openclawProbing = false;
+    openclawProbedKey = key;
+    openclawVersion = version;
+    if (!version) console.warn("hivra-chat: openclaw --version failed: " + detail);
+  };
+  try {
+    execFile(OPENCLAW_BIN, ["--version"], { env: AGENT_ENV, cwd: HOME, timeout: 15000 }, (err, stdout) => {
+      const match = !err && /\b(\d+\.\d+\.\d+)\b/.exec(String(stdout || ""));
+      done(match ? match[1] : null, err ? (err.code || err.message) : "no version in output");
+    });
+  } catch (error) {
+    done(null, (error && error.message) || String(error));
+  }
+}
+probeOpenclaw();
+function readSmallJson(file) {
+  try {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const buffer = Buffer.alloc(4096);
+      const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      return JSON.parse(buffer.subarray(0, size).toString("utf8"));
+    } finally { fs.closeSync(fd); }
+  } catch { return null; }
+}
+function agentAppReport() {
+  if (!AGENT_APP) return null;
+  const pattern = AGENT_APP_VERSION[AGENT_APP.name];
+  let version = null;
+  const activity = { lastUsedAt: new Date(agentAppLastUsedAt).toISOString(), openConnections: agentAppOpenConnections };
+  if (AGENT_APP.name === "openclaw") {
+    probeOpenclaw();
+    // Until the first probe after this gateway started has finished.
+    if (openclawVersion === undefined) return { name: AGENT_APP.name, checking: true, activity };
+    version = openclawVersion;
+  } else {
+    const record = readSmallJson(AGENT_APP_RECORD);
+    if (record && record.name === AGENT_APP.name && typeof record.version === "string" && pattern.test(record.version)) version = record.version;
+  }
+  const report = { name: AGENT_APP.name, version, activity };
+  const status = readSmallJson(AGENT_APP_STATUS);
+  if (status && status.name === AGENT_APP.name && AGENT_CLI_UPDATE_STATES.has(status.state)
+    && typeof status.to === "string" && pattern.test(status.to)) {
+    report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
+      ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
+  }
+  return report;
+}
+// While hivra-agent-app-update swaps the app it holds the app's surface (a
+// request mid-swap would reach a stopped or half-started app). A lock left by
+// a crashed updater stops counting after 30 minutes.
+function agentAppUpdating() {
+  try { return Date.now() - fs.statSync(AGENT_APP_LOCK).mtimeMs < 30 * 60 * 1000; } catch { return false; }
+}
+function isAgentAppPort(port) {
+  return Boolean(AGENT_APP && AGENT_APP.ports.includes(port));
+}
+// Counts an authenticated request to the app as use (a refused one too: the
+// updater then backs off) and answers it while the app is being swapped.
+// Returns true when it answered.
+function agentAppHold(req, res) {
+  agentAppLastUsedAt = Date.now();
+  if (!agentAppUpdating()) return false;
+  const accept = String(req.headers.accept || "");
+  res.writeHead(503, { "Content-Type": accept.includes("text/html") ? "text/html; charset=utf-8" : "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "15" });
+  const message = AGENT_APP.label + " is being updated. It will be back in a minute.";
+  res.end(accept.includes("text/html")
+    ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"15\"><title>Updating</title><p style=\"font:15px system-ui;margin:2em\">" + message + "</p>"
+    : message);
+  return true;
+}
+
 // Per-box Bankr wallet credentials. The dashboard provisions the wallet LAZILY
 // (user clicks "Create wallet") and SSH-writes ~/.hivra/bankr.env (0600, KEY=VALUE);
 // each chat spawn re-reads it so a wallet created mid-life applies on the NEXT
@@ -1902,6 +2005,7 @@ function a0CanonicalEntryHtml(html) {
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
   if (!authed(req)) return denyHtml(res);
+  if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   const editorPath = apath.split("?")[0];
   const editorAsset = (req.method === "GET" || req.method === "HEAD") && Object.hasOwn(A0_EDITOR_SOURCES, editorPath);
@@ -2136,6 +2240,7 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 // short-lived HttpOnly cookie before navigating here with a clean URL.
 function gateProxy(req, res, port, strip) {
   if (!authed(req)) return denyHtml(res);
+  if (isAgentAppPort(port) && agentAppHold(req, res)) return;
   return proxyHttp(req, res, port, strip);
 }
 
@@ -3514,7 +3619,7 @@ const server = http.createServer((req, res) => {
     // no-store: bootId (the sign-in epoch) and nativeReady describe the live
     // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
-    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}) });
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}), ...(authed(req) ? ((app) => app ? { agentApp: app } : {})(agentAppReport()) : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
@@ -3634,6 +3739,25 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   if (!port) { socket.destroy(); return; }
+  // The app's WebSockets count as use for as long as they stay open.
+  if (isAgentAppPort(port)) {
+    agentAppLastUsedAt = Date.now();
+    if (agentAppUpdating()) {
+      try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 15\r\n\r\n"); } catch (e) {}
+      socket.destroy();
+      return;
+    }
+    agentAppOpenConnections += 1;
+    let counted = true;
+    const closed = () => {
+      if (!counted) return;
+      counted = false;
+      agentAppOpenConnections = Math.max(0, agentAppOpenConnections - 1);
+      agentAppLastUsedAt = Date.now();
+    };
+    socket.once("end", closed);
+    socket.once("close", closed);
+  }
   let fwdUrl = req.url;
   if (strip) { fwdUrl = req.url.slice(strip.length); if (!fwdUrl.startsWith("/")) fwdUrl = "/" + fwdUrl; }
   // Agent Zero's WS also rides its form-login session (the browser never holds one —

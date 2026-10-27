@@ -59,35 +59,43 @@ describe("comparison page claims", () => {
     expect(container.querySelector('a[href="/pricing"]')).not.toBeNull();
   });
 
-  it.each(SLUGS)("/compare/%s closes with the website pack's heading", async (slug) => {
+  it.each(SLUGS)("/compare/%s closes with the copy's closing row", async (slug) => {
     expect(SLUGS).toHaveLength(9);
     const { container } = await renderComparison(slug);
-    const price = [...container.querySelectorAll("h2")].filter((h2) => h2.nextElementSibling?.textContent?.startsWith("From $9.99/mo."));
-    expect(price.map((h2) => h2.textContent)).toEqual(["Ready to leave server maintenance behind?"]);
+    const closing = [...container.querySelectorAll("h2")].filter((h2) => h2.textContent === "Ready to give your agent a computer?");
+    expect(closing).toHaveLength(1);
+    const section = closing[0].closest("section");
+    expect(section?.querySelector('a[href="/pricing"]')).not.toBeNull();
+    expect(section?.querySelector('a[href="/agents"]')).not.toBeNull();
+    expect([...(section?.querySelectorAll("a") ?? [])].map((a) => a.textContent)).toEqual(
+      expect.arrayContaining(["Explore Hivra pricing", "Compare all options", "Browse features"]),
+    );
     expect(container.textContent).not.toContain("stop managing infra");
+    expect(container.textContent).not.toContain("Ready to leave server maintenance behind?");
   });
 
-  // Competitor numbers re-checked on each vendor's own page on 2026-09-24.
-  // Update these with the copy when a vendor changes its prices.
+  // Competitor numbers: Hetzner, Railway and Render were re-read on their vendors' own pages (2026-09-24,
+  // 2026-10-09 and again for the 2026-10-20 audit). Update these with the copy when a vendor changes its prices.
   it("quotes the competitor prices that were verified, not the stale ones", async () => {
     const selfHosted = await comparisonText("vs-self-hosted");
-    expect(selfHosted).toMatch(/CX23 \(2 vCPU, 4 GB\) costs €5\.49\/mo before VAT/);
-    expect(selfHosted).toMatch(/CX33 \(€8\.49\/month, 4 vCPU 8 GB RAM\)/);
-    expect(selfHosted).toMatch(/DigitalOcean's equivalent Droplets are \$24-48\/month/);
+    expect(selfHosted).toMatch(/Hetzner CX23, with 2 vCPU and 4 GB RAM, is €5\.49 per month before VAT and a public IPv4 address/);
+    expect(selfHosted).toMatch(/From €5\.49\/mo before VAT and a public IPv4 address \(unmanaged\)/);
+    // The same server, in dollars and with Hetzner's own supply caveat, as the tools pages quote it (audit C1).
+    expect(selfHosted).toContain("(Hetzner's price adjustment page lists the same server at $6.49 in US dollars for Germany and Finland)");
+    expect(selfHosted).toContain("Hetzner says the number of servers in this range is limited, so you may not be able to order one when you look.");
+    expect(selfHosted).toContain("or $6.49 in US dollars for Germany and Finland. Hetzner says supply in this range is limited");
 
     const railway = await comparisonText("vs-railway");
-    expect(railway).toMatch(/\$20 per vCPU and \$10 per GB of RAM per month/);
-    expect(railway).toMatch(/\$0\.15 per GB of volume storage/);
+    expect(railway).toMatch(/Usage-based: \$20\/vCPU and \$10\/GB RAM per month, plus plan fee/);
     expect(railway).not.toMatch(/\$22/);
 
     const render_ = await comparisonText("vs-render");
-    expect(render_).toMatch(/Starter compute plan \(\$7\/month\) has 512 MB RAM/);
-    expect(render_).toMatch(/Standard compute plan at \$25\/month gives 1 CPU and 2 GB RAM/);
-    expect(render_).toMatch(/2 CPU and 4 GB plan is \$85\/month/);
+    expect(render_).toMatch(/Standard web service, listed at \$25 monthly with 1 CPU and 2 GB of RAM/);
+    expect(render_).toMatch(/5 GB persistent disk costing \$1\.25/);
+    expect(render_).toMatch(/around \$26\.25 before AI usage/);
+    expect(render_).toMatch(/\$85\/mo \(2 CPU, 4 GB\) plus disk/);
     expect(render_).toMatch(/one-click Hermes template/);
-    expect(render_).toMatch(/5 GB persistent disk/);
-    expect(render_).toMatch(/\$0\.25\/GB\/month/);
-    expect(render_).toMatch(/after 15 minutes without inbound traffic/);
+    expect(render_).toMatch(/Free sleeps after 15 idle minutes; paid plans stay up/);
 
     for (const slug of SLUGS) {
       const text = await comparisonText(slug);
@@ -112,7 +120,7 @@ describe("comparison page claims", () => {
   it("states the two sellable sizes inline and scopes the JSON export to Claude Code and Codex", async () => {
     const alternatives = await comparisonText("ai-agent-hosting-alternatives");
     expect(alternatives).toMatch(/\$9\.99\/month for 2 vCPU and 4 GB RAM, or \$19\.99\/month for 4 vCPU and 8 GB RAM/);
-    expect(alternatives).toMatch(/Yes, 7 days, card payments only/);
+    expect(alternatives).toMatch(/Yes: 7-day money-back guarantee on card payments/);
     for (const slug of SLUGS) {
       const text = await comparisonText(slug);
       expect(text).not.toMatch(/with JSON export|Chats and memory as one JSON file/);
@@ -126,7 +134,7 @@ describe("comparison page claims", () => {
     for (const slug of ["vs-self-hosted", "ai-agent-hosting-alternatives"]) {
       const { container } = await renderComparison(slug);
       const text = container.textContent ?? "";
-      expect(text).not.toMatch(/\d+\s*(?:-|\u2013)\s*\d+\+?\s*hours?|\$\d+\s*\/\s*hour|by our estimate|multi-day project/i);
+      expect(text).not.toMatch(/\d+\s*(?:-|–)\s*\d+\+?\s*hours?|\$\d+\s*\/\s*hour|by our estimate|multi-day project/i);
       expect(container.querySelector('a[href="/tools/ai-agent-hosting-cost-calculator"]')).not.toBeNull();
       cleanup();
     }
@@ -134,30 +142,65 @@ describe("comparison page claims", () => {
 
   // F-29: the options table must not say something about every alternative that
   // the page's own sections contradict (OpenClaw has its own memory, browser
-  // tools and scheduler), and must not state other providers' guarantees.
+  // tools and scheduler; Hermes ships its own dashboard and cron), and must not
+  // state other providers' guarantees.
   it("scopes the alternatives table to the options the page covers", async () => {
     const { container } = await renderComparison("ai-agent-hosting-alternatives");
     const text = container.textContent ?? "";
     expect(text).not.toMatch(/None in any alternative|on all alternatives|for alternatives\b/);
-    expect(text).toMatch(/None in the options above/);
+    // The audit of 2026-10-20 found "None in the options above" false: Cloudways lists Hermes as generally
+    // available and Hermes brings its own dashboard to any host.
+    expect(text).not.toMatch(/None in the options above/);
+    expect(text).toMatch(/Hermes brings its own dashboard on any host/);
     expect(text).toMatch(/Varies by provider/);
-    expect(text).toMatch(/OpenClaw has its own scheduler/);
+    expect(text).toMatch(/Hermes has its own cron and OpenClaw has its own scheduler/);
+    // Fly describes Sprites as persistent computers, so only E2B is called a short-lived sandbox.
+    expect(text).toMatch(/E2B is aimed at short-lived code sandboxes, while Fly describes Sprites as persistent computers/);
     expect(container.querySelector("h1")?.textContent).not.toMatch(/\bEvery option\b/i);
     cleanup();
-    // The index describes the page the same way: the main options, not every one.
     const index = render(<ComparePage />);
     expect(index.container.textContent).not.toMatch(/here is every option/i);
-    expect(index.container.textContent).toMatch(/the main options for hosting an AI agent/);
   });
 
   it("does not say Hivra cannot run OpenClaw, or that it imports OpenClaw itself", async () => {
     const text = await comparisonText("openclaw-to-hermes");
-    expect(text).toMatch(/Hivra can host OpenClaw itself/);
+    expect(text).toMatch(/Hivra can host it on a paid Hivra Cloud computer, just as it hosts Hermes/);
+    // No agent is "the paid one" (owner decision 2026-10-21): the answer states the rule for every computer.
+    expect(text).toMatch(/No\. Hivra can host OpenClaw as well as Hermes\. Every Hivra Cloud computer needs a paid plan\./);
+    expect(text).not.toMatch(/Hivra supports paid OpenClaw deployments|supported paid computer/);
     expect(text).toMatch(/hermes claw migrate/);
     expect(text).toMatch(/Hivra itself has no import tool/);
     expect(text).toMatch(/not affiliated with the OpenClaw project/);
+    // Hermes' own command does import memory and settings, so the page must not say nothing converts.
+    expect(text).not.toMatch(/No automatic conversion of OpenClaw memory/);
     // OpenClaw has its own memory and scheduler (its docs and Hermes' migration
     // guide both say so); the old copy claimed it had neither.
     expect(text).not.toMatch(/Session-scoped by default|Not supported natively|no native long-term memory/i);
+  });
+
+  it("does not state what the vendors' own pages contradict or no longer show (audit 2026-10-20)", async () => {
+    const railway = await comparisonText("vs-railway");
+    // Railway has service metrics and logs, community Hermes templates and a scheduler of its own for jobs.
+    expect(railway).not.toMatch(/Agent dashboard & monitoring\s*Built-in\s*None/);
+    expect(railway).not.toMatch(/DIY from scratch|Requires custom Docker setup|Separate Railway cron service/);
+    expect(railway).toMatch(/Community one-click Hermes templates exist/);
+
+    const selfHosted = await comparisonText("vs-self-hosted");
+    expect(selfHosted).not.toMatch(/None\. You build it|sometimes breaking|You script it/);
+    expect(selfHosted).toMatch(/Hermes ships its own dashboard/);
+
+    const xcloud = await comparisonText("vs-xcloud");
+    expect(xcloud).not.toMatch(/More than 30 listed|at the time/);
+    expect(xcloud).toMatch(/30\+ stated/);
+
+    const hostinger = await comparisonText("vs-hostinger");
+    expect(hostinger).not.toMatch(/No, proprietary|quicker/);
+    // Hostinger's managed plan and KVM 2 were re-read on 2026-10-21 ($4.99 and $8.79, both shown as sale prices):
+    // the superseded figures are gone and the page says they are sale prices to confirm.
+    expect(hostinger).not.toMatch(/\$5\.99|\$143\.76|\$8\.99|since we checked/);
+    expect(hostinger).toMatch(/promotion is \$4\.99 a month on a 24-month commitment/);
+    expect(hostinger).toMatch(/\$119\.76 for 24 months, our arithmetic/);
+    expect(hostinger).toMatch(/KVM 2 at \$8\.79\/mo/);
+    expect(hostinger).toMatch(/shows both the managed plan and the KVM 2 VPS at sale prices, so confirm the current figures/);
   });
 });

@@ -7,7 +7,7 @@ export default function How() {
   return (
     <section id="workspace" className={styles.how} aria-labelledby="how-heading">
       <header className={styles.sectionHead}>
-        <span className={styles.eyebrow}>{HOW.eyebrow}</span>
+        <span className={styles.eyebrow} aria-hidden="true" />
         <h2 id="how-heading" className={styles.sectionTitle}>
           {HOW.title} <em>{HOW.titleTail}</em>
         </h2>
@@ -15,11 +15,11 @@ export default function How() {
       <HowScene copy={HOW} />
       <div className={styles.sectionActions}>
         <a href={AGENT_LAUNCH_HREF} className={styles.primaryCta} data-cta="how-primary">
-          <span>Launch an agent</span>
+          <span>{HOW.primary}</span>
           <ArrowRight size={18} aria-hidden="true" />
         </a>
-        <a href="#pricing" className={styles.textCta}>
-          See pricing
+        <a href={HOW.secondary.href} className={styles.textCta} data-cta="how-plans">
+          {HOW.secondary.label}
           <ArrowRight size={16} aria-hidden="true" />
         </a>
       </div>

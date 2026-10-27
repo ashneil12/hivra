@@ -68,9 +68,11 @@ import { getPlan } from "@/lib/subscription";
 import { isPaidTier, VENICE_BOOST_CPU, VENICE_BOOST_RAM_MB } from "@/lib/services/tier-boost";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import {
+  readPlanOnHold,
   resolveEffectiveSubscription,
   resolveWorkspaceCloudEntitlement,
 } from "@/lib/billing/instance-entitlement";
+import { PAYMENT_GRACE_HOURS } from "@/lib/subscription/plans";
 import { normalizeModelValue } from "@/lib/models";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
 import { reconcileModelForProvider } from "@/lib/services/provider-config";
@@ -2295,13 +2297,20 @@ export class InstanceService {
     }
 
     if (!sub) {
+      // A paid plan whose payment failed and whose grace is over resolves to
+      // no plan at all. Tell that owner what happened instead of asking them
+      // to choose a plan they already have.
+      const hold =
+        productSurface === "workspace_cloud" ? null : await readPlanOnHold(userId);
       return {
         success: false,
         status: 403,
         // No token wording: a user with no entitlement reads this in every
         // country, so it names only the plans every viewer can buy.
         message:
-          "Active subscription required. Choose a plan to start deploying agents.",
+          hold?.reason === "payment_overdue"
+            ? "Your plan is on hold because a payment didn't go through. Update your payment in Billing to launch a computer."
+            : "Active subscription required. Choose a plan to start deploying agents.",
       };
     }
 
@@ -2348,8 +2357,7 @@ export class InstanceService {
       return {
         success: false,
         status: 402,
-        message:
-          "Your last payment didn't go through. Update your payment method to deploy new agents — your existing agents keep running during the grace period.",
+        message: `Your last payment didn't go through. Update your payment method to launch a new computer. Your existing computers keep running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment.`,
       };
     }
 

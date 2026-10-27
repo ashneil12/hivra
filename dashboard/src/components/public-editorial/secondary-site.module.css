@@ -131,16 +131,6 @@
 .included li { display:flex; align-items:baseline; gap:12px; }
 .included svg { flex-shrink:0; color:var(--gold-leaf); }
 .verdict { font-size:21px; line-height:1.7; border-left:2px solid var(--gold-leaf); padding:8px 0 8px 28px; }
-.legal { width:min(100% - 2 * var(--public-gutter,24px),1120px); margin-inline:auto; padding-block:72px 120px; }
-.legal h1 { font-size:clamp(42px,7vw,86px); font-weight:500; line-height:1.05; letter-spacing:-.06em; padding-bottom:48px; border-bottom:1px solid var(--etched-border); margin-bottom:48px; }
-.legal>div { max-width:760px; margin-left:auto; color:var(--text-secondary); font-size:17px; line-height:1.85; }
-.legal h2 { color:var(--ink-black); font-size:28px; line-height:1.25; font-weight:500; letter-spacing:-.03em; margin:52px 0 24px; }
-.legal p { margin-bottom:24px; }
-.legal>div>p:first-child { color:var(--text-muted); font:12px/1.7 var(--public-mono); }
-.legal ul { padding-left:24px; margin:24px 0; }
-.legal li { margin-bottom:16px; }
-.legal strong { color:var(--ink-black); font-weight:600; }
-.legal button { text-decoration:underline; text-underline-offset:4px; color:var(--gold-leaf); }
 .changeEntry { display:grid; grid-template-columns:280px minmax(0,1fr); gap:64px; padding-block:48px; border-bottom:1px solid var(--etched-border); scroll-margin-top:110px; }
 .changeEntry>header { position:sticky; top:110px; align-self:start; }
 .changeEntry>header>a { display:flex; align-items:center; gap:9px; text-decoration:none; }
@@ -157,17 +147,16 @@
 .announcement h1 { font:500 clamp(42px,6.5vw,92px)/1.04 var(--public-font); letter-spacing:-.065em; margin:24px 0 32px; }
 .announcement h1 span { display:block; }
 .announcement p { color:var(--text-secondary); font-size:19px; line-height:1.7; max-width:480px; margin-bottom:32px; }
+.announcement .tagline { font-size:clamp(24px,2.4vw,30px); font-weight:500; line-height:1.25; letter-spacing:-.035em; color:var(--ink-black); max-width:520px; }
+.announcement .tagline strong { font-weight:inherit; }
 .announcement>.art { min-height:500px; }
 .livePage { position:relative; }
-.liveContent { width:min(100% - 2 * var(--public-gutter),1240px); margin:auto; padding-block:64px 80px; }
+.liveContent { width:min(100% - 2 * var(--public-gutter,24px),1280px); margin:auto; padding-block:48px 120px; }
 .liveContent>main { width:100%; max-width:none!important; padding:0!important; margin:0!important; }
-.liveContent>main>header,.liveContent>main>div:first-child { text-align:left!important; display:block!important; max-width:920px; border-bottom:1px solid var(--etched-border); padding-bottom:44px; margin-bottom:48px!important; }
-.liveContent h1 { font-size:clamp(42px,6.5vw,80px)!important; line-height:1.08!important; letter-spacing:-.055em!important; font-weight:500!important; max-width:1000px; }
-.liveContent header>p,.liveContent>main>div:first-child>p { max-width:680px!important; margin-left:0!important; font-size:18px!important; line-height:1.7!important; }
+.liveContent>main>header,.liveContent>main>div:first-child { text-align:left!important; display:block!important; border-bottom:1px solid var(--etched-border); padding-bottom:52px; margin-bottom:64px!important; }
+.liveContent h1 { font-size:clamp(42px,6.6vw,96px)!important; line-height:1.04!important; letter-spacing:-.065em!important; font-weight:500!important; max-width:1050px; }
+.liveContent header>p,.liveContent>main>div:first-child>p { max-width:680px!important; margin-left:0!important; font-size:clamp(17px,1.5vw,21px)!important; line-height:1.65!important; }
 .liveContent :global(.etched-card) { background:var(--public-surface)!important; box-shadow:none!important; }
-.liveContent [aria-label="Public surface status"] { border-inline:0!important; }
-.liveContent [aria-label="Public surface status"]>div { padding:28px 0!important; }
-.liveContent [aria-label="Public surface status"] :global(.serif) { font-size:22px!important; }
 .liveContent button { min-height:44px; }
 .page a:focus-visible,.page summary:focus-visible { outline:2px solid var(--gold-leaf); outline-offset:5px; }
 @media(max-width:1000px) { .articleHeader { grid-template-columns:1fr; gap:32px; } .articleHeader>.art { display:none; } .articleLayout { grid-template-columns:200px minmax(0,1fr); gap:40px; } .featured { gap:32px; } .featured .art { min-height:360px; } .row { grid-template-columns:35px minmax(0,1fr) 145px; gap:20px; } .rowArrow { display:none; } }
@@ -176,6 +165,6 @@
 /* Comparison tables (row headers, two data columns): the criterion stays pinned and each data column
    fits beside it, so every verdict can be scrolled fully into view. Markdown tables keep plain scrolling. */
 @media(max-width:600px) { .tableScroll table:has(tbody th[scope="row"]) { --pinned-col:clamp(104px,32cqi,136px); --data-col:min(100cqi - var(--pinned-col),260px); table-layout:fixed; width:calc(var(--pinned-col) + 2 * var(--data-col)); min-width:0; } .tableScroll table:has(tbody th[scope="row"]) :is(th,td) { overflow-wrap:break-word; } .tableScroll table:has(tbody th[scope="row"]) thead th { width:var(--data-col); } .tableScroll table:has(tbody th[scope="row"]) :is(th[scope="row"],thead th:first-child) { width:var(--pinned-col); position:sticky; left:0; z-index:1; background:var(--public-surface); box-shadow:inset -1px 0 var(--etched-border); } }
-@media(max-width:800px) { .changeEntry { grid-template-columns:1fr; gap:32px; padding-block:36px; } .changeEntry>header { position:static; } .legal { padding-block:48px 72px; } .legal>div { font-size:16px; } .legal h2 { font-size:25px; } .announcement { grid-template-columns:1fr; gap:48px; padding-block:48px 72px; } .announcement>.art { min-height:300px; } .liveContent { padding-block:48px 64px; } .liveContent h1 { font-size:42px!important; } }
+@media(max-width:800px) { .changeEntry { grid-template-columns:1fr; gap:32px; padding-block:36px; } .changeEntry>header { position:static; } .announcement { grid-template-columns:1fr; gap:48px; padding-block:48px 72px; } .announcement>.art { min-height:300px; } .liveContent { padding-block:48px 72px; } .liveContent>main>header,.liveContent>main>div:first-child { padding-bottom:36px; margin-bottom:40px!important; } .liveContent h1 { font-size:42px!important; } }
 @media(prefers-reduced-motion:reduce) { .page * { scroll-behavior:auto!important; transition:none!important; } }
 @media print { .contents,.readingProgress,.art,.cta { display:none!important; } .main { width:100%; padding:0; } .articleLayout { display:block; } .articleHeader { display:block; } .articleBody { font-size:11pt; } .articleBody>section { break-inside:avoid; } }

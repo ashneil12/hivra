@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 import { ArrowUpRight } from "lucide-react";
 
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 
 const BILLING_HREF = "/dashboard/billing?from=paywall&feature=always_on";
@@ -60,8 +61,7 @@ export function UsageUpgradeFooter() {
           Your agent&apos;s earning its keep
         </span>
         <span style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>
-          That&apos;s real work from a free agent. Free sleeps after 4 idle days and runs on 1 GB. For
-          $9.99 a month, Pro stays on 24/7 with 4x the memory and room to do a lot more.
+          {`That's real work from your agent. Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. A paid computer stays on and is not paused for inactivity.`}
         </span>
       </div>
       <a
@@ -92,7 +92,7 @@ export function UsageUpgradeFooter() {
           whiteSpace: "nowrap",
         }}
       >
-        Go Pro <ArrowUpRight size={13} strokeWidth={2.5} />
+        See plans <ArrowUpRight size={13} strokeWidth={2.5} />
       </a>
     </div>
   );

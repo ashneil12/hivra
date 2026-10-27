@@ -2,9 +2,9 @@
 
 ## A computer of its own. A platform built around human control.
 
-**Version 2.1, September 2026.** This paper describes what Hivra does today, what it is building, and what remains research. Status labels are used throughout and they mean what they say. Where evidence is thin, the paper says so.
+**Version 2.2, October 2026.** This paper describes what Hivra does today, what it is building, and what remains research. Status labels are used throughout and they mean what they say. Where evidence is thin, the paper says so.
 
-Token and migration sections are proposals. Final terms are published separately before they take effect. Nothing in this paper is an offer or an inducement to acquire any asset.
+The migration snapshot is complete. The new token launch, fee routing and claim campaign are still subject to deployment and verification. This paper distinguishes what exists, what has been decided, and what remains planned. Verified addresses and claim instructions will be published separately. Nothing here is an offer or invitation to acquire an asset.
 
 ---
 
@@ -255,147 +255,146 @@ Agent Computers give the work a place to happen. The products below address what
 
 ## 7. The economic layer ($HIVRA)
 
-**Everything in this section beyond 7.2 is a proposal.** Final terms, thresholds and parameters are published separately before they take effect. Nothing here is an offer or an inducement to acquire an asset.
+**Status: $HermesOS is the existing token; $HIVRA is the planned successor.** The migration snapshot is complete. Final launch contracts, dates and claim instructions are not yet verified as live.
 
-### 7.0 The token
+### 7.0 What $HIVRA is
 
-**$HIVRA**, on Base.
+$HIVRA is planned for Base. It succeeds $HermesOS, which launched alongside the earlier HermesOS platform. It is intended to support optional payments and access within Hivra, and potentially other parts of the ecosystem as they are built.
 
-It succeeds **$HermesOS**, the existing token. Section 8 covers where $HermesOS came from and the migration between them. Until $HIVRA launches, the live token is $HermesOS.
+The token is not equity, a share of project revenue or a right to dividends. **Nobody needs to hold a token to self-host Hivra.** Cloud customers can continue using ordinary payment methods.
 
-$HIVRA is the settlement and access unit for everything described in this section. It is not equity, not a claim on revenue, and not required to use the platform. Where this paper refers to the token, it means $HIVRA.
+**There is no planned founder allocation of new $HIVRA tokens.** That is different from the founder receiving trading-fee revenue, which is explained openly in section 7.4.
 
-### 7.1 Why a token is involved at all
+### 7.1 Why have a token at all?
 
-The test applied to every mechanic: would a card, a bank transfer or a stablecoin do this better? Where the answer is yes, Hivra uses those.
+Every proposed use has to pass a simple test: would a card, bank transfer or stablecoin do the job better? If so, use that instead.
 
-Two properties of this system are where the answer is no.
+The longer-term case is about people and systems that don't share a payment provider: a security researcher receiving a bounty, a publisher selling a useful tool, or an agent paying for a specific service within a budget somebody has authorised. Shared on-chain settlement may help in these cases. It is not an excuse to force every Hivra user into crypto.
 
-**Participants who do not share a payment system.** A security researcher claiming a containment bounty in one jurisdiction, a publisher selling a computer image in another, a reviewer certifying a workflow in a third. Onboarding each individually to a payment processor, for amounts that are frequently small, is not operable.
+An agent has no independent legal authority to spend. Any payments it makes must sit within limits set by an accountable person. That rule applies whether the payment is in $HIVRA, stablecoins or something else.
 
-**Participants that are not people.** An agent paying for its own compute, buying a pack, or paying another agent has no legal personality, no identity documents and no bank account. It has a capped allowance from a named human principal.
+### 7.2 What works today
 
-A shared permissionless settlement unit addresses both.
+**Status: current $HermesOS functionality; $HIVRA transition still pending.**
 
-**The limit is stated as prominently as the case.** Anyone can use Hivra paying ordinary money and never touch the token. Anyone can be paid by Hivra in stablecoin and never touch it either. Self-hosting requires neither the token nor an account.
+**Compute access.** Under the existing service terms, qualifying $HermesOS holdings can unlock a higher service tier. Previously qualified users' treatment during migration needs to be stated in the final eligibility and access policy. Token claims and access rights are separate matters.
 
-### 7.2 What the token does today
+**Optional token payment.** Hivra has supported $HermesOS payments for subscriptions or usage, alongside ordinary payment methods. The earlier version of this paper quoted particular subscription prices, discounted rates and credit bonuses. Those figures should be checked against live billing before being restated as continuing $HIVRA commitments.
 
-Both of these are live today with $HermesOS. When $HIVRA launches it takes them over for new users, and existing $HermesOS users keep them (section 8.3).
+The final token page will specify which uses are live with $HIVRA, rather than assuming every earlier $HermesOS setting carries over unchanged.
 
-**Access to compute.** Holding a specified quantity of the token grants a higher service tier. The required quantity is fixed when a holding first qualifies. A later fall in price does not remove access already granted while that quantity is held. New qualifiers need the current equivalent.
+### 7.3 What may come next
 
-**Optional payment.** Subscriptions and usage may be paid in ordinary money or in the token, at the customer's choice. Paying in the token costs less. A year of Pro is $49 in the token against $79 by card, and a year of Power $99 against $149. Model-credit top-ups paid in the token add bonus credits: 20% during the launch period and 10% after, capped per account. Token payments are final. These discounts carry over to $HIVRA.
+These are directions, not services already available because a token exists.
 
-### 7.3 What the token does as the system arrives
+**Metered resources.** Runtime, storage, cores and network use billed against defined allowances.
 
-**Metered spending.** Runtime, storage, additional cores and egress priced per unit against a balance.
+**Operator packs.** Preconfigured environments and workflows that others can publish and sell.
 
-**Packs.** Prebuilt operator configurations purchased outright.
+**Reserved capacity.** Priority or reserved compute backed by actual infrastructure, not promises of unlimited capacity.
 
-**Reserved capacity.** The fleet has a hard ceiling because hardware is finite. Reserved headroom and priority placement are limited by real hardware.
+**Containment bounties.** Funded tests of specific isolation claims, using authorised Hivra environments and reproducible evidence. An unclaimed bounty is not proof of security.
 
-**Containment bounties.** Pools funded against precise tests. Nearly all current AI security bounty funding addresses the model layer: injection, jailbreaks, guardrail bypass. Substantially less addresses whether an agent can escape the machine it runs on. That is the layer Hivra is built on.
+**Certification bonds.** Defined collateral against testable Seal claims, with payment for verified findings, not passive returns.
 
-Two structural advantages apply. Hivra is the environment, so a researcher receives a real authorised Agent Computer rather than a description of a target. And the activity record supports reproduction, which is where bounty triage usually becomes expensive.
+**Work-based payments.** Publisher fees, reviewed threat reports, experience packages and sponsored missions paid against work delivered or evidence accepted.
 
-**An unclaimed pool does not demonstrate security.** It records that no eligible claim has been paid under those rules. The useful public record is scope, reward, duration, testing activity and verified findings.
+**Agent spending.** Revocable allowances that cannot grow when one agent delegates to another.
 
-**Certification bonds.** Collateral posted behind a specific Seal claim, paying out to whoever disproves it inside the terms. Nothing accrues for the passage of time. Terms must be consistent with the prohibition on rewards for holding, and require definition before operation.
+**LaunchPad (future).** Hivra is exploring ways for agents, creators and communities to come together around new projects, with potential support for promising builders. The design, availability and participation terms are still being worked through. LaunchPad is not live and its inclusion here is not an invitation to launch or trade a token.
 
-**Threat report payouts, publisher payouts, certification fees.** Payment for verified work through Signal, Exchange and Seal.
+### 7.4 Trading fees, liquidity and operating funds
 
-**Experience packages.** Machine-earned operational knowledge sold with provenance, adopted only after review.
+**Status: founder-selected structure awaiting confirmation in the final deployed Doppler configuration.** $HIVRA is planned as an independent Doppler launch, not the earlier Bankr conversion approach.
 
-**Mission funding.** Sponsor budgets released against accepted evidence.
+The intended all-in trading fee is approximately **1.58%**. Expressed as percentages of each trade:
 
-**Agent budgets.** Capped, revocable allowances. Delegation must never multiply the available amount.
+| Recipient or use | Intended portion | What it means |
+|---|---:|---|
+| Founder and operations | 1.20% | Revenue for the founder and Hivra's development and operations |
+| Liquidity reserve | 0.30% | Set aside for periodically adding to and locking liquidity |
+| Doppler protocol | ~0.08% | Expected protocol share, to be confirmed from the contracts |
+| **Total** | **~1.58%** | **Target, not yet a verified live fee** |
 
-### 7.4 The treasury
+These are percentages of trading volume, not percentages of the collected fee pool. Any additional trading charges or change in routing must be disclosed before trading opens.
 
-An operating fund. Its purpose is to spend.
+**The liquidity commitment is manual.** The planned 0.30% will not automatically become locked liquidity as soon as a trade happens. The intention is to route it to a distinct wallet, potentially a dedicated Safe, and periodically use it to add and lock liquidity through established infrastructure. The precise collection assets, signing arrangements, positions and lock mechanism must be confirmed. A Safe wallet holding funds is not itself a liquidity lock.
 
-**Funding.** Trading fees and platform revenue. Bankr pools charge a 0.7% swap fee, 95% of which goes to the launch's fee recipient. The fee recipient, fee assets, treasury wallets and signing authority are published before launch.
+Hivra intends to publish a regular record, preferably weekly, of fees received for this purpose, amounts actually deposited, the associated lock and transaction references, and any amount still waiting to be deployed. Where a deposit cannot be made, that should be reported rather than presented as completed. Locked liquidity does not guarantee liquidity will be active at every price or protect against price declines.
 
-**Expenditure.** Retainers for maintainers of widely depended-upon agent tools, independent security audits of Hivra itself, adoption of useful abandoned projects, sponsored compute for students and open source contributors, and the initial bounty pools directed at Hivra's own systems.
+**The founder receives no initial token allocation, but does receive the disclosed fee entitlement.** The operating budget may support hosting, security work, open-source maintenance, outside reviews and further development. The project is not committing trading-fee revenue to token buybacks, holder payouts or price support.
 
-**Payment.** Contributors choose stablecoin or $HIVRA at equivalent value. Nobody is required to take a market position to be paid for work, and nobody who prefers the token is refused.
+### 7.5 What the token does not promise
 
-**It moves in both directions.** The treasury sells to cover obligations and buys $HIVRA only when the $HIVRA it holds falls below the $HIVRA payouts contributors have chosen. Those decisions follow funded work. It does not trade to support or influence the price. No price target and no return promised to holders.
+No staking yield, dividends, revenue share for holding, guaranteed liquidity, presale entitlement, or automatic governance power. There is no planned founder token allocation. Hivra will not market token purchases as a way to fund guaranteed returns, nor use project revenue for a mechanical buyback scheme.
 
-**Both directions are published.** Purchases, sales and payments out, with transaction references and what each funded. Off-chain costs require a record too. Publishing purchases without disposals would misrepresent the arrangement.
-
-**What it is not.** Not a buyback programme. No fixed share of revenue is committed to purchasing tokens. Not supply reduction: treasury tokens are spent, not destroyed. Not a distribution: it creates no holder payout, ownership interest or claim on revenue.
-
-### 7.5 Excluded by design
-
-No staking. No yield or interest. No time locks. No presale or private round. No binding governance. No purchase of weakened security controls, enforced architecturally rather than by policy. No ownership, profit share or dividend claim. No wash trading or circular treasury activity.
-
-**Founder allocation is an open parameter.** Bankr's options are no allocation, or 15% of supply vesting to the creator over one year with a 30-day cliff. Whichever is chosen is published before launch. Disclosed in advance is ordinary. Discovered afterwards is not.
+The total supply, initial distribution beyond snapshot claims, control permissions, eventual fee recipients and the treatment of any unclaimed allocation must be checked and disclosed before deployment. No supply figure is assumed here solely because an earlier Bankr-based plan used one.
 
 ### 7.6 The admission test
 
-Every proposed mechanic answers these before shipping:
+Before an economic feature ships, it needs clear answers:
 
-1. What problem does it solve, for whom?
-2. What does the participant receive, in exact terms?
-3. Who supplies that value and who bears the cost?
-4. Why would a card, a transfer or a stablecoin not do this better?
-5. What is the cap, so a price movement or mass redemption cannot damage the service?
-6. How does someone exit, refund or leave?
-7. Does it require a network that does not yet exist?
+1. Who needs it, and why?
+2. What does the participant receive?
+3. Who pays for it, and what limits the cost?
+4. Why not use an ordinary payment method or stablecoin?
+5. What happens if market conditions change sharply?
+6. Can the participant stop, leave or seek redress?
+7. Does the feature depend on a product or network that does not yet exist?
 
-Question seven disqualifies most candidates. Anything functioning only at scale belongs in a description of direction. Section 7.3 is that description, and each item in it still has to pass this test before it ships.
+A promising idea that relies on infrastructure we haven't built is still an idea. It doesn't become a current token benefit by appearing in this paper.
 
 ---
 
 ## 8. The migration from $HermesOS to $HIVRA
 
-**Status: proposed route, parameters open.**
+**Status: snapshot completed; claim deployment, launch and official deadlines pending verification.**
 
-### 8.1 Where $HermesOS came from
+### 8.1 Why migrate?
 
-The token launched as $HermesOS in April 2026, alongside the original platform, before the Hivra name existed. Fair launch, no presale, no private round, no founder allocation on that launch, liquidity locked.
+$HermesOS launched in April 2026 with the original HermesOS platform, before the Hivra rebrand and expanded direction. The first launch had no presale, private round or founder allocation.
 
-### 8.2 Mechanism
+The founder previously intended to keep that token. As Hivra developed, he decided a new arrangement would provide more independence over launch terms, fee routing and the longer-term project. That change of direction should be acknowledged, not obscured.
 
-**$HIVRA** on Base, launched through Bankr.
+### 8.2 How the new migration works
 
-**It is designed as an active claim, not a snapshot or an airdrop.** Holders choose to convert. $HIVRA is not distributed automatically to every wallet holding $HermesOS.
+The old proposal was to sell $HermesOS into its pool and use the proceeds to buy $HIVRA through Bankr. **That is no longer the migration mechanism.**
 
-The claim would sell the holder's $HermesOS into the existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion, and its exact steps are published with the terms. The proceeds move to the new pool rather than being stranded behind (the old pool's locked liquidity stays where it is), and dormant wallets do not receive assets they will never use.
+The current plan is a **1:1 claim based on a completed snapshot of eligible $HermesOS holdings**, using Sablier. Eligible holders must actively claim their allocation. It is not automatically sent to every wallet, and there is **no requirement to burn or hand over the original $HermesOS tokens**.
 
-The conversion rate, the fees (including each pool's swap fee and who receives it) and how price movement during a conversion is handled are published before claims open. None of this is a fixed ratio or a price guarantee.
+The planned claim window is **90 days**, starting when the final campaign goes live. Claim fees, including applicable network costs, are borne by holders. Eligibility conditions, allocation data, claim fees, exact start and end dates, addresses and the verified claim route will be published before claims open.
 
-### 8.3 Commitment to existing holders
+The ratio describes token quantities, **not a guarantee of equal market value**. The claim is separate from trading the old token or the new one. Hivra must reserve sufficient $HIVRA for eligible claims before opening the campaign.
 
-Holders of $HermesOS who hold for platform access retain that access. No forced conversion, no claim deadline, no requalification.
+### 8.3 Existing holders and service access
 
-$HermesOS and $HIVRA access thresholds run in parallel for existing access holders. Final terms will state exactly who is covered and how eligibility carries across. Keeping access and converting tokens are separate decisions.
+A holder's snapshot allocation does not depend on selling the old token. Existing $HermesOS-based access and payment rights are a separate product matter, and the published migration rules must state what remains available, to whom, and for how long. No claim about indefinite parallel access is made until those terms are confirmed.
 
-Once $HIVRA launches, new users qualify and pay with $HIVRA. Anyone who already holds $HermesOS for access, or has paid with it, can keep using $HermesOS.
+**Founder-held legacy tokens.** The founder plans an initial **two-week waiting period**, followed by sales of **500 million $HermesOS tokens per week for approximately three months**. After the scheduled sales, any remaining founder-held $HermesOS will be burned. The exact start date, weeks covered, wallet addresses, sales transactions, remaining balance and final burn transaction will be published. This is an intended schedule, not a statement that sales have already begun or a promise of a particular market outcome.
 
-### 8.4 Chain selection
+**Timing matters.** A two-week wait followed by roughly three months of weekly sales may run beyond a 90-day Sablier claim window if both clocks start together. The burn therefore follows the completed sales schedule; it should not be represented as necessarily occurring on the claim closing date. The final dated timeline will clarify the relationship between the two. The old token contract and other holders' tokens do not disappear when founder-held tokens are burned.
 
-Base. $HermesOS already lives there, so holders and liquidity stay on one network, and Bankr launches on it.
+### 8.4 Launch venue and liquidity
 
-### 8.5 The old contract
+$HIVRA is intended to launch on **Base using Doppler**. That is separate from the Sablier migration claim. The target opening valuation, token supply, auction configuration, recipient wallets and final token contract must be independently checked before any announcement describes them as live.
 
-The prior contract does not disappear. Two similarly named assets will exist, and that is a permanent source of confusion and impersonation risk. It has already started: tokens named Hivra, HivraOS and HIVRA that have nothing to do with this project exist on Base. Migration documentation identifies the canonical contract and makes no claim about price equivalence between the two. Hivra publishes one authoritative reference at hivra.cloud/token, and never confirms addresses in direct messages.
+The intended fee structure is in section 7.4. The liquidity reserve is to be handled manually and transparently, not advertised as automatically locked by the token contract.
+
+### 8.5 Official addresses and impersonation
+
+Two assets will exist, and similarly named unauthorised tokens can appear. Hivra's official token page at **https://hivra.cloud/token** is intended to be the authoritative location for verified contracts and migration instructions. Never rely on unsolicited direct messages or addresses supplied in replies. A draft page may describe the plan, but must plainly say when trading and claims are not live.
 
 ### 8.6 Wallets and keys
 
-Hivra's wallet features run on Bankr. Bankr wallets are smart wallets whose private keys nobody can export, Hivra included.
+Hivra's existing product-wallet integrations with Bankr are distinct from the independent $HIVRA token launch. Those integrations are not automatically replaced by using Doppler to launch a token.
 
-**Payment addresses.** Hivra creates a Bankr payment address for each user who pays in crypto. Payments for credits, yearly plans and managed inference land there, and Hivra moves them to its own treasury. Once paid, the funds are Hivra's. Hivra also holds the key to a treasury wallet that pays the network fees for those transfers.
+**Payment addresses.** Hivra creates a Bankr payment address for users paying in crypto and transfers payments received to an operating treasury. The relevant signing and custody arrangements remain security-sensitive and subject to review.
 
-**Agent wallets.** New agent wallets belong to the user's own Bankr account. The user creates the key at bankr.bot, sets its permissions and spending limits there, and lets Hivra store it encrypted and give it to that agent. The user can revoke it at Bankr or disconnect it in Hivra at any time. Hivra's own Bankr account has no access to these wallets, and Hivra never starts transfers from them.
+**User-controlled agent wallets.** New agent-wallet integrations are intended to use users' own Bankr accounts, with permissions and limits configured by the user and revocable through that provider. Hivra stores connection material under its documented security controls. Exact current wallet and key-custody implementations must be verified against production before publication.
 
-**Older agent wallets.** Agents created before this change may use a wallet Hivra created. For those, Hivra holds the key, gives it to the agent, and can move funds, for example to complete a withdrawal the owner asks for. Owners can switch to their own Bankr account once the wallet is empty.
+**Legacy wallets.** Older agent and access wallets may have been created and controlled through Hivra's earlier arrangements. Owners need a documented way to check balances and withdraw or transition access. They should not be told a new claim automatically changes those custody relationships.
 
-**Older access wallets.** Some users deposited $HermesOS into a Hivra-created wallet to hold a service tier. No new ones are created, and holders can withdraw to an address they choose.
-
-Custody and regulatory treatment are under legal review.
+UK regulatory treatment, token promotions and any custody implications require specialist review. The existence of a public website or an eligibility snapshot does not settle those questions.
 
 ---
 
@@ -405,11 +404,11 @@ Custody and regulatory treatment are under legal review.
 
 **Preview.** Omarchy and Windows computers, DeepSeek, and running on infrastructure you already own.
 
-**Next.** Hivra Orchestrator. One launch flow for every agent and every place a computer can run. Full self-host packaging. $HIVRA access and payment, and the optional conversion from $HermesOS. Gate, Exchange, Arena, Signal.
+**Next.** Hivra Orchestrator. One launch flow for every agent and every place a computer can run. Full self-host packaging. $HIVRA access and payment, the independent token launch and snapshot-based Sablier claims. Gate, Exchange, Arena, Signal.
 
 **Then.** macOS and custom images. Vault, Passport, Seal, Rescue, Challenges, Experience.
 
-**Research.** Missions, Foundry, Colony, Interchange, Ports.
+**Research.** Missions, Foundry, Colony, Interchange, Ports, and the LaunchPad concept.
 
 No dates. Availability is announced after shipping, never before. If a capability is described as available in this paper, it exists.
 
@@ -429,7 +428,7 @@ What it changes is blast radius.
 
 ### 10.2 Open parameters
 
-Founder allocation (none, or Bankr's standard vesting). The fee recipient and fee asset. How long $HermesOS access carries on for existing holders. Deprecation handling for the old contract. Supply is not open: a Bankr launch fixes it at 100 billion.
+Final token supply and auction settings. Verified fee recipients, fee assets and any additional charges. Deployment addresses and control permissions. Exact migration claim dates and holder fees. $HermesOS access rights after migration. Founder-controlled legacy-token balance and the exact start/end dates for the two-week waiting period, 500 million-per-week sales, and subsequent burn. Treatment of unclaimed allocations. Independent verification of how the liquidity reserve is added and locked.
 
 None are stated publicly until decided. None are estimated to make a document feel complete.
 
@@ -462,8 +461,8 @@ If operators keep the local default even when a separate computer is as easy to 
 | Observability chain at stated depth | Building | Foundations shipped, full depth in progress |
 | Every umbrella product beyond Agent Computers | Proposed | Design stage or research |
 | Token access to compute and token payment ($HermesOS) | Live | Production |
-| $HIVRA access and payment | Next | Ships with the migration |
-| Migration route | Proposed | Parameters open |
+| $HIVRA access and payment | Next | Subject to launch and product verification |
+| Migration route | Partly decided | Snapshot completed; 1:1 Sablier claim and 90-day window planned; contracts and dates pending |
 
 ## Appendix B: paper boundaries
 

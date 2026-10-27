@@ -6,7 +6,8 @@ import PublicSite from "@/components/public-site/PublicSite";
 import { Breadcrumbs, EditorialRelated } from "@/components/public-editorial/Editorial";
 import editorial from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
-import { buildWebsiteMetadata } from "@/lib/metadata";
+import Markup from "@/components/tools/Markup";
+import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { TOOLS_HUB, TOOL_ENTRIES, nonAffiliationLine, toolOgImage, toolPath } from "@/lib/tools/tool-catalog";
 import ToolsCta from "./ToolsCta";
@@ -14,13 +15,15 @@ import styles from "./tools.module.css";
 
 // /tools was an indexed page on the retired site. Rebuilt on the public
 // editorial shell; the catalog in lib/tools/tool-catalog.ts owns the copy.
+// The browser title is the finished one from the copy, so it skips the layout's
+// " | Hivra" template (absoluteTitle).
 
 export const metadata: Metadata = {
-  title: TOOLS_HUB.metaTitle,
+  title: absoluteTitle(TOOLS_HUB.browserTitle),
   description: TOOLS_HUB.metaDescription,
   ...buildWebsiteMetadata({
     path: TOOLS_HUB.path,
-    title: TOOLS_HUB.metaTitle,
+    title: TOOLS_HUB.browserTitle,
     description: TOOLS_HUB.metaDescription,
     images: [toolOgImage()],
   }),
@@ -61,20 +64,29 @@ export default function ToolsIndexPage() {
     <PublicSite className={editorial.page} data-page="tools">
       <StructuredData schema={schema} />
       <main className={editorial.main} id="main-content">
-        <Breadcrumbs items={[{ label: "Tools" }]} />
+        <div className={styles.crumbs}>
+          <Breadcrumbs items={[{ label: "Tools" }]} />
+        </div>
         <header className={editorial.masthead}>
           <span className={editorial.eyebrow}>{TOOLS_HUB.eyebrow}</span>
           <h1>
-            Tools for people who <strong>run agents.</strong>
+            Free tools for people <strong>building with AI agents</strong>
           </h1>
-          <p>{TOOLS_HUB.intro}</p>
+          <div className={styles.hubIntro}>
+            {TOOLS_HUB.intro.map((paragraph) => (
+              <p key={paragraph}>
+                <Markup text={paragraph} />
+              </p>
+            ))}
+          </div>
         </header>
 
+        <h2 className={styles.directoryHeading}>{TOOLS_HUB.directoryHeading}</h2>
         <div className={[editorial.directory, styles.directoryBalanced].filter(Boolean).join(" ")}>
           {TOOL_ENTRIES.map((entry, index) => (
             <Link key={entry.slug} href={toolPath(entry.slug)}>
               <span>{String(index + 1).padStart(2, "0")}</span>
-              <h2>{entry.name}</h2>
+              <h3>{entry.name}</h3>
               <div>
                 <p>{entry.subhead}</p>
                 <span className={editorial.readLink}>
@@ -89,7 +101,7 @@ export default function ToolsIndexPage() {
         <ToolsCta
           title={
             <>
-              Agents that <strong>stay on.</strong>
+              Computers that <strong>stay on.</strong>
             </>
           }
         />

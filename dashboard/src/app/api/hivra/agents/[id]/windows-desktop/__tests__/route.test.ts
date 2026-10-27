@@ -7,6 +7,7 @@ const mockFrom = jest.fn();
 const mockInspect = jest.fn();
 const mockReadConfig = jest.fn();
 const mockBuildToken = jest.fn();
+const mockMatches = jest.fn();
 const mockFetch = jest.fn();
 const mockWarn = jest.fn();
 
@@ -19,7 +20,8 @@ jest.mock("@/lib/remote-computers/capability-inspection", () => ({
 }));
 jest.mock("@/lib/remote-computers/windows-rdp-gateway", () => ({
   readWindowsRdpGatewayConfig: () => mockReadConfig(),
-  windowsDescriptorMatchesGateway: () => true,
+  windowsDescriptorMatchesGateway: (...args: unknown[]) => mockMatches(...args),
+  windowsRdpCertificatePin: jest.requireActual("@/lib/remote-computers/windows-rdp-gateway").windowsRdpCertificatePin,
   buildWindowsGatewayToken: (...args: unknown[]) => mockBuildToken(...args),
   guacamoleClientIdentifier: () => "client-id",
 }));
@@ -57,6 +59,7 @@ beforeEach(() => {
   mockAuth.mockResolvedValue({ userId: "user_fixture" });
   mockReadConfig.mockReturnValue(config);
   mockBuildToken.mockReturnValue("encrypted-token");
+  mockMatches.mockReturnValue(true);
   mockFrom.mockReturnValue({ select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue({ data: agent, error: null }) });
   mockInspect.mockResolvedValue({ ok: true, windowsDescriptor: { protocol: "hivra-windows-rdp-prepared-v1" } });
@@ -81,6 +84,26 @@ it.each(["hq", "qhd", "uhd"] as const)("passes the explicit %s profile to the Wi
   const response = await POST(request({ streamingMode }), params);
   expect(response.status).toBe(200);
   expect(mockBuildToken).toHaveBeenCalledWith(expect.objectContaining({ streamingMode }));
+});
+
+it("checks and pins the certificate this computer's last preparation stored", async () => {
+  const stored = `sha256:${"e".repeat(64)}`;
+  loadAgent({ windows_rdp_certificate_fingerprint: stored });
+  expect((await POST(request(), params)).status).toBe(200);
+  expect(mockMatches).toHaveBeenCalledWith(expect.anything(), config, stored);
+  expect(mockBuildToken).toHaveBeenCalledWith(expect.objectContaining({ certificateFingerprint: stored }));
+});
+
+it("asks for preparation when the guest's certificate no longer matches the pin", async () => {
+  // Preparation reads the renewed certificate and stores it; until then no
+  // gateway token is issued for a certificate the computer has not pinned.
+  loadAgent({ windows_rdp_certificate_fingerprint: null });
+  mockMatches.mockReturnValue(false);
+  const response = await POST(request(), params);
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({ code: "windows_prepare_required" });
+  expect(mockMatches).toHaveBeenCalledWith(expect.anything(), config, config.certificateFingerprint);
+  expect(mockBuildToken).not.toHaveBeenCalled();
 });
 
 it("passes only validated panel geometry to the owner-bound handoff", async () => {

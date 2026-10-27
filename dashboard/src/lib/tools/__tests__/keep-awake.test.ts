@@ -193,7 +193,7 @@ describe("keep-awake CTA", () => {
   it("says so when a plugged-in laptop with the command is enough, with no product push", () => {
     const cta = keepAwakeCta(buildKeepAwake(input()));
     expect(cta.state).toBe("enough");
-    expect(cta.text).toMatch(/is enough/);
+    expect(cta.text).toMatch(/may be enough/);
     expect(cta.text).not.toMatch(/Hivra|\$9\.99/);
     expect(cta.button).toBeNull();
   });

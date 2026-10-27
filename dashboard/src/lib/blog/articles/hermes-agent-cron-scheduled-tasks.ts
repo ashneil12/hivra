@@ -38,7 +38,7 @@ export const article: BlogArticle = {
     {
       heading: "Morning briefing",
       paragraphs: [
-        "Most common scheduled task. Common things people put in:\n\n- Weather forecast for the day\n- Calendar events\n- Unread email count + anything flagged urgent\n- News headlines filtered to topics you care about\n- Outstanding tasks from your to-do system\n- Portfolio snapshot if you track investments\n\nStart with one or two. The agent needs API credentials for each data source (Google Calendar API key, etc.). It will ask the first time, or you add them to `~/.hermes/.env` directly. Once set, they're remembered.",
+        "Most common scheduled task. Common things people put in:\n\n- Weather forecast for the day\n- Calendar events\n- Unread email count + anything flagged urgent\n- News headlines filtered to topics you care about\n- Outstanding tasks from your to-do system\n- Portfolio summary if you track investments\n\nStart with one or two. The agent needs API credentials for each data source (Google Calendar API key, etc.). It will ask the first time, or you add them to `~/.hermes/.env` directly. Once set, they're remembered.",
       ],
     },
     {

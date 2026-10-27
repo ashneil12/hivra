@@ -1,0 +1,53 @@
+/* Additions to the editorial components. secondary-site.module.css is not touched: its
+   selectors are shared by about twenty pages. */
+
+/* A question answered with markup (EditorialQuestions `node`). Paragraphs inside it take the
+   existing ".questions details p" spacing and colour; this covers what that rule does not:
+   lists, links and bold text. */
+.answerNode {
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.answerNode ul,
+.answerNode ol {
+  margin: 18px 34px 0 0;
+  padding-left: 22px;
+}
+
+/* The global reset removes list markers, so a list in an answer sets its own. */
+.answerNode ul {
+  list-style: disc;
+}
+
+.answerNode ol {
+  list-style: decimal;
+}
+
+.answerNode li {
+  margin-top: 6px;
+}
+
+.answerNode a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.answerNode a:hover {
+  color: var(--gold-leaf);
+}
+
+.answerNode strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .answerNode ul,
+  .answerNode ol {
+    margin-right: 0;
+  }
+}

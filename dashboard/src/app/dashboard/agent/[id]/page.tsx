@@ -41,6 +41,7 @@ import { HivraGit } from "@/components/hivra/HivraGit";
 import { HivraSkills } from "@/components/hivra/HivraSkills";
 import { HivraTelegram } from "@/components/hivra/HivraTelegram";
 import { HivraManage } from "@/components/hivra/HivraManage";
+import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
 import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
@@ -607,7 +608,7 @@ function BrowserDisabledView({
   onUpgrade: () => void;
 }) {
   const body = isFreePlan
-    ? "Upgrade to Pro or above to enable the live browser."
+    ? "The live browser needs a paid plan."
     : "Turn it on in Manage to open the live browser.";
   const button = isFreePlan ? (
     <button
@@ -616,7 +617,7 @@ function BrowserDisabledView({
       className="mono"
       style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
     >
-      <Settings2 size={14} /> Upgrade to Pro
+      <Settings2 size={14} /> See plans
     </button>
   ) : (
     <button
@@ -960,6 +961,18 @@ export default function AgentPage() {
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
   }, [id]);
 
+  // "Update available" beside the agent's name opens Manage › Updates: the
+  // link a newly mounted Manage reads, and a request an open one follows.
+  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: "updates"; id: number } | null>(null);
+  const openManageUpdates = useCallback(() => {
+    const nextURL = new URL(window.location.href);
+    nextURL.searchParams.set("section", "updates");
+    nextURL.hash = "agent-software";
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+    setManageSectionRequest((current) => ({ section: "updates", id: (current?.id ?? 0) + 1 }));
+    selectTab("manage");
+  }, [selectTab]);
+
   // Remember this agent and the surface actually on screen, so Home can offer
   // it back ("Pick up where you left off") and the switchers can list it under
   // Recent and reopen it where you were. Only once the agent has loaded here:
@@ -1142,6 +1155,8 @@ export default function AgentPage() {
       onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
       browserOn={browserOn}
       onBrowserChange={(e) => setBrowserOn(e)}
+      softwareChipInHeader={Boolean(nativeWorkspace)}
+      sectionRequest={manageSectionRequest}
     />
   );
 
@@ -1169,6 +1184,11 @@ export default function AgentPage() {
           nativeWorkspace ? undefined : (
             <div className={styles.identity}>
               <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} showKind={!kindInBar} status={provisioning ? activity.label : agent.status} />
+              {isComputer ? null : (
+                <span className={styles.softwareChip}>
+                  <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />
+                </span>
+              )}
             </div>
           )
         }

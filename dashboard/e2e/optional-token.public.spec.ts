@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test';
 
+// The ecosystem map (lib/ecosystem-map.ts): each product is a level 3 heading under its stage.
+const ECOSYSTEM_PRODUCTS = [
+  'Agent Computers',
+  'Gate', 'Exchange', 'Arena', 'Signal',
+  'Vault', 'Passport', 'Seal', 'Rescue', 'Challenges', 'Experience',
+  'Missions', 'Foundry', 'Colony', 'Interchange', 'Ports',
+];
+
 for (const width of [1440, 390]) {
   test(`product to optional token journey at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -10,13 +18,17 @@ for (const width of [1440, 390]) {
     await expect(nav.getByRole('link', { name: 'Token', exact: true })).toHaveCount(0);
     await nav.getByRole('link', { name: 'Ecosystem', exact: true }).click();
     await expect(page).toHaveURL(/\/ecosystem$/);
-    await expect(page).toHaveTitle(/Hivra ecosystem/);
+    await expect(page).toHaveTitle(/^Hivra Ecosystem \| What exists, what's next and what's being explored$/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const main = page.locator('main');
-    for (const name of ['Gate', 'Exchange', 'Arena', 'Signal', 'Vault', 'Passport', 'Seal', 'Rescue', 'Challenges', 'Experience', 'Missions', 'Foundry', 'Colony', 'Interchange', 'Ports']) {
-      await expect(main).toContainText(`${name}:`);
+    await expect(main.getByRole('heading', { level: 1 })).toHaveCount(1);
+    for (const stage of ['Available now', /^Next:/, /^Then:/, /^Research:/]) {
+      await expect(main.getByRole('heading', { level: 2, name: stage })).toHaveCount(1);
     }
-    await main.getByRole('link', { name: 'Token: current access and proposals' }).click();
+    for (const name of ECOSYSTEM_PRODUCTS) {
+      await expect(main.getByRole('heading', { level: 3, name, exact: true })).toHaveCount(1);
+    }
+    await main.getByRole('link', { name: 'Current token information', exact: true }).click();
     await expect(page).toHaveURL(/\/token$/);
     await expect(page).toHaveTitle(/current access and proposals/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

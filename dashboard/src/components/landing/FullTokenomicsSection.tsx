@@ -1,4 +1,4 @@
-import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { TokenGeoNotice } from "@/components/token/TokenGeoNotice";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
 import TokenomicsLaunchedView from "@/components/token/TokenomicsLaunchedView";
@@ -6,19 +6,13 @@ import { DORMANT_TOKENOMICS_COPY, RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token
 import type { TokenPageEntry } from "@/lib/token-verification-content";
 import styles from "./founder-tokenomics.module.css";
 import { glossify } from "@/components/gloss/glossify";
+import PrelaunchSections from "@/components/token/PrelaunchSections";
 
 /** Set only when the token geo-policy blocks this viewer. */
 export type TokenomicsGeoRestriction = { notice: string; entries: TokenPageEntry[] };
 
 /** Phase-independent, and the same idea the litepaper's economy section opens with. */
 const PROJECT_LEAD = "Hivra gives an AI agent a computer of its own, so it does its work there and stays off yours. One shared token could pay for the parts around that: the computers, the security rewards, and the people who keep tools alive.";
-
-const USES = [
-  { name: "Compute and software", text: "Hold for a tier of computing power, fixed when you first qualify. Pay for running time, storage, extra processor cores and data sent out. Ready-made agent setups and reserved capacity." },
-  { name: "Work that improves security", text: "Rewards for breaking out of the machine, paid threat reports and paid reviews. Certification bonds put a deposit behind a specific claim; nothing grows just from holding it." },
-  { name: "Builders and useful methods", text: "Pay the people who publish and look after tools on Exchange. Buy experience packages with the method, proof and limits included for review." },
-  { name: "Budgets with boundaries", text: "Fund missions, paying when the proof is accepted. Give an agent an allowance with a cap that can be taken back. Handing a job to another agent must never multiply the money available." },
-] as const;
 
 /**
  * What a viewer the token geo-policy blocks sees instead of the economy
@@ -76,36 +70,20 @@ export default function FullTokenomicsSection({
   }
   const copy = DORMANT_TOKENOMICS_COPY;
   const Heading = headingLevel === 1 ? "h1" : "h2";
+  // Before the launch the page shows the planned facts from token-launch-status.ts, the same as /token.
   return <section id="tokenomics" className={styles.economy} aria-labelledby="tokenomics-heading">
     <header className={styles.economyHeading}>
       <div><span className={styles.eyebrow}>The Hivra token</span><Heading id="tokenomics-heading">$HIVRA<br /><em>Tokenomics.</em></Heading></div>
-      <div><p>{glossify(PROJECT_LEAD, { token: true })}</p><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full tokenomics<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+      <div><p>{glossify(PROJECT_LEAD, { token: true })}</p><p>{copy.headerLead}</p><a className={styles.textLink} href="/docs/litepaper/index.html#economy" target="_blank" rel="noopener noreferrer">Read the full economy section<ArrowUpRight size={20} aria-hidden="true" /></a></div>
     </header>
-
     <div className={styles.accessMigration}>
       <article className={styles.access}>
         <span className={styles.eyebrow}>Existing access</span>
         <h3>A fixed quantity.<br />{" "}A choice to keep.</h3>
-        <p>Existing $HermesOS holders can qualify for compute. The amount you need is fixed when your holding first qualifies. A price fall doesn&apos;t take away access you already have, as long as you keep holding it.</p>
-        <p>You can also pay through ordinary payment methods, or pay in the token, which costs less: a year of Pro is $49 in the token against $79 by card, and credit top-ups paid in the token come with bonus credits. Token payments are final, except where the law gives you a right to cancel. Self-hosting Hivra requires neither the token nor a Hivra account.</p>
-      </article>
-      <article className={styles.migration}>
-        <span className={styles.eyebrow}>{copy.migrationEyebrow}</span>
-        <h3>{copy.migrationHeading}</h3>
-        <p>{glossify(copy.migrationParagraphs[0], { token: true })}</p>
-        <ol className={styles.claimFlow} aria-label={copy.flowLabel}><li><span>01</span>{copy.flowSteps[0]}</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>02</span>{copy.flowSteps[1]}</li><li aria-hidden="true"><ArrowRight size={19} /></li><li><span>03</span>{copy.flowSteps[2]}</li></ol>
-        <p>{glossify(copy.migrationParagraphs[1], { token: true })}</p>
+        <p>Existing $HermesOS holders can qualify for compute. The amount you need is fixed when your holding first qualifies. A price fall doesn&apos;t take away access you already have, as long as you keep holding it. Self-hosting Hivra requires neither the token nor a Hivra account.</p>
       </article>
     </div>
-
-    <div className={styles.proposalNote}><span>What comes next</span><p>{copy.proposalNote}</p></div>
-    <div className={styles.uses}>{USES.map(({ name, text }, index) => <article key={name}><span>{String(index + 1).padStart(2, "0")}</span><h3>{name}</h3><p>{glossify(text, { token: true })}</p></article>)}</div>
-
-    <div className={styles.treasury}>
-      <div><span className={styles.eyebrow}>The proposed treasury</span><h3>An operating fund.<br />{" "}Its job is to spend.</h3></div>
-      <div><p>Trading fees and platform revenue would fund maintenance, independent audits, sponsored compute and security bounties. Contributors choose stablecoin or $HIVRA at equivalent value.</p><p>The treasury would sell to cover bills and contributor payments, and buy only when the $HIVRA it holds falls below what contributors have chosen to be paid in $HIVRA. Purchases, sales and payments would all be published, with what each one funded. Tokens held in the treasury aren&apos;t burned. They get paid out again.</p><p>No price target, holder payout or claim on revenue. No fixed share of revenue committed to buying tokens.</p></div>
-    </div>
-    <div className={styles.rules}><span>No staking or yield.</span><span>No company ownership.</span><span>No buying extra authority.</span></div>
-    <div className={styles.economyEnding}><p>{copy.supplyLine}</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
+    <PrelaunchSections />
+    <div className={styles.economyEnding}><p>No presale or private round. No founder allocation of new $HIVRA is planned. The final supply and contract are published once verified.</p><a className={styles.textLink} href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document<ArrowUpRight size={20} aria-hidden="true" /></a></div>
   </section>;
 }

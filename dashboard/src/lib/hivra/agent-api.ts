@@ -4,6 +4,7 @@
 // store). Agents are real rows in hivra_agents, provisioned through the
 // Proxmox allocator.
 
+import type { ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import type { AgentId } from "./agent-catalog";
 import type { ComputerTemplateId } from "./computer-catalog";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
@@ -12,6 +13,7 @@ import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import type { HivraAgentActivity } from "./agent-authority";
 import type { ManageCapabilities } from "./manage-sections";
 import type { ComputerHistoryEvent } from "./computer-history";
+import type { AgentAppUpdateReport, AgentCliUpdateReport, AgentSoftwareSummary } from "./agent-cli-status";
 import { ComputerUsageViewSchema, type ComputerUsageView } from "./computer-usage-contract";
 import type { ProviderAgentReadinessStage } from "./provider-readiness-contract";
 import type { ProviderAgentPowerStage } from "./provider-power-contract";
@@ -46,6 +48,8 @@ export interface HivraAgent {
   readiness_stage?: ProviderAgentReadinessStage;
   power_stage?: ProviderAgentPowerStage;
   resize_stage?: ProviderResizeStage | "verification_unavailable";
+  /** A My cloud runtime update the poll is observing, or its outcome. */
+  runtime_update_stage?: ProviderRuntimeUpdateStage;
   cpu: number;
   ram: number;
   cpu_max?: number | null;
@@ -80,6 +84,9 @@ export interface HivraAgent {
   /** What Manage offers for this computer, and why not (server-computed,
    *  public fields only). Absent only from an older server. */
   manage?: ManageCapabilities;
+  /** The agents list's stored summary of this agent's software (Claude Code /
+   *  Codex version against Hivra's tested one). Absent where not covered. */
+  agent_software?: AgentSoftwareSummary | null;
 }
 
 export interface HivraAgentSnapshot {
@@ -536,13 +543,19 @@ export async function fetchPlan(): Promise<PlanInfo> {
   return (await fetchPlanStrict()) ?? FREE_PLAN;
 }
 
-/** A lifecycle action the server refused or could not verify, with its HTTP status. */
+/**
+ * A lifecycle action the server refused or could not verify, with its HTTP
+ * status and, where the server gives one, a stable code (for example
+ * host_not_ready, busy, not_running or unverified from update_runtime).
+ */
 export class AgentActionError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null = null) {
     super(message);
     this.name = "AgentActionError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -553,7 +566,9 @@ async function agentActionData(id: string, action: string, extra?: Record<string
     body: JSON.stringify({ action, ...(extra || {}) }),
   });
   const j = await readJson(r);
-  if (!r.ok || !j || j.success !== true) throw new AgentActionError((j?.error as string) || "Action failed", r.status);
+  if (!r.ok || !j || j.success !== true) {
+    throw new AgentActionError((j?.error as string) || "Action failed", r.status, typeof j?.code === "string" ? j.code : null);
+  }
   const data = j.data;
   return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
 }
@@ -586,18 +601,31 @@ export const restartAgent = async (id: string): Promise<PowerOutcome> => powerOu
 export const forceStopAgent = (id: string) => agentAction(id, "force_stop");
 /** Switch the computer off at once, then start it again. */
 export const forceRestartAgent = (id: string) => agentAction(id, "force_restart");
-export const updateAgentRuntime = (id: string) => agentAction(id, "update_runtime");
-export const resizeAgent = (
+/**
+ * The in-place connection-service update. For Claude Code and Codex it also
+ * reports what it did about moving the CLI to Hivra's tested version, and for
+ * the Aeon dashboard, OpenClaw and Agent Zero about moving the app.
+ */
+export const updateAgentRuntime = async (id: string): Promise<{ status: string; agentCli?: AgentCliUpdateReport; agentApp?: AgentAppUpdateReport }> => {
+  const data = await agentActionData(id, "update_runtime");
+  return {
+    status: typeof data.status === "string" ? data.status : "running",
+    ...(data.agentCli && typeof data.agentCli === "object" ? { agentCli: data.agentCli as AgentCliUpdateReport } : {}),
+    ...(data.agentApp && typeof data.agentApp === "object" ? { agentApp: data.agentApp as AgentAppUpdateReport } : {}),
+  };
+};
+export const resizeAgent = async (
   id: string,
   cpu: number,
   ram: number,
   maximumCpu: number,
   maximumRam: number,
-) => agentAction(id, "resize", { cpu, ram, maximumCpu, maximumRam });
-export const renameAgent = (id: string, name: string) => agentAction(id, "rename", { name });
-export const snapshotAgent = (id: string) => agentAction(id, "snapshot");
-export const restoreAgentSnapshot = (id: string, snapshotId: string) =>
-  agentAction(id, "restore", { snapshotId });
+): Promise<void> => { await agentAction(id, "resize", { cpu, ram, maximumCpu, maximumRam }); };
+export const renameAgent = async (id: string, name: string): Promise<void> => { await agentAction(id, "rename", { name }); };
+export const snapshotAgent = async (id: string): Promise<void> => { await agentAction(id, "snapshot"); };
+export const restoreAgentSnapshot = async (id: string, snapshotId: string): Promise<void> => {
+  await agentAction(id, "restore", { snapshotId });
+};
 
 const ProviderResizeViewResponseSchema = z.object({
   operation: ProviderResizeOperationViewSchema.nullable(),

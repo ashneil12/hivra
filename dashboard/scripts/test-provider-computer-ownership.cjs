@@ -154,6 +154,29 @@ async function main() {
     });
     await db.exec(LATEST_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedLatest, "re-applying the 2026.10.07.1 admission changes nothing");
+    // 2026.10.20.1 anchors on the 2026.10.07.1 entry, which appears exactly once
+    // in each function after the releases above; idempotent too.
+    const OWNED_UPDATE_ADMISSION = migration("20261020110000_provider_release_admission_2026_10_20_1.sql");
+    await db.exec(OWNED_UPDATE_ADMISSION);
+    const admittedOwnedUpdate = await admissionDefinitions();
+    admittedOwnedUpdate.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(OWNED_UPDATE_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedOwnedUpdate, "re-applying the 2026.10.20.1 admission changes nothing");
+    // 2026.10.20.2 anchors on the 2026.10.20.1 entry; idempotent too.
+    const APP_UPDATE_ADMISSION = migration("20261020130000_provider_release_admission_2026_10_20_2.sql");
+    await db.exec(APP_UPDATE_ADMISSION);
+    const admittedAppUpdate = await admissionDefinitions();
+    admittedAppUpdate.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(APP_UPDATE_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedAppUpdate, "re-applying the 2026.10.20.2 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";
@@ -887,6 +910,52 @@ async function main() {
     assert.equal((await readPower()).dispatch_intent_at, null);
     assert.equal(await cancelPower(), true);
     console.log("PASS provider power SQL: atomic exclusive claim, single dispatch, exact terminal action, actual state and reboot proof, delete races, retained evidence and private grants");
+
+    // A My cloud runtime update holds the same computer under its own kind,
+    // from the owner's request until the poll observes the guest's outcome.
+    await db.exec(migration("20261020120000_provider_runtime_update.sql"));
+    const updateOp = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const claimUpdate = (user = "owner", operation = updateOp) => value(
+      "select public.claim_hivra_provider_runtime_update($1,$2,$3) as result", [user, agent, operation]);
+    const finishUpdate = (outcome, error = null, operation = updateOp, user = "owner") => value(
+      "select public.finish_hivra_provider_runtime_update($1,$2,$3,$4,$5) as result", [user, agent, operation, outcome, error]);
+    await reset(); await reserve();
+    assert.equal(await claimUpdate(), false); // The installation still owns it.
+    await powerFixture();
+    assert.equal(await claimUpdate("foreign"), false);
+    assert.equal(await claimUpdate("owner", null), false);
+    assert.equal(await claimUpdate(), true);
+    let updating = await readAgent();
+    assert.deepEqual([updating.status, updating.operation_kind, updating.operation_id, updating.desired_state],
+      ["provisioning", "runtime_update", updateOp, "running"]);
+    assert.equal(await claimUpdate(), true); // A replay of the same update is not a new grant.
+    assert.equal((await readAgent()).operation_started_at, updating.operation_started_at);
+    assert.equal(await claimUpdate("owner", other), false); // One update at a time.
+    assert.equal(await claimPower("restart"), false); // Power waits for it.
+    for (const [outcome, error] of [["succeeded", "x"], ["failed", null], ["failed", ""], ["failed", "x".repeat(501)], ["done", null]]) {
+      assert.equal(await finishUpdate(outcome, error), false);
+    }
+    assert.equal(await finishUpdate("succeeded", null, other), false);
+    assert.equal(await finishUpdate("succeeded", null, updateOp, "foreign"), false);
+    assert.equal(await finishUpdate("failed", "The connection service update didn't finish, so the previous version was put back. Try again."), true);
+    updating = await readAgent();
+    assert.deepEqual([updating.status, updating.operation_id, updating.operation_kind, updating.error],
+      ["running", null, null, "The connection service update didn't finish, so the previous version was put back. Try again."]);
+    assert.equal(await finishUpdate("succeeded"), false); // Settled once.
+    assert.equal(await claimUpdate(), true);
+    assert.equal(await finishUpdate("succeeded"), true);
+    assert.deepEqual([(await readAgent()).status, (await readAgent()).error], ["running", null]);
+    // Only installed agents whose runtime probe is not bound to their install
+    // release (a desktop or DeepSeek row cannot change type to test it here).
+    assert.ok((await value("select pg_get_functiondef('public.claim_hivra_provider_runtime_update(text,uuid,uuid)'::regprocedure) as result"))
+      .includes("a.type not in ('claude-code','codex','aeon','openclaw','agent-zero')"));
+    await powerFixture("stopped");
+    assert.equal(await claimUpdate("owner", other), false); // Not while stopped.
+    for (const signature of ["claim_hivra_provider_runtime_update(text,uuid,uuid)", "finish_hivra_provider_runtime_update(text,uuid,uuid,text,text)"]) {
+      assert.deepEqual(await value("select jsonb_build_object('anon',has_function_privilege('anon',$1,'execute'),'auth',has_function_privilege('authenticated',$1,'execute'),'service',has_function_privilege('service_role',$1,'execute')) as result",
+        ["public."+signature]), { anon: false, auth: false, service: true });
+    }
+    console.log("PASS provider runtime update SQL: installed-agent claim on the bound computer, replay without a new grant, one lease with power, exact settlement once, eligible types only and private grants");
 
     await reset();
     for (const change of [{ user: "foreign" }, { revision: 8 }, { connection: other }, { target: other }, { order: other }, { attempt: other }, { server: "43" }]) await rejected(() => reserve(change));

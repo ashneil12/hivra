@@ -21,12 +21,13 @@
 // dashes, no trial or card claims, no unmeasured speed claims, short sentences,
 // real numbers, honest tradeoffs including when DIY wins.
 
+import { MONEY_BACK_GUARANTEE, PLAN_DISPLAY, formatPlanSize } from "@/lib/blog/plan-facts";
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 import { apiCostPerActiveHour, formatUsd } from "./claude-plan-calc";
 import { CLAUDE_PLAN_FACTS, usd } from "./claude-plan-facts";
 import { KEEP_AWAKE_FACTS } from "./keep-awake";
-import { TMUX_FACTS } from "./tmux-sheet";
+import { TMUX_FACTS, TMUX_KEYS_NOTE } from "./tmux-sheet";
 import { monthYear } from "@/lib/tools/month-year";
 
 export type ToolComponentKey =
@@ -78,19 +79,45 @@ export interface ToolExample {
   result: string;
 }
 
+/**
+ * The words above a tool, from the copy overhaul (2026-10-20). Inline marks
+ * (**bold**, *italic*, `code`) are read by lib/tools/markup.ts.
+ */
+export interface ToolIntro {
+  /** The first paragraph, set large under the H1. */
+  lede: string;
+  /** The paragraphs that follow, in a reading column. */
+  body: string[];
+  /** A closing paragraph set apart as a callout: a caveat, or how to read the keys. */
+  note?: string;
+}
+
 export interface ToolEntry {
   slug: string;
   name: string;
   h1: string;
+  /** One line for the card on /tools. It is not shown on the tool's own page. */
   subhead: string;
   /** Page title before the root " | Hivra" suffix. At most 55 characters. */
   metaTitle: string;
+  /**
+   * The finished browser title, brand included, exactly as the copy gives it. Pages use it
+   * as an absolute title, so the root layout does not add " | Hivra" a second time. It is
+   * also the Open Graph and Twitter title.
+   */
+  browserTitle: string;
   /** 120 to 155 characters. */
   metaDescription: string;
-  /** Two short paragraphs rendered above the tool. */
-  longIntro: string[];
+  /** What is said above the tool. */
+  intro: ToolIntro;
   /** At least 4 real questions from the keyword cluster. */
   faqs: ToolFaq[];
+  /**
+   * Commands, keys and flags quoted in the answers, as exact phrases. The page sets them in code; the
+   * answers themselves stay plain text, which is what the structured data carries. Each phrase must
+   * occur in an answer (the catalog test checks it).
+   */
+  faqCode?: readonly string[];
   /** Site links beyond the other tools, which the page adds on its own. */
   relatedLinks: ToolRelatedLink[];
   componentKey: ToolComponentKey;
@@ -107,11 +134,18 @@ export const TOOLS_HUB = {
   path: "/tools",
   /** Page title before the root " | Hivra" suffix. */
   metaTitle: "Free Tools for Running AI Agents",
+  /** The finished browser title, brand included (see ToolEntry.browserTitle). */
+  browserTitle: "Free Tools for Running AI Agents | Hivra",
   metaDescription:
     "Free tools for people who run AI agents: keep-awake commands, a tmux cheat sheet, Claude plan and limit calculators, a survival check and hosting costs.",
   eyebrow: "Free. No signup.",
-  intro:
-    "Calculators, checks, command builders and a cheat sheet we built for our own decisions, published as they are. Every number states its assumptions. And if the answer is that you don't need us, that's the answer you get.",
+  h1: "Free tools for people building with AI agents",
+  /** Two paragraphs under the H1, set in two columns. Inline marks as in ToolIntro. */
+  intro: [
+    "Running an agent often means solving problems that have little to do with AI. Your laptop sleeps halfway through a task. Your Claude usage limit arrives sooner than expected. A cheap server turns into a maintenance chore. Or you simply forget which tmux command gets you back into yesterday's session.",
+    "We built these free tools to make those decisions easier. They are practical, independent checks you can use without creating an account. Each calculator tells you what it assumes, and each command builder tells you what it *cannot* fix. Sometimes the sensible answer is to keep using the machine you already have. That is fine by us.",
+  ],
+  directoryHeading: "Pick the problem you are trying to solve",
   vendors: ["Anthropic", "OpenAI"],
 } as const;
 
@@ -132,6 +166,29 @@ export const TOOLS_CTA = {
   secondaryHref: "/pricing",
 } as const;
 
+/**
+ * The closing block under every tools page, the same words on all seven (copy overhaul,
+ * 2026-10-20). The price and size come from lib/blog/plan-facts, the stays-on sentence is the
+ * approved one, the AI-usage sentences are the owner's, and the guarantee is the shared
+ * phrase, linked to the terms. The copy's own wording said the agent "keeps running" and
+ * named the plan only as "(2 vCPU, 4 GB)"; both are rewritten to the repo's wording. The
+ * offer sentence now says the computer stays on after you leave your desk (owner's
+ * wording, 2026-10-21), a claim about the computer, not about a run. The AI-usage sentence is
+ * the owner's approved one and stays word for word; the sentence after it says the one case where its
+ * "or pay with Hivra credits" does not hold, because every page here can end in a Run Claude Code on
+ * Hivra button and Claude Code takes only the owner's own sign-in (lib/launch/model-access.ts).
+ */
+export const TOOLS_CLOSING = {
+  offer: `If you want the computer to stay on after you leave your desk, Hivra offers a managed computer starting at ${formatPlanSize("entry")}.`,
+  staysOn: `A paid ${PLAN_DISPLAY.entry} computer stays on and is not paused for inactivity.`,
+  aiUsage:
+    "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
+  claudeCodeSignIn: "Claude Code uses your own Anthropic sign-in, not Hivra credits.",
+  guaranteeLead: "There is a",
+  guarantee: MONEY_BACK_GUARANTEE,
+  guaranteeHref: "/terms",
+} as const;
+
 // The Claude Code plan calculator. Its figures are the shared Claude plan facts
 // (claude-plan-facts.ts, read 2026-09-30), so the page copy, the calculator and
 // the blog post it backs cannot disagree. Anything Anthropic does not publish is
@@ -145,23 +202,38 @@ const API = PLAN_FACTS.api;
 const ANTHROPIC_COST = PLAN_FACTS.anthropicCost;
 const LIMIT_CHANGES = PLAN_FACTS.limitChanges;
 const PLAN_DAY = usd(ANTHROPIC_COST.perActiveDayUsd);
-/** What the estimate gives for a normal three-hour Sonnet day, beside Anthropic's average. */
+/** What the estimate gives for a normal three-hour day on each model, beside Anthropic's average. */
 const NORMAL_SONNET_DAY = formatUsd(apiCostPerActiveHour("sonnet", false) * 3);
+const NORMAL_OPUS_DAY = formatUsd(apiCostPerActiveHour("opus", false) * 3);
+/** Haiku 5.5's two price tiers, as one phrase: "$0.10 and $0.50 for prompts up to 100,000 tokens, $0.50 and $2.50 above that". */
+const HAIKU_PRICES = `${usd(API.haiku.input)} and ${usd(API.haiku.output)} for prompts up to ${API.haiku.longPrompt.overTokens.toLocaleString("en-US")} tokens, ${usd(API.haiku.longPrompt.input)} and ${usd(API.haiku.longPrompt.output)} above that`;
+
+/**
+ * Hetzner's cost-optimised page says the number of available servers in that range is limited, and its CX23
+ * row showed as not available when the audit read it on 2026-10-20. The wording claims only what Hetzner says.
+ * Shown under the calculator's CX23 preset and in the hosting FAQ answer, so both read the same.
+ */
+export const HETZNER_LIMITED_NOTE =
+  "Hetzner says the number of servers in this range is limited, so you may not be able to order one when you look.";
 
 const PLAN_CALCULATOR_ENTRY: ToolEntry = {
   slug: "claude-code-plan-calculator",
   name: "Claude Code Plan Calculator",
-  h1: "Claude Code plan calculator",
+  h1: "Which Claude Code plan makes sense for your work?",
   subhead:
     "Tell it how much you code with Claude and where Pro's limit stops you today. It names the cheapest plan that fits and prices the same usage at API rates.",
   metaTitle: "Claude Code Plan Calculator: Pro vs Max",
+  browserTitle: "Claude Code Plan Calculator: Pro vs Max | Hivra",
   // Built from the plan facts like the rest of the page, so a price change cannot
   // leave the title, og tags and WebApplication JSON-LD description stale.
   metaDescription: `Estimate your Claude Code usage and see which Anthropic plan fits: Pro at ${usd(PRO.priceUsd)}, Max 5x at ${usd(MAX5.priceUsd)}, or Max 20x at ${usd(MAX20.priceUsd)} a month. With an API cost comparison.`,
-  longIntro: [
-    `Claude Code comes with Anthropic's Pro plan at ${usd(PRO.priceUsd)} a month, and with its Max plans at ${usd(MAX5.priceUsd)} (5x) and ${usd(MAX20.priceUsd)} (20x). Max gives you five or twenty times Pro's usage per five-hour session. Anthropic publishes no fixed caps and no weekly multiple for Max, so most people guess.`,
-    `The calculator works from what you already know. Set your days, hours and model mix, then say how far into a five-hour window Pro's limit stops you. You get a fit rating for each plan and an estimate of what the same work costs at API list price. Everything Anthropic publishes is linked below, checked in ${monthYear(PLAN_FACTS.lastVerified)}. Whatever Anthropic doesn't publish is labelled an estimate.`,
-  ],
+  intro: {
+    lede: "If you use Claude Code every day, it is tempting to move straight from Pro to the most expensive Max plan. But paying for more headroom only makes sense if the allowance is the thing slowing you down.",
+    body: [
+      "Tell the calculator how often you work, which models you use and, most importantly, roughly when Pro stops you during a five-hour session. It will compare Pro, Max 5x and Max 20x using the published session multipliers, then show an indicative API cost for the same workload.",
+    ],
+    note: "There is an important limit to the result: Anthropic does not publish a universal message or token allowance that makes the exact fit predictable. The plan verdicts are estimates based on your own experience, not promises that you will stay under a particular limit. Weekly limits are a separate problem and are not given a made-up multiplier.",
+  },
   // Tool questions only. Plan and price questions (what Max is, whether Pro is
   // enough, what API billing costs, what to do at a limit) belong to the post this
   // page links to, so the two FAQPage blocks do not repeat each other.
@@ -180,7 +252,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
     },
     {
       q: "Where does the dollar estimate come from, and how far should I trust it?",
-      a: `It's your active hours times a cost per hour at API list price. Don't read it as a plan price or a quote. The cost per hour uses Anthropic's published rates and its published ${ANTHROPIC_COST.inputToOutputRatio} input tokens per output token. Two assumptions are ours: about ${Math.round(PLAN_FACTS.estimate.outputMPerHour.normal * 1000)}K output tokens in a normal hour (${Math.round(PLAN_FACTS.estimate.outputMPerHour.heavy * 1000)}K in a heavy one) and ${Math.round(PLAN_FACTS.estimate.cacheReadShare * 100)}% of input read from the prompt cache. Anthropic publishes neither. A normal three-hour Sonnet 5.5 day comes to about ${NORMAL_SONNET_DAY}, close to Anthropic's ${PLAN_DAY} enterprise average. Take it as a rough guide. It isn't a forecast for you.`,
+      a: `It's your active hours times a cost per hour at API list price. Don't read it as a plan price or a quote. The cost per hour uses Anthropic's published rates and its published ${ANTHROPIC_COST.inputToOutputRatio} input tokens per output token. Two assumptions are ours: about ${Math.round(PLAN_FACTS.estimate.outputMPerHour.normal * 1000)}K output tokens in a normal hour (${Math.round(PLAN_FACTS.estimate.outputMPerHour.heavy * 1000)}K in a heavy one) and ${Math.round(PLAN_FACTS.estimate.cacheReadShare * 100)}% of input read from the prompt cache. Anthropic publishes neither. A normal three-hour day comes to about ${NORMAL_SONNET_DAY} on ${API.sonnet.label} and ${NORMAL_OPUS_DAY} on ${API.opus.label}, either side of Anthropic's ${PLAN_DAY} enterprise average. Take it as a rough guide. It isn't a forecast for you.`,
     },
     {
       q: "Why does the model mix start at 100% Opus?",
@@ -224,15 +296,15 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         sources: [PLAN_SOURCES.apiPricing, PLAN_SOURCES.sessionsBlog],
       },
       {
-        text: `Anthropic's docs give a way to check those assumptions. They put API-billed Claude Code at about ${PLAN_DAY} per developer per active day, and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} per developer per month across enterprise deployments. For 90% of users, costs stay below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} per active day. We set the assumptions so that a normal three-hour day on Sonnet 5.5 comes to about ${NORMAL_SONNET_DAY}, close to that average, and a heavy three-hour day on Opus 5.5 lands above the ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} line. The second figure on the page is the ${PLAN_DAY} enterprise average times your active days. It's an average, and it can't predict your own cost.`,
+        text: `Anthropic's docs give a way to check those assumptions. They put API-billed Claude Code at about ${PLAN_DAY} per developer per active day, and ${usd(ANTHROPIC_COST.perMonthLowUsd)} to ${usd(ANTHROPIC_COST.perMonthHighUsd)} per developer per month across enterprise deployments. For 90% of users, costs stay below ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} per active day. With our assumptions, a normal three-hour day comes to about ${NORMAL_SONNET_DAY} on ${API.sonnet.label} and ${NORMAL_OPUS_DAY} on ${API.opus.label}, either side of that average, and a heavy three-hour day on ${API.opus.label} lands above the ${usd(ANTHROPIC_COST.p90PerActiveDayUsd)} line. The second figure on the page is the ${PLAN_DAY} enterprise average times your active days. It's an average, and it can't predict your own cost.`,
         sources: [PLAN_SOURCES.costs],
       },
       {
-        text: `${PLAN_FACTS.defaultModel.label} has been Claude Code's default model on Pro, Max, Team and Enterprise since ${PLAN_FACTS.defaultModel.since}, so the model mix starts at 100% Opus. ${API.fable.label} (${usd(API.fable.input)} input, ${usd(API.fable.output)} output) is never the default. Max includes it up to 50% of weekly limits and Pro uses usage credits for it, so the calculator leaves it out. It also leaves out ${API.haiku.label} (${usd(API.haiku.input)} and ${usd(API.haiku.output)}), fast mode (available through usage credits only), Team and Enterprise seats, and usage credits themselves.`,
-        sources: [PLAN_SOURCES.modelConfig, PLAN_SOURCES.fable, PLAN_SOURCES.fastMode],
+        text: `${PLAN_FACTS.defaultModel.label} has been Claude Code's default model on Pro, Max, Team and Enterprise since ${PLAN_FACTS.defaultModel.since}, so the model mix starts at 100% Opus. ${API.fable.label} (${usd(API.fable.input)} input, ${usd(API.fable.output)} output) is never the default. Max includes it up to 50% of weekly limits and Pro uses usage credits for it, so the calculator leaves it out. It also leaves out ${API.haiku.label} (${HAIKU_PRICES}), fast mode (available through usage credits only), Team and Enterprise seats, and usage credits themselves.`,
+        sources: [PLAN_SOURCES.modelConfig, PLAN_SOURCES.fable, PLAN_SOURCES.fastMode, PLAN_SOURCES.apiPricing],
       },
       {
-        text: `How this was checked: every value on this page was read from the Anthropic pages linked above in ${monthYear(PLAN_FACTS.lastVerified)}, then checked against them a second time. Anthropic changes plans often, so the month matters. Your inputs stay in your browser.`,
+        text: `How this was checked: every value on this page was read from the Anthropic pages linked above in ${monthYear(PLAN_FACTS.lastVerified)}, then checked against them a second time. The API rates were checked against Anthropic's pricing table again in ${monthYear(PLAN_FACTS.apiRatesRead)}. Anthropic changes plans often, so the month matters. Your inputs stay in your browser.`,
       },
     ],
   },
@@ -256,10 +328,10 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         "Pro      $20/mo   Fits with headroom",
         "Max 5x   $100/mo  Fits with headroom",
         "Max 20x  $200/mo  Fits with headroom",
-        "API list price, estimated: $19.42/mo",
+        "API list price, estimated: $12.55/mo",
       ].join("\n"),
       result:
-        "Pro covers you. But one hour a week is light enough that the estimate at API list price, $19.42 a month, comes out a little under Pro's $20. That's the one kind of schedule where paying per token can be cheaper, and it leans on the assumptions above.",
+        "Pro covers you. But one hour a week is light enough that the estimate at API list price, $12.55 a month, comes out under Pro's $20. That's the one kind of schedule where paying per token can be cheaper, and it leans on the assumptions above.",
     },
     {
       title: "Long days and a weekly stop",
@@ -268,7 +340,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
         "Pro      $20/mo   Would hit limits",
         "Max 5x   $100/mo  Tight",
         "Max 20x  $200/mo  Fits with headroom",
-        "API list price, estimated: $534/mo",
+        "API list price, estimated: $452/mo",
       ].join("\n"),
       result:
         "Five times one hour is five hours against a five-hour window, so Max 5x is rated tight and Max 20x has headroom. The weekly stop on Pro is a separate limit, and the calculator can't rate it because Anthropic publishes no weekly multiple for Max. The verdict says so.",
@@ -293,16 +365,19 @@ export const TOOL_ENTRIES: ToolEntry[] = [
   {
     slug: "agent-survival-check",
     name: "Agent Survival Check",
-    h1: "Will your agent survive the night?",
+    h1: "Will your agent still be running tomorrow morning?",
     subhead:
       "Answer a few questions about your setup. Find out whether Claude Code keeps working when you close the lid, and what to fix if it doesn't.",
     metaTitle: "Keep Claude Code Running 24/7: Agent Survival Check",
+    browserTitle: "Keep Claude Code Running 24/7: Agent Survival Check | Hivra",
     metaDescription:
       "Answer a few questions about your setup and find out if Claude Code keeps running when you close your laptop. Covers sleep, SSH drops, tmux and reboots.",
-    longIntro: [
-      "Claude Code runs on your machine. Close the lid and the OS suspends it mid task. Nothing runs while the lid is shut, and a long tool call or network request often fails when the machine wakes. The same goes for Codex and most CLI agents.",
-      "Tell the check where the agent runs and how the session stays alive, then what happens on sleep, network drops and reboots. For some setups, tmux on a VPS is enough, and the result says so.",
-    ],
+    intro: {
+      lede: "A long-running agent is only as reliable as the computer and terminal session underneath it. Claude Code can be midway through a job when your laptop sleeps, your SSH connection drops or the server restarts. Having the right model does not help when its process has stopped.",
+      body: [
+        "Use this check to describe where your agent runs, how you keep its session alive and what happens when something fails. You will get a practical risk assessment and an ordered list of fixes. It is not a live health monitor, and its score is not a prediction of uptime. If an ordinary VPS with tmux and a restart service solves your problem, we will tell you that rather than pretending you need managed hosting.",
+      ],
+    },
     faqs: [
       {
         q: "Why does Claude Code stop when I close my laptop?",
@@ -318,7 +393,7 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       },
       {
         q: "How do I keep an AI agent running overnight?",
-        a: "Run it on a machine that stays on. That can be a desktop you leave running, a VPS with tmux, or a managed computer. Hivra runs Claude Code on a cloud computer with your own Anthropic sign-in. The $9.99 a month plan gives it 2 vCPU and 4 GB, and paid plans aren't paused for inactivity. Start the run inside tmux in the computer's Terminal tab, or send it from Telegram, and it keeps going with your laptop closed.",
+        a: "Run it on a machine that stays on. That can be a desktop you leave running, a VPS with tmux, or a managed computer. Hivra runs Claude Code on a cloud computer with your own Anthropic sign-in (subject to the provider's terms). The $9.99 a month plan gives it 2 vCPU and 4 GB, and paid plans aren't paused for inactivity. Start the run inside tmux in the computer's Terminal tab, or send it from Telegram, and it keeps going with your laptop closed.",
       },
       {
         q: "Is a VPS with tmux enough?",
@@ -337,20 +412,24 @@ export const TOOL_ENTRIES: ToolEntry[] = [
   {
     slug: "ai-agent-hosting-cost-calculator",
     name: "AI Agent Hosting Cost Calculator",
-    h1: "AI agent hosting cost calculator",
+    h1: "What does it really cost to keep an AI agent running?",
     subhead:
       "Compare what running an agent 24/7 costs on a VPS you manage and on a managed computer. Your time is part of the bill.",
     metaTitle: "AI Agent Hosting Cost Calculator: VPS vs Managed",
+    browserTitle: "AI Agent Hosting Cost Calculator: VPS vs Managed | Hivra",
     metaDescription:
       "Work out what running an AI agent 24/7 costs on a VPS you manage versus a managed computer. It counts your time as well as the server bill.",
-    longIntro: [
-      "Running an AI agent 24/7 needs a computer that stays on. The usual options: a VPS you rent and manage, hardware you already own, or a managed agent computer. Each has a monthly cost, and the server bill is only part of it.",
-      "The calculator compares one VPS you run yourself with one managed computer: the server bill, setup time and the maintenance hours priced at your own rate, plus DIY backups if you tick them. Hivra's price doesn't include backups, so they start off. Model usage is separate on both, billed through your own Claude or ChatGPT login or API key. DIY wins in some cases, and the numbers show where.",
-    ],
+    intro: {
+      lede: "A five-dollar server sounds hard to beat. It often is, particularly if you are comfortable maintaining Linux and already have a machine online. But the invoice from your hosting provider is not always the whole cost. Installation, updates, backups, troubleshooting and the odd late-night restart take time too.",
+      body: [
+        "This calculator lets you compare a VPS you manage with a managed Hivra computer over twelve months. You choose the server, put a value on your time and decide whether backups and other extras belong in the comparison. You can also set your time cost to zero. The result should help you decide, not simply point you towards Hivra.",
+      ],
+      note: "The model bill is separate in both cases. Neither a VPS nor Hivra's hosting plan includes unlimited Claude, Codex or API inference. We also do not quietly bundle backups into Hivra's entry-level price when they are not included.",
+    },
     faqs: [
       {
         q: "How much does it cost to run an AI agent 24/7?",
-        a: "A small VPS lists at about $5 to $12 a month before tax. Hardware you already own costs mostly electricity, roughly $1 to $10 a month depending on the machine. A managed computer on Hivra is $9.99 a month for 2 vCPU and 4 GB. Model usage bills separately through your own account on all three.",
+        a: "A small VPS lists at about $5 to $12 a month before tax. Hardware you already own costs mostly electricity, roughly $1 to $10 a month depending on the machine. A managed computer on Hivra is $9.99 a month for 2 vCPU and 4 GB. Model usage bills separately on all three.",
       },
       {
         q: "What is the cheapest way to run an AI agent?",
@@ -362,11 +441,11 @@ export const TOOL_ENTRIES: ToolEntry[] = [
       },
       {
         q: "How does Hivra compare to a VPS of the same size?",
-        a: "Hetzner's CX23 has the same 2 vCPU and 4 GB. It lists at $6.49 a month in Germany and Finland, plus $0.60 for its IPv4 address, before tax. DigitalOcean and Vultr list 2 vCPU and 4 GB at $24 and $20 a month. Hivra is $9.99 a month and installs and runs the agent for you.",
+        a: `Hetzner's CX23 has the same 2 vCPU and 4 GB. It lists at $6.49 a month in Germany and Finland, plus $0.60 for its IPv4 address, before tax. ${HETZNER_LIMITED_NOTE} DigitalOcean and Vultr list 2 vCPU and 4 GB at $24 and $20 a month. Hivra is $9.99 a month and installs and runs the agent for you.`,
       },
       {
         q: "Does managed hosting include the model costs?",
-        a: "No. On Hivra you sign in with your own Claude or ChatGPT account, or paste your own API key. Hivra charges for the computer: $9.99 a month for 2 vCPU and 4 GB, or $19.99 a month for 4 vCPU and 8 GB.",
+        a: "No. The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits. If you sign in with your own Claude or ChatGPT account, that is subject to the provider's terms. Hivra charges for the computer: $9.99 a month for 2 vCPU and 4 GB, or $19.99 a month for 4 vCPU and 8 GB.",
       },
       {
         q: "When does self-hosting win?",
@@ -385,20 +464,24 @@ export const TOOL_ENTRIES: ToolEntry[] = [
   {
     slug: "claude-code-limit-reset-calculator",
     name: "Claude Code Limit Reset Calculator",
-    h1: "When does your Claude Code limit reset?",
+    h1: "When will Claude Code let you work again?",
     subhead:
       "Enter the time you sent the first prompt of this session. See the minute the five-hour window should close, and why the weekly limit is a different clock.",
     metaTitle: "When Does Claude Code Usage Limit Reset? Calculator",
+    browserTitle: "When Does Claude Code Usage Limit Reset? Calculator | Hivra",
     metaDescription:
       "Enter your first prompt time and see when your Claude Code five-hour window reopens. Plus why waiting five hours never clears the weekly limit.",
-    longIntro: [
-      "Claude Code stops with a usage limit message, and the reset time moves around from day to day. That's because the five-hour session window rolls. It follows your own usage. Midnight and the top of the hour don't come into it.",
-      "Give this calculator the time of your first prompt and it does the arithmetic. It also separates the two limits people confuse. The five-hour window and the weekly limit are different clocks, and waiting out one does nothing for the other.",
-    ],
+    intro: {
+      lede: "A Claude Code limit can arrive in the middle of an otherwise productive session. You remember when you started, but not necessarily when the window ends, and the message about weekly usage can look deceptively similar.",
+      body: [
+        "Put in the time of your first message and this calculator will show a *possible* end to your five-hour session window on your own clock. If you know your weekly reset, you can add that separately. The important distinction is that waiting five hours does not clear a weekly allowance.",
+      ],
+      note: "Anthropic's own usage screen and the reset time in Claude Code remain authoritative. This tool estimates timing from an explicitly stated first-message assumption; it cannot see your account or grant additional usage.",
+    },
     faqs: [
       {
         q: "When does the Claude Code usage limit reset?",
-        a: "Five hours after your session started, whatever the clock says. Anthropic describes a rolling five-hour session window and doesn't document what opens it. The widely reported behavior, and the one this calculator assumes, is that your first message opens it: send it at 10:20 and the window closes at 15:20. Claude Code's limit message and the /usage command show the exact reset time.",
+        a: "Five hours after your session started, whatever the clock says. Anthropic describes a rolling five-hour session window and doesn't document what opens it. The widely reported behaviour, and the one this calculator assumes, is that your first message opens it: send it at 10:20 and the window closes at 15:20. Claude Code's limit message and the /usage command show the exact reset time.",
       },
       {
         q: "Why does my Claude Code limit reset at a different time each day?",
@@ -432,16 +515,20 @@ export const TOOL_ENTRIES: ToolEntry[] = [
   {
     slug: "keep-mac-awake",
     name: "Keep Mac Awake Command Builder",
-    h1: "Caffeinate on Mac: keep it awake while an agent runs",
+    h1: "Keep your Mac awake while an agent works",
     subhead:
       "Pick macOS or Linux, how long, power and lid. You get the exact command, how to check it's working, and a list of what it won't cover.",
     metaTitle: "Caffeinate Mac: Keep Your Mac Awake, Command Builder",
+    browserTitle: "Caffeinate Mac: Keep Your Mac Awake, Command Builder | Hivra",
     metaDescription:
       "Build the exact caffeinate command to keep a Mac awake while Claude Code or Codex runs, with the Linux version and a list of what it can't cover.",
-    longIntro: [
-      "caffeinate ships with macOS and stops the Mac sleeping while a job runs. The -i flag stops idle sleep, -s stops system sleep (on AC power only), and -t sets a timeout in seconds. Apple describes closed-lid use with an external display, power connected and an external keyboard and mouse or trackpad. caffeinate's manual makes no promise about the lid.",
-      "Answer four questions and the builder prints the command for macOS or Linux. The command you type stays in your browser.",
-    ],
+    intro: {
+      lede: "If you are running Claude Code, Codex or another CLI agent locally, your Mac going to sleep can interrupt the job. macOS already includes a small tool called `caffeinate` that can help, and in many cases it is all you need.",
+      body: [
+        "Choose your operating system, whether you are plugged in, what you want to run and how long you need it awake. The builder will give you a command you can copy, a way to check it and an explanation of its limits.",
+      ],
+      note: "The crucial catch: keeping a computer awake is not the same as keeping an agent reliable. It will not prevent reboots, recover from a failed tool call or guarantee that a MacBook stays running with its lid closed. This page tells you where those boundaries are instead of promising an overnight run it cannot deliver.",
+    },
     faqs: [
       {
         q: "How do I use caffeinate on Mac?",
@@ -471,6 +558,19 @@ export const TOOL_ENTRIES: ToolEntry[] = [
         q: "How do I keep a Linux laptop awake when I close the lid?",
         a: "Run the command under systemd-inhibit --what=sleep:handle-lid-switch. The lock lasts while the command runs. For a permanent change, set HandleLidSwitch=ignore in logind.conf. Some desktops handle the lid themselves, so test with the lid closed for a minute.",
       },
+    ],
+    faqCode: [
+      "caffeinate -is claude",
+      "caffeinate -i",
+      "caffeinate -t",
+      "pkill caffeinate",
+      "systemd-inhibit --what=sleep:handle-lid-switch",
+      "HandleLidSwitch=ignore",
+      "logind.conf",
+      "Ctrl-C",
+      "-i",
+      "-s",
+      "-t",
     ],
     relatedLinks: [
       { href: "/tools/agent-survival-check", label: "Check if your whole setup survives a closed laptop" },
@@ -536,16 +636,20 @@ export const TOOL_ENTRIES: ToolEntry[] = [
   {
     slug: "tmux-cheat-sheet",
     name: "tmux Cheat Sheet for AI Coding Agents",
-    h1: "tmux cheat sheet",
+    h1: "tmux commands worth keeping nearby",
     subhead:
       "Sessions, windows, panes, detach and attach, copy mode and logging, plus the few commands that keep an AI coding agent in a session you can leave and come back to.",
     metaTitle: "tmux Cheat Sheet: Commands and Keys for AI Agents",
+    browserTitle: "tmux Cheat Sheet: Commands and Keys for AI Agents | Hivra",
     metaDescription:
       "A tmux cheat sheet with copy buttons: sessions, windows, panes, detach and attach, copy mode and logging, plus commands for AI coding agents.",
-    longIntro: [
-      "tmux is a terminal multiplexer. It runs your shells inside sessions that keep going when your terminal closes or your SSH connection drops. You attach to a session to look at it and detach to leave it running.",
-      "Each command below has a copy button and was checked against the tmux manual. The last section is for AI coding agents: one named session per agent, re-attaching from another device, and keeping a log. tmux survives disconnects. It doesn't survive a sleeping laptop.",
-    ],
+    intro: {
+      lede: "You do not need to learn every corner of tmux to make it useful. Start a named session, run your agent, detach, then return later from another terminal or device. That handful of commands solves one of the most irritating problems with long-running CLI work: losing the terminal that was holding everything together.",
+      body: [
+        "This reference covers sessions, windows, panes, copy mode, logging and a few practical setups for Claude Code and Codex. The commands are here to copy, not memorise. We also explain the underlying behaviour, because tmux protects you from terminal disconnects, not from a sleeping computer, a reboot or an agent crash.",
+      ],
+      note: TMUX_KEYS_NOTE,
+    },
     faqs: [
       {
         q: "What is the tmux prefix key?",
@@ -575,6 +679,24 @@ export const TOOL_ENTRIES: ToolEntry[] = [
         q: "How do I log tmux output to a file?",
         a: "Run tmux pipe-pane -o -t NAME: 'cat >> ~/NAME.log' to append everything the pane prints from that moment. Run it again, or tmux pipe-pane -t NAME:, to stop. To save the existing history once, run tmux capture-pane -p -S - -t NAME: > file.",
       },
+    ],
+    faqCode: [
+      "tmux pipe-pane -o -t NAME: 'cat >> ~/NAME.log'",
+      "tmux pipe-pane -t NAME:",
+      "tmux capture-pane -p -S - -t NAME: > file",
+      "tmux attach -d -t NAME",
+      "tmux attach -t NAME",
+      "tmux attach -t claude",
+      "tmux new -s claude",
+      "tmux set -g mouse on",
+      "tmux ls",
+      "Ctrl-b then [",
+      "Ctrl-b then d",
+      "Ctrl-b Page Up",
+      "Ctrl-b d",
+      "Ctrl-b c",
+      "Ctrl-b %",
+      "Ctrl-b",
     ],
     relatedLinks: [
       { href: "/tools/keep-mac-awake", label: "Keep a Mac awake with caffeinate" },

@@ -788,9 +788,11 @@ describe("BillingPage", () => {
       render(<BillingPage />);
 
       expect(await screen.findByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-      expect(screen.getByRole("heading", { name: "Pro plan on hold" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Hivra Cloud plan on hold" })).toBeInTheDocument();
+      // After the 48 hours the computers are stopped, their files are kept, and
+      // Start works again once the plan is paid.
       expect(screen.getByText(
-        "A payment didn't go through, so this plan isn't active right now. Pay the open invoice or update your card in the billing portal.",
+        "A payment didn't go through, so this plan is on hold and your Hivra Cloud computers are stopped. Their files are kept. Pay the open invoice or update your card in the billing portal, then press Start on each computer.",
       )).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Open billing portal" })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Choose a plan" })).not.toBeInTheDocument();
@@ -807,7 +809,7 @@ describe("BillingPage", () => {
       };
       render(<BillingPage />);
 
-      expect(await screen.findByRole("heading", { name: "Power plan on hold" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Hivra Cloud plan on hold" })).toBeInTheDocument();
       expect(screen.getByText("This plan has no agent slots right now. Contact support to check it.")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Open billing portal" })).not.toBeInTheDocument();
       // Nothing bills this plan by card, so Checkout for a plan still works.
@@ -815,6 +817,38 @@ describe("BillingPage", () => {
       await waitFor(() => {
         expect(screen.getByRole("tab", { name: "Plans" })).toHaveAttribute("aria-selected", "true");
       });
+    });
+
+    it("tells someone with no plan that a Hivra Cloud computer needs a paid plan, and what a plan that ended did", async () => {
+      notSubscribed();
+      render(<BillingPage />);
+
+      // Plans opens for someone with no plan: the intro says the same thing.
+      expect(await screen.findByText(
+        /^Every computer that Hivra Cloud runs for you needs a paid plan, from \$9\.99 a month for 2 vCPU and 4 GB of RAM\. A free account works with a computer or server you connect yourself\./,
+      )).toBeInTheDocument();
+      expect(screen.queryByText(/Every plan runs/)).not.toBeInTheDocument();
+
+      await openTab("Overview");
+      expect(screen.getByText(
+        "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. If a plan has ended, your Hivra Cloud computers are stopped and their files are kept. Choose a plan, then press Start.",
+      )).toBeInTheDocument();
+    });
+
+    it("names the 48 hours on a card plan whose payment failed, and only there", async () => {
+      subscribedAs({ status: "past_due" });
+      const { unmount } = render(<BillingPage />);
+
+      expect(await screen.findByText(
+        "A payment didn't go through. Your computers keep running for up to 48 hours after the first failed payment. If it is still unpaid then, they are stopped. Pay the open invoice or update your card in the billing portal, then press Start on each computer.",
+      )).toBeInTheDocument();
+      unmount();
+
+      // Apple has its own grace period, so the 48 hours would be wrong there.
+      subscribedAs({ status: "past_due", source: "apple_iap", canChangePlanInPlace: false });
+      render(<BillingPage />);
+      expect(await screen.findByText("Payment due")).toBeInTheDocument();
+      expect(screen.queryByText(/up to 48 hours/)).not.toBeInTheDocument();
     });
 
     it("renders only the active panel and wires tabs to their panels", async () => {
@@ -1910,7 +1944,10 @@ describe("BillingPage", () => {
       // Overview: the free plate, with no card controls to manage.
       expect(await screen.findByText("Free · no charge")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /manage payment method/i })).not.toBeInTheDocument();
-      expect(screen.getByText("Sleeps after 4 idle days")).toBeInTheDocument();
+      // A free account that still holds a Hivra-run computer needs a paid plan
+      // for it, so the plate no longer promises a sleep rule.
+      expect(screen.getByText("Needs a paid plan")).toBeInTheDocument();
+      expect(screen.queryByText(/Sleeps after/)).not.toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
       await waitFor(() => {

@@ -2,7 +2,7 @@
  * Warm-pool campaign email — Resend integration.
  *
  * ONE email, sent once, to the engaged-free pool (free plan + a running
- * instance + activity in the last 7 days) that has never been pitched Pro.
+ * instance + activity in the last 7 days) that has never been pitched a paid plan.
  * Owner-triggered via POST /api/admin/warm-pool-campaign; this module only
  * knows how to build and send the email. At-most-once bookkeeping lives in
  * lifecycle_email_sends under WARM_POOL_EMAIL_KEY (see the
@@ -16,6 +16,7 @@ import { Resend } from "resend";
 
 import { log } from "@/lib/logger";
 import { SITE_URL } from "@/lib/seo-urls";
+import { PLANS, formatPrice } from "@/lib/subscription/plans";
 
 /**
  * The lifecycle_email_sends ledger key for this campaign. Dated on purpose:
@@ -45,6 +46,8 @@ export type WarmPoolEmailSendResult =
 
 const LOG_SOURCE = "warm-pool-campaign-email";
 const CTA_URL = `${SITE_URL}/dashboard/billing?from=warm_pool`;
+/** The entry paid plan's prices, from the same table checkout reads. */
+const ENTRY_PRICE_LINE = `${formatPrice(PLANS.operator.price)}/mo, or ${formatPrice(PLANS.operator.yearlyPrice)}/yr`;
 
 function greeting(firstName?: string | null): string {
   return firstName?.trim() ? `Hey ${firstName.trim()},` : "Hey,";
@@ -112,24 +115,24 @@ export function buildWarmPoolEmail(params: WarmPoolEmailContentParams): WarmPool
   const subject = "what your agent could be doing";
   const ctaUrl = CTA_URL;
   const capabilities = [
-    `<strong>Web browsing.</strong> "Watch this product's price and tell me the day it drops." Free can't read live pages. Pro can.`,
+    `<strong>Web browsing.</strong> "Watch this product's price and tell me the day it drops." Browsing needs a computer run by Hivra.`,
     `<strong>Persistent memory.</strong> Tell it once that reports go in bullet points, numbers up top. It still knows in three weeks.`,
     `<strong>Scheduled tasks.</strong> "Every Monday at 9, give me the three things in my niche worth reading." Runs on its own, no prompt.`,
   ];
   const capabilitiesText = [
-    `Web browsing. "Watch this product's price and tell me the day it drops." Free can't read live pages. Pro can.`,
+    `Web browsing. "Watch this product's price and tell me the day it drops." Browsing needs a computer run by Hivra.`,
     `Persistent memory. Tell it once that reports go in bullet points, numbers up top. It still knows in three weeks.`,
     `Scheduled tasks. "Every Monday at 9, give me the three things in my niche worth reading." Runs on its own, no prompt.`,
   ];
-  const close = "If free covers you, ignore this — it stays free.";
+  const close = "If your own computer covers you, ignore this.";
   const text = [
     greeting(params.firstName),
     "",
-    "You've had an agent running. Here's what changes on Pro:",
+    "You've had an agent running. Here is what changes on a paid plan:",
     "",
     ...capabilitiesText.map((c) => `  • ${c}`),
     "",
-    "$9.99/mo, or $79/yr.",
+    `${ENTRY_PRICE_LINE}.`,
     "",
     `Upgrade: ${ctaUrl}`,
     "",
@@ -139,14 +142,14 @@ export function buildWarmPoolEmail(params: WarmPoolEmailContentParams): WarmPool
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
-    preheader: "Three things your agent picks up on Pro. $9.99/mo or $79/yr.",
+    preheader: `Three things your agent picks up on a paid plan. ${ENTRY_PRICE_LINE}.`,
     eyebrow: "Your agent",
     title: "What your agent could be doing.",
     body: [
       htmlParagraph(greeting(params.firstName)),
-      htmlParagraph("You've had an agent running. Here's what changes on Pro:"),
+      htmlParagraph("You've had an agent running. Here is what changes on a paid plan:"),
       htmlList(capabilities),
-      htmlParagraph("<strong>$9.99/mo, or $79/yr.</strong>"),
+      htmlParagraph(`<strong>${ENTRY_PRICE_LINE}.</strong>`),
       htmlParagraph(close),
     ].join("\n"),
     ctaText: "See plans",

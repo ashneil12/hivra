@@ -283,7 +283,7 @@ describe("/token page content", () => {
   it("has no notice and keeps the proposals for an allowed viewer while $HIVRA is dormant", () => {
     render(<TokenPageClient entries={dormantTokenPageEntries()} />);
     expect(screen.queryByTestId("token-geo-notice")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
   });
 
   it("has no notice and shows the launched page for an allowed viewer with the committed launch", () => {

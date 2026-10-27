@@ -15,6 +15,7 @@ import {
 import { CopyAddressButton } from "./CopyAddressButton";
 import { TokenGeoNotice } from "./TokenGeoNotice";
 import TokenLaunchedView from "./TokenLaunchedView";
+import PrelaunchSections from "./PrelaunchSections";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
@@ -87,7 +88,7 @@ export default function TokenPageClient({
     return <TokenLaunchedView entries={entries} airdropFacts={airdropFacts} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} tokenSurfaces={tokenSurfaces} />;
   }
   // Reached only while $HIVRA is dormant, or by a blocked viewer, who reads none of
-  // the phase copy below (the restricted copy replaces it and the proposals are dropped).
+  // the phase copy below (the restricted copy replaces it and the prelaunch sections are dropped).
   const phaseCopy = DORMANT_TOKEN_PAGE_COPY;
   // A blocked viewer reads the contracts and the access they already have, not the
   // status, proposal or qualify-for-compute lines (RESTRICTED_TOKEN_PAGE_COPY).
@@ -157,16 +158,8 @@ export default function TokenPageClient({
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
-      {geoNotice ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
-        <p className="mono" style={{ fontSize: 11 }}>{copy.migrationEyebrow}</p>
-        <h2 id="proposals-title">{copy.migrationHeading}</h2>
-        <p>{copy.migrationParagraphs[0]}</p>
-        <p>{copy.migrationParagraphs[1]}</p>
-        <h3>Utility and treasury proposals</h3>
-        <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
-        <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>
-        <p><a href="/docs/litepaper/">Read the full litepaper and economy proposal</a></p>
-      </section>}
+      {/* Reached by an unblocked viewer only while $HIVRA is dormant: the planned launch facts (token-launch-status.ts). */}
+      {geoNotice ? null : <PrelaunchSections />}
     </main>
   </PublicSite>;
 }

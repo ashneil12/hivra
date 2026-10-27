@@ -8,7 +8,7 @@ export default function MotionSwitch() {
   const { off, ready, setUserOff } = useMotionPref();
   if (!ready) return null;
   return (
-    <button type="button" className={styles.motionSwitch} aria-pressed={!off} onClick={() => setUserOff(!off)}>
+    <button type="button" className={styles.motionSwitch} aria-pressed={!off} title="Switch the page's animation on or off" onClick={() => setUserOff(!off)}>
       <span aria-hidden="true" data-on={!off ? "" : undefined} />
       Motion {off ? "off" : "on"}
     </button>

@@ -16,15 +16,15 @@ const DORMANT: TokenPhaseCopy & { tokenPage: TokenPagePhaseCopy; tokenomics: Tok
   tokenPage: {
     metadataTitle: "Hivra token: current access and proposals",
     metadataDescription:
-      "Verify the existing $HermesOS contract, understand current holder access, and read the proposed $HIVRA migration. A wallet is optional.",
+      "Verify the existing $HermesOS contract, understand current holder access, and read the plan for $HIVRA and the $HermesOS migration. A wallet is optional.",
     heroTitle: "$HermesOS and Hivra.",
     heroLead:
-      "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the proposed $HIVRA token.",
+      "Use Hivra and pay by card without connecting a wallet. This page explains existing holder access and the planned $HIVRA token. The launch is in preparation and nothing is trading yet.",
     migrationEyebrow: "PROPOSED. NOT AVAILABLE HERE.",
-    migrationHeading: "The proposed $HIVRA migration",
+    migrationHeading: "The planned $HIVRA migration",
     migrationParagraphs: [
-      "The litepaper proposes a Hivra token on Base through Bankr, with an optional active claim from $HermesOS. Keeping access and converting tokens are separate decisions.",
-      "The proposed claim would sell the old tokens into their existing pool and use the ETH proceeds to buy from the new pool. Conversion terms, fees and price protections must be published with the contract before claims open. No migration action is offered on this page.",
+      "$HIVRA is planned for Base, launched through Doppler. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, without burning anything. Keeping access and claiming are separate decisions.",
+      "The eligibility snapshot is complete. Claims are not open yet, and the contract, claim link and times are published here once verified. No migration action is offered on this page.",
     ],
     accessParagraph:
       "Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.",
@@ -38,8 +38,8 @@ const DORMANT: TokenPhaseCopy & { tokenPage: TokenPagePhaseCopy; tokenomics: Tok
     migrationEyebrow: "Proposed migration",
     migrationHeading: "Keeping access and converting tokens are separate decisions.",
     migrationParagraphs: [
-      "The proposal is $HIVRA on Base, launched through Bankr. An active claim would sell your old tokens into their existing pool and use the ETH proceeds to buy $HIVRA in the new pool. Bankr would run the conversion.",
-      "Existing holders keep their access, without forced conversion or a claim deadline. The conversion rate, the fees and how price changes during a conversion are handled get published before claims open, along with the exact steps. Once $HIVRA launches, new users hold and pay with $HIVRA.",
+      "The plan is $HIVRA on Base, launched through Doppler. The eligibility snapshot is complete. Eligible $HermesOS holders will be able to claim $HIVRA 1:1 through Sablier, within a 90-day window that starts when claims open. You pay the claim and network fees, and you do not burn or surrender your $HermesOS.",
+      "Existing holders keep their access. Claims are not open yet. The claim link, start and end times and the exact steps are published here once verified. Once $HIVRA launches, new users hold and pay with $HIVRA.",
     ],
     flowLabel: "Proposed claim flow",
     flowSteps: ["$HermesOS", "ETH proceeds", "$HIVRA"],
@@ -49,10 +49,10 @@ const DORMANT: TokenPhaseCopy & { tokenPage: TokenPagePhaseCopy; tokenomics: Tok
       "No presale or private round. The supply is fixed at 100 billion by the Bankr launch. Any founder allocation and its vesting get published before launch.",
   },
   evolution: {
-    hivraStatus: "$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.",
+    hivraStatus: "$HIVRA is a planned new token on Base, to be launched through Doppler. Launch is in preparation and it does not exist yet.",
     hivraDetails: [
       "Under the proposal, new users would use $HIVRA once it launches.",
-      "Under the proposal, converting your $HermesOS would be optional, and the terms would be published before claims open.",
+      "Claiming $HIVRA from your $HermesOS snapshot is optional, and claims are not open yet.",
       "Under the proposal, paying in the token keeps its discount.",
     ],
     addressNote: "Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the",

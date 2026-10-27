@@ -15,6 +15,9 @@ jest.mock("@/components/public-site/PublicSite", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
+// The live count is read after the redirect check; these tests do not reach the database.
+const mockCount = jest.fn();
+jest.mock("@/components/landing/home/agents-deployed", () => ({ getHomeAgentsDeployed: () => mockCount() }));
 
 import LandingPage from "../page";
 
@@ -29,6 +32,20 @@ describe("homepage redirect for signed-in visitors", () => {
     jest.clearAllMocks();
     requestHeaders = { host: "hivra.cloud" };
     mockAuth.mockResolvedValue({ userId: "user_123" });
+    mockCount.mockResolvedValue(null);
+  });
+
+  it("reads the live count only after it has decided not to redirect", async () => {
+    // The real redirect() throws, which ends the render before anything else runs.
+    mockRedirect.mockImplementationOnce(() => {
+      throw new Error("NEXT_REDIRECT");
+    });
+    requestHeaders["sec-fetch-site"] = "none";
+    await expect(LandingPage({})).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockCount).not.toHaveBeenCalled();
+    requestHeaders["sec-fetch-site"] = "same-origin";
+    await LandingPage({});
+    expect(mockCount).toHaveBeenCalledTimes(1);
   });
 
   it("sends a direct visit (typed URL, bookmark or external link) to the dashboard", async () => {

@@ -37,7 +37,7 @@ function copyFor(level: WarnLevel, isPaidTier: boolean, pct: number): { title: s
       }
     : {
         title: "Out of RAM on the free plan",
-        body: `This agent maxed its free-plan RAM (${pct}%) and may restart mid-task. Upgrade to Pro for several times the memory.`,
+        body: `This agent maxed the RAM on the free account (${pct}%) and may restart mid-task. A paid plan has several times the memory.`,
       };
 }
 

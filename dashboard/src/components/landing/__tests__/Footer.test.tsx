@@ -6,7 +6,7 @@ import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import Footer from "../Footer";
+import Footer, { downloadLinkLabel } from "../Footer";
 
 jest.mock("next/link", () => {
   const MockLink = ({
@@ -60,6 +60,7 @@ describe("Footer", () => {
 
     expect(screen.getByRole("link", { name: "Status" })).toHaveAttribute("href", "/status");
     expect(screen.getByRole("link", { name: "Changelog" })).toHaveAttribute("href", "/changelog");
+    expect(screen.getByRole("link", { name: "This week" })).toHaveAttribute("href", "/week");
   });
 
   it("includes a roadmap link in the footer", () => {
@@ -73,6 +74,15 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "Computers" })).toHaveAttribute("href", "/#computers");
     expect(screen.getByRole("link", { name: "Hosting & self-hosting" })).toHaveAttribute("href", "/#hosting");
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
+  });
+
+  // /download says "Public download coming soon" while there is no installer, so the footer link must not promise one.
+  it("does not promise a download while the macOS installer is unpublished", () => {
+    render(<Footer tokenSurfaces />);
+    expect(screen.getByRole("link", { name: "Mac app (coming soon)" })).toHaveAttribute("href", "/download");
+    expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
+    expect(downloadLinkLabel("pending")).toBe("Mac app (coming soon)");
+    expect(downloadLinkLabel("published")).toBe("Download the app");
   });
 
   it("links the official X account in a new tab", () => {

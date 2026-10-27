@@ -10,9 +10,6 @@
  *                         matching the other *_ENABLED sweep flags — set it in
  *                         Vercel to go live)
  *   - non-card invoices   collection_method !== "charge_automatically"
- *   - attempt 1           Stripe Smart Retries get one silent shot; we only
- *                         email from attempt_count >= 2 (Stripe increments
- *                         attempt_count per automatic retry)
  *   - already sent        lifecycle_email_sends ledger row keyed on the
  *                         invoice id (payment_failed_recovery_<invoice_id>),
  *                         so webhook redeliveries and later attempts for the
@@ -20,6 +17,11 @@
  *   - recovered           the invoice is re-fetched from Stripe right before
  *                         send; anything no longer `open` (paid / void /
  *                         uncollectible) is skipped
+ *
+ * It goes out on the first failed attempt, not a later retry: the email
+ * promises a window that runs from the first failed payment
+ * (PAYMENT_GRACE_HOURS), and Stripe's second attempt can land after that
+ * window has closed.
  *
  * Dedupe is two layers, same contract as the lifecycle sweep: ledger checked
  * before send + inserted after Resend accepts, with the invoice-keyed Resend
@@ -46,9 +48,6 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 const LOG_SOURCE = "dunning-email";
 
-/** Only email from the second failed attempt on (Smart Retries get one silent shot). */
-const MIN_ATTEMPT_COUNT = 2;
-
 /**
  * Master gate. Default OFF (codebase convention for new sweeps/sends);
  * set HERMES_DUNNING_EMAIL_ENABLED=true in Vercel to activate. Read at call
@@ -63,7 +62,6 @@ type DunningEmailSkipReason =
   | "db_unavailable"
   | "missing_invoice_id"
   | "not_charge_automatically"
-  | "first_attempt"
   | "ledger_check_failed"
   | "already_sent"
   | "invoice_lookup_failed"
@@ -97,10 +95,6 @@ export async function maybeSendPaymentFailedRecoveryEmail(params: {
 
   if (invoice.collection_method !== "charge_automatically") {
     return { sent: false, reason: "not_charge_automatically" };
-  }
-
-  if ((invoice.attempt_count ?? 0) < MIN_ATTEMPT_COUNT) {
-    return { sent: false, reason: "first_attempt" };
   }
 
   const emailKey = paymentFailedRecoveryEmailKey(invoiceId);

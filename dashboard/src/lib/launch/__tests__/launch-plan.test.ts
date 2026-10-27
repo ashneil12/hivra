@@ -330,7 +330,7 @@ describe("fitting a size to where it runs", () => {
 describe("plan holds", () => {
   it("says why Hivra Cloud is closed and what settles it, from what billing observed", () => {
     expect(planHoldMessage({ reason: "payment_overdue", planName: "Pro" }, "Claude Code"))
-      .toBe("Your Pro plan is on hold because a payment didn't go through. Update your payment in Billing to run Claude Code on Hivra Cloud.");
+      .toBe("Your plan is on hold because a payment didn't go through, so your Hivra Cloud computers are stopped. Update your payment in Billing to run Claude Code on Hivra Cloud.");
     expect(planHoldMessage({ reason: "no_slots", planName: "Power" }))
       .toBe("Your Power plan has no agent slots right now. Check it in Billing to launch on Hivra Cloud.");
     expect(planHoldAction({ reason: "payment_overdue", planName: "Pro" })).toBe("Update payment");

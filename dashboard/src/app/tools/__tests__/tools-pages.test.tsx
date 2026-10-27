@@ -58,8 +58,10 @@ describe("/tools hub", () => {
     expect(readJsonLd(container)).toHaveLength(1);
   });
 
-  it("has a self-canonical, its own social card and a title without the brand suffix", () => {
-    expect(hubMetadata.title).toBe("Free Tools for Running AI Agents");
+  it("has a self-canonical, its own social card and the finished browser title, which skips the layout template", () => {
+    expect(hubMetadata.title).toEqual({ absolute: "Free Tools for Running AI Agents | Hivra" });
+    expect(metaValue(hubMetadata.openGraph, "title")).toBe("Free Tools for Running AI Agents | Hivra");
+    expect(metaValue(hubMetadata.twitter, "title")).toBe("Free Tools for Running AI Agents | Hivra");
     expect(metaValue(hubMetadata.alternates, "canonical")).toBe("https://hivra.cloud/tools");
     expect(metaValue(hubMetadata.openGraph, "url")).toBe("https://hivra.cloud/tools");
     expect(metaValue(hubMetadata.twitter, "images")).toEqual(["https://hivra.cloud/tools/opengraph-image"]);
@@ -106,7 +108,10 @@ describe("/tools/[slug]", () => {
   it.each(TOOL_ENTRIES)("$slug has a self-canonical and its own social card", async (entry) => {
     const metadata = await generateMetadata({ params: Promise.resolve({ slug: entry.slug }) });
     const url = `https://hivra.cloud/tools/${entry.slug}`;
-    expect(metadata.title).toBe(entry.metaTitle);
+    // The finished browser title, so the layout's " | Hivra" is not added a second time.
+    expect(metadata.title).toEqual({ absolute: entry.browserTitle });
+    expect(metaValue(metadata.openGraph, "title")).toBe(entry.browserTitle);
+    expect(metaValue(metadata.twitter, "title")).toBe(entry.browserTitle);
     expect(metadata.description).toBe(entry.metaDescription);
     expect(metaValue(metadata.alternates, "canonical")).toBe(url);
     expect(metaValue(metadata.openGraph, "url")).toBe(url);

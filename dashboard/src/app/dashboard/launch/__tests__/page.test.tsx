@@ -157,7 +157,7 @@ const GVISOR_TARGET: DeploymentTargetDto = {
   displayName: "Owned Linux host — gVisor",
   capabilities: {
     kind: "gvisor", launchReady: true, hostIdentityDigest: "a".repeat(64),
-    adapter: { version: "2026.09.15.1", sha256: "b".repeat(64) },
+    adapter: { version: "2026.10.20.1", sha256: "b".repeat(64) },
     runtime: { path: "/usr/local/bin/runsc", sha256: "c".repeat(64) },
     runtimeCompatibility: { contractVersion: 1, supportedWorkloadKinds: ["linux-terminal"] },
     resourcePolicy: { reservationEqualsMaximum: true, aggregateAdmission: "serialized-host-headroom-v1" },

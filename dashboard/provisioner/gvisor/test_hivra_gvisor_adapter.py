@@ -234,5 +234,178 @@ class WorkspaceHelperLifecycleTests(unittest.TestCase):
         inspect_resource.assert_not_called()
 
 
+class FakeDocker:
+    """A small stateful Docker: just enough of create/inspect/rename/start/
+    stop/rm, volumes and networks for the adapter's real update code."""
+
+    def __init__(self, req, *, running=True, labels_version=None, fail_start_for=None):
+        self.req = req
+        name, volume, network = adapter.names(req)
+        labels = adapter.expected_labels(req)
+        if labels_version:
+            labels = {**labels, "cloud.hivra.adapter": labels_version}
+        self.volumes = {volume: dict(labels)}
+        self.networks = {network: dict(labels)}
+        self.containers = {}
+        self.calls = []
+        self.fail_start_for = fail_start_for
+        self.serial = 0
+        self.containers[name] = self.container(name, labels, 1.0, 1024, running)
+
+    def container(self, name, labels, cpu, memory, running):
+        self.serial += 1
+        _, volume, network = adapter.names(self.req)
+        return {
+            "Id": f"id-{self.serial}", "Name": "/" + name,
+            "State": {"Running": running},
+            "Config": {"Labels": dict(labels), "User": "65534:65534", "Image": adapter.IMAGE},
+            "HostConfig": {
+                "Runtime": "runsc", "Privileged": False, "ReadonlyRootfs": True, "NetworkMode": network,
+                "Binds": None, "Devices": None, "DeviceCgroupRules": None, "CapAdd": None, "CapDrop": ["ALL"],
+                "PortBindings": {}, "PidMode": "", "UsernsMode": "", "IpcMode": "private", "UTSMode": "",
+                "CgroupnsMode": "private", "NanoCpus": int(cpu * 1_000_000_000), "Memory": memory * 1024 * 1024,
+                "MemorySwap": memory * 1024 * 1024, "PidsLimit": 256, "SecurityOpt": ["no-new-privileges"],
+                "Tmpfs": {"/tmp": "rw,noexec,nosuid,nodev,size=128m"},
+                "Mounts": [{"Type": "volume", "Source": volume, "Target": "/workspace", "VolumeOptions": {"NoCopy": True}}],
+            },
+            "Mounts": [{"Type": "volume", "Name": volume, "Destination": "/workspace", "RW": True}],
+            "NetworkSettings": {"Ports": {}},
+        }
+
+    def __call__(self, *args, check=True, timeout=120, capture_limit=None):
+        self.calls.append(args)
+        ok = lambda out="": subprocess.CompletedProcess(args, 0, out, "")
+        bad = subprocess.CompletedProcess(args, 1, "", "error")
+        def result(value):
+            if value.returncode != 0 and check:
+                raise subprocess.CalledProcessError(value.returncode, args)
+            return value
+        if args[0] == "inspect":
+            item = self.containers.get(args[1])
+            return result(ok(json.dumps([item])) if item else bad)
+        if args[0] == "ps":
+            wanted = args[args.index("--filter") + 1].split("^/")[1].rstrip("$")
+            return ok(wanted + "\n" if wanted in self.containers else "")
+        if args[0] in ("volume", "network"):
+            store = self.volumes if args[0] == "volume" else self.networks
+            if args[1] == "inspect":
+                labels = store.get(args[2])
+                return result(ok(json.dumps([{"Labels": labels}])) if labels is not None else bad)
+            if args[1] == "ls":
+                wanted = args[args.index("--filter") + 1].split("^")[1].rstrip("$")
+                return ok(wanted + "\n" if wanted in store else "")
+        if args[0] == "pull":
+            return ok()
+        if args[0] == "stop":
+            self.containers[args[-1]]["State"]["Running"] = False
+            return ok()
+        if args[0] == "start":
+            if args[1] == self.fail_start_for and self.containers[args[1]]["Id"] != "id-1":
+                return result(bad)
+            self.containers[args[1]]["State"]["Running"] = True
+            return ok()
+        if args[0] == "rename":
+            if args[2] in self.containers:
+                return result(bad)
+            self.containers[args[2]] = self.containers.pop(args[1])
+            self.containers[args[2]]["Name"] = "/" + args[2]
+            return ok()
+        if args[0] == "create":
+            name = args[args.index("--name") + 1]
+            if name in self.containers:
+                return result(bad)
+            labels = dict(value.split("=", 1) for flag, value in zip(args, args[1:]) if flag == "--label")
+            cpu = float(args[args.index("--cpus") + 1])
+            memory = int(args[args.index("--memory") + 1].rstrip("m"))
+            self.containers[name] = self.container(name, labels, cpu, memory, False)
+            return ok()
+        if args[0] == "rm":
+            self.containers.pop(args[-1], None)
+            return ok()
+        raise AssertionError(f"unexpected docker {args}")
+
+
+class SandboxUpdateTests(unittest.TestCase):
+    def setUp(self):
+        self.req = request("update") | {"hostMemoryReserveMb": 512}
+        self.name, self.volume, self.network = adapter.names(self.req)
+
+    def run_update(self, fake):
+        with mock.patch.object(adapter, "docker", fake), \
+                mock.patch.object(adapter, "host_capacity", return_value=(8, 8192, 7168, 0, 0)), \
+                redirect_stdout(io.StringIO()) as out:
+            adapter.update(self.req)
+        return json.loads(out.getvalue().split("HIVRA_GVISOR_V1 ", 1)[1])
+
+    def test_recreates_the_container_on_the_pinned_image_and_keeps_the_workspace(self):
+        # The regression: a Linux Sandbox could never be updated; Start only
+        # restarted the container it was created with.
+        fake = FakeDocker(self.req, labels_version="2026.09.15.1")
+        before = fake.containers[self.name]["Id"]
+        receipt = self.run_update(fake)
+        after = fake.containers[self.name]
+        self.assertNotEqual(after["Id"], before)
+        self.assertEqual(after["Config"]["Image"], adapter.IMAGE)
+        self.assertEqual(after["Config"]["Labels"]["cloud.hivra.adapter"], adapter.VERSION)
+        self.assertEqual(after["Mounts"][0]["Name"], self.volume)  # Same workspace volume.
+        self.assertEqual(set(fake.volumes), {self.volume})  # Never recreated or copied.
+        self.assertTrue(after["State"]["Running"])
+        self.assertEqual(receipt["state"], "running")
+        self.assertNotIn(adapter.previous_name(self.req), fake.containers)
+        ops = [call[0] for call in fake.calls if call[0] in ("pull", "stop", "rename", "create", "start", "rm")]
+        self.assertEqual(ops, ["pull", "stop", "rename", "create", "start", "rm"])
+        self.assertFalse(any(call[:2] == ("volume", "rm") or call[:2] == ("volume", "create") for call in fake.calls))
+
+    def test_keeps_a_stopped_sandbox_stopped(self):
+        fake = FakeDocker(self.req, running=False)
+        receipt = self.run_update(fake)
+        self.assertEqual(receipt["state"], "stopped")
+        self.assertFalse(any(call[0] in ("start", "stop") for call in fake.calls))
+
+    def test_keeps_the_limits(self):
+        fake = FakeDocker(self.req)
+        fake.containers[self.name]["HostConfig"]["NanoCpus"] = 1_500_000_000
+        receipt = self.run_update(fake)
+        self.assertEqual((receipt["cpu"], receipt["memoryMb"]), (1.5, 1024))
+
+    def test_puts_the_previous_container_back_when_the_new_one_fails(self):
+        fake = FakeDocker(self.req, fail_start_for=self.name)
+        before = fake.containers[self.name]["Id"]
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_update(fake)
+        self.assertEqual(fake.containers[self.name]["Id"], before)
+        self.assertTrue(fake.containers[self.name]["State"]["Running"])
+        self.assertNotIn(adapter.previous_name(self.req), fake.containers)
+
+    def test_settles_an_interrupted_update_before_any_other_operation(self):
+        # Interrupted after the first rename: only the previous container exists.
+        fake = FakeDocker(self.req)
+        fake.containers[adapter.previous_name(self.req)] = fake.containers.pop(self.name)
+        with mock.patch.object(adapter, "docker", fake):
+            adapter.recover_update(self.req)
+        self.assertIn(self.name, fake.containers)
+        self.assertNotIn(adapter.previous_name(self.req), fake.containers)
+        # Interrupted after the new container exists: keep it, drop the previous one.
+        fake = FakeDocker(self.req)
+        fake.containers[adapter.previous_name(self.req)] = fake.container(adapter.previous_name(self.req),
+            adapter.expected_labels(self.req), 1.0, 1024, False)
+        current = fake.containers[self.name]["Id"]
+        with mock.patch.object(adapter, "docker", fake):
+            adapter.recover_update(self.req)
+        self.assertEqual(fake.containers[self.name]["Id"], current)
+        self.assertNotIn(adapter.previous_name(self.req), fake.containers)
+
+    def test_refuses_another_sandboxs_or_an_unknown_releases_resources(self):
+        fake = FakeDocker(self.req, labels_version="2026.01.01.1")
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            self.run_update(fake)
+        self.assertFalse(any(call[0] in ("stop", "rename", "create", "rm") for call in fake.calls))
+
+    def test_update_is_a_valid_operation_that_needs_the_host_reserve(self):
+        self.assertEqual(adapter.valid_input(dict(self.req))["operation"], "update")
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            adapter.valid_input(request("update"))
+
+
 if __name__ == "__main__":
     unittest.main()

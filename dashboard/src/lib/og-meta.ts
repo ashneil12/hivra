@@ -22,14 +22,14 @@ export const OG_IMAGE = {
     url: "/changelog/opengraph-image",
     width: OG_SIZE.width,
     height: OG_SIZE.height,
-    alt: "Hivra changelog: what shipped",
+    alt: "Hivra changelog: what we've been building",
     type: OG_CONTENT_TYPE,
   },
   status: {
     url: "/status/opengraph-image",
     width: OG_SIZE.width,
     height: OG_SIZE.height,
-    alt: "Hivra status: live platform health",
+    alt: "Hivra status: live checks of public pages",
     type: OG_CONTENT_TYPE,
   },
   // Token-facing cards: factual copy only (no price, returns or pitch).

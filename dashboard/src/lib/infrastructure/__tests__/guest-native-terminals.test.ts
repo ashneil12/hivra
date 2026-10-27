@@ -348,7 +348,8 @@ curl() {
       expect(text.slice(check, check + 400)).toContain('die "terminals did not answer through the gateway on their owner-only sockets"');
     });
     it("is what the guest runtime updater checks after it restarts idle terminals onto their sockets", () => {
-      const updater = readFileSync(path.join(bundle, "hivra-update-guest-runtime.sh"), "utf8");
+      // The updater's guest half (its own file since 2026.10.20.1).
+      const updater = readFileSync(path.join(bundle, "hivra-guest-runtime-update.sh"), "utf8");
       const restart = updater.indexOf('if [ "$RESTART_AGENT_TTYD" = 1 ] && ! systemctl try-restart bux-ttyd.service; then rollback; exit 1; fi');
       const committed = updater.indexOf("COMMITTED=1");
       const check = updater.slice(restart, committed);
