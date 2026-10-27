@@ -177,7 +177,7 @@ test("pricing shows the four offers that can be had today and links straight to 
   await renderHome();
   const pricing = within(document.getElementById("pricing") as HTMLElement);
   expect(pricing.getAllByRole("article")).toHaveLength(4);
-  expect(pricing.getAllByRole("heading", { level: 3 }).map(heading => heading.textContent)).toEqual(["Hivra Cloud", "More room", "Connect your server", "Self-host the platform"]);
+  expect(pricing.getAllByRole("heading", { level: 3 }).map(heading => heading.textContent)).toEqual(["Connect your server", "Self-host the platform", "Hivra Cloud", "More room"]);
   expect(pricing.getByRole("heading", { level: 2 })).toHaveTextContent("Start free on your own server. Or let us run it from $9.99 a month.");
   expect(pricing.getByRole("link", { name: /Get started/ })).toHaveAttribute("href", "/get-started?plan=operator");
   expect(pricing.getByRole("link", { name: /Choose this size/ })).toHaveAttribute("href", "/get-started?plan=fleet");
