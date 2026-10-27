@@ -35,8 +35,8 @@ export interface HivraTokenLaunchConfig {
 }
 
 export const HIVRA_TOKEN_LAUNCH: HivraTokenLaunchConfig = {
-  contractAddress: "",
+  contractAddress: "0xe3a1F26440A9FDf5d17b6B3F12F5ebB290080871",
   decimals: 18,
-  poolId: "",
-  activatesAt: "",
+  poolId: "0x74a4449939263212decf59c4a5900f81bfaaf988241cf60f1613149bd5f7441f",
+  activatesAt: "2026-10-30T12:00:00Z",
 };

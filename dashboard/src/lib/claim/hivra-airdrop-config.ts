@@ -59,9 +59,9 @@ export type HivraAirdropConfig = {
 
 export const HIVRA_AIRDROP: HivraAirdropConfig = {
   senderAddress: "0x3B954866d4329E19C1B9165774c88508f2fefA0c",
-  snapshotBlock: null,
-  snapshotTakenAt: null,
-  snapshotUrl: null,
+  snapshotBlock: 53005062,
+  snapshotTakenAt: "2026-10-23T23:51:11Z",
+  snapshotUrl: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
   claim: { campaignUrl: null, opensAt: null, closesAt: null },
 };
 
