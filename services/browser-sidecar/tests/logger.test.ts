@@ -32,4 +32,17 @@ describe("redactArgs", () => {
     expect(redactArgs(42)).toBe(42);
     expect(redactArgs(null)).toBe(null);
   });
+
+  it("redacts the cookie-import file, which is the user's whole session export", () => {
+    expect(
+      redactArgs({ identity: "vex", file: "# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tsid\tabc", dryRun: false }),
+    ).toEqual({ identity: "vex", file: "[REDACTED]", dryRun: false });
+  });
+
+  it("redacts cookie and storage-state fields by name", () => {
+    expect(redactArgs({ cookies: [{ name: "sid", value: "abc" }], storageState: { origins: [] } })).toEqual({
+      cookies: "[REDACTED]",
+      storageState: "[REDACTED]",
+    });
+  });
 });
