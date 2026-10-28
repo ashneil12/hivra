@@ -41,11 +41,11 @@ it("retains the Omarchy prepared-computer claim route", async () => {
 });
 
 it("never echoes an internal claim error message to the client", async () => {
-  claimMock.mockRejectedValue(new Error("connect ECONNREFUSED 10.20.0.7:8006 proxmox_host=pve3"));
+  claimMock.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:8006 proxmox_host=internal-node-7"));
   const response = await POST(request({ profile: "omarchy", name: "OMARCHY" }));
   const text = await response.text();
   expect(response.status).toBe(503);
   expect(text).toContain("prepared_guest_unavailable");
   expect(text).not.toContain("ECONNREFUSED");
-  expect(text).not.toContain("pve3");
+  expect(text).not.toContain("internal-node-7");
 });

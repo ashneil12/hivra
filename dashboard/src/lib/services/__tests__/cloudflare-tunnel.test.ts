@@ -67,7 +67,7 @@ describe("boxHostname — pins hostnames one label under the zone apex", () => {
 });
 
 describe("createBoxTunnel — failed-provision cleanup", () => {
-  const TUNNEL_ID = "11111111-2222-4333-8444-555555555555";
+  const TUNNEL_ID = "00000000-0000-4000-8000-000000000b01";
   const CFG = { apiToken: "cf_test", zoneId: "zone123", domain: "hermesos.cloud", accountId: "acct123" };
 
   function json(body: unknown, status = 200): Response {
