@@ -321,6 +321,7 @@ describe("SEC-04: buildWebUIConfigYaml quotes scalars safely", () => {
     expect(yamlText).not.toMatch(/^ {2}injected:/m);
 
     // And the emitted file still parses as YAML with the expected values.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped YAML fixture
     const parsed = loadYaml(yamlText) as Record<string, any>;
     expect(parsed.model.default).toBe('evil"injected: true');
     expect(parsed.model.base_url).toBe('https://crof.ai/v1"injected: true');
