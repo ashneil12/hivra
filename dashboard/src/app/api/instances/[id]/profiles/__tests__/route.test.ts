@@ -563,6 +563,46 @@ describe("GET /api/instances/[id]/profiles", () => {
     expect(mockedSyncProfiles).not.toHaveBeenCalled();
   });
 
+  it("mirrors WebUI profiles into Supabase at most once per window, not on every poll", async () => {
+    const upsert = jest.fn().mockResolvedValue({ error: null });
+    mockedResolveWebUIInstanceClient.mockResolvedValue({
+      ok: true,
+      baseUrl: "https://webui.example.com",
+      client: {
+        profiles: jest.fn().mockResolvedValue({
+          active: "research",
+          profiles: [
+            { name: "research", is_default: false, is_active: true, gateway_running: true, model: "@crof:deepseek-v3.2", provider: "crof" },
+          ],
+        }),
+      } as unknown as Awaited<ReturnType<typeof resolveWebUIInstanceClient>> extends { ok: true; client: infer T } ? T : never,
+    });
+    mockedFrom.mockImplementation((table: string) => {
+      if (table === "profiles") return { upsert };
+      if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        single: jest.fn().mockResolvedValue({
+          data: { name: "WebUI Agent", config: {}, backend: "webui" },
+          error: null,
+        }),
+      };
+    });
+    const poll = () => GET(
+      new NextRequest("http://localhost/api/instances/inst_backfill_once/profiles"),
+      { params: Promise.resolve({ id: "inst_backfill_once" }) }
+    );
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect((await poll()).status).toBe(200);
+    await settle();
+    expect((await poll()).status).toBe(200);
+    await settle();
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
   it("returns lightweight WebUI profile summaries without per-profile runtime settings", async () => {
     mockedResolveWebUIInstanceClient.mockResolvedValue({
       ok: true,
