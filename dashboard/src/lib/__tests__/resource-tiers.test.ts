@@ -19,14 +19,13 @@ describe("resource tier helpers", () => {
     expect(isBaseResourceTierForUpgradePrompt(null)).toBe(true);
     expect(isBaseResourceTierForUpgradePrompt("free")).toBe(true);
     expect(isBaseResourceTierForUpgradePrompt("credit_base")).toBe(true);
-    expect(isBaseResourceTierForUpgradePrompt("token_base")).toBe(true);
     expect(isBaseResourceTierForUpgradePrompt("operator")).toBe(false);
   });
 
-  it("limits only Free aliases and token-base to one base instance", () => {
+  it("limits only Free aliases to one base instance (the Starter tier is gone)", () => {
     expect(isSingleInstanceBaseResourceTier("free")).toBe(true);
     expect(isSingleInstanceBaseResourceTier("credit_base")).toBe(true);
-    expect(isSingleInstanceBaseResourceTier("token_base")).toBe(true);
+    expect(isSingleInstanceBaseResourceTier("token_base")).toBe(false);
     expect(isSingleInstanceBaseResourceTier("operator")).toBe(false);
     expect(isSingleInstanceBaseResourceTier(null)).toBe(false);
   });

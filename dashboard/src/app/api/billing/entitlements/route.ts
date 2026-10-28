@@ -69,9 +69,6 @@ export async function GET() {
         : null,
       creditBalanceCredits: creditSummary.balance,
       reservedCredits,
-      tokenHolding: tokenSnapshot
-        ? { verified: true, balance: tokenSnapshot.balance }
-        : { verified: false, balance: 0 },
       activeInstances: (instances || []).map(normalizeEntitlementInstance),
     });
 
