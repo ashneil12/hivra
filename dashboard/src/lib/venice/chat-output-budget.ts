@@ -105,11 +105,6 @@ const INJECTED_FIELD: Record<ManagedVeniceChatProtocol, ManagedVeniceOutputCapFi
   responses: "max_output_tokens",
 };
 
-export const MANAGED_VENICE_OUTPUT_CAP_FIELDS: readonly ManagedVeniceOutputCapField[] = [
-  "max_completion_tokens",
-  "max_tokens",
-  "max_output_tokens",
-];
 
 /** The chat-shaped request the estimator prices, for a body with `patch` applied. */
 export function managedVeniceChatEstimateBody(

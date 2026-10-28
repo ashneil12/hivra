@@ -164,10 +164,14 @@ function getGlobalSettings(userId: string): Promise<Record<string, unknown>> {
         const user = await clerk.users.getUser(userId);
         return extractGlobalHermesSettings(user.publicMetadata);
       } catch (err) {
-        console.warn(
-          `[fleet-live-update] user ${userId}: Clerk metadata unavailable, using defaults (${(err as Error).message})`
-        );
-        return {};
+        // Only a confirmed missing user falls back to defaults. Any other Clerk
+        // failure must fail each of this user's instances: pushing defaults to a
+        // live box because Clerk was briefly unreachable overwrites its settings.
+        if ((err as { status?: number }).status === 404) {
+          console.warn(`[fleet-live-update] user ${userId}: not found in Clerk, using defaults`);
+          return {};
+        }
+        throw new Error(`Clerk metadata unavailable for user ${userId}: ${(err as Error).message}`);
       }
     })());
   }

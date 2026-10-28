@@ -79,7 +79,7 @@ async function handle(req: NextRequest) {
   const freeMarkBefore = new Date(nowMs - (freeDays - graceDays) * day).toISOString();
   const paidMarkBefore = new Date(nowMs - (paidDays - graceDays) * day).toISOString();
 
-  const markResults = { free_marked: 0, paid_marked: 0 };
+  const markResults = { free_marked: 0, paid_marked: 0, failed: 0 };
 
   if (enabled) {
     const { data: freeCandidates, error: freeErr } = await supabaseAdmin
@@ -107,7 +107,18 @@ async function handle(req: NextRequest) {
         .eq("lifecycle_state", "cold_archived")
         .select("id")
         .maybeSingle();
-      if (!upd.error && upd.data) markResults.free_marked += 1;
+      if (upd.error) {
+        markResults.failed += 1;
+        log.warn("mark for deletion failed", {
+          source: LOG_SOURCE,
+          instanceId: row.id,
+          failureType: "cold_mark_failed",
+          tier: "free",
+          message: upd.error.message,
+        });
+      } else if (upd.data) {
+        markResults.free_marked += 1;
+      }
     }
 
     const { data: paidCandidates, error: paidErr } = await supabaseAdmin
@@ -136,7 +147,18 @@ async function handle(req: NextRequest) {
         .eq("lifecycle_state", "cold_archived")
         .select("id")
         .maybeSingle();
-      if (!upd.error && upd.data) markResults.paid_marked += 1;
+      if (upd.error) {
+        markResults.failed += 1;
+        log.warn("mark for deletion failed", {
+          source: LOG_SOURCE,
+          instanceId: row.id,
+          failureType: "cold_mark_failed",
+          tier: "paid",
+          message: upd.error.message,
+        });
+      } else if (upd.data) {
+        markResults.paid_marked += 1;
+      }
     }
   }
 
@@ -203,6 +225,7 @@ async function handle(req: NextRequest) {
     enabled,
     markedFree: markResults.free_marked,
     markedPaid: markResults.paid_marked,
+    markFailed: markResults.failed,
     purged: purgeResults.purged,
     purgeFailed: purgeResults.failed,
     dueCandidates: dueCandidates.length,

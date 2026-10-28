@@ -1,8 +1,4 @@
-import type {
-  AgentComputer,
-  AgentComputerSourceIdentity,
-  AgentComputerSurface,
-} from "@/lib/agent-computers/contracts";
+import type { AgentComputerSurface } from "@/lib/agent-computers/contracts";
 
 export type WorkspaceSurface = "conversation" | AgentComputerSurface;
 
@@ -21,15 +17,4 @@ export interface WorkspaceSurfaceDescriptor {
   label: string;
   availability: WorkspaceSurfaceAvailability;
   reason?: string;
-}
-
-/**
- * Secret-free content that the common workspace shell may retain.
- * Family-specific credentials and transport URLs stay behind render methods.
- */
-interface WorkspaceAgentContent {
-  uid: string;
-  computer: AgentComputer;
-  sourceLabel: string;
-  surfaces: readonly WorkspaceSurfaceDescriptor[];
 }

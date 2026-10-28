@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { HivraLogin } from "../HivraLogin";
-import { boxLoginStartRaw } from "@/lib/hivra/agent-api";
+import { boxLoginStartRaw, boxLoginStatus } from "@/lib/hivra/agent-api";
 
 jest.mock("@/lib/hivra/agent-api", () => ({
   boxLoginStartRaw: jest.fn(),
@@ -88,6 +88,22 @@ it("focuses the Claude code field for a mouse and keyboard", async () => {
   render(<HivraLogin boxUrl="https://box.test" onDone={jest.fn()} agentKind="claude" />);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Sign in with Claude/ })); });
   expect(screen.getByRole("textbox", { name: "Authorization code" })).toHaveFocus();
+});
+
+it("stops checking for the Codex sign-in after a bounded window, and offers to check again", async () => {
+  jest.useFakeTimers();
+  try {
+    start.mockResolvedValue({ url: "https://auth.openai.test/device", code: "ABCD-1234", deviceAuth: true });
+    render(<HivraLogin boxUrl="https://box.test" onDone={jest.fn()} agentKind="codex" />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Sign in with ChatGPT/ })); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(11 * 60_000); });
+    expect(screen.getByRole("button", { name: /Check again/ })).toBeInTheDocument();
+    const checks = jest.mocked(boxLoginStatus).mock.calls.length;
+    await act(async () => { await jest.advanceTimersByTimeAsync(60_000); });
+    expect(jest.mocked(boxLoginStatus).mock.calls.length).toBe(checks);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 describe("a sign-in link from an agent added to a computer (T28)", () => {

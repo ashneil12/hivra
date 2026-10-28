@@ -30,11 +30,14 @@ import {
 } from "@/lib/hivra/tool-install";
 import { listToolTargets, type ToolTarget } from "@/lib/hivra/tool-targets";
 import { applyToolsToHermesInstance } from "@/lib/hivra/hermes-tool-apply";
-import { readInstalledHermesToolNames, type HermesToolServerEntry } from "@/lib/hivra/hermes-tool-config";
+import { readInstalledHermesToolEntries, type HermesToolServerEntry } from "@/lib/hivra/hermes-tool-config";
 import { getToolById } from "@/data/curated-tools";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { log } from "@/lib/logger";
+
+/** Max simultaneous per-target host operations in the POST fan-out. */
+const FANOUT_CONCURRENCY = 5;
 
 export async function GET() {
   try {
@@ -119,21 +122,32 @@ async function reconcileHermesTarget(params: {
     .single();
   if (!instance) return { ok: false, error: "Instance not found" };
 
-  // Current desired set: read the live config's hivra_ entries, then rebuild each
-  // from the catalog (so we never have to store install state ourselves).
-  const cfgNames = readInstalledHermesToolNames(
-    (instance.config as Record<string, unknown>) || {},
+  // Desired set = every currently-installed hivra_ tool, plus/minus this one.
+  // entries must be COMPLETE: buildHermesConfigWithTools strips all managed
+  // keys before writing, so any tool missing here is silently uninstalled.
+  // Kept tools pass through verbatim from the stored config — their env was
+  // resolved at install time and this request only carries env for `tool`.
+  // The tool itself is re-resolved from the catalog so re-install can update it.
+  const stored = new Map(
+    readInstalledHermesToolEntries(
+      (instance.config as Record<string, unknown>) || {},
+    ).map((e) => [e.name, e]),
   );
-  const keep = new Set(cfgNames);
   const tool = getToolById(params.toolId);
   if (!tool) return { ok: false, error: "Unknown tool" };
+  const keep = new Set(stored.keys());
   if (params.remove) keep.delete(tool.mcp.name);
   else keep.add(tool.mcp.name);
 
   const entries: HermesToolServerEntry[] = [];
-  for (const t of [tool]) {
-    if (!keep.has(t.mcp.name)) continue;
-    const resolved = resolveToolMcpSpec({ id: t.id, env: params.env }, "claude");
+  for (const name of keep) {
+    if (name !== tool.mcp.name) {
+      const existing = stored.get(name);
+      if (existing) entries.push(existing);
+      continue;
+    }
+    if (params.remove) continue;
+    const resolved = resolveToolMcpSpec({ id: tool.id, env: params.env }, "claude");
     if ("skip" in resolved) return { ok: false, error: `cannot resolve tool: ${resolved.skip}` };
     entries.push({
       name: resolved.spec.name,
@@ -193,39 +207,62 @@ export async function POST(req: NextRequest) {
     const all = await listToolTargets(userId);
     const byUid = new Map(all.map((t) => [t.uid, t]));
 
-    const results: { uid: string; ok: boolean; error?: string }[] = [];
-    for (const uid of wanted) {
-      const target = byUid.get(uid);
+    // Each instance is reconciled once per call. A repeated uid would run two
+    // read-modify-write reconciles of the same config at once, and one write
+    // would overwrite the other; its repeats reuse the one result below.
+    const unique = Array.from(new Set(wanted));
+
+    // CLI-lane agent rows only need the ids we actually target — one .in()
+    // query instead of a round-trip per target inside the pool.
+    const queue = unique.map((uid) => ({ uid, target: byUid.get(uid) }));
+    const cliIds = queue
+      .filter((q) => q.target?.lane === "cli" && q.target.installable)
+      .map((q) => String(q.target!.id));
+    const agents = new Map<string, Record<string, unknown>>();
+    if (cliIds.length) {
+      const { data: agentRows } = await supabaseAdmin
+        .from("hivra_agents")
+        .select("*")
+        .in("id", cliIds)
+        .eq("user_id", userId);
+      for (const row of agentRows || []) {
+        const a = row as Record<string, unknown>;
+        agents.set(String(a.id), a);
+      }
+    }
+
+    // Each target does its own host work (config reconcile or SSH install);
+    // bounded fan-out keeps a 25-target call from running 25 serial round
+    // trips while staying gentle on the fleet. results[] stays request-ordered.
+    const results: ({ uid: string; ok: boolean; error?: string } | undefined)[] =
+      new Array(queue.length);
+    const runTarget = async (i: number) => {
+      const { uid, target } = queue[i];
       if (!target) {
-        results.push({ uid, ok: false, error: "not found" });
-        continue;
+        results[i] = { uid, ok: false, error: "not found" };
+        return;
       }
       if (!target.installable) {
-        results.push({ uid, ok: false, error: target.blockedMessage || target.blockedReason || "not installable" });
-        continue;
+        results[i] = { uid, ok: false, error: target.blockedMessage || target.blockedReason || "not installable" };
+        return;
       }
 
       if (target.lane === "hermes") {
         const r = await reconcileHermesTarget({ userId, target, toolId, env, remove });
-        results.push({ uid, ...r });
-        continue;
+        results[i] = { uid, ...r };
+        return;
       }
 
       // CLI lane — reuse the proven per-box installer.
-      const { data: agent } = await supabaseAdmin
-        .from("hivra_agents")
-        .select("*")
-        .eq("id", target.id)
-        .eq("user_id", userId)
-        .single();
+      const agent = agents.get(String(target.id));
       if (!agent) {
-        results.push({ uid, ok: false, error: "agent not found" });
-        continue;
+        results[i] = { uid, ok: false, error: "agent not found" };
+        return;
       }
-      const resolved = await cliTargetEnv(userId, agent as Record<string, unknown>);
+      const resolved = await cliTargetEnv(userId, agent);
       if ("error" in resolved) {
-        results.push({ uid, ok: false, error: resolved.error });
-        continue;
+        results[i] = { uid, ok: false, error: resolved.error };
+        return;
       }
       const box = {
         id: String(agent.id),
@@ -234,32 +271,47 @@ export async function POST(req: NextRequest) {
       };
       if (remove) {
         const r = await uninstallToolFromBox(box, toolId, resolved.env);
-        results.push({
+        results[i] = {
           uid,
           ok: r.ok,
           error: r.ok ? undefined : toolHostFailure({ userId, agentId: box.id, op: "uninstall", error: r.error || "" }),
-        });
+        };
       } else {
         const r = await installToolsOnBox(box, [{ id: toolId, env }], resolved.env);
         const skipped = r.skipped.find((s) => s.id === toolId);
-        results.push({
+        results[i] = {
           uid,
           ok: r.ok && r.installed.includes(toolId),
           error: r.error
             ? toolHostFailure({ userId, agentId: box.id, op: "install", error: r.error })
             : skipped ? skipped.reason : undefined,
-        });
+        };
       }
-    }
+    };
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(FANOUT_CONCURRENCY, queue.length) }, async () => {
+        for (;;) {
+          const i = cursor++;
+          if (i >= queue.length) return;
+          await runTarget(i);
+        }
+      }),
+    );
 
-    const okCount = results.filter((r) => r.ok).length;
+    // Request-ordered, one entry per requested uid (repeats share a result).
+    const ordered = wanted.map((uid) => {
+      const i = unique.indexOf(uid);
+      return results[i] ?? { uid, ok: false, error: "not completed" };
+    });
+    const okCount = ordered.filter((r) => r.ok).length;
     await logHivraAgentEvent({
       userId,
       event: remove ? "tools_uninstalled" : "tools_installed",
-      detail: { id: toolId, targets: wanted.length, ok: okCount, results },
+      detail: { id: toolId, targets: wanted.length, ok: okCount, results: ordered },
     });
 
-    return apiSuccess({ toolId, op: remove ? "uninstall" : "install", results, ok: okCount });
+    return apiSuccess({ toolId, op: remove ? "uninstall" : "install", results: ordered, ok: okCount });
   } catch (err) {
     return handleApiError(err);
   }

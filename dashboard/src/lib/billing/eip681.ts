@@ -122,6 +122,3 @@ export function hermesosTransferUri(quote: {
     amountRaw: quote.amountRaw,
   });
 }
-
-/** The same link, named for what it does now. */
-export const platformTokenTransferUri = hermesosTransferUri;

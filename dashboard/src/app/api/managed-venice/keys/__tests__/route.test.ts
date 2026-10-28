@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { ManagedVeniceProxyKeyNotFoundError } from "@/lib/venice/proxy-keys";
 
 const mockCreateKey = jest.fn();
 const mockListKeys = jest.fn();
@@ -9,6 +10,7 @@ const mockRateLimit = jest.fn<Response | null, [Request, Record<string, unknown>
 
 jest.mock("@/lib/venice/proxy-keys", () => ({
   AgentModelKeyInUseError: jest.requireActual("@/lib/venice/proxy-keys").AgentModelKeyInUseError,
+  ManagedVeniceProxyKeyNotFoundError: jest.requireActual("@/lib/venice/proxy-keys").ManagedVeniceProxyKeyNotFoundError,
   createManagedVeniceProxyKey: (...args: unknown[]) => mockCreateKey(...args),
   listManagedVeniceProxyKeys: (...args: unknown[]) => mockListKeys(...args),
   revokeManagedVeniceProxyKey: (...args: unknown[]) => mockRevokeKey(...args),
@@ -224,6 +226,16 @@ describe("/api/managed-venice/keys", () => {
       keyId: "key_1",
     });
     expect(body.data).toEqual({ revoked: true });
+  });
+
+  it("answers 404 when the key is missing or not the user's", async () => {
+    mockRevokeKey.mockRejectedValueOnce(new ManagedVeniceProxyKeyNotFoundError());
+
+    const response = await DELETE(
+      makeReq("http://localhost/api/managed-venice/keys?id=missing_key")
+    );
+
+    expect(response.status).toBe(404);
   });
 
   it("requires a key id for revoke", async () => {

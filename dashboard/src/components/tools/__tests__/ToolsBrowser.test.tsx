@@ -42,7 +42,7 @@ describe("ToolsBrowser manage dialog", () => {
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
-    fetchMock = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    fetchMock = jest.fn((_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") {
         return jsonResponse({ success: true, data: { results: [{ uid: "cli:a1", ok: true }, { uid: "cli:a2", ok: true }] } });
       }

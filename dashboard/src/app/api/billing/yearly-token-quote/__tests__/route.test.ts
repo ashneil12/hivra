@@ -58,6 +58,18 @@ jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
 }));
 
+const mockSubsLimit = jest.fn();
+const mockFrom = jest.fn((..._args: unknown[]) => ({
+  select: () => ({
+    eq: () => ({
+      order: () => ({ limit: (...args: unknown[]) => mockSubsLimit(...args) }),
+    }),
+  }),
+}));
+jest.mock("@/lib/supabase", () => ({
+  supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) },
+}));
+
 const mockReportPriceGateRefusal = jest.fn<Promise<unknown>, unknown[]>(async () => ({
   refusal: { assetKey: "hivra", asset: "$HIVRA", reason: "median_deviation", gate: "deviation", observed: {} },
   logged: true,
@@ -104,6 +116,7 @@ describe("/api/billing/yearly-token-quote", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockBillingEnabled.mockReturnValue(true);
+    mockSubsLimit.mockResolvedValue({ data: [], error: null });
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
     mockGetPendingYearlyQuotes.mockResolvedValue([]);
     mockResolveEffectiveSubscription.mockResolvedValue(null);
@@ -167,6 +180,18 @@ describe("/api/billing/yearly-token-quote", () => {
       expect(body.data.quote.id).toBe("yq_1");
       expect(mockGetActiveYearlyQuote).toHaveBeenCalledWith({ userId: "user_a", tier: "pro" });
       expect(mockGetActiveYearlyQuotes).not.toHaveBeenCalled();
+    });
+
+    it("answers 500, not a 200 with no subscription, when the subscription read fails", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      mockGetActiveYearlyQuotes.mockResolvedValueOnce([]);
+      mockSubsLimit.mockResolvedValueOnce({ data: null, error: { message: "connection reset" } });
+      const response = await GET(makeReq("http://localhost/api/billing/yearly-token-quote"));
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe("Failed to load yearly token quotes.");
+      expect(body.data).toBeUndefined();
+      consoleErrorSpy.mockRestore();
     });
 
     it("serialises tokensRequiredRaw as a string (BigInt is not JSON-safe)", async () => {

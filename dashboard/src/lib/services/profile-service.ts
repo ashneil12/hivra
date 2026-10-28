@@ -50,6 +50,14 @@ export class InstanceAccessError extends Error {
   }
 }
 
+/** The named profile does not exist on this instance for this user (a normal 0-row lookup). */
+export class ProfileNotFoundError extends Error {
+  constructor() {
+    super("Profile not found");
+    this.name = "ProfileNotFoundError";
+  }
+}
+
 export function sanitizeDockerName(name: string): string {
   if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid identifier format. Only alphanumeric characters, dashes, and underscores are allowed. Got: ${name}`);
@@ -281,7 +289,12 @@ CONTAINEREOF
   static async getGuestSshForInstance(
     instanceId: string,
     userId: string
-  ): Promise<{ ip: string; guestTarget: ProxmoxSshHostConfig | null }> {
+  ): Promise<{
+    ip: string;
+    guestTarget: ProxmoxSshHostConfig | null;
+    /** The instance row already read here, so callers can reuse its config instead of re-reading it. */
+    instance?: { config: Record<string, unknown> | null };
+  }> {
     sanitizeDockerName(instanceId);
     const { data: instance, error } = await supabaseAdmin!
       .from("hermes_instances")
@@ -306,7 +319,7 @@ CONTAINEREOF
     }
     const guestTarget = getHermesGuestSshTarget(instance);
     const ip = await ProfileService.resolveInstanceHostIp(instance);
-    return { ip, guestTarget };
+    return { ip, guestTarget, instance: { config: instance.config } };
   }
 
   private static async resolveInstanceHostIp(instance: {
@@ -358,17 +371,31 @@ CONTAINEREOF
     return hs.ipv4;
   }
 
-  static async getHermesHomeForInstance(instanceId: string, userId: string): Promise<string> {
+  /**
+   * Pass `instance` (from getGuestSshForInstance) to reuse the row already read
+   * for this request instead of querying hermes_instances again.
+   */
+  static async getHermesHomeForInstance(
+    instanceId: string,
+    userId: string,
+    instance?: { config: Record<string, unknown> | null }
+  ): Promise<string> {
     sanitizeDockerName(instanceId);
-    const { data: instance, error } = await supabaseAdmin!
-      .from("hermes_instances")
-      .select("config")
-      .eq("id", instanceId)
-      .eq("user_id", userId)
-      .single();
+    if (!instance) {
+      const { data, error } = await supabaseAdmin!
+        .from("hermes_instances")
+        .select("config")
+        .eq("id", instanceId)
+        .eq("user_id", userId)
+        .maybeSingle<{ config: Record<string, unknown> | null }>();
 
-    if (error || !instance) {
-      throw new Error("Instance not found or unauthorized");
+      if (error) {
+        throw new Error("Instance lookup failed");
+      }
+      if (!data) {
+        throw new InstanceAccessError();
+      }
+      instance = data;
     }
 
     return resolveHermesHomeDirFromConfig(instance.config as Record<string, unknown> | undefined);
@@ -509,8 +536,8 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
    * List all profiles on the container via SSH and sync with the database.
    */
   static async syncProfiles(instanceId: string, userId: string) {
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
 
     // Read the directories inside the canonical Hermes profile home to discover them quickly
@@ -586,19 +613,26 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
         .filter((port): port is number => typeof port === "number" && Number.isFinite(port))
     );
 
+    // Decide every change first, then write each kind in one request: a status
+    // update per target status, one insert for new rows, one delete for stale rows.
+    const statusUpdates = new Map<string, { ids: string[]; names: string[] }>();
+    const newProfileRows: Array<{
+      instance_id: string;
+      user_id: string;
+      name: string;
+      gateway_port: number;
+      status: string;
+    }> = [];
+
     for (const p of profiles) {
       const expectedStatus = p.running ? "running" : "stopped";
       if (dbMap.has(p.name)) {
         const dbp = dbMap.get(p.name)!;
         if (dbp.status !== expectedStatus && dbp.status !== "creating") {
-          const { error: updateError } = await supabaseAdmin!
-            .from("profiles")
-            .update({ status: expectedStatus })
-            .eq("id", dbp.id);
-
-          if (updateError) {
-            throw new Error(`Failed to update synced profile ${p.name}`);
-          }
+          const group = statusUpdates.get(expectedStatus) ?? { ids: [], names: [] };
+          group.ids.push(dbp.id);
+          group.names.push(p.name);
+          statusUpdates.set(expectedStatus, group);
         }
         dbMap.delete(p.name);
       } else {
@@ -606,26 +640,48 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
         // re-querying the same profile table for every discovered profile.
         const newPort = this.pickAvailablePort(usedPorts);
         usedPorts.add(newPort);
-        const { error: insertError } = await supabaseAdmin!.from("profiles").insert({
+        newProfileRows.push({
           instance_id: instanceId,
           user_id: userId,
           name: p.name,
           gateway_port: newPort,
           status: expectedStatus,
         });
-
-        if (insertError) {
-          throw new Error(`Failed to track synced profile ${p.name}`);
-        }
       }
     }
 
-    // Any remaining in dbMap are deleted from disk
-    for (const dbp of dbMap.values()) {
-      if (dbp.status === "creating") continue; // Prevent race conditions with createProfile
-      const { error: deleteError } = await supabaseAdmin!.from("profiles").delete().eq("id", dbp.id);
+    for (const [status, group] of statusUpdates) {
+      const { error: updateError } = await supabaseAdmin!
+        .from("profiles")
+        .update({ status })
+        .in("id", group.ids);
+
+      if (updateError) {
+        throw new Error(`Failed to update synced profile ${group.names.join(", ")}`);
+      }
+    }
+
+    if (newProfileRows.length > 0) {
+      const { error: insertError } = await supabaseAdmin!.from("profiles").insert(newProfileRows);
+
+      if (insertError) {
+        throw new Error(`Failed to track synced profile ${newProfileRows.map((row) => row.name).join(", ")}`);
+      }
+    }
+
+    // Profile rows with no matching profile on the box are removed from the profiles table.
+    const staleProfiles = Array.from(dbMap.values()).filter(
+      (dbp) => dbp.status !== "creating" // Prevent race conditions with createProfile
+    );
+    if (staleProfiles.length > 0) {
+      const { error: deleteError } = await supabaseAdmin!
+        .from("profiles")
+        .delete()
+        .in("id", staleProfiles.map((dbp) => dbp.id));
       if (deleteError) {
-        throw new Error(`Failed to delete stale synced profile ${dbp.name}`);
+        throw new Error(
+          `Failed to delete stale synced profile ${staleProfiles.map((dbp) => dbp.name).join(", ")}`
+        );
       }
     }
   }
@@ -663,8 +719,8 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
     if (error || !profile) throw new Error("Could not create profile record");
 
     try {
-      const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-      const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+      const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+      const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
       const containerName = this.buildContainerName(instanceId);
 
       let cloneFlag = "";
@@ -863,8 +919,8 @@ EOF\n`;
 
   static async deleteProfile(instanceId: string, userId: string, name: string) {
     const safeName = sanitizeDockerName(name);
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
     
@@ -909,28 +965,47 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
     });
   }
 
-  static async startProfileGateway(instanceId: string, userId: string, name: string) {
-    const safeName = sanitizeDockerName(name);
+  /**
+   * Resolves the profile row a gateway start/stop acts on. A missing row is a
+   * ProfileNotFoundError; a DB failure is reported as such, not as a missing port.
+   */
+  private static async loadGatewayProfile(
+    instanceId: string,
+    userId: string,
+    safeName: string
+  ): Promise<{ id: string; gateway_port: number }> {
     // Scope by user_id so a profile lookup never returns a row from another
     // tenant's instance even if instanceId is ever guessable. Ownership is
     // also re-checked by getHostIpForInstance below; this is defense-in-depth.
-    const { data: profile } = await supabaseAdmin!
+    const { data: profile, error } = await supabaseAdmin!
        .from("profiles")
        .select("id, gateway_port")
        .eq("instance_id", instanceId)
        .eq("user_id", userId)
        .eq("name", safeName)
-       .single();
+       .maybeSingle<{ id: string; gateway_port: number | null }>();
 
-    if (!profile?.gateway_port) {
+    if (error) {
+      throw new Error("Failed to resolve profile gateway");
+    }
+    if (!profile) {
+      throw new ProfileNotFoundError();
+    }
+    if (!profile.gateway_port) {
       throw new Error("Profile has no allocated gateway port");
     }
+    return { id: profile.id, gateway_port: profile.gateway_port };
+  }
+
+  static async startProfileGateway(instanceId: string, userId: string, name: string) {
+    const safeName = sanitizeDockerName(name);
+    const profile = await this.loadGatewayProfile(instanceId, userId, safeName);
 
     // Note: Gateway key shouldn't be overridden unless needed.
     // The dashboard proxy authenticates with the instance's main key.
 
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
 
@@ -972,23 +1047,13 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
     // SSH'd in, ran the stop script against a directory that doesn't exist, and
     // then rebuilt the instance's Caddyfile. That last step is the one that
     // took boxes down; see the fail-closed guard in updateAgentCaddyRouting.
-    const { data: profile } = await supabaseAdmin!
-       .from("profiles")
-       .select("id, gateway_port")
-       .eq("instance_id", instanceId)
-       .eq("user_id", userId)
-       .eq("name", safeName)
-       .single();
+    await this.loadGatewayProfile(instanceId, userId, safeName);
 
-    if (!profile?.gateway_port) {
-      throw new Error("Profile has no allocated gateway port");
-    }
-
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
-    
+
     // Stop using hermes cli to ensure graceful shutdown and lock release, fallback to kill if manually spawned
     const script = this.buildGatewayStopScript(containerName, profileDir, safeName, {
       removePidFile: true,

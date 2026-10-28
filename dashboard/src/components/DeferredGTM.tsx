@@ -10,6 +10,7 @@ import {
 
 type GoogleTagWindow = Window & {
   requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
   gtag?: (...args: unknown[]) => void;
 } & Record<string, unknown>;
 
@@ -28,10 +29,11 @@ export function DeferredGTM({ gtmId, gaId }: { gtmId: string; gaId?: string }) {
     const w = window as GoogleTagWindow;
     const cb = () => setIdle(true);
     if (typeof w.requestIdleCallback === "function") {
-      w.requestIdleCallback(cb, { timeout: 3000 });
-    } else {
-      setTimeout(cb, 2000);
+      const handle = w.requestIdleCallback(cb, { timeout: 3000 });
+      return () => w.cancelIdleCallback?.(handle);
     }
+    const timer = setTimeout(cb, 2000);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {

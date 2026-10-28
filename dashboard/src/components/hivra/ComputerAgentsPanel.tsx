@@ -209,11 +209,20 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
   const ended = !current ? ready?.attachments[0] ?? null : null;
   const pending = Boolean(current && (live(current) || openOperation(current)));
 
-  // Follow an open step by its receipts.
+  // Follow an open step by its receipts: one read at a time, and none while the tab is hidden.
   useEffect(() => {
     if (!pending) return;
-    const timer = window.setInterval(() => { void load(); }, ATTACH_POLL_MS);
-    return () => window.clearInterval(timer);
+    let alive = true;
+    let timer: number | undefined;
+    const tick = async () => {
+      try {
+        if (!document.hidden) await load();
+      } finally {
+        if (alive) timer = window.setTimeout(tick, ATTACH_POLL_MS);
+      }
+    };
+    timer = window.setTimeout(tick, ATTACH_POLL_MS);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [pending, load]);
 
   // Tell the page when something finished, so its tabs follow (Chat appears or goes).

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Copy, Check } from "lucide-react";
 import { captureClientOpsEvent } from "@/lib/client/ops-events";
 import { getLastRequestId } from "@/lib/client/request-id-tracker";
@@ -114,6 +114,13 @@ function headlineForAgentError(detail: AgentErrorDetail | undefined): string | n
 
 export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBannerProps) {
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
 
   if (!error) return null;
 
@@ -133,7 +140,7 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
     }
 
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1500);
 
     void captureClientOpsEvent({
       source: context?.source || "client.diagnostic",

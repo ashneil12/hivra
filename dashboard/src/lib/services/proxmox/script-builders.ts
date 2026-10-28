@@ -1872,4 +1872,3 @@ qm set "$VMID" --cores "$CORES" --cpulimit "$CPU_LIMIT" --memory "$MEMORY_MB" --
  * `-autoheal` (64M), `-dashboard-sidecar` — are deliberately fixed-size and
  * must NOT be resized with the tier.
  */
-const TIER_CEILING_CONTAINER_SUFFIXES = ["gateway", "official-dashboard"] as const;

@@ -170,4 +170,23 @@ describe("expiry emails match what the user actually has", () => {
     expect(mockSend).not.toHaveBeenCalledWith(expect.objectContaining({ transition: "expired" }));
     expect(row(memory, "ys_ended")).toMatchObject({ expired_email_sent_at: null });
   });
+
+  it("does not send the ended email twice when the stamp write fails", async () => {
+    const memory = setup([
+      yearlySubscriptionRow({ id: "ys_ended", status: "expired", expires_at: at(-9 * DAY_MS) }),
+    ]);
+    memory.failNext({
+      table: "yearly_token_subscriptions",
+      op: "update",
+      match: (patch) => "expired_email_sent_at" in patch,
+      error: { code: "XX000", message: "stamp write failed" },
+    });
+
+    await runCron();
+    await runCron();
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ userId: "user_1", transition: "expired" }));
+    expect(row(memory, "ys_ended")?.expired_email_sent_at).toEqual(expect.any(String));
+  });
 });

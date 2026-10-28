@@ -399,7 +399,7 @@ const WITHDRAW_ASSETS: Record<Exclude<InstanceBankrWithdrawAsset, "HIVRA">, With
  * now. $HIVRA's contract, decimals and symbol come from the token registry
  * (hivra-token-launch.ts), never a copy here.
  */
-export function resolveWithdrawAsset(
+function resolveWithdrawAsset(
   asset: InstanceBankrWithdrawAsset,
   now: Date = new Date()
 ): WithdrawAssetConfig | null {

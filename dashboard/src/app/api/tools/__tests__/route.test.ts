@@ -1,6 +1,8 @@
 /** @jest-environment node */
 
 import { ProxmoxExecutionContextError } from "@/lib/infrastructure/proxmox-execution-context";
+import { applyToolsToHermesInstance } from "@/lib/hivra/hermes-tool-apply";
+import { resolveToolMcpSpec } from "@/lib/hivra/tool-install";
 import { POST as fanOut } from "../route";
 
 const mockAuth = jest.fn();
@@ -22,12 +24,22 @@ jest.mock("@/lib/supabase", () => ({
     from: (table: string) => {
       const filters: Record<string, unknown> = {};
       const chain: Record<string, unknown> = {};
-      const rows = () => (mockRows[table] ?? []).filter((row) => row.user_id === filters.user_id);
+      const rows = () => (mockRows[table] ?? []).filter((row) => {
+        if (filters.user_id !== undefined && row.user_id !== filters.user_id) return false;
+        const inIds = filters["in:id"] as unknown[] | undefined;
+        if (inIds && !inIds.includes(row.id)) return false;
+        return true;
+      });
       chain.select = jest.fn(() => chain);
       chain.eq = jest.fn((column: string, value: unknown) => { filters[column] = value; return chain; });
+      chain.in = jest.fn((column: string, values: unknown[]) => { filters[`in:${column}`] = values; return chain; });
       chain.neq = jest.fn(() => chain);
       chain.order = jest.fn(async () => ({ data: rows(), error: null }));
       chain.single = jest.fn(async () => ({ data: rows().find((row) => row.id === filters.id) ?? null, error: null }));
+      // Awaiting the builder itself (no terminal call) resolves the row set,
+      // same as the real PostgrestBuilder thenable.
+      chain.then = (resolve: (v: { data: unknown[]; error: null }) => void) =>
+        resolve({ data: rows(), error: null });
       return chain;
     },
   },
@@ -177,5 +189,104 @@ describe("POST /api/tools CLI fan-out", () => {
       op: "install",
       errorMessage: raw,
     }));
+  });
+});
+
+describe("POST /api/tools Hermes reconcile", () => {
+  const applyTools = applyToolsToHermesInstance as jest.Mock;
+  const resolveSpec = resolveToolMcpSpec as jest.Mock;
+
+  function hermesRow(config: Record<string, unknown>) {
+    return {
+      id: "h1",
+      user_id: "user-a",
+      name: "Hermes",
+      status: "running",
+      lifecycle_state: "active",
+      config,
+    };
+  }
+
+  const storedSearxng = {
+    command: "npx",
+    args: ["-y", "mcp-searxng"],
+    env: { SEARXNG_URL: "https://searx.example" },
+  };
+  const expectedSearxngEntry = { name: "searxng", ...storedSearxng };
+
+  function appliedEntries(): { name: string; env?: Record<string, string> }[] {
+    return applyTools.mock.calls[0][0].entries;
+  }
+
+  beforeEach(() => {
+    mockRows.hivra_agents = [];
+    mockAuth.mockResolvedValue({ userId: "user-a" });
+    applyTools.mockReset().mockResolvedValue({ applied: true });
+    resolveSpec.mockReset().mockReturnValue({
+      spec: {
+        name: "github",
+        command: "npx",
+        args: ["-y", "github-mcp"],
+        env: { GITHUB_TOKEN: "tok" },
+      },
+    });
+  });
+
+  it("installing a tool keeps every other managed tool, verbatim including resolved env", async () => {
+    mockRows.hermes_instances = [
+      hermesRow({
+        mcp_servers: {
+          hivra_searxng: storedSearxng,
+          composio: { url: "https://composio.example" },
+          mine: { command: "my-server" },
+        },
+      }),
+    ];
+    expect(await results({ toolId: "github", targets: ["hermes-h1"], env: { GITHUB_TOKEN: "tok" } }))
+      .toEqual([{ uid: "hermes-h1", ok: true, error: undefined }]);
+    const entries = appliedEntries();
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toEqual(expectedSearxngEntry);
+    expect(entries[1]).toEqual(
+      expect.objectContaining({ name: "github", command: "npx", env: { GITHUB_TOKEN: "tok" } }),
+    );
+  });
+
+  it("uninstalling one tool keeps the remaining managed tools", async () => {
+    mockRows.hermes_instances = [
+      hermesRow({
+        mcp_servers: {
+          hivra_github: { command: "npx", args: ["-y", "github-mcp"] },
+          hivra_searxng: storedSearxng,
+        },
+      }),
+    ];
+    expect(await results({ toolId: "github", targets: ["hermes-h1"], op: "uninstall" }))
+      .toEqual([{ uid: "hermes-h1", ok: true, error: undefined }]);
+    expect(appliedEntries()).toEqual([expectedSearxngEntry]);
+    expect(resolveSpec).not.toHaveBeenCalled();
+  });
+
+  it("uninstalling the last managed tool sends an empty desired set", async () => {
+    mockRows.hermes_instances = [
+      hermesRow({ mcp_servers: { hivra_github: { command: "npx" }, mine: { command: "x" } } }),
+    ];
+    await results({ toolId: "github", targets: ["hermes-h1"], op: "uninstall" });
+    expect(appliedEntries()).toEqual([]);
+  });
+
+  it("reconciles a target listed twice once, and answers both request entries", async () => {
+    mockRows.hermes_instances = [hermesRow({ mcp_servers: { mine: { command: "x" } } })];
+    expect(await results({ toolId: "github", targets: ["hermes-h1", "hermes-h1"] })).toEqual([
+      { uid: "hermes-h1", ok: true, error: undefined },
+      { uid: "hermes-h1", ok: true, error: undefined },
+    ]);
+    expect(applyTools).toHaveBeenCalledTimes(1);
+  });
+
+  it("installing the first tool on an agent with no managed tools sends just that entry", async () => {
+    mockRows.hermes_instances = [hermesRow({ mcp_servers: { mine: { command: "x" } } })];
+    await results({ toolId: "github", targets: ["hermes-h1"] });
+    expect(appliedEntries().map((e) => e.name)).toEqual(["github"]);
   });
 });

@@ -2587,7 +2587,7 @@ export function buildHermesEnvLines(params: {
   honchoSettings?: HonchoSettings;
   memorySystem?: MemorySystemConfig;
 }): string[] {
-  const { containerName, provider, apiKey, model, agentSettings } = params;
+  const { provider, apiKey, model, agentSettings } = params;
   const normalizedModel = model ? normalizeModelValue(model, provider) : "";
   const apiServerKey = params.apiServerKey && params.apiServerKey !== "undefined"
     ? params.apiServerKey

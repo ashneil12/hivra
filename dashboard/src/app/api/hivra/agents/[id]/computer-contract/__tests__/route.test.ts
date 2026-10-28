@@ -11,6 +11,7 @@ const mockSendSetup = jest.fn();
 const mockContext = jest.fn();
 const mockRateLimit = jest.fn();
 const queries: Array<Array<[string, unknown]>> = [];
+let mockDbError: { code: string; message: string } | null = null;
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
 jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
@@ -27,7 +28,7 @@ jest.mock("@/lib/supabase", () => ({
         select: () => builder,
         eq: (column: string, value: unknown) => { filters.push([column, value]); return builder; },
         neq: (column: string, value: unknown) => { filters.push([`not ${column}`, value]); return builder; },
-        maybeSingle: async () => ({ data: mockAgent(filters), error: null }),
+        maybeSingle: async () => ({ data: mockAgent(filters), error: mockDbError }),
       };
       return builder;
     },
@@ -169,5 +170,19 @@ describe("POST /api/hivra/agents/[id]/computer-contract", () => {
     expect((await POST(post({ action: "check" }), params)).status).toBe(429);
     expect(mockRateLimit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ routeKey: "hivra_computer_contract_post", userId: "user_1" }));
     expect(mockAdvance).not.toHaveBeenCalled();
+  });
+
+  it("answers 503, not 404, when the agent lookup fails, and never acts on it", async () => {
+    mockDbError = { code: "08006", message: "connection failure" };
+    try {
+      const getResponse = await GET(get(), params);
+      expect(getResponse.status).toBe(503);
+      const postResponse = await POST(post({ action: "deliver" }), params);
+      expect(postResponse.status).toBe(503);
+      expect(mockAdvance).not.toHaveBeenCalled();
+      expect(mockStatus).not.toHaveBeenCalled();
+    } finally {
+      mockDbError = null;
+    }
   });
 });

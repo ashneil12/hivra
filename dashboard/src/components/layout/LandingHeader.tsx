@@ -41,7 +41,7 @@ function readClerkSessionHint(): boolean {
 const subscribeToNothing = () => () => {};
 
 /** An explicit route-resolved value wins; otherwise read the cookie hint after hydration. */
-export function useSignedInHint(isSignedIn?: boolean): boolean {
+function useSignedInHint(isSignedIn?: boolean): boolean {
   const hint = useSyncExternalStore(subscribeToNothing, readClerkSessionHint, () => false);
   return isSignedIn ?? hint;
 }

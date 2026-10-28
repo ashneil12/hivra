@@ -377,10 +377,22 @@ export async function GET(request: NextRequest) {
             // metadataPatch (the vmMissing release) must win over the status
             // patch so the released proxmox_vmid/config are persisted.
             const patch = { ...statusPatch, ...metadataPatch };
-            await supabaseAdmin!
+            const { error: proxmoxSyncError } = await supabaseAdmin!
               .from("hermes_instances")
               .update(patch)
               .eq("id", inst.id);
+            if (proxmoxSyncError) {
+              // Report the stored state, not a transition the row does not hold.
+              log.error("failed to persist proxmox status sync (list)", proxmoxSyncError, {
+                source: "instances",
+                route: "/api/instances",
+                method: "GET",
+                instanceId: inst.id,
+                userId,
+                failureType: "instance_list_status_sync_write_failed",
+              });
+              return inst;
+            }
             // Post-ready SOUL.md seed: this list-sync promotion may be the
             // FIRST observation of readiness (user sitting on the dashboard
             // instead of the welcome poll). The in-band provision seed races
@@ -461,10 +473,22 @@ export async function GET(request: NextRequest) {
               inst.lifecycle_state !== expectedLifecycleState
             ) {
               const patch = buildInstanceLifecyclePatch(nextStatus);
-              await supabaseAdmin!
+              const { error: hetznerSyncError } = await supabaseAdmin!
                 .from("hermes_instances")
                 .update(patch)
                 .eq("id", inst.id);
+              if (hetznerSyncError) {
+                // Report the stored state, not a transition the row does not hold.
+                log.error("failed to persist hetzner status sync (list)", hetznerSyncError, {
+                  source: "instances",
+                  route: "/api/instances",
+                  method: "GET",
+                  instanceId: inst.id,
+                  userId,
+                  failureType: "instance_list_status_sync_write_failed",
+                });
+                return inst;
+              }
               // Post-ready SOUL.md seed on the Hetzner promotion path — same
               // race, same fix as the Proxmox branch above.
               if (
@@ -501,10 +525,21 @@ export async function GET(request: NextRequest) {
           // this, the row stays 'provisioning' forever and the boot UI
           // spins. Mirror the per-instance GET handler in [id]/route.ts.
           const patch = buildInstanceLifecyclePatch("error");
-          await supabaseAdmin!
+          const { error: orphanFlipError } = await supabaseAdmin!
             .from("hermes_instances")
             .update(patch)
             .eq("id", inst.id);
+          if (orphanFlipError) {
+            log.error("failed to flip orphan provisioning row to error (list)", orphanFlipError, {
+              source: "instances",
+              route: "/api/instances",
+              method: "GET",
+              instanceId: inst.id,
+              userId,
+              failureType: "instance_list_orphan_flip_write_failed",
+            });
+            return inst;
+          }
           return { ...inst, ...patch };
         }
         return inst;

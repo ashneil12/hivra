@@ -103,7 +103,7 @@ describe('Profile Service Unit Tests', () => {
       (supabaseAdmin!.from as jest.Mock).mockReturnValue({
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-        single: jest.fn().mockResolvedValue({
+        maybeSingle: jest.fn().mockResolvedValue({
           data: {
             config: {
               agentSettings: {
