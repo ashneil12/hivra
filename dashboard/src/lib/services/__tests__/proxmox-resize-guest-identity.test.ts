@@ -23,7 +23,7 @@ import { resizeProxmoxVm } from "../proxmox-instance-service";
 
 const VMID = 1148;
 const GUEST_IP = "10.250.20.51";
-const INSTANCE_ID = "3f0c9a52-6d1e-4b7a-9c2f-8e5d4a1b0c3d";
+const INSTANCE_ID = "00000000-0000-4000-8000-0000000c3d01";
 
 let host: StubProxmoxGuestHost;
 let keyDir: string;

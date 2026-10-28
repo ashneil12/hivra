@@ -96,13 +96,13 @@ function chain(hops: Array<{ url: string; ip?: string }>) {
 
 describe("navigationChainBlockCode", () => {
   it("passes a plain public navigation", async () => {
-    const res = chain([{ url: "https://example.com/", ip: "93.184.216.34" }]);
+    const res = chain([{ url: "https://example.com/", ip: "203.0.113.10" }]);
     expect(await navigationChainBlockCode(res, "https://example.com/")).toBeNull();
   });
 
   it("blocks a public URL that redirects to the metadata address", async () => {
     const res = chain([
-      { url: "https://redirector.example/go", ip: "93.184.216.34" },
+      { url: "https://redirector.example/go", ip: "203.0.113.10" },
       { url: "http://169.254.169.254/latest/meta-data/", ip: "169.254.169.254" },
     ]);
     expect(await navigationChainBlockCode(res, "http://169.254.169.254/latest/meta-data/")).toBe(
@@ -112,9 +112,9 @@ describe("navigationChainBlockCode", () => {
 
   it("blocks a redirect hop to a sibling service even if the final page is public", async () => {
     const res = chain([
-      { url: "https://a.example/", ip: "93.184.216.34" },
+      { url: "https://a.example/", ip: "203.0.113.10" },
       { url: "http://warden:7070/keys/anthropic" },
-      { url: "https://b.example/", ip: "93.184.216.35" },
+      { url: "https://b.example/", ip: "203.0.113.11" },
     ]);
     expect(await navigationChainBlockCode(res, "https://b.example/")).toBe("BLOCKED_DESTINATION");
   });
@@ -143,7 +143,7 @@ describe("gotoWithNavigationGuard", () => {
         }
         current = "http://169.254.169.254/latest/meta-data/";
         return chain([
-          { url, ip: "93.184.216.34" },
+          { url, ip: "203.0.113.10" },
           { url: current, ip: "169.254.169.254" },
         ]);
       }),

@@ -40,7 +40,7 @@ beforeEach(() => {
     id: "inst-1",
     userId: "user_1",
     instance: INSTANCE,
-    hostIp: "10.0.0.5",
+    hostIp: "10.250.20.51",
     errorResponse: null,
   });
   mockSshExec.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
