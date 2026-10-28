@@ -99,3 +99,84 @@ ${probe}
     expect(spawnSync("bash", ["-n"], { input: lifecycle, encoding: "utf8" }).status).toBe(0);
   });
 });
+
+describe("managed readiness against a host bundle without the capacity admission helper", () => {
+  // Prod incident, 25 Oct 2026: one managed host still ran bundle 2026.09.08.3. Readiness
+  // admitted it (a compatible version with an intact manifest), placement sent
+  // every launch there, and the launch kickoff died with exit 127 on the
+  // missing hivra-host-capacity-admission before any VM was created.
+  const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
+  const os = jest.requireActual<typeof import("node:os")>("node:os");
+  const path = jest.requireActual<typeof import("node:path")>("node:path");
+  const { PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES } = jest.requireActual<
+    typeof import("@/lib/infrastructure/portable-provisioner-contract")
+  >("@/lib/infrastructure/portable-provisioner-contract");
+  const sourceDir = path.join(__dirname, "../../../../provisioner");
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-readiness-"));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  function host(options: { version: string; withAdmission: boolean }) {
+    const bundle = path.join(root, "hivra-provisioner");
+    for (const file of PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES) {
+      if (!options.withAdmission && file === "hivra-host-capacity-admission") continue;
+      fs.mkdirSync(path.dirname(path.join(bundle, file)), { recursive: true });
+      fs.copyFileSync(path.join(sourceDir, file), path.join(bundle, file));
+    }
+    fs.writeFileSync(path.join(bundle, "VERSION"), `${options.version}\n`);
+    const manifest = spawnSync("bash", ["-c", "find . -type f ! -name BUNDLE.sha256 | sort | xargs sha256sum"], {
+      cwd: bundle, encoding: "utf8",
+    });
+    expect(manifest.status).toBe(0);
+    fs.writeFileSync(path.join(bundle, "BUNDLE.sha256"), manifest.stdout);
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const stub = (name: string, body: string) => fs.writeFileSync(path.join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+    stub("qm", "exit 0");
+    stub("pvesm", "echo 'Name Type Status'; echo 'local-lvm lvmthin active'");
+    stub("ip", "exit 0");
+    fs.mkdirSync(path.join(root, "keys"));
+    fs.writeFileSync(path.join(root, "keys/vm-orchestrator"), "key");
+    fs.writeFileSync(path.join(root, "keys/vm-orchestrator.pub"), "key");
+    fs.writeFileSync(path.join(root, "jammy.img"), "image");
+    return { bundle, bin };
+  }
+
+  function run(purpose: "provision" | "lifecycle" | "resize", fixture: { bundle: string; bin: string }) {
+    const script = managedHivraHostReadinessScript("default", purpose)
+      .replaceAll("'/root/hivra-provisioner'", `'${fixture.bundle}'`)
+      .replaceAll("'/root/jammy-server-cloudimg-amd64.img'", `'${path.join(root, "jammy.img")}'`)
+      .replaceAll("'/etc/hivra/keys/vm-orchestrator", `'${path.join(root, "keys/vm-orchestrator")}`);
+    return spawnSync("bash", ["--noprofile", "--norc", "-s"], {
+      input: script, encoding: "utf8", timeout: 10_000,
+      env: { PATH: `${fixture.bin}:/usr/bin:/bin`, NODE_ENV: "test" },
+    });
+  }
+
+  it("refuses new launches and resizes on a 2026.09.08.3 bundle so placement moves on", () => {
+    const fixture = host({ version: "2026.09.08.3", withAdmission: false });
+    for (const purpose of ["provision", "resize"] as const) {
+      const result = run(purpose, fixture);
+      expect(result.status).toBe(1);
+      expect(result.stdout).not.toContain("HIVRA_HOST_READY");
+      expect(result.stderr).toContain("hivra-host-capacity-admission");
+    }
+  });
+
+  it("keeps Start and Restart available on that host: the start helper never calls the admission helper", () => {
+    const result = run("lifecycle", host({ version: "2026.09.08.3", withAdmission: false }));
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("HIVRA_HOST_READY");
+  });
+
+  it("admits launches on a current bundle", () => {
+    const result = run("provision", host({ version: PORTABLE_HIVRA_PROVISIONER_VERSION, withAdmission: true }));
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("HIVRA_HOST_READY");
+  });
+});
