@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -288,6 +289,9 @@ function Inspector({
   );
 }
 
+const isRunRecord = (event: ActivityEvent) =>
+  event.kind === "trace_span" || event.kind === "tool_activity";
+
 export function ActivityObservatory({
   showUsage = true,
 }: {
@@ -414,66 +418,89 @@ export function ActivityObservatory({
     else if (target.right > bounds.right)
       strip.scrollLeft += target.right - bounds.right + 16;
   }, [view]);
-  const events = data?.events ?? [];
+  const events = useMemo(() => data?.events ?? [], [data]);
   const now = data?.generatedAt ?? "";
   const query = search.trim().toLowerCase();
-  const matchesQuery = (event: ActivityEvent) =>
-    !query ||
-    [
-      presentEvent(event).title,
-      event.title,
-      event.id,
-      event.computerId,
-      event.spanId,
-      event.summary,
-      event.agentName,
-      event.runId,
-      event.traceId,
-      event.toolName,
-      event.conversationId,
-      producerName(event),
-      ...event.evidence.flatMap((item) => [item.label, item.value]),
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  const inScope = (event: ActivityEvent) =>
-    (agent === "all" || event.agentId === agent) &&
-    (kind === "all" || event.kind === kind);
-  const isRunRecord = (event: ActivityEvent) =>
-    event.kind === "trace_span" || event.kind === "tool_activity";
-  const filtered = events.filter(
-    (event) =>
-      (view !== "attention" || event.needsAttention) &&
-      (view !== "runs" || isRunRecord(event)) &&
-      inScope(event) &&
-      matchesQuery(event),
+  // Stable per query, agent and kind, so the derived lists below can memoise
+  // and a keystroke or selection does not regroup every loaded record.
+  const matchesQuery = useCallback(
+    (event: ActivityEvent) =>
+      !query ||
+      [
+        presentEvent(event).title,
+        event.title,
+        event.id,
+        event.computerId,
+        event.spanId,
+        event.summary,
+        event.agentName,
+        event.runId,
+        event.traceId,
+        event.toolName,
+        event.conversationId,
+        producerName(event),
+        ...event.evidence.flatMap((item) => [item.label, item.value]),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    [query],
+  );
+  const inScope = useCallback(
+    (event: ActivityEvent) =>
+      (agent === "all" || event.agentId === agent) &&
+      (kind === "all" || event.kind === kind),
+    [agent, kind],
+  );
+  const filtered = useMemo(
+    () =>
+      events.filter(
+        (event) =>
+          (view !== "attention" || event.needsAttention) &&
+          (view !== "runs" || isRunRecord(event)) &&
+          inScope(event) &&
+          matchesQuery(event),
+      ),
+    [events, view, inScope, matchesQuery],
   );
   // Runs are grouped from every loaded record that passes the agent and kind
   // filters, so a run's status, start and counts never depend on the search;
   // the search only chooses which runs are shown.
-  const runEvents =
-    view === "runs"
-      ? events.filter((event) => isRunRecord(event) && inScope(event))
-      : [];
-  const shownRuns =
-    view === "runs"
-      ? selectRuns(runEvents, query ? matchesQuery : undefined)
-      : undefined;
-  const shownRunIds = new Set(
-    shownRuns
-      ? [
-          ...shownRuns.groups.flatMap((group) =>
-            group.steps.flatMap((step) => step.records.map((item) => item.id)),
-          ),
-          ...shownRuns.ungrouped.map((event) => event.id),
-        ]
-      : [],
+  const runEvents = useMemo(
+    () =>
+      view === "runs"
+        ? events.filter((event) => isRunRecord(event) && inScope(event))
+        : [],
+    [events, view, inScope],
   );
-  const selectable =
-    view === "runs"
-      ? runEvents.filter((event) => shownRunIds.has(event.id))
-      : filtered;
+  const shownRuns = useMemo(
+    () =>
+      view === "runs"
+        ? selectRuns(runEvents, query ? matchesQuery : undefined)
+        : undefined,
+    [view, runEvents, query, matchesQuery],
+  );
+  const shownRunIds = useMemo(
+    () =>
+      new Set(
+        shownRuns
+          ? [
+              ...shownRuns.groups.flatMap((group) =>
+                group.steps.flatMap((step) => step.records.map((item) => item.id)),
+              ),
+              ...shownRuns.ungrouped.map((event) => event.id),
+            ]
+          : [],
+      ),
+    [shownRuns],
+  );
+  const selectable = useMemo(
+    () =>
+      view === "runs"
+        ? runEvents.filter((event) => shownRunIds.has(event.id))
+        : filtered,
+    [view, runEvents, shownRunIds, filtered],
+  );
   const active =
     selectable.find((event) => event.id === selected) ??
     selectable.find(matchesQuery);

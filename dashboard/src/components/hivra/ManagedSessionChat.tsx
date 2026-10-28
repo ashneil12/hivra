@@ -243,19 +243,34 @@ export function ManagedSessionChat({
 
   useEffect(() => { lastEventIdRef.current = transcript.lastEventId; }, [transcript.lastEventId]);
 
-  // A starting session is reconciled against DigitalOcean until it settles.
+  // A starting session is reconciled against DigitalOcean until it settles. Each
+  // read is scheduled only after the last one settles, backing off, and hidden
+  // tabs skip the read, so one slow or failing read never stacks up behind another.
   useEffect(() => {
     if (session.status !== "provisioning" && session.status !== "deleting") return;
     const controller = new AbortController();
-    const timer = window.setInterval(() => {
+    const DELAYS_MS = [2_500, 5_000, 10_000, 30_000];
+    let attempt = 0;
+    let timer: number | undefined;
+    const schedule = () => {
+      timer = window.setTimeout(tick, DELAYS_MS[Math.min(attempt, DELAYS_MS.length - 1)]);
+    };
+    const tick = () => {
+      if (document.hidden) { schedule(); return; }
       void getManagedSession(agentId, { reconcile: true, signal: controller.signal })
         .then((next) => {
           setSession(next);
           if (next.status === "deleted") onDeletedRef.current?.();
+          attempt += 1;
+          if (!controller.signal.aborted) schedule();
         })
-        .catch(() => undefined);
-    }, 2_500);
-    return () => { controller.abort(); window.clearInterval(timer); };
+        .catch(() => {
+          attempt += 1;
+          if (!controller.signal.aborted) schedule();
+        });
+    };
+    schedule();
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [agentId, session.status, setSession]);
 
   // Stored history first, then the live tail from the last event it held.

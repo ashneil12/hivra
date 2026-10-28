@@ -27,6 +27,7 @@ import {
   Wifi,
   X,
 } from "lucide-react";
+import { pollWhenVisible } from "@/lib/poll-when-visible";
 
 interface LaneInstance {
   id: string;
@@ -596,10 +597,15 @@ export function DashboardClient() {
   const anyPending = useMemo(() => instances.some((i) => isPending(i.status)), [instances]);
   useEffect(() => {
     if (!anyPending) return;
-    const t = setInterval(() => {
-      void load(true);
-      void loadStatus();
-    }, 5000);
+    // Skip a tick while the previous refresh is still in flight, and while the tab is hidden.
+    let refreshing = false;
+    const t = setInterval(pollWhenVisible(() => {
+      if (refreshing) return;
+      refreshing = true;
+      void Promise.all([load(true), loadStatus()]).finally(() => {
+        refreshing = false;
+      });
+    }), 5000);
     return () => clearInterval(t);
   }, [anyPending, load, loadStatus]);
 

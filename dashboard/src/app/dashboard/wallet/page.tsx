@@ -348,6 +348,10 @@ export default function WalletPage() {
   const stepUpRequest = useStepUpJsonRequest();
   const fromWelcome = searchParams?.get('from') === 'welcome';
   const welcomeRedirectFiredRef = useRef(false);
+  const withdrawReloadTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (withdrawReloadTimerRef.current !== null) window.clearTimeout(withdrawReloadTimerRef.current);
+  }, []);
   const [data, setData] = useState<WalletApiPayload | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityPayload | null>(null);
   const [priceUnavailable, setPriceUnavailable] = useState(false);
@@ -791,6 +795,18 @@ export default function WalletPage() {
     }
   }, []);
 
+  // After a withdrawal: refresh once now (the post-withdraw eligibility re-check
+  // already wrote a fresh snapshot) and again 60s later — by which time Base has
+  // definitely confirmed the tx and the chain read is authoritative.
+  const handleWithdrew = useCallback(() => {
+    void load({ silent: true });
+    if (withdrawReloadTimerRef.current !== null) window.clearTimeout(withdrawReloadTimerRef.current);
+    withdrawReloadTimerRef.current = window.setTimeout(() => {
+      withdrawReloadTimerRef.current = null;
+      void load({ silent: true });
+    }, 60_000);
+  }, [load]);
+
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
   // Legacy custody follows the lock wallet's $HermesOS. A lock wallet that holds
   // only $HIVRA (tokenLockHoldsHermes false, sent only once $HIVRA is live) is
@@ -1171,16 +1187,7 @@ export default function WalletPage() {
               withdrawAddress={withdrawAddress}
               withdrawAvailableAt={withdrawAvailableAt}
               onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
-              onWithdrew={() => {
-                // Refresh once now (the post-withdraw eligibility re-check
-                // already wrote a fresh snapshot) and again 60s later — by
-                // which time Base has definitely confirmed the tx and the
-                // chain read is authoritative.
-                void load({ silent: true });
-                window.setTimeout(() => {
-                  void load({ silent: true });
-                }, 60_000);
-              }}
+              onWithdrew={handleWithdrew}
             />
           )}
           {lockWalletHivra && (
@@ -1191,12 +1198,7 @@ export default function WalletPage() {
               withdrawAddress={withdrawAddress}
               withdrawAvailableAt={withdrawAvailableAt}
               onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
-              onWithdrew={() => {
-                void load({ silent: true });
-                window.setTimeout(() => {
-                  void load({ silent: true });
-                }, 60_000);
-              }}
+              onWithdrew={handleWithdrew}
             />
           )}
         </section>

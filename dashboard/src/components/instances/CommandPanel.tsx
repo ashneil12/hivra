@@ -551,6 +551,8 @@ export function CommandPanel({
       }
       // Re-check connected state shortly after (the OAuth finishes in the popup;
       // the focus listener catches the common case, this covers same-tab flows).
+      // A second connect replaces the pending check instead of leaving it to fire.
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = setTimeout(() => connectedApps.refresh(), 2500);
     },
     [composio, connectedApps],

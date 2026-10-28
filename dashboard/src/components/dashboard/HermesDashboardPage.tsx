@@ -1918,8 +1918,10 @@ export function HermesDashboardPage() {
   const [restoreErrorByInstanceId, setRestoreErrorByInstanceId] = useState<Record<string, string>>({});
   const [commandCenterV2Enabled, setCommandCenterV2Enabled] = useState(false);
 
-  const fetchInstancesAndHosts = useCallback(async () => {
-    if (!userId) return;
+  // Resolves false when the load failed (the error is logged and shown here),
+  // so the poll loop can back off.
+  const fetchInstancesAndHosts = useCallback(async (): Promise<boolean> => {
+    if (!userId) return false;
     try {
       setError(null);
       const [resInst, resHosts, resUsage] = await Promise.all([
@@ -1975,8 +1977,9 @@ export function HermesDashboardPage() {
            const pRes = await fetch(`/api/instances/${onlyInstance.id}/profiles`);
            const pData = await pRes.json();
            if (pData.success) {
-             setProfiles(pData.data || []);
-             writeStoredJsonIfChanged(localStorage, `dashboard_profiles_${userId}`, pData.data || []);
+             const nextProfiles: AgentProfile[] = pData.data || [];
+             setProfiles((prev) => (sameRowList(prev, nextProfiles) ? prev : nextProfiles));
+             writeStoredJsonIfChanged(localStorage, `dashboard_profiles_${userId}`, nextProfiles);
              fetchedProfilesRef.current = true;
            }
          } finally {
@@ -1984,6 +1987,7 @@ export function HermesDashboardPage() {
          }
       }
 
+      return true;
     } catch (err) {
       clientLog.error("failed to load dashboard operations", err, {
         source: "dashboard.operations",
@@ -1992,6 +1996,7 @@ export function HermesDashboardPage() {
         failureType: "dashboard_operations_load_failed",
       });
       setError(dashboardCopy.errors.failedToLoadOperations);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -2120,7 +2125,7 @@ export function HermesDashboardPage() {
   }, [isLoaded, userId]);
 
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: NodeJS.Timeout | undefined;
     let isMounted = true;
     let consecutiveFailures = 0;
     setMounted(true);
@@ -2157,9 +2162,10 @@ export function HermesDashboardPage() {
 
     const poll = async () => {
       if (!isMounted) return;
+      clearTimeout(timeoutId);
       try {
-        await fetchInstancesAndHosts();
-        consecutiveFailures = 0; // reset on success
+        const ok = await fetchInstancesAndHosts();
+        consecutiveFailures = ok ? 0 : consecutiveFailures + 1; // reset on success
       } catch {
         consecutiveFailures += 1;
       }
@@ -2167,15 +2173,27 @@ export function HermesDashboardPage() {
       if (isMounted) {
         // Exponential backoff: 10s, 20s, 40s... up to 120s max
         const backoffMs = Math.min(10000 * Math.pow(2, consecutiveFailures), 120000);
-        timeoutId = setTimeout(poll, backoffMs);
+        timeoutId = setTimeout(tick, backoffMs);
       }
     };
+
+    // A backgrounded tab stops the chain instead of fetching every tick; the
+    // visibilitychange listener below restarts it with one fetch.
+    const tick = () => {
+      if (document.hidden) return;
+      void poll();
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) void poll();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     poll();
 
     return () => {
       isMounted = false;
       clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [isLoaded, userId, fetchInstancesAndHosts]);
 
@@ -2214,17 +2232,29 @@ export function HermesDashboardPage() {
     };
   }, [mounted, userId]);
 
+  // The activity effect keys on the id string above. The ref gives it the
+  // current rows without refiring on every new instances array.
+  const liveWebUIInstancesRef = useRef(liveWebUIInstances);
   useEffect(() => {
-    if (!mounted || !userId || liveWebUIInstances.length === 0) {
+    liveWebUIInstancesRef.current = liveWebUIInstances;
+  }, [liveWebUIInstances]);
+
+  useEffect(() => {
+    const targetInstances = liveWebUIInstancesRef.current;
+    if (!mounted || !userId || targetInstances.length === 0) {
       return;
     }
 
     let cancelled = false;
-    const targetInstances = liveWebUIInstances;
     const refreshActivity = async () => {
       if (cancelled) return;
-      const loadingPatch = Object.fromEntries(targetInstances.map((instance) => [instance.id, true]));
-      setActivityLoadingByInstanceId((previous) => ({ ...previous, ...loadingPatch }));
+      // Loading flags and digests only change state when a value actually
+      // flips, so an unchanged 30s tick does not re-render the page.
+      setActivityLoadingByInstanceId((previous) => {
+        if (targetInstances.every((instance) => previous[instance.id])) return previous;
+        const loadingPatch = Object.fromEntries(targetInstances.map((instance) => [instance.id, true]));
+        return { ...previous, ...loadingPatch };
+      });
 
       const results = await Promise.all(
         targetInstances.map(async (instance) => ({
@@ -2235,21 +2265,34 @@ export function HermesDashboardPage() {
       if (cancelled) return;
 
       setActivityByInstanceId((previous) => {
+        let changed = false;
         const next = { ...previous };
         for (const { instanceId, result } of results) {
-          if (result.ok) next[instanceId] = result.digest;
+          if (result.ok && !sameRowValue(previous[instanceId], result.digest)) {
+            next[instanceId] = result.digest;
+            changed = true;
+          }
         }
-        return next;
+        return changed ? next : previous;
       });
       setActivityErrorsByInstanceId((previous) => {
+        let changed = false;
         const next = { ...previous };
         for (const { instanceId, result } of results) {
-          if (result.ok) delete next[instanceId];
-          else next[instanceId] = result.message;
+          if (result.ok) {
+            if (instanceId in next) {
+              delete next[instanceId];
+              changed = true;
+            }
+          } else if (next[instanceId] !== result.message) {
+            next[instanceId] = result.message;
+            changed = true;
+          }
         }
-        return next;
+        return changed ? next : previous;
       });
       setActivityLoadingByInstanceId((previous) => {
+        if (targetInstances.every((instance) => !previous[instance.id])) return previous;
         const next = { ...previous };
         for (const instance of targetInstances) {
           next[instance.id] = false;
@@ -2264,7 +2307,7 @@ export function HermesDashboardPage() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [mounted, userId, liveWebUIInstanceIds, liveWebUIInstances]);
+  }, [mounted, userId, liveWebUIInstanceIds]);
 
   // Empty state: an account with no agents opens Launch, the one place to
   // start an agent or a computer. A new account turns its Free plan on

@@ -51,11 +51,6 @@ export function useAttachedAgentChatRead(agent: Pick<HivraAgent, "id" | "type" |
   return { target: eligible && read?.id === id ? read.value : null, checking: eligible && read?.id !== id };
 }
 
-/** The agent added to this computer, once it is ready to chat, or null. */
-export function useAttachedAgentChat(agent: Pick<HivraAgent, "id" | "type" | "status"> | null, id: string): AttachedAgentChatTarget | null {
-  return useAttachedAgentChatRead(agent, id).target;
-}
-
 /** The attached agent's chat, under its computer's gateway origin. */
 export function attachedChatBase(chatUrl: string, installationId: string): string {
   return `${chatUrl.replace(/\/$/, "")}/agents/${encodeURIComponent(installationId)}`;

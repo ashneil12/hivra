@@ -411,16 +411,18 @@ function HivraManageContent({
     if (typeof window === "undefined") return false;
     try { return new URLSearchParams(window.location.search).get("addAgent") === "1"; } catch { return false; }
   });
-  const refreshMcp = useCallback(async () => {
+  const refreshMcp = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!isChatCli || !agent.chat_url) return;
     const r = await listBoxMcp(agent.chat_url, agent.api_token);
+    // A reply that arrives after the box changed (stop/start moves its URL) is stale.
+    if (!isCurrent()) return;
     if (r.error) { setMcpSupported(false); return; }
     setMcpSupported(true);
     setMcp(r.servers);
   }, [isChatCli, agent.chat_url, agent.api_token]);
   useEffect(() => {
     let alive = true;
-    void (async () => { if (alive) await refreshMcp(); })();
+    void refreshMcp(() => alive);
     return () => { alive = false; };
   }, [refreshMcp]);
 

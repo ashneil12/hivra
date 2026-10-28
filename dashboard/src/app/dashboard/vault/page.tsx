@@ -113,6 +113,9 @@ function getCodexProfileOptionLabel(agentName: string, profile: AgentProfileSumm
   return profile.display_name ? `${profile.display_name} (${profile.name})` : profile.name;
 }
 
+// The device code is short-lived; a sign-in still waiting after this is abandoned.
+const CODEX_SIGN_IN_WAIT_MS = 15 * 60 * 1000;
+
 export default function VaultPage() {
   const reduceMotion = Boolean(useReducedMotion());
   const sectionVariants = buildHermesFadeSlideVariants(reduceMotion, { offset: 16 });
@@ -147,6 +150,9 @@ export default function VaultPage() {
   const [codexProfileName, setCodexProfileName] = useState('default');
   const [showNousPortalOAuth, setShowNousPortalOAuth] = useState(false);
   const codexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Bumped whenever the Codex sign-in is stopped, so a status read that was
+  // already in flight cannot update a flow the owner has cancelled or left.
+  const codexFlowIdRef = useRef(0);
   const codexSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const successMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codexCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -159,6 +165,20 @@ export default function VaultPage() {
       if (codexCopiedTimerRef.current) clearTimeout(codexCopiedTimerRef.current);
     };
   }, []);
+
+  const stopCodexPoll = useCallback(() => {
+    codexFlowIdRef.current += 1;
+    if (codexPollRef.current) {
+      clearInterval(codexPollRef.current);
+      codexPollRef.current = null;
+    }
+  }, []);
+
+  // Cancel, a provider change or closing the form ends a sign-in still waiting.
+  const resetCodexFlow = useCallback(() => {
+    stopCodexPoll();
+    setCodexStep('idle');
+  }, [stopCodexPoll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -219,6 +239,9 @@ export default function VaultPage() {
         ? `?profile=${encodeURIComponent(targetProfile.name)}`
         : '';
 
+    // A new start replaces any sign-in still waiting from an earlier attempt.
+    stopCodexPoll();
+    const flowId = codexFlowIdRef.current;
     setCodexStep('starting');
     setCodexError('');
     if (codexSuccessTimerRef.current) {
@@ -232,6 +255,7 @@ export default function VaultPage() {
     try {
       const res = await fetch(`/api/instances/${targetAgentId}/oauth/codex/start${profileQuery}`, { method: 'POST' });
       const data = await res.json();
+      if (codexFlowIdRef.current !== flowId) return;
       if (!res.ok) {
         throw new Error(
           normalizeSshWarmupMessage(data.error, 'Failed to start Codex OAuth')
@@ -240,11 +264,24 @@ export default function VaultPage() {
       setCodexUrl(data.data.url);
       setCodexCode(data.data.code ?? null);
       setCodexStep('waiting');
-      
+
+      // One status read at a time, and the sign-in is abandoned after its time
+      // limit or once the server reports the code expired.
+      let statusReadInFlight = false;
+      const waitDeadline = Date.now() + CODEX_SIGN_IN_WAIT_MS;
       codexPollRef.current = setInterval(async () => {
+        if (statusReadInFlight || codexFlowIdRef.current !== flowId) return;
+        if (Date.now() > waitDeadline) {
+          stopCodexPoll();
+          setCodexError('The sign-in was not completed in time. Start again to get a new code.');
+          setCodexStep('error');
+          return;
+        }
+        statusReadInFlight = true;
         try {
           const sr = await fetch(`/api/instances/${targetAgentId}/oauth/codex/status${profileQuery}`);
           const sd = await sr.json();
+          if (codexFlowIdRef.current !== flowId) return;
           if (!sr.ok) {
             throw new Error(
               normalizeSshWarmupMessage(sd.error, 'Failed to check Codex OAuth status')
@@ -254,8 +291,7 @@ export default function VaultPage() {
             throw new Error(`Codex connected on ${targetLabel}, but saving the reusable session failed: ${sd.data.persistenceError}`);
           }
           if (readCodexAuthenticatedFlag(sd)) {
-            clearInterval(codexPollRef.current!);
-            codexPollRef.current = null;
+            stopCodexPoll();
             setCodexStep('success');
             codexSuccessTimerRef.current = setTimeout(async () => {
               codexSuccessTimerRef.current = null;
@@ -271,22 +307,27 @@ export default function VaultPage() {
                 successMessageTimerRef.current = null;
               }, 4000);
             }, 2500);
+          } else if (sd?.data?.expired === true) {
+            stopCodexPoll();
+            setCodexError('The sign-in code expired before it was used. Start again to get a new code.');
+            setCodexStep('error');
           }
         } catch (err: unknown) {
-          if (codexPollRef.current) {
-            clearInterval(codexPollRef.current);
-            codexPollRef.current = null;
-          }
+          if (codexFlowIdRef.current !== flowId) return;
+          stopCodexPoll();
           setCodexError(err instanceof Error ? err.message : String(err));
           setCodexStep('error');
+        } finally {
+          statusReadInFlight = false;
         }
       }, 4000);
     } catch (err: unknown) {
+      if (codexFlowIdRef.current !== flowId) return;
       const message = err instanceof Error ? err.message : String(err);
       setCodexError(normalizeSshWarmupMessage(message, 'Failed to start Codex OAuth'));
       setCodexStep('error');
     }
-  }, [agents, codexAgentId, codexProfileName, codexProfiles]);
+  }, [agents, codexAgentId, codexProfileName, codexProfiles, stopCodexPoll]);
 
 
 
@@ -552,7 +593,10 @@ export default function VaultPage() {
                 )}
               </div>
               <button 
-                onClick={() => setIsAddingMode(!isAddingMode)}
+                onClick={() => {
+                  if (isAddingMode) resetCodexFlow();
+                  setIsAddingMode(!isAddingMode);
+                }}
                 className="max-md:min-h-[44px] pointer-coarse:min-h-[44px]"
                 style={{
                   background: 'var(--ink-black)', color: "var(--bg-surface)", border: 'none', padding: '10px 16px', cursor: 'pointer',
@@ -568,7 +612,7 @@ export default function VaultPage() {
               <form onSubmit={handleSaveKey} aria-busy={savingKey} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--etched-border)', padding: '2rem', marginBottom: '2rem' }}>
                 <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1.5rem', alignItems: 'center', borderBottom: '1px solid var(--etched-border)', paddingBottom: '1rem' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: !isOauthMode ? 700 : 400, opacity: !isOauthMode ? 1 : 0.6 }}>
-                    <input type="radio" checked={!isOauthMode} onChange={() => { setIsOauthMode(false); setNewProvider("openrouter"); }} style={{ accentColor: 'var(--ink-black)' }} /> Manual API Key
+                    <input type="radio" checked={!isOauthMode} onChange={() => { resetCodexFlow(); setIsOauthMode(false); setNewProvider("openrouter"); }} style={{ accentColor: 'var(--ink-black)' }} /> Manual API Key
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: isOauthMode ? 700 : 400, opacity: isOauthMode ? 1 : 0.6 }}>
                     <input type="radio" checked={isOauthMode} onChange={() => { setIsOauthMode(true); setNewProvider("codex"); }} style={{ accentColor: 'var(--ink-black)' }} /> Automated Device Auth
@@ -702,6 +746,7 @@ export default function VaultPage() {
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, marginTop: 12, opacity: 0.7 }}>
                                       <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Waiting for browser auth and key save...
                                     </div>
+                                    <button type="button" onClick={resetCodexFlow} style={{ display: 'block', marginTop: 8, minHeight: 44, padding: '10px 14px', background: 'transparent', border: '1px solid var(--etched-border)', cursor: 'pointer', fontSize: 11 }}>Cancel sign-in</button>
                                   </div>
                                ) : codexStep === 'success' ? (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px', color: 'var(--green)' }}>
@@ -720,7 +765,7 @@ export default function VaultPage() {
 
                         <div style={{ border: '1px solid var(--etched-border)', padding: '1rem', background: newProvider === 'nous' ? 'var(--bg-surface)' : 'transparent' }}>
                            <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', marginBottom: newProvider === 'nous' ? '1rem' : 0 }}>
-                             <input type="radio" checked={newProvider === 'nous'} onChange={() => setNewProvider('nous')} style={{ accentColor: 'var(--ink-black)' }} />
+                             <input type="radio" checked={newProvider === 'nous'} onChange={() => { resetCodexFlow(); setNewProvider('nous'); }} style={{ accentColor: 'var(--ink-black)' }} />
                              <div>
                                 <span style={{ fontWeight: 600, fontSize: 14 }}>Nous Portal</span>
                                 <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>Uses Hermes device auth + a reusable saved session</div>

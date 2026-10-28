@@ -27,6 +27,11 @@ import styles from "./HivraChat.module.css";
 // Inline code keeps a lightweight mono chip that wraps anywhere.
 const CHAT_REMARK_PLUGINS = [remarkGfm];
 
+// Session saves: wait this long after the last change while a reply streams,
+// but never longer than the max wait, so a long stream still saves as it goes.
+const CHAT_SAVE_IDLE_MS = 1000;
+const CHAT_SAVE_MAX_WAIT_MS = 2500;
+
 /** Markdown parse is the expensive part of a message row — memoize on the
  *  rendered text so a poll tick or keystroke doesn't re-parse history. */
 const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
@@ -151,15 +156,19 @@ async function prepareImageAttachment(file: File): Promise<{ blob: Blob; name: s
 // Hover copy-the-whole-message affordance for assistant replies.
 function MessageCopy({ text }: { text: string }) {
  const [copied, setCopied] = useState(false);
+ // The "Copied" flash clears on its own timer, and that timer is cleared on unmount.
+ useEffect(() => {
+ if (!copied) return;
+ const timer = window.setTimeout(() => setCopied(false), 1600);
+ return () => window.clearTimeout(timer);
+ }, [copied]);
  return (
  <button
  type="button"
  aria-label="Copy message"
  onClick={() => {
  void copyTextToClipboard(text).then((ok) => {
- if (!ok) return;
- setCopied(true);
- window.setTimeout(() => setCopied(false), 1600);
+ if (ok) setCopied(true);
  });
  }}
  className={`mono ${styles.msgAction}`}
@@ -612,6 +621,87 @@ function ToolHistory({ message }: { message: ChatMessage }) {
  );
 }
 
+/** One message in the transcript. Memoized on its message object: a streamed token
+ *  replaces only the streaming reply, so every other row skips re-rendering. */
+interface ChatMessageRowProps {
+ m: ChatMessage;
+ index: number;
+ accent: string;
+ agentName: string;
+ historySessionId: string | null;
+ rating?: "up" | "down";
+ onRate: (index: number, rating: "up" | "down") => void;
+ onOpenHistory: (sessionId: string) => void;
+}
+
+const ChatMessageRow = memo(function ChatMessageRow({ m, index: i, accent, agentName, historySessionId, rating, onRate, onOpenHistory }: ChatMessageRowProps) {
+ const isUser = m.role === "user";
+ return (
+ <div className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
+ {/* The user bubble is already tinted, so its avatar is dropped below md. */}
+ <div
+ className={isUser ? "hidden md:flex" : "flex"}
+ style={{
+ width: 26,
+ height: 26,
+ flexShrink: 0,
+ borderRadius: "50%",
+ border: "1px solid var(--etched-border)",
+ background: isUser ? "var(--bg-elevated)" : accent,
+ color: isUser ? "var(--ink-black)" : "#fff",
+ alignItems: "center",
+ justifyContent: "center",
+ fontSize: 11,
+ fontWeight: 700,
+ fontFamily: "var(--font-mono)",
+ }}
+ >
+ {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
+ </div>
+ <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
+ {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
+ <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
+ {m.role === "assistant" ? (
+ <AssistantMarkdown text={replyMarkdown(m)} />
+ ) : (
+ <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
+ )}
+ </div>
+ {m.role === "assistant" ? <ToolHistory message={m} /> : null}
+ {m.role === "assistant" && m.streaming && m.pending ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label="Waiting for the agent update">{m.pending}</div>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && m.outcome === "unknown" ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label="Finished while you were away">
+ {historySessionId ? "Finished while you were away — open the history to see the full reply" : "Finished while you were away"}
+ </div>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && m.outcome === "unknown" && historySessionId ? (
+ <button
+ type="button"
+ onClick={() => onOpenHistory(historySessionId)}
+ className={`mono ${styles.msgAction}`}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
+ >
+ <MessageSquare size={11} /> Open the history
+ </button>
+ ) : null}
+ {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error" || m.outcome === "disconnected") ? (
+ <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : m.outcome === "disconnected" ? "Reconnecting to the agent" : "Response failed"}>
+ {m.outcome === "stopped" ? "Stopped" : m.outcome === "disconnected" ? "Connection lost. Your agent keeps working; this reply fills in when it reconnects." : "Could not complete response"}
+ </div>
+ ) : null}
+ {m.role === "assistant" && m.text && !m.streaming ? (
+ <span style={{ display: "inline-flex", alignItems: "center" }}>
+ <MessageCopy text={m.text} />
+ <MessageFeedback rating={rating} onRate={(r) => onRate(i, r)} />
+ </span>
+ ) : null}
+ </div>
+ </div>
+ );
+});
+
 export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--gold-leaf)", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
  const skey = storageKey || boxUrl;
  // "Think" — extended-reasoning toggle, mirroring paioclaw's reasoning on/off.
@@ -690,6 +780,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  // so a rating sticks to its message and survives session switches. UI-only state
  // (the event itself goes to PostHog) — not persisted across reloads.
  const [feedback, setFeedback] = useState<Record<string, "up" | "down">>({});
+ // The same ratings, read by rateMessage outside the state updater (rateMessage is the only writer).
+ const feedbackRef = useRef<Record<string, "up" | "down">>({});
  // Pending attachments (already uploaded to the box; sent with the next message).
  const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
  const attachmentsRef = useRef<{ name: string; path: string }[]>([]);
@@ -869,14 +961,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (activeId) saveActiveId(skey, activeId); // persist the open chat per box
  }, [activeId, skey]);
 
+ const pendingSinceRef = useRef<number | null>(null);
  // Persist on a short debounce (avoid thrashing localStorage on every token).
- // With parallel chats some session is often streaming, so waiting for idle
- // could postpone saving indefinitely; loadSessions clears stale streaming.
- // Nothing is saved until this box's sessions are in state: saving the
- // placeholder chat (or the previous box's chats) would overwrite its history.
+ // With parallel chats some session is often streaming, so the debounce has a
+ // max wait: while a reply streams, a save happens at least every
+ // CHAT_SAVE_MAX_WAIT_MS even though the sessions keep changing; loadSessions
+ // clears stale streaming. Nothing is saved until this box's sessions are in
+ // state: saving the placeholder chat (or the previous box's chats) would
+ // overwrite its history.
  useEffect(() => {
  if (loadedKey !== skey) return;
- const timer = window.setTimeout(() => saveSessions(skey, sessions), anyBusy ? 1000 : 0);
+ const now = Date.now();
+ if (pendingSinceRef.current === null) pendingSinceRef.current = now;
+ const waited = now - pendingSinceRef.current;
+ const delay = anyBusy ? Math.max(0, Math.min(CHAT_SAVE_IDLE_MS, CHAT_SAVE_MAX_WAIT_MS - waited)) : 0;
+ const timer = window.setTimeout(() => {
+ pendingSinceRef.current = null;
+ saveSessions(skey, sessions);
+ }, delay);
  return () => window.clearTimeout(timer);
  }, [sessions, anyBusy, loadedKey, skey]);
  // Leaving must not lose a reply's run id inside the save debounce: the next
@@ -1653,11 +1755,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const rateMessage = useCallback(
  (index: number, rating: "up" | "down") => {
  const key = activeIdRef.current + ":" + index;
- setFeedback((prev) => {
- const next = { ...prev };
- const cleared = prev[key] === rating;
+ // The next ratings are worked out here, not inside the state updater: React may
+ // run an updater more than once, which would send the event more than once.
+ const cleared = feedbackRef.current[key] === rating;
+ const next = { ...feedbackRef.current };
  if (cleared) delete next[key];
  else next[key] = rating;
+ feedbackRef.current = next;
+ setFeedback(next);
  captureClient("chat_feedback", {
  rating: cleared ? "none" : rating,
  agent_id: skey,
@@ -1665,8 +1770,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  message_id: activeIdRef.current + ":" + index,
  agent_kind: agentKind,
  lane: "hivra",
- });
- return next;
  });
  },
  [agentKind, instanceId, skey],
@@ -1703,11 +1806,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  if (m.role === "assistant" && !m.streaming && (m.outcome === undefined || m.outcome === "disconnected")) void stopBoxChatRun(boxUrl, m.runId, token);
  }
  setLastFailed(id, null);
+ // The chat that opens next is worked out here, from the sessions as they are, so
+ // the state updater below has no side effects (React may run it more than once).
+ const remaining = sessionsRef.current.filter((s) => s.id !== id);
+ const fallback = emptySession();
+ if (id === activeIdRef.current) setActiveId((remaining[0] ?? fallback).id);
  setSessions((prev) => {
  const next = prev.filter((s) => s.id !== id);
- const final = next.length ? next : [emptySession()];
- if (id === activeIdRef.current) setActiveId(final[0].id);
- return final;
+ return next.length ? next : [fallback];
  });
  },
  [boxUrl, setLastFailed, stopSession, token],
@@ -1922,73 +2028,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  </div>
  ) : null}
- {messages.map((m, i) => {
- const isUser = m.role === "user";
- return (
- <div key={i} className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
- {/* The user bubble is already tinted, so its avatar is dropped below md. */}
- <div
- className={isUser ? "hidden md:flex" : "flex"}
- style={{
- width: 26,
- height: 26,
- flexShrink: 0,
- borderRadius: "50%",
- border: "1px solid var(--etched-border)",
- background: isUser ? "var(--bg-elevated)" : accent,
- color: isUser ? "var(--ink-black)" : "#fff",
- alignItems: "center",
- justifyContent: "center",
- fontSize: 11,
- fontWeight: 700,
- fontFamily: "var(--font-mono)",
- }}
- >
- {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
- </div>
- <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
- {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
- <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
- {m.role === "assistant" ? (
- <AssistantMarkdown text={replyMarkdown(m)} />
- ) : (
- <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
- )}
- </div>
- {m.role === "assistant" ? <ToolHistory message={m} /> : null}
- {m.role === "assistant" && m.streaming && m.pending ? (
- <div className="hivra-chat-turn-state" role="status" aria-label="Waiting for the agent update">{m.pending}</div>
- ) : null}
- {m.role === "assistant" && !m.streaming && m.outcome === "unknown" ? (
- <div className="hivra-chat-turn-state" role="status" aria-label="Finished while you were away">
- {historySessionId ? "Finished while you were away — open the history to see the full reply" : "Finished while you were away"}
- </div>
- ) : null}
- {m.role === "assistant" && !m.streaming && m.outcome === "unknown" && historySessionId ? (
- <button
- type="button"
- onClick={() => showBoxHistory(historySessionId)}
- className={`mono ${styles.msgAction}`}
- style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
- >
- <MessageSquare size={11} /> Open the history
- </button>
- ) : null}
- {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error" || m.outcome === "disconnected") ? (
- <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : m.outcome === "disconnected" ? "Reconnecting to the agent" : "Response failed"}>
- {m.outcome === "stopped" ? "Stopped" : m.outcome === "disconnected" ? "Connection lost. Your agent keeps working; this reply fills in when it reconnects." : "Could not complete response"}
- </div>
- ) : null}
- {m.role === "assistant" && m.text && !m.streaming ? (
- <span style={{ display: "inline-flex", alignItems: "center" }}>
- <MessageCopy text={m.text} />
- <MessageFeedback rating={feedback[activeId + ":" + i]} onRate={(r) => rateMessage(i, r)} />
- </span>
- ) : null}
- </div>
- </div>
- );
- })}
+ {messages.map((m, i) => (
+ <ChatMessageRow key={i} m={m} index={i} accent={accent} agentName={agentName} historySessionId={historySessionId}
+ rating={feedback[activeId + ":" + i]} onRate={rateMessage} onOpenHistory={showBoxHistory} />
+ ))}
  </div>
  </div>
 
