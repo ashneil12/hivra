@@ -72,27 +72,6 @@ export async function ensurePersonalOrg(db: SupabaseClient, userId: string): Pro
   return rpc<string>(db, "hivra_net_ensure_personal_org", { p_user_id: userId }, "ensure personal organization");
 }
 
-export async function createTeamOrg(db: SupabaseClient, input: { ownerUserId: string; name: string }): Promise<string> {
-  return rpc<string>(
-    db,
-    "hivra_net_create_org",
-    { p_kind: "team", p_owner_user_id: input.ownerUserId, p_name: input.name },
-    "create organization"
-  );
-}
-
-export async function addOrgMember(
-  db: SupabaseClient,
-  input: { orgId: string; userId: string; role: "admin" | "member" | "owner"; actorUserId: string }
-): Promise<void> {
-  await rpc<null>(
-    db,
-    "hivra_net_add_member",
-    { p_org_id: input.orgId, p_user_id: input.userId, p_role: input.role, p_actor_user_id: input.actorUserId },
-    "add member"
-  );
-}
-
 /** Returns how many of the member's agents were suspended or dropped. */
 export async function removeOrgMember(
   db: SupabaseClient,

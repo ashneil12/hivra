@@ -325,3 +325,43 @@ it("redacts persistence failures and rejects malformed caller identity before an
   await expect(cancelProviderResizeOperation({ ...input, userId: "" }, "source_changed")).rejects.toThrow();
   expect(mockRpc).not.toHaveBeenCalled();
 });
+
+it("reports read failures as unavailable, never as a missing computer, conflict, or idle operation", async () => {
+  const failed = { data: null, error: { message: "connection reset" } };
+  mockRead.mockResolvedValueOnce(failed);
+  await expect(loadProviderResizeAuthority(input.userId, input.agentId))
+    .rejects.toMatchObject({ code: "unavailable" });
+
+  const value = fixture();
+  const ok = (data: unknown) => ({ data, error: null });
+  mockRead.mockReset();
+  mockRead.mockResolvedValueOnce(ok(value.agent)).mockResolvedValueOnce(failed);
+  await expect(loadProviderResizeAuthority(input.userId, input.agentId))
+    .rejects.toMatchObject({ code: "unavailable" });
+
+  mockRead.mockReset();
+  mockRead.mockResolvedValueOnce(ok(value.agent)).mockResolvedValueOnce(ok(value.order))
+    .mockResolvedValueOnce(failed);
+  await expect(loadProviderResizeAuthority(input.userId, input.agentId))
+    .rejects.toMatchObject({ code: "unavailable" });
+
+  mockRead.mockReset();
+  mockRead.mockResolvedValueOnce(ok(value.agent)).mockResolvedValueOnce(ok(value.order))
+    .mockResolvedValueOnce(ok(null));
+  await expect(loadProviderResizeAuthority(input.userId, input.agentId))
+    .rejects.toMatchObject({ code: "conflict" });
+
+  mockRead.mockReset();
+  mockRead.mockResolvedValueOnce(ok(value.agent)).mockResolvedValueOnce(ok(value.order))
+    .mockResolvedValueOnce(ok(value.target)).mockResolvedValueOnce(failed);
+  await expect(loadProviderResizeOperation(input)).rejects.toMatchObject({ code: "unavailable" });
+
+  mockRead.mockReset();
+  mockRead.mockResolvedValueOnce(failed);
+  await expect(findActiveProviderResizeOperation(input.userId, input.agentId))
+    .rejects.toMatchObject({ code: "unavailable" });
+
+  mockRead.mockReset();
+  mockRead.mockResolvedValueOnce(ok(null));
+  await expect(findActiveProviderResizeOperation(input.userId, input.agentId)).resolves.toBeNull();
+});

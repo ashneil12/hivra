@@ -76,11 +76,23 @@ if [ -n "$MAP_FILE" ]; then
   MAP_B64="$(base64 < "$MAP_FILE" | tr -d '\n')"
 fi
 
+# These values land inside the remote shell command line. Reject anything
+# that could break quoting rather than relying on printf %q alone.
+check_remote_arg() { # $1 = flag name, $2 = value
+  if [ -z "$2" ] || [[ "$2" == *"'"* || "$2" == *[[:space:]]* || "$2" == *[[:cntrl:]]* ]]; then
+    echo "invalid $1: must be non-empty and contain no single quotes, whitespace, or control characters" >&2
+    exit 2
+  fi
+}
+check_remote_arg --wake-origin "$WAKE_ORIGIN"
+check_remote_arg --sites-dir "$SITES_DIR"
+
+REMOTE_ENV="WAKE_ORIGIN=$(printf '%q' "$WAKE_ORIGIN") SITES_DIR=$(printf '%q' "$SITES_DIR") EXECUTE=$(printf '%q' "$EXECUTE") MAP_B64=$(printf '%q' "$MAP_B64")"
+
 for HOST in "${HOSTS[@]}"; do
   echo "=== $HOST (execute=$EXECUTE) ==="
   # shellcheck disable=SC2086
-  ssh $SSH_OPTS "$HOST" \
-    "WAKE_ORIGIN='$WAKE_ORIGIN' SITES_DIR='$SITES_DIR' EXECUTE='$EXECUTE' MAP_B64='$MAP_B64' bash -s" <<'REMOTE'
+  ssh $SSH_OPTS "$HOST" "$REMOTE_ENV bash -s" <<'REMOTE'
 set -euo pipefail
 
 MARKER="hermes-auto-wake-fallback"
@@ -96,7 +108,8 @@ lookup_map() { # $1 = gateway host → instance id or empty
 }
 
 extract_forward_auth_id() { # $1 = vhost file → instance id or empty
-  grep -o 'agent-stream-auth?instance_id=[A-Za-z0-9-]*' "$1" 2>/dev/null \
+  # No match is a normal outcome; under pipefail it must not abort the rollout.
+  { grep -o 'agent-stream-auth?instance_id=[A-Za-z0-9-]*' "$1" 2>/dev/null || true; } \
     | head -1 | sed 's/.*instance_id=//'
 }
 

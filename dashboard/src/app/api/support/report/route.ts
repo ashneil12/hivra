@@ -23,6 +23,61 @@ import {
   RATE_LIMIT_PRESETS,
 } from "@/lib/authenticated-rate-limit";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { supabaseAdmin } from "@/lib/supabase";
+
+// Same text rules as POST /api/ops/events, so a report reads the same way.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INVISIBLE_FORMAT_CHARS = /[­؜᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
+const CONTROL_CHARS_EXCEPT_TAB_AND_NEWLINE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+const TITLE_MAX_CHARS = 160;
+const MESSAGE_MAX_CHARS = 1000;
+
+function clampChars(value: string, max: number): string {
+  const chars = Array.from(value);
+  return chars.length <= max ? value : `${chars.slice(0, max - 1).join("")}…`;
+}
+
+/** One plain line: no line breaks, no control or invisible characters. */
+function plainTitle(value: string): string {
+  const flattened = value
+    .replace(INVISIBLE_FORMAT_CHARS, "")
+    .replace(CONTROL_CHARS, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clampChars(flattened || "Support report", TITLE_MAX_CHARS);
+}
+
+/** Plain text that keeps its line breaks and tabs and drops other control or invisible characters. */
+function plainMessage(value: string): string {
+  const cleaned = value
+    .replace(INVISIBLE_FORMAT_CHARS, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(CONTROL_CHARS_EXCEPT_TAB_AND_NEWLINE, "")
+    .trim();
+  return clampChars(cleaned || "Support report", MESSAGE_MAX_CHARS);
+}
+
+/**
+ * Whether the signed-in user owns this Hermes instance or Hivra agent. An
+ * ops event's instance_id decides whose dashboard reads it, so a report may
+ * only be attached to the caller's own instance.
+ */
+async function callerOwnsInstance(userId: string, instanceId: string): Promise<boolean> {
+  if (!supabaseAdmin || !UUID_PATTERN.test(instanceId)) return false;
+  const owned = await Promise.all(["hermes_instances", "hivra_agents"].map(async (table) => {
+    const { data, error } = await supabaseAdmin!
+      .from(table)
+      .select("id")
+      .eq("id", instanceId)
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    // A failed lookup counts as not owned, so the id is dropped rather than trusted.
+    return !error && Boolean(data);
+  }));
+  return owned.some(Boolean);
+}
 
 const ReportSchema = z.object({
   // Where the report originated, e.g. "agent-start-failure" | "billing-checkout" | "deploy".
@@ -65,20 +120,38 @@ export async function POST(req: NextRequest) {
 
     const { surface, summary, instanceId, errorContext } = parsed.data;
 
+    // An unowned instance id would file this report under someone else's
+    // instance feed, so drop it and say so in the metadata.
+    let attachedInstanceId: string | null = null;
+    let instanceIdDropped = false;
+    if (instanceId) {
+      if (await callerOwnsInstance(clerkUserId, instanceId)) {
+        attachedInstanceId = instanceId;
+      } else {
+        instanceIdDropped = true;
+      }
+    }
+
     // 'info' severity: a user-initiated report is a signal, not an incident.
     // reportOpsEvent dedupes by fingerprint, so repeat reports of the same
     // dead-end roll up into one row with an occurrence count.
     await reportOpsEvent({
       source: "support-report",
       severity: "info",
-      title: `Support report: ${summary}`,
-      message: errorContext?.trim()
-        ? `User reported a problem from "${surface}". Error: ${errorContext.trim()}`
-        : `User reported a problem from "${surface}".`,
+      title: plainTitle(`Support report: ${summary}`),
+      message: plainMessage(
+        errorContext?.trim()
+          ? `User reported a problem from "${surface}". Error: ${errorContext.trim()}`
+          : `User reported a problem from "${surface}".`
+      ),
       route: "/api/support/report",
       userId: clerkUserId,
-      instanceId: instanceId ?? null,
-      metadata: { surface, summary },
+      instanceId: attachedInstanceId,
+      metadata: {
+        surface,
+        summary,
+        ...(instanceIdDropped ? { instanceIdDropped: true } : {}),
+      },
     });
 
     return apiSuccess({ recorded: true });

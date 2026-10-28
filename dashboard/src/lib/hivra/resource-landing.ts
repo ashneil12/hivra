@@ -18,13 +18,6 @@ import type { ComputerTemplateId } from "@/lib/hivra/computer-catalog";
  * transport renders it. It never touches a URL, a token, or a lifecycle action.
  */
 
-/** Legal computer_profile values (mirrors the DB CHECK constraint). */
-export const COMPUTER_PROFILE_IDS = [
-  "ubuntu-desktop",
-  "omarchy",
-  "windows",
-] as const satisfies readonly ComputerTemplateId[];
-
 /** Which desktop component a profile's surface renders through. */
 export type DesktopTransport = "remote" | "omarchy" | "windows";
 

@@ -51,16 +51,39 @@ export async function listToolTargets(userId: string): Promise<ToolTarget[]> {
   if (!supabaseAdmin) return [];
   const out: ToolTarget[] = [];
 
+  // The two lane queries are independent — fetch together; a lane that fails
+  // is simply omitted, so the Tools page still renders the other one.
+  const laneRows = async (q: PromiseLike<{ data: unknown }>) => {
+    try {
+      const { data } = await q;
+      return (data ?? []) as Record<string, unknown>[];
+    } catch {
+      return [] as Record<string, unknown>[];
+    }
+  };
+  const [cliRows, hermesRows] = await Promise.all([
+    laneRows(
+      supabaseAdmin
+        .from("hivra_agents")
+        .select(CLI_SELECT)
+        .eq("user_id", userId)
+        .neq("status", "deleted")
+        .order("created_at", { ascending: true }),
+    ),
+    laneRows(
+      supabaseAdmin
+        .from("hermes_instances")
+        .select(HERMES_SELECT)
+        .eq("user_id", userId)
+        .neq("status", "deleted")
+        .neq("lifecycle_state", "deleted")
+        .order("created_at", { ascending: true }),
+    ),
+  ]);
+
   // --- CLI lane -----------------------------------------------------------
   try {
-    const { data } = await supabaseAdmin
-      .from("hivra_agents")
-      .select(CLI_SELECT)
-      .eq("user_id", userId)
-      .neq("status", "deleted")
-      .order("created_at", { ascending: true });
-    for (const r of data || []) {
-      const row = r as Record<string, unknown>;
+    for (const row of cliRows) {
       const type = String(row.type || "");
       const status = String(row.status || "");
       const supported = Boolean(toolMcpKindForType(type));
@@ -95,15 +118,7 @@ export async function listToolTargets(userId: string): Promise<ToolTarget[]> {
 
   // --- Hermes lane --------------------------------------------------------
   try {
-    const { data } = await supabaseAdmin
-      .from("hermes_instances")
-      .select(HERMES_SELECT)
-      .eq("user_id", userId)
-      .neq("status", "deleted")
-      .neq("lifecycle_state", "deleted")
-      .order("created_at", { ascending: true });
-    for (const r of data || []) {
-      const row = r as Record<string, unknown>;
+    for (const row of hermesRows) {
       const status = String(row.status || "");
       const config = (row.config as Record<string, unknown>) || {};
       const installedTools = readInstalledHermesToolNames(config);

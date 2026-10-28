@@ -8,7 +8,7 @@ import { ATTACH_INSTALLER_SHA256, ATTACH_NOT_AVAILABLE, attachSupported, type At
 import { ATTACH_GRANT_POLICY_SHA256, ATTACHED_SERVICE_POLICY_V2_SHA256, accessReviewSha256, attachReviewSha256,
   removeReviewSha256 } from "./attach-review";
 import { createAttachmentLifecycleStore, type AttachmentLifecycleStore, type AttachmentView, type AttachTarget } from "./attachment-lifecycle-store";
-import { readAttachedGatewayProtocol } from "./attached-gateway-protocol";
+import { readAttachedGatewayProtocol, type AttachedGatewayProtocol } from "./attached-gateway-protocol";
 
 // What the attach routes decide (design 5.6, 5.8): owner from auth only, the
 // computer looked up with that owner, the review recomputed here, the plan's
@@ -100,6 +100,33 @@ async function gatewayRefusal(chatUrl: string | null | undefined, deps: AttachDe
   return await deps.gatewayProtocol(chatUrl) === "update_required" ? "computer_update_required" : null;
 }
 
+/** The list's gateway answers, reused for a minute per origin: a gateway's protocol changes only when its
+ * owner updates it, and the list is read often. Only the list reuses them; the claim asks again. */
+const GATEWAY_LIST_TTL_MS = 60_000;
+const gatewayListAnswers = new Map<string, { answer: Promise<AttachedGatewayProtocol>; expiresAt: number }>();
+
+function listedGatewayRefusal(chatUrl: string | null | undefined, deps: AttachDependencies): Promise<AttachReason | null> {
+  let origin: string;
+  try {
+    const parsed = new URL(chatUrl ?? "");
+    if (parsed.protocol !== "https:") throw new Error("not https");
+    origin = parsed.origin;
+  } catch {
+    return gatewayRefusal(chatUrl, deps);
+  }
+  const now = Date.now();
+  let entry = gatewayListAnswers.get(origin);
+  if (!entry || entry.expiresAt <= now) {
+    const answer = Promise.resolve().then(() => deps.gatewayProtocol(chatUrl));
+    entry = { answer, expiresAt: now + GATEWAY_LIST_TTL_MS };
+    gatewayListAnswers.set(origin, entry);
+    answer.catch(() => {
+      if (gatewayListAnswers.get(origin)?.answer === answer) gatewayListAnswers.delete(origin);
+    });
+  }
+  return entry.answer.then((answer): AttachReason | null => answer === "update_required" ? "computer_update_required" : null);
+}
+
 function subject(computer: ComputerFacts) {
   return { sourceId: computer.id, deploymentMode: computer.deploymentMode, cpu: computer.cpu, ramGb: computer.ramGb };
 }
@@ -160,7 +187,7 @@ export async function readAttachChoices(ownerId: string,
   const targets = await Promise.all(listed.map((computer) => deps.store.readTarget(ownerId, computer.id)));
   // Only a computer the gate would otherwise open is asked, all at once.
   const gateways = await Promise.all(listed.map((computer, index) =>
-    targets[index]?.eligible ? gatewayRefusal(computer.chatUrl, deps) : Promise.resolve(null)));
+    targets[index]?.eligible ? listedGatewayRefusal(computer.chatUrl, deps) : Promise.resolve(null)));
   let plan: AttachChoice | null | undefined;
   const choices = new Map<string, AttachChoice>();
   for (const [index, computer] of listed.entries()) {

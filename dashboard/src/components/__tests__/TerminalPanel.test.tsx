@@ -361,6 +361,45 @@ describe("TerminalPanel", () => {
     );
   });
 
+  it("sends SSE-fallback input POSTs one at a time, in typed order", async () => {
+    mockStartWithoutWebSocketUrl();
+    render(<TerminalPanel instanceId="inst_1" isActive sessionMode="shell" />);
+
+    await flushInitialMount();
+    await advanceConnectTimer();
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    // Hold each input POST open until the test releases it.
+    const baseFetch = global.fetch as jest.Mock;
+    const inputData: string[] = [];
+    const releases: Array<() => void> = [];
+    global.fetch = jest.fn(async (url: string, options?: RequestInit) => {
+      const body = typeof options?.body === "string" ? JSON.parse(options.body) : {};
+      if (body.action !== "input") return baseFetch(url, options);
+      inputData.push(body.data);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      return { ok: true, json: async () => ({ ok: true }) } as Response;
+    }) as jest.Mock;
+
+    const onData = mockTerminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    act(() => {
+      onData?.("l");
+      onData?.("s");
+    });
+
+    await waitFor(() => expect(inputData).toEqual(["l"]));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(inputData).toEqual(["l"]);
+
+    act(() => {
+      releases[0]();
+    });
+    await waitFor(() => expect(inputData).toEqual(["l", "s"]));
+  });
+
   it("debounces geometry updates to one resize POST after the viewport settles", async () => {
     render(<TerminalPanel instanceId="inst_1" isActive sessionMode="tui" />);
 

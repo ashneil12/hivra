@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState, type ReactNode } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import {
@@ -223,6 +223,20 @@ describe("UnifiedWorkspace", () => {
       expect.objectContaining({ uid: "x-beta" }),
       expect.any(AbortSignal),
     );
+  });
+
+  it("restores a saved selection under StrictMode's double-invoked effects", async () => {
+    persistWorkspaceSelection({ uid: "x-beta", surface: "files" });
+    const loadAgentDetail = jest.fn(async (selected: UnifiedAgent) => detail(selected));
+
+    render(
+      <StrictMode>
+        <UnifiedWorkspace loadAgentDetail={loadAgentDetail} />
+      </StrictMode>,
+    );
+
+    expect(await screen.findByText("REAL_HIVRA_FILES")).toBeInTheDocument();
+    expect(window.location.search).toBe("?agent=x-beta&surface=files");
   });
 
   it("does not let a colliding backing ID restore the wrong source family", async () => {

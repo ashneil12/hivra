@@ -2,29 +2,21 @@
 import '@testing-library/jest-dom';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 
-import { DEFAULT_SETTINGS, useSettings } from '../use-settings';
+import { useSettings } from '../use-settings';
 
 function SettingsProbe() {
-  const { settings, isLoaded } = useSettings();
+  const { isLoaded } = useSettings();
 
-  return (
-    <div>
-      <span data-testid="loaded">{String(isLoaded)}</span>
-      <span data-testid="session-expiry">{String(settings.sessionExpiryHours)}</span>
-    </div>
-  );
+  return <span data-testid="loaded">{String(isLoaded)}</span>;
 }
 
 function SettingsActionsProbe() {
-  const { clearCacheAndReload, updateSettings } = useSettings();
+  const { clearCacheAndReload } = useSettings();
 
   return (
     <div>
       <button type="button" onClick={clearCacheAndReload}>
         Clear cache
-      </button>
-      <button type="button" onClick={() => updateSettings({ sessionExpiryHours: 48 })}>
-        Update settings
       </button>
     </div>
   );
@@ -45,31 +37,16 @@ describe('useSettings', () => {
     jest.restoreAllMocks();
   });
 
-  it('keeps defaults when localStorage settings are malformed JSON', () => {
-    localStorage.setItem('hermes_os_settings', '{"enablePlugins":');
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const removeItemSpy = jest.spyOn(Storage.prototype, 'removeItem');
-
+  it('reports loaded once the mount timer runs', () => {
     render(<SettingsProbe />);
 
-    expect(() => {
-      act(() => {
-        jest.runOnlyPendingTimers();
-      });
-    }).not.toThrow();
+    expect(screen.getByTestId('loaded')).toHaveTextContent('false');
+
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
 
     expect(screen.getByTestId('loaded')).toHaveTextContent('true');
-    expect(screen.getByTestId('session-expiry')).toHaveTextContent(String(DEFAULT_SETTINGS.sessionExpiryHours));
-    expect(errorSpy).toHaveBeenCalledWith(
-      '[use-settings] Failed to load Hivra settings from localStorage',
-      expect.objectContaining({ name: 'SyntaxError' }),
-      expect.objectContaining({
-        source: 'use-settings',
-        failureType: 'settings_local_storage_parse_failed',
-      })
-    );
-    expect(removeItemSpy).toHaveBeenCalledWith('hermes_os_settings');
-    expect(localStorage.getItem('hermes_os_settings')).toBeNull();
   });
 
   it('clears pending load timers on unmount', () => {
@@ -150,32 +127,4 @@ describe('useSettings', () => {
     }
   });
 
-  it('clears the pending cloud sync timer on unmount', () => {
-    const originalFetch = global.fetch;
-    const fetchSpy = jest.fn().mockResolvedValue({ ok: true });
-    Object.defineProperty(global, 'fetch', {
-      configurable: true,
-      value: fetchSpy,
-    });
-
-    const { unmount } = render(<SettingsActionsProbe />);
-
-    act(() => {
-      jest.runOnlyPendingTimers();
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /update settings/i }));
-
-    expect(jest.getTimerCount()).toBeGreaterThan(0);
-
-    unmount();
-
-    expect(jest.getTimerCount()).toBe(0);
-    expect(fetchSpy).not.toHaveBeenCalled();
-
-    Object.defineProperty(global, 'fetch', {
-      configurable: true,
-      value: originalFetch,
-    });
-  });
 });

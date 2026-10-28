@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -33,9 +34,17 @@ const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
  * ram-cap) and the non-payment suspend path flip `status` off "running".
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // The route is deliberately unauthenticated (see above), so the only brake
+  // on a hostile caller is the per-IP window. Enforce it before any work —
+  // even a malformed id costs the caller one of their 60 requests/minute.
+  const rateLimit = enforceRateLimit(`aeon-gate:${getIP(req)}`, { limit: 60, windowMs: 60_000 });
+  if (!rateLimit.success) {
+    return NextResponse.json({ active: false, status: "rate_limited" }, { status: 429 });
+  }
+
   const { id } = await params;
   if (!INSTANCE_ID_PATTERN.test(id)) {
     return NextResponse.json({ active: false, status: "not_found" });

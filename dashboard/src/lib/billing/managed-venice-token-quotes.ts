@@ -1626,18 +1626,23 @@ async function handleSettledQuote(
 // Whether `transfer` is a redelivery of the SAME transfer `quote` settled with.
 // When the delivery and the settlement claim both name their log, that is the
 // same log: another log of the credited tx is a different transfer (a batched
-// double-send) whatever its amount, even inside the settled band. A legacy
-// settlement without a log index falls back to the tx and the amount. The
-// amount can legally differ from the quote when the original settlement was an
-// accepted over-send (quoted <= observed <= quoted*ceiling), so the same band
-// is accepted rather than a byte-exact amount — otherwise a benign retry of an
-// over-send would spuriously open a "replayed_after_settlement" item.
+// double-send) whatever its amount, even inside the settled band. Without a
+// log on both sides, the claim's recorded settled amount is the identity: a
+// second transfer in the same tx with a DIFFERENT amount is a different
+// transfer, so it is surfaced rather than silently dropped as a redelivery.
+// Only a legacy settlement that recorded neither log nor amount falls back to
+// the tx and the quoted..ceiling band — the amount can legally differ from the
+// quote when the original settlement was an accepted over-send (quoted <=
+// observed <= quoted*ceiling), so a band, not a byte-exact amount, stands in.
 function isSettledTransferRedelivery(quote: ManagedVeniceTokenQuote, transfer: SettlementTransfer) {
   if (!sameTransactionHash(quote.transactionHash, transfer.transactionHash)) return false;
   const claim = quote.settlementClaim;
-  const claimLogIndex =
-    claim && sameTransactionHash(claim.transactionHash, quote.transactionHash) ? claim.logIndex : null;
+  const claimForSettledTx =
+    claim && sameTransactionHash(claim.transactionHash, quote.transactionHash) ? claim : null;
+  const claimLogIndex = claimForSettledTx?.logIndex ?? null;
   if (claimLogIndex !== null && transfer.logIndex !== null) return claimLogIndex === transfer.logIndex;
+  const settledAmountRaw = claimForSettledTx?.tokenAmountRaw;
+  if (settledAmountRaw) return BigInt(transfer.tokenAmountRaw) === BigInt(settledAmountRaw);
   const quoted = BigInt(quote.tokenAmountRaw);
   const observed = BigInt(transfer.tokenAmountRaw);
   return observed >= quoted && observed <= overSendCeiling(quoted);

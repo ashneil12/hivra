@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState, type CSSProperties } from 'react';
-import QRCode from 'qrcode';
 
 interface LocalAddressQrProps {
   address: string;
@@ -26,7 +25,10 @@ export function LocalAddressQr({
     }
 
     let cancelled = false;
-    QRCode.toDataURL(address, { margin: 1, width: size })
+    // Loaded here, not at import: every billing transfer view imports this file,
+    // but the QR library is only needed once an address is shown.
+    import('qrcode')
+      .then(({ default: QRCode }) => QRCode.toDataURL(address, { margin: 1, width: size }))
       .then((value) => {
         if (!cancelled) setQr({ address, src: value });
       })

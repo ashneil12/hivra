@@ -223,7 +223,7 @@ describe("Buzz relay contract", () => {
 
   it("leaves only through a signed NIP-43 request bound to the same NIP-98 identity", async () => {
     const identity = generateBuzzIdentity();
-    const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
+    const fetcher = jest.fn(async (_url: string, init?: RequestInit) => {
       const event = JSON.parse(String(init?.body)) as Event;
       expect(verifyEvent(event)).toBe(true);
       expect(event.kind).toBe(28936);

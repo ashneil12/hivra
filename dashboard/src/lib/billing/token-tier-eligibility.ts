@@ -752,14 +752,6 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
     return active ? { amount: active.amount, code: active.code } : null;
   };
 
-  // Diagnostic: gated on non-test.
-  if (process.env.NODE_ENV !== "test") {
-    // eslint-disable-next-line no-console
-    console.log(
-      `[evaluateTier] user=${userId} tier=${tier} token=${tokenKey} balance=${rowBalance.toString()} qualifying=${qualifyingQuantity.toString()} quoteId=${activeQuote?.id ?? "none"} eitherToken=${eitherToken}`
-    );
-  }
-
   // ──────────────────────────────────────────────────────────────────
   // Case (e/f/g) — currently suspended branch.
   // ──────────────────────────────────────────────────────────────────

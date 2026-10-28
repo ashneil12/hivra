@@ -18,8 +18,18 @@ export async function POST(request: Request) {
   const { userId } = await auth();
 
   const { searchParams } = new URL(request.url);
-  const triggerSecret = searchParams.get("secret");
   const configuredTriggerSecret = process.env.INDEXNOW_TRIGGER_SECRET;
+
+  // The trigger secret belongs in a header: a query-param secret lands in
+  // access logs, browser history and Referer headers. Authorization: Bearer
+  // wins, then x-indexnow-secret; the ?secret= param stays for backwards
+  // compatibility with the existing cron caller.
+  const bearerSecret = request.headers
+    .get("authorization")
+    ?.match(/^Bearer\s+(.+)$/i)?.[1]
+    ?.trim();
+  const headerSecret = request.headers.get("x-indexnow-secret")?.trim();
+  const triggerSecret = bearerSecret || headerSecret || searchParams.get("secret");
 
   if (!userId) {
     if (

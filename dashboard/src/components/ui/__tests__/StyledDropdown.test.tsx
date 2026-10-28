@@ -219,4 +219,22 @@ describe("StyledDropdown", () => {
     expect(screen.queryByText("Kimi K2.6 duplicate")).not.toBeInTheDocument();
     expect(screen.getByText("GLM-5.1")).toBeInTheDocument();
   });
+
+  it("measures the trigger at most once a frame while the page scrolls", () => {
+    render(<StyledDropdown value="" onChange={() => {}} options={longOptions} placeholder="Pick a model" />);
+    const trigger = screen.getByRole("button", { name: "Pick a model" });
+    const measure = jest.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ top: 200, bottom: 240, left: 10, right: 210, width: 200, height: 40, x: 10, y: 200, toJSON: () => ({}) });
+    fireEvent.click(trigger);
+    const measuredOnOpen = measure.mock.calls.length;
+
+    for (let i = 0; i < 10; i += 1) {
+      fireEvent.scroll(window);
+    }
+    expect(measure.mock.calls.length).toBe(measuredOnOpen);
+
+    act(() => {
+      jest.advanceTimersByTime(20);
+    });
+    expect(measure.mock.calls.length).toBe(measuredOnOpen + 1);
+  });
 });

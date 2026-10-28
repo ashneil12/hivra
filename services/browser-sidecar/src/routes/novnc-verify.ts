@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
@@ -13,9 +15,10 @@ import { NOVNC_TTL_MS } from "../config.js";
 // Scope is derived from the URL path: /browser-sidecar/novnc/<identity>/...
 // or, if a single shared seed scope is used, from the ?scope= query param.
 //
-// Replay protection: every successful verify consumes the URL's nonce in
-// the in-memory NonceStore. A second verify with the same nonce within TTL
-// returns 401 reason="replay_detected".
+// Replay protection: every successful verify consumes the URL's nonce in a
+// NonceStore persisted under PROFILES_DIR (the named volume), so a restart
+// does not make in-flight signed URLs replayable. A second verify with the
+// same nonce within TTL returns 401 reason="replay_detected".
 //
 // Audit logging: every verify (success + failure) is logged with the
 // requesting client IP, scope, and reason. Operators can grep for replay
@@ -24,7 +27,10 @@ export function registerNovncVerifyRoute(
   app: FastifyInstance,
   deps: { config: Config; logger: Logger },
 ): void {
-  const store = new NonceStore(deps.logger);
+  const store = new NonceStore(
+    deps.logger,
+    join(deps.config.PROFILES_DIR, ".sidecar-state"),
+  );
   store.startPruner();
 
   app.get("/internal/verify-novnc-url", async (req, reply) => {

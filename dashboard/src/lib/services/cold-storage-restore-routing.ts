@@ -32,6 +32,7 @@ import {
 import {
   assertSupportedProxmoxGatewayHost,
   buildProxmoxGatewayCaddySite,
+  isSafeGatewayHostname,
 } from "./proxmox-gateway-caddy-site";
 import { getCloudflareDnsConfig } from "./cloudflare-dns";
 import { log } from "@/lib/logger";
@@ -115,12 +116,21 @@ async function writeHostCaddySite(input: {
   const sitesDir = resolveCaddySitesDir(hostEnv);
   const dashboardOrigin = resolveDashboardOrigin(hostEnv);
   let siteContent: string;
+  let script: string;
   try {
     siteContent = buildProxmoxGatewayCaddySite({
       gatewayHost: input.gatewayHost,
       privateIp: input.privateIp,
       instanceId: input.instanceId,
       dashboardOrigin,
+    });
+    // Strict literal-hostname gate: unlike the provisioning builder, the
+    // restore path writes a real site file — bash placeholders are never
+    // valid here.
+    script = buildRestoreHostCaddySiteApplyScript({
+      sitesDir,
+      gatewayHost: input.gatewayHost,
+      siteContent,
     });
   } catch (error) {
     return {
@@ -131,11 +141,6 @@ async function writeHostCaddySite(input: {
       ),
     };
   }
-  const script = buildRestoreHostCaddySiteApplyScript({
-    sitesDir,
-    gatewayHost: input.gatewayHost,
-    siteContent,
-  });
 
   const result = await runProxmoxHostScript(script, hostEnv, 90_000);
   if (!result.ok) {
@@ -155,13 +160,18 @@ export function buildRestoreHostCaddySiteApplyScript(input: {
   gatewayHost: string;
   siteContent: string;
 }): string {
+  if (!isSafeGatewayHostname(input.gatewayHost)) {
+    throw new Error(
+      `Refusing to write a restore Caddy site for unsafe gateway hostname: ${input.gatewayHost}`,
+    );
+  }
   const siteB64 = Buffer.from(input.siteContent, "utf8").toString("base64");
   const verifyUrl = `https://${input.gatewayHost}/`;
 
   return `#!/usr/bin/env bash
 set -euo pipefail
 SITES_DIR=${shQuote(input.sitesDir)}
-SITE_FILE="$SITES_DIR/${input.gatewayHost.replace(/'/g, "")}.caddy"
+SITE_FILE="$SITES_DIR/"${shQuote(`${input.gatewayHost}.caddy`)}
 SITE_CANDIDATE="\${SITE_FILE}.candidate.$$"
 SITE_BACKUP="\${SITE_FILE}.backup.$$"
 SITE_HAD_PRIOR=0
@@ -268,6 +278,9 @@ async function removeHostCaddySite(input: {
   gatewayHost: string;
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }): Promise<{ ok: boolean; skipped?: boolean; reason?: string }> {
+  if (!isSafeGatewayHostname(input.gatewayHost)) {
+    return { ok: false, reason: "unsupported_gateway_host" };
+  }
   const hostEnv = (() => {
     try {
       return resolveProxmoxHostEnv(hostRouting(input.hostSlug), input.env);

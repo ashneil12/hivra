@@ -861,7 +861,7 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
 }
 
 /** Raw balance per platform token among `snapshots` (VVV and others ignored). */
-export function platformTokenBalancesFromSnapshots(
+function platformTokenBalancesFromSnapshots(
   snapshots: ReadonlyArray<Pick<HermesTokenHoldingSnapshot, "tokenAddress" | "balanceRaw">>
 ): Partial<Record<PlatformTokenKey, bigint>> {
   const balances: Partial<Record<PlatformTokenKey, bigint>> = {};

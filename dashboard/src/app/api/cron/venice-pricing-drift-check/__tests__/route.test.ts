@@ -314,4 +314,21 @@ describe("GET /api/cron/venice-pricing-drift-check", () => {
     expect(body.data.liveCheckRan).toBe(false);
     warnSpy.mockRestore();
   });
+
+  it("skips live diff gracefully when Venice's 200 body is not valid JSON instead of returning 500", async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      new Response("<html>gateway error</html>", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const response = await GET(mockReq());
+    const body = (await response.json()) as { data: { liveCheckRan: boolean } };
+
+    expect(response.status).toBe(200);
+    expect(body.data.liveCheckRan).toBe(false);
+    warnSpy.mockRestore();
+  });
 });

@@ -457,10 +457,18 @@ async function subscriptionIdForQuote(db: YearlySettlementDb, quoteId: string) {
 // upgraded_at is stamped here. Best-effort: never blocks the activation.
 async function stampTokenConversion(db: YearlySettlementDb, userId: string, now: Date) {
   try {
-    await table(db, "hermes_subscriptions")
+    const { error } = await table(db, "hermes_subscriptions")
       .update({ upgraded_at: now.toISOString(), upgrade_source: "token_payment" })
       .eq("user_id", userId)
       .is("upgraded_at", null);
+    if (error) {
+      log.warn("yearly token conversion stamp failed", {
+        source: "yearly-token-settlement",
+        failureType: "yearly_token_conversion_stamp",
+        userId,
+        error: error.message,
+      });
+    }
   } catch {
     // Analytics stamp only — activation already succeeded.
   }

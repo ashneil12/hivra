@@ -23,12 +23,18 @@ import {
   refreshPrimaryHermesTokenHolding,
 } from "@/lib/billing/token-holdings";
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 
 interface ActiveQuoteUserRow {
   user_id: string;
+}
+
+interface RefreshOutcome {
+  userId: string;
+  kind: "no_wallet" | "ok" | "eval_failed";
 }
 
 const LOG_CONTEXT = {
@@ -89,56 +95,64 @@ export async function GET(req: NextRequest) {
     // Cron runs every minute. Sequential per-user RPC was the dominant
     // cost (2 Base RPC calls per user, sequentially) — at 20+ active
     // depositors a slow Base tick could blow past the 60s function
-    // ceiling. Process users in bounded-concurrency batches so the wall
-    // time scales with batch size, not user count. Per-user errors are
-    // isolated so one slow / failing wallet doesn't block the rest.
-    const BATCH_SIZE = 8;
-    for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
-      const batch = userIds.slice(i, i + BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map(async (userId) => {
-          const result = await refreshPrimaryHermesTokenHolding({ userId });
-          if (result.status !== "refreshed" || !result.snapshot) {
-            return { userId, kind: "no_wallet" as const };
-          }
-          try {
-            await evaluateAndRecordTokenTierEligibility({
-              userId,
-              balances: result.balances,
-            });
-            return { userId, kind: "ok" as const };
-          } catch (eligErr) {
-            log.warn("active deposit quote eligibility evaluation failed", {
-              ...LOG_CONTEXT,
-              userId,
-              failureType: "active_deposit_quote_eligibility_failed",
-            }, eligErr);
-            return { userId, kind: "eval_failed" as const };
-          }
-        })
-      );
-      for (const r of results) {
-        if (r.status === "rejected") {
-          failed += 1;
-          log.error("active deposit quote holding refresh failed", r.reason, {
-            ...LOG_CONTEXT,
-            failureType: "active_deposit_quote_holding_refresh_failed",
-          });
-          continue;
+    // ceiling. Users run through a small worker pool that pulls the next user
+    // from a shared cursor, so wall time scales with the pool size, not the
+    // user count, and one slow wallet holds back only its own worker instead of
+    // a whole fixed batch. Per-user errors are isolated so one slow / failing
+    // wallet doesn't block the rest.
+    const CONCURRENCY = 8;
+    const refreshOne = async (userId: string): Promise<RefreshOutcome> => {
+      const result = await refreshPrimaryHermesTokenHolding({ userId });
+      if (result.status !== "refreshed" || !result.snapshot) {
+        return { userId, kind: "no_wallet" };
+      }
+      try {
+        await evaluateAndRecordTokenTierEligibility({
+          userId,
+          balances: result.balances,
+        });
+        return { userId, kind: "ok" };
+      } catch (eligErr) {
+        log.warn("active deposit quote eligibility evaluation failed", {
+          ...LOG_CONTEXT,
+          userId,
+          failureType: "active_deposit_quote_eligibility_failed",
+        }, eligErr);
+        return { userId, kind: "eval_failed" };
+      }
+    };
+    const results = await mapWithConcurrencyLimit(
+      userIds,
+      CONCURRENCY,
+      async (userId): Promise<PromiseSettledResult<RefreshOutcome>> => {
+        try {
+          return { status: "fulfilled", value: await refreshOne(userId) };
+        } catch (reason) {
+          return { status: "rejected", reason };
         }
-        switch (r.value.kind) {
-          case "no_wallet":
-            noWallet += 1;
-            break;
-          case "ok":
-            refreshed += 1;
-            evaluated += 1;
-            break;
-          case "eval_failed":
-            refreshed += 1;
-            evaluationFailures += 1;
-            break;
-        }
+      },
+    );
+    for (const r of results) {
+      if (r.status === "rejected") {
+        failed += 1;
+        log.error("active deposit quote holding refresh failed", r.reason, {
+          ...LOG_CONTEXT,
+          failureType: "active_deposit_quote_holding_refresh_failed",
+        });
+        continue;
+      }
+      switch (r.value.kind) {
+        case "no_wallet":
+          noWallet += 1;
+          break;
+        case "ok":
+          refreshed += 1;
+          evaluated += 1;
+          break;
+        case "eval_failed":
+          refreshed += 1;
+          evaluationFailures += 1;
+          break;
       }
     }
 

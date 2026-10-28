@@ -40,7 +40,8 @@ const defaults: Dependencies = {
 };
 const NO_ABSENCE: HetznerCleanupAbsence = { server: false, ipv4: false, ipv6: false, sshKey: false };
 // The database lease lasts 120s. Stop dispatching mutations within 45s of
-// starting the claim, leaving room for the provider's bounded 15s request and
+// starting the cleanup, counted from before retirement and the claim (the more
+// conservative bound), leaving room for the provider's bounded 15s request and
 // observation/checkpoint work. Do not depend on a host enforcing maxDuration.
 const MUTATION_WINDOW_MS = 45_000;
 

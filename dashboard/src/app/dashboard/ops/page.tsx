@@ -107,7 +107,9 @@ async function fetchTopUnarchivedOpsEvents(): Promise<{
 }> {
   const { data, error } = await supabaseAdmin!
     .from('ops_events')
-    .select('*')
+    .select(
+      'id,source,severity,title,message,route,user_id,instance_id,conversation_id,profile_name,metadata,sample_stack,first_seen_at,last_seen_at,occurrence_count',
+    )
     .is('archived_at', null)
     .order('last_seen_at', { ascending: false })
     .limit(UNARCHIVED_FETCH_CAP);

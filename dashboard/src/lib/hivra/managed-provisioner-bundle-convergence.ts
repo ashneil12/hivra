@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import {
   isSafeManagedProvisionerTargetId,
   managedProvisionerBundleManifestFile,
@@ -18,6 +19,9 @@ import { resolveHivraClaudeCodeProxmoxHost, resolveHivraProxmoxHost } from "@/li
 import { loadPortableProvisionerBundle } from "@/lib/infrastructure/connection-preparation";
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
 import type { supabaseAdmin } from "@/lib/supabase";
+
+/** Hosts probed over SSH at once. */
+const PROBE_CONCURRENCY = 4;
 
 /**
  * Keeps each managed Proxmox host's provisioner bundle for THIS deployment's
@@ -229,8 +233,10 @@ export async function runManagedProvisionerBundleConvergence(params: {
     .digest("hex");
   const hostIds = Array.from(new Set([...liveComputers.keys(), ...placementHosts])).sort();
 
-  const probes = await Promise.all(
-    hostIds.map((targetId) => deps.probe(params.channel, targetId, expectedManifestDigest)),
+  // Each probe is an SSH call with its own timeout; a few at a time, so a long
+  // host list never opens every connection at once.
+  const probes = await mapWithConcurrencyLimit(hostIds, PROBE_CONCURRENCY, (targetId) =>
+    deps.probe(params.channel, targetId, expectedManifestDigest),
   );
   summary.hosts = hostIds.map((targetId, index) => ({
     targetId,

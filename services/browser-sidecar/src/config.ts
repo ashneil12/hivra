@@ -14,15 +14,22 @@ const envSchema = z.object({
   SIGNING_SECRET: z.string().min(16, "SIGNING_SECRET must be at least 16 chars"),
 
   // Bearer token required on every tool route (/goto, /click_text, etc).
-  // Optional during fleet migration: when unset, the preHandler logs a
-  // warning per request but does not 401, so existing VMs whose agent
-  // sidecar client hasn't been updated yet keep working. Provisioning
-  // seeds this for new VMs; once every VM has it, the warn path can be
-  // removed and the field becomes required.
+  // When unset the sidecar fails CLOSED (503 on gated routes) unless
+  // SIDECAR_ALLOW_UNAUTHENTICATED=1 is explicitly set — an unauthenticated
+  // tool API must never be the silent default. Provisioning seeds this on
+  // every VM where the sidecar runs.
   SIDECAR_AUTH_TOKEN: z
     .string()
     .min(16, "SIDECAR_AUTH_TOKEN must be at least 16 chars")
     .optional(),
+
+  // Explicit opt-in to the warn-only unauthenticated mode (fleet migration
+  // escape hatch and local dev). "true" is the only accepted value; anything
+  // else behaves as unset. Never set in production images.
+  SIDECAR_ALLOW_UNAUTHENTICATED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
 
   TIER_CHECK_URL: z.string().url().optional(),
   TIER_CHECK_INSTANCE_ID: z.string().optional(),

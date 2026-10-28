@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { GET } from "../route";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const maybeSingle = jest.fn();
 const neq = jest.fn(() => ({ maybeSingle }));
@@ -13,6 +14,13 @@ jest.mock("@/lib/supabase", () => ({
     return { from };
   },
 }));
+
+jest.mock("@/lib/rate-limit", () => ({
+  enforceRateLimit: jest.fn(() => ({ success: true })),
+  getIP: jest.fn(() => "203.0.113.7"),
+}));
+
+const mockedRateLimit = enforceRateLimit as jest.MockedFunction<typeof enforceRateLimit>;
 
 const INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -73,5 +81,38 @@ describe("GET /api/instances/[id]/aeon-gate", () => {
 
     await expect(call(INSTANCE_ID.toUpperCase())).resolves.toEqual({ status: 200, body: { active: true, status: "running" } });
     expect(eq).toHaveBeenCalledTimes(1);
+  });
+
+  // The route is unauthenticated by design, so the per-IP limit is the only
+  // brake on a hostile caller. Exceeding it answers 429 with the same
+  // active:false contract every other refusal uses.
+  it("returns 429 rate_limited once the caller exceeds the per-IP limit", async () => {
+    mockedRateLimit.mockReturnValueOnce({ success: false, retryAfterMs: 30_000 });
+
+    await expect(call(INSTANCE_ID)).resolves.toEqual({
+      status: 429,
+      body: { active: false, status: "rate_limited" },
+    });
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("caps each caller IP at 60 requests per minute", async () => {
+    maybeSingle.mockResolvedValue({ data: { status: "running" }, error: null });
+    await call(INSTANCE_ID);
+
+    expect(mockedRateLimit).toHaveBeenCalledWith("aeon-gate:203.0.113.7", {
+      limit: 60,
+      windowMs: 60_000,
+    });
+  });
+
+  it("counts a request toward the limit before validating the id", async () => {
+    mockedRateLimit.mockReturnValueOnce({ success: false, retryAfterMs: 30_000 });
+
+    await expect(call("not-a-uuid")).resolves.toEqual({
+      status: 429,
+      body: { active: false, status: "rate_limited" },
+    });
+    expect(from).not.toHaveBeenCalled();
   });
 });

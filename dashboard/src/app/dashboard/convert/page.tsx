@@ -26,8 +26,10 @@ export default async function ConvertPage() {
   // switch step; the contracts, the claim-safety lines and their access (and any
   // post-switch deadline) still show.
   // With the dormant policy this reads nothing.
-  const geo = await resolveTokenGeoBlockForPage(userId ?? null);
-  const access = await readConversionAccessGate(userId ?? null, now);
+  const [geo, access] = await Promise.all([
+    resolveTokenGeoBlockForPage(userId ?? null),
+    readConversionAccessGate(userId ?? null, now),
+  ]);
   const state = resolveConversionState(readConversionInputs(access, now));
   if (state.problems.length > 0) {
     // A set but invalid airdrop value is a release defect: surface it instead of

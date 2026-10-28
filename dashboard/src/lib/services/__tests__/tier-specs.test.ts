@@ -59,6 +59,16 @@ describe("tier-specs", () => {
       expect(spec.cpuLimit).toBe(0.5);
       expect(spec.ramLimitMb).toBe(1024);
     });
+
+    // REGRESSION: `in` also sees inherited Object members, so a tier named after
+    // one returned that member instead of falling back to the free tier.
+    it("treats inherited Object members as unknown tiers", () => {
+      for (const tier of ["constructor", "toString", "__proto__"]) {
+        const spec = resolveTierSpec(tier);
+        expect(spec.cpuLimit).toBe(0.5);
+        expect(spec.ramLimitMb).toBe(1024);
+      }
+    });
   });
 
   describe("tierFromPlanKey", () => {

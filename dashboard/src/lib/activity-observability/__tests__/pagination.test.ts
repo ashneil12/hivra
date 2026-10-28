@@ -30,7 +30,7 @@ function fakeTable(rows:Row[],limits:number[]){
     lt:(c:string,v:string)=>{preds.push(cmp("lt",c,v));return query;},
     lte:(c:string,v:string)=>{preds.push(cmp("lte",c,v));return query;},
     in:(c:string,v:string[])=>{preds.push(r=>v.includes(String(r[c])));return query;},
-    not:(c:string,op:string,v:string)=>{const list=v.slice(1,-1).split(",");preds.push(r=>!list.includes(String(r[c])));return query;},
+    not:(c:string,_op:string,v:string)=>{const list=v.slice(1,-1).split(",");preds.push(r=>!list.includes(String(r[c])));return query;},
     or:(filter:string)=>{
       const m=/^created_at\.lt\."([^"]+)",and\(created_at\.eq\."([^"]+)",id\.lt\."([^"]+)"\)$/.exec(filter);
       if(!m) throw new Error(`unexpected or filter ${filter}`);

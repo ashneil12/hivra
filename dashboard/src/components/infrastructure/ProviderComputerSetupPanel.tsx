@@ -83,6 +83,54 @@ function stageBody(view: ProviderComputerSetupView): string {
   }
 }
 
+/** A clock that ticks once a second. Only the countdown and elapsed lines use it,
+ * so the one-second re-render stays inside them and not the whole panel. */
+function useSecondClock(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  return now;
+}
+
+function SetupCountdown({ view, expiresAt, closesAt, running }: {
+  view: ProviderComputerSetupView;
+  expiresAt: number;
+  closesAt: number | null;
+  running: boolean;
+}) {
+  const clock = useSecondClock();
+  const remainingMs = expiresAt - clock;
+  const closingMs = closesAt === null || !Number.isFinite(closesAt) ? null : closesAt - clock;
+  return (
+    <p className={remainingMs > 0 && remainingMs < 3 * 60_000 ? `${styles.setupCountdown} ${styles.setupCountdownUrgent}` : styles.setupCountdown}>
+      <Clock3 size={14} aria-hidden="true" />
+      {view.enrollmentWindow === "since_start"
+        ? remainingMs > 0
+          ? <span>Setup must finish within 15 minutes of starting. <strong>{formatClock(remainingMs)}</strong> left for the server to connect back.</span>
+          : closingMs !== null && closingMs > 0
+            ? <span>The 15 minutes are up. Hivra keeps listening <strong>{formatClock(closingMs)}</strong> longer while Hetzner finishes booting the server.</span>
+            : <span>The setup window has closed. Checking the saved state…</span>
+        : remainingMs > 0
+          ? view.stage === "awaiting_setup" && !running
+            ? <span>Setup key valid for <strong>{formatClock(remainingMs)}</strong>. Start setup before it runs out; Hivra can&apos;t issue a new key for this server.</span>
+            : <span>The server has <strong>{formatClock(remainingMs)}</strong> left to connect back with its setup key.</span>
+          : <span>The setup key&apos;s time is up. Checking the saved state…</span>}
+    </p>
+  );
+}
+
+function SetupElapsed({ startedAt }: { startedAt: number }) {
+  const clock = useSecondClock();
+  return (
+    <p className={styles.setupElapsed}>
+      <Loader2 size={13} className={styles.spin} aria-hidden="true" />
+      <span>Setting up · <strong>{formatClock(clock - startedAt)}</strong> · usually about 5 minutes. Keep this window open.</span>
+    </p>
+  );
+}
+
 export function ProviderComputerSetupPanel({
   connection,
   orderId = null,
@@ -133,11 +181,9 @@ export function ProviderComputerSetupPanel({
   const expiresAt = current?.enrollmentExpiresAt && PRE_ENROLLMENT_STAGES.has(current.stage)
     ? Date.parse(current.enrollmentExpiresAt)
     : null;
-  const remainingMs = expiresAt === null || !Number.isFinite(expiresAt) ? null : expiresAt - clock;
   // The server's own deadline: 2 minutes after the 15 for a server started by
   // Start setup, the same moment for older servers.
   const closesAt = expiresAt !== null && current?.enrollmentClosesAt ? Date.parse(current.enrollmentClosesAt) : expiresAt;
-  const closingMs = closesAt === null || !Number.isFinite(closesAt) ? null : closesAt - clock;
 
   const load = useCallback(async () => {
     try {
@@ -160,22 +206,22 @@ export function ProviderComputerSetupPanel({
 
   useEffect(() => { onRunningChange?.(running); }, [running, onRunningChange]);
 
-  const ticking = running || remainingMs !== null;
-  useEffect(() => {
-    if (!ticking) return;
-    setClock(Date.now());
-    const interval = window.setInterval(() => setClock(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [ticking]);
-
   // The server decides expiry. Read the saved state when the 15 minutes end,
   // again when the server's own window closes, and a few times after that in
   // case this device's clock runs ahead of Hivra's, instead of claiming the
-  // window closed.
-  const expiryReadsDue = expiresAt === null || closesAt === null || running
-    ? 0
-    : [expiresAt, closesAt, ...EXPIRY_REREAD_AFTER_CLOSE_MS.map((delay) => closesAt + delay)]
-      .filter((checkpoint) => checkpoint <= clock).length;
+  // window closed. The page wakes only at these checkpoints; the countdown
+  // text ticks in its own child.
+  const expiryCheckpoints: number[] = expiresAt === null || closesAt === null || running
+    ? []
+    : [expiresAt, closesAt, ...EXPIRY_REREAD_AFTER_CLOSE_MS.map((delay) => closesAt + delay)];
+  const expiryReadsDue = expiryCheckpoints.filter((checkpoint) => checkpoint <= clock).length;
+  const nextExpiryCheckpoint = expiryCheckpoints.reduce<number | null>((next, checkpoint) => (
+    checkpoint > clock && (next === null || checkpoint < next) ? checkpoint : next), null);
+  useEffect(() => {
+    if (nextExpiryCheckpoint === null) return;
+    const timer = window.setTimeout(() => setClock(Date.now()), Math.max(0, nextExpiryCheckpoint - Date.now()) + 1);
+    return () => window.clearTimeout(timer);
+  }, [nextExpiryCheckpoint, clock]);
   useEffect(() => {
     if (expiryReadsDue === 0 || !current) return;
     const key = `${current.orderId}:${current.enrollmentExpiresAt}:${expiryReadsDue}`;
@@ -247,31 +293,13 @@ export function ProviderComputerSetupPanel({
         </div>
       </div>
 
-      {remainingMs !== null && !isProviderComputerSetupTerminal(current) ? (
-        <p className={remainingMs > 0 && remainingMs < 3 * 60_000 ? `${styles.setupCountdown} ${styles.setupCountdownUrgent}` : styles.setupCountdown}>
-          <Clock3 size={14} aria-hidden="true" />
-          {current.enrollmentWindow === "since_start"
-            ? remainingMs > 0
-              ? <span>Setup must finish within 15 minutes of starting. <strong>{formatClock(remainingMs)}</strong> left for the server to connect back.</span>
-              : closingMs !== null && closingMs > 0
-                ? <span>The 15 minutes are up. Hivra keeps listening <strong>{formatClock(closingMs)}</strong> longer while Hetzner finishes booting the server.</span>
-                : <span>The setup window has closed. Checking the saved state…</span>
-            : remainingMs > 0
-              ? current.stage === "awaiting_setup" && !running
-                ? <span>Setup key valid for <strong>{formatClock(remainingMs)}</strong>. Start setup before it runs out; Hivra can&apos;t issue a new key for this server.</span>
-                : <span>The server has <strong>{formatClock(remainingMs)}</strong> left to connect back with its setup key.</span>
-              : <span>The setup key&apos;s time is up. Checking the saved state…</span>}
-        </p>
+      {expiresAt !== null && Number.isFinite(expiresAt) && !isProviderComputerSetupTerminal(current) ? (
+        <SetupCountdown view={current} expiresAt={expiresAt} closesAt={closesAt} running={running} />
       ) : null}
 
       {running || observed.length > 0 ? (
         <div className={styles.setupProgress}>
-          {running && startedAt !== null ? (
-            <p className={styles.setupElapsed}>
-              <Loader2 size={13} className={styles.spin} aria-hidden="true" />
-              <span>Setting up · <strong>{formatClock(clock - startedAt)}</strong> · usually about 5 minutes. Keep this window open.</span>
-            </p>
-          ) : null}
+          {running && startedAt !== null ? <SetupElapsed startedAt={startedAt} /> : null}
           {observed.length > 0 ? (
             <ol className={styles.setupObservedStages} aria-label="Observed setup steps">
               {observed.map((item) => <li key={`${item.label}:${item.elapsedMs}`}><span>{formatClock(item.elapsedMs)}</span>{item.label}</li>)}
