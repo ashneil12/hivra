@@ -139,4 +139,55 @@ describe("ensureWalletHasGas", () => {
 
     expect(result.status).toBe("already_funded");
   });
+
+  it("sends one top-up when two calls for the same wallet overlap", async () => {
+    // Regression: both calls used to read the same low balance before either
+    // top-up landed, so both sent a transfer. The second call must wait for the
+    // first and then see the funded balance.
+    const WALLET = "0x2222222222222222222222222222222222222222";
+    let walletFunded = false;
+    const clients = makeClients({
+      sendTopupTx: jest.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        walletFunded = true;
+        return "0xbeef" as Hex;
+      }),
+    });
+    (clients.getBalance as jest.Mock).mockImplementation(async (address: Address) => {
+      if (address.toLowerCase() === TEST_KEY_ADDRESS.toLowerCase()) {
+        return 1_000_000_000_000_000n;
+      }
+      return walletFunded ? 100_000_000_000_000n : 0n;
+    });
+    const env = { HERMES_TREASURY_BASE_PRIVATE_KEY: TEST_KEY };
+
+    const [first, second] = await Promise.all([
+      ensureWalletHasGas({ walletAddress: WALLET, env, clients }),
+      ensureWalletHasGas({ walletAddress: WALLET, env, clients }),
+    ]);
+
+    expect(clients.sendTopupTx).toHaveBeenCalledTimes(1);
+    expect([first.status, second.status].sort()).toEqual(["already_funded", "topped_up"]);
+  });
+
+  it("keeps the wallet held when the top-up receipt is unknown instead of sending again", async () => {
+    // Regression: a failed receipt wait used to leave nothing recorded, so the
+    // next call sent a second top-up for a transfer that may already be out.
+    const WALLET = "0x3333333333333333333333333333333333333333";
+    const clients = makeClients({
+      waitForReceipt: jest.fn(async () => {
+        throw new Error("receipt timeout");
+      }),
+    });
+    const env = { HERMES_TREASURY_BASE_PRIVATE_KEY: TEST_KEY };
+
+    await expect(
+      ensureWalletHasGas({ walletAddress: WALLET, env, clients })
+    ).rejects.toThrow("receipt timeout");
+    await expect(
+      ensureWalletHasGas({ walletAddress: WALLET, env, clients })
+    ).rejects.toThrow(/not confirmed yet/);
+
+    expect(clients.sendTopupTx).toHaveBeenCalledTimes(1);
+  });
 });

@@ -22,7 +22,16 @@ import {
   platformTokenBalanceConfig,
 } from "@/lib/billing/token-holdings";
 import { getActiveHivraToken } from "@/lib/billing/token-registry";
-import { submitBankrTransfer } from "@/lib/billing/bankr-withdraw";
+import { BankrTransferHttpError, submitBankrTransfer } from "@/lib/billing/bankr-withdraw";
+
+/**
+ * Only an explicit 4xx from Bankr (other than a request timeout) proves the
+ * transfer was refused before anything was broadcast. Any other throw leaves
+ * the outcome unknown, so the withdrawal claim must stay held.
+ */
+function transferRefusedBeforeSend(err: unknown): boolean {
+  return err instanceof BankrTransferHttpError && err.status >= 400 && err.status < 500 && err.status !== 408;
+}
 import {
   withdrawDestinationHeldMessage,
   withdrawDestinationHeldUntil,
@@ -647,6 +656,17 @@ async function withdrawAssetCore(
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    if (!transferRefusedBeforeSend(err)) {
+      // The transfer may already have reached Bankr: keep the in-flight claim
+      // held so a retry cannot send the funds a second time.
+      return {
+        status: "transfer_failed",
+        errorMessage: `Withdrawal pending verification: ${errorMessage}. Withdrawals stay locked until the outcome is confirmed; try again later.`,
+        amountRaw,
+        amountDisplay,
+        recipientAddress: recipient,
+      };
+    }
     await finalizeWithdrawalClaim({
       claimId: claim.claimId,
       db,
@@ -812,6 +832,17 @@ async function withdrawBaseTokenCore(
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    if (!transferRefusedBeforeSend(err)) {
+      // The transfer may already have reached Bankr: keep the in-flight claim
+      // held so a retry cannot send the funds a second time.
+      return {
+        status: "transfer_failed",
+        errorMessage: `Withdrawal pending verification: ${errorMessage}. Withdrawals stay locked until the outcome is confirmed; try again later.`,
+        amountRaw,
+        amountDisplay,
+        recipientAddress: recipient,
+      };
+    }
     await finalizeWithdrawalClaim({
       claimId: claim.claimId,
       db,

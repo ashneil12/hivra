@@ -6,17 +6,12 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { mediaPricingFieldError, planMediaRequest } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-speech | Isaiah 50:4 | Verse: The Lord God hath given me the tongue of the learned, that I should know how to speak a word in season to him that is weary.
 const VENICE_AUDIO_SPEECH_URL = "https://api.venice.ai/api/v1/audio/speech";
 
 const ENDPOINT_LABEL = "/api/v1/audio/speech";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

@@ -7,6 +7,7 @@ import {
   PlatformTokenPriceGateError,
   _resetPlatformPriceReferenceCacheForTests,
   fetchPlatformTokenPriceCrossCheck,
+  fetchPlatformTokenPriceCrossCheckForQuote,
   fetchPlatformTokenPriceUsd,
   priceGateRefusalFromError,
   toDecimalString,
@@ -293,6 +294,26 @@ describe("platform token price gates", () => {
     const cross = await fetchPlatformTokenPriceCrossCheck(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
     expect(cross).toMatchObject({ source: "geckoterminal_ohlcv_median", priceUsd: "0.000000002" });
     expect(toDecimalString(1.09036588922258e-6)).toBe("0.00000109036588922");
+  });
+
+  it("derives the cross-check from the gated quote's pool read without a second spot request", async () => {
+    const fetchImpl = fakeFetch({
+      pairs: [pair(HERMESOS_POOL_ID, "0.0000011", 80_000)],
+      closes: [0.00000109, 0.0000011, 0.00000111, 0.00000112],
+    });
+    const dexscreenerCalls = () => fetchImpl.mock.calls.filter(([url]) => url.includes("dexscreener")).length;
+
+    const quote = await fetchPlatformTokenPriceUsd(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    const spotReadsForGate = dexscreenerCalls();
+    const derived = await fetchPlatformTokenPriceCrossCheckForQuote(HERMESOS_TOKEN, quote, {
+      fetchImpl: fetchImpl as never,
+      env: env(),
+    });
+
+    expect(spotReadsForGate).toBe(1);
+    expect(dexscreenerCalls()).toBe(spotReadsForGate);
+    const direct = await fetchPlatformTokenPriceCrossCheck(HERMESOS_TOKEN, { fetchImpl: fetchImpl as never, env: env() });
+    expect(derived).toEqual(direct);
   });
 });
 

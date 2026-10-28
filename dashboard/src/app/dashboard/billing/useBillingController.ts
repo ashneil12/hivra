@@ -999,7 +999,11 @@ export function useBillingController() {
       const result = await res.json();
 
       if (result.success) {
-        setSuccessMsg(result.data?.message || "Plan changed successfully.");
+        const planMessage = result.data?.message || "Plan changed successfully.";
+        // The charge went through but the local record is still catching up.
+        setSuccessMsg(result.data?.syncPending && result.data?.warning
+          ? `${planMessage} ${result.data.warning}`
+          : planMessage);
         // Keep the dialog busy until the new plan has loaded, so the page
         // never shows the old plan with live buttons in between.
         await fetchUsage();

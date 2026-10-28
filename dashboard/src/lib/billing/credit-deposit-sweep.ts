@@ -831,7 +831,13 @@ export async function sweepPendingCreditDepositReceipts(
   for (const receipt of await loadReceipts(ctx, ["submitted"], limit)) {
     results.push(await guarded(receipt, "verify", () => settleSubmittedSweep(receipt, ctx)));
   }
-  for (const receipt of await loadReceipts(ctx, ["pending", "failed"], limit)) {
+  // Fresh pending deposits go first. A receipt that failed on an earlier run
+  // (no credentials, gas, transfer refused) only takes the slots left over, so
+  // permanent failures cannot fill every batch and starve newer deposits.
+  const pending = await loadReceipts(ctx, ["pending"], limit);
+  const failed =
+    pending.length < limit ? await loadReceipts(ctx, ["failed"], limit - pending.length) : [];
+  for (const receipt of [...pending, ...failed]) {
     results.push(await guarded(receipt, "sweep", () => sweepReceipt(receipt, ctx)));
   }
 

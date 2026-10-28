@@ -46,6 +46,12 @@ function createMemoryDb() {
 
   function creditAccountsTable() {
     return {
+      select: () => ({
+        eq: async (_column: string, userId: string) => {
+          const existing = accounts.get(userId);
+          return { data: existing ? [existing] : [], error: null };
+        },
+      }),
       upsert: (row: { user_id: string }) => ({
         select: () => ({
           single: async () => {
@@ -787,14 +793,12 @@ describe("credits billing domain", () => {
       from: (name: string) => {
         if (name === "credit_accounts") {
           return {
-            upsert: () => ({
-              select: () => ({
-                single: async () => ({
-                  data: accounts.get("user_cached"),
-                  error: null,
-                }),
-              }),
+            select: () => ({
+              eq: async () => ({ data: [accounts.get("user_cached")], error: null }),
             }),
+            upsert: () => {
+              throw new Error("BUG: the cached read should not upsert credit_accounts");
+            },
           };
         }
         if (name === "credit_ledger_entries") {
@@ -834,14 +838,12 @@ describe("credits billing domain", () => {
       from: (name: string) => {
         if (name === "credit_accounts") {
           return {
-            upsert: () => ({
-              select: () => ({
-                single: async () => ({
-                  data: accounts.get("user_legacy"),
-                  error: null,
-                }),
-              }),
+            select: () => ({
+              eq: async () => ({ data: [accounts.get("user_legacy")], error: null }),
             }),
+            upsert: () => {
+              throw new Error("BUG: the cached read should not upsert credit_accounts");
+            },
             update: (patch: { balance_cached_credits?: number }) => ({
               eq: async () => {
                 if (typeof patch.balance_cached_credits === "number") {
@@ -873,6 +875,48 @@ describe("credits billing domain", () => {
     expect(balance).toBe(250);
     // Critical: the cache was actually written so the next read is cheap.
     expect(updateWritten).toBe(250);
+  });
+
+  it("getCachedCreditBalance backfills through the SQL recompute RPC, not a ledger sum in app code", async () => {
+    // Null cache on an existing account: the backfill must ask the database to
+    // sum the ledger. The ledger table throws on access, so an app-side sum
+    // would fail this test.
+    const account = {
+      id: "acct_rpc",
+      user_id: "user_rpc",
+      balance_cached_credits: null,
+      stripe_customer_id: null,
+    };
+    const rpc = jest.fn(async () => ({ data: 175, error: null }));
+    const db = {
+      from: (name: string) => {
+        if (name === "credit_accounts") {
+          return {
+            select: () => ({
+              eq: async () => ({ data: [account], error: null }),
+            }),
+            upsert: () => {
+              throw new Error("BUG: the cached read should not upsert credit_accounts");
+            },
+          };
+        }
+        if (name === "credit_ledger_entries") {
+          throw new Error("BUG: backfill should not sum credit_ledger_entries in app code");
+        }
+        throw new Error(`Unexpected table: ${name}`);
+      },
+      rpc,
+    };
+
+    const balance = await getCachedCreditBalance(
+      "user_rpc",
+      db as unknown as Parameters<typeof getCachedCreditBalance>[1]
+    );
+
+    expect(balance).toBe(175);
+    expect(rpc).toHaveBeenCalledWith("refresh_credit_account_cached_balance", {
+      p_account_id: "acct_rpc",
+    });
   });
 
   it("admits the Wave 6.1 marketplace/transfer ledger reasons (and keeps existing ones)", () => {

@@ -27,6 +27,7 @@ import {
   isManagedVeniceProxyBaseUrl,
   isManagedVeniceProxyKey,
 } from "@/lib/venice/byok-classification";
+import { requireDb } from "@/lib/billing/db-utils";
 
 const LOG_SOURCE = "managed-venice-webui-enable";
 
@@ -113,13 +114,6 @@ interface ManagedVeniceEnableDeps {
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
-}
-
-function requireDb(db: SupabaseLike | null | undefined): SupabaseLike {
-  if (!db) {
-    throw new Error("Database not configured");
-  }
-  return db;
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -345,7 +339,7 @@ export async function enableManagedVeniceForWebUIInstance(
   },
   deps: ManagedVeniceEnableDeps = {}
 ) {
-  const db = requireDb(deps.db ?? supabaseAdmin);
+  const db = requireDb<SupabaseLike>(deps.db ?? supabaseAdmin);
   const now = deps.now ?? (() => new Date());
   const walletType = params.walletType === "card" ? "card" : "hermesos";
   const instance = await loadInstanceForEnable(db, params);
@@ -670,7 +664,7 @@ export async function disableManagedVeniceForWebUIInstance(
     );
   }
 
-  const db = requireDb(deps.db ?? supabaseAdmin);
+  const db = requireDb<SupabaseLike>(deps.db ?? supabaseAdmin);
   const now = deps.now ?? (() => new Date());
   const instance = await loadInstanceForEnable(db, params);
   const config = readRecord(instance.config);

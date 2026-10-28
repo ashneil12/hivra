@@ -941,6 +941,38 @@ describe("POST /api/billing/subscribe", () => {
     expect(getSpyOutput(consoleErrorSpy)).not.toContain("db-secret-hint");
   });
 
+  it("fails closed with a retryable 503 when the existing-subscription read errors, before any Stripe or DB write", async () => {
+    // A failed read used to look like "no subscription": a paying user would get
+    // a second Stripe customer and their live row overwritten with a pending one.
+    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+      data: null,
+      error: { message: "read-secret-leak", code: "08006", details: "x", hint: "y" },
+    });
+
+    const res = await POST(createRequest({ plan: "fleet" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(503);
+    expect(body.error).toMatch(/try again/i);
+    expect(mockStripeCustomersCreate).not.toHaveBeenCalled();
+    expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
+    expect(validateOrRecreateStripeCustomer).not.toHaveBeenCalled();
+    expect(mockSupabaseQuery.upsert).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toContain("read-secret-leak");
+  });
+
+  it("does not treat a failed read as a free activation either", async () => {
+    mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+      data: null,
+      error: { message: "read-secret-leak", code: "08006" },
+    });
+
+    const res = await POST(createRequest({ plan: "free" }));
+
+    expect(res.status).toBe(503);
+    expect(mockSupabaseQuery.upsert).not.toHaveBeenCalled();
+  });
+
   it("does not leak raw Stripe checkout errors from the final catch path", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 

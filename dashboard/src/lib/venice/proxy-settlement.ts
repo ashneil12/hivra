@@ -44,6 +44,7 @@ import {
   resolveVeniceMultimodalMarkup,
   type VeniceMultimodalSkipReason,
 } from "./multimodal-pricing";
+import { requireDb } from "@/lib/billing/db-utils";
 
 type QueryError = { code?: string; message?: string } | null;
 
@@ -74,11 +75,6 @@ const DEFAULT_SUBSIDY_STATE: ManagedVeniceSubsidyState = {
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
-}
-
-function requireDb(db: SupabaseLike | null | undefined): SupabaseLike {
-  if (!db) throw new Error("Database not configured");
-  return db;
 }
 
 function readNumericField(record: Record<string, unknown>, key: string): number | null {

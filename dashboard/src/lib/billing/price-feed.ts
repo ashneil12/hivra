@@ -691,6 +691,38 @@ export async function fetchPlatformTokenPriceCrossCheck(
       { token, observed: withHttpStatus({ stage: "spot", poolId: token.poolId }, error) }
     );
   }
+  return crossCheckFromPair(token, pair, options);
+}
+
+/**
+ * The cross-check for a quote that fetchPlatformTokenPriceUsd already gated:
+ * the pool pair that quote was gated on is reused, so the spot pool is not
+ * read a second time. The median reference is the same cached read. A quote
+ * without that pair (an injected price) falls back to a fresh spot read.
+ */
+export async function fetchPlatformTokenPriceCrossCheckForQuote(
+  token: PlatformToken,
+  quote: HermesPriceQuote,
+  options: FetchTokenPriceOptions = {}
+): Promise<HermesPriceCrossCheck> {
+  const pair = gatedPairOf(token, quote);
+  if (!pair) return fetchPlatformTokenPriceCrossCheck(token, options);
+  return crossCheckFromPair(token, pair, options);
+}
+
+function gatedPairOf(token: PlatformToken, quote: HermesPriceQuote): DexScreenerPair | null {
+  const pair = (quote.raw as { pair?: DexScreenerPair } | null | undefined)?.pair;
+  if (!pair || typeof pair !== "object") return null;
+  // The token is the pool's base; anything else is not the pair this quote was gated on.
+  if (pair.baseToken?.address?.toLowerCase() !== token.address.toLowerCase()) return null;
+  return pair;
+}
+
+async function crossCheckFromPair(
+  token: PlatformToken,
+  pair: DexScreenerPair,
+  options: FetchTokenPriceOptions
+): Promise<HermesPriceCrossCheck> {
   assertEthQuoted(token, pair, pair.pairAddress ?? token.poolId);
   const usdPerNative = Number(pair.priceUsd) / Number(pair.priceNative);
   if (!(usdPerNative > 0) || !Number.isFinite(usdPerNative)) {

@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
-import {
-  getCreditAccountStripeCustomerId,
-  setCreditAccountStripeCustomerId,
-} from "@/lib/billing/credits";
+import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import { getOrCreateCreditStripeCustomerId } from "@/lib/billing/credit-stripe-customer";
 import { getStripe } from "@/lib/stripe";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
+
+// Five starts a minute per person, as for the other card and crypto top-ups.
+const CARD_TOP_UP_RATE_LIMIT = { limit: 5, windowMs: 60_000 } as const;
 
 const MIN_MANAGED_VENICE_TOP_UP_MICRO_USD = 10_000_000;
 const MAX_MANAGED_VENICE_TOP_UP_MICRO_USD = 5_000_000_000;
@@ -76,6 +77,13 @@ export async function POST(req: NextRequest) {
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
 
+    const limited = enforceAuthenticatedRouteRateLimit(req, {
+      routeKey: "managed-venice-card-top-up",
+      userId,
+      ...CARD_TOP_UP_RATE_LIMIT,
+    });
+    if (limited) return limited;
+
     let body: unknown;
     try {
       body = await req.json();
@@ -96,25 +104,7 @@ export async function POST(req: NextRequest) {
     const amountMicroUsd = parsed.data.amountMicroUsd;
     const amountCents = microUsdToCents(amountMicroUsd);
     const stripe = getStripe();
-    let stripeCustomerId = await getCreditAccountStripeCustomerId(userId);
-
-    if (!stripeCustomerId) {
-      const clerkUser = await currentUser();
-      const email = clerkUser?.emailAddresses?.[0]?.emailAddress;
-      const name = [clerkUser?.firstName, clerkUser?.lastName]
-        .filter(Boolean)
-        .join(" ")
-        .trim();
-
-      const customer = await stripe.customers.create({
-        email: email || undefined,
-        name: name || undefined,
-        metadata: { clerk_user_id: userId },
-      });
-
-      stripeCustomerId = customer.id;
-      await setCreditAccountStripeCustomerId(userId, stripeCustomerId);
-    }
+    const stripeCustomerId = await getOrCreateCreditStripeCustomerId(userId, stripe);
 
     const appUrl = getDashboardOrigin();
     const metadata = {
