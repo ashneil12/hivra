@@ -1,7 +1,6 @@
 import {
   buildActivationCohorts,
   getActivationCohorts,
-  groupInstancesByUser,
   isRetained,
   isUsedKnownForWeek,
   pickSubscriptionByUser,
@@ -11,7 +10,7 @@ import {
   type ActivationInstanceRow,
   type ActivationSubscriptionRow,
 } from "@/lib/activation-cohorts";
-import { lastNWeekStarts } from "@/lib/conversion-funnel";
+import { groupInstancesByUser, lastNWeekStarts } from "@/lib/conversion-funnel";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
@@ -314,6 +313,29 @@ describe("getActivationCohorts", () => {
     expect(current.paid).toBe(1); // u1 operator
     expect(current.retained).toBe(1); // u1 period end advanced
     expect(current.digestEmailed).toBe(1); // u1
+  });
+
+  it("pages digest sends by the unique row id so offset pages cannot skip or repeat rows", async () => {
+    const digestQueries: RecordedQuery[] = [];
+    mockSupabase((query) => {
+      if (query.table === "hermes_instances") {
+        return { data: [inst({ user_id: "u1", created_at: "2026-06-08T10:00:00Z" })] };
+      }
+      if (query.table === "hermes_subscriptions") return { data: [] };
+      if (query.table === "lifecycle_email_sends") {
+        digestQueries.push(query);
+        return { data: [] };
+      }
+      throw new Error(`unexpected table ${query.table}`);
+    });
+
+    await getActivationCohorts(NOW);
+
+    expect(digestQueries.length).toBeGreaterThan(0);
+    for (const query of digestQueries) {
+      expect(has(query, "order", (args) => args[0] === "id")).toBe(true);
+      expect(has(query, "order", (args) => args[0] === "user_id")).toBe(false);
+    }
   });
 
   it("returns zeroed stats when a query fails", async () => {

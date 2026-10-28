@@ -6,7 +6,7 @@ import { requireOpsAdmin } from "@/lib/hermes-releases/ops-auth";
 import { nextStage, releaseStage, type ReleaseStage } from "@/lib/hermes-releases/policy";
 import {
   haltRelease,
-  loadReleases,
+  loadRelease,
   promoteRelease,
   ReleaseStoreError,
   unhaltRelease,
@@ -63,8 +63,8 @@ export async function POST(
       return apiSuccess({ release: { ...release, stage: releaseStage(release) } });
     }
 
-    const current = (await loadReleases(supabaseAdmin)).find((release) => release.id === id);
-    if (!current) return apiError("Release not found", 404);
+    // Throws a 404 ReleaseStoreError when the id is unknown; the catch below maps it.
+    const current = await loadRelease(supabaseAdmin, id);
     const to: ReleaseStage | null = body.to ?? nextStage(releaseStage(current));
     if (!to) return apiError("The release is already fully rolled out", 409);
     if (body.pilotInstanceId) {

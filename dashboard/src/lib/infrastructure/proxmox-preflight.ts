@@ -1,5 +1,7 @@
 import "server-only";
 
+import { shellQuote } from "@/lib/hivra/proxmox-target";
+
 /**
  * Portable Proxmox preflight protocol.
  *
@@ -13,7 +15,6 @@ import "server-only";
 export const PROXMOX_PREFLIGHT_PROTOCOL = "HIVRA_PROXMOX_PREFLIGHT_V1";
 export const MAX_PROXMOX_PREFLIGHT_OUTPUT_BYTES = 1280 * 1024;
 const SUPPORTED_PROXMOX_MAJOR_VERSIONS = [8, 9] as const;
-const PROXMOX_HOST_MEMORY_RESERVE_BYTES = 2 * 1024 ** 3;
 
 const MAX_VMID_SPAN = 10_000;
 const MAX_REQUIRED_ASSETS = 16;
@@ -430,10 +431,6 @@ function validatePortableProxmoxPreflightInput(
       requiredAssets,
     },
   };
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function assetTest(asset: ProxmoxPreparedAssetRequirement, bridge: string | null): string {

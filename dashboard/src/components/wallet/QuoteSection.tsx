@@ -44,7 +44,7 @@ export const HERMESOS_TOKEN_ADDRESS = HERMESOS_TOKEN.publishedAddress;
  * countdown copy refreshes without making render impure (React's
  * no-impure-render lint rejects raw Date.now() in JSX).
  */
-export function useNowMs(intervalMs: number): number {
+function useNowMs(intervalMs: number): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const handle = window.setInterval(() => setNowMs(Date.now()), intervalMs);

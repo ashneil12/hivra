@@ -60,4 +60,23 @@ describe("recordInstanceUserActivity", () => {
       })
     );
   });
+
+  it("writes repeat activity on the same instance at most once a minute", async () => {
+    const eq = jest.fn().mockResolvedValue({ error: null });
+    const update = jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ eq }) });
+    (supabaseAdmin!.from as jest.Mock).mockReturnValue({ update });
+    const start = Date.parse("2026-05-14T21:00:00.000Z");
+    const at = (ms: number) => ({ instanceId: "inst_coalesce", userId: "user_123", source: "terminal_input" as const, now: new Date(ms) });
+
+    await recordInstanceUserActivity(at(start));
+    await expect(recordInstanceUserActivity(at(start + 30_000))).resolves.toEqual({ ok: true, recordedAt: "2026-05-14T21:00:00.000Z" });
+    expect(update).toHaveBeenCalledTimes(1);
+
+    await recordInstanceUserActivity(at(start + 60_000));
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith({
+      last_activity_at: "2026-05-14T21:01:00.000Z",
+      updated_at: "2026-05-14T21:01:00.000Z",
+    });
+  });
 });

@@ -340,6 +340,23 @@ describe("archiveInstance", () => {
     expect(runHostScript).toHaveBeenCalledTimes(1);
   });
 
+  it("flags revertFailed when the paused revert write errors, instead of returning the plain failure", async () => {
+    // Regression: the revert result was never read, so a failed revert left the
+    // row locked in `archiving` with no signal to the caller.
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: baseRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: { message: "connection reset" } } }, // revert fails
+    ]);
+    const { deps, runHostScript } = makeDeps([
+      { ok: false, stdout: "", stderr: "oh no", error: "script blew up" },
+    ]);
+
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps);
+    expect(result).toMatchObject({ ok: false, reason: "host_script_failed", retryable: true, revertFailed: true });
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+  });
+
   it("reverts and does NOT destroy on manifest sha mismatch", async () => {
     let revertedPayload: Record<string, unknown> | undefined;
     const supabase = makeSupabase([
@@ -748,6 +765,23 @@ describe("restoreInstance", () => {
     const destroyIdx = teardownScript.indexOf("qm destroy");
     expect(guardIdx).toBeGreaterThan(-1);
     expect(destroyIdx).toBeGreaterThan(guardIdx);
+  });
+
+  it("flags revertFailed when the cold revert write errors after a failed restore", async () => {
+    // Regression: same unread-revert shape as archive. A failed revert must be
+    // reported, not swallowed while the row stays locked in `restoring`.
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: { message: "connection reset" } } },
+    ]);
+    const { deps } = makeDeps([
+      { ok: false, stdout: "[restore] SHA MISMATCH", stderr: "", error: "exit 2" },
+      { ok: true, stdout: "TEARDOWN_SKIP_ABSENT 599", stderr: "" },
+    ]);
+
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
+    expect(result).toMatchObject({ ok: false, reason: "host_script_failed", revertFailed: true });
   });
 
   it("parks the row health_pending (not reverted) when the script exits 5 with status=health_pending", async () => {

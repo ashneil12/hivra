@@ -14,6 +14,7 @@
 
 import { Resend } from "resend";
 
+import { escapeHtml } from "@/lib/email/escape-html";
 import { log } from "@/lib/logger";
 import { SITE_URL } from "@/lib/seo-urls";
 import { PLANS, formatPrice } from "@/lib/subscription/plans";
@@ -146,7 +147,7 @@ export function buildWarmPoolEmail(params: WarmPoolEmailContentParams): WarmPool
     eyebrow: "Your agent",
     title: "What your agent could be doing.",
     body: [
-      htmlParagraph(greeting(params.firstName)),
+      htmlParagraph(escapeHtml(greeting(params.firstName))),
       htmlParagraph("You've had an agent running. Here is what changes on a paid plan:"),
       htmlList(capabilities),
       htmlParagraph(`<strong>${ENTRY_PRICE_LINE}.</strong>`),

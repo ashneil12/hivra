@@ -11,7 +11,7 @@ import { TokenAddressChecker } from "./TokenAddressChecker";
 // change until the launch block is filled in (it reveals nothing new).
 export const DORMANT_MESSAGE = "Conversion opens after $HIVRA launches; terms are published first.";
 export const PROPOSED_LABEL = "Proposed. Terms are published before conversion opens.";
-export const DORMANT_TITLE = "Convert $HermesOS to $HIVRA";
+const DORMANT_TITLE = "Convert $HermesOS to $HIVRA";
 
 // Launched copy: factual only (no price, returns or invitation to buy). It is
 // token-facing copy and needs UK financial-promotion / legal review before any Promote.
@@ -21,10 +21,10 @@ export const DORMANT_TITLE = "Convert $HermesOS to $HIVRA";
 export const LAUNCHED_TITLE = "$HIVRA for $HermesOS holders";
 export const CLAIM_LABEL = "Claims are not automatic.";
 export const CLAIM_LEAD = "Eligible holders can claim $HIVRA through Sablier based on the snapshot already taken.";
-export const GEO_BLOCKED_LABEL = "Token details are limited for you.";
+const GEO_BLOCKED_LABEL = "Token details are limited for you.";
 export const SNAPSHOT_PENDING_MESSAGE =
   "The snapshot is not published yet. This page shows the snapshot block and links to the full list of wallets once it is.";
-export const CLAIM_SAFETY_TITLE = "Claim safely";
+const CLAIM_SAFETY_TITLE = "Claim safely";
 export const CLAIM_SAFETY_WALLET =
   "A legitimate Sablier claim involves connecting a wallet and authorising the necessary claim transaction.";
 export const CLAIM_SAFETY_DM =

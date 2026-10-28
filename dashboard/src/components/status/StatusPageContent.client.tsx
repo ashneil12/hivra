@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { pollWhenVisible } from "@/lib/poll-when-visible";
 
 import { ActionLinks, type ActionLink } from "@/components/public-editorial/ActionLinks";
 import styles from "./status-page.module.css";
@@ -150,7 +151,7 @@ export default function StatusPageContent() {
       setIsChecking(false);
     };
     void tick();
-    const id = setInterval(() => void tick(), REFRESH_MS);
+    const id = setInterval(pollWhenVisible(() => void tick()), REFRESH_MS);
     return () => {
       alive = false;
       clearInterval(id);

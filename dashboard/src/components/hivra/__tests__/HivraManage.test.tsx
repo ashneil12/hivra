@@ -744,6 +744,22 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
   });
 
+  it("drops an MCP list that answers after the box URL changed", async () => {
+    const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
+    let answerOld: (value: unknown) => void = () => undefined;
+    mockListBoxMcp
+      .mockImplementationOnce(() => new Promise((resolve) => { answerOld = resolve; }))
+      .mockResolvedValueOnce({ servers: [{ name: "new-box-server", command: "npx", args: [] }], error: null });
+    const props = { def: getAgent("codex"), plan, browserOn: false, onChanged: jest.fn(), onDestroyed: jest.fn() };
+    const { rerender } = render(<HivraManage {...props} agent={chatAgent} />);
+    rerender(<HivraManage {...props} agent={{ ...chatAgent, chat_url: "https://new-box.example.com" }} />);
+    openSection("Model & tools");
+    expect(await screen.findByRole("button", { name: "Remove new-box-server" })).toBeInTheDocument();
+    await act(async () => answerOld({ servers: [{ name: "old-box-server", command: "npx", args: [] }], error: null }));
+    expect(screen.queryByRole("button", { name: "Remove old-box-server" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove new-box-server" })).toBeInTheDocument();
+  });
+
   describe("touch safety", () => {
     const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
 

@@ -26,13 +26,10 @@ export const VENICE_CHAT_PRICING_CATALOG_UPDATED_AT = "2026-06-09";
 // window so an operator re-checks before users overpay (or we eat the
 // margin).
 //
-// TODO(2026-05-17): the static catalog is a reliability hazard — Venice's
-// /v1/models endpoint exposes live pricing per model (input.usd, output.usd,
-// cache_input.usd) and we're already proxying that endpoint. Move the
-// cost-estimator to read from a 5-minute in-memory cache of the live
-// endpoint with this static catalog as fallback. Until then, every
-// chat/completions request runs checkVeniceChatPricingCatalogStaleness()
-// and logs a warning when the window expires (see chat/completions/route.ts).
+// Live prices come from Venice's /v1/models endpoint via live-pricing.ts (5-minute
+// in-memory cache, this static catalog as the fallback). Every chat request runs
+// checkVeniceChatPricingCatalogStaleness() in proxy-chat-core.ts, which logs a
+// warning once per catalog snapshot when the window expires.
 export const VENICE_CHAT_PRICING_CATALOG_MAX_AGE_DAYS = 30;
 
 export interface VeniceChatPricingCatalogStaleness {

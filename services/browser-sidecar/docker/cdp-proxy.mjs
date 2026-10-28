@@ -214,6 +214,10 @@ server.on("upgrade", (creq, csock, head) => {
   });
   usock.on("error", () => csock.destroy());
   csock.on("error", () => usock.destroy());
+  // `close` fires on RST/abort paths where no `end` is emitted — without this
+  // the peer socket to Chrome leaks for the proxy's lifetime.
+  csock.on("close", () => usock.destroy());
+  usock.on("close", () => csock.destroy());
 });
 
 server.listen(LISTEN_PORT, "0.0.0.0", () =>

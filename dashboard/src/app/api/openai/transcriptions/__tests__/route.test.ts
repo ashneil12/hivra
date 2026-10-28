@@ -238,6 +238,41 @@ describe("POST /api/openai/transcriptions", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("aborts a hung OpenAI upload with a 504 instead of holding the request open", async () => {
+    mockedAuth.mockResolvedValue({ userId: "user_123" } as Awaited<ReturnType<typeof auth>>);
+    process.env.VOICE_TRANSCRIPTION_OPENAI_API_KEY = "vercel-fallback-openai-key";
+
+    const query = {
+      select: jest.fn(),
+      eq: jest.fn(),
+      single: jest.fn(),
+    };
+    query.select.mockReturnValue(query);
+    query.eq.mockReturnValue(query);
+    query.single.mockResolvedValue({
+      data: { provider: "openai", api_key_encrypted: null },
+      error: null,
+    });
+    mockedFrom.mockReturnValue(query);
+    fetchMock.mockRejectedValue(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError")
+    );
+
+    const formData = new FormData();
+    formData.set("instanceId", "inst_123");
+    formData.set("file", new File(["audio"], "recording.webm", { type: "audio/webm" }));
+
+    const response = await POST(buildRequest(formData));
+    const json = await response.json();
+
+    expect(response.status).toBe(504);
+    expect(json.error).toBe("OpenAI transcription timed out. Please try again.");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/transcriptions",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
   it("does not leak upstream OpenAI failures to the client or logs", async () => {
     mockedAuth.mockResolvedValue({ userId: "user_123" } as Awaited<ReturnType<typeof auth>>);
 

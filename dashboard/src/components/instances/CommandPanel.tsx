@@ -397,6 +397,13 @@ export function CommandPanel({
   // Workflows list is live, scroll to it; otherwise inject a starter prompt via
   // the same iframe sender, kicking off the first session.
   const workflowsSectionRef = useRef<HTMLDivElement | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    [],
+  );
   // Optimistically mark the first-task step done the moment a task/workflow is
   // dispatched — so Getting-started retires live (the digest won't refetch to show
   // the new session) regardless of whether the agent finishes the run, and a
@@ -544,7 +551,9 @@ export function CommandPanel({
       }
       // Re-check connected state shortly after (the OAuth finishes in the popup;
       // the focus listener catches the common case, this covers same-tab flows).
-      setTimeout(() => connectedApps.refresh(), 2500);
+      // A second connect replaces the pending check instead of leaving it to fire.
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => connectedApps.refresh(), 2500);
     },
     [composio, connectedApps],
   );

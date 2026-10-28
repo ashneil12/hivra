@@ -92,6 +92,27 @@ describe("settlement", () => {
     expect(world.memory.tables.hermes_subscriptions[0].upgraded_at).toBe(stampedAt);
   });
 
+  it("logs a rejected conversion stamp and still settles the quote", async () => {
+    const world = createYearlyTokenWorld();
+    world.memory.insertRow("hermes_subscriptions", { user_id: "user_1", upgraded_at: null });
+    openQuote(world);
+    world.pay({ tx: txHash(1), amountRaw: REQUIRED, offsetMs: -6 * MINUTE_MS });
+    world.memory.failNext({
+      table: "hermes_subscriptions",
+      op: "update",
+      match: (patch) => "upgraded_at" in patch,
+      error: { message: "stamp write rejected" },
+    });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await reconcile(world)).toMatchObject({ status: "activated", transactionHash: txHash(1) });
+      expect(world.memory.tables.hermes_subscriptions[0].upgraded_at).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("yearly token conversion stamp failed"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("accepts an over-send up to twice the quote and records what was actually received", async () => {
     const world = createYearlyTokenWorld();
     openQuote(world);

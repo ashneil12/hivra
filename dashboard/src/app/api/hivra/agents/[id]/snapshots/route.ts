@@ -7,6 +7,11 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 
+// The database refuses a sixth live restore point (begin_hivra_agent_snapshot counts status <> 'deleted' and stops at 5),
+// so this limit only bounds the read. It is also the maximum returned to the client.
+const SNAPSHOT_MAXIMUM = 5;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function publicSnapshot(row: Record<string, unknown>) {
   return {
     id: String(row.id),
@@ -32,6 +37,7 @@ export async function GET(
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
     const { id } = await params;
+    if (!UUID.test(id)) return apiError("Agent not found", 404);
 
     const { data: agent, error: agentError } = await supabaseAdmin
       .from("hivra_agents")
@@ -52,13 +58,14 @@ export async function GET(
       .eq("agent_id", id)
       .eq("user_id", userId)
       .neq("status", "deleted")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(SNAPSHOT_MAXIMUM);
     if (error) return apiError("Could not load restore points.", 503);
 
     const response = apiSuccess({
       snapshots: (Array.isArray(data) ? data : []).map((row) => publicSnapshot(row)),
       supported: true,
-      maximum: 5,
+      maximum: SNAPSHOT_MAXIMUM,
     });
     response.headers.set("Cache-Control", "no-store");
     return response;

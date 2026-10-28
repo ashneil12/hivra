@@ -91,6 +91,11 @@ interface RecentSubRow {
  * tier, or null. Used by the dashboard banner to render the post-pay
  * progress stepper (activated → swept) without needing to wait for
  * the next page reload.
+ *
+ * A failed read throws instead of returning null: null means "no
+ * subscription", and the banner would drop the paid/activated/swept
+ * stages for a user who does have one. The GET handler turns the throw
+ * into its 500 response.
  */
 async function loadRecentSubscriptions(
   userId: string,
@@ -104,7 +109,12 @@ async function loadRecentSubscriptions(
     .eq("user_id", userId)
     .order("paid_at", { ascending: false })
     .limit(10);
-  if (error || !Array.isArray(data)) return { pro: null, power: null };
+  if (error) {
+    throw new Error(`yearly_token_subscriptions read failed: ${error.message}`);
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("yearly_token_subscriptions read returned no row list");
+  }
   const rows = data as RecentSubRow[];
   return {
     pro: rows.find((r) => r.tier === "pro") ?? null,

@@ -106,7 +106,7 @@ export function AgentWalletCopyButton({ text, label = 'Copy' }: { text: string |
  * Pass `dismissOnBackdrop={false}` while a form holds typed input, and
  * `closeDisabled` while a request is in flight.
  */
-export function AgentWalletModalFrame({
+function AgentWalletModalFrame({
   title,
   description,
   children,

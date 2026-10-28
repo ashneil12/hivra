@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
     }
 
     const rawPlanKey = parsedRequest.data.plan;
-    const planKey = rawPlanKey in PLANS ? (rawPlanKey as PlanKey) : null;
+    const planKey = Object.hasOwn(PLANS, rawPlanKey) ? (rawPlanKey as PlanKey) : null;
     const cadence: Cadence = parsedRequest.data.cadence;
     const returnTo = safeReturnPath(parsedRequest.data.returnTo);
     if (parsedRequest.data.returnTo !== undefined && !returnTo) {
