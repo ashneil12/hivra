@@ -19,6 +19,7 @@
 import { useMemo } from "react";
 
 import { TelegramConnect, type TelegramConnectAdapter, type TelegramConnectStatus } from "@/components/channels/TelegramConnect";
+import { readJson } from "@/lib/client/read-json";
 
 // Bound every save round-trip client-side. The integrations route can hold the
 // connection while it restarts the box's gateway; without a client deadline the
@@ -33,14 +34,6 @@ function isAbortError(e: unknown): boolean {
 
 const SAVE_TIMEOUT_MESSAGE =
   "Saving is taking longer than expected — your bot may still be restarting. Try again in a moment.";
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try {
-    return (await r.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
 
 export function InstanceTelegramConnect({
   instanceId,

@@ -10,6 +10,7 @@
 //   ever hidden behind an animation.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useMediaQuery } from "@/lib/client/media-query";
 import { LazyMotion, domAnimation, transform, useAnimationControls, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "framer-motion";
 
 export const EASE_OUT = [0.16, 1, 0.3, 1] as const;
@@ -36,25 +37,6 @@ const noopSubscribe = () => () => {};
 /** False on the server and while hydrating, true afterwards. */
 function useHydrated(): boolean {
   return useSyncExternalStore(noopSubscribe, () => true, () => false);
-}
-
-function subscribeMedia(query: string) {
-  return (onChange: () => void) => {
-    if (typeof window.matchMedia !== "function") return () => {};
-    const mq = window.matchMedia(query);
-    mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
-  };
-}
-
-/** A media query's current answer; `fallback` on the server and while hydrating. */
-export function useMediaQuery(query: string, fallback = false): boolean {
-  const subscribe = useMemo(() => subscribeMedia(query), [query]);
-  return useSyncExternalStore(
-    subscribe,
-    () => (typeof window.matchMedia === "function" ? window.matchMedia(query).matches : fallback),
-    () => fallback,
-  );
 }
 
 function readStoredOff(): boolean {
