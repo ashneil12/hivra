@@ -753,12 +753,13 @@ describe("POST /api/hivra/agents/[id]/action", () => {
   });
 
   it.each([
-    ["start", { action: "start" }],
-    ["restart", { action: "restart" }],
-    ["resize", { action: "resize", cpu: 2, ram: 4 }],
+    // Resize also runs the host's capacity admission helper, so it asks for it.
+    ["start", { action: "start" }, "lifecycle"],
+    ["restart", { action: "restart" }, "lifecycle"],
+    ["resize", { action: "resize", cpu: 2, ram: 4 }, "resize"],
   ])(
     "fails closed before claiming or mutating when the exact managed host cannot prove the current helper for %s",
-    async (_name, body) => {
+    async (_name, body, purpose) => {
       mockCheckManagedHivraHostReadiness.mockResolvedValueOnce({
         ok: false,
         status: 503,
@@ -783,7 +784,7 @@ describe("POST /api/hivra/agents/[id]/action", () => {
           PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
         }),
         channel: "default",
-        purpose: "lifecycle",
+        purpose,
       });
       expect(mockSupabaseRpc).not.toHaveBeenCalled();
       expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
