@@ -68,9 +68,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     .eq("id", instanceId)
     .maybeSingle<{ id: string; user_id: string; api_server_key_encrypted: string | null }>();
 
-  if (error || !data?.api_server_key_encrypted) {
-    return deny(404);
-  }
+  // A lookup error is an outage, not a refusal: the sidecar fails closed on
+  // 4xx, so it must see 503 here and fail open behind the reconcile backstop.
+  if (error) return deny(503);
+  if (!data?.api_server_key_encrypted) return deny(404);
 
   let expected: string;
   try {
