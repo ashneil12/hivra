@@ -55,7 +55,6 @@ const NOW_LATE = new Date("2026-05-14T18:15:00.000Z");
 function buildSweepStub(params: {
   freeRows: CandidateRow[];
   paidRows: CandidateRow[];
-  tokenRows?: CandidateRow[];
   // instanceId -> newest stat_date with sessions>0, as instance_usage_snapshots
   // would report it.
   agentUsage?: Record<string, string>;
@@ -96,9 +95,8 @@ function buildSweepStub(params: {
     ...row,
   });
   const freeRows = params.freeRows.map(withProbe);
-  const tokenRows = (params.tokenRows ?? []).map(withProbe);
   const paidRows = params.paidRows.map(withProbe);
-  const allRows = [...freeRows, ...tokenRows, ...paidRows];
+  const allRows = [...freeRows, ...paidRows];
   const agentUsage = params.agentUsage ?? {};
   const channelConnectedIds = new Set(params.channelConnectedIds ?? []);
 
@@ -167,7 +165,7 @@ function buildSweepStub(params: {
     // Distinguish the two selects by their column list (only the candidate fetch
     // selects user_id); update chains resolve via the thenable below. Candidate
     // rows are routed by the requested TIER, not by call order — the sweep now
-    // issues a variable number of selects (free, token, and paid only when opted in).
+    // issues a variable number of selects (free, and paid only when opted in).
     let mode: "select-candidates" | "select-recheck" | "update" | null = null;
     let rows: CandidateRow[] = [];
     let recheckId: string | null = null;
@@ -193,8 +191,7 @@ function buildSweepStub(params: {
     });
     query.in = jest.fn((_column: string, values: string[]) => {
       filter.tier = values;
-      if (values.includes("token_base")) rows = tokenRows;
-      else if (values.includes("credit_base")) rows = freeRows;
+      if (values.includes("credit_base")) rows = freeRows;
       else rows = paidRows;
       return query;
     });
@@ -319,7 +316,6 @@ describe("runInactivitySweep", () => {
       activityUnknown: 0,
       channelGuarded: 0,
       freeIdleDays: 4,
-      tokenIdleDays: 30,
       paidIdleDays: null,
       enabled: false,
       timedOut: false,
@@ -342,7 +338,6 @@ describe("runInactivitySweep", () => {
       activityUnknown: 0,
       channelGuarded: 0,
       freeIdleDays: 4,
-      tokenIdleDays: 30,
       paidIdleDays: null,
       enabled: true,
       timedOut: false,
@@ -354,78 +349,23 @@ describe("runInactivitySweep", () => {
     expect(paid).toBeUndefined();
   });
 
-  it("gives token_base its own 30-day idle window, separate from the 4-day free window", async () => {
-    // $HERMES holders were promised a 30-day grace and were nevertheless swept on
-    // the 4-day free schedule, because token_base sat inside FREE_TIER_VALUES.
-    // The two tiers must be scanned against different cutoffs.
+  it("scans no separate window for the removed Starter tier (token_base)", async () => {
+    // token_base had its own 30-day window. The tier is gone (hosted computers
+    // are paid only; its rows moved to credit_base), so by default the sweep
+    // scans the free tier alone.
     const { filters } = buildSweepStub({ freeRows: [], paidRows: [] });
     const summary = await runInactivitySweep({ now: NOW_EARLY });
 
-    expect(summary.freeIdleDays).toBe(4);
-    expect(summary.tokenIdleDays).toBe(30);
-
-    const free = filters.find((f) => f.tier.includes("credit_base"));
-    const token = filters.find((f) => f.tier.includes("token_base"));
-
-    // credit_base and token_base are no longer scanned together.
-    expect(free?.tier).not.toContain("token_base");
-    expect(token?.tier).toEqual(["token_base"]);
-
-    expect(free?.cutoff).toBe("2026-05-06T12:00:00.000Z"); // now - 4d
-    expect(token?.cutoff).toBe("2026-04-10T12:00:00.000Z"); // now - 30d
-  });
-
-  it("does not pause a token_base instance idle for only 10 days", async () => {
-    // Inside the 30-day grace. Under the old code this row sat in the free scan
-    // and was paused at day 4.
-    const tokenRow: CandidateRow = {
-      id: "inst_token_young",
-      user_id: "user_token",
-      resource_tier: "token_base",
-      proxmox_node: "fixturenode1",
-      proxmox_vmid: 210,
-      host_id: null,
-      config: { infrastructure: baseProxmoxInfra },
-      last_activity_at: "2026-04-30T12:00:00.000Z", // 10 days before NOW_EARLY
-      created_at: "2026-04-01T12:00:00.000Z",
-    };
-
-    buildSweepStub({ freeRows: [], paidRows: [], tokenRows: [tokenRow] });
-
-    const summary = await runInactivitySweep({ now: NOW_EARLY });
-
-    expect(summary.scanned).toBe(1);
-    expect(summary.swept).toBe(0);
-    expect(summary.skipped).toBe(1);
-    expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
-  });
-
-  it("pauses a token_base instance once it passes 30 days idle", async () => {
-    const tokenRow: CandidateRow = {
-      id: "inst_token_old",
-      user_id: "user_token",
-      resource_tier: "token_base",
-      proxmox_node: "fixturenode1",
-      proxmox_vmid: 211,
-      host_id: null,
-      config: { infrastructure: baseProxmoxInfra },
-      last_activity_at: "2026-04-01T12:00:00.000Z", // 39 days before NOW_EARLY
-      created_at: "2026-03-01T12:00:00.000Z",
-    };
-
-    buildSweepStub({ freeRows: [], paidRows: [], tokenRows: [tokenRow] });
-
-    const summary = await runInactivitySweep({ now: NOW_EARLY });
-
-    expect(summary.scanned).toBe(1);
-    expect(summary.swept).toBe(1);
-    expect(shutdownProxmoxInstance).toHaveBeenCalledTimes(1);
+    expect(summary).not.toHaveProperty("tokenIdleDays");
+    expect(filters.map((f) => f.tier)).toEqual([["credit_base"]]);
   });
 
   it("judges each tier's agent-side usage against ITS OWN cutoff, not the widest one", async () => {
-    // The usage table is read once against the OLDEST cutoff (token's 30 days).
-    // A free-tier box whose last session was 20 days ago is inside that read but
-    // well outside its own 4-day window — it must still be paused.
+    // The usage table is read once against the OLDEST cutoff (here an opted-in
+    // 30-day paid window). A free-tier box whose last session was 20 days ago is
+    // inside that read but well outside its own 4-day window — it must still be
+    // paused.
+    process.env.HERMES_INACTIVITY_PAID_DAYS = "30";
     const freeRow: CandidateRow = {
       id: "inst_free_old_session",
       user_id: "user_free",
@@ -445,10 +385,14 @@ describe("runInactivitySweep", () => {
       agentUsage: { inst_free_old_session: "2026-04-20" },
     });
 
-    const summary = await runInactivitySweep({ now: NOW_EARLY });
+    try {
+      const summary = await runInactivitySweep({ now: NOW_EARLY });
 
-    expect(summary.agentActive).toBe(0);
-    expect(summary.swept).toBe(1);
+      expect(summary.agentActive).toBe(0);
+      expect(summary.swept).toBe(1);
+    } finally {
+      delete process.env.HERMES_INACTIVITY_PAID_DAYS;
+    }
   });
 
   it("sweeps paid tiers only when HERMES_INACTIVITY_PAID_DAYS is explicitly set", async () => {

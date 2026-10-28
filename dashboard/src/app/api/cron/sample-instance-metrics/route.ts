@@ -26,7 +26,7 @@ import { reportOpsEvent } from "@/lib/ops-events";
  * bill — the build plan's 5%-tolerance check.
  *
  * Throttling:
- *   - paid tiers (token_base, operator, fleet, command): every 5-minute
+ *   - paid tiers (operator, fleet, command): every 5-minute
  *     tick. They cost real money to run; we want fine-grained timeline
  *     for billing audits.
  *   - free tier (credit_base): every 30 minutes only — i.e. on the `:00`

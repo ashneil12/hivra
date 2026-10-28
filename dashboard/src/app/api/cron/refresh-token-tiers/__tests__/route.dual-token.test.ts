@@ -1,6 +1,7 @@
 /**
  * refresh-token-tiers with $HIVRA ACTIVATED at a test address: which tokens'
- * holdings and tier rows count for grandfathered and new users.
+ * tier rows count for grandfathered and new users, and that no holding of
+ * either token grants a compute tier on its own (the Starter tier is gone).
  */
 import { NextRequest } from "next/server";
 
@@ -43,15 +44,7 @@ jest.mock("@/lib/billing/token-access", () => {
   };
 });
 
-// $HIVRA readiness reads the gated price here: passing unless a test says otherwise.
-const mockGatedPrice = jest.fn();
-jest.mock("@/lib/billing/live-thresholds", () => ({
-  ...jest.requireActual("@/lib/billing/live-thresholds"),
-  getGatedPlatformTokenPrice: (...args: unknown[]) => mockGatedPrice(...args),
-}));
-
 import { POST } from "../route";
-import { _resetHivraReadinessForTests } from "@/lib/billing/hivra-readiness";
 import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 
@@ -61,7 +54,7 @@ const ONE = "1000000000000000000";
 
 function thenable<T>(data: T) {
   const builder: Record<string, unknown> = {};
-  for (const method of ["select", "in", "eq", "gte", "not", "order"]) builder[method] = jest.fn(() => builder);
+  for (const method of ["select", "in", "eq", "gte", "not", "or", "order"]) builder[method] = jest.fn(() => builder);
   builder.then = (resolve: (value: { data: T; error: null }) => unknown) =>
     Promise.resolve({ data, error: null }).then(resolve);
   return builder;
@@ -99,87 +92,34 @@ const ORIGINAL_ENV = process.env;
 beforeEach(() => {
   jest.clearAllMocks();
   process.env = { ...ORIGINAL_ENV, CRON_SECRET: "cron-secret" };
-  _resetHivraReadinessForTests();
-  mockGatedPrice.mockResolvedValue({ price: { priceUsd: "0.05" }, fetchedAt: new Date() });
 });
 afterAll(() => {
   process.env = ORIGINAL_ENV;
 });
 
-it("reads snapshots for both live platform tokens", async () => {
-  const { snapshotBuilder } = mockTables({ instances: [], snapshots: [] });
-  await POST(request());
-  // No users: the snapshot scan is skipped entirely; with users it filters by both.
-  mockTables({ instances: [{ user_id: "new_1", resource_tier: "credit_base" }], snapshots: [] });
-  await POST(request());
-  const builder = (supabaseAdmin!.from as jest.Mock).mock.results
-    .map((r) => r.value)
-    .find((b) => (b.in as jest.Mock)?.mock.calls.some((c: unknown[]) => c[0] === "token_address"));
-  expect(builder.in).toHaveBeenCalledWith("token_address", [HERMESOS, HIVRA]);
-  expect(snapshotBuilder).toBeDefined();
-});
-
-it("a new user's $HermesOS balance does not grant the token base tier; $HIVRA does", async () => {
-  mockTables({
+it("grants no tier for a whole token of either platform token, grandfathered or new", async () => {
+  const { snapshotBuilder } = mockTables({
     instances: [
-      { user_id: "new_hermesos", resource_tier: "credit_base" },
       { user_id: "new_hivra", resource_tier: "credit_base" },
+      { user_id: "old_holder", resource_tier: "credit_base" },
     ],
     snapshots: [
-      { user_id: "new_hermesos", token_address: HERMESOS, balance_raw: "5000000000000000000000" },
       { user_id: "new_hivra", token_address: HIVRA, balance_raw: ONE },
-    ],
-  });
-  await POST(request());
-  expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "new_hivra", newTier: "token_base" }));
-  // The $HermesOS-only new user stays on credit_base (no change applied).
-  expect(applyTierChange).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "new_hermesos" }));
-});
-
-describe("while $HIVRA is not usable (its pool fails the price gate)", () => {
-  beforeEach(() => {
-    mockGatedPrice.mockRejectedValue(new Error("pool below the ETH-side floor"));
-  });
-
-  it("grants no new base tier on $HIVRA, not even for one whole token", async () => {
-    mockTables({
-      instances: [{ user_id: "new_hivra", resource_tier: "credit_base" }],
-      snapshots: [{ user_id: "new_hivra", token_address: HIVRA, balance_raw: ONE }],
-    });
-    await POST(request());
-    expect(applyTierChange).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "new_hivra" }));
-  });
-
-  it("keeps a base tier the account already has on $HIVRA", async () => {
-    mockTables({
-      instances: [{ user_id: "new_held", resource_tier: "token_base" }],
-      snapshots: [{ user_id: "new_held", token_address: HIVRA, balance_raw: ONE }],
-    });
-    await POST(request());
-    // Already on token_base and still qualifying: nothing to change.
-    expect(applyTierChange).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "new_held" }));
-  });
-
-  it("leaves a grandfathered user's $HermesOS base tier alone", async () => {
-    mockTables({
-      instances: [{ user_id: "old_1", resource_tier: "credit_base" }],
-      snapshots: [{ user_id: "old_1", token_address: HERMESOS, balance_raw: ONE }],
-    });
-    await POST(request());
-    expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "old_1", newTier: "token_base" }));
-  });
-});
-
-it("a grandfathered user keeps the base tier on $HermesOS alone", async () => {
-  mockTables({
-    instances: [{ user_id: "old_holder", resource_tier: "credit_base" }],
-    snapshots: [
       { user_id: "old_holder", token_address: HERMESOS, balance_raw: ONE },
-      { user_id: "old_holder", token_address: HIVRA, balance_raw: "0" },
     ],
   });
   await POST(request());
-  expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "old_holder", newTier: "token_base" }));
+  expect(applyTierChange).not.toHaveBeenCalled();
+  expect(snapshotBuilder.select).not.toHaveBeenCalled();
+});
+
+it("moves a computer left on token_base to credit_base while it still holds $HIVRA", async () => {
+  mockTables({
+    instances: [{ user_id: "new_held", resource_tier: "token_base" }],
+    snapshots: [{ user_id: "new_held", token_address: HIVRA, balance_raw: ONE }],
+  });
+  await POST(request());
+  expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "new_held", newTier: "credit_base" }));
 });
 
 it("counts a grandfathered user's $HermesOS Pro row and ignores a non-member's", async () => {
