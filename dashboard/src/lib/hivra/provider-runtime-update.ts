@@ -66,11 +66,16 @@ async function loadOperationRow(raw: ProviderRuntimeUpdateOperation) {
   return { operation, row: OpRow.parse(data) };
 }
 
-/** The lane's loader for a computer this update holds: same pin and scope as a seed. */
-function operationContextLoader(operation: ProviderRuntimeUpdateOperation) {
+/** The lane's loader for a computer this update holds: same pin and scope as a seed.
+ * `known` is a row the caller has just read; the first load reuses it. Later
+ * loads (the guest seed's reload before it writes) always read again. */
+function operationContextLoader(operation: ProviderRuntimeUpdateOperation,
+  known?: Awaited<ReturnType<typeof loadOperationRow>>["row"]) {
+  let pending = known;
   return async (ref: ProviderGuestSeedRef) => {
     if (ref.agentId !== operation.agentId || ref.userId !== operation.userId) throw new ProviderRuntimeUpdateError();
-    const { row } = await loadOperationRow(operation);
+    const row = pending ?? (await loadOperationRow(operation)).row;
+    pending = undefined;
     return providerAgentGuestContext(ref, row);
   };
 }
@@ -251,7 +256,7 @@ export async function observeProviderRuntimeUpdate(raw: ProviderRuntimeUpdateOpe
   const { row } = await loadOperationRow(operation);
   const age = deps.now() - Date.parse(row.operation_started_at);
   const result = await deps.run({ userId: operation.userId, agentId: operation.agentId },
-    buildProviderRuntimeUpdateStatusScript(operation.operationId), { load: operationContextLoader(operation) });
+    buildProviderRuntimeUpdateStatusScript(operation.operationId), { load: operationContextLoader(operation, row) });
   let guest: ProviderRuntimeUpdateGuestState | null = null;
   if (result.ok) {
     try { guest = parseProviderRuntimeUpdateStatus(result.stdout); } catch { guest = null; }

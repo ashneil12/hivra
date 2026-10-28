@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import net from "node:net";
 
 import { accountCode } from "@/lib/account-code";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 
 import {
@@ -216,7 +217,9 @@ export async function getServerEnrollment(userId: string, enrollmentId: string, 
 
 export async function listServerEnrollments(userId: string, now = new Date()): Promise<ServerEnrollmentList> {
   const rows = await listServerEnrollmentRows(userId, now);
-  const enrollments = await Promise.all(rows.map(row => enrollmentView(userId, row, now)));
+  // Each reported row looks up its known server (up to three queries), so the
+  // list runs a few rows at a time instead of all at once.
+  const enrollments = await mapWithConcurrencyLimit(rows, 4, row => enrollmentView(userId, row, now));
   const origin = trustedAppOrigin();
   return { enrollments, uninstallCommand: origin ? serverUninstallCommand(origin) : null };
 }

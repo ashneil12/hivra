@@ -362,7 +362,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       .eq("id", id)
       .eq("user_id", userId)
       .single();
-    if (error || !agent) return apiError("Agent not found", 404);
+    // .single() reports zero rows as PGRST116 and a malformed id as 22P02: both
+    // mean no such agent. Any other error is a failed read, not a missing agent.
+    if (error && !["PGRST116", "22P02"].includes(error.code)) return apiError("Could not load this computer.", 503);
+    if (!agent) return apiError("Agent not found", 404);
 
     if (agent.computer_substrate === "provider-vm") {
       let readiness: ProviderAgentReadinessStage | undefined;

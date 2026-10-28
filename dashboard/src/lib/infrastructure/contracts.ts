@@ -24,7 +24,7 @@ export const HETZNER_CLOUD_CONNECTION_ERROR_CODES = [
 ] as const;
 /** Provider-API failures for a DigitalOcean Managed Agents connection. These
  * never share the Proxmox preflight vocabulary. */
-export const DIGITALOCEAN_CONNECTION_ERROR_CODES = [
+const DIGITALOCEAN_CONNECTION_ERROR_CODES = [
   "invalid_credentials",
   "managed_agents_forbidden",
   "provider_unavailable",
@@ -352,8 +352,7 @@ function validateVmidRange(
 export const ProxmoxVmidRangeSchema =
   ProxmoxVmidRangeObjectSchema.superRefine(validateVmidRange);
 
-export const SSH_PRIVILEGES = ["login", "sudo"] as const;
-export type SshPrivilege = (typeof SSH_PRIVILEGES)[number];
+const SSH_PRIVILEGES = ["login", "sudo"] as const;
 
 const ProxmoxSshEndpointSchema = z
   .object({
@@ -376,7 +375,7 @@ const ProxmoxSshEndpointSchema = z
   })
   .strict();
 
-export const ProxmoxHostCapacityPolicySchema = z
+const ProxmoxHostCapacityPolicySchema = z
   .object({
     mode: z.enum(["observe", "enforce"]),
     hostMemoryReserveMb: z.number().int().min(512).max(1_048_576),
@@ -385,7 +384,7 @@ export const ProxmoxHostCapacityPolicySchema = z
   })
   .strict();
 
-export const ProxmoxAdvancedConfigurationSchema = z
+const ProxmoxAdvancedConfigurationSchema = z
   .object({
     node: ProxmoxIdentifierSchema.optional(),
     bridge: ProxmoxBridgeSchema.optional(),
@@ -1073,7 +1072,7 @@ const ProxmoxHostCapacityEvidenceSchema = z.object({
   ceilingCpuHeadroom: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
 
-export const ProxmoxPreflightCapacitySchema = z
+const ProxmoxPreflightCapacitySchema = z
   .object({
     cpu: z
       .object({

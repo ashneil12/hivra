@@ -1,5 +1,7 @@
 import "server-only";
 
+import { shellQuote } from "@/lib/hivra/proxmox-target";
+
 /**
  * Portable Proxmox preflight protocol.
  *
@@ -429,10 +431,6 @@ function validatePortableProxmoxPreflightInput(
       requiredAssets,
     },
   };
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function assetTest(asset: ProxmoxPreparedAssetRequirement, bridge: string | null): string {

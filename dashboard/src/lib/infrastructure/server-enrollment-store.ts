@@ -12,7 +12,7 @@ import {
   type ServerEnrollmentDto,
   type ServerEnrollmentFacts,
 } from "./server-enrollment-contracts";
-import { canonicalEd25519HostKey } from "./ssh-host-key";
+import { canonicalEd25519HostKey, sha256FingerprintHex } from "./ssh-host-key";
 
 /**
  * Database access for one-command server enrollment. Every write is one
@@ -378,7 +378,8 @@ export async function findKnownServer(
 ): Promise<KnownServer | null> {
   const db = database();
   const canonical = canonicalEd25519HostKey(hostPublicKey);
-  const hex = Buffer.from(canonical.fingerprintSha256.slice("SHA256:".length) + "=", "base64").toString("hex");
+  const hex = sha256FingerprintHex(canonical.fingerprintSha256);
+  if (hex === null) return null;
   const [{ data: sshRows, error: sshError }, { data: bootRows, error: bootError }] = await Promise.all([
     db.from("infrastructure_connections")
       .select("id,name,provider,revision,ssh_user,ssh_host,ssh_privilege")

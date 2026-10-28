@@ -33,14 +33,6 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   "agent-zero": /^sha256:[0-9a-f]{64}$/,
 };
 
-export function isAgentCliVersion(value: unknown): value is string {
-  return typeof value === "string" && CLI_VERSION.test(value);
-}
-
-export function isAgentSoftwareName(value: unknown): value is AgentSoftwareName {
-  return typeof value === "string" && Object.hasOwn(SOFTWARE_VERSION, value);
-}
-
 /** A version in the form this software names its versions. */
 export function isAgentSoftwareVersion(name: AgentSoftwareName, value: unknown): value is string {
   return typeof value === "string" && SOFTWARE_VERSION[name].test(value);
@@ -308,8 +300,6 @@ export type AgentSoftwareView =
   | { kind: "update_deferred"; target: string; installed: string | null }
   | { kind: "update_rolled_back"; target: string; installed: string | null }
   | { kind: "update_failed"; reason: AgentSoftwareFailure; target: string; installed: string | null };
-
-export type AgentSoftwareViewKind = AgentSoftwareView["kind"];
 
 /** A request newer than this with no progress yet reads as "starting". */
 export const AGENT_CLI_PENDING_REQUEST_MS = 10 * 60_000;
