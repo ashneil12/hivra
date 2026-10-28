@@ -4,6 +4,8 @@ import {
   assertNavigationAllowed,
   BlockedNavigationError,
   gotoWithNavigationGuard,
+  installNavigationRouteGuard,
+  installPageNavigationWatchdog,
   navigationChainBlockCode,
 } from "../src/navigation-guard.js";
 
@@ -162,5 +164,139 @@ describe("gotoWithNavigationGuard", () => {
       BlockedNavigationError,
     );
     expect(page.goto).not.toHaveBeenCalled();
+  });
+});
+
+describe("gotoWithNavigationGuard when goto throws", () => {
+  it("still parks a page left on a blocked URL and reports BLOCKED_DESTINATION", async () => {
+    let current = "about:blank";
+    const page = {
+      goto: vi.fn(async (url: string) => {
+        if (url === "about:blank") {
+          current = url;
+          return null;
+        }
+        current = "http://127.0.0.1:9223/json";
+        throw new Error("page.goto: Timeout 30000ms exceeded.");
+      }),
+      url: () => current,
+    };
+    await expect(gotoWithNavigationGuard(page, "https://redirector.example/slow")).rejects.toBeInstanceOf(
+      BlockedNavigationError,
+    );
+    expect(current).toBe("about:blank");
+  });
+
+  it("rethrows the navigation error when nothing blocked was reached", async () => {
+    const page = {
+      goto: vi.fn(async () => {
+        throw new Error("net::ERR_NAME_NOT_RESOLVED");
+      }),
+      url: () => "about:blank",
+    };
+    await expect(gotoWithNavigationGuard(page, "https://nowhere.example/")).rejects.toThrow(
+      "ERR_NAME_NOT_RESOLVED",
+    );
+  });
+});
+
+describe("installNavigationRouteGuard", () => {
+  async function routeFor(url: string) {
+    let handler: ((route: unknown) => Promise<void>) | undefined;
+    await installNavigationRouteGuard({
+      route: async (_pattern: string, h: (route: never) => Promise<void>) => {
+        handler = h as (route: unknown) => Promise<void>;
+      },
+    });
+    const route = { request: () => ({ url: () => url }), abort: vi.fn(async () => {}), fallback: vi.fn(async () => {}) };
+    await handler!(route);
+    return route;
+  }
+
+  it.each([
+    "http://127.0.0.1:18081/",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://warden:7070/keys/anthropic",
+    "http://[::ffff:127.0.0.1]/",
+  ])("aborts a page-initiated request to %s (meta refresh, script redirect, iframe)", async (url) => {
+    const route = await routeFor(url);
+    expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
+    expect(route.fallback).not.toHaveBeenCalled();
+  });
+
+  it.each(["https://example.com/", "data:text/html,hi", "http://10.0.5.7/lan-service"])(
+    "lets %s through",
+    async (url) => {
+      const route = await routeFor(url);
+      expect(route.fallback).toHaveBeenCalled();
+      expect(route.abort).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("installPageNavigationWatchdog", () => {
+  function watchedPage() {
+    const listeners: Record<string, (arg: never) => void> = {};
+    const page = {
+      goto: vi.fn(async () => null),
+      on: vi.fn((event: string, listener: (arg: never) => void) => {
+        listeners[event] = listener;
+      }),
+      url: () => "https://example.com/",
+    };
+    installPageNavigationWatchdog(page as never);
+    return { page, listeners };
+  }
+
+  it("parks the page when any frame commits a blocked URL", async () => {
+    const { page, listeners } = watchedPage();
+    listeners.framenavigated({ url: () => "http://169.254.169.254/" } as never);
+    expect(page.goto).toHaveBeenCalledWith("about:blank");
+  });
+
+  it("parks the page when a document arrives from a blocked address", async () => {
+    const { page, listeners } = watchedPage();
+    listeners.response({
+      request: () => ({ resourceType: () => "document" }),
+      serverAddr: async () => ({ ipAddress: "127.0.0.1", port: 80 }),
+    } as never);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(page.goto).toHaveBeenCalledWith("about:blank");
+  });
+
+  it("leaves ordinary navigations alone", async () => {
+    const { page, listeners } = watchedPage();
+    listeners.framenavigated({ url: () => "https://example.com/next" } as never);
+    listeners.response({
+      request: () => ({ resourceType: () => "document" }),
+      serverAddr: async () => ({ ipAddress: "203.0.113.10", port: 443 }),
+    } as never);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(page.goto).not.toHaveBeenCalled();
+  });
+
+  it("makes the next guarded goto report the block it parked", async () => {
+    const listeners: Record<string, (arg: never) => void> = {};
+    let current = "about:blank";
+    const page = {
+      on: vi.fn((event: string, listener: (arg: never) => void) => {
+        listeners[event] = listener;
+      }),
+      goto: vi.fn(async (url: string) => {
+        if (url === "about:blank") {
+          current = url;
+          return null;
+        }
+        current = "https://public.example/";
+        // The page redirects itself somewhere blocked while goto is in flight.
+        listeners.framenavigated({ url: () => "http://127.0.0.1:9223/json" } as never);
+        return null;
+      }),
+      url: () => current,
+    };
+    installPageNavigationWatchdog(page as never);
+    await expect(gotoWithNavigationGuard(page, "https://public.example/")).rejects.toBeInstanceOf(
+      BlockedNavigationError,
+    );
   });
 });

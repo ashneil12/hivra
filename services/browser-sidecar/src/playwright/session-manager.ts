@@ -1,4 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
+import { installNavigationRouteGuard, installPageNavigationWatchdog } from "../navigation-guard.js";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { chromium } from "playwright";
@@ -47,6 +48,7 @@ export class SessionManager {
 
     const ctx = await this.getOrCreateContext(identity);
     const page = await ctx.newPage();
+    installPageNavigationWatchdog(page);
     page.setDefaultNavigationTimeout(this.config.DEFAULT_NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(this.config.DEFAULT_ACTION_TIMEOUT_MS);
 
@@ -263,7 +265,13 @@ export class SessionManager {
         // the CDP path's bound. See finding_browser_sidecar_bloat_root_cause.
         `--disk-cache-size=${Number(process.env.SIDECAR_DISK_CACHE_MB ?? 256) * 1024 * 1024}`,
       ],
+      // Service-worker fetches bypass context.route, so they would bypass the
+      // navigation guard below.
+      serviceWorkers: "block",
     });
+    // Abort any request (frames, iframes, subresources) aimed at a blocked
+    // destination, so a page can't redirect itself somewhere /goto refuses.
+    await installNavigationRouteGuard(ctx);
 
     this.contexts.set(identity, ctx);
     this.logger.info({ identity, dir }, "persistent context opened");

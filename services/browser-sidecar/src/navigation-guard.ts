@@ -157,13 +157,99 @@ export async function navigationChainBlockCode(
 
 // Navigate with the full policy: pre-flight URL check, then the redirect-chain
 // check. A page that ended up somewhere blocked is sent to about:blank before
-// the error is thrown, so no later /screenshot or /text call can read it.
+// the error is thrown, so no later /screenshot or /text call can read it. The
+// chain check also runs when goto throws (a timeout on a page whose `load`
+// never fires), since the page may still be sitting on the blocked URL.
 export async function gotoWithNavigationGuard(page: GuardedPage, rawUrl: string): Promise<void> {
   assertNavigationAllowed(rawUrl);
-  const response = await page.goto(rawUrl);
-  const code = await navigationChainBlockCode(response || null, page.url());
+  parkedPages.delete(page);
+  let response: GuardedResponse | null = null;
+  let navigationError: unknown = null;
+  try {
+    response = (await page.goto(rawUrl)) || null;
+  } catch (err) {
+    navigationError = err;
+  }
+  const code = parkedPages.has(page)
+    ? "BLOCKED_DESTINATION"
+    : await navigationChainBlockCode(response, page.url());
   if (code) {
     await page.goto("about:blank").catch(() => undefined);
     throw new BlockedNavigationError(code);
   }
+  if (navigationError) throw navigationError;
+}
+
+// Pages the watchdog below parked since their last guarded goto.
+const parkedPages = new WeakSet<object>();
+
+export interface WatchedFrame {
+  url(): string;
+}
+export interface WatchedResponse {
+  request(): { resourceType(): string };
+  serverAddr(): Promise<{ ipAddress: string; port: number } | null>;
+}
+export interface WatchedPage {
+  goto(url: string): Promise<unknown>;
+  on(event: "framenavigated", listener: (frame: WatchedFrame) => void): unknown;
+  on(event: "response", listener: (response: WatchedResponse) => void): unknown;
+}
+
+// Last line of defence for what neither the route guard nor the post-goto
+// check sees in time: an HTTP redirect hop that commits after goto already
+// gave up (a timeout), or a public name that resolved to a blocked address.
+// When any frame commits a blocked URL, or a document arrives from a blocked
+// IP, the page is parked on about:blank straight away, before the agent's next
+// /screenshot or /text call can read it.
+export function installPageNavigationWatchdog(page: WatchedPage): void {
+  let parking = false;
+  const park = () => {
+    parkedPages.add(page);
+    if (parking) return;
+    parking = true;
+    void page
+      .goto("about:blank")
+      .catch(() => undefined)
+      .finally(() => {
+        parking = false;
+      });
+  };
+  page.on("framenavigated", (frame) => {
+    if (urlHostBlocked(frame.url())) park();
+  });
+  page.on("response", (response) => {
+    if (response.request().resourceType() !== "document") return;
+    void response
+      .serverAddr()
+      .then((addr) => {
+        if (addr?.ipAddress && isBlockedNavigationHost(addr.ipAddress)) park();
+      })
+      .catch(() => undefined);
+  });
+}
+
+// Structural slice of Playwright's BrowserContext.route, for the same reason.
+export interface GuardedRoute {
+  request(): { url(): string };
+  abort(errorCode?: string): Promise<void>;
+  fallback(): Promise<void>;
+}
+export interface GuardedContext {
+  route(url: string, handler: (route: GuardedRoute) => Promise<void>): Promise<unknown>;
+}
+
+// Request-layer guard for everything the page itself starts after /goto: a
+// meta refresh, a script setting `location`, an iframe or a subresource
+// pointed at loopback, the metadata address or a sibling service. Playwright
+// does not call route handlers for HTTP redirect hops, which is why
+// gotoWithNavigationGuard keeps its redirect-chain check as well.
+export async function installNavigationRouteGuard(ctx: GuardedContext): Promise<void> {
+  await ctx.route("**/*", async (route) => {
+    if (urlHostBlocked(route.request().url())) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.fallback();
+  });
 }
