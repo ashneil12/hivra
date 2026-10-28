@@ -49,3 +49,57 @@
   outline: 2px solid var(--gold-leaf);
   outline-offset: 3px;
 }
+
+/* "How did you hear about Hivra?" above the card (R8). It borrows the Clerk card's
+   field look: a small mono label and a square, etched-border control. */
+.heardAbout {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 1.25rem;
+}
+
+.heardAbout label {
+  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.heardAbout label span {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.heardAbout select,
+.heardAbout input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--etched-border);
+  border-radius: 0;
+  background: var(--bg-surface);
+  color: var(--ink-black);
+  font: inherit;
+  font-size: 14px;
+}
+
+.heardAbout select:focus-visible,
+.heardAbout input:focus-visible {
+  outline: 2px solid var(--ink-black);
+  outline-offset: 1px;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
