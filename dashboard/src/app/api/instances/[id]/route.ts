@@ -87,6 +87,8 @@ import { recordInstanceUserActivity } from "@/lib/instance-activity";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { getPlan } from "@/lib/subscription";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
+import { isHostedInstanceStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import { normalizeModelValue } from "@/lib/models";
 import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { fetchFirstReachableGatewayResponse } from "@/lib/agent-gateway";
@@ -2766,6 +2768,18 @@ export async function POST(
         ? { error: redactSensitiveCommandOutput(res.error.trim()) }
         : {}),
     });
+
+    // A hosted computer needs a paid plan: refuse Start while the owner has
+    // none (dark until HIVRA_LAPSE_ENFORCE_LIVE is "true"). Read live, so it
+    // clears the moment they pay. Ahead of the cold restore, which also starts.
+    if (await isHostedInstanceStartBlockedForLapse(userId, action)) {
+      return apiError(
+        `${HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE} This computer's files are kept; press Start once you have a plan.`,
+        402,
+        undefined,
+        { code: "instance_entitlement_suspended" },
+      );
+    }
 
     // Cold-storage restore path (Phase 3 of docs/cold-storage-orchestration.md).
     // When the row is `cold_archived` or `pending_deletion` (data lives on
