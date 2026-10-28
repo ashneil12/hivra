@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { redirect } from "next/navigation";
 
 import { findBannedClaims } from "@/lib/tools/copy-rules";
@@ -25,8 +25,10 @@ jest.mock("next/link", () => {
   return MockLink;
 });
 
+const mockPathname = jest.fn(() => "/sign-up");
 jest.mock("next/navigation", () => ({
   redirect: jest.fn(),
+  usePathname: () => mockPathname(),
 }));
 
 const mockAuth = jest.fn();
@@ -45,6 +47,8 @@ describe("SignUpPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
+    mockPathname.mockReturnValue("/sign-up");
     delete process.env.HIVRA_AUTH_MODE;
     mockAuth.mockResolvedValue({ userId: null });
   });
@@ -194,5 +198,67 @@ describe("SignUpPage", () => {
     render(await SignUpPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole("link", { name: "Hivra home" }).closest("header")).toHaveAttribute("data-web-chrome");
   });
-});
 
+  // R8: where sign-ups come from. The answer is optional and goes to Clerk as unsafe metadata.
+  describe("How did you hear about Hivra?", () => {
+    const lastSignUpProps = () => mockSignUp.mock.calls[mockSignUp.mock.calls.length - 1][0];
+
+    it("asks once, optionally, between the plan note and the account form", async () => {
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+      const question = screen.getByRole("combobox", { name: /How did you hear about Hivra\?/ });
+      expect(question).toHaveValue("");
+      expect(question).not.toBeRequired();
+      expect(within(question).getByRole("option", { name: "Choose one" })).toBeInTheDocument();
+      expect(within(question).getByRole("option", { name: "AI assistant (ChatGPT, Claude, Perplexity)" })).toBeInTheDocument();
+      const note = screen.getByText(/^Every computer that Hivra Cloud runs for you needs a paid plan/);
+      expect(note.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(question.compareDocumentPosition(screen.getByTestId("mock-sign-up")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // Skipped: Clerk gets no answer.
+      expect(lastSignUpProps().unsafeMetadata).toEqual({});
+    });
+
+    it("hands the chosen answer to Clerk as unsafe metadata", async () => {
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+      fireEvent.change(screen.getByRole("combobox", { name: /How did you hear about Hivra\?/ }), { target: { value: "reddit" } });
+
+      expect(lastSignUpProps().unsafeMetadata).toEqual({ heard_about: "reddit" });
+      expect(screen.queryByRole("textbox", { name: "Where did you hear about Hivra?" })).not.toBeInTheDocument();
+    });
+
+    it("takes a short free-text answer for Somewhere else", async () => {
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+      fireEvent.change(screen.getByRole("combobox", { name: /How did you hear about Hivra\?/ }), { target: { value: "other" } });
+      const where = screen.getByRole("textbox", { name: "Where did you hear about Hivra?" });
+      expect(where).toHaveAttribute("maxLength", "100");
+      fireEvent.change(where, { target: { value: "  a  Discord server " } });
+
+      expect(lastSignUpProps().unsafeMetadata).toEqual({ heard_about: "other", heard_about_other: "a Discord server" });
+    });
+
+    it("carries the first-touch UTM and referrer stash with it", async () => {
+      window.localStorage.setItem(
+        "hermes:signup_attribution",
+        JSON.stringify({ utm_source: "newsletter", referrer: "https://news.ycombinator.com/", landing_page: "/compare", captured_at: 1, junk: "x" }),
+      );
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+      fireEvent.change(screen.getByRole("combobox", { name: /How did you hear about Hivra\?/ }), { target: { value: "hacker_news" } });
+
+      expect(lastSignUpProps().unsafeMetadata).toEqual({
+        heard_about: "hacker_news",
+        signup_attribution: { utm_source: "newsletter", referrer: "https://news.ycombinator.com/", landing_page: "/compare" },
+      });
+    });
+
+    it("is gone once the sign-up exists (email code, OAuth callback)", async () => {
+      mockPathname.mockReturnValue("/sign-up/verify-email-address");
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+
+      expect(screen.queryByRole("combobox", { name: /How did you hear about Hivra\?/ })).not.toBeInTheDocument();
+      expect(screen.getByTestId("mock-sign-up")).toBeInTheDocument();
+    });
+  });
+});
