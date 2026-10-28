@@ -207,6 +207,7 @@ describe("installNavigationRouteGuard", () => {
       route: async (_pattern: string, h: (route: never) => Promise<void>) => {
         handler = h as (route: unknown) => Promise<void>;
       },
+      routeWebSocket: async () => {},
     });
     const route = { request: () => ({ url: () => url }), abort: vi.fn(async () => {}), fallback: vi.fn(async () => {}) };
     await handler!(route);
@@ -224,7 +225,7 @@ describe("installNavigationRouteGuard", () => {
     expect(route.fallback).not.toHaveBeenCalled();
   });
 
-  it.each(["https://example.com/", "data:text/html,hi", "http://10.0.5.7/lan-service"])(
+  it.each(["https://example.com/", "data:text/html,hi", "http://10.250.20.60/lan-service"])(
     "lets %s through",
     async (url) => {
       const route = await routeFor(url);
@@ -298,5 +299,35 @@ describe("installPageNavigationWatchdog", () => {
     await expect(gotoWithNavigationGuard(page, "https://public.example/")).rejects.toBeInstanceOf(
       BlockedNavigationError,
     );
+  });
+});
+
+describe("installNavigationRouteGuard WebSockets", () => {
+  async function wsFor(url: string) {
+    let handler: ((ws: unknown) => Promise<void>) | undefined;
+    await installNavigationRouteGuard({
+      route: async () => {},
+      routeWebSocket: async (_pattern: RegExp, h: (ws: never) => Promise<void>) => {
+        handler = h as (ws: unknown) => Promise<void>;
+      },
+    });
+    const ws = { url: () => url, close: vi.fn(async () => {}), connectToServer: vi.fn() };
+    await handler!(ws);
+    return ws;
+  }
+
+  it.each(["ws://127.0.0.1:6080/websockify", "ws://warden:7070/", "wss://[::1]/"])(
+    "closes a page's WebSocket to %s",
+    async (url) => {
+      const ws = await wsFor(url);
+      expect(ws.close).toHaveBeenCalled();
+      expect(ws.connectToServer).not.toHaveBeenCalled();
+    },
+  );
+
+  it("connects an ordinary WebSocket through", async () => {
+    const ws = await wsFor("wss://example.com/socket");
+    expect(ws.connectToServer).toHaveBeenCalled();
+    expect(ws.close).not.toHaveBeenCalled();
   });
 });

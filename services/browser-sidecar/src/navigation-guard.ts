@@ -122,6 +122,8 @@ export interface GuardedPage {
   url(): string;
 }
 
+const NETWORK_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
+
 function urlHostBlocked(rawUrl: string): boolean {
   let parsed: URL;
   try {
@@ -129,7 +131,7 @@ function urlHostBlocked(rawUrl: string): boolean {
   } catch {
     return false; // about:blank, data: etc. have no host to reach
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (!NETWORK_PROTOCOLS.has(parsed.protocol)) return false;
   return isBlockedNavigationHost(parsed.hostname);
 }
 
@@ -235,8 +237,14 @@ export interface GuardedRoute {
   abort(errorCode?: string): Promise<void>;
   fallback(): Promise<void>;
 }
+export interface GuardedWebSocketRoute {
+  url(): string;
+  close(options?: { code?: number; reason?: string }): Promise<void>;
+  connectToServer(): unknown;
+}
 export interface GuardedContext {
   route(url: string, handler: (route: GuardedRoute) => Promise<void>): Promise<unknown>;
+  routeWebSocket(url: RegExp, handler: (ws: GuardedWebSocketRoute) => Promise<void>): Promise<unknown>;
 }
 
 // Request-layer guard for everything the page itself starts after /goto: a
@@ -251,5 +259,14 @@ export async function installNavigationRouteGuard(ctx: GuardedContext): Promise<
       return;
     }
     await route.fallback();
+  });
+  // WebSockets skip context.route and the same-origin rules, so a page could
+  // otherwise talk to a WebSocket server on loopback or a sibling container.
+  await ctx.routeWebSocket(/.*/, async (ws) => {
+    if (urlHostBlocked(ws.url())) {
+      await ws.close({ code: 1008, reason: "blocked destination" });
+      return;
+    }
+    ws.connectToServer();
   });
 }
