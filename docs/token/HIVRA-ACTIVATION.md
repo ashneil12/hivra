@@ -685,7 +685,11 @@ Filled in already: `treasurySafe`, `fee`, and the founder's `wallet`,
 `maxPriceImpactPct`, `weeks` and `burnAddress`. Filled in at launch, each by a
 reviewed PR: `announcedAt` (UTC instant), the founder's `saleStart`,
 `saleDay` (the weekday, matching `saleStart`; checked, not shown) and
-`burnDate`, `receipts` as transactions confirm, and `published: true` last.
+`burnDate`, claim `receipts` as transactions confirm, and `published: true` last.
+Liquidity, founder-sale and burn transactions go in the receipts ledger instead
+(`dashboard/src/lib/token-receipts/token-receipts-config.ts`, see
+[TOKEN-RECEIPTS.md](TOKEN-RECEIPTS.md)): this page shows them from there, and
+/token/receipts checks each one against Base.
 `claimRecordsUrl` is optional: a Sablier claim-dashboard link (the same rules as
 `claim.campaignUrl`) or the campaign contract's BaseScan address page, shown as
 "Verified claim transactions or claim dashboard" once the claim is open or
