@@ -195,11 +195,11 @@ describe("POST /api/billing/managed-venice/hermesos/settle", () => {
     expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(1);
   });
 
-  it("returns a safe 500 when the quote does not exist", async () => {
+  it("returns a 404 (not a retryable 500) when the quote does not exist", async () => {
     const response = await deliver("0xpaid", QUOTED, IN_WINDOW, "missing");
 
-    expect(response.status).toBe(500);
-    expect(((await response.json()) as { error?: string }).error).toBe("Failed to settle managed Venice token quote.");
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { error?: string }).error).toBe("Managed Venice token quote not found.");
   });
 });
 

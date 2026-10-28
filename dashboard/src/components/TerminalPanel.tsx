@@ -107,6 +107,8 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
     const terminalRttSequenceRef = useRef(0);
     const pendingTerminalRttSamplesRef = useRef(new Map<string, PendingTerminalRttSample>());
     const pendingTerminalRttKeysByCharRef = useRef(new Map<string, string[]>());
+    // SSE-mode input POSTs run one after another so keystrokes apply in typed order.
+    const fallbackInputQueueRef = useRef<Promise<void>>(Promise.resolve());
     const [connState, setConnState] = useState<ConnState>('init');
     const [errMsg, setErrMsg] = useState<string | null>(null);
     // Sticky Ctrl from the touch key strip: the next typed character is sent as
@@ -292,19 +294,22 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
             return;
         }
         for (const chunk of chunkTerminalInput(data)) {
-            void fetch(apiBase, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'input',
-                    data: chunk,
-                    mode: sessionMode,
-                    sessionKey,
-                    sessionToken,
-                }),
-            }).catch((err) => {
-                logTerminalWarning('Terminal input request failed', 'terminal_input_request_failed', err);
-            });
+            fallbackInputQueueRef.current = fallbackInputQueueRef.current
+                .then(() => fetch(apiBase, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'input',
+                        data: chunk,
+                        mode: sessionMode,
+                        sessionKey,
+                        sessionToken,
+                    }),
+                }))
+                .then(() => undefined)
+                .catch((err) => {
+                    logTerminalWarning('Terminal input request failed', 'terminal_input_request_failed', err);
+                });
         }
     }, [apiBase, logTerminalWarning, sessionMode]);
     const sendResize = useCallback((cols: number, rows: number) => {

@@ -82,6 +82,7 @@ import {
 } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
+import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { InfrastructureEntryChooser } from "./InfrastructureEntryChooser";
 import { HivraCloudCapacityCard } from "./HivraCloudCapacityCard";
 import { HivraCloudPurchaseDialog } from "./HivraCloudPurchaseDialog";
@@ -513,7 +514,13 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     || (item.phase === "issued" && Date.parse(item.expiresAt) > enrollmentNow));
   useEffect(() => {
     if (!waitingEnrollment || enrollmentDialogOpen) return;
-    const timer = window.setInterval(() => void loadEnrollments(), 5_000);
+    // Skip a tick while the last list request is still out, so slow replies never pile up.
+    let pending = false;
+    const timer = window.setInterval(pollWhenVisible(() => {
+      if (pending) return;
+      pending = true;
+      void loadEnrollments().finally(() => { pending = false; });
+    }), 5_000);
     return () => window.clearInterval(timer);
   }, [waitingEnrollment, enrollmentDialogOpen, loadEnrollments]);
 

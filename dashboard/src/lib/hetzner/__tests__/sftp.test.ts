@@ -231,5 +231,53 @@ describe('sftp', () => {
       expect(resolveSshConnectConfig).toHaveBeenCalledTimes(1);
       expect(resolveSshConnectConfig).toHaveBeenCalledWith(ip, 15_000);
     });
+
+    it('keeps the pooled connection open while another operation still runs on it', async () => {
+      jest.useFakeTimers();
+      try {
+        const ip = '203.0.113.71';
+        let releaseSlow: ((err: Error | null, list: unknown[]) => void) | undefined;
+        mockSftp.readdir.mockImplementation((path: string, cb: (err: Error | null, list: unknown[]) => void) => {
+          if (path === '/slow') {
+            releaseSlow = cb;
+          } else {
+            cb(null, []);
+          }
+        });
+
+        const quick = sftpList(ip, '/quick');
+        const slow = sftpList(ip, '/slow');
+        // Let the mocked config resolve so the connect timer exists, then fire it (ready).
+        for (let i = 0; i < 5; i += 1) await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(1);
+        await expect(quick).resolves.toEqual([]);
+
+        // The quick operation is done, the slow one is still waiting on SFTP. Going past the
+        // idle timeout must not close the client under it.
+        await jest.advanceTimersByTimeAsync(30_000);
+        expect(mockConn.end).not.toHaveBeenCalled();
+
+        releaseSlow!(null, []);
+        await expect(slow).resolves.toEqual([]);
+        expect(Client).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps the pooled connection after an application error such as a missing file', async () => {
+      const ip = '203.0.113.72';
+      mockSftp.readdir
+        .mockImplementationOnce((_path: string, cb: (err: Error | null, list?: unknown[]) => void) =>
+          cb(Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }))
+        )
+        .mockImplementationOnce((_path: string, cb: (err: Error | null, list: unknown[]) => void) => cb(null, []));
+
+      await expect(sftpList(ip, '/missing')).rejects.toThrow('ENOENT');
+      await expect(sftpList(ip, '/root')).resolves.toEqual([]);
+
+      expect(mockConn.end).not.toHaveBeenCalled();
+      expect(Client).toHaveBeenCalledTimes(1);
+    });
   });
 });

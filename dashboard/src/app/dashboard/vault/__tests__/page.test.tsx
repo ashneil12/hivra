@@ -364,6 +364,67 @@ describe('Vault Page', () => {
     expect(screen.getByRole('button', { name: /^copy$/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /copied!/i })).not.toBeInTheDocument();
   });
+
+  it('stops polling a Codex sign-in when the owner cancels it', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchMock = jest.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.includes('/api/instances/inst-1/oauth/codex/start')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              data: {
+                url: 'https://auth.openai.com/device',
+                code: 'ABCD-EFGH',
+              },
+            }),
+          });
+        }
+
+        if (url.includes('/api/instances/inst-1/oauth/codex/status')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ success: true, data: { authenticated: false } }),
+          });
+        }
+
+        return defaultFetchImplementation(input);
+      });
+
+      Object.defineProperty(global, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: fetchMock,
+      });
+
+      render(<VaultPage />);
+
+      fireEvent.click(await screen.findByRole('button', { name: /add new key/i }));
+      fireEvent.click(screen.getByLabelText(/automated device auth/i));
+      fireEvent.click(screen.getByRole('button', { name: /connect codex/i }));
+      await screen.findByText(/step 1 — open this url/i);
+
+      fireEvent.click(screen.getByRole('button', { name: /cancel sign-in/i }));
+      expect(screen.getByRole('button', { name: /connect codex/i })).toBeInTheDocument();
+
+      const statusReads = () => fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes('/oauth/codex/status')
+      ).length;
+      const readsBeforeTicks = statusReads();
+      await act(async () => {
+        jest.advanceTimersByTime(12_000);
+        await Promise.resolve();
+      });
+
+      expect(statusReads()).toBe(readsBeforeTicks);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('shows Nous Portal as an automated Vault auth option', async () => {
     render(<VaultPage />);
 

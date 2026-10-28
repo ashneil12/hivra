@@ -530,7 +530,9 @@ describe("buildAgentDeployScript", () => {
       ramLimit: 1024,
     });
     expect(script).toContain('Resolving public IP dynamically for 0-0-0-0.sslip.io placeholder...');
-    expect(script).toContain('PUBLIC_IP=$(curl -s http://169.254.169.254/hetzner/v1/metadata/public-ipv4 || curl -s ifconfig.me)');
+    expect(script).toContain('PUBLIC_IP=$(curl -s http://169.254.169.254/hetzner/v1/metadata/public-ipv4 || curl -s https://ifconfig.me)');
+    // The resolved IP is validated before it is spliced into sed.
+    expect(script).toContain(`case "$PUBLIC_IP" in *[!0-9.]*|'') PUBLIC_IP="" ;; esac`);
     expect(script).toContain('sed -i "s/0-0-0-0\\\\.sslip\\\\.io/$REAL_FQDN/g" .env Caddyfile docker-compose.yml');
   });
 

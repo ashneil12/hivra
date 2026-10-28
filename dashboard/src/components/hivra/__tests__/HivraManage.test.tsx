@@ -744,6 +744,22 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
   });
 
+  it("drops an MCP list that answers after the box URL changed", async () => {
+    const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
+    let answerOld: (value: unknown) => void = () => undefined;
+    mockListBoxMcp
+      .mockImplementationOnce(() => new Promise((resolve) => { answerOld = resolve; }))
+      .mockResolvedValueOnce({ servers: [{ name: "new-box-server", command: "npx", args: [] }], error: null });
+    const props = { def: getAgent("codex"), plan, browserOn: false, onChanged: jest.fn(), onDestroyed: jest.fn() };
+    const { rerender } = render(<HivraManage {...props} agent={chatAgent} />);
+    rerender(<HivraManage {...props} agent={{ ...chatAgent, chat_url: "https://new-box.example.com" }} />);
+    openSection("Model & tools");
+    expect(await screen.findByRole("button", { name: "Remove new-box-server" })).toBeInTheDocument();
+    await act(async () => answerOld({ servers: [{ name: "old-box-server", command: "npx", args: [] }], error: null }));
+    expect(screen.queryByRole("button", { name: "Remove old-box-server" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove new-box-server" })).toBeInTheDocument();
+  });
+
   describe("touch safety", () => {
     const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
 
@@ -902,6 +918,35 @@ describe("HivraManage lifecycle guidance", () => {
       fireEvent.keyDown(name, { key: "Enter" });
       expect(screen.getByRole("textbox", { name: "MCP server command" })).toHaveFocus();
       expect(mockAddBoxMcp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("connection address link safety (SEC-07)", () => {
+    const renderAdvanced = (chat_url: string) => {
+      render(<HivraManage agent={{ ...agent, chat_url }} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      openSection("Advanced");
+    };
+
+    it.each([
+      "javascript:alert(1)",
+      "data:text/html,<h1>pwned</h1>",
+      "vbscript:msgbox(1)",
+      "file:///etc/passwd",
+      "box.example.com",
+      " https://box.example.com ",
+      "https://box.example.com/?x=1",
+      "https://user:pass@box.example.com",
+    ])("does not render the external link for %s", (chat_url) => {
+      renderAdvanced(chat_url);
+      // The raw value still displays as text — only the href is withheld.
+      expect(screen.getByText("Connection address")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Open endpoint" })).not.toBeInTheDocument();
+    });
+
+    it("renders the external link for a plain https box address", () => {
+      renderAdvanced("https://box.example.com");
+      expect(screen.getByRole("link", { name: "Open endpoint" }))
+        .toHaveAttribute("href", "https://box.example.com");
     });
   });
 });

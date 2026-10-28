@@ -637,15 +637,19 @@ describe("Hetzner token replacement storage", () => {
       .mockReturnValueOnce(listQuery({
         data: Array.from({ length: 101 }, () => ({ id: QUOTE_ID, status: "created_off", provider_resource_id: "42", provider_ssh_key_id: null })),
         error: null,
-      }));
+      }))
+      .mockReturnValueOnce(awaitedQuery({ data: [], error: null }));
     await expect(loadHetznerCloudTokenReplacementScope("user_a", CONNECTION_ID))
       .rejects.toMatchObject({ code: "database_error" });
   });
 
   it("refuses to replace a connection with no stored envelope", async () => {
+    // The order and inventory reads now start alongside the secret read.
     mockFrom
       .mockReturnValueOnce(query({ data: connectionRow(), error: null }))
-      .mockReturnValueOnce(query({ data: null, error: null }));
+      .mockReturnValueOnce(query({ data: null, error: null }))
+      .mockReturnValueOnce(listQuery({ data: [], error: null }))
+      .mockReturnValueOnce(awaitedQuery({ data: [], error: null }));
     await expect(loadHetznerCloudTokenReplacementScope("user_a", CONNECTION_ID))
       .rejects.toMatchObject({ code: "credential_error" });
   });

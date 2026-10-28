@@ -148,6 +148,12 @@ describe("POST /api/billing/subscribe", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 Invalid plan for inherited object keys such as constructor", async () => {
+    const res = await POST(createRequest({ plan: "constructor" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("Invalid plan");
+  });
+
   it("activates the free plan without creating a Stripe customer or checkout session", async () => {
     mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
       data: null,

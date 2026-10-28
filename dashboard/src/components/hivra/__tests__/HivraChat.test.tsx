@@ -17,6 +17,11 @@ import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
 import { listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
 import { startAgentWelcomeRun } from "@/lib/hivra/agent-welcome";
 import { clientLog } from "@/lib/client/logger";
+import { captureClient } from "@/lib/telemetry/posthog-client";
+
+jest.mock("@/lib/telemetry/posthog-client", () => ({
+  captureClient: jest.fn(),
+}));
 
 jest.mock("posthog-js", () => ({
   __esModule: true,
@@ -1634,6 +1639,41 @@ describe("HivraChat", () => {
       expect.objectContaining({ role: "user", text: "long task" }),
       expect.objectContaining({ role: "assistant", runId }),
     ]);
+  });
+
+  it("saves a reply while it keeps streaming, not only once the stream pauses", async () => {
+    window.localStorage.setItem("hivra:first-welcome:save-streaming", "1");
+    const words = Array.from({ length: 10 }, (_, i) => `w${i} `);
+    let next = 0;
+    const read = jest.fn(async () => {
+      if (next >= words.length) return { done: true, value: undefined };
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return eventChunk(replyText(words[next++]));
+    });
+    global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="save-streaming" agentName="Atlas" agentKind="claude" />);
+
+    await sendMessage("keep going");
+    // Tokens arrive every 400 ms, faster than the 1 s idle save: the save must still happen mid-stream.
+    await waitFor(() => expect(window.localStorage.getItem("hivra_sessions_savestreaming") || "").toContain("w0"), { timeout: 3000 });
+    expect(next).toBeLessThan(words.length);
+  });
+
+  it("records a rating once per tap, even when React replays the state update", async () => {
+    window.localStorage.setItem("hivra:first-welcome:rate-once", "1");
+    window.localStorage.setItem("hivra_sessions_rateonce", JSON.stringify([{
+      id: "s1", title: "chat", claudeSessionId: null, createdAt: 1,
+      messages: [
+        { role: "user", text: "hi", tools: [] },
+        { role: "assistant", text: "Hello there", tools: [], outcome: "complete" },
+      ],
+    }]));
+    window.localStorage.setItem("hivra_sessions_rateonce_active", "s1");
+    render(<React.StrictMode><HivraChat boxUrl="https://box.example.com" storageKey="rate-once" agentName="Atlas" agentKind="claude" /></React.StrictMode>);
+
+    fireEvent.click(await screen.findByLabelText("Good response"));
+    expect(captureClient).toHaveBeenCalledTimes(1);
+    expect(captureClient).toHaveBeenCalledWith("chat_feedback", expect.objectContaining({ rating: "up" }));
   });
 
   // ── Replies started on another device ─────────────────────────────────────

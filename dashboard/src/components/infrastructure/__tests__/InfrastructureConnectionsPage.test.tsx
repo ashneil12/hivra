@@ -2792,6 +2792,31 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
   });
 
+  it("turns a fresh review's price into the expired notice when its time runs out", async () => {
+    (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
+    (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);
+    (quoteHetznerCloudCapacity as jest.Mock).mockResolvedValue({
+      ...HETZNER_QUOTE,
+      expiresAt: new Date(Date.now() + 1_500).toISOString(),
+    });
+    render(<InfrastructureConnectionsPage />);
+
+    const projectHeading = await screen.findByRole("heading", { name: "Personal cloud" });
+    const projectCard = projectHeading.closest("article") as HTMLElement;
+    fireEvent.click(within(projectCard).getByRole("button", { name: "Create cloud server" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a Hetzner server" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Review current rates" }));
+    fireEvent.click(await within(dialog).findByRole("checkbox", {
+      name: /I understand Hetzner bills this server/i,
+    }));
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent(/This price has expired/i), { timeout: 4_000 });
+    expect(within(dialog).getByRole("button", { name: "Create server and start billing" })).toBeDisabled();
+    expect(createHetznerCloudCapacity).not.toHaveBeenCalled();
+  });
+
   it("fails closed before quoting when secure request identifiers are unavailable", async () => {
     (listInfrastructureConnections as jest.Mock).mockResolvedValue([HETZNER_CONNECTION]);
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([]);

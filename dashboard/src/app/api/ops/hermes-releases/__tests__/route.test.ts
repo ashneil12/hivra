@@ -102,6 +102,12 @@ describe("ops hermes-releases API", () => {
     expect((await step({ action: "unhalt" })).data.release.halted).toBe(false);
   });
 
+  it("answers 404 when promoting a release id that does not exist", async () => {
+    const res = await POST_ID(json(`/api/ops/hermes-releases/${RELEASE}`, { action: "promote" }), { params: Promise.resolve({ id: RELEASE }) });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("Release not found");
+  });
+
   it("requires a tag, or a digest with its version", async () => {
     expect((await POST(json("/api/ops/hermes-releases", { imageRepo: REPO }))).status).toBe(400);
     expect((await POST(json("/api/ops/hermes-releases", { imageRepo: REPO, digest: `sha256:${"d".repeat(64)}` }))).status).toBe(400);

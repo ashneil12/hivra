@@ -79,14 +79,18 @@ type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec | null => v && typeof v === "object" && !Array.isArray(v) ? v as Rec : null;
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
 const str = (v: unknown, max = 200): string | undefined => typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined;
-const hex = (v: unknown, len: number): string | undefined => typeof v === "string" && new RegExp(`^[a-fA-F0-9]{${len}}$`).test(v) ? v.toLowerCase() : undefined;
+const HEX_RES: Record<number, RegExp> = { 16: /^[a-fA-F0-9]{16}$/, 32: /^[a-fA-F0-9]{32}$/, 64: /^[a-fA-F0-9]{64}$/ };
+const hex = (v: unknown, len: number): string | undefined => {
+  const re = HEX_RES[len] ?? (HEX_RES[len] = new RegExp(`^[a-fA-F0-9]{${len}}$`));
+  return typeof v === "string" && re.test(v) ? v.toLowerCase() : undefined;
+};
 
 /** Credential-shaped identifiers are dropped even when their charset is allowed. */
 export function looksSecret(candidate: string): boolean {
   return /^(?:sk-|gh[opsu]_|github_pat_|xox[baprs]-|AKIA|ASIA|eyJ[A-Za-z0-9_-]*\.)/i.test(candidate)||/bearer/i.test(candidate);
 }
 
-function anyValue(key: string, value: unknown): string | number | boolean | undefined {
+function anyValue(value: unknown): string | number | boolean | undefined {
   const r = rec(value);
   if (!r) return undefined;
   if (typeof r.stringValue === "string") {
@@ -109,7 +113,7 @@ function attributes(value: unknown): Record<string, string | number | boolean> {
   for (const entry of arr(value).slice(0, MAX_ATTRIBUTES)) {
     const item = rec(entry); const key = str(item?.key, 120);
     if (!key || BLOCKED_KEY.test(key) || !SAFE_ATTRIBUTE_KEYS.has(key)) continue;
-    const parsed = anyValue(key, item?.value);
+    const parsed = anyValue(item?.value);
     if (parsed !== undefined) out[key] = parsed;
   }
   return out;

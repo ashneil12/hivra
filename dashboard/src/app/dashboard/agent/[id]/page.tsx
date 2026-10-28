@@ -35,12 +35,7 @@ import { useNativeWorkspace } from "@/components/layout/NativeWorkspaceBridge";
 import { HivraChat } from "@/components/hivra/HivraChat";
 import { HivraLogin } from "@/components/hivra/HivraLogin";
 import { HivraGitHubConnect } from "@/components/hivra/HivraGitHubConnect";
-import { HivraFiles } from "@/components/hivra/HivraFiles";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
-import { HivraGit } from "@/components/hivra/HivraGit";
-import { HivraSkills } from "@/components/hivra/HivraSkills";
-import { HivraTelegram } from "@/components/hivra/HivraTelegram";
-import { HivraManage } from "@/components/hivra/HivraManage";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
 import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
@@ -148,6 +143,28 @@ const DigitalOceanAgentWorkspace = dynamic(
 const TasksPanel = dynamic(
   () => import("@/components/scheduled-tasks/TasksPanel").then((mod) => mod.TasksPanel, surfaceCodeUnavailable),
   { ssr: false, loading: () => <LoadingState compact label="Loading tasks…" /> },
+);
+// Manage and the Files, Git, Skills and Telegram tabs are not the default tab:
+// their code loads when the owner opens one (each sits in a SurfaceCodeBoundary).
+const HivraManage = dynamic(
+  () => import("@/components/hivra/HivraManage").then((mod) => mod.HivraManage, surfaceCodeUnavailable),
+  { loading: () => <LoadingState compact label="Opening Manage…" /> },
+);
+const HivraFiles = dynamic(
+  () => import("@/components/hivra/HivraFiles").then((mod) => mod.HivraFiles, surfaceCodeUnavailable),
+  { loading: () => <LoadingState compact label="Loading files…" /> },
+);
+const HivraGit = dynamic(
+  () => import("@/components/hivra/HivraGit").then((mod) => mod.HivraGit, surfaceCodeUnavailable),
+  { loading: () => <LoadingState compact label="Loading git…" /> },
+);
+const HivraSkills = dynamic(
+  () => import("@/components/hivra/HivraSkills").then((mod) => mod.HivraSkills, surfaceCodeUnavailable),
+  { loading: () => <LoadingState compact label="Loading skills…" /> },
+);
+const HivraTelegram = dynamic(
+  () => import("@/components/hivra/HivraTelegram").then((mod) => mod.HivraTelegram, surfaceCodeUnavailable),
+  { loading: () => <LoadingState compact label="Loading Telegram…" /> },
 );
 /**
  * Starts downloading a desktop's code before the page knows which computer it
@@ -796,6 +813,7 @@ export default function AgentPage() {
   // sections, replaces the setup progress while it is being set up.
   const [manageChosenFor, setManageChosenFor] = useState<string | null>(null);
   const [browserOn, setBrowserOn] = useState<boolean | null>(null);
+  const browserProbeRef = useRef<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
   const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
@@ -839,7 +857,12 @@ export default function AgentPage() {
   // (drives the Browser tab visibility + the Manage toggle + the resize floor).
   useEffect(() => {
     if (agent?.status === "running" && agent.chat_url && catalogAgent(agent.type)?.browser && browserOn === null) {
+      // One probe per agent at a time: browserOn stays null until this resolves,
+      // and each poll that changes the agent object re-runs this effect.
+      if (browserProbeRef.current === agent.id) return;
+      browserProbeRef.current = agent.id;
       void browserStatus(agent.chat_url, agent.api_token).then((s) => {
+        if (browserProbeRef.current === agent.id) browserProbeRef.current = null;
         if (s.error) {
           clientLog.warn("Browser status probe failed", {
             source: "hivra-agent-page",
@@ -1144,20 +1167,22 @@ export default function AgentPage() {
   const tok = agent.api_token || "";
   const isFreePlan = agent.deployment_mode !== "self-managed" && Boolean(plan && (!plan.subscribed || plan.key === "free"));
   const managePanel = (
-    <HivraManage
-      key={agent.id}
-      agent={agent}
-      def={def}
-      plan={plan}
-      chatReadiness={chatReadiness}
-      onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
-      onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
-      onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
-      browserOn={browserOn}
-      onBrowserChange={(e) => setBrowserOn(e)}
-      softwareChipInHeader={Boolean(nativeWorkspace)}
-      sectionRequest={manageSectionRequest}
-    />
+    <SurfaceCodeBoundary>
+      <HivraManage
+        key={agent.id}
+        agent={agent}
+        def={def}
+        plan={plan}
+        chatReadiness={chatReadiness}
+        onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+        onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
+        onDestroyed={() => { listChanged(); go(isComputer ? "/dashboard/computers" : "/dashboard"); }}
+        browserOn={browserOn}
+        onBrowserChange={(e) => setBrowserOn(e)}
+        softwareChipInHeader={Boolean(nativeWorkspace)}
+        sectionRequest={manageSectionRequest}
+      />
+    </SurfaceCodeBoundary>
   );
 
   return (
@@ -1385,14 +1410,14 @@ export default function AgentPage() {
         ) : effectiveTab === "desktop" ? (
           agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
         ) : effectiveTab === "git" ? (
-          agent.chat_url ? <HivraGit boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+          agent.chat_url ? <SurfaceCodeBoundary><HivraGit boxUrl={agent.chat_url} token={agent.api_token} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "files" ? (
           providerWorkspace && agent.status === "running" && agent.chat_url ? null
-            : agent.chat_url && !providerWorkspace ? <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+            : agent.chat_url && !providerWorkspace ? <SurfaceCodeBoundary><HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "skills" ? (
-          agent.chat_url ? <HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+          agent.chat_url ? <SurfaceCodeBoundary><HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "telegram" ? (
-          agent.chat_url ? <HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+          agent.chat_url ? <SurfaceCodeBoundary><HivraTelegram boxUrl={agent.chat_url} boxId={agent.id} token={agent.api_token} agentName={agent.name} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "tasks" ? (
           agent.status === "running" ? (
             <SurfaceCodeBoundary>

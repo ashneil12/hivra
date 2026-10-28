@@ -111,9 +111,10 @@ export async function agentWebApi(
     .select("id, gateway_url, status, host_id, hetzner_server_id, api_server_key_encrypted")
     .eq("id", instanceId)
     .eq("user_id", userId)
-    .single();
+    .maybeSingle();
 
-  if (error || !instance) throw new Error("Instance not found");
+  if (error) throw new Error("Instance lookup failed");
+  if (!instance) throw new Error("Instance not found");
   if (!instance.gateway_url) throw new Error("Gateway URL not configured");
   if (instance.status !== "running") throw new Error("Instance is not running");
   if (!instance.api_server_key_encrypted) {

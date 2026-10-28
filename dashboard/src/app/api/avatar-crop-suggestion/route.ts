@@ -196,6 +196,8 @@ async function requestModelCropSuggestion(
         },
       },
     }),
+    // A stalled upstream must not hold the upload request open; the caller's catch returns the centred crop.
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {

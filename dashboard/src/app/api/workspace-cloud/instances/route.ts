@@ -75,7 +75,8 @@ export async function POST(request: NextRequest) {
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401, undefined, undefined, { route: ROUTE });
 
-    const json = await request.json();
+    const json = await request.json().catch(() => null);
+    if (json === null) return apiError("Invalid JSON body", 400, undefined, undefined, { route: ROUTE });
     const fingerprintRequestId =
       typeof json?.fingerprintRequestId === "string" ? json.fingerprintRequestId : null;
 

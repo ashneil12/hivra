@@ -54,7 +54,10 @@ interface InstanceFixture {
 function mockSupabaseInstanceList(rows: InstanceFixture[]) {
   const builder = {
     select: jest.fn().mockReturnThis(),
-    in: jest.fn().mockResolvedValue({ data: rows, error: null }),
+    in: jest.fn().mockReturnThis(),
+    gt: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockResolvedValue({ data: rows, error: null }),
   };
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
     if (table === "hermes_instances") return builder;
@@ -466,5 +469,48 @@ describe("GET /api/cron/sample-instance-metrics", () => {
     expect(body.data).toMatchObject({ sampled: 1, skipped: 0, errors: 1 });
     expect(recordInstanceMeteringSample).toHaveBeenCalledTimes(1);
     jest.useRealTimers();
+  });
+
+  it("reads the whole fleet across pages, so instances past the first 1000 rows are sampled", async () => {
+    // 1003 sampleable instances: the first page is full, the tail is 3. A single
+    // unbounded read kept only the first page and never reached the tail.
+    const rows = Array.from({ length: 1003 }, (_, i) => ({
+      id: `inst_${String(i).padStart(5, "0")}`,
+      proxmox_vmid: 1000 + i,
+      resource_tier: "operator",
+      lifecycle_state: "active",
+      infrastructure_provider: "proxmox",
+    }));
+    const pageCalls: Array<{ afterId: string | null; limit: number }> = [];
+    (supabaseAdmin!.from as jest.Mock).mockImplementation(() => {
+      let afterId: string | null = null;
+      const builder: Record<string, unknown> = {};
+      const self = () => builder;
+      builder.select = jest.fn(self);
+      builder.in = jest.fn(self);
+      builder.order = jest.fn(self);
+      builder.gt = jest.fn((_col: string, value: string) => {
+        afterId = value;
+        return builder;
+      });
+      builder.limit = jest.fn(async (n: number) => {
+        const after: string | null = afterId;
+        pageCalls.push({ afterId: after, limit: n });
+        const page = rows.filter((r) => after === null || r.id > after).slice(0, n);
+        return { data: page, error: null };
+      });
+      return builder;
+    });
+    (getProxmoxInstanceMetrics as jest.Mock).mockResolvedValue(null);
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(pageCalls).toEqual([
+      { afterId: null, limit: 1000 },
+      { afterId: rows[999].id, limit: 1000 },
+    ]);
+    expect(body.data).toMatchObject({ total: 1003, skipped: 1003, errors: 0 });
   });
 });

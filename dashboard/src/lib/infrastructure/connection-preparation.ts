@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import {
   runProxmoxHostScript,
   type HostScriptResult,
@@ -36,6 +37,7 @@ import {
 import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
 
 const MAX_PROVISIONER_BUNDLE_BYTES = 2 * 1024 * 1024;
+const BUNDLE_READ_CONCURRENCY = 8;
 // Leave enough of the route's 300-second budget for the mandatory read-only
 // preflight (up to 60 seconds) and response serialization.
 const PREPARATION_TIMEOUT_MS = 225_000;
@@ -271,28 +273,31 @@ export async function loadPortableProvisionerBundle(
   bundleRoot = path.join(process.cwd(), "provisioner"),
 ): Promise<PortableProvisionerBundleAsset[]> {
   const canonicalRoot = await realpath(bundleRoot);
-  const assets: PortableProvisionerBundleAsset[] = [];
-  let totalBytes = 0;
-
   for (const relativePath of PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES) {
     if (!safeBundleRelativePath(relativePath)) {
       throw new Error("Portable provisioner bundle path is invalid.");
     }
-    const candidate = path.join(canonicalRoot, relativePath);
-    const canonicalCandidate = await realpath(candidate);
-    if (!canonicalCandidate.startsWith(`${canonicalRoot}${path.sep}`)) {
-      throw new Error("Portable provisioner bundle escaped its root.");
-    }
-    const stat = await lstat(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error("Portable provisioner bundle contains an unsupported entry.");
-    }
-    const content = await readFile(candidate);
-    totalBytes += content.byteLength;
-    if (totalBytes > MAX_PROVISIONER_BUNDLE_BYTES) {
-      throw new Error("Portable provisioner bundle is too large.");
-    }
-    assets.push({ relativePath, content });
+  }
+  // Files are read in bounded parallel and keep the allowlist order.
+  const assets = await mapWithConcurrencyLimit(
+    PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
+    BUNDLE_READ_CONCURRENCY,
+    async (relativePath): Promise<PortableProvisionerBundleAsset> => {
+      const candidate = path.join(canonicalRoot, relativePath);
+      const canonicalCandidate = await realpath(candidate);
+      if (!canonicalCandidate.startsWith(`${canonicalRoot}${path.sep}`)) {
+        throw new Error("Portable provisioner bundle escaped its root.");
+      }
+      const stat = await lstat(candidate);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error("Portable provisioner bundle contains an unsupported entry.");
+      }
+      return { relativePath, content: await readFile(candidate) };
+    },
+  );
+  const totalBytes = assets.reduce((sum, asset) => sum + asset.content.byteLength, 0);
+  if (totalBytes > MAX_PROVISIONER_BUNDLE_BYTES) {
+    throw new Error("Portable provisioner bundle is too large.");
   }
 
   const versionAsset = assets.find((asset) => asset.relativePath === "VERSION");

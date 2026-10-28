@@ -121,9 +121,9 @@ jest.mock("@/lib/billing/billing-v2-availability", () => ({
 }));
 
 jest.mock("@/lib/billing/tier-thresholds", () => ({
-  getTierThresholds: () => ({
-    source: "configured" as const,
-    thresholds: { pro: 200000n, power: 500000n },
+  resolveActiveThresholds: () => ({
+    pro: { amount: 200000n },
+    power: { amount: 500000n },
   }),
   HERMESOS_TOKEN_DECIMALS: 18,
   isFoundersRateUser: () => false,

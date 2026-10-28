@@ -30,7 +30,8 @@ export class ProviderComputerSetupError extends Error {
   }
 }
 
-async function describe(userId: string, connectionId: string, order: StoredHetznerCloudCapacityOrder, deps: Dependencies) {
+async function describe(userId: string, connectionId: string, order: StoredHetznerCloudCapacityOrder, deps: Dependencies,
+  loadTargets: () => ReturnType<Dependencies["targets"]> = () => deps.targets(userId, { connectionId })) {
   const operation = order.operation;
   if (operation.connectionId !== connectionId) throw new ProviderComputerSetupError("connection_changed");
   const view: ProviderComputerSetupView = {
@@ -71,7 +72,7 @@ async function describe(userId: string, connectionId: string, order: StoredHetzn
     if (boot?.abandonedAt) view.stage = "stopped";
     else if (enrollment.phase === "enrolled") {
       view.stage = "identity_enrolled";
-      const targets = await deps.targets(userId, { connectionId });
+      const targets = await loadTargets();
       const target = targets.find(candidate => "kind" in candidate.capabilities
         && candidate.capabilities.kind === "provider-vm"
         && candidate.capabilities.capacityOrderId === operation.id);
@@ -97,7 +98,14 @@ async function describe(userId: string, connectionId: string, order: StoredHetzn
 export async function listProviderComputerSetups(userId: string, connectionId: string, dependencies: Partial<Dependencies> = {}) {
   const deps = { ...defaults, ...dependencies };
   const orders = await deps.orders(userId, connectionId);
-  const results = await Promise.all(orders.map(order => describe(userId, connectionId, order, deps)));
+  // The target list is read at most once per request, and only if an enrolled
+  // order reaches the step that needs it.
+  let targets: ReturnType<Dependencies["targets"]> | undefined;
+  const loadTargets = () => {
+    targets ??= deps.targets(userId, { connectionId });
+    return targets;
+  };
+  const results = await Promise.all(orders.map(order => describe(userId, connectionId, order, deps, loadTargets)));
   return results.map(result => result.view);
 }
 

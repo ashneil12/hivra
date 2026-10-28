@@ -7,6 +7,8 @@ const LOG_SOURCE = "resend-announcement-sync";
 
 const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
 const CLERK_PAGE_SIZE = 100;
+const CLERK_FETCH_TIMEOUT_MS = 15_000;
+const ANNOUNCEMENT_SETUP_TTL_MS = 5 * 60_000;
 const CONTACT_SYNC_DELAY_MS = 800;
 const RATE_LIMIT_RETRY_MS = 1_500;
 const MAX_RATE_LIMIT_RETRIES = 5;
@@ -134,7 +136,9 @@ async function withRateLimitRetry<T extends ResendResponseWithError>(
   label: string,
   operation: () => Promise<T>,
 ) {
-  for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt += 1) {
+  // The last attempt (MAX_RATE_LIMIT_RETRIES) always returns below, so the loop
+  // never falls through; no trailing return is needed.
+  for (let attempt = 0; ; attempt += 1) {
     const result = await operation();
     if (
       !result.error ||
@@ -154,8 +158,6 @@ async function withRateLimitRetry<T extends ResendResponseWithError>(
     });
     await sleep(waitMs);
   }
-
-  return operation();
 }
 
 function buildAnnouncementRecipient(user: ClerkAnnouncementUser): AnnouncementRecipient | null {
@@ -211,6 +213,7 @@ export async function fetchClerkAnnouncementUsers(secretKey = requireEnv("CLERK_
       headers: {
         Authorization: `Bearer ${secretKey}`,
       },
+      signal: AbortSignal.timeout(CLERK_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -315,13 +318,42 @@ async function ensureContactProperties(resend: Resend) {
   }
 }
 
-async function ensureAnnouncementSetup(resend: Resend) {
-  const config = getSyncConfig();
+async function runAnnouncementSetup(resend: Resend, config: SyncConfig) {
   const segmentId = await ensureSegment(resend, config.segmentName);
   const topicId = await ensureTopic(resend, config);
   await ensureContactProperties(resend);
 
   return { segmentId, topicId };
+}
+
+// Every single-user Clerk or reservation event used to re-list the segment,
+// topic and contact properties before its one contact upsert. The ids only
+// change when the config does, so reuse the last setup for a few minutes. A
+// failed setup is dropped so the next event retries it.
+let announcementSetupCache: {
+  key: string;
+  expiresAt: number;
+  setup: ReturnType<typeof runAnnouncementSetup>;
+} | null = null;
+
+function ensureAnnouncementSetup(resend: Resend) {
+  const config = getSyncConfig();
+  const key = JSON.stringify(config);
+  const now = Date.now();
+  if (announcementSetupCache?.key === key && announcementSetupCache.expiresAt > now) {
+    return announcementSetupCache.setup;
+  }
+
+  const entry = {
+    key,
+    expiresAt: now + ANNOUNCEMENT_SETUP_TTL_MS,
+    setup: runAnnouncementSetup(resend, config),
+  };
+  announcementSetupCache = entry;
+  entry.setup.catch(() => {
+    if (announcementSetupCache === entry) announcementSetupCache = null;
+  });
+  return entry.setup;
 }
 
 async function getContactByEmail(resend: Resend, email: string) {

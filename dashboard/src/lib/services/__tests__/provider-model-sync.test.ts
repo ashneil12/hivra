@@ -172,6 +172,43 @@ describe("provider model sync", () => {
     expect(store.errors.get("venice")).toBe("Provider returned HTTP 500");
   });
 
+  // REGRESSION: the catalog save ignored Supabase's error, so a failed write was
+  // reported as checked and changed. A failed save must come back as checked:false.
+  it("reports a failed catalog save as not checked", async () => {
+    const upsert = jest.fn().mockResolvedValue({ error: { message: "db unavailable" } });
+    const fakeAdmin = {
+      from: jest.fn(() => ({
+        select: jest.fn(() => ({
+          eq: jest.fn(() => ({ maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }) })),
+        })),
+        upsert,
+      })),
+    };
+    const supabaseModule = jest.requireMock("@/lib/supabase") as { supabaseAdmin: unknown };
+    supabaseModule.supabaseAdmin = fakeAdmin;
+
+    try {
+      (fetchLiveProviderModels as jest.Mock).mockResolvedValue([{ value: "kimi-k2-6", label: "Kimi K2.6" }]);
+
+      const results = await syncProviderModelCatalogs({ providers: ["crof"] });
+
+      expect(upsert).toHaveBeenCalled();
+      expect(results).toEqual([
+        {
+          provider: "crof",
+          checked: false,
+          changed: false,
+          modelCount: 0,
+          addedModels: [],
+          removedModels: [],
+          error: "Failed to save provider model catalog",
+        },
+      ]);
+    } finally {
+      supabaseModule.supabaseAdmin = null;
+    }
+  });
+
   it("includes public providers by default and private providers only when a server key exists", () => {
     expect(getProvidersForModelSync()).toEqual(
       expect.arrayContaining(["cometapi", "crof", "nous", "openrouter", "venice"])

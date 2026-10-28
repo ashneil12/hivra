@@ -90,6 +90,7 @@ export function NousPortalOAuthModal({
   const pollRequestInFlightRef = useRef(false);
   const finalizingRef = useRef(false);
   const oauthStartedAtRef = useRef<number | null>(null);
+  const startAttemptRef = useRef(0);
   const reduceMotion = useReducedMotion();
   const overlayVariants = buildHermesOverlayVariants(Boolean(reduceMotion));
   const modalVariants = buildHermesSurfaceVariants(Boolean(reduceMotion), {
@@ -123,6 +124,8 @@ export function NousPortalOAuthModal({
 
   useEffect(() => {
     return () => {
+      // A start request still in flight must not arm timers after unmount.
+      startAttemptRef.current += 1;
       clearPolling();
       clearExpiry();
       clearSuccessTimer();
@@ -276,6 +279,8 @@ export function NousPortalOAuthModal({
   );
 
   const handleStart = useCallback(async () => {
+    startAttemptRef.current += 1;
+    const attempt = startAttemptRef.current;
     clearPolling();
     clearExpiry();
     pollRequestInFlightRef.current = false;
@@ -298,6 +303,7 @@ export function NousPortalOAuthModal({
         method: "POST",
       });
       const payload = await response.json();
+      if (startAttemptRef.current !== attempt) return;
       if (!response.ok || !payload.success) {
         throw new Error(payload.error || "Failed to start Nous Portal login");
       }

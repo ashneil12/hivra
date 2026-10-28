@@ -203,25 +203,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const action = String(body.action || "");
 
-    const { data: agent } = await supabaseAdmin
+    const { data: agent, error: agentError } = await supabaseAdmin
       .from("hivra_agents")
       .select("*")
       .eq("id", id)
       .eq("user_id", userId)
       .single();
+    // .single() reports zero rows as PGRST116 and a malformed id as 22P02: both
+    // mean no such agent. Any other error is a failed read, not a missing agent.
+    if (agentError && !["PGRST116", "22P02"].includes(agentError.code)) {
+      return apiError("Could not load this computer.", 503);
+    }
     if (!agent) return apiError("Agent not found", 404);
 
     // rename is metadata-only — no box required.
     if (action === "rename") {
       const name = String(body.name ?? "").trim();
       if (name.length < 1 || name.length > 60) return apiError("Name must be 1–60 characters", 400);
-      const { data: updated } = await supabaseAdmin
+      const { data: updated, error: renameError } = await supabaseAdmin
         .from("hivra_agents")
         .update({ name })
         .eq("id", agent.id)
         .select()
         .single();
-      return apiSuccess({ name, agent: sanitizeHivraAgentRow(updated || { ...agent, name }) });
+      // Zero rows (PGRST116) means the agent was removed during the request. Never
+      // report a rename that was not saved.
+      if (renameError) {
+        if (renameError.code === "PGRST116") {
+          return apiError("This computer changed while it was being renamed. Refresh and try again.", 409);
+        }
+        return apiError("Could not rename this computer.", 503);
+      }
+      return apiSuccess({ name, agent: sanitizeHivraAgentRow(updated) });
     }
 
     if (action === "onboarding") {

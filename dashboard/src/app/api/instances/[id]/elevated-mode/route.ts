@@ -15,7 +15,7 @@ const ELEVATED_APPLY_TIMEOUT_MS = 90_000;
 const ELEVATED_READ_TIMEOUT_MS = 30_000;
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {

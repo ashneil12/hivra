@@ -41,7 +41,6 @@ export async function GET(
 
     const parts = (result.stdout || "").split("###");
     if (parts.length >= 3) {
-      // containerName = parts[0].trim(); // ignored
       statsRaw = parts[1].trim();
       uptimeRaw = parts[2].trim();
     } else {

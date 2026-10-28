@@ -66,6 +66,10 @@ export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
   const completed = useRef<string | null>(null);
   const shutdownContinuation = useRef<string | null>(null);
   const targetRef = useRef("");
+  // Read through a ref: the page passes a new inline onChanged on every render,
+  // and load must not be recreated (and re-fetched) because of it.
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
 
   const load = useCallback(async () => {
     try {
@@ -89,7 +93,7 @@ export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
             // A later ready observation may continue; unknown POSTs never retry.
             shutdownContinuation.current = null;
           }
-          if (continued.stage === "succeeded") onChanged();
+          if (continued.stage === "succeeded") onChangedRef.current();
         } finally { setBusy(false); }
       }
       if (state.catalog) {
@@ -106,7 +110,7 @@ export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
       }
       if (state.operation?.stage === "succeeded" && completed.current !== state.operation.operationId) {
         completed.current = state.operation.operationId;
-        onChanged();
+        onChangedRef.current();
       }
     } catch (cause) {
       if (cause instanceof ProviderResizeApiError && ["not_found", "not_supported"].includes(String(cause.code))) {
@@ -119,7 +123,7 @@ export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
     } finally {
       setLoading(false);
     }
-  }, [agent.id, onChanged]);
+  }, [agent.id]);
 
   useEffect(() => {
     void load();

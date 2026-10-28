@@ -85,7 +85,7 @@ function continueHref(pending: PendingLaunch, targetId: string): string {
 
 /** A fresh launch with the server chosen. A Linux Sandbox server can run only
  * Linux Sandbox, so that choice is made too. */
-export function freshLaunchHref(targetId: string, placement: "gvisor" | "other"): string {
+function freshLaunchHref(targetId: string, placement: "gvisor" | "other"): string {
   const id = encodeURIComponent(targetId);
   return placement === "gvisor"
     ? `/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=${id}`

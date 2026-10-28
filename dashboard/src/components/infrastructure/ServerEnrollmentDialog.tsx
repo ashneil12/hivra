@@ -158,6 +158,12 @@ export function ServerEnrollmentDialog({
 
   const enrollmentId = state.kind === "ready" ? state.enrollment.id : null;
   const phase = state.kind === "ready" ? state.enrollment.phase : null;
+  // Read through refs: the page passes new inline callbacks on every render, and
+  // those must not restart the poll (or abort its request).
+  const onChangedRef = useRef(onChanged);
+  const onConnectionsChangedRef = useRef(onConnectionsChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  useEffect(() => { onConnectionsChangedRef.current = onConnectionsChanged; }, [onConnectionsChanged]);
   useEffect(() => {
     if (!enrollmentId || (phase !== "issued" && phase !== "reported")) return;
     const controller = new AbortController();
@@ -165,15 +171,16 @@ export function ServerEnrollmentDialog({
       void getServerEnrollment(enrollmentId, controller.signal).then((next) => {
         setState((current) => (current.kind === "ready" && current.enrollment.id === next.id
           ? { ...current, enrollment: next } : current));
-        if (next.phase !== "issued") onChanged();
-        if (next.phase === "confirmed") onConnectionsChanged?.();
+        // Only a phase change is news to the page; a repeated reading is not.
+        if (next.phase !== phase) onChangedRef.current();
+        if (next.phase === "confirmed") onConnectionsChangedRef.current?.();
       }).catch(() => undefined);
     }, POLL_MS);
     return () => {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [enrollmentId, phase, onChanged, onConnectionsChanged]);
+  }, [enrollmentId, phase]);
 
   async function renew() {
     if (state.kind !== "ready") return;
