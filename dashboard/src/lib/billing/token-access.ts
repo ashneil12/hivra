@@ -211,21 +211,6 @@ export function conversionDue(access: UserTokenAccess, now: Date): boolean {
 }
 
 /**
- * The token base tier: one whole token of a platform token the user may hold.
- * Before $HIVRA is active this is exactly the old "≥ 1 $HermesOS" rule.
- */
-export function qualifiesForTokenBaseTier(
-  access: UserTokenAccess,
-  balances: Partial<Record<PlatformTokenKey, bigint>>
-): boolean {
-  return access.allowedTokens.some((key) => {
-    const token = platformTokenByKey(key);
-    const balance = balances[key];
-    return !!token && balance !== undefined && balance >= 10n ** BigInt(token.decimals);
-  });
-}
-
-/**
  * The holding snapshot that decides the token base tier: before $HIVRA is
  * active, exactly the latest $HermesOS snapshot (as before). Once active, the
  * latest snapshot of a token the user may hold, preferring one that meets

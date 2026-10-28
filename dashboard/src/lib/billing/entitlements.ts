@@ -10,7 +10,7 @@ import {
 } from "@/lib/services/tier-specs";
 import type { PlanKey } from "@/lib/subscription";
 
-type ComputeEntitlementTier = PlanKey | "credit_base" | "token_base";
+type ComputeEntitlementTier = PlanKey | "credit_base";
 
 interface ComputeEntitlementSubscription {
   plan: string;
@@ -22,11 +22,6 @@ interface ComputeEntitlementSubscription {
    * and pass it, or a grace-expired failed payment keeps its tier.
    */
   grace_period_ends_at?: string | null;
-}
-
-interface ComputeEntitlementTokenHolding {
-  verified: boolean;
-  balance: number;
 }
 
 export interface ComputeEntitlementInstance {
@@ -46,7 +41,6 @@ export interface ComputeEntitlementInput {
   subscription: ComputeEntitlementSubscription | null;
   creditBalanceCredits: number | null;
   reservedCredits?: number;
-  tokenHolding: ComputeEntitlementTokenHolding;
   activeInstances: ComputeEntitlementInstance[];
   requestedInstance?: RequestedComputeInstance;
 }
@@ -74,8 +68,6 @@ export interface ComputeEntitlementDecision {
   payAsYouGoEnabled: boolean;
   reasons: string[];
 }
-
-const MINIMUM_TOKEN_BALANCE = 1;
 
 function normalizeSubscriptionTier(value: string | null | undefined): ComputeEntitlementTier | null {
   if (isFreeResourceTier(value)) {
@@ -181,8 +173,9 @@ export function evaluateComputeEntitlement(
   // Dunning cutoff (flag-gated, see hasPlanAccessWithGrace): a past_due sub
   // stops granting its compute tier once the 48h grace anchor elapses, so a
   // failed payment can't hold Pro+ features for Stripe's whole retry window.
-  // Falls through to the token/credit branches below, exactly as an
-  // unentitled sub would.
+  // Falls through to the credit branch below, exactly as an unentitled sub
+  // would. Holding a token never unlocks compute on its own: the 1-token
+  // Starter tier (token_base) was removed, hosted computers are paid only.
   if (
     planKey &&
     input.subscription &&
@@ -192,11 +185,6 @@ export function evaluateComputeEntitlement(
     limits = getTierLimits(planKey);
     verified = true;
     reasons.push(`Subscription ${input.subscription.status} on ${planKey}.`);
-  } else if (input.tokenHolding.verified && input.tokenHolding.balance >= MINIMUM_TOKEN_BALANCE) {
-    allowedTier = "token_base";
-    limits = getTierLimits("token_base");
-    verified = true;
-    reasons.push("Verified Hivra token holding unlocks base compute.");
   } else if (availableCredits !== null && availableCredits > 0) {
     reasons.push("Credits are available for billing/top-ups but do not unlock a compute tier.");
   }
@@ -217,7 +205,7 @@ export function evaluateComputeEntitlement(
       payAsYouGoEnabled: false,
       reasons: reasons.length > 0
         ? reasons
-        : ["No verified subscription or token entitlement."],
+        : ["No verified subscription entitlement."],
     };
   }
 

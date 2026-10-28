@@ -47,7 +47,7 @@ import { sendCapacityPausedEmail } from "@/lib/email/capacity-pause";
 
 const LOG_SOURCE = "capacity-pressure-sweep";
 
-const FREE_TIER_VALUES = new Set(["credit_base", "token_base"]);
+const FREE_TIER_VALUES = new Set(["credit_base"]);
 const PAID_TIER_VALUES = new Set(["operator", "fleet", "command"]);
 
 const COUNT_THRESHOLD_DEFAULT = 1.0;

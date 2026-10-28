@@ -16,7 +16,7 @@ import { cumulativeCounterIncrease } from "@/lib/services/instance-metering";
 
 const LOG_SOURCE = "resource-watchdog";
 
-const FREE_TIER_VALUES = new Set(["credit_base", "token_base"]);
+const FREE_TIER_VALUES = new Set(["credit_base"]);
 const PAID_TIER_VALUES = new Set(["operator", "fleet", "command"]);
 
 const RAM_PCT_THRESHOLD = 0.95;

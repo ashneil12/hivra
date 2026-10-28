@@ -471,10 +471,10 @@ describe("isFreeTierKey", () => {
 });
 
 describe("isSingleInstanceBaseTierKey", () => {
-  it("limits Free and token-base tiers to one active base instance", () => {
+  it("limits Free tiers to one active base instance (the Starter tier is gone)", () => {
     expect(isSingleInstanceBaseTierKey("free")).toBe(true);
     expect(isSingleInstanceBaseTierKey("credit_base")).toBe(true);
-    expect(isSingleInstanceBaseTierKey("token_base")).toBe(true);
+    expect(isSingleInstanceBaseTierKey("token_base")).toBe(false);
     expect(isSingleInstanceBaseTierKey("operator")).toBe(false);
   });
 });
@@ -2000,69 +2000,6 @@ describe("InstanceService.createInstance free-tier guard", () => {
         })
       );
     }
-  });
-
-  it("rejects a second token-base provision before any backend call", async () => {
-    const subscriptionQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({
-        data: {
-          plan: "token_base",
-          status: "active",
-          instance_limit: 1,
-          total_cpu_budget: 0.5,
-          total_ram_budget: 1024,
-        },
-      }),
-    };
-
-    const baseGuardQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      or: jest.fn().mockReturnThis(),
-      not: jest.fn().mockReturnThis(),
-      neq: jest.fn().mockReturnThis(),
-      limit: jest.fn(async () => ({
-        data: [{ id: "inst_existing_token_base" }],
-        error: null,
-      })),
-    };
-
-    let hermesInstancesCall = 0;
-    const proxmoxHostsRegistry = createEmptyProxmoxHostsRegistry();
-    (supabaseAdmin!.from as jest.Mock).mockImplementation((tableName: string) => {
-      if (tableName === "hermes_subscriptions") return subscriptionQuery;
-      if (tableName === "hermes_instances") {
-        hermesInstancesCall += 1;
-        return baseGuardQuery;
-      }
-      if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
-      throw new Error(`Unexpected table lookup: ${tableName}`);
-    });
-
-    const result = await InstanceService.createInstance(
-      "user_token",
-      CreateInstanceSchema.parse({
-        name: "Token Agent",
-        provider: "openrouter",
-        apiKey: "sk-or-test",
-      })
-    );
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: false,
-        status: 403,
-        message: expect.stringMatching(/one active base-tier agent/i),
-        error: expect.objectContaining({
-          code: "FREE_INSTANCE_LIMIT_REACHED",
-          existingInstanceId: "inst_existing_token_base",
-        }),
-      })
-    );
-    expect(hermesInstancesCall).toBe(1);
-    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
   it("falls through to the next Proxmox target when the primary target VMID range is full", async () => {
