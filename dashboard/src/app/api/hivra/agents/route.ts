@@ -126,6 +126,7 @@ import {
   HIVRA_AGENT_VM_STORAGE_HEADROOM_GB,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   provisionerSupportsActivityTelemetry,
+  provisionerSupportsHostCapacityAdmission,
 } from "@/lib/infrastructure/portable-provisioner-contract";
 
 // Process-lifetime once-guard for the hivra-lane box_created emit. Same
@@ -1231,6 +1232,12 @@ async function launchAgent(request: NextRequest) {
         }
         if (launchAdmission && !targetSupportsLaunchModelSettings(context.target, type)) {
           return apiError("This host needs the model-settings provisioner update before launch with an API key. Prepare it again, or launch with native sign-in.", 409);
+        }
+        if (!provisionerSupportsHostCapacityAdmission(context.runtime.provisionerVersion)) {
+          return apiError(
+            "This computer's Hivra connection service is too old to launch agents. Update the connection service, then launch again.",
+            409,
+          );
         }
 
         const requestedMemoryBytes = ram * 1024 * 1024 * 1024;
