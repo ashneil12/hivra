@@ -8,6 +8,7 @@ import {
   enforceAuthenticatedRouteRateLimit,
 } from "@/lib/authenticated-rate-limit";
 import { getPublicInstanceConfig } from "@/lib/instance-settings";
+import { withoutEncryptedColumns } from "@/lib/instance-record";
 import { log } from "@/lib/logger";
 import {
   disableManagedVeniceForWebUIInstance,
@@ -86,9 +87,8 @@ export async function POST(
       applied: result.applied,
       applyError: result.applyError,
       instance: {
-        ...result.instance,
+        ...withoutEncryptedColumns(result.instance),
         config: getPublicInstanceConfig(result.instance.config ?? undefined),
-        api_key_encrypted: undefined,
         api_key_preview: result.instance.api_key_preview,
       },
     });
@@ -164,9 +164,8 @@ export async function DELETE(
       applied: result.applied,
       applyError: result.applyError,
       instance: {
-        ...result.instance,
+        ...withoutEncryptedColumns(result.instance),
         config: getPublicInstanceConfig(result.instance.config ?? undefined),
-        api_key_encrypted: undefined,
         api_key_preview: result.instance.api_key_preview,
       },
     });
