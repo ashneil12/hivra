@@ -105,3 +105,65 @@ export function assertNavigationAllowed(rawUrl: string): URL {
   }
   return parsed;
 }
+
+// Structural slices of Playwright's Request/Response, so the redirect walk is
+// testable without a browser.
+export interface GuardedRequest {
+  url(): string;
+  redirectedFrom(): GuardedRequest | null;
+  response(): Promise<GuardedResponse | null>;
+}
+export interface GuardedResponse {
+  request(): GuardedRequest;
+  serverAddr(): Promise<{ ipAddress: string; port: number } | null>;
+}
+export interface GuardedPage {
+  goto(url: string): Promise<GuardedResponse | null | undefined | void>;
+  url(): string;
+}
+
+function urlHostBlocked(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false; // about:blank, data: etc. have no host to reach
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  return isBlockedNavigationHost(parsed.hostname);
+}
+
+// The pre-flight check above sees only the URL the caller asked for. The
+// browser then follows HTTP redirects on its own, so a public URL that answers
+// `302 Location: http://169.254.169.254/...` (or a name that resolves to
+// 127.0.0.1) would land the page on a blocked target. Walk the whole redirect
+// chain the navigation actually took and check every hop's URL and the IP the
+// browser really connected to.
+export async function navigationChainBlockCode(
+  response: GuardedResponse | null | undefined,
+  finalUrl: string,
+): Promise<NavigationBlockCode | null> {
+  if (urlHostBlocked(finalUrl)) return "BLOCKED_DESTINATION";
+  let req: GuardedRequest | null = response ? response.request() : null;
+  while (req) {
+    if (urlHostBlocked(req.url())) return "BLOCKED_DESTINATION";
+    const res = await req.response().catch(() => null);
+    const addr = res ? await res.serverAddr().catch(() => null) : null;
+    if (addr?.ipAddress && isBlockedNavigationHost(addr.ipAddress)) return "BLOCKED_DESTINATION";
+    req = req.redirectedFrom();
+  }
+  return null;
+}
+
+// Navigate with the full policy: pre-flight URL check, then the redirect-chain
+// check. A page that ended up somewhere blocked is sent to about:blank before
+// the error is thrown, so no later /screenshot or /text call can read it.
+export async function gotoWithNavigationGuard(page: GuardedPage, rawUrl: string): Promise<void> {
+  assertNavigationAllowed(rawUrl);
+  const response = await page.goto(rawUrl);
+  const code = await navigationChainBlockCode(response || null, page.url());
+  if (code) {
+    await page.goto("about:blank").catch(() => undefined);
+    throw new BlockedNavigationError(code);
+  }
+}
