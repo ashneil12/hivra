@@ -61,3 +61,14 @@ export async function isStartBlockedForLapse(
   if (!isHivraCloudComputer(agent) || typeof agent.user_id !== "string") return false;
   return ownerHasNoPaidPlan(agent.user_id);
 }
+
+/**
+ * The same refusal for the older lane (hermes_instances): every row there is a
+ * hosted computer. Only "start" brings a stopped one up (cold restore included);
+ * a reboot or gateway restart needs it running, and the sweep stops those.
+ */
+export async function isHostedInstanceStartBlockedForLapse(userId: string, action: string): Promise<boolean> {
+  if (!isHivraLapseEnforceLive()) return false;
+  if (action !== "start") return false;
+  return ownerHasNoPaidPlan(userId);
+}

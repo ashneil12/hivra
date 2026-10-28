@@ -24,11 +24,14 @@ import {
 } from "@/lib/billing/subscription-grace-reconciler";
 import { sweepBillingSuspendedCompute } from "@/lib/recovery/dunning-grace-enforce";
 import { runHivraLapseSweep } from "@/lib/recovery/hivra-lapse-enforce";
+import { runHermesLapseSweep } from "@/lib/recovery/hermes-lapse-enforce";
 
 export const dynamic = "force-dynamic";
-// Two sweeps share this run. The lapse sweep may stop up to 5 computers one
-// after another (120 s each); the cancelled-computer sweep stops starting new
-// users after 60 s and gives up on a single shutdown after 90 s.
+// Three sweeps share this run. The cancelled-computer sweep stops starting new
+// users after 60 s and gives up on a single shutdown after 90 s; the older-lane
+// unpaid sweep stops starting new shutdowns after 45 s and gives up on one after
+// 60 s; the Hivra lapse sweep may stop up to 5 computers one after another
+// (120 s each).
 export const maxDuration = 800;
 
 export async function GET(req: NextRequest) {
@@ -116,6 +119,19 @@ export async function GET(req: NextRequest) {
         source: "dunning-grace-enforce",
         route: "/api/cron/reconcile-subscription-grace",
         failureType: "billing_sweep_failed",
+      });
+    }
+
+    // Stop older-lane hosted computers whose owner has no paid plan, Free
+    // included (dark until HIVRA_LAPSE_ENFORCE_LIVE is "true"). A failure here
+    // never breaks this route.
+    try {
+      await runHermesLapseSweep();
+    } catch (err) {
+      log.error("hermes lapse sweep failed", err, {
+        source: "hermes-lapse-enforce",
+        route: "/api/cron/reconcile-subscription-grace",
+        failureType: "hermes_lapse_sweep_failed",
       });
     }
 
