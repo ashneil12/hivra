@@ -37,9 +37,20 @@ export interface BlogCardInput {
   readingTimeMin?: number;
 }
 
-async function readMarkDataUri(): Promise<string> {
-  const bytes = await readFile(MARK_PATH);
-  return `data:image/png;base64,${bytes.toString("base64")}`;
+// The mark is the same file for every card: read and encode it once per process.
+// A failed read clears the cache so the next card retries it.
+let markDataUriPromise: Promise<string> | null = null;
+
+function readMarkDataUri(): Promise<string> {
+  if (!markDataUriPromise) {
+    markDataUriPromise = readFile(MARK_PATH)
+      .then((bytes) => `data:image/png;base64,${bytes.toString("base64")}`)
+      .catch((err: unknown) => {
+        markDataUriPromise = null;
+        throw err;
+      });
+  }
+  return markDataUriPromise;
 }
 
 export async function renderBlogCard({ title, readingTimeMin }: BlogCardInput): Promise<ImageResponse> {

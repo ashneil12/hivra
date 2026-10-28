@@ -800,6 +800,17 @@ export default function InstanceDetailPage() {
   // no upgrade ask. This is the paywall VIEW event for the always-on upsell we
   // now surface in the inactivity banner. Deduped per instance, like ram_cap.
   const inactivityUpsellViewedRef = useRef<string | null>(null);
+
+  // Delayed refetches scheduled after a power action — cleared on unmount so
+  // navigating away mid-action doesn't fire requests for a page that's gone.
+  const powerFetchTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(
+    () => () => {
+      for (const t of powerFetchTimersRef.current) clearTimeout(t);
+      powerFetchTimersRef.current = [];
+    },
+    [],
+  );
   useEffect(() => {
     if (!instance) return;
     if (instance.paused_reason !== "inactivity") return;
@@ -870,10 +881,10 @@ export default function InstanceDetailPage() {
       } else {
         if (action === "restart") setRestartRequired(false);
         // Immediate status sync for better UX
-        setTimeout(() => fetchInstance(true), 500);
+        powerFetchTimersRef.current.push(setTimeout(() => fetchInstance(true), 500));
       }
       // Follow-up fetch after 2s for status transitions
-      setTimeout(fetchInstance, 2200);
+      powerFetchTimersRef.current.push(setTimeout(() => fetchInstance(false), 2200));
     } catch (err) {
       const startFailure = action === "start"
         ? describeAgentStartFailure({ error: err, code: "network_error" })

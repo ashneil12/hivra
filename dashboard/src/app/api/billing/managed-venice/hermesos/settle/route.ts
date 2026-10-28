@@ -105,7 +105,9 @@ export async function POST(req: NextRequest) {
 
     const quote = await loadManagedVeniceTokenQuote(parsed.data.quoteId);
     if (!quote) {
-      throw new Error("Managed Venice token quote not found");
+      return apiError("Managed Venice token quote not found.", 404, {
+        failureType: "managed_venice_settlement_quote_not_found",
+      });
     }
 
     // A delivery names a tx, and one tx can pay the deposit address several

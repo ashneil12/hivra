@@ -326,9 +326,16 @@ export function applyManagedSessionEvent(transcript: ManagedTranscript, event: M
       next = withRun(next, runId, (run) => ({ ...run, state: run.approvals.some((a) => a.state === "pending") ? "awaiting_approval" : "running" }));
       break;
     case "run.token_delta":
-      next = withRun(next, runId, (run) => d.isReasoning
-        ? { ...run, reasoning: (run.reasoning + String(d.text)).slice(-MAX_RUN_TEXT) }
-        : { ...run, text: (run.text + String(d.text)).slice(0, MAX_RUN_TEXT) });
+      // Only trim once the cap is passed: a delta is then a plain append,
+      // not a copy of the whole text on every token.
+      next = withRun(next, runId, (run) => {
+        if (d.isReasoning) {
+          const reasoning = run.reasoning + String(d.text);
+          return { ...run, reasoning: reasoning.length > MAX_RUN_TEXT ? reasoning.slice(-MAX_RUN_TEXT) : reasoning };
+        }
+        const text = run.text + String(d.text);
+        return { ...run, text: text.length > MAX_RUN_TEXT ? text.slice(0, MAX_RUN_TEXT) : text };
+      });
       break;
     case "run.tool_call_started": {
       const id = (d.toolCallId as string | null) ?? `${event.id}`;

@@ -11,7 +11,7 @@
 //               site; the box polls OpenAI itself, so we just wait for status).
 
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Loader2, Check, Copy } from "lucide-react";
+import { ExternalLink, Loader2, Check, Copy, RefreshCw } from "lucide-react";
 
 import { boxLoginStartRaw, boxLoginComplete, boxLoginStatus } from "@/lib/hivra/agent-api";
 import { isTrustedSignInLink } from "@/lib/agent-computers/attach-client";
@@ -57,6 +57,10 @@ const LOGIN_CSS = `
   .hivra-login__device .hivra-login__secondary { flex: 1 1 100%; }
 }
 `;
+
+/** Codex device sign-in: check the box this often, and for this long before it asks the person to check again. */
+const CODEX_POLL_MS = 3_000;
+const CODEX_POLL_WINDOW_MS = 10 * 60_000;
 
 /** Touch devices raise a keyboard on focus; let the person choose when. */
 function coarsePointer(): boolean {
@@ -118,6 +122,8 @@ export function HivraLogin({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  const [pollExpired, setPollExpired] = useState(false);
+  const [pollRound, setPollRound] = useState(0);
   const codeInputRef = useRef<HTMLInputElement>(null);
   const onDoneRef = useRef(onDone);
   useEffect(() => {
@@ -134,28 +140,37 @@ export function HivraLogin({
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  // Codex device-auth: once awaiting, poll the box until login completes.
+  // Codex device-auth: once awaiting, poll the box until login completes. It
+  // checks for a bounded window, skips checks while the tab is hidden, and then
+  // stops and offers a visible "Check again" instead of polling forever.
   useEffect(() => {
     if (!isCodex || step !== "awaiting") return;
-    let stop = false;
-    (async () => {
-      while (!stop) {
-        await new Promise((r) => setTimeout(r, 3000));
-        if (stop) return;
-        const st = await boxLoginStatus(boxUrl, token);
-        if (st.loggedIn) {
-          if (!stop) {
-            setStep("done");
-            onDoneRef.current();
-          }
+    const controller = new AbortController();
+    const started = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      if (controller.signal.aborted) return;
+      if (Date.now() - started > CODEX_POLL_WINDOW_MS) {
+        setPollExpired(true);
+        return;
+      }
+      if (!document.hidden) {
+        const st = await boxLoginStatus(boxUrl, token).catch(() => null);
+        if (controller.signal.aborted) return;
+        if (st?.loggedIn) {
+          setStep("done");
+          onDoneRef.current();
           return;
         }
       }
-    })();
-    return () => {
-      stop = true;
+      timer = setTimeout(tick, CODEX_POLL_MS);
     };
-  }, [isCodex, step, boxUrl, token]);
+    timer = setTimeout(tick, CODEX_POLL_MS);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [isCodex, step, boxUrl, token, pollRound]);
 
   async function start() {
     setBusy(true);
@@ -274,9 +289,18 @@ export function HivraLogin({
             </span>
           </div>
           {openSignIn}
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-muted)" }}>
-            <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Waiting for you to authorize…
-          </div>
+          {pollExpired ? (
+            <div role="status" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, fontSize: 12.5, color: "var(--text-muted)" }}>
+              <span>Hivra hasn&apos;t seen the sign-in yet.</span>
+              <button type="button" className="hivra-login__secondary" onClick={() => { setPollExpired(false); setPollRound((n) => n + 1); }}>
+                <RefreshCw size={13} /> Check again
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-muted)" }}>
+              <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Waiting for you to authorize…
+            </div>
+          )}
         </div>
       ) : (
         <div className="hivra-login__await" style={{ gap: 14 }}>

@@ -102,6 +102,12 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
   // error step. Reset on any successful poll. Definite errors (persistenceError,
   // 4xx) still fail immediately.
   const transientPollFailuresRef = useRef(0);
+  // One status request at a time: a poll slower than the 4 s interval must not
+  // let the next tick read the same authenticated result and log it twice.
+  const pollInFlightRef = useRef(false);
+  // False once the modal has unmounted. A request still in flight then must not
+  // start the success timer (it calls onSuccess and onClose) or log events.
+  const mountedRef = useRef(true);
   // A backdrop press closes only when it also started on the backdrop, so a
   // drag-select out of the URL or code mid-sign-in does not.
   const backdropPressRef = useRef(false);
@@ -116,7 +122,9 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
   const tapScale = reduceMotion ? undefined : { scale: 0.97 };
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (codexPollRef.current) clearInterval(codexPollRef.current);
       startAbortRef.current?.abort();
       if (successTimerRef.current) clearTimeout(successTimerRef.current);
@@ -302,6 +310,8 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           });
           return;
         }
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
         let pollHttpStatus: number | null = null;
         try {
           setCodexPollCount((count) => count + 1);
@@ -327,6 +337,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           if (readCodexAuthenticatedFlag(sd)) {
             clearInterval(codexPollRef.current!);
             codexPollRef.current = null;
+            if (!mountedRef.current) return;
             setCodexStep('success');
             captureOauthEvent('provider_oauth_completed', {
               ...codexOauthBaseProperties(instanceId),
@@ -360,6 +371,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
               return;
             }
           }
+          if (!mountedRef.current) return;
           transientPollFailuresRef.current = 0;
           if (codexPollRef.current) {
             clearInterval(codexPollRef.current);
@@ -378,6 +390,8 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
             http_status: pollHttpStatus,
             error_message: sanitizeOauthErrorMessage(message),
           });
+        } finally {
+          pollInFlightRef.current = false;
         }
       }, 4000);
     } catch (err: unknown) {

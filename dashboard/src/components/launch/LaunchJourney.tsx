@@ -559,6 +559,17 @@ function elapsedSince(at: number, now: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/** Time since the request was sent: an observed fact, never a guess at progress.
+ * It owns its own clock so the rest of the journey does not re-render each second. */
+function SentAgo({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <>{elapsedSince(since, now)}</>;
+}
+
 /** Records a funnel moment once it is on screen, once per key: later
  * renders with the same key describe the same moment. */
 function FunnelMoment({ momentKey, event, properties }: {
@@ -708,7 +719,6 @@ export function LaunchJourney(
   const [pastedKey, setPastedKey] = useState<{ launchRequestId: string; value: string } | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
   const [observation, setObservation] = useState<LaunchObservation | null>(null);
-  const [now, setNow] = useState(() => Date.now());
   const [reconciling, setReconciling] = useState(false);
   const [reconcileNote, setReconcileNote] = useState<string | null>(null);
   // The prepared desktop computer (Omarchy) is offered only where this
@@ -1100,16 +1110,6 @@ export function LaunchJourney(
     if (!draft || withModelAccessDefault(draft, context) === draft) return;
     setDraft(current => current ? withModelAccessDefault(current, context) : current);
   }, [creditsBalance, draft, selfHosted]);
-
-  // The launching screen counts time from when the request was sent: an
-  // observed fact, never a guess at progress.
-  const launchInFlight = draft?.stage === "launch" && draft.launchState === "submitting";
-  useEffect(() => {
-    if (!launchInFlight) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [launchInFlight]);
 
   // Until the owner chooses, a browser follows the plan on Hivra Cloud
   // and the selected host's measured capacity on their own infrastructure.
@@ -2642,7 +2642,7 @@ export function LaunchJourney(
           <p>Hivra is checking the request for {draft.name.trim()}. We’ll open it as soon as the launch is confirmed.</p>
           <p className={styles.observed}>
             {observedLaunchText(observation, resumeMode === "resend")}
-            {draft.submittedAt ? <> · Sent {elapsedSince(Date.parse(draft.submittedAt), now)} ago</> : null}
+            {draft.submittedAt ? <> · Sent <SentAgo since={Date.parse(draft.submittedAt)} /> ago</> : null}
           </p>
         </section>
       ) : null}

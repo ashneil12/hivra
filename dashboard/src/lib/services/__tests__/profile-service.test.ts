@@ -199,16 +199,20 @@ describe('ProfileService', () => {
       await ProfileService.syncProfiles("inst_123", "user_123");
 
       expect(mockSelect).toHaveBeenCalledTimes(1);
-      expect(mockInsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        name: "native-agent-a",
-        gateway_port: 8651,
-        status: "running",
-      }));
-      expect(mockInsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        name: "native-agent-b",
-        gateway_port: 8652,
-        status: "stopped",
-      }));
+      // New profiles are written in one insert; ports are still assigned from the loaded rows.
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+      expect(mockInsert).toHaveBeenCalledWith([
+        expect.objectContaining({
+          name: "native-agent-a",
+          gateway_port: 8651,
+          status: "running",
+        }),
+        expect.objectContaining({
+          name: "native-agent-b",
+          gateway_port: 8652,
+          status: "stopped",
+        }),
+      ]);
     });
 
     it("throws when a host-created profile cannot be assigned a gateway port", async () => {
@@ -265,9 +269,10 @@ describe('ProfileService', () => {
         eq: jest.fn().mockReturnThis(),
         not: jest.fn().mockReturnThis(),
         update: jest.fn().mockReturnThis(),
-        single: jest.fn()
+        single: jest.fn(),
+        maybeSingle: jest.fn()
       }
-      mockChain.single.mockResolvedValueOnce({ data: { id: 'prof_new', gateway_port: 8651 } }); // startProfileGateway
+      mockChain.maybeSingle.mockResolvedValueOnce({ data: { id: 'prof_new', gateway_port: 8651 } }); // startProfileGateway
       mockChain.not.mockResolvedValueOnce({ data: [] }); // updateAgentCaddyRouting profiles
       mockChain.single.mockResolvedValueOnce({ data: { subdomain: "test", config: {} } }); // updateAgentCaddyRouting instances
       

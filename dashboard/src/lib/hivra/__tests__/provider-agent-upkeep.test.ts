@@ -9,6 +9,7 @@ type Update = { patch: Row; filters: Array<[string, string, unknown]> };
 let agentRow: Row;
 let claimAvailable: boolean;
 let claimError: { code: string } | null;
+let stampError: { code: string } | null;
 const updates: Update[] = [];
 
 function builder() {
@@ -29,6 +30,7 @@ function builder() {
         claimAvailable = false;
         return { data: { id: agentRow.id }, error: null };
       }
+      if (stampError) return { data: null, error: stampError };
       agentRow = { ...agentRow, ...patch };
       return { data: agentRow, error: null };
     },
@@ -78,6 +80,7 @@ beforeEach(() => {
   agentRow = baseRow();
   claimAvailable = true;
   claimError = null;
+  stampError = null;
   updates.length = 0;
   for (const mock of [mockWarn, mockEvent, seed, contract]) mock.mockReset();
   seed.mockResolvedValue({ attempted: ["bootstrap", "bankr-skills"], confirmed: ["bootstrap"] });
@@ -114,6 +117,16 @@ it("keeps the contract current while only seeds that don't touch system-prompt.m
   await run({ ...agentRow, bootstrapped_at: "2026-09-24T11:00:00.000Z" });
   expect(seed).not.toHaveBeenCalled();
   expect(contract).toHaveBeenCalledTimes(1);
+});
+
+it("logs no seed activity when the stamp fails, so the next page load sends the seed again", async () => {
+  stampError = { code: "08006" };
+  await run();
+  expect(seed).toHaveBeenCalledTimes(1);
+  expect(mockEvent).not.toHaveBeenCalled();
+  expect(mockWarn).toHaveBeenCalledWith("provider agent seed stamp could not be saved; retrying later",
+    expect.objectContaining({ code: "08006", failureType: "provider_agent_seed_stamp_failed" }));
+  expect(agentRow.bootstrapped_at).toBeNull();
 });
 
 it("sends nothing when the attempt can't be claimed, for example before the column is deployed", async () => {

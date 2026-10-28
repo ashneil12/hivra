@@ -6,6 +6,9 @@
  * refactor can't silently drop the fallback from one path.
  */
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import {
   buildWakeFallbackCaddyBlock,
   buildWakeRedirectUrl,
@@ -116,5 +119,22 @@ describe("vhost generators both emit the fallback", () => {
     const markerCount = script.split(WAKE_FALLBACK_MARKER).length - 1;
     expect(markerCount).toBe(1);
     expect(script).toContain("redir ${WAKE_REDIRECT_URL} 302");
+  });
+});
+
+describe("scripts/rollout-wake-fallback.sh remote argument validation (SEC-09)", () => {
+  const scriptPath = path.resolve(process.cwd(), "..", "scripts", "rollout-wake-fallback.sh");
+
+  it("rejects single quotes or whitespace in --wake-origin or --sites-dir before invoking ssh", () => {
+    for (const args of [
+      ["--wake-origin", "https://hivra.cloud';id;'", "root@192.0.2.10"],
+      ["--sites-dir", "/etc/caddy/hermes.d';id;'", "root@192.0.2.10"],
+      ["--wake-origin", "https://hivra.cloud evil", "root@192.0.2.10"],
+      ["--sites-dir", "", "root@192.0.2.10"],
+    ]) {
+      const res = spawnSync("bash", [scriptPath, ...args], { encoding: "utf8" });
+      expect(res.status).toBe(2);
+      expect(res.stderr).toMatch(/invalid --(wake-origin|sites-dir)/);
+    }
   });
 });

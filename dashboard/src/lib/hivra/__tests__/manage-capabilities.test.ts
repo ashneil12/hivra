@@ -149,6 +149,12 @@ describe("manageCapabilitiesFor", () => {
       expect(busy.power.stop).toEqual({ state: "blocked", code: "operation_in_progress", reason: "Wait for the current operation to finish." });
     });
 
+    it("says a computer in error needs checking before Start, not that it is already on", () => {
+      const errored = manageCapabilitiesFor({ ...rows.ubuntu, status: "error" }, { preparedMatch: true }).power;
+      expect(errored.start).toEqual({ state: "blocked", code: "needs_check", reason: "This computer reported an error. Check it before you start it." });
+      expect(errored.start).not.toMatchObject({ code: "already_on" });
+    });
+
     it("says a Windows computer on My server has no power controls yet, instead of offering and refusing them", () => {
       const power = map("windowsMyServer", false).power;
       expect(power.start).toMatchObject({ state: "unavailable", code: "windows_my_server" });

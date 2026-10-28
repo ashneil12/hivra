@@ -21,6 +21,8 @@
  */
 
 import {
+  isValidColdArchiveUri,
+  isValidColdTimestampCompact,
   manifestPathFromArchiveUri,
   parseColdStorageManifest,
 } from "@/lib/cold-storage/manifest";
@@ -93,6 +95,8 @@ export type ColdArchiveResult =
       instanceId: string;
       /** When the source VM still exists but archive failed before destroy. */
       retryable: boolean;
+      /** True when the paused revert did not land: the row is still stuck in `archiving`. */
+      revertFailed?: boolean;
     };
 
 export type ColdRestoreResult =
@@ -125,6 +129,8 @@ export type ColdRestoreResult =
       message: string;
       instanceId: string;
       retryable: boolean;
+      /** True when the revert to the cold state did not land: the row is still stuck in `restoring`. */
+      revertFailed?: boolean;
       /** Populated for reason='health_pending': the live restored VM. */
       newVmid?: number;
       newPveHost?: string;
@@ -340,6 +346,19 @@ export async function archiveInstance(
 ): Promise<ColdArchiveResult> {
   const d = resolveDeps(deps);
 
+  // SEC-02: instanceId is interpolated into remote shell commands
+  // (archive-vm-cold.sh argv and the `ssh cold` manifest path). Reject a
+  // non-UUID id before it can reach either.
+  if (!INSTANCE_UUID_RE.test(instanceId)) {
+    return {
+      ok: false,
+      reason: "instance_not_archivable",
+      message: `Instance id ${JSON.stringify(instanceId)} is not a valid UUID; refusing to run remote commands.`,
+      instanceId,
+      retryable: false,
+    };
+  }
+
   // 1. preflight: instance exists, is paused, has a known vmid+host
   const row = await fetchInstance(supabase, instanceId);
   if (!row) {
@@ -360,11 +379,19 @@ export async function archiveInstance(
       retryable: false,
     };
   }
-  if (!row.proxmox_node || !row.proxmox_vmid) {
+  // SEC-02: proxmox_vmid is interpolated unquoted into archive-vm-cold.sh
+  // argv and the `qm destroy` line — it must be a real integer, not just
+  // truthy, or a malformed DB value becomes shell.
+  if (
+    !row.proxmox_node ||
+    typeof row.proxmox_vmid !== "number" ||
+    !Number.isSafeInteger(row.proxmox_vmid) ||
+    row.proxmox_vmid <= 0
+  ) {
     return {
       ok: false,
       reason: "instance_not_archivable",
-      message: `Instance ${instanceId} lacks proxmox routing fields.`,
+      message: `Instance ${instanceId} lacks valid proxmox routing fields.`,
       instanceId,
       retryable: false,
     };
@@ -406,11 +433,10 @@ export async function archiveInstance(
     reason: ColdArchiveResult & { ok: false },
     extra?: { pausedReasonOverride?: string }
   ): Promise<ColdArchiveResult> => {
-    // Chain .select().maybeSingle() so callers (and tests) can observe the
-    // revert. If revert fails the row stays in `archiving` and ops must
-    // intervene — we surface that via the returned reason being marked
-    // non-retryable in extreme cases.
-    await supabase
+    // If the revert does not land (DB error, or the row is no longer in
+    // `archiving`) the row stays locked and ops must intervene: log it and
+    // flag the returned reason so the caller can report it.
+    const { data: revertedRow, error: revertError } = await supabase
       .from("hermes_instances")
       .update({
         lifecycle_state: "paused",
@@ -422,6 +448,16 @@ export async function archiveInstance(
       .eq("lifecycle_state", "archiving")
       .select("id")
       .maybeSingle();
+    if (revertError || !revertedRow) {
+      log.error("archive revert to paused did not land; row may be stuck in archiving", new Error("cold_archive_revert_failed"), {
+        source: "cold-storage-service",
+        failureType: "cold_archive_revert_failed",
+        instanceId,
+        originalReason: reason.reason,
+        redactedMessage: revertError?.message ?? "no row in archiving state",
+      });
+      return { ...reason, revertFailed: true };
+    }
     return reason;
   };
 
@@ -502,6 +538,30 @@ async function archiveInstanceAfterLock(
       retryable: true,
     });
   }
+  // SEC-02: host stdout is not trusted input. `tsCompact` lands in both the
+  // archive_uri written to the DB and the `ssh cold` manifest path below; a
+  // poisoned token (e.g. `ts=20260501T000000Z$(id)`) would inject into every
+  // later remote command that reads archive_uri back. sha256 is pinned to
+  // the canonical 64-hex form for the same reason. Fail closed before any
+  // of it is used.
+  if (!isValidColdTimestampCompact(tsCompact)) {
+    return revertToPaused({
+      ok: false,
+      reason: "manifest_verify_failed",
+      message: `archive-vm-cold.sh reported an unsafe ts token: ${JSON.stringify(tsCompact)}`,
+      instanceId,
+      retryable: false,
+    });
+  }
+  if (!/^[a-f0-9]{64}$/.test(archiveSha)) {
+    return revertToPaused({
+      ok: false,
+      reason: "manifest_verify_failed",
+      message: `archive-vm-cold.sh reported a malformed sha256 token.`,
+      instanceId,
+      retryable: false,
+    });
+  }
   if (iidFromScript !== instanceId) {
     return revertToPaused({
       ok: false,
@@ -526,7 +586,7 @@ async function archiveInstanceAfterLock(
   const archiveUri = `free/${instanceId}/data-${tsCompact}.tar.zst`;
   const manifestPath = `meta/${instanceId}/${tsCompact}.json`;
   const manifestFetch = await d.runHostScript(
-    `ssh cold "cat ${manifestPath}"`,
+    `ssh cold "cat ${shellQuote(manifestPath)}"`,
     hostEnv,
     { timeoutMs: 30_000 }
   );
@@ -812,6 +872,19 @@ export async function restoreInstance(
       retryable: false,
     };
   }
+  // SEC-02: archive_uri is DB-stored host output and instanceId lands in
+  // restore-vm-cold.sh argv — both must pass path-safety validation before
+  // the remote command is built. Fails before the CAS lock: nothing held,
+  // nothing to revert.
+  if (!INSTANCE_UUID_RE.test(instanceId) || !isValidColdArchiveUri(row.archive_uri)) {
+    return {
+      ok: false,
+      reason: "missing_archive_metadata",
+      message: `Instance ${instanceId} archive identity failed path-safety validation (archive_uri=${JSON.stringify(row.archive_uri)}); refusing to build the restore command.`,
+      instanceId,
+      retryable: false,
+    };
+  }
 
   // CAS: cold_archived | pending_deletion → restoring
   const lockedAt = d.now().toISOString();
@@ -847,7 +920,7 @@ export async function restoreInstance(
   const revertToCold = async (
     reason: ColdRestoreResult & { ok: false }
   ): Promise<ColdRestoreResult> => {
-    await supabase
+    const { data: revertedRow, error: revertError } = await supabase
       .from("hermes_instances")
       .update({
         lifecycle_state: previousState,
@@ -858,6 +931,16 @@ export async function restoreInstance(
       .eq("lifecycle_state", "restoring")
       .select("id")
       .maybeSingle();
+    if (revertError || !revertedRow) {
+      log.error("restore revert did not land; row may be stuck in restoring", new Error("cold_restore_revert_failed"), {
+        source: "cold-storage-service",
+        failureType: "cold_restore_revert_failed",
+        instanceId,
+        originalReason: reason.reason,
+        redactedMessage: revertError?.message ?? "no row in restoring state",
+      });
+      return { ...reason, revertFailed: true };
+    }
     return reason;
   };
 
@@ -1032,11 +1115,35 @@ async function restoreInstanceAfterLock(
   options: RestoreInstanceOptions,
   revertToCold: (reason: ColdRestoreResult & { ok: false }) => Promise<ColdRestoreResult>
 ): Promise<ColdRestoreResult> {
-  if (!row.archive_uri || !row.archive_sha256) {
+  if (
+    !row.archive_uri ||
+    !row.archive_sha256 ||
+    !INSTANCE_UUID_RE.test(instanceId) ||
+    !isValidColdArchiveUri(row.archive_uri)
+  ) {
     return revertToCold({
       ok: false,
       reason: "missing_archive_metadata",
-      message: `Instance ${instanceId} archive metadata vanished after lock acquisition.`,
+      message: `Instance ${instanceId} archive metadata missing or failed path-safety validation after lock acquisition.`,
+      instanceId,
+      retryable: false,
+    });
+  }
+  // SEC-02: every positional arg below lands in a remote shell command line.
+  // Caller-supplied destination numerics are type-checked, not trusted —
+  // pin them to real numbers before they are stringified into argv.
+  if (
+    !Number.isSafeInteger(options.destinationVmid) ||
+    options.destinationVmid <= 0 ||
+    !Number.isSafeInteger(options.templateVmid) ||
+    options.templateVmid <= 0 ||
+    !Number.isSafeInteger(options.targetDiskGb ?? 30) ||
+    !Number.isFinite(options.cpuLimit ?? 0.5)
+  ) {
+    return revertToCold({
+      ok: false,
+      reason: "host_script_failed",
+      message: `restore options failed numeric validation (destinationVmid=${options.destinationVmid} templateVmid=${options.templateVmid} targetDiskGb=${options.targetDiskGb} cpuLimit=${options.cpuLimit}).`,
       instanceId,
       retryable: false,
     });
@@ -1050,12 +1157,12 @@ async function restoreInstanceAfterLock(
     // Reinstall from this deploy's embedded copy first — the host may still be
     // carrying a hand-copied version from an earlier release.
     `${buildColdStorageScriptInstall("restore-vm-cold.sh")}\n/usr/local/sbin/restore-vm-cold.sh`,
-    instanceId,
-    row.archive_uri,
-    row.archive_sha256,
+    shellQuote(instanceId),
+    shellQuote(row.archive_uri),
+    shellQuote(row.archive_sha256),
     String(options.destinationVmid),
-    options.destinationIp,
-    options.destinationGateway,
+    shellQuote(options.destinationIp),
+    shellQuote(options.destinationGateway),
     String(options.templateVmid),
     String(options.targetDiskGb ?? 30),
     String(options.cpuLimit ?? 0.5),
@@ -1339,6 +1446,19 @@ export async function verifyArchiveIntegrity(
       expectedSha256: row.archive_sha256 ?? "",
     };
   }
+  // SEC-02: archive_uri is DB-stored host output and is interpolated into
+  // the `ssh cold` / rsync commands below. A tampered value must be refused
+  // before any remote command is constructed — never quoted-and-hoped.
+  if (!INSTANCE_UUID_RE.test(instanceId) || !isValidColdArchiveUri(row.archive_uri)) {
+    return {
+      ok: false,
+      reason: "missing_archive_metadata",
+      message: `Instance ${instanceId} archive_uri failed path-safety validation: ${JSON.stringify(row.archive_uri)}`,
+      instanceId,
+      archiveUri: row.archive_uri ?? "",
+      expectedSha256: row.archive_sha256 ?? "",
+    };
+  }
 
   const hostSlug =
     options.hostSlug ??
@@ -1367,7 +1487,7 @@ export async function verifyArchiveIntegrity(
     };
   }
   const manifestResult = await d.runHostScript(
-    `ssh cold "cat ${manifestPath}/$(ssh cold 'ls ${manifestPath} 2>/dev/null' | tail -1)" 2>/dev/null || ssh cold "cat ${manifestPath}"`,
+    `ssh cold "cat ${shellQuote(manifestPath)}/$(ssh cold 'ls ${manifestPath} 2>/dev/null' | tail -1)" 2>/dev/null || ssh cold "cat ${shellQuote(manifestPath)}"`,
     env,
     { timeoutMs: 30_000 }
   );
@@ -1424,7 +1544,7 @@ export async function verifyArchiveIntegrity(
     // the archive header is intact and zstd can decode anything, it's a real
     // archive — not a truncated upload. Full SHA verify is the `full` mode.
     const sliceResult = await d.runHostScript(
-      `ssh cold "head -c 1048576 ${row.archive_uri}" | zstd -dc --long=27 2>/dev/null | head -c 1024 >/dev/null && echo OK`,
+      `ssh cold "head -c 1048576 ${shellQuote(row.archive_uri)}" | zstd -dc --long=27 2>/dev/null | head -c 1024 >/dev/null && echo OK`,
       env,
       { timeoutMs: 60_000 }
     );
@@ -1451,7 +1571,7 @@ export async function verifyArchiveIntegrity(
 
   // Full verify: download to PVE host, sha256sum, compare.
   const fullResult = await d.runHostScript(
-    `set -e; T=$(mktemp); rsync -a -e ssh cold:${row.archive_uri} "$T"; FULL_SHA=$(sha256sum "$T" | awk '{print $1}'); SIZE=$(stat -c %s "$T"); rm -f "$T"; echo "VERIFY sha=$FULL_SHA size=$SIZE"`,
+    `set -e; T=$(mktemp); rsync -a -e ssh cold:${shellQuote(row.archive_uri)} "$T"; FULL_SHA=$(sha256sum "$T" | awk '{print $1}'); SIZE=$(stat -c %s "$T"); rm -f "$T"; echo "VERIFY sha=$FULL_SHA size=$SIZE"`,
     env,
     { timeoutMs: 10 * 60 * 1000 }
   );
@@ -1547,6 +1667,18 @@ export async function purgeArchive(
       instanceId,
     };
   }
+  // SEC-02: archive_uri is DB-stored host output. Its parent path is
+  // interpolated into the `ssh cold` rm/mv command below — a tampered value
+  // (e.g. `data-x$(id).tar.zst`) would execute on the Storage Box. Refuse
+  // before any remote command is constructed.
+  if (!INSTANCE_UUID_RE.test(instanceId) || !isValidColdArchiveUri(row.archive_uri)) {
+    return {
+      ok: false,
+      reason: "missing_archive_metadata",
+      message: `Instance ${instanceId} archive_uri failed path-safety validation: ${JSON.stringify(row.archive_uri)}`,
+      instanceId,
+    };
+  }
 
   const hostSlug =
     options.hostSlug ??
@@ -1564,8 +1696,8 @@ export async function purgeArchive(
 
   const dataPathParent = row.archive_uri.replace(/\/[^/]+$/, "");
   const remoteCmd = options.skipTrash
-    ? `ssh cold "rm -rf ${dataPathParent} meta/${instanceId}"`
-    : `ssh cold "mkdir -p ${trashUri} && mv ${dataPathParent} ${trashUri}/data && (mv meta/${instanceId} ${trashUri}/meta || true)"`;
+    ? `ssh cold "rm -rf ${shellQuote(dataPathParent)} ${shellQuote(`meta/${instanceId}`)}"`
+    : `ssh cold "mkdir -p ${shellQuote(trashUri)} && mv ${shellQuote(dataPathParent)} ${shellQuote(`${trashUri}/data`)} && (mv ${shellQuote(`meta/${instanceId}`)} ${shellQuote(`${trashUri}/meta`)} || true)"`;
 
   const result = await d.runHostScript(remoteCmd, env, { timeoutMs: 60_000 });
   if (!result.ok) {
@@ -1610,6 +1742,8 @@ export async function purgeArchive(
 
 // Re-exports for callers that only want the public surface from one place.
 export {
+  isValidColdArchiveUri,
+  isValidColdTimestampCompact,
   manifestPathFromArchiveUri,
   parseColdStorageManifest,
 } from "@/lib/cold-storage/manifest";

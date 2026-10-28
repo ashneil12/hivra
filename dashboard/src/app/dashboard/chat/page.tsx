@@ -47,38 +47,18 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
   };
 
   if (supabaseAdmin) {
-    if (lastChatId) {
-      const data = await maybeSelectSingleId(supabaseAdmin
+    // The last-chat lookup and the fallback are independent: run both at once,
+    // so a stale cookie costs one round trip instead of two.
+    const lastChatLookup = lastChatId
+      ? maybeSelectSingleId(supabaseAdmin
         .from("hermes_instances")
         .select("id, backend")
         .eq("user_id", userId)
         .eq("id", lastChatId)
         .neq("status", "deleted")
-      );
-
-      if (data && data.id) {
-        const defaultSurface = getDefaultInstanceSurfacePreference(data.backend);
-        const preferredSurface = readInstanceSurfacePreferenceCookie(
-          cookieStore,
-          data.id,
-          defaultSurface
-        );
-        if (preferredSurface === "tui") {
-          log.info("chat resolver routing to saved TUI surface preference", {
-            source: "dashboard.chat.surface",
-            route: "/dashboard/chat",
-            userId,
-            instanceId: data.id,
-            backend: data.backend ?? null,
-            defaultSurface,
-            preferredSurface,
-          });
-        }
-        redirect(`${getInstanceSurfaceHref(data.id, preferredSurface)}${searchStr}`);
-      }
-    }
-
-    const data = await maybeSelectSingleId(supabaseAdmin
+      )
+      : Promise.resolve(null);
+    const fallbackLookup = maybeSelectSingleId(supabaseAdmin
       .from("hermes_instances")
       .select("id, backend")
       .eq("user_id", userId)
@@ -86,6 +66,28 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
       .order("created_at", { ascending: true })
       .limit(1)
     );
+    const [lastChatData, data] = await Promise.all([lastChatLookup, fallbackLookup]);
+
+    if (lastChatData && lastChatData.id) {
+      const defaultSurface = getDefaultInstanceSurfacePreference(lastChatData.backend);
+      const preferredSurface = readInstanceSurfacePreferenceCookie(
+        cookieStore,
+        lastChatData.id,
+        defaultSurface
+      );
+      if (preferredSurface === "tui") {
+        log.info("chat resolver routing to saved TUI surface preference", {
+          source: "dashboard.chat.surface",
+          route: "/dashboard/chat",
+          userId,
+          instanceId: lastChatData.id,
+          backend: lastChatData.backend ?? null,
+          defaultSurface,
+          preferredSurface,
+        });
+      }
+      redirect(`${getInstanceSurfaceHref(lastChatData.id, preferredSurface)}${searchStr}`);
+    }
 
     if (data && data.id) {
       const defaultSurface = getDefaultInstanceSurfacePreference(data.backend);

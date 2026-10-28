@@ -30,6 +30,7 @@ function buildConfig(overrides: Partial<Config>): Config {
     TIER_CHECK_INSTANCE_ID: undefined,
     TIER_CHECK_TOKEN: undefined,
     SIDECAR_AUTH_TOKEN: undefined,
+    SIDECAR_ALLOW_UNAUTHENTICATED: false,
     CLERK_EMAIL: undefined,
     CLERK_PASSWORD: undefined,
     CLERK_LOGIN_URL: undefined,
@@ -128,15 +129,21 @@ describe("bearer auth preHandler", () => {
     });
   });
 
-  describe("warn-only mode (SIDECAR_AUTH_TOKEN unset)", () => {
-    it("accepts unauth requests so existing fleet doesn't break during rollout", async () => {
-      const app = await buildApp(buildConfig({}), logger);
+  describe("explicit warn-only mode (SIDECAR_ALLOW_UNAUTHENTICATED=1, no token)", () => {
+    it("accepts unauth requests only under the explicit opt-in", async () => {
+      const app = await buildApp(
+        buildConfig({ SIDECAR_ALLOW_UNAUTHENTICATED: true }),
+        logger,
+      );
       const res = await app.inject({ method: "POST", url: "/goto", payload: {} });
       expect(res.statusCode).toBe(200);
     });
 
     it("logs a warning on every gated request so operators can see what's still unauth", async () => {
-      const app = await buildApp(buildConfig({}), logger);
+      const app = await buildApp(
+        buildConfig({ SIDECAR_ALLOW_UNAUTHENTICATED: true }),
+        logger,
+      );
       await app.inject({ method: "POST", url: "/goto", payload: {} });
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ auth_disabled: true, tool: "/goto" }),
@@ -145,9 +152,54 @@ describe("bearer auth preHandler", () => {
     });
 
     it("does not log the warn for /health (so the docker healthcheck doesn't spam)", async () => {
-      const app = await buildApp(buildConfig({}), logger);
-      await app.inject({ method: "GET", url: "/health" });
+      const app = await buildApp(
+        buildConfig({ SIDECAR_ALLOW_UNAUTHENTICATED: true }),
+        logger,
+      );
+      const res = await app.inject({ method: "GET", url: "/health" });
+      expect(res.statusCode).toBe(200);
       expect(logger.warn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("fail-closed mode (no token, no opt-in)", () => {
+    it("rejects gated routes with 503 AUTH_NOT_CONFIGURED", async () => {
+      const app = await buildApp(buildConfig({}), logger);
+      const res = await app.inject({ method: "POST", url: "/goto", payload: {} });
+      expect(res.statusCode).toBe(503);
+      expect(res.json().error).toBe("AUTH_NOT_CONFIGURED");
+    });
+
+    it("rejects even when a bearer is presented (no configured token to compare)", async () => {
+      const app = await buildApp(buildConfig({}), logger);
+      const res = await app.inject({
+        method: "POST",
+        url: "/screenshot",
+        payload: {},
+        headers: { authorization: `Bearer ${"z".repeat(32)}` },
+      });
+      expect(res.statusCode).toBe(503);
+    });
+
+    it("logs an error naming the fix on every refused request", async () => {
+      const app = await buildApp(buildConfig({}), logger);
+      await app.inject({ method: "POST", url: "/goto", payload: {} });
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ auth_disabled: true, tool: "/goto" }),
+        expect.stringContaining("SIDECAR_ALLOW_UNAUTHENTICATED"),
+      );
+    });
+
+    it("lets /health through without a bearer (healthcheck must keep working)", async () => {
+      const app = await buildApp(buildConfig({}), logger);
+      const res = await app.inject({ method: "GET", url: "/health" });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("lets /internal/verify-novnc-url through (its HMAC contract owns auth)", async () => {
+      const app = await buildApp(buildConfig({}), logger);
+      const res = await app.inject({ method: "GET", url: "/internal/verify-novnc-url" });
+      expect(res.statusCode).toBe(200);
     });
   });
 });

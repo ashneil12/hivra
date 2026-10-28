@@ -68,12 +68,6 @@ export function supportsStrictProxmoxDiscovery(result: HostDiscoveryResult): boo
   return engine?.availability === "installed" && engine.supported;
 }
 
-export function supportsGvisorDiscovery(result: HostDiscoveryResult): boolean {
-  if (!result.ok) return false;
-  const engine = result.snapshot.engines.find((candidate) => candidate.id === "gvisor");
-  return engine?.supported === true && (engine.availability === "installed" || engine.availability === "installable");
-}
-
 function environmentLabel(value: HostDiscoverySnapshot["host"]["environment"]["virtualization"]): string {
   switch (value) {
     case "bare-metal": return "Bare metal";

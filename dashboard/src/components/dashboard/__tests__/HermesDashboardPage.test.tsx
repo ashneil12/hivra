@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import { HermesDashboardPage as DashboardPage } from "@/components/dashboard/HermesDashboardPage";
@@ -1056,6 +1056,72 @@ describe("DashboardPage", () => {
           body: JSON.stringify({ action: "start" }),
         })
       );
+    });
+  });
+
+  describe("dashboard poll", () => {
+    const instancesCalls = () =>
+      (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "/api/instances?summary=true").length;
+
+    // Lets the first poll settle (its failure path schedules the next tick).
+    const settle = () => act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    const advance = (ms: number) => act(async () => {
+      await jest.advanceTimersByTimeAsync(ms);
+    });
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("backs off after a failed load instead of retrying every 10s", async () => {
+      // Regression: fetchInstancesAndHosts used to swallow the error, so the
+      // failure counter never moved and an outage polled every 10s.
+      const healthyFetch = global.fetch as jest.Mock;
+      global.fetch = jest.fn((input: RequestInfo | URL) =>
+        String(input) === "/api/instances?summary=true"
+          ? Promise.reject(new Error("network down"))
+          : healthyFetch(input),
+      ) as jest.Mock;
+
+      render(<DashboardPage />);
+      await settle();
+      expect(instancesCalls()).toBe(1);
+
+      await advance(10_000);
+      expect(instancesCalls()).toBe(1); // first retry waits 20s, not 10s
+
+      await advance(10_000);
+      expect(instancesCalls()).toBe(2);
+    });
+
+    it("stops fetching while the tab is hidden and refreshes once when it returns", async () => {
+      // Regression: the main 10s poll had no document.hidden guard, unlike the
+      // other two pollers on this page.
+      render(<DashboardPage />);
+      await settle();
+      expect(instancesCalls()).toBe(1);
+
+      const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(true);
+      try {
+        await advance(10_000);
+        await advance(10_000);
+        expect(instancesCalls()).toBe(1);
+
+        hidden.mockReturnValue(false);
+        await act(async () => {
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await settle();
+        expect(instancesCalls()).toBe(2);
+      } finally {
+        hidden.mockRestore();
+      }
     });
   });
 });

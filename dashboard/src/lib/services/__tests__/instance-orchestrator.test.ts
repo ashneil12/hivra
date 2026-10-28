@@ -567,6 +567,50 @@ describe("applyLiveUpdate", () => {
     expect(typeof captured[0].last_synced_at).toBe("string");
   });
 
+  it("still reports the launch when the redeploying write fails, and logs the stale row", async () => {
+    const logError = jest.spyOn(log, "error").mockImplementation(() => undefined);
+    // Regression for an unchecked write: the update was launched on the box, but a
+    // failed row write used to be ignored silently. The launch is real, so the
+    // result stays applied (a caller seeing applied:false could start a second
+    // update), and the failed write is logged.
+    (decryptApiKey as jest.Mock)
+      .mockReturnValueOnce("plain-api-key")
+      .mockReturnValueOnce("gateway-secret");
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn(() => ({
+          eq: jest.fn().mockResolvedValue({ error: { message: "statement timeout" } }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-state-write-fail",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result).toMatchObject({ applied: true, initiator: USER_LIVE_UPDATE });
+    expect(logError).toHaveBeenCalledWith(
+      "live update launched but the redeploying state write failed",
+      expect.any(Error),
+      expect.objectContaining({ failureType: "live_update_state_write_failed", instanceId: "inst-state-write-fail" }),
+    );
+    logError.mockRestore();
+  });
+
   it("wraps background manual updates with dashboard status reporting", async () => {
     (decryptApiKey as jest.Mock)
       .mockReturnValueOnce("plain-api-key")

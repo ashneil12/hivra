@@ -167,8 +167,6 @@ export const WELCOME_AGENT_TYPES: WelcomeAgentTypeDefinition[] = [
   },
 ];
 
-export const DEFAULT_WELCOME_AGENT_TYPE_KEY: WelcomeAgentTypeKey = "general";
-
 export function resolveWelcomeAgentTypeKey(value: string | null | undefined): WelcomeAgentTypeKey | null {
   if (!value) return null;
   return WELCOME_AGENT_TYPES.some((agentType) => agentType.key === value)

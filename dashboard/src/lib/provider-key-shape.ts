@@ -1,9 +1,3 @@
-// Must stay word-for-word in sync with the createInstance missing-key 400 in
-// src/lib/services/instance-service.ts so inline (client) validation shows the
-// exact wording users would otherwise only see after the final deploy step.
-export const PROVIDER_KEY_REQUIRED_MESSAGE =
-  "Provider API key is required. Provide it manually or select a Vault key that contains an encrypted credential.";
-
 export type ProviderKeyShapeFailure = {
   failureType: "provider_key_invalid_shape";
   message: string;

@@ -245,6 +245,38 @@ describe("test wiring rules", () => {
     expect(journal?.weak).toEqual(['dashboard/package.json "test:journal" (no workflow runs it)']);
   });
 
+  it("does not count a package script whose workflow only mentions the package in another step", () => {
+    const result = analyze({
+      ".github/workflows/ci.yml": PR_WORKFLOW("      - run: npm test\n      - name: Upload\n        run: echo dashboard/report.txt"),
+      "dashboard/package.json": JSON.stringify({ scripts: { test: "node --test test/*.test.mjs" } }),
+      "dashboard/test/index.test.mjs": "",
+    });
+    expect(orphanPaths(result)).toEqual(["dashboard/test/index.test.mjs"]);
+  });
+
+  it("counts a package script run in its directory through the job defaults", () => {
+    const result = analyze({
+      ".github/workflows/ci.yml": PR_WORKFLOW("      - run: npm test").replace(
+        "    runs-on: ubuntu-latest\n",
+        "    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: dashboard\n",
+      ),
+      "dashboard/package.json": JSON.stringify({ scripts: { test: "node --test test/*.test.mjs" } }),
+      "dashboard/test/index.test.mjs": "",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails the check on a package manifest that does not parse instead of skipping it", () => {
+    const result = analyze({
+      ".github/workflows/ci.yml": PR_WORKFLOW("      - run: npm test\n        working-directory: dashboard"),
+      "dashboard/package.json": "{ \"scripts\": { \"test\": ",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.problems).toEqual([
+      expect.objectContaining({ kind: "unreadable", path: "dashboard/package.json" }),
+    ]);
+  });
+
   it("counts a Python module run from its own directory", () => {
     const result = analyze({
       ".github/workflows/ci.yml": PR_WORKFLOW("      - run: python3 -m unittest -v test_connector\n        working-directory: services/connector"),

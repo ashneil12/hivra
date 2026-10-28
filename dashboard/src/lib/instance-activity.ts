@@ -27,6 +27,14 @@ export type RecordInstanceUserActivityResult =
   | { ok: true; recordedAt: string }
   | { ok: false; error: string };
 
+// Activity on one instance is written at most once per window in this process.
+// Terminal input posts can arrive many times a second. Readers look at minutes
+// to days (the shortest is 45 minutes), so the stored time is never meaningfully
+// behind. Each serverless process keeps its own map.
+const ACTIVITY_WRITE_INTERVAL_MS = 60_000;
+const MAX_TRACKED_INSTANCES = 5_000;
+const lastWrittenAtMs = new Map<string, number>();
+
 export async function recordInstanceUserActivity(
   input: RecordInstanceUserActivityInput
 ): Promise<RecordInstanceUserActivityResult> {
@@ -41,6 +49,12 @@ export async function recordInstanceUserActivity(
       failureType: "instance_activity_database_unavailable",
     });
     return { ok: false, error: "Database not configured" };
+  }
+
+  const recordedAtMs = Date.parse(recordedAt);
+  const previousMs = lastWrittenAtMs.get(input.instanceId);
+  if (previousMs !== undefined && recordedAtMs >= previousMs && recordedAtMs - previousMs < ACTIVITY_WRITE_INTERVAL_MS) {
+    return { ok: true, recordedAt: new Date(previousMs).toISOString() };
   }
 
   try {
@@ -65,6 +79,10 @@ export async function recordInstanceUserActivity(
       return { ok: false, error: error.message };
     }
 
+    if (!lastWrittenAtMs.has(input.instanceId) && lastWrittenAtMs.size >= MAX_TRACKED_INSTANCES) {
+      lastWrittenAtMs.clear();
+    }
+    lastWrittenAtMs.set(input.instanceId, recordedAtMs);
     return { ok: true, recordedAt };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
