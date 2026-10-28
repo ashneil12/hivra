@@ -18,16 +18,21 @@ import { CURATED_TOOLS, getToolById, isInstallableToolEntry, isToolSupportedOnKi
 import {
   applyToolMcpOnBox,
   toolMcpKindForType,
+  type ToolMcpAuthority,
   type ToolMcpServerSpec,
 } from "@/lib/hivra/tool-mcp-seed";
 import { installCuratedSkillsOnBox } from "@/lib/hivra/skill-install";
-import type { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 
 export interface ToolInstallAgent {
   id: string;
   type?: string | null;
   ip?: string | null;
+  /** The agent's VMID; tool credentials only go to the guest attested for it. */
+  vmid?: number | null;
 }
+
+/** The agent's resolved execution context (HivraAgentExecutionContext). */
+export type ToolInstallAuthority = ToolMcpAuthority;
 
 /** One requested install: the tool id and the env values the user supplied. */
 export interface ToolInstallRequest {
@@ -203,7 +208,7 @@ export function resolveToolMcpSpec(
 export async function installToolsOnBox(
   agent: ToolInstallAgent,
   requests: ToolInstallRequest[],
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: ToolInstallAuthority,
 ): Promise<ToolInstallResult> {
   const kind = toolMcpKindForType(agent.type);
   if (!kind) {
@@ -235,7 +240,7 @@ export async function installToolsOnBox(
     return { ok: skipped.length === 0, installed: [], skipped };
   }
 
-  const mcpRes = await applyToolMcpOnBox(kind, "add", ip, servers, env);
+  const mcpRes = await applyToolMcpOnBox(kind, "add", agent, servers, authority);
   if (!mcpRes.ok) {
     return { ok: false, installed: [], skipped, error: mcpRes.error };
   }
@@ -249,7 +254,7 @@ export async function installToolsOnBox(
     const skillRes = await installCuratedSkillsOnBox(
       { id: agent.id, type: agent.type ?? null, ip: agent.ip ?? null },
       skillIds,
-      env,
+      authority.env,
     );
     if (!skillRes.ok) {
       // MCP already landed; flag which tools carried skills that didn't seed.
@@ -269,7 +274,7 @@ export async function installToolsOnBox(
 export async function uninstallToolFromBox(
   agent: ToolInstallAgent,
   toolId: string,
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: ToolInstallAuthority,
 ): Promise<{ ok: boolean; error?: string }> {
   const kind = toolMcpKindForType(agent.type);
   if (!kind) return { ok: false, error: "unsupported agent type" };
@@ -277,8 +282,8 @@ export async function uninstallToolFromBox(
   if (!/^[0-9.]+$/.test(ip)) return { ok: false, error: "missing or invalid box ip" };
   const tool = getToolById(toolId);
   if (!tool) return { ok: false, error: "unknown tool" };
-  const res = await applyToolMcpOnBox(kind, "remove", ip, [
+  const res = await applyToolMcpOnBox(kind, "remove", agent, [
     { name: tool.mcp.name, command: "", args: [], env: {} },
-  ], env);
+  ], authority);
   return res.ok ? { ok: true } : { ok: false, error: res.error };
 }
