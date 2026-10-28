@@ -62,6 +62,13 @@ describe("buildWarmPoolEmail", () => {
     expect(`${text}\n${html}`).not.toMatch(/stays free|Free can't|Pro can|on Pro/);
   });
 
+  it("escapes the first name in the HTML greeting", () => {
+    const { text, html } = buildWarmPoolEmail({ firstName: "<b>Sam</b>" });
+    expect(html).not.toContain("<b>Sam</b>");
+    expect(html).toContain("Hey &lt;b&gt;Sam&lt;/b&gt;,");
+    expect(text).toContain("Hey <b>Sam</b>,");
+  });
+
   it("personalizes the greeting and falls back cleanly", () => {
     expect(buildWarmPoolEmail({ firstName: "Sam" }).text).toContain("Hey Sam,");
     expect(buildWarmPoolEmail({}).text).toContain("Hey,");

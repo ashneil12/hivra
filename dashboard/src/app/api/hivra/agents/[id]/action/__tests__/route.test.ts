@@ -48,6 +48,8 @@ let mockSnapshot: Record<string, unknown>;
 let mockAttachments: Array<{ id: string }> = [];
 let mockLifecycleUpdateError: unknown;
 let mockContinueOperationResult: boolean;
+let mockAgentLookupError: unknown = null;
+let mockRenameError: unknown = null;
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: () => mockAuth(),
@@ -130,6 +132,8 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     jest.clearAllMocks();
     mockRevokeRemoteDesktopCapability.mockReset().mockResolvedValue({ ok: true, revoked: true });
     mockLifecycleUpdateError = null;
+    mockAgentLookupError = null;
+    mockRenameError = null;
     mockContinueOperationResult = true;
     mockProviderRateLimit.mockReset().mockReturnValue(null);
     mockMutateGvisorComputer.mockReset();
@@ -254,21 +258,22 @@ describe("POST /api/hivra/agents/[id]/action", () => {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         single: jest.fn(async () => ({
-          data: mockAgent,
-          error: null,
+          data: mockAgentLookupError ? null : mockAgent,
+          error: mockAgentLookupError,
         })),
         update: jest.fn((payload: Record<string, unknown>) => {
           const updated = { ...mockAgent, ...payload };
           type UpdateChain = {
             eq: () => UpdateChain;
             select: () => UpdateChain;
-            single: () => Promise<{ data: typeof updated; error: null }>;
+            single: () => Promise<{ data: typeof updated | null; error: unknown }>;
             then: (resolve: (value: { data: typeof updated; error: unknown }) => void) => void;
           };
           const chain: UpdateChain = {
             eq: jest.fn(() => chain),
             select: jest.fn(() => chain),
-            single: jest.fn(async () => ({ data: updated, error: null })),
+            single: jest.fn(async () =>
+              mockRenameError ? { data: null, error: mockRenameError } : { data: updated, error: null }),
             then: (resolve: (value: { data: Record<string, unknown>; error: unknown }) => void) =>
               resolve({
                 data: updated,
@@ -1818,6 +1823,39 @@ read_activity_credential "$1"`,
       expect(response.status).toBe(200);
       expect(mockCollectorUpsert).toHaveBeenCalledTimes(1);
       expect(mockSupabaseRpc).toHaveBeenCalledWith("continue_hivra_agent_operation", expect.anything());
+    });
+  });
+
+  describe("failed database reads and writes are not reported as missing agents or saved renames", () => {
+    function actionRequest(body: Record<string, unknown>) {
+      return new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
+        method: "POST",
+        headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }) as never;
+    }
+
+    it("answers 503 when the agent lookup fails, and 404 for a malformed id", async () => {
+      mockAgentLookupError = { code: "08006", message: "connection failure" };
+      const outage = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(outage.status).toBe(503);
+
+      mockAgentLookupError = { code: "22P02", message: "invalid input syntax for type uuid" };
+      const malformed = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(malformed.status).toBe(404);
+    });
+
+    it("does not report a rename as saved when the write fails", async () => {
+      mockRenameError = { code: "08006", message: "connection failure" };
+      const response = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(response.status).toBe(503);
+      expect(await response.json()).not.toMatchObject({ success: true });
+    });
+
+    it("answers 409 when the agent disappears during a rename", async () => {
+      mockRenameError = { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" };
+      const response = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(response.status).toBe(409);
     });
   });
 });

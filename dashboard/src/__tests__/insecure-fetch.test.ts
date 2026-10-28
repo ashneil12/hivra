@@ -24,17 +24,28 @@ describe("fetchWithInsecureTLS", () => {
     fetchSpy.mockRestore();
   });
 
-  it("attaches the insecure dispatcher only for managed sslip.io gateways", async () => {
+  it("verifies TLS for managed sslip.io gateways unless the break-glass env is set", async () => {
     const mockResponse = new Response("ok", { status: 200 });
     const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(mockResponse);
-
-    await fetchWithInsecureTLS("https://203-0-113-11.sslip.io/v1/models");
-
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "https://203-0-113-11.sslip.io/v1/models",
-      expect.objectContaining({ dispatcher: insecureAgent })
-    );
-    fetchSpy.mockRestore();
+    const prev = process.env.ALLOW_INSECURE_GATEWAY_TLS;
+    delete process.env.ALLOW_INSECURE_GATEWAY_TLS;
+    try {
+      await fetchWithInsecureTLS("https://203-0-113-11.sslip.io/v1/models");
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://203-0-113-11.sslip.io/v1/models",
+        expect.not.objectContaining({ dispatcher: insecureAgent })
+      );
+      process.env.ALLOW_INSECURE_GATEWAY_TLS = "true";
+      await fetchWithInsecureTLS("https://203-0-113-11.sslip.io/v1/models");
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://203-0-113-11.sslip.io/v1/models",
+        expect.objectContaining({ dispatcher: insecureAgent })
+      );
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_INSECURE_GATEWAY_TLS;
+      else process.env.ALLOW_INSECURE_GATEWAY_TLS = prev;
+      fetchSpy.mockRestore();
+    }
   });
 
   it("does not trust arbitrary sslip.io subdomains unless explicitly overridden", async () => {

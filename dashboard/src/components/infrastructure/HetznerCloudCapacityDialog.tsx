@@ -550,11 +550,19 @@ export function HetznerCloudCapacityDialog({
     headingRef.current?.focus({ preventScroll: true });
   }, [screenKey, dialogRef]);
 
+  // The quote only matters at its expiry (quoteFresh), so wake the dialog once
+  // then, instead of re-rendering the whole dialog every second.
   useEffect(() => {
     if (phase !== "review" || !quote) return;
-    setQuoteClock(Date.now());
-    const interval = window.setInterval(() => setQuoteClock(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
+    const expiresAt = Date.parse(quote.expiresAt);
+    let timer: number | undefined;
+    const check = () => {
+      const now = Date.now();
+      setQuoteClock(now);
+      if (expiresAt > now) timer = window.setTimeout(check, expiresAt - now);
+    };
+    check();
+    return () => window.clearTimeout(timer);
   }, [phase, quote]);
 
   function changeServerType(value: string) {

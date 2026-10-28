@@ -10,6 +10,7 @@ import {
   type Locale,
 } from '@/lib/i18n';
 import { trackIframeError, trackIframeLoaded, trackIframeStopped } from '@/lib/telemetry/iframe-events';
+import { isSafeHttpNavigationUrl } from '@/lib/safe-http-url';
 import {
   WEBUI_DASHBOARD_APPEARANCE_MESSAGE_TYPE,
   WEBUI_DASHBOARD_SEND_MESSAGE_TYPE,
@@ -502,6 +503,13 @@ async function fetchLoginUrl(
 
   if (!isRecord(body) || typeof body.url !== 'string') {
     throw new Error('Login URL response was malformed');
+  }
+  // The URL is server-returned data: it feeds an iframe src, a popup
+  // navigation and a fallback <a href>. A non-http(s) scheme (javascript:,
+  // data:) would execute in the dashboard origin, so reject it here — at the
+  // boundary — before it can reach any of those sinks.
+  if (!isSafeHttpNavigationUrl(body.url)) {
+    throw new Error('Login URL response was not a safe http(s) URL');
   }
   return {
     kind: 'ready',
@@ -1082,6 +1090,13 @@ export function WebuiIframe({
         return;
       }
 
+      // Re-check at the navigation sink: the URL is about to drive a real
+      // browser navigation (or render as a clickable href), so it must be a
+      // safe http(s) address even if a future change stops fetchLoginUrl
+      // from guaranteeing that.
+      if (!isSafeHttpNavigationUrl(result.url)) {
+        throw new Error('Login URL response was not a safe http(s) URL');
+      }
       if (openedWindow) {
         openedWindow.location.href = result.url;
       } else {
@@ -1274,7 +1289,10 @@ export function WebuiIframe({
     );
   }
 
-  if (state.kind === 'loading' || state.kind === 'pending' || !state.url) {
+  // Last line of defence before the iframe src: state.url only ever comes
+  // from a fetchLoginUrl result that was already scheme-checked, but the
+  // render sink must never embed a non-http(s) URL regardless.
+  if (state.kind === 'loading' || state.kind === 'pending' || !isSafeHttpNavigationUrl(state.url)) {
     return (
       <WebuiHandoffLoadingShell
         className={className}

@@ -1,6 +1,11 @@
 /**
  * @jest-environment node
  */
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   buildConfigSnapshotStagingScript,
   buildMetadataFile,
@@ -169,6 +174,84 @@ describe("buildConfigSnapshotStagingScript", () => {
     expect(script).toContain(`'"'"'`);
     expect(script).toContain('[[ "$INSTANCE_ID" =~ ^[0-9a-f-]{36}$ ]]');
   });
+
+  it("guards per-profile names with a strict allowlist before interpolating them (SEC-05)", () => {
+    const script = buildConfigSnapshotStagingScript({
+      instanceId: "00000000-0000-4000-8000-000000001056",
+      vmid: 200,
+      guestIp: "10.250.20.50",
+    });
+    expect(script).toContain('[[ "$p" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || continue');
+    // The guard must sit inside the profiles loop, BEFORE $p reaches mkdir or any
+    // g "sudo ..." string that a guest shell will re-parse.
+    const loopIdx = script.indexOf('for p in $(g "sudo ls $V/profiles');
+    const guardIdx = script.indexOf('[[ "$p" =~ ^[a-zA-Z0-9_-]{1,64}$ ]]');
+    const mkdirIdx = script.indexOf('mkdir -p "$STAGE/hermes/profiles/$p"');
+    expect(loopIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(loopIdx);
+    expect(mkdirIdx).toBeGreaterThan(guardIdx);
+  });
+
+  it("skips hostile profile names end-to-end: they never reach a guest command or host path (SEC-05)", () => {
+    const script = buildConfigSnapshotStagingScript({
+      instanceId: "00000000-0000-4000-8000-000000001056",
+      vmid: 200,
+      guestIp: "10.250.20.50",
+    });
+    // Pull the real `if g "sudo test -d $V/profiles" ... fi` block out of the generated
+    // script and run it under bash with a stubbed `g` (the guest-ssh helper). The stub
+    // logs every remote-command arg and answers the `ls` with tenant-controlled names.
+    const block = script.match(/if g "sudo test -d \$V\/profiles"[\s\S]*?\nfi\n/);
+    expect(block).not.toBeNull();
+
+    const sq = (s: string) => `'${s.replace(/'/g, `'"'"'`)}'`;
+    const hostileNames = [
+      "..",
+      "../escape",
+      "evil;touch",
+      "$(id)",
+      "`id`",
+      "a/b",
+      "'quoted'",
+      'x"quote',
+      "name$(touch${IFS}x)",
+      "*",
+    ];
+    const tmp = mkdtempSync(join(tmpdir(), "sec05-profiles-"));
+    try {
+      const callsPath = join(tmp, "calls.log");
+      const runDir = join(tmp, "rundir");
+      mkdirSync(runDir); // empty cwd: a bare `*` cannot glob into real filenames
+      const harness = [
+        "set -u",
+        `STAGE=${sq(join(tmp, "stage"))}`,
+        "V=/fake/vol",
+        `CALLS=${sq(callsPath)}`,
+        `cd ${sq(runDir)}`,
+        `g() { printf 'G\\t%s\\n' "$*" >> "$CALLS"; case "$*" in *"ls $V/profiles"*) printf '%s\\n' ${["good-name", "legit_123", ...hostileNames].map(sq).join(" ")} ;; *" cat "*) printf 'x\\n' ;; esac; return 0; }`,
+        block![0],
+      ].join("\n");
+      execFileSync("bash", ["-c", harness], { stdio: "pipe" });
+
+      const calls = readFileSync(callsPath, "utf8");
+      // Allowlisted profile names are still snapshotted.
+      expect(calls).toContain("/fake/vol/profiles/good-name/config.yaml");
+      expect(calls).toContain("/fake/vol/profiles/legit_123/config.yaml");
+      // No hostile fragment ever reached a guest-command argument.
+      expect(calls).not.toMatch(/\$\(/);
+      expect(calls).not.toContain("`");
+      expect(calls).not.toContain(";");
+      expect(calls).not.toMatch(/\.\./);
+      expect(calls).not.toMatch(/profiles\/\*/);
+      // And no hostile/traversal directory was created on the host staging tree.
+      expect(readdirSync(join(tmp, "stage", "hermes", "profiles")).sort()).toEqual([
+        "good-name",
+        "legit_123",
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildMetadataFile", () => {
@@ -295,5 +378,52 @@ describe("pushSnapshotToGitHub", () => {
     });
     expect(res.changed).toBe(false);
     expect(committed).toBe(false);
+  });
+
+  it("uploads changed blobs a few at a time and keeps the tree in file order", async () => {
+    const files = Array.from({ length: 8 }, (_, i) => file(`hermes/f${i}.md`, `body ${i}`));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const u = String(url);
+      const json = (obj: unknown) =>
+        ({ ok: true, status: 200, text: async () => JSON.stringify(obj) } as Response);
+      if (method === "GET" && u.endsWith("/git/ref/heads/main")) return json({ object: { sha: "basecommit" } });
+      if (method === "GET" && u.includes("/git/commits/basecommit")) return json({ tree: { sha: "basetree" } });
+      if (method === "GET" && u.includes("/git/trees/basetree")) return json({ tree: [] });
+      if (method === "POST" && u.endsWith("/git/blobs")) {
+        const body = JSON.parse(init!.body as string) as { content: string };
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return json({ sha: `blob-${Buffer.from(body.content, "base64").toString("utf8")}` });
+      }
+      if (method === "POST" && u.endsWith("/git/trees")) return json({ sha: "newtree" });
+      if (method === "POST" && u.endsWith("/git/commits")) return json({ sha: "newcommit" });
+      if (method === "PATCH" && u.endsWith("/git/refs/heads/main")) return json({ ref: "ok" });
+      throw new Error(`unexpected ${method} ${u}`);
+    }) as unknown as typeof fetch;
+
+    const res = await pushSnapshotToGitHub({
+      repo: "o/r",
+      branch: "main",
+      token: "t",
+      files,
+      commitMessage: "snap",
+    });
+
+    expect(res.blobsUploaded).toBe(8);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    const treeCall = (global.fetch as unknown as jest.Mock).mock.calls.find(
+      ([u, init]) => String(u).endsWith("/git/trees") && init?.method === "POST"
+    );
+    const entries = (JSON.parse(treeCall[1].body as string) as {
+      tree: Array<{ path: string; sha: string | null }>;
+    }).tree;
+    expect(entries.map((e) => e.path)).toEqual(files.map((f) => `snapshot/${f.path}`));
+    expect(entries.map((e) => e.sha)).toEqual(files.map((_, i) => `blob-body ${i}`));
   });
 });

@@ -6,6 +6,7 @@ import type { ComputerContractGuestOutcome, ComputerContractGuestRequest } from 
 type Row = Record<string, unknown>;
 const table: Row[] = [];
 let tableDeployed = true;
+let updatesFail = false;
 
 // A small stand-in for the service-role client: enough of PostgREST's builder
 // for the contract store, with the unique (agent, revision) key enforced.
@@ -36,6 +37,7 @@ function query() {
         return { data: structuredClone(stored), error: null };
       }
       if (pending.kind === "update") {
+        if (updatesFail) return { data: null, error: { code: "23514" } };
         const [row] = matching();
         if (!row) return { data: null, error: { code: "PGRST116" } };
         Object.assign(row, pending.patch);
@@ -94,6 +96,7 @@ const advance = (agent: Row, mode: "auto" | "deliver" | "restore" | "check" = "a
 beforeEach(() => {
   table.length = 0;
   tableDeployed = true;
+  updatesFail = false;
   clock = Date.parse("2026-09-24T12:00:00.000Z");
   seed.mockReset();
 });
@@ -299,6 +302,16 @@ describe("advanceProxmoxComputerContract", () => {
     const status = await advance({ ...AGENT, status: "stopped" });
     expect(seed).not.toHaveBeenCalled();
     expect(status).toEqual({ kind: "not_started", channel: "proxmox-seed" });
+  });
+
+  it("never reports a delivery as recorded when the database write that records it fails", async () => {
+    updatesFail = true;
+    seed.mockImplementation(async (_ip, request) => delivered(request));
+    const status = await advance(AGENT);
+    // The computer took the block, but the store did not record the receipt.
+    expect(seed).toHaveBeenCalledTimes(1);
+    expect(status).toMatchObject({ revision: 1, state: "pending", deliveredAt: null });
+    expect(table[0]).toMatchObject({ delivery_state: "pending", delivered_at: null, receipt: null });
   });
 
   it("claims nothing when the contract store is not deployed", async () => {

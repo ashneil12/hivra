@@ -769,6 +769,24 @@ describe("GET /api/hivra/agents/[id]", () => {
     }));
   });
 
+  it("answers 503, not 404, when the poll's agent read fails, and 404 for a malformed id", async () => {
+    mockSupabaseFrom.mockImplementation(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn(async () => ({ data: null, error: { code: "08006", message: "connection failure" } })),
+    }));
+    const outage = await GET(makeGetRequest() as never, { params: Promise.resolve({ id: "agent-1" }) });
+    expect(outage.status).toBe(503);
+
+    mockSupabaseFrom.mockImplementation(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn(async () => ({ data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } })),
+    }));
+    const malformed = await GET(makeGetRequest() as never, { params: Promise.resolve({ id: "agent-1" }) });
+    expect(malformed.status).toBe(404);
+  });
+
   it("preserves the first provision timestamp when a restarted agent becomes ready again", async () => {
     mockRunProxmoxHostScript.mockResolvedValueOnce({
       ok: true,

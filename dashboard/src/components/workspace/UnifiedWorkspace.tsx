@@ -14,6 +14,7 @@ import type { AgentComputer, AgentComputerSurface } from "@/lib/agent-computers/
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { pollWhenVisible } from "@/lib/poll-when-visible";
 import type { ReleaseMetadata } from "@/lib/workspace/release-metadata";
 import type {
   WorkspaceRouteState,
@@ -401,10 +402,12 @@ export function UnifiedWorkspace({
 
   useEffect(() => {
     if (restorationAttemptedRef.current || workspaceAgents.loading) return;
-    restorationAttemptedRef.current = true;
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
+      // Claimed inside the microtask, not before it: StrictMode's cleanup then
+      // re-run would otherwise leave this one-shot restore scheduled nowhere.
+      restorationAttemptedRef.current = true;
       const saved = restoreWorkspaceSelection();
       if (!saved) {
         openDefaultAgent();
@@ -893,7 +896,10 @@ function ResolvedAgentBoundary({
 
   useEffect(() => {
     if (!provisioning) return;
-    const timer = window.setInterval(onRetry, PROVISIONING_REFRESH_INTERVAL_MS);
+    const timer = window.setInterval(
+      pollWhenVisible(onRetry),
+      PROVISIONING_REFRESH_INTERVAL_MS,
+    );
     return () => window.clearInterval(timer);
   }, [onRetry, provisioning]);
 

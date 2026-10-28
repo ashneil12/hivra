@@ -9,6 +9,7 @@ import {
   isOrphanLvReapEnabled,
   isRestoreCloneReaperEnabled,
   isSafeVgLvPath,
+  loadInstanceRowsByIds,
   parseLiveVmsFromHostScript,
   parseOrphanLvReapOutput,
   parseOrphanLvsFromHostScript,
@@ -320,6 +321,35 @@ const LEAK_ID_B = "00000000-0000-4000-8000-000000001001";
 function orphanVm(p: Partial<ProxmoxOrphanVm> & { vmid: number; name: string | null }): ProxmoxOrphanVm {
   return { hostId: "fixturenode11", memoryMb: 4096, cores: 2, ...p };
 }
+
+describe("loadInstanceRowsByIds", () => {
+  it("looks up at most 100 ids per request and merges every chunk", async () => {
+    const ids = Array.from(
+      { length: 250 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    const inCalls: string[][] = [];
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          in: async (_column: string, list: string[]) => {
+            inCalls.push(list);
+            return {
+              data: list.map((id) => ({ id, lifecycle_state: "cold_archived", proxmox_vmid: null })),
+              error: null,
+            };
+          },
+        }),
+      }),
+    };
+
+    const rows = await loadInstanceRowsByIds(supabase as never, ids);
+
+    expect(inCalls.map((list) => list.length)).toEqual([100, 100, 50]);
+    expect(rows.size).toBe(250);
+    expect(rows.get(ids[249]!)?.lifecycle_state).toBe("cold_archived");
+  });
+});
 
 describe("instanceIdFromVmName", () => {
   it("extracts the uuid from the restore-clone signature hermes-<uuid>", () => {

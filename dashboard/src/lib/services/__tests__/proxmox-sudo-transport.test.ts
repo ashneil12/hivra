@@ -320,6 +320,17 @@ describe("local-mode round trip through the real loader (T29)", () => {
     expect((await runProxmoxHostScriptWithStdin("echo small\n", "", login, options)).stdout).toBe("small\n");
   });
 
+  it("runs a sudo-transport script past Linux's 128 KiB single-argument limit", async () => {
+    // The loader must never pass the script as one execve argument: real
+    // sudo-transport scripts reach several hundred KB.
+    const filler = ("# " + "x".repeat(97) + "\n").repeat(1_400);
+    const script = filler + "echo done\n";
+    expect(Buffer.byteLength(script)).toBeGreaterThan(128 * 1024);
+    const result = await runProxmoxHostScript(script, local, options);
+    expect(result).toMatchObject({ ok: true, stdout: "done\n", stderr: "" });
+    expect(HIVRA_SUDO_LOADER).not.toContain("-c \"$s\"");
+  });
+
   it("runs a 96 KB script", async () => {
     const filler = ("# " + "x".repeat(97) + "\n").repeat(960);
     const script = filler + "echo done\n";

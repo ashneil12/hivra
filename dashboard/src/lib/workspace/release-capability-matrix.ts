@@ -9,6 +9,7 @@ import {
   type WorkspaceProjectionReason,
 } from "@/lib/agent-computers/workspace-projection";
 import type { UnifiedAgent, UnifiedKind } from "@/lib/hivra/unified-agent";
+import { hasSafeHttpAccessUrl } from "@/lib/safe-http-url";
 
 export const RELEASE_CAPABILITY_SURFACES = AGENT_COMPUTER_SURFACES;
 
@@ -113,25 +114,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function hasSafeHttpAccessUrl(value: unknown): boolean {
-  if (typeof value !== "string" || !value.trim() || value !== value.trim()) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(value);
-    return (
-      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
-      !parsed.username &&
-      !parsed.password &&
-      !parsed.search &&
-      !parsed.hash
-    );
-  } catch {
-    return false;
-  }
 }
 
 function projectionReason(

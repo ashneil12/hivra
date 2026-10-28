@@ -120,3 +120,36 @@ export function readInstalledHermesToolNames(config: Record<string, unknown>): s
     .filter(isHivraManagedServerName)
     .map((k) => k.slice(HIVRA_TOOL_SERVER_PREFIX.length));
 }
+
+/**
+ * Read back every installed Hivra-managed server as a full entry. The stored
+ * payload is preserved verbatim — its env was resolved when the tool was
+ * installed, and a later install/uninstall request only carries env for the
+ * tool being changed. Entries with no usable url/command are skipped.
+ */
+export function readInstalledHermesToolEntries(
+  config: Record<string, unknown>,
+): HermesToolServerEntry[] {
+  const raw = config?.mcp_servers;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const out: HermesToolServerEntry[] = [];
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isHivraManagedServerName(key)) continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const p = value as Record<string, unknown>;
+    const entry: HermesToolServerEntry = {
+      name: key.slice(HIVRA_TOOL_SERVER_PREFIX.length),
+    };
+    if (typeof p.url === "string") entry.url = p.url;
+    if (p.headers && typeof p.headers === "object" && !Array.isArray(p.headers)) {
+      entry.headers = p.headers as Record<string, string>;
+    }
+    if (typeof p.command === "string") entry.command = p.command;
+    if (Array.isArray(p.args)) entry.args = p.args.filter((a): a is string => typeof a === "string");
+    if (p.env && typeof p.env === "object" && !Array.isArray(p.env)) {
+      entry.env = p.env as Record<string, string>;
+    }
+    if (entry.url || entry.command) out.push(entry);
+  }
+  return out;
+}

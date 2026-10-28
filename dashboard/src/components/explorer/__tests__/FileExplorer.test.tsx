@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { FileExplorer } from "../FileExplorer";
 import { resolveExplorerHome } from "@/lib/explorer-home";
@@ -259,6 +259,41 @@ describe("FileExplorer", () => {
     await waitFor(() => {
       expect(getListBodies()).toContainEqual({ action: "list", path: INSTANCE_EXPLORER_HOME });
     });
+  });
+
+  it("does not let an earlier folder's listing replace the folder now on screen", async () => {
+    let releaseOpt: (response: Response) => void = () => undefined;
+    const optResponse = new Promise<Response>((resolve) => { releaseOpt = resolve; });
+    const home = global.fetch as jest.Mock;
+    global.fetch = jest.fn(async (input, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === "list" && body.path === "/opt") return optResponse;
+      return home(input, init);
+    }) as jest.Mock;
+
+    render(<FileExplorer instanceId="inst_123" />);
+    expect(await screen.findByText("README.md")).toBeInTheDocument();
+
+    const currentPath = screen.getByLabelText("Current path");
+    fireEvent.click(within(currentPath).getByRole("button", { name: "opt" }));
+    await waitFor(() => {
+      expect(getListBodies()).toContainEqual({ action: "list", path: "/opt" });
+    });
+
+    // Back home before /opt has answered; home's listing arrives first.
+    fireEvent.click(screen.getByRole("button", { name: /go to explorer home/i }));
+    await waitFor(() => {
+      expect(getListBodies()).toContainEqual({ action: "list", path: INSTANCE_EXPLORER_HOME });
+    });
+    expect(await screen.findByText("README.md")).toBeInTheDocument();
+
+    await act(async () => {
+      releaseOpt({
+        json: async () => ({ ok: true, files: [{ name: "stale-opt-file.txt", type: "file", size: 1, modifyTime: 1710000000 }] }),
+      } as Response);
+    });
+    expect(screen.queryByText("stale-opt-file.txt")).not.toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
   });
 
   it("clamps an out-of-root default path before the first folder request", async () => {

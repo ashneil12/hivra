@@ -512,18 +512,18 @@ export async function listInfrastructureConnections(
   userId: string,
 ): Promise<InfrastructureConnectionDto[]> {
   const db = database();
-  const { data: connectionRows, error: connectionError } = await db
-    .from("infrastructure_connections")
-    .select(CONNECTION_SELECT)
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (connectionError) throw databaseError(connectionError);
-
   // Presence only: encrypted_bundle is intentionally never selected here.
-  const { data: secretRows, error: secretError } = await db
-    .from("infrastructure_connection_secrets")
-    .select("connection_id")
-    .eq("user_id", userId);
+  const [{ data: connectionRows, error: connectionError }, { data: secretRows, error: secretError }] =
+    await Promise.all([
+      db.from("infrastructure_connections")
+        .select(CONNECTION_SELECT)
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false }),
+      db.from("infrastructure_connection_secrets")
+        .select("connection_id")
+        .eq("user_id", userId),
+    ]);
+  if (connectionError) throw databaseError(connectionError);
   if (secretError) throw databaseError(secretError);
 
   const configuredIds = new Set(
@@ -539,8 +539,11 @@ export async function getInfrastructureConnection(
   userId: string,
   connectionId: string,
 ): Promise<InfrastructureConnectionDto> {
-  const row = await ownerConnectionRow(userId, connectionId);
-  return dtoFromRow(row, await credentialsConfigured(userId, connectionId));
+  const [row, configured] = await Promise.all([
+    ownerConnectionRow(userId, connectionId),
+    credentialsConfigured(userId, connectionId),
+  ]);
+  return dtoFromRow(row, configured);
 }
 
 export async function listInfrastructureDeploymentTargets(

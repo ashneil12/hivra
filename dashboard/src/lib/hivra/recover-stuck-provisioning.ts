@@ -657,21 +657,24 @@ async function markError(row: StuckAgentRow, reason: string, message: string): P
   if (flipped && (row.cf_tunnel_id || row.cf_hostname)) {
     await deleteBoxTunnel({ tunnelId: row.cf_tunnel_id, hostname: row.cf_hostname });
   }
-  await logHivraAgentEvent({
-    userId: row.user_id,
-    event: "failed",
-    agentId: row.id,
-    agentType: row.type,
-    detail: { vmid: row.vmid, reason },
-  });
-  log.error("stuck hivra agent marked as failed", new Error(message), {
-    source: LOG_SOURCE,
-    failureType: "hivra_agent_stuck_provisioning_terminal",
-    agentId: row.id,
-    vmid: row.vmid,
-    proxmoxHost: row.proxmox_host,
-    reason,
-  });
+  // Record the failure only when this call moved the row: a superseded row is not failed.
+  if (flipped) {
+    await logHivraAgentEvent({
+      userId: row.user_id,
+      event: "failed",
+      agentId: row.id,
+      agentType: row.type,
+      detail: { vmid: row.vmid, reason },
+    });
+    log.error("stuck hivra agent marked as failed", new Error(message), {
+      source: LOG_SOURCE,
+      failureType: "hivra_agent_stuck_provisioning_terminal",
+      agentId: row.id,
+      vmid: row.vmid,
+      proxmoxHost: row.proxmox_host,
+      reason,
+    });
+  }
   return flipped;
 }
 

@@ -157,7 +157,13 @@ export function StyledDropdown({
       Math.min(top, viewportBottom - MENU_VIEWPORT_MARGIN - maxHeight)
     );
 
-    setMenuPosition({ top, left, width, maxHeight });
+    // Keep the same object when nothing moved, so a scroll that does not
+    // shift the menu does not re-render the dropdown.
+    setMenuPosition((current) =>
+      current && current.top === top && current.left === left && current.width === width && current.maxHeight === maxHeight
+        ? current
+        : { top, left, width, maxHeight }
+    );
   }, [resolvedMenuMaxHeight]);
 
   useEffect(() => {
@@ -201,8 +207,14 @@ export function StyledDropdown({
       focusTimerRef.current = null;
     }, 50);
 
+    // A page scroll fires many events a frame: measure once per frame.
+    let frame: number | null = null;
     const handleViewportChange = () => {
-      updateMenuPosition();
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        updateMenuPosition();
+      });
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -221,6 +233,7 @@ export function StyledDropdown({
         window.clearTimeout(focusTimerRef.current);
         focusTimerRef.current = null;
       }
+      if (frame !== null) window.cancelAnimationFrame(frame);
 
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);

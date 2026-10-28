@@ -92,6 +92,13 @@ export function HivraAgentsPanel({
     [],
   );
 
+  // Read through a ref so an inline onCounts callback from a parent does not
+  // change refresh's identity and refetch the inventory on every parent render.
+  const onCountsRef = useRef(onCounts);
+  useEffect(() => {
+    onCountsRef.current = onCounts;
+  }, [onCounts]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     const result = await listAgentsResult();
@@ -102,7 +109,7 @@ export function HivraAgentsPanel({
           catalogAgent(agent.type)?.resourceKind !== "computer",
       );
       setAgents(resources);
-      onCounts?.({
+      onCountsRef.current?.({
         running: resources.filter((agent) => agent.status === "running").length,
         total: resources.length,
       });
@@ -110,7 +117,7 @@ export function HivraAgentsPanel({
     setLoadError(result.error);
     setLoaded(true);
     setRefreshing(false);
-  }, [onCounts]);
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Owns the initial async inventory request and visibility-aware refresh interval.

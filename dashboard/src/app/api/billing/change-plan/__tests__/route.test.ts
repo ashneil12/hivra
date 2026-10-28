@@ -83,6 +83,18 @@ describe("POST /api/billing/change-plan", () => {
     }
   });
 
+  it("returns 400 for a malformed JSON body instead of a 500", async () => {
+    const req = {
+      headers: new Headers(),
+      json: jest.fn().mockRejectedValue(new SyntaxError("Unexpected token")),
+    } as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("Invalid JSON body");
+  });
+
   it("refuses to upgrade manual or missing-Stripe paid rows without secure checkout", async () => {
     const selectBuilder = {
       select: jest.fn().mockReturnThis(),

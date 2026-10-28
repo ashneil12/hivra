@@ -32,8 +32,11 @@ export async function POST(req: NextRequest) {
     if (rateLimitError) return rateLimitError;
 
     const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-    if (!file) return apiError("No file provided", 400);
+    const file = formData.get("file");
+    // A form field can be a string instead of a File (forged or malformed
+    // multipart). The `as File` cast hid that and file.size/file.name
+    // evaluated on a string, producing a confusing 400 downstream.
+    if (!(file instanceof File)) return apiError("No file provided", 400);
 
     // Validate file extension
     if (!file.name.endsWith(".zip")) {

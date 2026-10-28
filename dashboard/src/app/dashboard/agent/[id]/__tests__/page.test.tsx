@@ -316,7 +316,8 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     await screen.findByText(/public connection has not passed verification yet/);
     fireEvent.click(screen.getByRole("button", { name: button }));
-    expect(screen.getByText("Manage panel")).toBeInTheDocument();
+    // Manage's code loads on demand, so its panel appears once that download lands.
+    expect(await screen.findByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
   });
 
@@ -2016,6 +2017,33 @@ describe("AgentPage", () => {
     expect(await findSurfaceButton(/codex session/i)).toBeInTheDocument();
     expect(getSurfaceButton(/^browser$/i)).toBeInTheDocument();
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
+  });
+
+  it("keeps one browser probe in flight when a re-read changes the agent object", async () => {
+    const running = {
+      id: "agent_123",
+      type: "codex",
+      name: "CODEX_AGENT",
+      status: "running",
+      cpu: 2,
+      ram: 4,
+      chat_url: "https://box.example.com",
+      api_token: "box-token",
+    };
+    mockGetAgent.mockResolvedValue(running);
+    mockBrowserStatus.mockReturnValueOnce(new Promise(() => undefined));
+    render(<AgentPage />);
+    await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalledTimes(1));
+
+    // The next poll reads a changed agent (a new object) while the probe is still pending.
+    mockGetAgent.mockResolvedValue({ ...running, cpu: 3 });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(mockGetAgent).toHaveBeenCalledTimes(2));
+    await act(async () => undefined);
+
+    expect(mockBrowserStatus).toHaveBeenCalledTimes(1);
   });
 
   it("shows the channel-connect nudge on a welcome landing when Telegram is not connected", async () => {

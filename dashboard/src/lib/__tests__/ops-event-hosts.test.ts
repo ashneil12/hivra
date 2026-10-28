@@ -50,4 +50,17 @@ describe('ops-event-hosts', () => {
     expect(resolved.get('inst-direct')).toBe('203.0.113.10');
     expect(resolved.get('inst-hosted')).toBe('198.51.100.7');
   });
+
+  it('looks up a large instance list a few hundred ids per request', async () => {
+    const instanceIn = jest.fn().mockResolvedValue({ data: [], error: null });
+    (supabaseAdmin!.from as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      in: instanceIn,
+    });
+    const ids = Array.from({ length: 450 }, (_, index) => `inst-${index}`);
+
+    await resolveOpsEventHostIpMap(ids);
+
+    expect(instanceIn.mock.calls.map(([, chunk]) => (chunk as string[]).length)).toEqual([200, 200, 50]);
+  });
 });

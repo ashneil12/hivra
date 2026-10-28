@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { decryptApiKey } from "@/lib/crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { normalizeUsageRows } from "./usage-normalization";
@@ -150,17 +151,19 @@ export async function POST(request: NextRequest) {
       }
 
       const rollupDates = Array.from(new Set(days.map((day) => day.stat_date))).sort();
-      let rollupOk = true;
-      for (const statDate of rollupDates) {
+      // A 90-day payload used to wait on 90 rollup round trips in series; run a few at a time.
+      const rollupClient = supabaseAdmin;
+      const rollupResults = await mapWithConcurrencyLimit(rollupDates, 4, async (statDate) => {
         try {
-          const { error: rollupError } = await supabaseAdmin.rpc("compute_platform_stats_snapshot", {
+          const { error: rollupError } = await rollupClient.rpc("compute_platform_stats_snapshot", {
             p_date: statDate,
           });
-          if (rollupError) rollupOk = false;
+          return !rollupError;
         } catch {
-          rollupOk = false;
+          return false;
         }
-      }
+      });
+      const rollupOk = rollupResults.every(Boolean);
 
       return apiSuccess({
         ingested: rows.length,

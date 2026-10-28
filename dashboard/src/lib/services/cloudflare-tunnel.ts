@@ -280,8 +280,17 @@ export async function createBoxTunnel(
       throw new BoxTunnelProvisionError(false);
     }
     log.error("cloudflare tunnel provision failed; cleaning up", err, { source: LOG_SOURCE, hostname, tunnelId });
-    if (dnsRecordId) await cf(cfg, `/zones/${cfg.zoneId}/dns_records/${dnsRecordId}`, { method: "DELETE" }).catch(() => {});
-    if (tunnelId) await deleteTunnelById(cfg, tunnelId).catch(() => {});
+    // Best-effort, but a failed delete leaves an orphan behind, so it is logged.
+    if (dnsRecordId) {
+      await cf(cfg, `/zones/${cfg.zoneId}/dns_records/${dnsRecordId}`, { method: "DELETE" }).catch((cleanupErr) => {
+        log.warn("cloudflare tunnel cleanup: DNS record delete failed", { source: LOG_SOURCE, hostname, tunnelId, dnsRecordId, error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) });
+      });
+    }
+    if (tunnelId) {
+      await deleteTunnelById(cfg, tunnelId).catch((cleanupErr) => {
+        log.warn("cloudflare tunnel cleanup: tunnel delete failed", { source: LOG_SOURCE, hostname, tunnelId, error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) });
+      });
+    }
     return null;
   }
 }
@@ -289,7 +298,9 @@ export async function createBoxTunnel(
 async function deleteTunnelById(cfg: CloudflareTunnelConfig, tunnelId: string): Promise<void> {
   const accountId = await resolveAccountId(cfg);
   // Clean up any stale connections first, then delete the tunnel.
-  await cf(cfg, `/accounts/${accountId}/cfd_tunnel/${tunnelId}/connections`, { method: "DELETE" }).catch(() => {});
+  await cf(cfg, `/accounts/${accountId}/cfd_tunnel/${tunnelId}/connections`, { method: "DELETE" }).catch((connErr) => {
+    log.warn("cloudflare tunnel cleanup: stale connection delete failed", { source: LOG_SOURCE, tunnelId, error: connErr instanceof Error ? connErr.message : String(connErr) });
+  });
   await cf(cfg, `/accounts/${accountId}/cfd_tunnel/${tunnelId}`, { method: "DELETE" });
 }
 
@@ -304,7 +315,11 @@ export async function deleteBoxTunnel(
     if (params.hostname) {
       const search = new URLSearchParams({ type: "CNAME", name: params.hostname });
       const recs = await cf<Array<{ id: string }>>(cfg, `/zones/${cfg.zoneId}/dns_records?${search.toString()}`).catch(() => []);
-      for (const r of recs) await cf(cfg, `/zones/${cfg.zoneId}/dns_records/${r.id}`, { method: "DELETE" }).catch(() => {});
+      for (const r of recs) {
+        await cf(cfg, `/zones/${cfg.zoneId}/dns_records/${r.id}`, { method: "DELETE" }).catch((recErr) => {
+          log.warn("cloudflare tunnel teardown: CNAME delete failed", { source: LOG_SOURCE, hostname: params.hostname, dnsRecordId: r.id, error: recErr instanceof Error ? recErr.message : String(recErr) });
+        });
+      }
     }
     if (params.tunnelId) await deleteTunnelById(cfg, params.tunnelId);
   } catch (err) {

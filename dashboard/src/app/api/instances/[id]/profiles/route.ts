@@ -34,6 +34,11 @@ interface InstanceConfig {
   [key: string]: unknown;
 }
 
+// The lazy WebUI backfill is a best-effort mirror. Run it at most once per instance per window,
+// so each dashboard poll does not rewrite every profile row.
+const BACKFILL_INTERVAL_MS = 5 * 60_000;
+const lastBackfillAt = new Map<string, number>();
+
 function readInstanceConfig(config: unknown): InstanceConfig {
   return config && typeof config === "object" && !Array.isArray(config)
     ? config as InstanceConfig
@@ -219,7 +224,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         // returning: the read response no longer waits on the backfill, and a
         // failed write is logged instead of derailing the response.
         const backfillTargets = orderedProfiles.filter((p) => p.name !== "default");
-        if (backfillTargets.length > 0) {
+        const backfillNowMs = Date.now();
+        const backfillDue = (lastBackfillAt.get(instanceId) ?? 0) + BACKFILL_INTERVAL_MS <= backfillNowMs;
+        if (backfillTargets.length > 0 && backfillDue) {
+          lastBackfillAt.set(instanceId, backfillNowMs);
           void Promise.allSettled(
             backfillTargets.map((profile) =>
               persistWebUIProfileToSupabase({

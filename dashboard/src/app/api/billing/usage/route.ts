@@ -155,15 +155,14 @@ export async function GET() {
     // Venice compute boost is "active" when the user holds ≥ $199 of VVV AND
     // is on a paid tier (the boost only stacks on paid). Best-effort: a
     // boost-table read hiccup degrades to "no boost", never fails the page.
-    let veniceBoostActive = false;
-    if (isPaidTier(sub.plan)) {
+    const veniceBoostRead: Promise<boolean> = (async () => {
+      if (!isPaidTier(sub.plan)) return false;
       try {
-        veniceBoostActive = await isVeniceBoostEligible(userId);
+        return await isVeniceBoostEligible(userId);
       } catch (boostErr) {
         // Degrade to "no boost" so the page never fails, but emit a breadcrumb:
         // a silent false here means an eligible user sees no boost and operators
         // get no signal that the boost-eligibility read is failing.
-        veniceBoostActive = false;
         log.warn("venice boost eligibility check failed; degrading to no-boost", {
           source: "billing-usage",
           route: "/api/billing/usage",
@@ -171,10 +170,18 @@ export async function GET() {
           userId,
           failureType: "venice_boost_eligibility_check_failed",
         }, boostErr);
+        return false;
       }
-    }
+    })();
 
-    const managed = await readManagedCompute(userId);
+    // The boost read, the managed-compute read and the agent count do not depend
+    // on each other, so they run together.
+    const [veniceBoostActive, managed, { data: slotCount, error: slotError }] = await Promise.all([
+      veniceBoostRead,
+      readManagedCompute(userId),
+      supabaseAdmin.rpc("hivra_owner_agent_slot_count", { p_owner: userId }),
+    ]);
+
     if (!managed.ok) {
       log.warn(
         managed.failureType === "billing_usage_hermes_instances_query_failed"
@@ -197,8 +204,6 @@ export async function GET() {
     // attach enforce under the owner's slot lock. It also counts agents added
     // to the owner's Hivra Cloud computers, which have no row above and use
     // none of the pool's CPU or memory.
-    const { data: slotCount, error: slotError } = await supabaseAdmin
-      .rpc("hivra_owner_agent_slot_count", { p_owner: userId });
     if (slotError || !Number.isSafeInteger(slotCount) || (slotCount as number) < 0) {
       log.warn("billing usage could not verify the agent count", {
         source: "billing.usage",

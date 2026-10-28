@@ -239,9 +239,19 @@ export class HostRelay extends DurableObject<Env> {
       return json(401, { error: "unauthorized" });
     }
     const replayKey = `jti:${payload.jti}`;
-    if (await this.ctx.storage.get(replayKey)) return json(401, { error: "unauthorized" });
-    await this.ctx.storage.put(replayKey, payload.exp);
-    await this.forgetExpiredTickets(now);
+    // Ticket consumption must be atomic: concurrent upgrades bearing the
+    // same jti must not both pass storage.get before either put lands.
+    const runExclusive: <T>(fn: () => Promise<T>) => Promise<T> =
+      typeof this.ctx.blockConcurrencyWhile === "function"
+        ? this.ctx.blockConcurrencyWhile.bind(this.ctx)
+        : (fn) => fn();
+    const replayed = await runExclusive(async () => {
+      if (await this.ctx.storage.get(replayKey)) return true;
+      await this.ctx.storage.put(replayKey, payload.exp);
+      await this.forgetExpiredTickets(now);
+      return false;
+    });
+    if (replayed) return json(401, { error: "unauthorized" });
 
     const agent = this.ctx.getWebSockets("agent")[0];
     if (!agent) return json(503, { error: "host_offline" });

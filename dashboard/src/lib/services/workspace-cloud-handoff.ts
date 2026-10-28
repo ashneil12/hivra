@@ -147,7 +147,7 @@ export async function exchangeWorkspaceCloudHandoffCode(params: {
 
   const codeHash = sha256Hex(params.code);
 
-  const { data: row } = await supabaseAdmin
+  const { data: row, error: lookupError } = await supabaseAdmin
     .from("workspace_cloud_handoff_codes")
     .select("id, user_id, instance_id, challenge, expires_at, consumed_at")
     .eq("code_hash", codeHash)
@@ -160,6 +160,10 @@ export async function exchangeWorkspaceCloudHandoffCode(params: {
       consumed_at: string | null;
     }>();
 
+  // A failed lookup is a server error, not a wrong code.
+  if (lookupError) {
+    return { ok: false, status: 500, error: "Failed to exchange handoff code" };
+  }
   if (!row) {
     return { ok: false, status: 400, error: "Invalid or expired code" };
   }

@@ -126,10 +126,16 @@ export async function GET(req: NextRequest) {
   //    epoch) bucketed by UTC day for signups_by_day.
   const userIds: string[] = [];
   const signupsByDay: Record<string, number> = {};
+  let pageFailed = false;
   for (let offset = 0; ; offset += PAGE) {
     const batch = (await clerkGet(`/users?limit=${PAGE}&offset=${offset}`, key)) as
       | Array<{ id: string; created_at?: number }>
       | null;
+    // null means the page request failed after retries, not that the list ended.
+    if (batch === null) {
+      pageFailed = true;
+      break;
+    }
     if (!Array.isArray(batch) || batch.length === 0) break;
     for (const u of batch) {
       if (!u?.id) continue;
@@ -140,6 +146,31 @@ export async function GET(req: NextRequest) {
       }
     }
     if (batch.length < PAGE) break;
+  }
+  // A failed page leaves a partial user list. Writing it would overwrite
+  // total_users and signups_by_day with under-counts, so keep the last good row.
+  if (pageFailed) {
+    log.warn("sync-user-geo user page failed; leaving platform_geo unchanged", {
+      source: "sync-user-geo",
+      route: "/api/cron/sync-user-geo",
+      failureType: "sync_user_geo_page_failed",
+      usersPagedBeforeFailure: userIds.length,
+    });
+    await reportOpsEvent({
+      source: "cron.sync-user-geo",
+      severity: "warn",
+      title: "sync-user-geo run aborted; platform_geo not updated",
+      message:
+        `A Clerk user page failed after retries after ${userIds.length} users were read. ` +
+        `The partial list was not written, so the last good user, signup and country counts were kept. ` +
+        `Likely a Clerk outage or sustained rate-limiting.`,
+      route: "/api/cron/sync-user-geo",
+      metadata: {
+        failureType: "sync_user_geo_page_failed",
+        usersPagedBeforeFailure: userIds.length,
+      },
+    });
+    return apiSuccess({ users: userIds.length, updated: false, degraded: true });
   }
   const totalUsers = userIds.length;
 

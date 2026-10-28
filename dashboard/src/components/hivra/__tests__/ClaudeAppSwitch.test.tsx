@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   claudeAppInstall,
   claudeAppRemove,
@@ -59,6 +59,23 @@ it("renders nothing while the status cannot be read, rather than guessing", asyn
   const { container } = mount();
   await waitFor(() => expect(claudeAppStatus).toHaveBeenCalled());
   expect(container.textContent).toBe("");
+});
+
+it("backs off while the status cannot be read, instead of polling every 3 s", async () => {
+  jest.useFakeTimers();
+  try {
+    jest.mocked(claudeAppStatus).mockResolvedValue({ available: true, status: null, error: "HTTP 502" });
+    mount();
+    await waitFor(() => expect(claudeAppStatus).toHaveBeenCalledTimes(1));
+    await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
+    expect(claudeAppStatus).toHaveBeenCalledTimes(2);
+    await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
+    expect(claudeAppStatus).toHaveBeenCalledTimes(2);
+    await act(async () => { await jest.advanceTimersByTimeAsync(7_000); });
+    expect(claudeAppStatus).toHaveBeenCalledTimes(3);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it("does not poll while the desktop tab is not shown", () => {

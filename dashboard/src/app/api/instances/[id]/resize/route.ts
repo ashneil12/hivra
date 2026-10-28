@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
+import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import { resolveEffectiveTierSpec, type TierKey } from "@/lib/services/tier-specs";
@@ -87,6 +88,33 @@ export async function PATCH(
 
   if (!result.ok) {
     return apiError(`Resize failed: ${result.error || result.stderr || "unknown"}`, 500);
+  }
+
+  // The VM now runs at the spec caps. Record them on the row: the capacity
+  // checks, usage and memory-pressure routes read the stored columns, so a
+  // stale row would keep reporting the old size.
+  const { error: sizeUpdateError } = await supabaseAdmin
+    .from("hermes_instances")
+    .update({
+      cpu_limit: spec.cpuLimit,
+      ram_limit: spec.ramLimitMb,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("user_id", userId);
+  if (sizeUpdateError) {
+    log.error("instance resize database update failed after VM resize", sizeUpdateError, {
+      source: "instances",
+      route: "/api/instances/[id]/resize",
+      method: "PATCH",
+      instanceId: id,
+      userId,
+      failureType: "instance_resize_row_update_failed",
+    });
+    return apiError(
+      "The VM was resized, but its saved allocation could not be updated. Retry the resize.",
+      500,
+    );
   }
 
   return apiSuccess({

@@ -85,19 +85,27 @@ export function ResourceSurfaceNavigation<T extends string>({
       popover.current.style.top = layout.placement === "below" ? "calc(100% + 8px)" : "auto";
       popover.current.style.bottom = layout.placement === "above" ? "calc(100% + 8px)" : "auto";
     }
+    // A scroll can fire many times a frame, and each position() reads layout.
+    // Measure at most once per frame instead.
+    let frame = 0;
+    const positionSoon = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => { frame = 0; position(); });
+    };
     position();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(position);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(positionSoon);
     for (const element of [root.current, header, banner, bottomNav]) if (element) observer?.observe(element);
-    window.addEventListener("resize", position);
-    document.addEventListener("scroll", position, true);
-    viewport?.addEventListener("resize", position);
-    viewport?.addEventListener("scroll", position);
+    window.addEventListener("resize", positionSoon);
+    document.addEventListener("scroll", positionSoon, true);
+    viewport?.addEventListener("resize", positionSoon);
+    viewport?.addEventListener("scroll", positionSoon);
     return () => {
       observer?.disconnect();
-      window.removeEventListener("resize", position);
-      document.removeEventListener("scroll", position, true);
-      viewport?.removeEventListener("resize", position);
-      viewport?.removeEventListener("scroll", position);
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", positionSoon);
+      document.removeEventListener("scroll", positionSoon, true);
+      viewport?.removeEventListener("resize", positionSoon);
+      viewport?.removeEventListener("scroll", positionSoon);
     };
   }, [open]);
 

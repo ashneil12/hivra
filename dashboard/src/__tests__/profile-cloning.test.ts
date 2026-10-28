@@ -12,7 +12,8 @@ jest.mock('../lib/supabase', () => ({
     eq: jest.fn().mockReturnThis(),
     not: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({ data: { id: 'mock-id', gateway_port: 8650 }, error: null })
+    single: jest.fn().mockResolvedValue({ data: { id: 'mock-id', gateway_port: 8650 }, error: null }),
+    maybeSingle: jest.fn().mockResolvedValue({ data: { id: 'mock-id', gateway_port: 8650 }, error: null })
   }
 }));
 
