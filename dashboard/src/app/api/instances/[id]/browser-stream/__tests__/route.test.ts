@@ -109,6 +109,11 @@ describe("GET /api/instances/[id]/browser-stream", () => {
     expect(loc).toContain("path=vnc/websockify");
     expect(loc).toContain("autoconnect=true");
     expect(loc).toContain("password=");
+    // The password rides in the fragment, which the browser never sends to a
+    // server: it stays out of the VM's access logs, proxies and Referer.
+    const url = new URL(loc);
+    expect(url.search).toBe("");
+    expect(url.hash).toContain("password=");
     // Must not embed the raw signing secret, nor route via the old signed path.
     expect(loc).not.toContain("raw-api-server-key");
     expect(loc).not.toContain("/browser-sidecar/novnc");
