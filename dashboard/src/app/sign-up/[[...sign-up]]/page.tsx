@@ -1,4 +1,3 @@
-import { SignUp } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -8,6 +7,7 @@ import funnelStyles from "@/components/public-site/public-site.module.css";
 import { HOSTED_COMPUTE_NEEDS_PLAN } from "@/lib/blog/plan-facts";
 import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { isLocalAuthMode } from "@/lib/self-host/config";
+import HeardAboutSignUp from "./HeardAboutSignUp";
 import styles from "./sign-up.module.css";
 
 // Paid sign-ups start on /get-started, which carries the plan through
@@ -66,7 +66,8 @@ export default async function SignUpPage({
             </p>
             <p>{HOSTED_COMPUTE_NEEDS_PLAN}</p>
           </div>
-          <SignUp
+          {/* "How did you hear about Hivra?" sits above the card and rides into Clerk (R8). */}
+          <HeardAboutSignUp
             fallbackRedirectUrl={redirectUrl}
             appearance={authCardAppearance({
               headerTitle: "serif text-[2.2rem] font-normal text-[var(--ink-black)] leading-none mb-2",
