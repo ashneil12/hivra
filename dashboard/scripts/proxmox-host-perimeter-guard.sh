@@ -209,6 +209,7 @@ MANAGED_INPUT = {
     'iifname "vmbr1" drop',
     'iifname "vmbr1" ct state invalid drop',
     'iifname "vmbr1" ct state new drop',
+    'iifname "vmbr1" meta l4proto { icmp, ipv6-icmp } accept',
 }
 
 # The catch-all drops are limited to new/invalid connections so replies from
@@ -217,6 +218,7 @@ MANAGED_INPUT = {
 # that rule sits in the chain.
 VMBR1_INPUT_BLOCK = [
     'iifname "vmbr1" udp dport 123 accept',
+    'iifname "vmbr1" meta l4proto { icmp, ipv6-icmp } accept',
     'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop',
     'iifname "vmbr1" ct state invalid drop',
     'iifname "vmbr1" ct state new drop',
@@ -516,10 +518,11 @@ CF = [ipaddress.ip_network(c) for c in (
     "2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32"
 ).split()]
 
-root = Path(sys.argv[1])
-files = [p for p in root.rglob("*") if p.is_file() and (p.name == "Caddyfile" or p.suffix == ".caddy" or p.parent.name in ("conf.d", "sites", "sites-enabled"))] if root.is_dir() else []
-if not files:
+root = Path(sys.argv[1]).resolve()
+queue = [p for p in root.rglob("*") if p.is_file() and (p.name == "Caddyfile" or p.suffix == ".caddy" or p.parent.name in ("conf.d", "sites", "sites-enabled"))] if root.is_dir() else []
+if not queue:
     sys.exit("no Caddy site config under %s; cannot prove every site is proxied" % root)
+
 
 def addresses(text):
     return [a for a in re.split(r"[\s,]+", text.strip()) if a]
@@ -527,32 +530,58 @@ def addresses(text):
 
 # At the top level a Caddyfile holds only the global options block, snippet
 # definitions, imports and site address lists (which may span lines joined by
-# commas) followed by their block.
+# commas) followed by their block. A file with no site block is a single site
+# whose address is its first line. Imported files are parsed too.
 hosts = set()
 bad = []
-for f in files:
+seen = set()
+while queue:
+    f = queue.pop(0).resolve()
+    if f in seen:
+        continue
+    seen.add(f)
     depth = 0
     pending = []
+    snippets = set()
+    first_line = None
+    blocks = 0
     for raw in f.read_text(errors="replace").split("\n"):
         line = raw.split("#", 1)[0].strip()
+        if line and first_line is None:
+            first_line = line
         if depth == 0 and line:
             words = line.split()
             if words[0] == "import":
                 target = words[1] if len(words) > 1 else ""
-                if target.startswith("/") and not target.startswith(str(root)):
-                    bad.append("import %s (outside %s; cannot verify)" % (target, root))
+                if target in snippets or not target:
+                    pass
+                else:
+                    pattern = Path(target) if target.startswith("/") else f.parent / target
+                    if not str(pattern.resolve()).startswith(str(root) + "/"):
+                        bad.append("import %s (outside %s; cannot verify)" % (target, root))
+                    else:
+                        queue.extend(q for q in Path("/").glob(str(pattern.resolve()).lstrip("/")) if q.is_file())
                 pending = []
             elif line.startswith("("):
+                snippets.add(line[1:].split(")", 1)[0])
                 pending = []
             elif line == "{":
+                if pending:
+                    blocks += 1
                 hosts.update(pending)
                 pending = []
             elif line.endswith("{"):
+                blocks += 1
                 hosts.update(pending + addresses(line[:-1]))
                 pending = []
             else:
                 pending += addresses(line)
         depth += raw.count("{") - raw.count("}")
+    if blocks == 0 and first_line and not first_line.startswith(("{", "(", "import")):
+        hosts.update(addresses(first_line))
+
+if not hosts:
+    bad.append("no site addresses found in %s; cannot prove every site is proxied" % root)
 
 for addr in sorted(hosts):
     host = re.sub(r"^[a-z]+://", "", addr).split("/", 1)[0]

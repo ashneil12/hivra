@@ -288,6 +288,10 @@ fi
     it("adds the vmbr1 guest-to-host input drops before the WAN accepts", () => {
       const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain(NTP_ACCEPT);
+      // Guests can still ping their gateway and run IPv6 neighbour discovery.
+      expect(output.indexOf('iifname "vmbr1" meta l4proto { icmp, ipv6-icmp } accept')).toBeLessThan(
+        output.indexOf(VMBR1_NEW_DROP),
+      );
       expect(output).toContain(VMBR1_TCP_DROP);
       expect(output).not.toMatch(/^\s*iifname "vmbr1" drop$/m);
       expect(output).toContain(VMBR1_INVALID_DROP);
@@ -600,6 +604,7 @@ esac
         [":443 {\n\trespond ok\n}\n", ":443"],
         ["{$GATEWAY_HOST} {\n\trespond ok\n}\n", "{$GATEWAY_HOST}"],
         ["import /srv/other/sites/*\n", "/srv/other/sites/*"],
+        ["agent-3.198-51-100-9.sslip.io\nreverse_proxy 10.250.0.3:8080\n", "agent-3.198-51-100-9.sslip.io"],
       ]) {
         const { nftConf, apply } = setupApply({ caddyfile });
         let stderr = "";
@@ -612,6 +617,23 @@ esac
         expect(stderr).toContain(reported);
         expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
       }
+    });
+
+    it("follows imports into files without a .caddy suffix", () => {
+      const { dir, nftConf, apply } = setupApply({ caddyfile: "import tenants/*\n" });
+      mkdirSync(path.join(dir, "caddy", "tenants"));
+      writeFileSync(
+        path.join(dir, "caddy", "tenants", "agent-4"),
+        "agent-4.198-51-100-10.sslip.io {\n\treverse_proxy 10.250.0.4:8080\n}\n",
+      );
+      let stderr = "";
+      try {
+        apply(CF_ONLY);
+      } catch (err) {
+        stderr = String((err as { stderr?: string }).stderr);
+      }
+      expect(stderr).toContain("agent-4.198-51-100-10.sslip.io");
+      expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
     });
 
     it("refuses --cloudflare-origin-only when there is no Caddy config to check", () => {
