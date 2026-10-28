@@ -82,11 +82,6 @@ export const CSP_DISTINCT_KEY_WINDOW_MS = 60 * 60 * 1000;
 let windowStartedAt = 0;
 let seenKeys = new Set<string>();
 
-export function resetCspReportBudgetForTests(): void {
-  windowStartedAt = 0;
-  seenKeys = new Set<string>();
-}
-
 function parseUrl(value: string | undefined): URL | null {
   if (!value) return null;
   try {

@@ -3,6 +3,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
+import { log } from "@/lib/logger";
 import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -14,6 +15,7 @@ import {
   resolveProxmoxLifecycleTarget,
 } from "@/lib/services/proxmox-infrastructure";
 import { deleteHetznerServer } from "@/lib/services/hetzner-instance-service";
+import { HetznerCloudApiError } from "@/lib/hetzner/client";
 import {
   deriveDnsDomainFromGatewayUrl,
   removeInstanceDnsBestEffort,
@@ -171,7 +173,20 @@ export async function POST(
       try {
         await deleteHetznerServer(instance.hetzner_server_id);
       } catch (err) {
-        providerError = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        // Only Hetzner's own not_found answer proves absence; a proxy 404 does not.
+        if (err instanceof HetznerCloudApiError && err.status === 404 && err.providerCode === "not_found") {
+          // Already gone: same as hosts/[id] DELETE. The lifecycle write below still runs.
+          log.warn("hetzner server already gone during force-delete; marking row deleted", {
+            source: "ops-force-delete",
+            route: "/api/ops/instances/[id]/force-delete",
+            failureType: "force_delete_hetzner_already_gone",
+            instanceId: id,
+            hetznerServerId: instance.hetzner_server_id,
+          });
+        } else {
+          providerError = msg;
+        }
       }
     }
 

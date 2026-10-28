@@ -275,6 +275,15 @@ describe("POST /api/tools Hermes reconcile", () => {
     expect(appliedEntries()).toEqual([]);
   });
 
+  it("reconciles a target listed twice once, and answers both request entries", async () => {
+    mockRows.hermes_instances = [hermesRow({ mcp_servers: { mine: { command: "x" } } })];
+    expect(await results({ toolId: "github", targets: ["hermes-h1", "hermes-h1"] })).toEqual([
+      { uid: "hermes-h1", ok: true, error: undefined },
+      { uid: "hermes-h1", ok: true, error: undefined },
+    ]);
+    expect(applyTools).toHaveBeenCalledTimes(1);
+  });
+
   it("installing the first tool on an agent with no managed tools sends just that entry", async () => {
     mockRows.hermes_instances = [hermesRow({ mcp_servers: { mine: { command: "x" } } })];
     await results({ toolId: "github", targets: ["hermes-h1"] });

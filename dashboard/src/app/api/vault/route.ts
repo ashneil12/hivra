@@ -56,7 +56,8 @@ export async function POST(request: NextRequest) {
     });
     if (rateLimitError) return rateLimitError;
 
-    const json = await request.json();
+    const json = await request.json().catch(() => null);
+    if (json === null) return apiError("Invalid JSON body", 400);
     const parsed = ApiKeySchema.safeParse(json);
     if (!parsed.success) return apiError(parsed.error.issues[0].message, 400);
 
@@ -118,7 +119,7 @@ export async function POST(request: NextRequest) {
         .eq("id", id)
         .eq("user_id", userId)
         .select()
-        .single();
+        .maybeSingle();
     } else {
       dbResult = await supabaseAdmin
         .from("user_api_keys")
@@ -132,6 +133,11 @@ export async function POST(request: NextRequest) {
         failureType: "vault_key_save_failed",
         operation: id ? "update" : "upsert",
       });
+    }
+
+    // An update that matched no row: the id is unknown, deleted or not this user's key.
+    if (!dbResult.data) {
+      return apiError("Key not found", 404);
     }
 
     return apiSuccess({ id: dbResult.data.id });

@@ -207,9 +207,14 @@ export async function POST(req: NextRequest) {
     const all = await listToolTargets(userId);
     const byUid = new Map(all.map((t) => [t.uid, t]));
 
+    // Each instance is reconciled once per call. A repeated uid would run two
+    // read-modify-write reconciles of the same config at once, and one write
+    // would overwrite the other; its repeats reuse the one result below.
+    const unique = Array.from(new Set(wanted));
+
     // CLI-lane agent rows only need the ids we actually target — one .in()
     // query instead of a round-trip per target inside the pool.
-    const queue = wanted.map((uid) => ({ uid, target: byUid.get(uid) }));
+    const queue = unique.map((uid) => ({ uid, target: byUid.get(uid) }));
     const cliIds = queue
       .filter((q) => q.target?.lane === "cli" && q.target.installable)
       .map((q) => String(q.target!.id));
@@ -294,7 +299,11 @@ export async function POST(req: NextRequest) {
       }),
     );
 
-    const ordered = results.map((r, i) => r ?? { uid: wanted[i], ok: false, error: "not completed" });
+    // Request-ordered, one entry per requested uid (repeats share a result).
+    const ordered = wanted.map((uid) => {
+      const i = unique.indexOf(uid);
+      return results[i] ?? { uid, ok: false, error: "not completed" };
+    });
     const okCount = ordered.filter((r) => r.ok).length;
     await logHivraAgentEvent({
       userId,

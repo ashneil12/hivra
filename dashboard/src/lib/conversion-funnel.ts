@@ -1,5 +1,6 @@
 import "server-only";
 import { chunk } from "@/lib/array-utils";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
@@ -34,6 +35,8 @@ const HOUR_MS = 3_600_000;
 // fetch pages explicitly with a deterministic order.
 const PAGE_SIZE = 1000;
 const IN_CHUNK_SIZE = 200;
+/** Parallel PostgREST chains for the per-200-user fan-outs; bounded so a large signup window cannot flood the API. */
+const IN_CHUNK_CONCURRENCY = 4;
 
 export interface FunnelSubscriptionRow {
   user_id: string;
@@ -286,8 +289,10 @@ async function fetchInstancesForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<FunnelInstanceRow[]> {
-  const groups = await Promise.all(
-    chunk(userIds, IN_CHUNK_SIZE).map((ids) =>
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    IN_CHUNK_CONCURRENCY,
+    (ids) =>
       fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
         client
           .from("hermes_instances")
@@ -296,7 +301,6 @@ async function fetchInstancesForUsers(
           .order("id")
           .range(from, to)
       )
-    )
   );
   return groups.flat();
 }
@@ -351,8 +355,10 @@ export async function fetchEngagedFreeUserIds(
   );
   const userIds = [...new Set(liveActive.map((r) => r.user_id).filter((id): id is string => !!id))];
   const engaged = new Set<string>();
-  await Promise.all(
-    chunk(userIds, IN_CHUNK_SIZE).map(async (ids) => {
+  await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    IN_CHUNK_CONCURRENCY,
+    async (ids) => {
       const { data, error } = await client
         .from("hermes_subscriptions")
         .select("user_id")
@@ -362,7 +368,7 @@ export async function fetchEngagedFreeUserIds(
       for (const row of data ?? []) {
         if (row.user_id) engaged.add(row.user_id);
       }
-    })
+    }
   );
   return [...engaged].sort();
 }

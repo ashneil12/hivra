@@ -28,9 +28,6 @@ export const SCHEDULING_PRIORITY = {
   command: 2,
 } as const;
 
-type SlotPlanKey = keyof typeof AGENT_SLOTS;
-
-
 // hermes_instances.resource_tier uses credit_base/token_base for the free tiers.
 const RESOURCE_TIER_PRIORITY: Record<string, number> = {
   credit_base: SCHEDULING_PRIORITY.free,

@@ -1,7 +1,4 @@
-import type {
-  AgentComputer,
-  AgentComputerSurface,
-} from "@/lib/agent-computers/contracts";
+import type { AgentComputerSurface } from "@/lib/agent-computers/contracts";
 
 export type WorkspaceSurface = "conversation" | AgentComputerSurface;
 

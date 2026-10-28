@@ -4,6 +4,7 @@
 // other sites copy are link spam under Google's spam policies, so the anchor
 // never carries the tool's topic.
 
+import { escapeHtml } from "@/lib/email/escape-html";
 import { monthYear } from "./month-year";
 
 export interface CiteInput {
@@ -13,14 +14,6 @@ export interface CiteInput {
   url: string;
   /** ISO date the facts on the page were last checked. */
   lastVerified: string;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 export function buildCite({ name, url, lastVerified }: CiteInput): { sentence: string; html: string } {
