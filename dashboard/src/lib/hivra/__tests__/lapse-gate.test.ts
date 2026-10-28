@@ -1,4 +1,4 @@
-import { isStartBlockedForLapse, ownerHasNoPaidPlan } from "../lapse-gate";
+import { isHostedInstanceStartBlockedForLapse, isStartBlockedForLapse, ownerHasNoPaidPlan } from "../lapse-gate";
 import { hasTokenTierInGrace, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 
 jest.mock("@/lib/billing/instance-entitlement", () => ({ resolveEffectiveSubscription: jest.fn(), hasTokenTierInGrace: jest.fn() }));
@@ -83,5 +83,31 @@ describe("isStartBlockedForLapse", () => {
   ])("does not gate %s", async (_name, fields) => {
     expect(await isStartBlockedForLapse({ ...cloud, ...fields }, "start")).toBe(false);
     expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+describe("isHostedInstanceStartBlockedForLapse (older lane)", () => {
+  it("refuses Start for an owner on the Free account only", async () => {
+    resolve.mockResolvedValue(free);
+    expect(await isHostedInstanceStartBlockedForLapse("owner", "start")).toBe(true);
+  });
+  it("lets a paying owner start", async () => {
+    resolve.mockResolvedValue(paid);
+    expect(await isHostedInstanceStartBlockedForLapse("owner", "start")).toBe(false);
+  });
+  it("never gates stop or any other action", async () => {
+    for (const action of ["stop", "reboot", "restart_gateway", "update", "redeploy"]) {
+      expect(await isHostedInstanceStartBlockedForLapse("owner", action)).toBe(false);
+    }
+    expect(resolve).not.toHaveBeenCalled();
+  });
+  it("lets everything through while the switch is off", async () => {
+    delete process.env.HIVRA_LAPSE_ENFORCE_LIVE;
+    expect(await isHostedInstanceStartBlockedForLapse("owner", "start")).toBe(false);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+  it("lets the owner start when the plan cannot be read", async () => {
+    resolve.mockRejectedValue(new Error("database unavailable"));
+    expect(await isHostedInstanceStartBlockedForLapse("owner", "start")).toBe(false);
   });
 });

@@ -10,6 +10,7 @@ import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-or
 import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
 import { apiError } from "@/lib/api-response";
+import { isHostedInstanceStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import {
   buildAdvancedInstanceConfigPayload,
   getAutoUpdateConfig,
@@ -192,6 +193,10 @@ jest.mock("@/lib/webui/instance", () => ({
 
 jest.mock("@/lib/billing/pro-tier", () => ({
   isProTierUser: jest.fn(),
+}));
+
+jest.mock("@/lib/hivra/lapse-gate", () => ({
+  isHostedInstanceStartBlockedForLapse: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock("@/lib/billing/backup-addon-billing", () => ({
@@ -484,6 +489,57 @@ describe("POST /api/instances/[id]", () => {
           recoveryAction: "open_billing",
         }),
       })
+    );
+  });
+
+  it("refuses Start on a hosted computer whose owner has no paid plan, before any start or restore", async () => {
+    (isHostedInstanceStartBlockedForLapse as jest.Mock).mockResolvedValueOnce(true);
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                neq: jest.fn().mockReturnValue({
+                  single: jest.fn().mockResolvedValue({
+                    data: {
+                      id: "inst-123",
+                      user_id: "user_123",
+                      status: "stopped",
+                      lifecycle_state: "paused",
+                      paused_reason: "no_paid_plan",
+                      entitlement_state: "ok",
+                      provider: "openai",
+                      host_id: null,
+                      api_key_encrypted: "encrypted",
+                      config: {},
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }),
+          update: jest.fn(),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const response = await POST(
+      makeJsonRequest("http://localhost/api/instances/inst-123", { action: "start" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+
+    expect(response.status).toBe(402);
+    expect(isHostedInstanceStartBlockedForLapse).toHaveBeenCalledWith("user_123", "start");
+    expect(startProxmoxInstance).not.toHaveBeenCalled();
+    expect(powerOnServer).not.toHaveBeenCalled();
+    expect(apiError).toHaveBeenCalledWith(
+      expect.stringContaining("needs a paid plan"),
+      402,
+      undefined,
+      { code: "instance_entitlement_suspended" },
     );
   });
 
