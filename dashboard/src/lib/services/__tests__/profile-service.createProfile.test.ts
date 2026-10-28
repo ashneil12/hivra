@@ -356,7 +356,7 @@ describe('ProfileService.createProfile', () => {
     const mockLookup = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
-      single: jest.fn().mockResolvedValue({
+      maybeSingle: jest.fn().mockResolvedValue({
         data: { id: "prof_123", gateway_port: 8651 },
         error: null,
       }),

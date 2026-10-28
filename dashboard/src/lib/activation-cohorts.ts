@@ -1,5 +1,6 @@
 import "server-only";
 import { chunk } from "@/lib/array-utils";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
@@ -48,6 +49,7 @@ const WEEKLY_COHORT_WEEKS = 8;
 const DAY_MS = 86_400_000;
 const PAGE_SIZE = 1000;
 const IN_CHUNK_SIZE = 200;
+const CHUNK_CONCURRENCY = 4;
 
 export interface ActivationInstanceRow {
   user_id: string | null;
@@ -125,19 +127,6 @@ export function utcWeekEndKey(weekStart: string): string {
  */
 export function isUsedKnownForWeek(weekStart: string, instrumentedFrom: string): boolean {
   return utcWeekEndKey(weekStart) >= instrumentedFrom;
-}
-
-export function groupInstancesByUser(
-  instances: ActivationInstanceRow[]
-): Map<string, ActivationInstanceRow[]> {
-  const byUser = new Map<string, ActivationInstanceRow[]>();
-  for (const inst of instances) {
-    if (!inst.user_id) continue;
-    const list = byUser.get(inst.user_id);
-    if (list) list.push(inst);
-    else byUser.set(inst.user_id, [inst]);
-  }
-  return byUser;
 }
 
 /**
@@ -298,39 +287,44 @@ async function fetchSubscriptionsForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<ActivationSubscriptionRow[]> {
-  const rows: ActivationSubscriptionRow[] = [];
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    rows.push(
-      ...(await fetchAllPages<ActivationSubscriptionRow>("activation cohort subscriptions", (from, to) =>
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    CHUNK_CONCURRENCY,
+    (ids) =>
+      fetchAllPages<ActivationSubscriptionRow>("activation cohort subscriptions", (from, to) =>
         client
           .from("hermes_subscriptions")
           .select("user_id, plan, status, current_period_end")
           .in("user_id", ids)
           .order("user_id")
           .range(from, to)
-      ))
-    );
-  }
-  return rows;
+      )
+  );
+  return groups.flat();
 }
 
 async function fetchDigestUserIds(
   client: AdminClient,
   userIds: string[]
 ): Promise<Set<string>> {
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    CHUNK_CONCURRENCY,
+    (ids) =>
+      fetchAllPages<ActivationDigestRow>("activation digest sends", (from, to) =>
+        client
+          .from("lifecycle_email_sends")
+          .select("user_id")
+          .like("email_key", "activity_digest%")
+          .in("user_id", ids)
+          // A user has one row per digest email, so user_id is not unique here;
+          // the primary key is the tie-breaker that keeps offset pages stable.
+          .order("id")
+          .range(from, to)
+      )
+  );
   const out = new Set<string>();
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    const rows = await fetchAllPages<ActivationDigestRow>("activation digest sends", (from, to) =>
-      client
-        .from("lifecycle_email_sends")
-        .select("user_id")
-        .like("email_key", "activity_digest%")
-        .in("user_id", ids)
-        .order("user_id")
-        .range(from, to)
-    );
-    for (const r of rows) if (r.user_id) out.add(r.user_id);
-  }
+  for (const rows of groups) for (const r of rows) if (r.user_id) out.add(r.user_id);
   return out;
 }
 

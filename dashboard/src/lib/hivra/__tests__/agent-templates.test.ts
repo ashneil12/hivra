@@ -39,23 +39,29 @@ function resetTables() {
 }
 
 let lastInsert: Record<string, unknown> | null = null;
-let lastUpdate: Record<string, unknown> | null = null;
+// The slug candidates each agent_templates `.in("slug", ...)` lookup asked about.
+const slugLookups: string[][] = [];
 
 function makeBuilder(table: string) {
   const store = tables[table];
-  const filters: Array<[string, unknown]> = [];
+  const filters: Array<(row: Record<string, unknown>) => boolean> = [];
   let op: "select" | "insert" | "update" | "delete" = "select";
   let insertPayload: Record<string, unknown> | null = null;
   let updatePayload: Record<string, unknown> | null = null;
 
-  const matches = (row: Record<string, unknown>) => filters.every(([k, v]) => row[k] === v);
+  const matches = (row: Record<string, unknown>) => filters.every((filter) => filter(row));
 
   const builder: Record<string, unknown> = {
     select() {
       return builder;
     },
     eq(col: string, val: unknown) {
-      filters.push([col, val]);
+      filters.push((row) => row[col] === val);
+      return builder;
+    },
+    in(col: string, vals: unknown[]) {
+      if (table === "agent_templates" && col === "slug") slugLookups.push(vals as string[]);
+      filters.push((row) => vals.includes(row[col]));
       return builder;
     },
     order() {
@@ -71,7 +77,6 @@ function makeBuilder(table: string) {
     update(payload: Record<string, unknown>) {
       op = "update";
       updatePayload = payload;
-      lastUpdate = payload;
       return builder;
     },
     delete() {
@@ -124,7 +129,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 beforeEach(() => {
   resetTables();
   lastInsert = null;
-  lastUpdate = null;
+  slugLookups.length = 0;
   mockSnapshot.mockReset();
   mockSnapshot.mockResolvedValue([]);
 });
@@ -208,6 +213,17 @@ describe("createTemplateFromAgent", () => {
     expect(t1?.slug).toBeTruthy();
     expect(t2?.slug).toBeTruthy();
     expect(t1?.slug).not.toBe(t2?.slug);
+  });
+
+  it("checks every slug candidate in one lookup and takes the first free one", async () => {
+    tables.hivra_agents.rows.push({ id: "a3", user_id: "owner", type: "codex", name: "Lookup Name" });
+    tables.agent_templates.rows.push({ id: "taken", owner_user_id: "other", slug: "lookup-name", type: "codex", visibility: "private", share_token: null });
+    const tpl = await createTemplateFromAgent("owner", "a3");
+    expect(slugLookups).toHaveLength(1);
+    expect(slugLookups[0]).toHaveLength(6);
+    expect(slugLookups[0][0]).toBe("lookup-name");
+    expect(tpl?.slug).not.toBe("lookup-name");
+    expect(tpl?.slug.startsWith("lookup-name-")).toBe(true);
   });
 });
 

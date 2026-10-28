@@ -8,6 +8,7 @@
 
 import { Resend } from "resend";
 
+import { escapeHtml } from "@/lib/email/escape-html";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { log } from "@/lib/logger";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -163,8 +164,8 @@ export async function sendColdArchivedEmail(
     eyebrow: "Paused",
     title: "We've paused your agent.",
     body: `
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Since ${agentLabel(params.agentName, params.agentType)} has been inactive, we've moved its state to cold storage to free up resources. Your data is safe and intact.</p>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(greeting(params.firstName))}</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Since ${escapeHtml(agentLabel(params.agentName, params.agentType))} has been inactive, we've moved its state to cold storage to free up resources. Your data is safe and intact.</p>
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">When you're ready, press Start. If no paid plan is active on your account, pay any open invoice or choose a plan in Billing first, because it cannot be started until one is. Restoring takes about 5 minutes the first time, and chat history and settings come back intact.</p>
       <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#666;">Want it to stay on? <a href="${BILLING_URL}" style="color:#1a1a1a;text-decoration:underline;">A paid plan keeps your computer running</a> and never pauses it for inactivity.</p>
     `,
@@ -206,15 +207,15 @@ export async function sendColdPendingDeletionEmail(
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
-    preheader: `${agentLabel(params.agentName, params.agentType)} will be deleted on ${dateLabel}.`,
+    preheader: `${escapeHtml(agentLabel(params.agentName, params.agentType))} will be deleted on ${dateLabel}.`,
     eyebrow: days <= 2 ? "Final notice" : "Action required",
     title:
       days <= 2
         ? `${days} day${days === 1 ? "" : "s"} left to keep your agent.`
         : `Your agent will be deleted in ${days} days.`,
     body: `
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${agentLabel(params.agentName, params.agentType)} has been in cold storage and hasn't been used recently. We'll permanently delete it on <strong>${dateLabel}</strong> unless you reactivate.</p>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(greeting(params.firstName))}</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(agentLabel(params.agentName, params.agentType))} has been in cold storage and hasn't been used recently. We'll permanently delete it on <strong>${dateLabel}</strong> unless you reactivate.</p>
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">To keep it, press Start in your dashboard. If no paid plan is active on your account, pay any open invoice or choose a plan in Billing first, because it cannot be started until one is. Restoring takes about 5 minutes, and chat history and settings come back intact.</p>
     `,
     ctaText: "Open Billing",
@@ -247,12 +248,12 @@ export async function sendColdDeletedEmail(
     "Founder, Hivra",
   ].join("\n");
   const html = shellHtml({
-    preheader: `${agentLabel(params.agentName, params.agentType)} has been permanently deleted.`,
+    preheader: `${escapeHtml(agentLabel(params.agentName, params.agentType))} has been permanently deleted.`,
     eyebrow: "Deleted",
     title: "Your agent has been deleted.",
     body: `
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${agentLabel(params.agentName, params.agentType)} has been permanently deleted from Hivra, as previously notified.</p>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(greeting(params.firstName))}</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(agentLabel(params.agentName, params.agentType))} has been permanently deleted from Hivra, as previously notified.</p>
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">If you'd like a fresh start, you can create a new agent any time.</p>
     `,
     ctaText: "Create a new agent",

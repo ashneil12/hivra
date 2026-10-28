@@ -25,7 +25,7 @@ describe("agentWebApi", () => {
     >;
   const mockedFrom = supabaseAdmin!.from as jest.Mock;
   const mockSingle = jest.fn();
-  const mockEqUser = jest.fn(() => ({ single: mockSingle }));
+  const mockEqUser = jest.fn(() => ({ maybeSingle: mockSingle }));
   const mockEqId = jest.fn(() => ({ eq: mockEqUser }));
   const mockSelect = jest.fn(() => ({ eq: mockEqId }));
 
@@ -46,6 +46,14 @@ describe("agentWebApi", () => {
       },
       error: null,
     });
+  });
+
+  it("says the instance is not found when the owner has no such row, and not when the lookup itself fails", async () => {
+    mockSingle.mockResolvedValueOnce({ data: null, error: null });
+    await expect(agentWebApi("inst_missing", "user_123")).rejects.toThrow("Instance not found");
+
+    mockSingle.mockResolvedValueOnce({ data: null, error: { message: "connection reset" } });
+    await expect(agentWebApi("inst_123", "user_123")).rejects.toThrow("Instance lookup failed");
   });
 
   it("uses the shared gateway probe helper for GET requests", async () => {

@@ -1298,4 +1298,104 @@ describe('WebuiIframe', () => {
       expect(screen.queryByTestId('webui-error-state')).not.toBeInTheDocument();
     });
   });
+
+  describe('server-returned URL scheme validation (SEC-07)', () => {
+    it.each(['javascript:alert(1)', 'data:text/html,<h1>pwned</h1>', 'vbscript:msgbox(1)', 'file:///etc/passwd'])(
+      'rejects the handoff URL %s instead of embedding it in the iframe',
+      async (url) => {
+        mockSuccessfulFetch(url);
+        render(<WebuiIframe instanceId="inst_unsafe_src" />);
+
+        await waitFor(() => screen.getByRole('alert'));
+        expect(screen.queryByTitle('Workspace')).not.toBeInTheDocument();
+        expect(trackIframeError).toHaveBeenCalledWith(
+          'inst_unsafe_src',
+          'fetch_url_failed',
+          expect.objectContaining({ message: 'Login URL response was not a safe http(s) URL' }),
+        );
+      },
+    );
+
+    it.each(['javascript:alert(1)', 'data:text/html,<h1>pwned</h1>'])(
+      'never navigates the fresh tab to a non-http(s) handoff URL (%s)',
+      async (url) => {
+        const openedWindow = {
+          close: jest.fn(),
+          location: { href: '' },
+          opener: {},
+        } as unknown as Window;
+        const openSpy = jest.spyOn(window, 'open').mockImplementation(() => openedWindow);
+        let calls = 0;
+        global.fetch = jest.fn().mockImplementation(async () => {
+          calls += 1;
+          if (calls === 1) {
+            return { ok: false, status: 500, headers: mockHeaders(), text: async () => 'gateway failed' };
+          }
+          return {
+            ok: true,
+            status: 200,
+            headers: mockHeaders(),
+            json: async () => ({ url, expiresAt: Date.now() + 30_000 }),
+          };
+        }) as unknown as typeof fetch;
+
+        render(<WebuiIframe instanceId="inst_open_unsafe" />);
+
+        const openInNewTab = await waitFor(() => screen.getByRole('button', { name: /^Open in new tab$/i }));
+        await act(async () => {
+          fireEvent.click(openInNewTab);
+        });
+
+        await waitFor(() => {
+          expect(trackIframeError).toHaveBeenCalledWith(
+            'inst_open_unsafe',
+            'fetch_url_failed',
+            expect.objectContaining({
+              message: 'Login URL response was not a safe http(s) URL',
+              source: 'open_new_tab',
+            }),
+          );
+        });
+        expect((openedWindow as unknown as { location: { href: string } }).location.href).toBe('');
+        expect(openedWindow.close).toHaveBeenCalled();
+        expect(screen.queryByRole('link', { name: /open it here/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Workspace')).not.toBeInTheDocument();
+        openSpy.mockRestore();
+      },
+    );
+
+    it('does not offer the popup-blocked fallback link for a non-http(s) handoff URL', async () => {
+      const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
+      let calls = 0;
+      global.fetch = jest.fn().mockImplementation(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: false, status: 500, headers: mockHeaders(), text: async () => 'gateway failed' };
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: mockHeaders(),
+          json: async () => ({ url: 'javascript:alert(document.cookie)', expiresAt: Date.now() + 30_000 }),
+        };
+      }) as unknown as typeof fetch;
+
+      render(<WebuiIframe instanceId="inst_blocked_unsafe" />);
+
+      const openInNewTab = await waitFor(() => screen.getByRole('button', { name: /^Open in new tab$/i }));
+      await act(async () => {
+        fireEvent.click(openInNewTab);
+      });
+
+      await waitFor(() => {
+        expect(trackIframeError).toHaveBeenCalledWith(
+          'inst_blocked_unsafe',
+          'fetch_url_failed',
+          expect.objectContaining({ source: 'open_new_tab' }),
+        );
+      });
+      expect(screen.queryByRole('link', { name: /open it here/i })).not.toBeInTheDocument();
+      openSpy.mockRestore();
+    });
+  });
 });

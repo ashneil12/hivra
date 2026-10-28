@@ -355,16 +355,6 @@ export function resolveActiveThresholds(
   };
 }
 
-/** Best tier the supplied balance qualifies for AT THE CURRENT EPOCH, or null. */
-export function bestQualifyingTier(
-  balance: bigint,
-  active: TierThresholdsForEpoch = resolveActiveThresholds()
-): TierKey | null {
-  if (balance >= active.power.amount) return "power";
-  if (balance >= active.pro.amount) return "pro";
-  return null;
-}
-
 /** Resolve a single tier's active threshold (helper for the evaluator). */
 export function resolveActiveThresholdForTier(
   tier: TierKey,
@@ -377,34 +367,3 @@ export function resolveActiveThresholdForTier(
 
 /** Re-export for convenience so consumers don't import token-holdings separately. */
 export { HERMESOS_TOKEN_DECIMALS };
-
-// ────────────────────────────────────────────────────────────────────
-// Backwards-compatibility shim
-// ────────────────────────────────────────────────────────────────────
-// The earlier evaluator API exported a simpler `getTierThresholds()`
-// returning a plain {pro, power} pair. Existing call sites and tests
-// rely on this shape; keep it as a thin wrapper that returns the
-// current epoch's amounts so refactor scope stays bounded.
-
-export interface TierThresholds {
-  pro: bigint;
-  power: bigint;
-}
-
-type TierThresholdSource = "configured" | "missing";
-
-export interface TierThresholdResult {
-  source: TierThresholdSource;
-  thresholds: TierThresholds | null;
-}
-
-export function getTierThresholds(now: Date = new Date()): TierThresholdResult {
-  const active = resolveActiveThresholds(now);
-  return {
-    source: "configured",
-    thresholds: {
-      pro: active.pro.amount,
-      power: active.power.amount,
-    },
-  };
-}

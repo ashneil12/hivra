@@ -54,9 +54,10 @@ async function main() {
   });
   await app.register(sensible);
 
-  // Gate every tool route on the Bearer token (or warn-only mode when
-  // SIDECAR_AUTH_TOKEN isn't configured yet). /health and the noVNC
-  // verify-url endpoint are explicitly exempt — see auth/bearer.ts.
+  // Gate every tool route on the Bearer token. When SIDECAR_AUTH_TOKEN is
+  // unset the sidecar fails closed (503) unless SIDECAR_ALLOW_UNAUTHENTICATED
+  // explicitly opts in to warn-only mode. /health and the noVNC verify-url
+  // endpoint are explicitly exempt — see auth/bearer.ts.
   app.addHook("onRequest", buildBearerAuthPreHandler(config, logger));
 
   // Single observability hook: every request emits one structured log line on completion.

@@ -129,16 +129,32 @@ export async function GET(req: NextRequest) {
   const now = new Date();
 
   try {
-    const { data, error } = await supabaseAdmin
-      .from("hermes_instances")
-      .select("id, proxmox_vmid, proxmox_node, resource_tier, lifecycle_state, infrastructure_provider, host_id, config")
-      .in("lifecycle_state", SAMPLED_LIFECYCLE_STATES as unknown as string[]);
+    // Keyset-paginate by id. PostgREST caps one response (~1000 rows), and the
+    // unbounded read kept only that first page, so the tail of a large fleet was
+    // never sampled and the truncation was silent. Page until a short page;
+    // keyset (.gt id) is stable under concurrent writes.
+    const SAMPLE_PAGE_SIZE = 1000;
+    const instances: SampleableInstance[] = [];
+    let afterId: string | null = null;
+    for (;;) {
+      let query = supabaseAdmin
+        .from("hermes_instances")
+        .select("id, proxmox_vmid, proxmox_node, resource_tier, lifecycle_state, infrastructure_provider, host_id, config")
+        .in("lifecycle_state", SAMPLED_LIFECYCLE_STATES as unknown as string[]);
+      if (afterId) {
+        query = query.gt("id", afterId);
+      }
+      const { data, error } = await query.order("id", { ascending: true }).limit(SAMPLE_PAGE_SIZE);
 
-    if (error) {
-      throw new Error(error.message || "Failed to load active instances");
+      if (error) {
+        throw new Error(error.message || "Failed to load active instances");
+      }
+
+      const page = (data ?? []) as SampleableInstance[];
+      instances.push(...page);
+      if (page.length < SAMPLE_PAGE_SIZE) break;
+      afterId = page[page.length - 1].id;
     }
-
-    const instances = (data ?? []) as SampleableInstance[];
 
     // Partition cheaply (no host I/O) into "actually sample" vs "skip".
     // Doing this up front lets the worker pool work on a uniform list
@@ -298,6 +314,7 @@ export async function GET(req: NextRequest) {
         errors,
         unsampled,
         toSample: toSample.length,
+        fleetTotal: instances.length,
         elapsedMs: Date.now() - startedAt,
       });
     }

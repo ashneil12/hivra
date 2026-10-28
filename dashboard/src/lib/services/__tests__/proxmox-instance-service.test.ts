@@ -1488,7 +1488,9 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     // The proactive lock wait runs before the first apt-get update so we
     // don't burn a failed attempt on the obvious first-boot race.
     expect(bootstrap.indexOf("wait_for_apt_locks\nrun_apt_get update -qq")).toBeGreaterThan(-1);
-    expect(bootstrap).toContain("curl -fsSL https://get.docker.com | sh");
+    expect(bootstrap).toContain("curl -fsSLo /tmp/gd.sh https://get.docker.com");
+    expect(bootstrap).toContain("sh /tmp/gd.sh");
+    expect(bootstrap).not.toContain("curl -fsSL https://get.docker.com | sh");
     expect(bootstrap).toContain("qemu-guest-agent");
     expect(bootstrap).toContain("hermes_ensure_time_sync()");
     expect(bootstrap).toContain("/var/log/hermes-time-sync.log");
@@ -1497,7 +1499,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(bootstrap).toContain("run_apt_get install -y --no-install-recommends systemd-timesyncd");
     expect(bootstrap).toContain("hwclock --systohc --utc");
     expect(bootstrap.indexOf("hermes_ensure_time_sync")).toBeLessThan(
-      bootstrap.indexOf("curl -fsSL https://get.docker.com | sh")
+      bootstrap.indexOf("curl -fsSLo /tmp/gd.sh https://get.docker.com")
     );
     expect(bootstrap).toContain("/etc/docker/daemon.json");
     expect(bootstrap).toContain('"max-size": "20m"');
@@ -3255,10 +3257,10 @@ esac
   });
 
   it("buildProxmoxResizeScript clamps balloonFloorMb to [64, memoryMb]", () => {
-    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
+    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
     expect(tooLow).toContain("BALLOON_FLOOR_MB='64'");
 
-    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
+    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
     expect(tooHigh).toContain("BALLOON_FLOOR_MB='2048'");
   });
 

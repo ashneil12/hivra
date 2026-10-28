@@ -124,6 +124,41 @@ describe("vault route security", () => {
     expect(getConsoleOutput()).not.toContain("github_pat_wrong_secret");
   });
 
+  it("answers 404 when updating a key id that is not this user's key", async () => {
+    const query = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+    };
+    mockedFrom.mockReturnValue(query);
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/vault", {
+        method: "POST",
+        body: JSON.stringify({ id: "44444444-4444-4444-8444-444444444444", name: "Primary OpenAI", provider: "openai" }),
+      })
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(json.error).toBe("Key not found");
+  });
+
+  it("answers 400 for a malformed JSON body instead of a 500", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/vault", {
+        method: "POST",
+        body: "{not json",
+      })
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json.error).toBe("Invalid JSON body");
+    expect(mockedFrom).not.toHaveBeenCalled();
+  });
+
   it("hides unexpected POST errors from the client and logs", async () => {
     mockedEncryptApiKey.mockImplementationOnce(() => {
       throw new Error("encrypt-secret-leak");

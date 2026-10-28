@@ -172,14 +172,77 @@ function tokenNames(token, file, suffix) {
   return token === file || token === suffix || token.endsWith(`/${suffix}`);
 }
 
+function workingDirectoryValue(line) {
+  return line.replace(/^\s*working-directory:\s*/, "").replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "").trim();
+}
+
+// Each step of a workflow with the directory it runs in: its own working-directory, else its
+// job's defaults.run.working-directory, else null (the repository root).
+function workflowSteps(text) {
+  const steps = [];
+  let job = { workdir: null };
+  let step = null;
+  let inSteps = false;
+  let inDefaults = false;
+  const closeStep = () => {
+    if (step) steps.push(step);
+    step = null;
+  };
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent <= 2) {
+      closeStep();
+      inSteps = false;
+      inDefaults = false;
+      if (indent === 2 && /^\s{2}[\w.-]+:\s*$/.test(line)) job = { workdir: null };
+      continue;
+    }
+    if (indent === 4) {
+      closeStep();
+      inSteps = /^\s{4}steps:\s*$/.test(line);
+      inDefaults = /^\s{4}defaults:\s*$/.test(line);
+      continue;
+    }
+    if (inDefaults && indent === 8 && /^\s{8}working-directory:/.test(line)) {
+      job.workdir = workingDirectoryValue(line);
+      continue;
+    }
+    if (!inSteps) continue;
+    if (indent === 6 && /^\s{6}-\s/.test(line)) {
+      closeStep();
+      step = { lines: [line], workdir: null, job };
+      continue;
+    }
+    if (step) {
+      step.lines.push(line);
+      if (indent === 8 && /^\s{8}working-directory:/.test(line)) step.workdir = workingDirectoryValue(line);
+    }
+  }
+  closeStep();
+  return steps.map((item) => ({ text: item.lines.join("\n"), workdir: item.workdir ?? item.job.workdir }));
+}
+
+// True when a step that runs the package's npm script runs it in that package directory.
+// Matches the whole directory name at a path boundary, inside that same step only.
 function packageRunsScript(workflowText, packageDir, scriptName) {
   const invocation = scriptName === "test"
     ? /\bnpm\s+(?:test|t|run\s+test|run-script\s+test)(?![\w:.-])/
     : new RegExp(`\\bnpm\\s+(?:run|run-script)\\s+${escapeRegex(scriptName)}(?![\\w:.-])`);
-  if (!invocation.test(workflowText)) return false;
-  if (workflowText.includes(packageDir)) return true;
+  const dir = escapeRegex(packageDir);
   const base = packageDir.split("/").pop();
-  return workflowText.includes("${{ matrix.") && new RegExp(`(?<![\\w.-])${escapeRegex(base)}(?![\\w.-])`).test(workflowText);
+  return workflowSteps(workflowText).some(({ text, workdir }) => {
+    if (!invocation.test(text)) return false;
+    if (workdir === null) {
+      if (packageDir === ".") return true;
+      return new RegExp(`(?:--prefix|\\bcd)\\s+["']?${dir}["']?(?=[\\s;&|)]|$)`, "m").test(text);
+    }
+    const normalized = workdir.replace(/^(?:\.\/)+/, "").replace(/\/+$/, "") || ".";
+    if (normalized === packageDir) return true;
+    return normalized.includes("${{ matrix.")
+      && workflowText.includes("${{ matrix.")
+      && new RegExp(`(?<![\\w.-])${escapeRegex(base)}(?![\\w.-])`).test(workflowText);
+  });
 }
 
 /**
@@ -187,6 +250,7 @@ function packageRunsScript(workflowText, packageDir, scriptName) {
  * @param {{ trackedFiles: string[], readFile: (file: string) => string, jestConfig: object, exemptions: object[] }} input
  */
 function analyzeTestWiring({ trackedFiles, readFile, jestConfig, exemptions }) {
+  const problems = [];
   const tracked = [...new Set(trackedFiles)].sort();
   const trackedSet = new Set(tracked);
   const inventory = tracked.filter(isTestFile);
@@ -253,6 +317,7 @@ function analyzeTestWiring({ trackedFiles, readFile, jestConfig, exemptions }) {
     try {
       scripts = JSON.parse(readFile(manifest)).scripts ?? {};
     } catch {
+      problems.push({ kind: "unreadable", path: manifest, detail: "is not valid JSON, so its scripts cannot be checked" });
       continue;
     }
     const packageDir = path.posix.dirname(manifest);
@@ -280,7 +345,6 @@ function analyzeTestWiring({ trackedFiles, readFile, jestConfig, exemptions }) {
     }
   }
 
-  const problems = [];
   const exempted = new Map();
   const seen = new Set();
   for (const [index, exemption] of exemptions.entries()) {
@@ -363,8 +427,9 @@ function loadRepository(root, exemptionsPath) {
     if (!cache.has(file)) {
       try {
         cache.set(file, fs.readFileSync(path.join(root, file), "utf8"));
-      } catch {
-        cache.set(file, "");
+      } catch (error) {
+        // An unreadable tracked file must fail the check, not look like an empty one.
+        throw new Error(`cannot read tracked file ${file}: ${error.message}`);
       }
     }
     return cache.get(file);
@@ -385,6 +450,11 @@ function formatReport(result) {
     for (const orphan of result.orphans) {
       lines.push(`  ${orphan.path}${orphan.weak.length ? `  (only named by ${orphan.weak.join("; ")})` : ""}`);
     }
+  }
+  const unreadable = result.problems.filter((problem) => problem.kind === "unreadable");
+  if (unreadable.length > 0) {
+    lines.push("", "Unreadable package manifests:");
+    for (const problem of unreadable) lines.push(`  ${problem.path} ${problem.detail}`);
   }
   const stale = result.problems.filter((problem) => problem.kind === "stale");
   if (stale.length > 0) {

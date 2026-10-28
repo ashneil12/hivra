@@ -709,6 +709,59 @@ describe("BillingPage", () => {
 
       expect(await screen.findByText("Payment under review")).toBeInTheDocument();
     });
+
+    it("polls the yearly quote every 15 s only while the tab is visible, and never stacks a read", async () => {
+      withYearlyResponse({ pro: yearlyQuote(), power: null, proSubscription: currentYear, powerSubscription: null });
+      // Capture the 15 s poll's callback so the test can run ticks by hand.
+      const quotePolls: Array<() => void> = [];
+      const realSetInterval = window.setInterval.bind(window);
+      const setIntervalSpy = jest.spyOn(window, "setInterval").mockImplementation(((
+        handler: () => void,
+        timeout?: number,
+        ...rest: unknown[]
+      ) => {
+        if (timeout === 15_000) {
+          quotePolls.push(handler);
+          return 0;
+        }
+        return (realSetInterval as (...args: unknown[]) => number)(handler, timeout, ...rest);
+      }) as unknown as typeof window.setInterval);
+      const quoteReads = () => fetchMock.mock.calls.filter(([input, init]) =>
+        requestUrl(input as RequestInfo).includes("/api/billing/yearly-token-quote") &&
+        requestMethod(input as RequestInfo, init as RequestInit) === "GET"
+      ).length;
+      const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(false);
+      try {
+        render(<BillingPage />);
+        expect(await screen.findByText(/Yearly \$HermesOS · Pro/)).toBeInTheDocument();
+        await waitFor(() => expect(quotePolls.length).toBeGreaterThan(0));
+        const tick = () => quotePolls[quotePolls.length - 1]();
+
+        hidden.mockReturnValue(true);
+        const beforeHidden = quoteReads();
+        act(() => tick());
+        expect(quoteReads()).toBe(beforeHidden);
+
+        hidden.mockReturnValue(false);
+        act(() => tick());
+        await waitFor(() => expect(quoteReads()).toBe(beforeHidden + 1));
+
+        // A read that never settles: the next tick must not start another behind it.
+        const base = fetchMock.getMockImplementation()!;
+        fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+          requestUrl(input).includes("/api/billing/yearly-token-quote") && requestMethod(input, init) === "GET"
+            ? new Promise(() => undefined)
+            : base(input, init)
+        );
+        act(() => tick());
+        const pending = quoteReads();
+        act(() => tick());
+        expect(quoteReads()).toBe(pending);
+      } finally {
+        hidden.mockRestore();
+        setIntervalSpy.mockRestore();
+      }
+    });
   });
 
   async function openTab(name: string) {

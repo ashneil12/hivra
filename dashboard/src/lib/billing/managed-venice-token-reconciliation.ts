@@ -171,7 +171,7 @@ const SURFACING_SCAN_BUDGET_MS = 240_000;
 //     session. If the later session does not account for it (the yearly flow
 //     detects payment by wallet balance and records no tx), it is neither
 //     credited nor surfaced here. The yearly follow-up owns that attribution.
-export const LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
+const LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
 // Base produces a block every 2 s; used to estimate a block from a timestamp.
 // Every estimate is verified against eth_getBlockByNumber before it is used.
 const BASE_BLOCK_TIME_SEC = 2;

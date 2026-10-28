@@ -214,8 +214,15 @@ export async function GET(req: NextRequest) {
           return;
         }
         if (err instanceof GscApiError && err.status === 429) {
-          quotaExhausted = true;
-          skipped += urls.length - cursor;
+          // This URL was taken off the cursor but never inspected, so it is
+          // skipped too. The first 429 also drains the untaken tail. Later 429s
+          // from other in-flight workers count only their own URL, so the tail
+          // is not counted twice.
+          if (!quotaExhausted) {
+            quotaExhausted = true;
+            skipped += urls.length - cursor;
+          }
+          skipped += 1;
           return;
         }
         failed += 1;

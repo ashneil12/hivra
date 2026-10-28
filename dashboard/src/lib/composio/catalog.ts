@@ -87,6 +87,10 @@ const FALLBACK_CATALOG: ComposioCatalog = normalizeCatalog(
 
 let cache: { at: number; etag: string | null; data: ComposioCatalog } | null = null;
 let inflight: Promise<ComposioCatalog> | null = null;
+// When a refresh fails, skip the network until this passes, so an upstream outage
+// does not turn every request into a fresh fetch (the cache is only written on success).
+const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
+let failedAt = 0;
 
 /**
  * The full Composio catalog, cached per serverless instance and revalidated at
@@ -95,6 +99,7 @@ let inflight: Promise<ComposioCatalog> | null = null;
  */
 export async function getComposioCatalog(): Promise<ComposioCatalog> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
+  if (failedAt && Date.now() - failedAt < FAILURE_BACKOFF_MS) return cache?.data ?? FALLBACK_CATALOG;
   if (inflight) return inflight;
   inflight = (async () => {
     try {
@@ -104,15 +109,24 @@ export async function getComposioCatalog(): Promise<ComposioCatalog> {
       });
       if (res.status === 304 && cache) {
         cache = { at: Date.now(), etag: cache.etag, data: cache.data };
+        failedAt = 0;
         return cache.data;
       }
-      if (!res.ok) return cache?.data ?? FALLBACK_CATALOG;
+      if (!res.ok) {
+        failedAt = Date.now();
+        return cache?.data ?? FALLBACK_CATALOG;
+      }
       const raw = await res.json().catch(() => null);
       const data = normalizeCatalog(raw);
-      if (!data.apps.length) return cache?.data ?? FALLBACK_CATALOG;
+      if (!data.apps.length) {
+        failedAt = Date.now();
+        return cache?.data ?? FALLBACK_CATALOG;
+      }
       cache = { at: Date.now(), etag: res.headers.get("etag"), data };
+      failedAt = 0;
       return data;
     } catch {
+      failedAt = Date.now();
       return cache?.data ?? FALLBACK_CATALOG;
     } finally {
       inflight = null;

@@ -1,5 +1,4 @@
 /** @jest-environment node */
-import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Hero from "../Hero";
 import Pricing from "../Pricing";

@@ -9,7 +9,7 @@
 export const runtime = "nodejs";
 export const maxDuration = 15;
 
-import type { NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
@@ -94,7 +94,12 @@ export async function POST(req: NextRequest) {
           $insert_id: `telegram_connected_${userId}_${targetKind}_${targetId}`,
         },
       });
-      await posthogClient.flush();
+      // Flush after the response so PostHog latency can't delay the ack.
+      try {
+        after(() => posthogClient.flush());
+      } catch {
+        // `after` unavailable (test scope) — flush is best-effort anyway.
+      }
     } catch {
       // Best-effort analytics — the persisted row is the source of truth.
     }

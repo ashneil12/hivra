@@ -1027,6 +1027,8 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     // Zero rows matched the provisioning-guarded update — the row was flipped
     // (possibly to running) under us, so its tunnel belongs to a live box.
     expect(deleteBoxTunnel).not.toHaveBeenCalled();
+    // A superseded row is not failed: no terminal event or error log for it.
+    expect(mockedLogEvent).not.toHaveBeenCalledWith(expect.objectContaining({ event: "failed" }));
   });
 
   it("trusts a live tunnel over a stale ready:false marker", async () => {

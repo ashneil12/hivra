@@ -7,7 +7,7 @@
 // quiet "coming soon" state rather than an error. Mirrors AccountMemoryEditor's
 // fetch + status patterns and the settings page's Tailwind-free inline styling.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Check, Gift } from "lucide-react";
 
 type Summary = {
@@ -56,12 +56,19 @@ export function ReferralCard() {
   }, []);
 
   const link = summary?.link ?? null;
+  // One pending "copied" reset at a time, cleared on unmount so it cannot fire
+  // into an unmounted card.
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+  }, []);
   const copy = useCallback(async () => {
     if (!link) return;
     try {
       await navigator.clipboard.writeText(link);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1800);
     } catch {
       // Clipboard blocked — leave the field for manual copy.
     }

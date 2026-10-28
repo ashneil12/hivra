@@ -151,6 +151,9 @@ function mockInstances(
   const builder = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
+    gt: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
     update,
     then: (resolve: (v: { data: unknown[]; error: null }) => void) =>
       resolve({ data: rows, error: null }),
@@ -390,6 +393,53 @@ describe("GET /api/cron/harvest-agent-usage", () => {
     const body = await res.json();
     expect(body.data).toMatchObject({ harvested: 0, skipped: 1, errors: 0 });
     expect(sshExec).not.toHaveBeenCalled();
+  });
+
+  it("pages the fleet read past the 1000-row cap so instances beyond the first page are not dropped", async () => {
+    // 1003 active instances: the first page is full, the tail is 3. Without
+    // keyset paging the tail never reached the harvest loop.
+    (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
+    const ids = Array.from({ length: 1003 }, (_, i) => `inst_${String(i).padStart(5, "0")}`);
+    const pageCalls: Array<{ cursor: string | null; limit: number }> = [];
+    const makeBuilder = () => {
+      let cursor: string | null = null;
+      let limit = 0;
+      const builder: Record<string, unknown> = {};
+      const self = () => builder;
+      builder.select = jest.fn(self);
+      builder.eq = jest.fn(self);
+      builder.order = jest.fn(self);
+      builder.gt = jest.fn((_col: string, value: string) => {
+        cursor = value;
+        return builder;
+      });
+      builder.limit = jest.fn((n: number) => {
+        limit = n;
+        return builder;
+      });
+      builder.then = (resolve: (v: { data: unknown[]; error: null }) => void) => {
+        pageCalls.push({ cursor, limit });
+        const page = ids
+          .filter((id) => cursor === null || id > cursor)
+          .slice(0, limit)
+          .map((id) => ({ id, config: {} }));
+        resolve({ data: page, error: null });
+      };
+      return builder;
+    };
+    (supabaseAdmin!.from as jest.Mock).mockImplementation(() => makeBuilder());
+
+    const res = await GET(
+      makeRequest("Bearer cron-secret", "http://localhost/api/cron/harvest-agent-usage?force=1")
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(pageCalls).toEqual([
+      { cursor: null, limit: 1000 },
+      { cursor: ids[999], limit: 1000 },
+    ]);
+    expect(body.data).toMatchObject({ total: 1003, skippedNoIp: 1003, errors: 0 });
   });
 
   it("counts an SSH/host failure as host-unreachable (not the topology alarm)", async () => {

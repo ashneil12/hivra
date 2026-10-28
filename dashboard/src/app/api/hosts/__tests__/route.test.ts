@@ -19,14 +19,17 @@ describe("GET /api/hosts", () => {
   const mockedGetHetznerInstanceStatus =
     getHetznerInstanceStatus as jest.MockedFunction<typeof getHetznerInstanceStatus>;
   let consoleErrorSpy: jest.SpyInstance;
+  let consoleWarnSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
   });
 
   afterEach(() => {
     consoleErrorSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
   });
 
   it("hides unexpected host listing errors from the client", async () => {
@@ -297,5 +300,102 @@ describe("GET /api/hosts", () => {
 
     expect(response.status).toBe(200);
     expect(json.data[0].status).toBe("provisioning");
+  });
+
+  it("does not ask Hetzner again for a host checked within the last minute", async () => {
+    mockedAuth.mockResolvedValue({ userId: "user-123" } as Awaited<ReturnType<typeof auth>>);
+    mockedGetHetznerInstanceStatus.mockResolvedValue({ status: "running", ipv4: "203.0.113.10" });
+
+    const hostUpdateMock = jest.fn();
+    mockedFrom.mockImplementation((table: string) => {
+      if (table === "hermes_hosts") {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          neq: jest.fn().mockReturnThis(),
+          order: jest.fn().mockResolvedValue({
+            data: [
+              {
+                id: "host-1",
+                user_id: "user-123",
+                hetzner_server_id: 42,
+                status: "stopped",
+                created_at: "2026-04-23T10:00:00.000Z",
+                updated_at: new Date().toISOString(),
+              },
+            ],
+            error: null,
+          }),
+          update: hostUpdateMock,
+        };
+      }
+
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          neq: jest.fn().mockResolvedValue({ data: [], error: null }),
+        };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const response = await GET();
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data[0].status).toBe("stopped");
+    expect(mockedGetHetznerInstanceStatus).not.toHaveBeenCalled();
+    expect(hostUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("serves the last-known status when the status write returns an error", async () => {
+    mockedAuth.mockResolvedValue({ userId: "user-123" } as Awaited<ReturnType<typeof auth>>);
+    mockedGetHetznerInstanceStatus.mockResolvedValue({ status: "running", ipv4: "203.0.113.10" });
+
+    mockedFrom.mockImplementation((table: string) => {
+      if (table === "hermes_hosts") {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          neq: jest.fn().mockReturnThis(),
+          order: jest.fn().mockResolvedValue({
+            data: [
+              {
+                id: "host-1",
+                user_id: "user-123",
+                hetzner_server_id: 42,
+                status: "stopped",
+                created_at: "2026-04-23T10:00:00.000Z",
+              },
+            ],
+            error: null,
+          }),
+          // Supabase reports the failed write in the result instead of throwing.
+          update: jest.fn().mockReturnValue({
+            eq: jest.fn().mockResolvedValue({ error: { message: "host-write-failed" } }),
+          }),
+        };
+      }
+
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          neq: jest.fn().mockResolvedValue({ data: [], error: null }),
+        };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const response = await GET();
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data[0].status).toBe("stopped");
+    expect(consoleWarnSpy).toHaveBeenCalled();
+    expect(consoleWarnSpy.mock.calls.flat().join(" ")).toContain("host status write failed");
   });
 });
