@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 
@@ -45,25 +47,42 @@ function nullableStr(value: unknown): string | null {
  * if the admin client or RPC is unavailable — callers render a graceful
  * fallback. Never throws.
  */
+// The marketing counters move slowly and /stats reads them on every view, so the
+// RPC is cached for five minutes. A failed read throws inside the cache callback,
+// so it is never stored; the caller still gets null.
+const readPublicStatsRpc = unstable_cache(
+  async (): Promise<Record<string, unknown>> => {
+    const { data, error } = await supabaseAdmin!.rpc("get_public_stats");
+
+    if (error) {
+      log.error("public-stats: rpc failed", new Error(error.message || "rpc returned error"), {
+        source: "public-stats",
+        code: error.code ?? null,
+      });
+      throw new Error(error.message || "rpc returned error");
+    }
+
+    if (!data || typeof data !== "object") throw new Error("rpc returned no data");
+
+    return data as Record<string, unknown>;
+  },
+  ["public-stats-rpc"],
+  { revalidate: 300 },
+);
+
 export async function getPublicStats(): Promise<PublicStats | null> {
   if (!supabaseAdmin) {
     log.warn("public-stats: supabaseAdmin is null (env vars missing)", { source: "public-stats" });
     return null;
   }
 
-  const { data, error } = await supabaseAdmin.rpc("get_public_stats");
-
-  if (error) {
-    log.error("public-stats: rpc failed", new Error(error.message || "rpc returned error"), {
-      source: "public-stats",
-      code: error.code ?? null,
-    });
+  let p: Record<string, unknown>;
+  try {
+    p = await readPublicStatsRpc();
+  } catch {
     return null;
   }
 
-  if (!data || typeof data !== "object") return null;
-
-  const p = data as Record<string, unknown>;
   return {
     generatedAt: typeof p.generatedAt === "string" ? p.generatedAt : new Date().toISOString(),
     agentsDeployed: num(p.agentsDeployed),

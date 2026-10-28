@@ -395,7 +395,7 @@ export async function replaceServerEnrollmentAccess(
     failure = "connection_failed";
   }
   if (failure) {
-    await failServerEnrollmentReplacement({ userId, enrollmentId, runId, failure });
+    await failServerEnrollmentReplacement({ userId, enrollmentId, runId, failure }).catch(() => undefined);
     throw new ServerEnrollmentError("verification_failed", failure);
   }
   const completed = await completeServerEnrollmentReplacement({

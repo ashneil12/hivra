@@ -1,4 +1,9 @@
-import { runParkIdleHivraAgentsSweep, PARKABLE_INTERACTIVE_KINDS } from "../park-idle-agents";
+import {
+  runParkIdleHivraAgentsSweep,
+  PARKABLE_INTERACTIVE_KINDS,
+  IDLE_PARK_SWEEP_TIME_BUDGET_MS,
+  idleParkTimeBudgetSpent,
+} from "../park-idle-agents";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import {
   runProxmoxHostScript,
@@ -60,6 +65,18 @@ function wireSupabase(candidates: ReturnType<typeof candidateRow>[]) {
     return ub;
   });
 }
+
+describe("idleParkTimeBudgetSpent", () => {
+  // Regression: parks run one after another, so the sweep must stop starting new
+  // ones before the cron route's 300s maxDuration can cut it off mid-sweep.
+  it("stops starting new parks once the budget is spent, and keeps going before that", () => {
+    const start = 1_000_000;
+    expect(idleParkTimeBudgetSpent(start, start)).toBe(false);
+    expect(idleParkTimeBudgetSpent(start, start + IDLE_PARK_SWEEP_TIME_BUDGET_MS - 1)).toBe(false);
+    expect(idleParkTimeBudgetSpent(start, start + IDLE_PARK_SWEEP_TIME_BUDGET_MS)).toBe(true);
+    expect(IDLE_PARK_SWEEP_TIME_BUDGET_MS + 40_000).toBeLessThan(300_000);
+  });
+});
 
 describe("runParkIdleHivraAgentsSweep", () => {
   beforeEach(() => {

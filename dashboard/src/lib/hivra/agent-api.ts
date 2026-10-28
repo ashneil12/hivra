@@ -28,6 +28,7 @@ import {
   type ProviderResizeStage,
 } from "./provider-agent-resize-contract";
 import { z } from "zod";
+import { readJson } from "@/lib/client/read-json";
 
 export type AgentStatus = "provisioning" | "running" | "stopped" | "error" | "deleted";
 
@@ -122,14 +123,6 @@ export interface AgentLlmInput {
   model?: string;
   /** Managed only. */
   walletType?: "hermesos" | "card";
-}
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try {
-    return (await r.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 export interface CreateAgentInput {
@@ -1057,12 +1050,18 @@ export async function telegramConnect(
     return { ok: true, botUsername: j.botUsername ?? null, setupToken: j.setupToken ?? null, error: null };
   } catch (e) { return { ok: false, error: isTelegramAbortError(e) ? TELEGRAM_SAVE_TIMEOUT_MESSAGE : (e as Error).message }; }
 }
+/** Disconnect the bot. Throws when the box refuses or the request fails, so the
+ *  caller keeps the connected state (the bot is still live on the box). */
 export async function telegramDisconnect(boxUrl: string, token?: string | null): Promise<void> {
-  await fetch(`${boxBase(boxUrl)}/api/telegram/disconnect`, {
+  const r = await fetch(`${boxBase(boxUrl)}/api/telegram/disconnect`, {
     method: "POST",
     headers: boxHeaders(token),
     signal: AbortSignal.timeout(TELEGRAM_CONNECT_TIMEOUT_MS),
-  }).catch(() => {});
+  });
+  if (!r.ok) {
+    const j = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error || `HTTP ${r.status}`);
+  }
 }
 
 // ---- browser automation toggle (Chrome + live-view stack on/off) ----

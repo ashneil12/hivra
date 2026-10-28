@@ -24,6 +24,8 @@ export interface UseComposioKey {
   /** Remove the stored key. */
   remove: () => Promise<boolean>;
   refresh: () => void;
+  /** Set when the last load failed. Until a load succeeds, hasKey is not a verdict. */
+  error?: string | null;
 }
 
 export function useComposioKey(): UseComposioKey {
@@ -31,16 +33,22 @@ export function useComposioKey(): UseComposioKey {
   const [loading, setLoading] = useState<boolean>(enabled);
   const [hasKey, setHasKey] = useState(false);
   const [keyPreview, setKeyPreview] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     if (!enabled) return;
     fetch("/api/account/composio/key", { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`composio key load failed: ${r.status}`);
+        return r.json();
+      })
       .then((j) => {
         setHasKey(Boolean(j?.data?.hasKey));
         setKeyPreview(j?.data?.keyPreview ?? null);
+        setError(null);
       })
-      .catch(() => {})
+      // A failed load keeps the last known key state instead of reading as "no key".
+      .catch(() => setError("Couldn't load your Composio key status. Try again."))
       .finally(() => setLoading(false));
   }, [enabled]);
 
@@ -87,7 +95,7 @@ export function useComposioKey(): UseComposioKey {
     }
   }, []);
 
-  return { enabled, loading, hasKey, keyPreview, save, remove, refresh };
+  return { enabled, loading, hasKey, keyPreview, save, remove, refresh, error };
 }
 
 // ── connect launcher ───────────────────────────────────────────────────────
@@ -152,24 +160,31 @@ export interface UseComposioConnectedApps {
   apps: Set<string>;
   loading: boolean;
   refresh: () => void;
+  /** Set when the last load failed. The apps set then holds the last known list, not an empty one. */
+  error?: string | null;
 }
 
 export function useComposioConnectedApps(): UseComposioConnectedApps {
   const enabled = isComposioConnectFlagOn();
   const [apps, setApps] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState<boolean>(enabled);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     if (!enabled) return;
     fetch("/api/account/composio/connected-apps", { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`composio connected-apps load failed: ${r.status}`);
+        return r.json();
+      })
       .then((j) => {
         const list = j?.data?.apps;
-        if (Array.isArray(list)) {
-          setApps(new Set(list.filter((s: unknown): s is string => typeof s === "string")));
-        }
+        if (!Array.isArray(list)) throw new Error("composio connected-apps payload has no apps list");
+        setApps(new Set(list.filter((s: unknown): s is string => typeof s === "string")));
+        setError(null);
       })
-      .catch(() => {})
+      // A failed load keeps the last known apps instead of reading as "no connected apps".
+      .catch(() => setError("Couldn't load your connected apps. Try again."))
       .finally(() => setLoading(false));
   }, [enabled]);
 
@@ -182,5 +197,5 @@ export function useComposioConnectedApps(): UseComposioConnectedApps {
     return () => window.removeEventListener("focus", onFocus);
   }, [enabled, refresh]);
 
-  return { apps, loading, refresh };
+  return { apps, loading, refresh, error };
 }

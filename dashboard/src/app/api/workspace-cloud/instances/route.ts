@@ -113,23 +113,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Enforce the lane's own instance limit (scoped to this surface).
-    if (supabaseAdmin) {
-      const { count } = await supabaseAdmin
-        .from("hermes_instances")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("product_surface", "workspace_cloud")
-        .neq("status", "deleted");
-      if ((count ?? 0) >= sub.instance_limit) {
-        return apiError(
-          `Workspace Cloud agent limit reached (${sub.instance_limit}).`,
-          403,
-          undefined,
-          undefined,
-          { route: ROUTE }
-        );
-      }
+    // Enforce the lane's own instance limit (scoped to this surface). Fail
+    // closed: a failed or missing count is an error, never "zero instances".
+    if (!supabaseAdmin) return apiError("Database not configured", 500, undefined, undefined, { route: ROUTE });
+    const { count, error: countError } = await supabaseAdmin
+      .from("hermes_instances")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("product_surface", "workspace_cloud")
+      .neq("status", "deleted");
+    if (countError || count === null) {
+      return apiError(
+        "Failed to check the Workspace Cloud agent limit.",
+        500,
+        countError ? { code: countError.code } : undefined,
+        undefined,
+        { route: ROUTE }
+      );
+    }
+    if (count >= sub.instance_limit) {
+      return apiError(
+        `Workspace Cloud agent limit reached (${sub.instance_limit}).`,
+        403,
+        undefined,
+        undefined,
+        { route: ROUTE }
+      );
     }
 
     // Provision a fresh UPSTREAM Hermes agent on the dedicated wrk1 lane.

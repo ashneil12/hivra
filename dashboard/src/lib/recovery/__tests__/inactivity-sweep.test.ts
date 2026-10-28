@@ -58,6 +58,9 @@ function buildSweepStub(params: {
   // instanceId -> newest stat_date with sessions>0, as instance_usage_snapshots
   // would report it.
   agentUsage?: Record<string, string>;
+  // Full set of sessions>0 snapshot rows, when a test needs more than one row
+  // per instance. Overrides agentUsage.
+  agentUsageRows?: Array<{ instance_id: string; stat_date: string }>;
   // when set, the instance_usage_snapshots query errors (fail-closed path).
   agentUsageError?: string;
   // instance ids with a row in channel_connections (Telegram/Discord connected).
@@ -101,9 +104,18 @@ function buildSweepStub(params: {
   const channelConnectedIds = new Set(params.channelConnectedIds ?? []);
 
   // instance_usage_snapshots: the corroborating agent-side activity gate.
-  //   .select().in(ids).gt('sessions',0).gte('stat_date',day) — .gte is terminal.
+  //   .select().in(ids).gt('sessions',0).gte('stat_date',day)
+  //     .order('instance_id').order('stat_date').range(from, to)
+  // Like PostgREST, the read answers at most 1000 rows, ordered by the primary
+  // key. Awaiting the chain without .range() gets that first capped page, which
+  // is how an unpaged read silently drops the rows past the cap.
+  const usageRows =
+    params.agentUsageRows ??
+    Object.entries(agentUsage).map(([instance_id, stat_date]) => ({ instance_id, stat_date }));
   const agentUsageQuery = () => {
     let requestedIds: string[] = [];
+    let cutoffDay = "";
+    let pageWindow: [number, number] | null = null;
     const query: Record<string, unknown> = {};
     query.select = jest.fn().mockReturnValue(query);
     query.in = jest.fn((_col: string, values: string[]) => {
@@ -111,15 +123,27 @@ function buildSweepStub(params: {
       return query;
     });
     query.gt = jest.fn().mockReturnValue(query);
-    query.gte = jest.fn(async (_col: string, cutoffDay: string) => {
+    query.gte = jest.fn((_col: string, day: string) => {
+      cutoffDay = day;
+      return query;
+    });
+    query.order = jest.fn().mockReturnValue(query);
+    query.range = jest.fn((from: number, to: number) => {
+      pageWindow = [from, to];
+      return query;
+    });
+    const run = () => {
       if (params.agentUsageError) {
         return { data: null, error: { message: params.agentUsageError } };
       }
-      const data = requestedIds
-        .filter((id) => agentUsage[id] && agentUsage[id] >= cutoffDay)
-        .map((id) => ({ instance_id: id, stat_date: agentUsage[id] }));
-      return { data, error: null };
-    });
+      const matching = usageRows
+        .filter((row) => requestedIds.includes(row.instance_id) && row.stat_date >= cutoffDay)
+        .sort((a, b) => (a.instance_id < b.instance_id ? -1 : a.instance_id > b.instance_id ? 1 : a.stat_date < b.stat_date ? -1 : a.stat_date > b.stat_date ? 1 : 0));
+      const page = pageWindow ? matching.slice(pageWindow[0], pageWindow[1] + 1) : matching;
+      return { data: page.slice(0, 1000), error: null };
+    };
+    query.then = (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) =>
+      Promise.resolve(run()).then(resolve, reject);
     return query;
   };
 
@@ -676,6 +700,38 @@ describe("runInactivitySweep", () => {
     expect(summary.agentActive).toBe(1);
     expect(summary.swept).toBe(0);
     expect(summary.skipped).toBe(0);
+    expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
+  });
+
+  it("spares an instance whose recent agent usage sits past the 1000-row read cap", async () => {
+    // A busy instance's snapshots sort ahead of the quiet instance's single
+    // in-window row. An unpaged read stops at 1000 rows and drops that row, so
+    // the quiet instance read as idle and was paused while it was in use.
+    const dormantRow = {
+      user_id: "user_telegram",
+      resource_tier: "credit_base",
+      proxmox_node: "fixturenode1",
+      host_id: null,
+      config: { infrastructure: baseProxmoxInfra },
+      last_activity_at: "2026-05-01T12:00:00.000Z",
+      created_at: "2026-05-01T12:00:00.000Z",
+      last_lifecycle_transition_at: "2026-05-01T12:00:00.000Z",
+    };
+    const busyRow: CandidateRow = { ...dormantRow, id: "inst_aa_busy", proxmox_vmid: 216 };
+    const quietRow: CandidateRow = { ...dormantRow, id: "inst_zz_quiet", proxmox_vmid: 217 };
+    const windowDays = ["2026-05-10", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14"];
+    const agentUsageRows = [
+      ...Array.from({ length: 1100 }, (_, i) => ({ instance_id: "inst_aa_busy", stat_date: windowDays[i % windowDays.length] })),
+      { instance_id: "inst_zz_quiet", stat_date: "2026-05-13" },
+    ];
+
+    buildSweepStub({ freeRows: [busyRow, quietRow], paidRows: [], now: NOW_LATE, agentUsageRows });
+
+    const summary = await runInactivitySweep({ now: NOW_LATE });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.agentActive).toBe(2);
+    expect(summary.swept).toBe(0);
     expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
   });
 

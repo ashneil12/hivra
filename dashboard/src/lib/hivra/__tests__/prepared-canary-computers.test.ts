@@ -323,6 +323,31 @@ ${transition}`], { encoding: "utf8" });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ managed_provisioner_channel: "default" }));
   });
 
+  it("refuses to claim when this deployment's lane is unreadable instead of writing a canary row", async () => {
+    // Regression: the claim used to fall back to "canary" and insert a row that the
+    // same deployment's lifecycle and console paths then refuse, on a live VM.
+    retainedCanaryDeployment();
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "not-a-lane";
+    const priorTarget = process.env.VERCEL_TARGET_ENV;
+    delete process.env.VERCEL_TARGET_ENV;
+    const insert = jest.fn();
+    const runHost = jest.fn();
+    try {
+      await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
+        findOwnerProfile: async () => null,
+        findSlotOwner: async () => null,
+        runHost: runHost as never,
+        insert: insert as never,
+        markBindingEnforced: jest.fn() as never,
+      })).rejects.toThrow("prepared_profile_unavailable");
+    } finally {
+      if (priorTarget === undefined) delete process.env.VERCEL_TARGET_ENV;
+      else process.env.VERCEL_TARGET_ENV = priorTarget;
+    }
+    expect(runHost).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
   it("accepts only a Hivra console origin, and none at all when unset", () => {
     const envOf = (vars: Record<string, string | undefined>) => (
       { NODE_ENV: "test" as const, ...vars });

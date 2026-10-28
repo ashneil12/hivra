@@ -368,4 +368,124 @@ describe("DELETE /api/hosts/[id]", () => {
     expect(instanceUpdateQuery.update).not.toHaveBeenCalled();
     expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("secret proxmox failure");
   });
+
+  // Teardown used to wait for each provider call in turn. These cases pin the
+  // bounded lanes: several servers at once, but one VM at a time per node.
+  function mockHostAndInstances(host: Record<string, unknown>, instances: Array<Record<string, unknown>>) {
+    const hostFetchQuery = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: host, error: null }),
+    };
+    const instanceFetchQuery = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      neq: jest.fn().mockResolvedValue({ data: instances, error: null }),
+    };
+    const instanceUpdateQuery = {
+      update: jest.fn().mockReturnValue({
+        in: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        neq: jest.fn().mockResolvedValue({ error: null }),
+      }),
+    };
+    const hostUpdateQuery = {
+      update: jest.fn(() => {
+        const chain: Record<string, unknown> = {};
+        chain.eq = jest.fn(() => chain);
+        chain.then = (resolve: (value: { error: null }) => void) =>
+          Promise.resolve({ error: null }).then(resolve);
+        return chain;
+      }),
+    };
+
+    let hostCalls = 0;
+    let instanceCalls = 0;
+    mockedFrom.mockImplementation((table: string) => {
+      if (table === "hermes_hosts") {
+        hostCalls += 1;
+        return hostCalls === 1 ? hostFetchQuery : hostUpdateQuery;
+      }
+      if (table === "hermes_instances") {
+        instanceCalls += 1;
+        return instanceCalls === 1 ? instanceFetchQuery : instanceUpdateQuery;
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+  }
+
+  function deleteHost() {
+    return DELETE(
+      new NextRequest("http://localhost/api/hosts/host-123", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "host-123" }) }
+    );
+  }
+
+  it("destroys Hetzner servers a few at a time and still destroys every one", async () => {
+    mockedAuth.mockResolvedValue({ userId: "user-123" } as Awaited<ReturnType<typeof auth>>);
+    mockHostAndInstances(
+      { id: "host-123", name: "Primary Host", status: "running", hetzner_server_id: null },
+      [1, 2, 3, 4, 5].map((n) => ({
+        id: `inst-${n}`,
+        host_id: "host-123",
+        hetzner_server_id: 100 + n,
+        config: {},
+      })),
+    );
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockedDeleteHetznerServer.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+    });
+
+    const response = await deleteHost();
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.deletedResources).toEqual({ proxmoxDeleted: 0, hetznerDeleted: 5 });
+    expect(mockedDeleteHetznerServer).toHaveBeenCalledTimes(5);
+    expect(maxInFlight).toBe(3);
+  });
+
+  it("tears down the VMs of one Proxmox node one at a time", async () => {
+    mockedAuth.mockResolvedValue({ userId: "user-123" } as Awaited<ReturnType<typeof auth>>);
+    const proxmoxInstance = (id: string, vmid: number) => ({
+      id,
+      host_id: "host-123",
+      hetzner_server_id: null,
+      config: {
+        infrastructure: {
+          provider: "proxmox",
+          node: "pve-a",
+          vmid,
+          privateIpv4: `10.250.30.${vmid}`,
+          gatewayHost: "agent.example",
+        },
+      },
+    });
+    mockHostAndInstances(
+      { id: "host-123", name: "FixtureLegacy", status: "running", hetzner_server_id: null },
+      [proxmoxInstance("inst-1", 301), proxmoxInstance("inst-2", 302), proxmoxInstance("inst-3", 303)],
+    );
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockedDeleteProxmoxInstance.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { ok: true, stdout: "", stderr: "" };
+    });
+
+    const response = await deleteHost();
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.deletedResources).toEqual({ proxmoxDeleted: 3, hetznerDeleted: 0 });
+    expect(mockedDeleteProxmoxInstance).toHaveBeenCalledTimes(3);
+    expect(maxInFlight).toBe(1);
+  });
 });

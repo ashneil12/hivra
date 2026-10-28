@@ -889,6 +889,44 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     }));
   });
 
+  it("consumes the one-shot bearer when tunnel healthz recovery adopts it", async () => {
+    installSupabase([buildStuckRow()]);
+    mockedRunScript
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: `HIVRA_RECOVERY_VM exists\nHIVRA_RECOVERY_OWNERSHIP match\nHIVRA_RECOVERY_SECRET ${"d".repeat(64)}\n`,
+        stderr: "",
+      } as Awaited<ReturnType<typeof runProxmoxHostScript>>)
+      .mockResolvedValue({ ok: true, stdout: "", stderr: "" } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true });
+
+    const summary = await runRecoverStuckHivraProvisioningSweep();
+
+    expect(summary.results[0]).toMatchObject({ action: "recovered_via_tunnel" });
+    expect(mockedCompleteRunning).toHaveBeenCalledWith(expect.objectContaining({ apiToken: "d".repeat(64) }));
+    expect(mockedRunScript.mock.calls.some(([script]) =>
+      String(script).includes("rm -f -- '/var/lib/hivra/provision-results/1093.secret'"),
+    )).toBe(true);
+  });
+
+  it("keeps the one-shot bearer on disk when the tunnel recovery flip is superseded", async () => {
+    installSupabase([buildStuckRow()]);
+    mockedRunScript.mockResolvedValueOnce({
+      ok: true,
+      stdout: `HIVRA_RECOVERY_VM exists\nHIVRA_RECOVERY_OWNERSHIP match\nHIVRA_RECOVERY_SECRET ${"d".repeat(64)}\n`,
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true });
+    mockedCompleteRunning.mockResolvedValueOnce(false);
+
+    const summary = await runRecoverStuckHivraProvisioningSweep();
+
+    expect(summary.results[0]).toMatchObject({ action: "skipped" });
+    expect(mockedRunScript.mock.calls.some(([script]) =>
+      String(script).includes("rm -f -- '/var/lib/hivra/provision-results/1093.secret'"),
+    )).toBe(false);
+  });
+
   it("skips (no update) when the host probe fails — transient, retried next sweep", async () => {
     installSupabase([buildStuckRow()]);
     mockedRunScript.mockResolvedValue({

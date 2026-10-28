@@ -50,7 +50,7 @@ for dir in "$MIRROR_ROOT"/*/; do
   if [ -e "$lock" ] && ! flock -n "$lock" true 2>/dev/null; then
     echo "RECONCILE_SKIP_LOCKED id=$id"; continue
   fi
-  kb="$(du -sk "$dir" 2>/dev/null | cut -f1)"; kb="\${kb:-0}"
+  kb="$(du -sk "$dir" 2>/dev/null | cut -f1 || true)"; kb="\${kb:-0}"
   if rm -rf "$dir"; then
     removed=$((removed + 1)); freed_kb=$((freed_kb + kb))
     echo "RECONCILE_REMOVED id=$id kb=$kb"

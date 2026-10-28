@@ -15,8 +15,8 @@ import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { attachDependencies, claimAttach, readAttachGate } from "@/lib/agent-computers/attach-routes";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
-const noStore = <T extends Response>(response: T): T => { response.headers.set("Cache-Control", "no-store"); return response; };
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const Body = z.object({ grants: z.object({ workspace: z.boolean() }).strict(), reviewSha256: z.string().regex(/^[0-9a-f]{64}$/),
   requestId: Uuid }).strict();

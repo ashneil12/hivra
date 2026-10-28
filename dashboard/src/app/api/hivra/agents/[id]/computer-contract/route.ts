@@ -31,14 +31,9 @@ import {
   describeHivraAgentExecutionContextError,
   resolveHivraAgentExecutionContext,
 } from "@/lib/hivra/agent-execution-context";
-import { managedSessionFailure, readMutationBody } from "@/app/api/hivra/managed-sessions/route-support";
+import { noStore, managedSessionFailure, readMutationBody } from "@/app/api/hivra/managed-sessions/route-support";
 
 const ActionSchema = z.object({ action: z.enum(["deliver", "check", "restore", "send"]) }).strict();
-
-function noStore(response: Response): Response {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
 
 // Returns the owner's agent, or an error only for a failed read. A malformed id
 // (22P02) is no such agent, so it is not an error.

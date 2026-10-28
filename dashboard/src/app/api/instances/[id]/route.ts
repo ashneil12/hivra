@@ -107,7 +107,7 @@ import { validateProviderKeyShape } from "@/lib/provider-key-shape";
 import { buildVeniceByokStoredInstanceConfig } from "@/lib/venice/managed-webui-enable";
 import { isRealVeniceByokKey } from "@/lib/venice/byok-classification";
 import { normalizeWelcomeLaunchCapture } from "@/lib/welcome-personalization";
-import { isWebfreeBackend } from "@/lib/types/instance";
+import { buildReadinessProbeOptions, isWebfreeBackend } from "@/lib/types/instance";
 import { scheduleSoulSeedReconcileAfterResponse } from "@/lib/recovery/soul-seed-reconcile";
 import { removeBackupAddonBilling } from "@/lib/billing/backup-addon-billing";
 import { backupsIncludedWithInstance } from "@/lib/billing/backup-coverage";
@@ -485,49 +485,6 @@ function missingInstanceHostErrorOptions(action: string, hostIp?: string | null)
       ...(hostIp ? { hostIp } : {}),
     },
   } as const;
-}
-
-function buildReadinessProbeOptions(params: {
-  backend?: "gateway" | "webui" | null;
-  apiServerKey?: string | null;
-}) {
-  // Modern webfree box (backend='gateway'): probe the CHAT lane, not the
-  // dashboard shell. The box Caddyfile routes '/health' to the
-  // official-dashboard web server only, which comes up seconds (idle canary)
-  // to minutes (loaded prod host) BEFORE the gateway api_server that actually
-  // answers chat — measured on a fresh canary box 2026-07-10 (audit run
-  // fixturecase04): '/health' 200'd and the row flipped 'running' 8s before the
-  // box accepted its first WS upgrade; prod run fixturecase05 showed the same gap
-  // stretched past 190s, so a new user's workspace painted while their first
-  // message died. '/api/sessions' with the instance bearer traverses
-  // caddy → dashboard-sidecar → official-dashboard → gateway and flips 200
-  // in the same probe window as the WS upgrade, so 'running' (and the
-  // workspace it unlocks) means "you can chat". Keyless rows keep the legacy
-  // '/health' probe rather than never promoting (fail-open; the apiServerKey
-  // self-heal backfills the key). Legacy backend='webui' boxes don't serve
-  // the sessions route and keep '/health' too.
-  if (params.backend === "gateway" && params.apiServerKey) {
-    return {
-      pathname: "/api/sessions",
-      headers: {
-        Authorization: `Bearer ${params.apiServerKey}`,
-      } as Record<string, string>,
-    };
-  }
-
-  if (isWebfreeBackend(params.backend)) {
-    return {
-      pathname: "/health",
-      headers: {} as Record<string, string>,
-    };
-  }
-
-  return {
-    pathname: "/v1/models",
-    headers: params.apiServerKey
-      ? { Authorization: `Bearer ${params.apiServerKey}` }
-      : ({} as Record<string, string>),
-  };
 }
 
 async function runMirroredStatusWriteWithRetry(
@@ -1442,6 +1399,8 @@ export async function GET(
       } else if (instance!.hetzner_server_id) {
         // Standard Hetzner-level sync for provisioning / running states
         const hs = await getHetznerInstanceStatus(instance!.hetzner_server_id);
+        // A failed Hetzner lookup is not a server state: keep the stored status
+        // (no 'error' write) and skip the readiness probe for this poll.
         if (hs.ipv4) {
           publicIpv4 = hs.ipv4;
           await supabaseAdmin!
@@ -1526,7 +1485,7 @@ export async function GET(
           }
         }
 
-        if (nextStatus !== status) {
+        if (nextStatus !== status && !hs.lookupFailed) {
           const promotedToRunning = nextStatus === "running";
           const now = new Date().toISOString();
           const hetznerStatusPersisted = await persistInstanceLifecyclePatch(
@@ -2071,11 +2030,26 @@ export async function PATCH(
         try {
           let instanceIds = [id];
           if (serverIdToBackup) {
-            const { data: peers } = await supabaseAdmin!
+            const { data: peers, error: peersError } = await supabaseAdmin!
               .from("hermes_instances")
               .select("id")
               .eq("hetzner_server_id", serverIdToBackup)
               .eq("user_id", userId);
+            // Without the peer list the add-on would only be removed from this
+            // row while the Hetzner backups stop for every peer. Stop here and
+            // keep backups on, so a retry starts from the same state.
+            if (peersError) {
+              log.error("failed to list the instances sharing this server before turning backups off", peersError, {
+                source: "instances",
+                route: "/api/instances/[id]",
+                method: "PATCH",
+                instanceId: id,
+                failureType: "backup_peer_lookup_failed",
+              });
+              return apiError("Could not turn backups off right now. Backups are still on and billed. Please try again shortly.", 502, {
+                failureType: "backup_peer_lookup_failed",
+              });
+            }
             instanceIds = Array.from(
               new Set([id, ...((peers ?? []) as Array<{ id: string }>).map((peer) => peer.id)]),
             );

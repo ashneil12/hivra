@@ -3,6 +3,7 @@ import type {
   InstanceActivitySource,
   InstanceActivityState,
 } from "./activity";
+import { isRecord } from "@/lib/billing/db-utils";
 
 type ApiResult =
   | { ok: true; digest: InstanceActivityDigest }
@@ -20,10 +21,6 @@ const ACTIVITY_SOURCES = new Set<InstanceActivitySource>([
   "dashboard",
   "degraded",
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
