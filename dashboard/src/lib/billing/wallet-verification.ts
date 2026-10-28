@@ -217,8 +217,7 @@ export type RevokeDisplacedTokenEntitlements = (params: {
  * just taken over by a different account. Without this the displaced account
  * keeps qualifying off state that no longer has a wallet behind it:
  *
- *   - refresh-token-tiers honours its latest holding snapshot for up to 30
- *     days, so token_base would survive on the old balance;
+ *   - its latest holding snapshot would keep showing the old balance;
  *   - token_tier_qualifications / venice_compute_boost_qualifications rows are
  *     only re-evaluated for users the holdings cron can refresh, and that cron
  *     enumerates primary wallets — a user with no primary is never swept, so

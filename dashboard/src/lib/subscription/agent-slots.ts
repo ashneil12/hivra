@@ -28,10 +28,9 @@ export const SCHEDULING_PRIORITY = {
   command: 2,
 } as const;
 
-// hermes_instances.resource_tier uses credit_base/token_base for the free tiers.
+// hermes_instances.resource_tier uses credit_base for the Free tier.
 const RESOURCE_TIER_PRIORITY: Record<string, number> = {
   credit_base: SCHEDULING_PRIORITY.free,
-  token_base: SCHEDULING_PRIORITY.free,
   operator: SCHEDULING_PRIORITY.operator,
   fleet: SCHEDULING_PRIORITY.fleet,
   command: SCHEDULING_PRIORITY.command,

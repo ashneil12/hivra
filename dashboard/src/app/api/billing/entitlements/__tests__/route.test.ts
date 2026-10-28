@@ -136,7 +136,7 @@ describe("GET /api/billing/entitlements", () => {
     expect(getLatestHermesTokenHoldingSnapshot).toHaveBeenCalledWith(mockUserId, undefined);
   });
 
-  it("uses the latest token snapshot for dry-run token-base access", async () => {
+  it("reports the token snapshot but grants no compute from a token holding alone", async () => {
     const subscriptionQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
@@ -171,10 +171,11 @@ describe("GET /api/billing/entitlements", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    // The 1-token Starter tier is gone: hosted computers are paid only.
     expect(body.data.decision).toMatchObject({
-      allowedTier: "token_base",
-      canProvision: true,
-      shouldPause: false,
+      allowedTier: null,
+      canProvision: false,
+      failClosed: true,
     });
     expect(body.data.tokenHolding).toMatchObject({
       id: "snapshot_1",

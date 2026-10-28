@@ -14,6 +14,7 @@ import {
   hasTokenTierInGrace,
   resolveEffectiveSubscription,
 } from "@/lib/billing/instance-entitlement";
+import { paysForHostedCompute } from "@/lib/billing/hosted-compute";
 
 /**
  * Billing-lapse compute enforcer (legacy Hermes lane).
@@ -51,11 +52,12 @@ import {
  *  - DARK BY DEFAULT: the actual shutdown only fires when
  *    `DUNNING_GRACE_ENFORCE_LIVE=true`. Off → dry-run (logs `wouldStop`, touches
  *    no VM and no row). Mirrors FLEET_STATUS_RECONCILE_LIVE.
- *  - ENTITLEMENT-GUARDED: a user who still resolves to ANY entitlement (token
- *    holding, yearly $HERMESOS, a recovered sub) is skipped — we never stop a
- *    box the user is still entitled to. A token tier still inside its 24 hour
- *    breach grace counts too (the breach email promises it), as in the
- *    Hivra lapse gate.
+ *  - ENTITLEMENT-GUARDED: a user who still pays for hosted compute (token
+ *    holding, yearly $HERMESOS, a recovered sub; paysForHostedCompute) is
+ *    skipped — we never stop a box the user is still entitled to. The Free
+ *    account row does not count: it never includes a hosted computer. A token
+ *    tier still inside its 24 hour breach grace counts too (the breach email
+ *    promises it), as in the Hivra lapse gate.
  *  - SHUTDOWN, NOT DESTROY: `qm shutdown` (graceful, `setOnboot:0` so a host
  *    reboot won't auto-start it). Disks/chats/volumes untouched; the laddered
  *    stale-suspended sweep still owns eventual teardown with its warning emails.
@@ -156,15 +158,16 @@ export async function enforceGraceExpiredComputeStop(
     return { userId, outcome: "error", affected: 0, detail: "db not configured" };
   }
 
-  // Never stop a box the user is still entitled to. A past_due Stripe row can
-  // sit on top of a token-holding or yearly-$HERMESOS entitlement; the resolver
-  // (with the grace cutoff already applied) returns non-null only when the user
-  // still has SOME access. Non-null → leave everything running.
+  // Never stop a box the user still pays for. A past_due Stripe row can sit on
+  // top of a token-holding or yearly-$HERMESOS entitlement; the resolver (with
+  // the grace cutoff already applied) returns that entitlement. The Free account
+  // row is not one: it never includes a hosted computer, so a cancelled owner
+  // who then signs up for Free is stopped like any other cancelled owner.
   let effective: Awaited<ReturnType<typeof resolveEffectiveSubscription>>;
   let inTokenGrace = false;
   try {
     effective = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
-    if (!effective) inTokenGrace = await hasTokenTierInGrace(userId);
+    if (!paysForHostedCompute(effective)) inTokenGrace = await hasTokenTierInGrace(userId);
   } catch (err) {
     // Could not tell whether the user pays: stop nothing.
     log.error("dunning grace enforce could not read the entitlement; stopping nothing", err, {
@@ -179,12 +182,12 @@ export async function enforceGraceExpiredComputeStop(
       detail: err instanceof Error ? err.message : "entitlement read failed",
     };
   }
-  if (effective || inTokenGrace) {
+  if (paysForHostedCompute(effective) || inTokenGrace) {
     return {
       userId,
       outcome: "skipped_entitled",
       affected: 0,
-      detail: effective
+      detail: effective && !inTokenGrace
         ? `still entitled via ${effective.source}`
         : "token tier still inside its grace",
     };

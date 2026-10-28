@@ -8,7 +8,6 @@ import {
 } from "@/lib/billing/credits";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { powerOnServer, shutdownServer } from "@/lib/hetzner/client";
-import { getLatestAccessTokenHoldingSnapshot } from "@/lib/billing/token-access";
 import {
   getProxmoxInfrastructure,
   getProxmoxHostRoutingConfigFromInfrastructure,
@@ -76,7 +75,6 @@ type ComputeStartExecutor = (instance: BillableCreditInstanceRow) => Promise<{
   ok: boolean;
   error?: string;
 }>;
-type TokenSnapshotReader = typeof getLatestAccessTokenHoldingSnapshot;
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_HOURLY_CREDITS = 100;
@@ -85,11 +83,6 @@ const DEFAULT_GRACE_PERIOD_HOURS = 24;
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
-}
-
-function normalizeLimit(limit: number | undefined) {
-  if (!Number.isFinite(limit)) return 50;
-  return Math.max(1, Math.min(100, Math.floor(limit ?? 50)));
 }
 
 function normalizeMaxHours(maxHours: number | undefined) {
@@ -139,56 +132,6 @@ function parseDate(value: string | null | undefined, label: string) {
 
 function addHours(date: Date, hours: number) {
   return new Date(date.getTime() + hours * ONE_HOUR_MS);
-}
-
-async function listBillableCreditInstances(params: {
-  db: SupabaseLike;
-  limit: number;
-  resourceTier?: "credit_base" | "token_base";
-  lifecycleState?: "active" | "suspended";
-}) {
-  const lifecycleState = params.lifecycleState ?? "active";
-  const resourceTier = params.resourceTier ?? "credit_base";
-  let query = table(params.db, "hermes_instances")
-    .select(
-      [
-        "id",
-        "user_id",
-        "resource_tier",
-        "created_at",
-        "last_usage_billed_at",
-        "cpu_limit",
-        "ram_limit",
-        "status",
-        "lifecycle_state",
-        "entitlement_state",
-        "entitlement_grace_started_at",
-        "entitlement_grace_ends_at",
-        "infrastructure_provider",
-        "proxmox_node",
-        "proxmox_vmid",
-        "hetzner_server_id",
-        "host_id",
-        "config",
-      ].join(", ")
-    )
-    .eq("resource_tier", resourceTier)
-    .eq("lifecycle_state", lifecycleState);
-
-  if (lifecycleState === "suspended") {
-    query = query.eq("entitlement_state", "suspended");
-  }
-
-  const { data, error } = await query
-    .neq("status", "deleted")
-    .order("last_usage_billed_at", { ascending: true, nullsFirst: true })
-    .limit(params.limit);
-
-  if (error) {
-    throw new Error(error.message || "Failed to load billable credit instances");
-  }
-
-  return Array.isArray(data) ? (data as BillableCreditInstanceRow[]) : [];
 }
 
 async function updateBillingCursor(params: {
@@ -507,180 +450,6 @@ async function resumeSuspendedCreditInstance(params: {
   };
 }
 
-async function startTokenGrace(params: {
-  db: SupabaseLike;
-  instance: BillableCreditInstanceRow;
-  now: Date;
-  gracePeriodHours: number;
-}) {
-  const graceEndsAt = addHours(params.now, params.gracePeriodHours);
-
-  await updateInstanceEntitlement({
-    db: params.db,
-    instanceId: params.instance.id,
-    patch: {
-      entitlement_state: "grace",
-      entitlement_grace_started_at: params.now.toISOString(),
-      entitlement_grace_ends_at: graceEndsAt.toISOString(),
-      entitlement_reason: "token_holding_below_minimum",
-    },
-  });
-
-  return {
-    status: "token_grace_started" as const,
-    instanceId: params.instance.id,
-    graceEndsAt: graceEndsAt.toISOString(),
-  };
-}
-
-async function reconcileActiveTokenInstance(params: {
-  db: SupabaseLike;
-  instance: BillableCreditInstanceRow;
-  now: Date;
-  gracePeriodHours: number;
-  readTokenSnapshot: TokenSnapshotReader;
-  pauseCompute: ComputePauseExecutor;
-}) {
-  const snapshot = await params.readTokenSnapshot(params.instance.user_id, params.db);
-  const qualifies = snapshot?.qualifiesBaseTier === true;
-
-  if (qualifies) {
-    if (params.instance.entitlement_state === "grace") {
-      await updateInstanceEntitlement({
-        db: params.db,
-        instanceId: params.instance.id,
-        patch: {
-          entitlement_state: "ok",
-          entitlement_grace_started_at: null,
-          entitlement_grace_ends_at: null,
-          entitlement_reason: "token_holding_restored",
-        },
-      });
-
-      return {
-        status: "token_grace_cleared" as const,
-        instanceId: params.instance.id,
-      };
-    }
-
-    return {
-      status: "token_ok" as const,
-      instanceId: params.instance.id,
-    };
-  }
-
-  const existingGraceEndsAt = params.instance.entitlement_grace_ends_at
-    ? parseDate(params.instance.entitlement_grace_ends_at, "entitlement grace end")
-    : null;
-
-  if (!existingGraceEndsAt || params.instance.entitlement_state !== "grace") {
-    return startTokenGrace({
-      db: params.db,
-      instance: params.instance,
-      now: params.now,
-      gracePeriodHours: params.gracePeriodHours,
-    });
-  }
-
-  if (params.now.getTime() < existingGraceEndsAt.getTime()) {
-    await updateInstanceEntitlement({
-      db: params.db,
-      instanceId: params.instance.id,
-      patch: {
-        entitlement_state: "grace",
-        entitlement_reason: "token_holding_below_minimum",
-      },
-    });
-
-    return {
-      status: "token_grace_active" as const,
-      instanceId: params.instance.id,
-      graceEndsAt: existingGraceEndsAt.toISOString(),
-    };
-  }
-
-  const pauseResult = await params.pauseCompute(params.instance);
-  if (!pauseResult.ok) {
-    return {
-      status: "token_pause_failed" as const,
-      instanceId: params.instance.id,
-      error: pauseResult.error || "Failed to pause token compute",
-    };
-  }
-
-  await updateInstanceEntitlement({
-    db: params.db,
-    instanceId: params.instance.id,
-    patch: {
-      ...buildInstanceLifecyclePatch("stopped", { now: params.now }),
-      lifecycle_state: "suspended",
-      entitlement_state: "suspended",
-      entitlement_reason: "token_holding_below_minimum",
-      entitlement_suspended_at: params.now.toISOString(),
-    },
-  });
-
-  return {
-    status: "token_suspended" as const,
-    instanceId: params.instance.id,
-  };
-}
-
-async function resumeSuspendedTokenInstance(params: {
-  db: SupabaseLike;
-  instance: BillableCreditInstanceRow;
-  now: Date;
-  readTokenSnapshot: TokenSnapshotReader;
-  startCompute: ComputeStartExecutor;
-}) {
-  const snapshot = await params.readTokenSnapshot(params.instance.user_id, params.db);
-  const qualifies = snapshot?.qualifiesBaseTier === true;
-
-  if (!qualifies) {
-    await updateInstanceEntitlement({
-      db: params.db,
-      instanceId: params.instance.id,
-      patch: {
-        entitlement_state: "suspended",
-        entitlement_reason: "token_holding_below_minimum",
-      },
-    });
-
-    return {
-      status: "token_resume_waiting" as const,
-      instanceId: params.instance.id,
-    };
-  }
-
-  const startResult = await params.startCompute(params.instance);
-  if (!startResult.ok) {
-    return {
-      status: "token_resume_failed" as const,
-      instanceId: params.instance.id,
-      error: startResult.error || "Failed to resume token compute",
-    };
-  }
-
-  await updateInstanceEntitlement({
-    db: params.db,
-    instanceId: params.instance.id,
-    patch: {
-      ...buildInstanceLifecyclePatch("provisioning", { now: params.now }),
-      entitlement_state: "ok",
-      entitlement_grace_started_at: null,
-      entitlement_grace_ends_at: null,
-      entitlement_reason: "token_holding_restored",
-      entitlement_suspended_at: null,
-      entitlement_last_resumed_at: params.now.toISOString(),
-    },
-  });
-
-  return {
-    status: "token_resumed" as const,
-    instanceId: params.instance.id,
-  };
-}
-
 async function billCreditInstance(params: {
   db: SupabaseLike;
   instance: BillableCreditInstanceRow;
@@ -790,10 +559,8 @@ export async function billHourlyComputeUsage(params: {
   recordDebit?: ComputeDebitRecorder;
   pauseCompute?: ComputePauseExecutor;
   startCompute?: ComputeStartExecutor;
-  readTokenSnapshot?: TokenSnapshotReader;
 } = {}) {
   const admin = requireDb(params.db ?? supabaseAdmin);
-  const limit = normalizeLimit(params.limit);
   const hourlyCredits = params.hourlyCredits ?? getBaseHourlyComputeCredits();
   const maxHoursPerInstance = normalizeMaxHours(params.maxHoursPerInstance);
   const gracePeriodHours = normalizeGraceHours(
@@ -801,31 +568,17 @@ export async function billHourlyComputeUsage(params: {
   );
   const now = params.now ?? new Date();
   // Compute credits as an entitlement gate are disabled — Hermes' compute model
-  // is plan-based (free / paid / token-holding), and free-plan users were being
-  // wrongly suspended when their credit balance hit zero. Skip both credit_base
-  // loops to neutralize the suspend/resume cycle. Token-holding entitlement (the
-  // token_base tier below) is the only remaining compute gate. Dead-code
-  // cleanup for billCreditInstance / resumeSuspendedCreditInstance / etc. is
-  // tracked as a follow-up PR.
+  // is plan-based, and free-plan users were being wrongly suspended when their
+  // credit balance hit zero. Skip both credit_base loops to neutralize the
+  // suspend/resume cycle. The token-holding loop went with the 1-token Starter
+  // tier (token_base), so this run checks nothing today. Dead-code cleanup for
+  // billCreditInstance / resumeSuspendedCreditInstance / etc. is tracked as a
+  // follow-up PR.
   const activeInstances: BillableCreditInstanceRow[] = [];
   const suspendedInstances: BillableCreditInstanceRow[] = [];
-  const activeTokenInstances = await listBillableCreditInstances({
-    db: admin,
-    limit,
-    resourceTier: "token_base",
-    lifecycleState: "active",
-  });
-  const suspendedTokenInstances = await listBillableCreditInstances({
-    db: admin,
-    limit,
-    resourceTier: "token_base",
-    lifecycleState: "suspended",
-  });
   const results: Array<
     | Awaited<ReturnType<typeof billCreditInstance>>
     | Awaited<ReturnType<typeof resumeSuspendedCreditInstance>>
-    | Awaited<ReturnType<typeof reconcileActiveTokenInstance>>
-    | Awaited<ReturnType<typeof resumeSuspendedTokenInstance>>
     | { status: "failed"; instanceId: string; errorName: string }
   > = [];
 
@@ -838,12 +591,6 @@ export async function billHourlyComputeUsage(params: {
   let resumed = 0;
   let resumeWaiting = 0;
   let resumeFailed = 0;
-  let tokenChecked = 0;
-  let tokenGrace = 0;
-  let tokenSuspended = 0;
-  let tokenResumed = 0;
-  let tokenWaiting = 0;
-  let tokenFailed = 0;
   let failed = 0;
   let creditsDebited = 0;
 
@@ -917,70 +664,8 @@ export async function billHourlyComputeUsage(params: {
     }
   }
 
-  for (const instance of activeTokenInstances) {
-    tokenChecked += 1;
-    try {
-      const result = await reconcileActiveTokenInstance({
-        db: admin,
-        instance,
-        now,
-        gracePeriodHours,
-        readTokenSnapshot: params.readTokenSnapshot ?? getLatestAccessTokenHoldingSnapshot,
-        pauseCompute: params.pauseCompute ?? pauseComputeForCreditInstance,
-      });
-      results.push(result);
-
-      if (
-        result.status === "token_grace_started" ||
-        result.status === "token_grace_active"
-      ) {
-        tokenGrace += 1;
-      }
-      if (result.status === "token_suspended") tokenSuspended += 1;
-      if (result.status === "token_pause_failed") tokenFailed += 1;
-    } catch (error) {
-      failed += 1;
-      tokenFailed += 1;
-      results.push({
-        status: "failed",
-        instanceId: instance.id,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    }
-  }
-
-  for (const instance of suspendedTokenInstances) {
-    tokenChecked += 1;
-    try {
-      const result = await resumeSuspendedTokenInstance({
-        db: admin,
-        instance,
-        now,
-        readTokenSnapshot: params.readTokenSnapshot ?? getLatestAccessTokenHoldingSnapshot,
-        startCompute: params.startCompute ?? startComputeForCreditInstance,
-      });
-      results.push(result);
-
-      if (result.status === "token_resumed") tokenResumed += 1;
-      if (result.status === "token_resume_waiting") tokenWaiting += 1;
-      if (result.status === "token_resume_failed") tokenFailed += 1;
-    } catch (error) {
-      failed += 1;
-      tokenFailed += 1;
-      results.push({
-        status: "failed",
-        instanceId: instance.id,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    }
-  }
-
   return {
-    checked:
-      activeInstances.length +
-      suspendedInstances.length +
-      activeTokenInstances.length +
-      suspendedTokenInstances.length,
+    checked: activeInstances.length + suspendedInstances.length,
     billedInstances,
     billedEvents,
     skipped,
@@ -991,12 +676,6 @@ export async function billHourlyComputeUsage(params: {
     resumed,
     resumeWaiting,
     resumeFailed,
-    tokenChecked,
-    tokenGrace,
-    tokenSuspended,
-    tokenResumed,
-    tokenWaiting,
-    tokenFailed,
     creditsDebited,
     hourlyCredits,
     gracePeriodHours,
