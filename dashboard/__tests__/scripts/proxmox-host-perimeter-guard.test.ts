@@ -19,13 +19,15 @@ const runGuard = (args: string[], env: Record<string, string> = {}) =>
     env: { ...process.env, ...env },
   });
 
-const rewriteInPlace = (contents: string) => {
+const rewriteInPlace = (contents: string, extraArgs: string[] = []) => {
   const dir = mkdtempSync(path.join(tmpdir(), "perimeter-guard-"));
   const target = path.join(dir, "nftables.conf");
   writeFileSync(target, contents);
-  runGuard(["--rewrite-nft-only", target]);
+  runGuard(["--rewrite-nft-only", target, ...extraArgs]);
   return { target, output: readFileSync(target, "utf8") };
 };
+
+const CF_ONLY = ["--cloudflare-origin-only"];
 
 const CF_IPV4_CIDRS = [
   "173.245.48.0/20",
@@ -56,7 +58,8 @@ const CF_IPV6_CIDRS = [
 ];
 
 const VMBR1_TCP_DROP = 'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop';
-const VMBR1_DROP = 'iifname "vmbr1" drop';
+const VMBR1_INVALID_DROP = 'iifname "vmbr1" ct state invalid drop';
+const VMBR1_NEW_DROP = 'iifname "vmbr1" ct state new drop';
 const NTP_ACCEPT = 'iifname "vmbr1" udp dport 123 accept';
 const TAILSCALE_8006 = 'iifname "tailscale0" tcp dport 8006 accept';
 const RFC1918_FWD_DROP =
@@ -193,7 +196,7 @@ describe("proxmox-host-perimeter-guard.sh", () => {
     expect(script).toContain("/etc/ssh/sshd_config.d/99-hermes-hardening.conf");
     expect(script).toContain("/etc/nftables.conf");
     expect(script).toContain("sshd -t");
-    expect(script).toContain('nft -c -f "$NFT_CONF"');
+    expect(script).toContain('nft -c -f "$NFT_CANDIDATE"');
     expect(script).toContain('nft -f "$NFT_CONF"');
     expect(script).toContain("systemctl reload ssh");
     expect(script).toContain("sshd -T");
@@ -286,11 +289,12 @@ fi
       const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain(NTP_ACCEPT);
       expect(output).toContain(VMBR1_TCP_DROP);
-      expect(output).toMatch(/^\s*iifname "vmbr1" drop$/m);
+      expect(output).not.toMatch(/^\s*iifname "vmbr1" drop$/m);
+      expect(output).toContain(VMBR1_INVALID_DROP);
 
       const ntpIdx = output.indexOf(NTP_ACCEPT);
       const tcpDropIdx = output.indexOf(VMBR1_TCP_DROP);
-      const dropIdx = output.indexOf(VMBR1_DROP);
+      const dropIdx = output.indexOf(VMBR1_NEW_DROP);
       const wanIdx = output.indexOf("tcp dport 22 accept");
       expect(ntpIdx).toBeGreaterThan(-1);
       expect(ntpIdx).toBeLessThan(tcpDropIdx);
@@ -305,8 +309,18 @@ fi
       expect(output).toContain('iifname "vmbr1" tcp dport 53 accept');
     });
 
-    it("restricts 8006 to tailscale0 and 80/443 to the Cloudflare sets", () => {
+    it("restricts 8006 to tailscale0 and leaves 80/443 open by default", () => {
       const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
+      expect(output).not.toMatch(/^\s*tcp dport 8006 accept$/m);
+      expect(output).toContain(TAILSCALE_8006);
+      expect(output).toMatch(/^\s*tcp dport \{ 80, 443 \} accept$/m);
+      for (const rule of CF_ACCEPTS) {
+        expect(output).not.toContain(rule);
+      }
+    });
+
+    it("restricts 80/443 to the Cloudflare sets only with --cloudflare-origin-only", () => {
+      const { output } = rewriteInPlace(INLINE_CHAIN_NFT, CF_ONLY);
       expect(output).not.toMatch(/^\s*tcp dport 8006 accept$/m);
       expect(output).not.toMatch(/^\s*tcp dport \{ 80, 443 \} accept$/m);
       expect(output).toContain(TAILSCALE_8006);
@@ -336,6 +350,9 @@ fi
       const { target, output } = rewriteInPlace(INLINE_CHAIN_NFT);
       runGuard(["--rewrite-nft-only", target]);
       expect(readFileSync(target, "utf8")).toBe(output);
+      const cf = rewriteInPlace(INLINE_CHAIN_NFT, CF_ONLY);
+      runGuard(["--rewrite-nft-only", cf.target, ...CF_ONLY]);
+      expect(readFileSync(cf.target, "utf8")).toBe(cf.output);
     });
   });
 
@@ -349,7 +366,7 @@ fi
     });
 
     it("hardens 8006 and 80/443 while preserving every hivra_* rule", () => {
-      const { output } = rewriteInPlace(CUSTOM_CHAINS_NFT);
+      const { output } = rewriteInPlace(CUSTOM_CHAINS_NFT, CF_ONLY);
       expect(output).not.toMatch(/^\s*tcp dport 8006 accept$/m);
       expect(output).not.toMatch(/^\s*tcp dport \{ 80, 443 \} accept$/m);
       expect(output).toContain(TAILSCALE_8006);
@@ -381,6 +398,162 @@ fi
       expect(guestAcceptIdx).toBeGreaterThan(-1);
       expect(guestAcceptIdx).toBeLessThan(dropIdx);
       expect(dropIdx).toBeLessThan(wanIdx);
+    });
+  });
+  describe("--rewrite-nft-only rule ordering", () => {
+    // WAN accept above the established/related accept: a bare vmbr1 drop
+    // anchored before the first WAN accept would also drop guest replies.
+    const WAN_FIRST_NFT = `table inet filter {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		tcp dport 22 accept
+		ct state established,related accept
+		tcp dport 8006 accept
+		tcp dport { 80, 443 } accept
+		iifname "vmbr1" udp dport 67 accept
+		iifname "vmbr1" udp dport 53 accept
+		iifname "vmbr1" tcp dport 22 accept
+		iifname "vmbr1" accept
+	}
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+		iifname "vmbr1" oifname "vmbr0" accept
+	}
+}
+`;
+
+    it("only drops new or invalid guest traffic so replies still reach the established accept", () => {
+      const { output } = rewriteInPlace(WAN_FIRST_NFT);
+      expect(output).not.toMatch(/^\s*iifname "vmbr1" drop$/m);
+      const establishedIdx = output.indexOf("ct state established,related accept");
+      const newDropIdx = output.indexOf(VMBR1_NEW_DROP);
+      expect(newDropIdx).toBeGreaterThan(-1);
+      // The drop lands above the established accept here, which is only safe
+      // because it is limited to ct state new/invalid.
+      expect(newDropIdx).toBeLessThan(establishedIdx);
+      expect(output.indexOf(VMBR1_INVALID_DROP)).toBeLessThan(establishedIdx);
+    });
+
+    it("hoists explicit guest DHCP/DNS allows above the drop but not host-port or blanket accepts", () => {
+      const { output } = rewriteInPlace(WAN_FIRST_NFT);
+      const newDropIdx = output.indexOf(VMBR1_NEW_DROP);
+      expect(output.indexOf('iifname "vmbr1" udp dport 67 accept')).toBeLessThan(newDropIdx);
+      expect(output.indexOf('iifname "vmbr1" udp dport 53 accept')).toBeLessThan(newDropIdx);
+      expect(output.indexOf('iifname "vmbr1" tcp dport 22 accept')).toBeGreaterThan(newDropIdx);
+      expect(output.search(/^\s*iifname "vmbr1" accept$/m)).toBeGreaterThan(newDropIdx);
+    });
+
+    it("upgrades a bare vmbr1 drop written by an earlier guard release", () => {
+      const legacy = INLINE_CHAIN_NFT.replace(
+        "\t\ttcp dport 22 accept",
+        '\t\tiifname "vmbr1" drop\n\t\ttcp dport 22 accept',
+      );
+      const { output } = rewriteInPlace(legacy);
+      expect(output).not.toMatch(/^\s*iifname "vmbr1" drop$/m);
+      expect(output.split(VMBR1_NEW_DROP)).toHaveLength(2);
+    });
+  });
+
+  describe("--apply", () => {
+    const setupApply = (opts: { caddyfile?: string } = {}) => {
+      const dir = mkdtempSync(path.join(tmpdir(), "perimeter-guard-apply-"));
+      const binDir = path.join(dir, "bin");
+      mkdirSync(binDir);
+      const sshdDir = path.join(dir, "sshd_config.d");
+      mkdirSync(sshdDir);
+      const nftConf = path.join(dir, "nftables.conf");
+      writeFileSync(nftConf, INLINE_CHAIN_NFT);
+      const caddyDir = path.join(dir, "caddy");
+      mkdirSync(caddyDir);
+      if (opts.caddyfile) writeFileSync(path.join(caddyDir, "Caddyfile"), opts.caddyfile);
+      const stub = (name: string, body: string) => {
+        const target = path.join(binDir, name);
+        writeFileSync(target, body);
+        chmodSync(target, 0o755);
+      };
+      stub("id", "#!/usr/bin/env bash\necho 0\n");
+      stub("sshd", '#!/usr/bin/env bash\n[ "$1" = "-t" ] && exit "${SSHD_T_EXIT:-0}"\nexit 0\n');
+      stub("systemctl", "#!/usr/bin/env bash\nexit 0\n");
+      // nft: -c validates, -f loads (records the loaded file), list prints the
+      // last loaded file so the post-apply check sees what was applied.
+      stub(
+        "nft",
+        `#!/usr/bin/env bash
+log="${dir}/nft.log"
+case "$1" in
+  -c) echo "check $3" >> "$log"; exit "\${NFT_CHECK_EXIT:-0}" ;;
+  -f) echo "load $2" >> "$log"; cp "$2" "${dir}/loaded.conf"; n=$(grep -c '^load' "$log"); [ "$n" = "1" ] && exit "\${NFT_LOAD_EXIT:-0}"; exit 0 ;;
+  list) cat "${dir}/loaded.conf" ;;
+esac
+`,
+      );
+      const env = {
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PERIMETER_GUARD_NFT_CONF: nftConf,
+        PERIMETER_GUARD_SSHD_DROPIN: path.join(sshdDir, "00-hermes-hardening.conf"),
+        PERIMETER_GUARD_SSHD_DROPIN_LEGACY: path.join(sshdDir, "99-hermes-hardening.conf"),
+        PERIMETER_GUARD_CADDY_DIR: caddyDir,
+      };
+      const apply = (args: string[] = [], extra: Record<string, string> = {}) =>
+        execFileSync("bash", [scriptPath, "--apply", ...args], {
+          encoding: "utf8",
+          env: { ...process.env, ...env, ...extra },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      return { dir, nftConf, sshdDir, env, apply };
+    };
+
+    it("validates a temp copy, shows the diff, then installs and loads it", () => {
+      const { nftConf, apply } = setupApply();
+      const output = apply();
+      expect(output).toContain("nftables change to be applied:");
+      expect(output).toContain("+" + "        " + VMBR1_NEW_DROP);
+      expect(readFileSync(nftConf, "utf8")).toContain(VMBR1_NEW_DROP);
+    });
+
+    it("leaves the live file untouched when nft -c rejects the candidate", () => {
+      const { nftConf, apply } = setupApply();
+      expect(() => apply([], { NFT_CHECK_EXIT: "1" })).toThrow();
+      expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
+    });
+
+    it("restores and reloads the previous file when loading the new ruleset fails", () => {
+      const { dir, nftConf, apply } = setupApply();
+      expect(() => apply([], { NFT_LOAD_EXIT: "1" })).toThrow();
+      expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
+      expect(readFileSync(path.join(dir, "loaded.conf"), "utf8")).toBe(INLINE_CHAIN_NFT);
+    });
+
+    it("restores the previous sshd drop-ins when sshd -t fails", () => {
+      const { sshdDir, apply } = setupApply();
+      const legacy = path.join(sshdDir, "99-hermes-hardening.conf");
+      writeFileSync(legacy, "ClientAliveInterval 60\n");
+      expect(() => apply([], { SSHD_T_EXIT: "1" })).toThrow();
+      expect(readFileSync(legacy, "utf8")).toBe("ClientAliveInterval 60\n");
+      expect(() => statSync(path.join(sshdDir, "00-hermes-hardening.conf"))).toThrow();
+    });
+
+    it("refuses --cloudflare-origin-only when a Caddy site is an sslip.io or raw IP host", () => {
+      for (const site of ["agent-1.198-51-100-7.sslip.io", "198.51.100.7"]) {
+        const { nftConf, apply } = setupApply({
+          caddyfile: `{\n\temail ops@example.com\n}\n${site} {\n\treverse_proxy 10.250.0.2:8080\n}\n`,
+        });
+        let stderr = "";
+        try {
+          apply(CF_ONLY);
+        } catch (err) {
+          stderr = String((err as { stderr?: string }).stderr);
+        }
+        expect(stderr).toContain("--cloudflare-origin-only refused");
+        expect(stderr).toContain(site);
+        expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
+      }
+    });
+
+    it("refuses --cloudflare-origin-only when there is no Caddy config to check", () => {
+      const { nftConf, apply } = setupApply();
+      expect(() => apply(CF_ONLY)).toThrow();
+      expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
     });
   });
 });

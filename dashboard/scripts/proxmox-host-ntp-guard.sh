@@ -91,8 +91,10 @@ detect_vmbr1_subnet_allow() {
     addr="$(ip -4 -o addr show dev vmbr1 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1 || true)"
   fi
   if [ -z "$addr" ]; then
+    # 10.0.0.0 is the perimeter guard's RFC1918 forward-drop network, not a
+    # guest subnet.
     addr="$(grep -h '10\.' /etc/network/interfaces.d/vmbr1 "$NFT_CONF" 2>/dev/null |
-      grep -oE '\b10(\.[0-9]{1,3}){3}\b' | head -n1 || true)"
+      grep -oE '\b10(\.[0-9]{1,3}){3}\b' | grep -vx '10\.0\.0\.0' | head -n1 || true)"
   fi
   [[ "$addr" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 0
   local detected="allow ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0.0/16"

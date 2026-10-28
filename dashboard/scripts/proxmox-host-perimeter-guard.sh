@@ -6,17 +6,29 @@
 # during host standup or an approved fleet remediation to install the sshd
 # hardening drop-in and rewrite /etc/nftables.conf so that:
 #
-#   - guest VMs on vmbr1 cannot reach host SSH (22), the Proxmox Web UI
-#     (8006), or host Caddy (80/443)
+#   - guest VMs on vmbr1 cannot open new connections to the host (SSH 22,
+#     the Proxmox Web UI 8006, host Caddy 80/443, or anything else) except
+#     NTP and the guest allows (DHCP, DNS) that the host config already had;
+#     replies to host-initiated connections still pass
 #   - the Proxmox Web UI accepts Tailscale (tailscale0) traffic only and is
-#     never exposed to the public internet
-#   - 80/443 origin accepts are restricted to the published Cloudflare ranges
+#     never exposed to the public internet (use an SSH tunnel otherwise)
 #   - guest VMs cannot forward to RFC1918, CGNAT, or link-local destinations
 #     over the WAN bridge
+#   - optionally (--cloudflare-origin-only), 80/443 origin accepts are
+#     restricted to the published Cloudflare ranges. This is off by default
+#     because sslip.io and unproxied gateway hostnames reach the host directly;
+#     --apply refuses it unless every Caddy site resolves to Cloudflare only.
+#
+# Guest-to-guest traffic on the same bridge is NOT decided here: it rests on
+# the `table bridge hermes_vm_isolation` table, which this guard leaves as is.
+#
+# --apply validates the rewritten ruleset on a temp copy before it touches the
+# live file, prints the diff, and restores the previous file and ruleset if
+# loading or the post-apply check fails.
 #
 # Usage:
-#   sudo bash proxmox-host-perimeter-guard.sh --check
-#   sudo bash proxmox-host-perimeter-guard.sh --apply
+#   sudo bash proxmox-host-perimeter-guard.sh --check [--cloudflare-origin-only]
+#   sudo bash proxmox-host-perimeter-guard.sh --apply [--cloudflare-origin-only]
 #   bash proxmox-host-perimeter-guard.sh --rewrite-nft-only /path/to/nftables.conf
 #   bash proxmox-host-perimeter-guard.sh --write-sshd-dropin-only /path/to/dropin.conf
 #
@@ -31,6 +43,8 @@ SSHD_DROPIN="${PERIMETER_GUARD_SSHD_DROPIN:-/etc/ssh/sshd_config.d/00-hermes-har
 SSHD_DROPIN_LEGACY="${PERIMETER_GUARD_SSHD_DROPIN_LEGACY:-/etc/ssh/sshd_config.d/99-hermes-hardening.conf}"
 NFT_TARGET=""
 SSHD_TARGET=""
+CLOUDFLARE_ONLY="${PERIMETER_GUARD_CLOUDFLARE_ONLY:-0}"
+CADDY_CONFIG_DIR="${PERIMETER_GUARD_CADDY_DIR:-/etc/caddy}"
 
 SSHD_DIRECTIVES=(
   "PasswordAuthentication no"
@@ -57,26 +71,33 @@ NFT_REQUIRED_LINES=(
   'set cloudflare_ipv6'
   'iifname "vmbr1" udp dport 123 accept'
   'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop'
-  'iifname "vmbr1" drop'
+  'iifname "vmbr1" ct state invalid drop'
+  'iifname "vmbr1" ct state new drop'
   'iifname "tailscale0" tcp dport 8006 accept'
+  'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop'
+)
+NFT_CLOUDFLARE_LINES=(
   'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept'
   'ip6 saddr @cloudflare_ipv6 tcp dport { 80, 443 } accept'
   'ip saddr @cloudflare_ipv4 udp dport 443 accept'
   'ip6 saddr @cloudflare_ipv6 udp dport 443 accept'
-  'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop'
 )
 
 usage() {
   cat <<'EOF'
-Usage: proxmox-host-perimeter-guard.sh [--check|--apply]
-       proxmox-host-perimeter-guard.sh --rewrite-nft-only <path>
+Usage: proxmox-host-perimeter-guard.sh [--check|--apply] [--cloudflare-origin-only]
+       proxmox-host-perimeter-guard.sh --rewrite-nft-only <path> [--cloudflare-origin-only]
        proxmox-host-perimeter-guard.sh --write-sshd-dropin-only <path>
 
 --check                  Audit only. Exits non-zero if the sshd drop-in, the
                          effective sshd config, /etc/nftables.conf, or the live
                          nftables ruleset is missing a required perimeter rule.
---apply                  Install the sshd drop-in, reload sshd, then rewrite,
-                         validate, and apply /etc/nftables.conf.
+--apply                  Install the sshd drop-in, reload sshd, then rewrite a
+                         temp copy of /etc/nftables.conf, validate it, show
+                         the diff, and apply it (restoring on failure).
+--cloudflare-origin-only Also restrict 80/443 to Cloudflare's ranges. --apply
+                         refuses unless every Caddy site resolves only to
+                         Cloudflare (no sslip.io, raw IPs or unproxied names).
 --rewrite-nft-only       Rewrite an nftables.conf file in place (no root, only
                          python3). For unit tests.
 --write-sshd-dropin-only Write the sshd hardening drop-in to a path (no root).
@@ -95,6 +116,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --check) MODE="check" ;;
     --apply) MODE="apply" ;;
+    --cloudflare-origin-only) CLOUDFLARE_ONLY=1 ;;
     --rewrite-nft-only)
       shift
       [ "$#" -gt 0 ] || fatal "--rewrite-nft-only requires a file path"
@@ -137,7 +159,8 @@ rewrite_nft_conf_file() {
   local target="$1"
   [ -f "$target" ] || fatal "$target is missing"
   grep -Fq 'table inet filter' "$target" || fatal "$target missing table inet filter"
-  python3 - "$target" <<'PY'
+  CLOUDFLARE_ONLY="$CLOUDFLARE_ONLY" python3 - "$target" <<'PY'
+import os
 import re
 import sys
 from pathlib import Path
@@ -171,18 +194,31 @@ SET_V6 = [
     SET_INDENT + "}",
 ]
 
+CLOUDFLARE_ONLY = os.environ.get("CLOUDFLARE_ONLY") == "1"
+
+# Earlier releases of this guard wrote a bare `iifname "vmbr1" drop`; it is
+# recognised so a re-run upgrades it.
 MANAGED_INPUT = {
     'iifname "vmbr1" udp dport 123 accept',
     'iifname "vmbr1" tcp dport { 22, 8006 } drop',
     'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop',
     'iifname "vmbr1" drop',
+    'iifname "vmbr1" ct state invalid drop',
+    'iifname "vmbr1" ct state new drop',
 }
 
+# The catch-all drops are limited to new/invalid connections so replies from
+# guests to host-initiated connections (Caddy reverse proxy, host SSH into a
+# guest) still reach the `ct state established,related accept` rule, wherever
+# that rule sits in the chain.
 VMBR1_INPUT_BLOCK = [
     'iifname "vmbr1" udp dport 123 accept',
     'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop',
-    'iifname "vmbr1" drop',
+    'iifname "vmbr1" ct state invalid drop',
+    'iifname "vmbr1" ct state new drop',
 ]
+
+HOST_SERVICE_PORT = re.compile(r"\b(22|80|443|8006)\b")
 
 CLOUDFLARE_ACCEPTS = [
     'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept',
@@ -253,6 +289,19 @@ def is_fwd_wan_accept(n):
     )
 
 
+def is_hoistable_guest_allow(n):
+    # An explicit guest allow (DHCP, DNS, a jump to a hivra_* service chain)
+    # must stay ahead of the catch-all drop. A blanket accept, or one that
+    # opens a host service port, is not hoisted: the drop is meant to shadow it.
+    if not n.startswith('iifname "vmbr1"') or n in MANAGED_INPUT or "oifname" in n:
+        return False
+    if " jump " in n or " goto " in n:
+        return True
+    if not n.endswith(" accept") or "dport" not in n:
+        return False
+    return not HOST_SERVICE_PORT.search(n.split("dport", 1)[1])
+
+
 def harden_input(inner):
     out = []
     for line in inner:
@@ -262,7 +311,7 @@ def harden_input(inner):
         if re.fullmatch(r"tcp dport 8006 accept", n):
             out.append(RULE_INDENT + 'iifname "tailscale0" tcp dport 8006 accept')
             continue
-        if re.fullmatch(r"tcp dport \{ 80, 443 \} accept", n):
+        if CLOUDFLARE_ONLY and re.fullmatch(r"tcp dport \{ 80, 443 \} accept", n):
             out.extend(RULE_INDENT + r for r in CLOUDFLARE_ACCEPTS)
             continue
         out.append(line)
@@ -270,8 +319,9 @@ def harden_input(inner):
         (i for i, line in enumerate(out) if is_wan_accept(norm(line))),
         len(out),
     )
-    out[anchor:anchor] = [RULE_INDENT + r for r in VMBR1_INPUT_BLOCK]
-    return out
+    hoisted = [line for line in out[anchor:] if is_hoistable_guest_allow(norm(line))]
+    rest = [line for line in out[anchor:] if not is_hoistable_guest_allow(norm(line))]
+    return out[:anchor] + hoisted + [RULE_INDENT + r for r in VMBR1_INPUT_BLOCK] + rest
 
 
 def harden_forward(inner):
@@ -351,12 +401,33 @@ effective_sshd_hardened() {
   printf '%s\n' "$out" | grep -Fxq "x11forwarding no" || return 1
 }
 
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+SSHD_DROPIN_BACKUP=""
+SSHD_LEGACY_BACKUP=""
+
+# Backups live outside sshd_config.d so sshd never loads them.
 write_sshd_dropin() {
-  if [ -f "$SSHD_DROPIN" ] && ! sshd_dropin_is_correct; then
-    cp "$SSHD_DROPIN" "$SSHD_DROPIN.bak-hermes-$(date -u +%Y%m%dT%H%M%SZ)"
+  if [ -f "$SSHD_DROPIN" ]; then
+    SSHD_DROPIN_BACKUP="$SSHD_DROPIN.bak-hermes-$STAMP"
+    cp -p "$SSHD_DROPIN" "$SSHD_DROPIN_BACKUP"
+  fi
+  if [ -f "$SSHD_DROPIN_LEGACY" ]; then
+    SSHD_LEGACY_BACKUP="$SSHD_DROPIN_LEGACY.bak-hermes-$STAMP"
+    cp -p "$SSHD_DROPIN_LEGACY" "$SSHD_LEGACY_BACKUP"
   fi
   write_sshd_dropin_to "$SSHD_DROPIN"
   rm -f "$SSHD_DROPIN_LEGACY"
+}
+
+restore_sshd_dropin() {
+  if [ -n "$SSHD_DROPIN_BACKUP" ]; then
+    cp -p "$SSHD_DROPIN_BACKUP" "$SSHD_DROPIN"
+  else
+    rm -f "$SSHD_DROPIN"
+  fi
+  if [ -n "$SSHD_LEGACY_BACKUP" ]; then
+    cp -p "$SSHD_LEGACY_BACKUP" "$SSHD_DROPIN_LEGACY"
+  fi
 }
 
 reload_sshd() {
@@ -368,8 +439,11 @@ reload_sshd() {
 nft_conf_has_open_wan_rules() {
   [ -f "$NFT_CONF" ] || return 1
   grep -Eq '^[[:space:]]*tcp dport 8006 accept([[:space:]]*#.*)?$' "$NFT_CONF" && return 0
-  grep -Eq '^[[:space:]]*tcp dport \{ 80, 443 \} accept([[:space:]]*#.*)?$' "$NFT_CONF" && return 0
+  if [ "$CLOUDFLARE_ONLY" = "1" ]; then
+    grep -Eq '^[[:space:]]*tcp dport \{ 80, 443 \} accept([[:space:]]*#.*)?$' "$NFT_CONF" && return 0
+  fi
   grep -Fq 'iifname "vmbr1" tcp dport { 22, 8006 } drop' "$NFT_CONF" && return 0
+  grep -Eq '^[[:space:]]*iifname "vmbr1" drop([[:space:]]*#.*)?$' "$NFT_CONF" && return 0
   return 1
 }
 
@@ -379,14 +453,93 @@ nft_conf_is_hardened() {
   for rule in "${NFT_REQUIRED_LINES[@]}"; do
     grep -Fq "$rule" "$NFT_CONF" || return 1
   done
-  for cidr in "${CF_IPV4_CIDRS[@]}" "${CF_IPV6_CIDRS[@]}"; do
-    grep -Fq "$cidr" "$NFT_CONF" || return 1
-  done
+  if [ "$CLOUDFLARE_ONLY" = "1" ]; then
+    for rule in "${NFT_CLOUDFLARE_LINES[@]}"; do
+      grep -Fq "$rule" "$NFT_CONF" || return 1
+    done
+    for cidr in "${CF_IPV4_CIDRS[@]}" "${CF_IPV6_CIDRS[@]}"; do
+      grep -Fq "$cidr" "$NFT_CONF" || return 1
+    done
+  fi
   ! nft_conf_has_open_wan_rules
 }
 
 nft_ruleset_has_open_wan_rules() {
-  grep -Eq '^[[:space:]]*tcp dport (8006|\{ 80, 443 \}) accept([[:space:]]*#.*)?$' <<<"$1"
+  grep -Eq '^[[:space:]]*tcp dport 8006 accept([[:space:]]*#.*)?$' <<<"$1" && return 0
+  if [ "$CLOUDFLARE_ONLY" = "1" ]; then
+    grep -Eq '^[[:space:]]*tcp dport \{ 80, 443 \} accept([[:space:]]*#.*)?$' <<<"$1" && return 0
+  fi
+  return 1
+}
+
+# --cloudflare-origin-only drops every 80/443 packet that does not come from
+# Cloudflare, so it is only safe when every site this host's Caddy serves is
+# proxied. Refuse unless each site address resolves only to Cloudflare ranges.
+caddy_sites_are_cloudflare_only() {
+  python3 - "$CADDY_CONFIG_DIR" <<'PY'
+import ipaddress
+import re
+import socket
+import sys
+from pathlib import Path
+
+CF = [ipaddress.ip_network(c) for c in (
+    "173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 "
+    "141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 "
+    "197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 "
+    "104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 "
+    "2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 "
+    "2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32"
+).split()]
+
+root = Path(sys.argv[1])
+files = [p for p in root.rglob("*") if p.is_file() and (p.name == "Caddyfile" or p.suffix == ".caddy" or p.parent.name in ("conf.d", "sites", "sites-enabled"))] if root.is_dir() else []
+if not files:
+    sys.exit("no Caddy site config under %s; cannot prove every site is proxied" % root)
+
+hosts = set()
+for f in files:
+    depth = 0
+    for raw in f.read_text(errors="replace").split("\n"):
+        line = raw.split("#", 1)[0].strip()
+        if depth == 0 and line.endswith("{") and not line.startswith(("(", "{")):
+            for addr in re.split(r"[\s,]+", line[:-1].strip()):
+                if addr:
+                    hosts.add(addr)
+        depth += raw.count("{") - raw.count("}")
+
+bad = []
+for addr in sorted(hosts):
+    host = re.sub(r"^[a-z]+://", "", addr).split("/", 1)[0]
+    host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host.strip("[]")
+    if host in ("", "localhost") or host.startswith(("127.", "unix")):
+        continue
+    if host.endswith((".sslip.io", ".nip.io")):
+        bad.append(host + " (direct-IP hostname)")
+        continue
+    try:
+        ipaddress.ip_address(host)
+        bad.append(host + " (raw IP)")
+        continue
+    except ValueError:
+        pass
+    probe = "perimeter-guard-probe" + host[1:] if host.startswith("*.") else host
+    try:
+        addrs = {ai[4][0] for ai in socket.getaddrinfo(probe, 443, proto=socket.IPPROTO_TCP)}
+    except OSError as exc:
+        bad.append("%s (does not resolve: %s)" % (host, exc))
+        continue
+    direct = [a for a in addrs if not any(ipaddress.ip_address(a) in n for n in CF)]
+    if direct:
+        bad.append("%s (resolves outside Cloudflare: %s)" % (host, ", ".join(sorted(direct))))
+
+if bad:
+    print("Caddy sites not behind Cloudflare:", file=sys.stderr)
+    for b in bad:
+        print("  - " + b, file=sys.stderr)
+    sys.exit(1)
+print("%d Caddy site address(es) resolve only to Cloudflare" % len(hosts))
+PY
 }
 
 nft_runtime_is_hardened() {
@@ -397,10 +550,13 @@ nft_runtime_is_hardened() {
   ruleset="$(nft list ruleset 2>/dev/null)" || return 1
   printf '%s\n' "$input" | grep -Fq 'iifname "vmbr1" udp dport 123 accept' || return 1
   printf '%s\n' "$input" | grep -Fq 'iifname "vmbr1" tcp dport { 22, 80, 443, 8006 } drop' || return 1
-  printf '%s\n' "$input" | grep -Eq '^[[:space:]]*iifname "vmbr1" drop$' || return 1
+  printf '%s\n' "$input" | grep -Fq 'iifname "vmbr1" ct state invalid drop' || return 1
+  printf '%s\n' "$input" | grep -Fq 'iifname "vmbr1" ct state new drop' || return 1
   printf '%s\n' "$input" | grep -Fq 'iifname "tailscale0" tcp dport 8006 accept' || return 1
-  printf '%s\n' "$input" | grep -Fq 'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept' || return 1
-  printf '%s\n' "$input" | grep -Fq 'ip6 saddr @cloudflare_ipv6 tcp dport { 80, 443 } accept' || return 1
+  if [ "$CLOUDFLARE_ONLY" = "1" ]; then
+    printf '%s\n' "$input" | grep -Fq 'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept' || return 1
+    printf '%s\n' "$input" | grep -Fq 'ip6 saddr @cloudflare_ipv6 tcp dport { 80, 443 } accept' || return 1
+  fi
   printf '%s\n' "$forward" | grep -Fq 'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop' || return 1
   grep -Fq 'set cloudflare_ipv4' <<<"$ruleset" || return 1
   grep -Fq 'set cloudflare_ipv6' <<<"$ruleset" || return 1
@@ -412,18 +568,39 @@ if [ "$MODE" = "apply" ]; then
     require_command "$cmd"
   done
 
+  [ -f "$NFT_CONF" ] || fatal "$NFT_CONF is missing"
+  if [ "$CLOUDFLARE_ONLY" = "1" ]; then
+    caddy_sites_are_cloudflare_only \
+      || fatal "--cloudflare-origin-only refused: a Caddy site reaches this host directly"
+  fi
+
+  # Rewrite and validate a temp copy first; the live file is only replaced
+  # once nft accepts the new ruleset.
+  NFT_CANDIDATE="$(mktemp "${NFT_CONF}.perimeter-candidate.XXXXXX")"
+  trap 'rm -f "$NFT_CANDIDATE"' EXIT
+  cp -p "$NFT_CONF" "$NFT_CANDIDATE"
+  rewrite_nft_conf_file "$NFT_CANDIDATE"
+  nft -c -f "$NFT_CANDIDATE" || fatal "nft -c rejected the rewritten ruleset; $NFT_CONF left unchanged"
+  log "nftables change to be applied:"
+  diff -u "$NFT_CONF" "$NFT_CANDIDATE" || true
+
   log "applying sshd hardening drop-in"
   write_sshd_dropin
-  sshd -t || fatal "sshd -t rejected configuration including $SSHD_DROPIN"
+  if ! sshd -t; then
+    restore_sshd_dropin
+    fatal "sshd -t rejected $SSHD_DROPIN; previous sshd drop-ins restored, sshd not reloaded"
+  fi
   reload_sshd
 
   log "applying perimeter nftables guard"
-  [ -f "$NFT_CONF" ] || fatal "$NFT_CONF is missing"
-  cp "$NFT_CONF" "$NFT_CONF.bak-hermes-perimeter-$(date -u +%Y%m%dT%H%M%SZ)"
-  rewrite_nft_conf_file "$NFT_CONF"
-  nft -c -f "$NFT_CONF" || fatal "nft -c rejected rewritten $NFT_CONF"
-  nft -f "$NFT_CONF"
-  nft_runtime_is_hardened || fatal "applied ruleset still missing required perimeter rules"
+  NFT_BACKUP="$NFT_CONF.bak-hermes-perimeter-$STAMP"
+  cp -p "$NFT_CONF" "$NFT_BACKUP"
+  mv -f "$NFT_CANDIDATE" "$NFT_CONF"
+  if ! nft -f "$NFT_CONF" || ! nft_runtime_is_hardened; then
+    cp -p "$NFT_BACKUP" "$NFT_CONF"
+    nft -f "$NFT_CONF" || log "WARNING: restoring the previous ruleset also failed; check nftables now"
+    fatal "applied ruleset failed or lacked required rules; restored $NFT_CONF from $NFT_BACKUP"
+  fi
 else
   require_command sshd
   require_command nft
@@ -434,5 +611,9 @@ else
 fi
 
 log "sshd: hardening drop-in applied and effective"
-log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, Cloudflare-only 80/443, RFC1918 forward drop present"
+if [ "$CLOUDFLARE_ONLY" = "1" ]; then
+  log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, Cloudflare-only 80/443, RFC1918 forward drop present"
+else
+  log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, RFC1918 forward drop present (80/443 left open to all origins)"
+fi
 log "done"
