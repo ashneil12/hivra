@@ -209,7 +209,11 @@ export async function GET(req: NextRequest) {
     .select("*")
     .eq("lifecycle_state", "active")
     .eq("infrastructure_provider", "proxmox")
+    // created_at alone is not unique, so equal timestamps could come back in a
+    // different order on each run and the window would skip or repeat a box.
+    // id is the unique tie-breaker that keeps the windows stable.
     .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
     .range(from, from + limit - 1);
   if (error) return apiError("Failed to query instances", 500);
 

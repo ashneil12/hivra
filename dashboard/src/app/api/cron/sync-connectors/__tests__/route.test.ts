@@ -202,4 +202,16 @@ describe("GET /api/cron/sync-connectors (reconcile sweep)", () => {
     expect(maxInFlight).toBeGreaterThan(1); // parallel, not one serial sync per box
     expect(maxInFlight).toBeLessThanOrEqual(8); // SYNC_CONCURRENCY bound
   });
+
+  it("orders the rotating window by created_at then id, so equal timestamps keep a stable window", async () => {
+    mockActiveInstances([{ id: "i1", user_id: "u1" }]);
+    await GET(getReq());
+    const dataChain = (supabaseAdmin!.from as jest.Mock).mock.results[1].value as {
+      order: jest.Mock;
+    };
+    expect(dataChain.order.mock.calls).toEqual([
+      ["created_at", { ascending: true }],
+      ["id", { ascending: true }],
+    ]);
+  });
 });
