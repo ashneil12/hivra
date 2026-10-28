@@ -20,15 +20,17 @@ export const HIVRA_SUDO_SENTINEL = "HIVRA_SUDO_V1";
 
 /** Fixed, about 150 bytes, inside single quotes in the command: it must never
  * contain a single quote. */
-/** The script runs via `bash -c`, not `eval`: identical stdin semantics (the
- * framed data after the script still flows to the script's reads), but the
- * payload executes in a child process instead of inside the loader's own
- * shell — a malformed or hostile script can't mutate loader state mid-read,
- * and `timeout` still signals the whole process group. The Python mirror in
+/** The script runs as `( eval "$s" )`: a subshell, so a malformed or hostile
+ * script can't mutate the loader's own shell state, with identical stdin
+ * semantics (the framed data after the script still flows to the script's
+ * reads) and `timeout` still signalling the whole process group. It is not
+ * passed as `bash -c "$s"`: that makes the script one execve argument, and
+ * Linux refuses any argument over 128 KiB (MAX_ARG_STRLEN) while sudo
+ * scripts run up to MAX_SUDO_TRANSPORT_SCRIPT_BYTES. The Python mirror in
  * scripts/test-server-enroll-host.py (SUDO_LOADER) must stay byte-identical;
  * proxmox-sudo-transport.test.ts asserts it. */
 export const HIVRA_SUDO_LOADER =
-  'printf "HIVRA_SUDO_V1\\n" >&2; IFS= read -r n && [[ $n =~ ^[1-9][0-9]{0,5}$ ]] && IFS= read -r -d "" -n "$n" s && [ "${#s}" -eq "$n" ] && /bin/bash --noprofile --norc -c "$s"';
+  'printf "HIVRA_SUDO_V1\\n" >&2; IFS= read -r n && [[ $n =~ ^[1-9][0-9]{0,5}$ ]] && IFS= read -r -d "" -n "$n" s && [ "${#s}" -eq "$n" ] && ( eval "$s" )';
 
 /** The length prefix allows up to 999,999 bytes of script. */
 export const MAX_SUDO_TRANSPORT_SCRIPT_BYTES = 999_999;
