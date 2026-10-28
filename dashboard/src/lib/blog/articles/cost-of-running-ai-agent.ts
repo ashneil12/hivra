@@ -8,26 +8,26 @@ export const article: BlogArticle = {
   metaDescription:
     "What it costs to keep an AI agent running around the clock: server, API tokens and your time, with real monthly figures for self-hosted and managed setups.",
   publishedDate: "2026-04-01",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "What the monthly bill adds up to.",
   intro:
     "An agent that runs all the time costs more than the price on the plan. Here's each piece with a real figure: the server, the tokens, your time, and the bits no pricing table mentions.",
-  shortAnswer: `Running a persistent AI agent costs you a server, AI tokens and your time. A minimal self-hosted setup is about $10-17 a month in cash, or $60-117 once you count maintenance at $50 an hour. Hivra is ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, plus about $4-20 in tokens.`,
+  shortAnswer: `A minimal self-hosted agent costs a Hetzner server from €5.49 a month before VAT and IPv4, a small token bill and at least 1 to 2 hours of upkeep a month, or $50 to $100 at $50 an hour. Hivra is ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, plus about $4-20 in tokens.`,
   sections: [
     {
       heading: "What does the server cost?",
       paragraphs: [
         "Somewhere between €5 and $24 a month for a rented server, because the agent needs a machine that stays on. You can rent a VPS, pay a managed host, or run it on hardware you already own.",
-        `VPS prices as of September 2026 (Hetzner last changed its CX prices on 15 June 2026): Hetzner CX23 (2 vCPU, 4 GB RAM) costs €5.49/month excluding VAT. DigitalOcean's comparable Basic Droplet is $24/month. OVH's entry VPS-1 (2 vCPU, 4 GB) is about $4.54/month on annual billing. Hetzner and OVH are cheap, and every bit of setup and upkeep is yours. Need more room? The Hetzner CX33 (4 vCPU, 8 GB RAM) at €8.49/month is the next step up, and worth it if your agent uses the browser a lot.\n\nManaged hosting: [Hivra](/pricing) plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}. Paid plans are not paused for inactivity and come with a ${MONEY_BACK_GUARANTEE}. You pay for hosting, with no markup on AI usage through your own keys or logins. In return the setup's done and there's no server to maintain. To compare a specific setup against a raw VPS, run your numbers through the [AI agent hosting cost calculator](/tools/ai-agent-hosting-cost-calculator).`,
+        `Hetzner and DigitalOcean prices are as of October 2026, and OVH's as of September 2026 (Hetzner last changed its CX prices on 15 June 2026): Hetzner CX23 (2 vCPU, 4 GB RAM) costs €5.49/month excluding VAT and IPv4, or €5.99 with an IPv4 address. DigitalOcean's comparable Basic Droplet is $24/month. OVH's entry VPS-1 (2 vCPU, 4 GB) is about $4.54/month on annual billing. Hetzner and OVH are cheap, and every bit of setup and upkeep is yours. Need more room? The Hetzner CX33 (4 vCPU, 8 GB RAM) at €8.49/month on the same basis (€8.99 with IPv4) is the next step up, and worth it if your agent uses the browser a lot. Hetzner says the number of servers in this range is limited, and its page showed both as unavailable in October 2026, so check stock before you plan around them.\n\nManaged hosting: [Hivra](/pricing) plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}. Paid plans are not paused for inactivity and come with a ${MONEY_BACK_GUARANTEE}. You pay for hosting, with no markup on AI usage through your own keys or logins. In return the setup's done and there's no server to maintain. To compare a specific setup against a raw VPS, run your numbers through the [AI agent hosting cost calculator](/tools/ai-agent-hosting-cost-calculator).`,
       ],
     },
     {
       heading: "What do the AI tokens cost?",
       paragraphs: [
-        "Anthropic's prices as of October 2026, from [its pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (they move, so check): Claude Haiku 4.5 ($1 input / $5 output per MTok); Claude Sonnet 5.5 ($2 / $10 per MTok, with the 1M-token context window at standard pricing); Claude Opus 5.5 ($4 / $20 per MTok, also with the 1M-token window at standard pricing). OpenAI, as of April 2026: GPT-5 mini ($0.25 / $2 per MTok, the cheapest capable option at the time). The Anthropic Batch API cuts Anthropic rates by 50% for async workloads, so Haiku 4.5 drops to $0.50/$2.50 per MTok. The monthly ranges below were worked out at April 2026 prices and have not been recalculated.",
-        "In practice? A lean setup (10 to 15 scheduled tasks a day, a few URLs each, text output on Haiku 4.5) usually spends $3 to $8 a month. Mixed Haiku/Sonnet workloads with research and code generation run $20-50/month. Heavy Sonnet usage with long context tasks can push $60-120/month.",
+        "Anthropic's prices as of October 2026, from [its pricing page](https://platform.claude.com/docs/en/about-claude/pricing) (they move, so check): Claude Haiku 5.5 ($0.10 input / $0.50 output per MTok for prompts up to 100,000 tokens, $0.50 / $2.50 above that); Claude Sonnet 5.5 ($2 / $10 per MTok, with the 1M-token context window at standard pricing); Claude Opus 5.5 ($4 / $20 per MTok, also with the 1M-token window at standard pricing). OpenAI, as of April 2026: GPT-5 mini ($0.25 / $2 per MTok, the cheapest capable option at the time). The Anthropic Batch API cuts Anthropic rates by 50% for async workloads, so Haiku 5.5 drops to $0.05/$0.25 per MTok on prompts up to 100,000 tokens. The monthly ranges below were worked out at April 2026 prices and have not been recalculated. The Haiku-only part of these ranges falls to roughly a tenth, because the Haiku rate is a tenth of what it was.",
+        "In practice? At April 2026 Haiku prices, a lean setup (10 to 15 scheduled tasks a day, a few URLs each, text output on Haiku) usually spent $3 to $8 a month on tokens, and that Haiku-only part is now roughly a tenth of it. Mixed Haiku/Sonnet workloads with research and code generation run $20-50/month. Heavy Sonnet usage with long context tasks can push $60-120/month.",
         "Browser work is where tokens pile up, because screenshots and page captures are big. A task taking 10 screenshots at ~1,000 tokens each, running daily, costs roughly 300,000 tokens per month just for screenshot processing. If your agent browses a lot, put the screenshot steps on Haiku and save Sonnet for the thinking. [Which browser automation tool you pick](/blog/ai-agent-browser-automation-tools) changes that number too, because they differ in how much of the page they send to the model.",
         "Picking the model is the obvious lever. It isn't the only one. Prompt caching, batching and trimming what you resend each turn often save more than switching models. [What an AI agent costs per month in API tokens](/blog/ai-agent-api-cost-optimization) has a monthly table with the sums shown, plus those cuts.",
       ],
@@ -49,7 +49,7 @@ export const article: BlogArticle = {
     {
       heading: "So what does it all add up to?",
       paragraphs: [
-        `| Setup | What's in it | Cash per month | With your time at $50/hour |\n|---|---|---|---|\n| Self-hosted, minimal | Hetzner CX23 (€5.49 before VAT), $3 to $10 of Haiku tokens on text-only tasks, 1 to 2 hours of upkeep | $10 to $17 | $60 to $117 |\n| Self-hosted, active | Hetzner CX33 (€8.49 before VAT), $20 to $50 of mixed Haiku and Sonnet with some browser work, 2 to 3 hours of upkeep | $30 to $60 | $130 to $210 |\n| Hivra, ${ENTRY_PLAN_PRICE} plan | ${ENTRY_PLAN_SIZE}, $4 to $20 of tokens, no server upkeep | $14 to $30 | $14 to $30 |\n\nServerless (Modal or Daytona) sits off to one side. It costs almost nothing while idle and you pay per run, so it suits agents with rare but heavy jobs. Cold starts make it a poor fit for cron jobs that must fire every minute. Full plan details are on [the pricing page](/pricing).`,
+        `| Setup | What's in it | Cash per month | With your time at $50/hour |\n|---|---|---|---|\n| Self-hosted, minimal | Hetzner CX23 (€5.49 before VAT and IPv4), a small bill for Haiku tokens on text-only tasks, 1 to 2 hours of upkeep | €5.49 for the server, plus the tokens | The same, plus $50 to $100 of your time |\n| Self-hosted, active | Hetzner CX33 (€8.49 before VAT and IPv4), $20 to $50 of mixed Haiku and Sonnet with some browser work, 2 to 3 hours of upkeep | $30 to $60 | $130 to $210 |\n| Hivra, ${ENTRY_PLAN_PRICE} plan | ${ENTRY_PLAN_SIZE}, $4 to $20 of tokens, no server upkeep | $14 to $30 | $14 to $30 |\n\nServerless (Modal or Daytona) sits off to one side. It costs almost nothing while idle and you pay per run, so it suits agents with rare but heavy jobs. Cold starts make it a poor fit for cron jobs that must fire every minute. Full plan details are on [the pricing page](/pricing).`,
         "Count your time and managed hosting looks a lot better than the sticker prices suggest. Still, if you want root access or have strict rules about where data lives, self-hosting on Hetzner is a perfectly good choice. The hardware is solid and the self-hosted Hermes community is active.",
       ],
     },
@@ -66,11 +66,11 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "What is the absolute cheapest way to run a Hermes agent?",
-      a: `A Hetzner CX23 at €5.49/month, Claude Haiku as the model, and text-only tasks (browser work is what blows up token use). That's $10 to $17 a month if you're happy doing the setup yourself. Or skip the setup on Hivra, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}.`,
+      a: `A Hetzner CX23 at €5.49/month excluding VAT and IPv4, Claude Haiku as the model, and text-only tasks (browser work is what blows up token use). The server is the fixed part of the bill, the Haiku tokens are small, and the setup is yours to do. Or skip the setup on Hivra, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}.`,
     },
     {
       q: "Can I run a Hermes agent for free?",
-      a: "Not for long. Some providers have small free API tiers (the terms change, so check), and they're fine for poking around. They run out fast once you schedule real tasks. A setup you can keep running costs at least $8 to $15 a month, server and tokens included.",
+      a: "Not for long. Some providers have small free API tiers (the terms change, so check), and they're fine for poking around. They run out fast once you schedule real tasks. A setup you can keep running costs at least a server and a token bill: a Hetzner CX23 is €5.49 a month excluding VAT and IPv4, and the tokens come on top.",
     },
     {
       q: "How does pricing change as I add more agents?",

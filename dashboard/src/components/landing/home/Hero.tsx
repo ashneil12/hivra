@@ -1,20 +1,26 @@
 import Link from "next/link";
-import { ArrowRight, Code2, KeyRound, Server } from "lucide-react";
+import { ArrowRight, Code2, Gift, KeyRound, Server } from "lucide-react";
 import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
+import type { AgentsDeployedSnapshot } from "./agents-deployed-format";
 import { AGENT_LAUNCH_HREF, HERO } from "./content";
 import HeroScene from "./HeroScene";
 import styles from "./home.module.css";
 import { glossify } from "@/components/gloss/glossify";
 
-const PROOF_ICONS = [KeyRound, Server, Code2];
+// One icon per HERO.proof line, in the same order. A missing entry renders the
+// homepage as a 500 once it sits inside HomeMotion (the element is undefined).
+const PROOF_ICONS = [Gift, KeyRound, Server, Code2];
 
 /**
  * The first screen. The headline, subhead and call to action are plain server
  * HTML with no entrance animation, so the H1 is the page's first contentful
  * and largest paint. Only decoration moves: the neon on "computer.", the rule
  * under the second line, and the machine on the right.
+ *
+ * `agentsDeployed` is the live count, read and cached on the server by the
+ * page. Without it (the lookup failed, or the count is zero) no stat shows.
  */
-export default function Hero() {
+export default function Hero({ agentsDeployed }: { agentsDeployed?: AgentsDeployedSnapshot | null }) {
   return (
     <section className={styles.hero} aria-labelledby="home-title">
       <div className={styles.heroBackdrop} aria-hidden="true" />
@@ -24,7 +30,9 @@ export default function Hero() {
             {HERO.titleLead} <em className={styles.heroWord}>{HERO.titleWord}</em>{" "}
             <span className={styles.heroTail}>{HERO.titleTail}</span>
           </h1>
-          <p className={styles.heroSubhead}>{glossify(HERO.subhead)}</p>
+          {HERO.subhead.map(paragraph => (
+            <p key={paragraph} className={styles.heroSubhead}>{glossify(paragraph)}</p>
+          ))}
           <div className={styles.heroActions}>
             <Link id="hero-primary-cta" href={AGENT_LAUNCH_HREF} className={styles.primaryCta} data-cta="hero-primary">
               <span>{HERO.primary}</span>
@@ -41,14 +49,16 @@ export default function Hero() {
               return (
                 <li key={point}>
                   <Icon size={14} aria-hidden="true" />
-                  {glossify(point)}
+                  <span>{glossify(point)}</span>
                 </li>
               );
             })}
           </ul>
-          <div className={styles.heroStat}>
-            <AgentsDeployedStat />
-          </div>
+          {agentsDeployed ? (
+            <div className={styles.heroStat}>
+              <AgentsDeployedStat total={agentsDeployed.total} asOf={agentsDeployed.asOf} />
+            </div>
+          ) : null}
         </div>
         <HeroScene />
       </div>

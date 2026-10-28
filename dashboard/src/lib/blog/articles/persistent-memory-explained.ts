@@ -7,7 +7,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Persistent memory stores what an agent learns between sessions and loads it when the next one starts. What it holds, how it works and what it can't do.",
   publishedDate: "2026-03-19",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "A bigger context window won't make an agent remember last week.",
@@ -68,7 +68,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What happens to memory if I cancel my Hivra subscription?",
-      a: "Export before you cancel. While your subscription is active, download what you want to keep: a Hermes agent's memory files from its file explorer, or a Claude Code or Codex agent's chats and memory as one JSON file from the agent's page. (A grace window to download after cancellation is on the roadmap; for now, take your export while you're still subscribed.)",
+      a: "Export before you cancel. While your subscription is active, download what you want to keep: a Hermes agent's memory files from its file explorer, or a Claude Code or Codex agent's chats and memory as one JSON file from the agent's page. Every Hivra Cloud computer needs a paid plan. Except for Hermes agents, which follow an older process that the Terms describe, the computer is stopped when a plan ends or when a card payment is still unpaid after the retries. Its files are kept for a limited time so that you can start it again once you have paid, and Hivra emails you before anything is deleted. Hivra does not promise how long that time is or that the files are backed up, so keep your own export. The Terms set out what happens then.",
     },
   ],
   relatedArticles: [

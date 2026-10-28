@@ -87,6 +87,13 @@ export function formatLaunchInstantUtc(iso: string): string {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}, ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}${seconds} UTC`;
 }
 
+/** A UTC instant as a date only, "20 October 2026", the same on server and client. */
+export function formatSnapshotDateUtc(iso: string): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
 export interface OfficialAccount {
   /** Where the account lives, e.g. "X". */
   service: string;

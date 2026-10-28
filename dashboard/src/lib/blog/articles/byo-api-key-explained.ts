@@ -8,36 +8,36 @@ export const article: BlogArticle = {
   metaDescription:
     "With a BYO API key you use your own Anthropic, OpenAI or OpenRouter account, so the provider bills you directly and your tokens carry no markup.",
   publishedDate: "2026-03-21",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 6,
   author: "Hivra team",
   tagline: "Bring your own key and the provider bills you directly: no markup, and no Hivra proxy in between.",
   intro:
-    "BYO means bring your own: you supply the AI provider credentials your agent uses. Requests go straight from the agent to the model provider, and the provider sends you the bill. Hivra isn't in that loop.",
+    "BYO means bring your own: you supply the AI provider credentials your agent uses. With your own credentials, requests go straight from the agent to the model provider, and the provider sends you the bill. Hivra isn't in that loop.",
   shortAnswer:
-    "A BYO API key means you bring your own AI provider credentials. Your agent's requests go straight to the provider, which bills you for that usage, so there's no markup on tokens. You pay Hivra for managed hosting and the dashboard, and your prompts don't pass through a Hivra proxy.",
+    "A BYO API key means you bring your own AI provider credentials. Your agent's requests go straight to the provider, which bills you for that usage, so there's no markup on tokens. You pay Hivra for managed hosting and the dashboard, and with your own key your prompts don't pass through a Hivra proxy.",
   sections: [
     {
       heading: "How is a BYO key different from a bundled AI subscription?",
       paragraphs: [
         "Who sends you the bill. Most AI SaaS products buy tokens in bulk, add a markup and fold the AI usage into your subscription. Handy. But you pay the markup, and you rarely see how much you're actually using.",
-        `With your own key, you open a developer account straight with the provider (Anthropic, OpenAI, Google, Mistral, or OpenRouter if you want many models in one place), create a key and paste it in. The provider bills you for usage. The product only charges for the platform. That's how Hivra works: you pay Hivra for managed hosting and the dashboard, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and every AI request your agent makes goes straight to the provider. Hivra never touches that token bill. Would you rather not bring a key? Hivra also sells managed Venice credits.`,
+        `With your own key, you open a developer account straight with the provider (Anthropic, OpenAI, Google, Mistral, or OpenRouter if you want many models in one place), create a key and paste it in. The provider bills you for usage. The product only charges for the platform. That's how Hivra works when you bring your own key or login: you pay Hivra for managed hosting and the dashboard, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and the requests your agent makes with that key or login go straight to the provider. Hivra never touches that token bill. Would you rather not bring a key? Hivra also sells managed Venice credits, and those requests do pass through Hivra.`,
       ],
     },
     {
       heading: "What does a BYO key cost in practice?",
       paragraphs: [
-        "Less than most people expect. As of October 2026, Anthropic charges $1 per million input tokens and $5 per million output tokens for Claude Haiku 4.5. The Batch API halves that to $0.50 and $2.50 for work that can wait a few hours. An agent running 10 to 30 scheduled tasks a day on Haiku usually spends $3 to $12 a month.",
+        "Less than most people expect. As of October 2026, Anthropic charges $0.10 per million input tokens and $0.50 per million output tokens for Claude Haiku 5.5 on prompts up to 100,000 tokens. The Batch API halves that to $0.05 and $0.25 for work that can wait a few hours. An agent running 10 to 30 scheduled tasks a day on Haiku usually spent $3 to $12 a month at April 2026 prices, and the Haiku rate is now a tenth of what it was, so that Haiku-only range falls to roughly a tenth.",
         "Claude Sonnet 5.5 ($2/$10 per million tokens, in and out) handles most research and analysis, and it's the default for anything that needs sustained reasoning. Its 1 million token context window has no long-context surcharge, so a long task costs the same per token as a short one. Heavy research or code generation at Sonnet level tends to run $20 to $60 a month (we worked that range out at April 2026 prices and haven't redone it). Opus 5.5 ($4/$20) is the heavy tier. Worth it for hard multi-step synthesis, wasted on monitoring or summaries. Current prices are on [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing).",
-        "On OpenAI, GPT-5 mini at $0.25 in and $2 out is a cheap, capable option. Add Hivra hosting to your own API spend and the total almost always comes in under what AI SaaS products charge for the same work, because they stack their margin on top of the same provider prices.",
+        "On OpenAI, gpt-6-luna at $0.10 in and $0.50 out is the cheapest of its latest models as of October 2026, and GPT-5 mini ($0.25 in, $2 out) is still listed with its older models. Add Hivra hosting to your own API spend and you have the whole bill, with no Hivra markup on your own key. AI SaaS products add their margin on top of the same provider prices.",
         "And since the key is yours, every saving lands on your invoice. Caching, batching and resending less each turn all cut your own bill, not somebody else's margin. [What an AI agent costs per month in API tokens](/blog/ai-agent-api-cost-optimization) has a monthly table and the cuts worth making.",
       ],
     },
     {
       heading: "Which AI provider should I get a key from?",
       paragraphs: [
-        "For most agent work, start with Anthropic. Haiku 4.5 for speed, Sonnet 5.5 for reasoning, Opus 5.5 for depth. Claude models follow multi-step instructions reliably and stay on script, which is exactly what an agent needs.",
-        "OpenAI's API gives you GPT-5 and GPT-5 mini. Mini, at $0.25 in and $2 out, makes sense when you run lots of small tasks and the cost per request adds up. One thing trips people up: ChatGPT Plus and Pro don't include API access. The API is a separate account with OpenAI, billed per token.",
+        "For most agent work, start with Anthropic. Haiku 5.5 for speed, Sonnet 5.5 for reasoning, Opus 5.5 for depth. Claude models follow multi-step instructions reliably and stay on script, which is exactly what an agent needs.",
+        "OpenAI's API lists gpt-6-luna, gpt-6.1-sol and gpt-6-astra as its latest models, and GPT-5 and GPT-5 mini are still on the price list. gpt-6-luna, at $0.10 in and $0.50 out, makes sense when you run lots of small tasks and the cost per request adds up. One thing trips people up: ChatGPT Plus and Pro don't include API access. The API is a separate account with OpenAI, billed per token.",
         "OpenRouter puts 300+ models from 60+ providers behind one key and one balance. No monthly minimum. You top up and pay for what you use. It's great for testing five models on the same task, for open-weight models hosted by others, or for an agent that sends different jobs to different models.",
       ],
     },
@@ -52,7 +52,7 @@ export const article: BlogArticle = {
       heading: "Is a BYO key more private?",
       paragraphs: [
         "Yes, in one specific way. When a service holds the AI keys, your conversations and task data run through its servers. With your own key, requests go straight from the agent to the provider, and the host isn't in the path of your AI traffic.",
-        "That doesn't make your data private from the provider. Anthropic, OpenAI and the rest have their own data policies, and depending on your account settings API usage can be used to improve models. What it does mean is that your prompts and replies don't pass through a Hivra proxy or a Hivra-owned key. They aren't invisible to the host, though. Your agent's files and logins live on its VM, and Hivra administrators keep infrastructure access to the hosts Hivra manages. If that line matters for your data, [self-hosting](/blog/how-to-self-host-hermes-agent) is the stricter option.",
+        "That doesn't make your data private from the provider. Anthropic, OpenAI and the rest have their own data policies, and depending on your account settings API usage can be used to improve models. What it does mean is that your prompts and replies don't pass through a Hivra proxy or a Hivra-owned key (managed Venice credits are the exception: those requests do pass through Hivra). They aren't invisible to the host, though. Your agent's files and logins live on its VM, and Hivra administrators keep infrastructure access to the hosts Hivra manages. If that line matters for your data, [self-hosting](/blog/how-to-self-host-hermes-agent) is the stricter option.",
       ],
     },
   ],

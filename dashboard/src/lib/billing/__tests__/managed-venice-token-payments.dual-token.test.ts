@@ -18,6 +18,14 @@ jest.mock("@/lib/billing/hivra-token-launch", () => ({
   },
 }));
 
+// $HIVRA readiness reads the gated price through live-thresholds: failing here.
+const mockGatedPrice = jest.fn();
+jest.mock("@/lib/billing/live-thresholds", () => ({
+  ...jest.requireActual("@/lib/billing/live-thresholds"),
+  getGatedPlatformTokenPrice: (...args: unknown[]) => mockGatedPrice(...args),
+}));
+
+import { HivraNotReadyError, _resetHivraReadinessForTests } from "@/lib/billing/hivra-readiness";
 import {
   createManagedVeniceTokenQuote,
   MANAGED_VENICE_TOKEN_DEPOSIT_REASONS,
@@ -80,6 +88,24 @@ describe("managed Venice deposits after $HIVRA activation", () => {
         memory.db
       )
     ).rejects.toBeInstanceOf(TokenNotAllowedError);
+    expect(memory.tables.managed_venice_token_quotes ?? []).toHaveLength(0);
+  });
+
+  it("refuse a new user's $HIVRA deposit quote while $HIVRA fails the price gate", async () => {
+    _resetHivraReadinessForTests();
+    mockGatedPrice.mockRejectedValueOnce(new Error("candle history too short"));
+    const memory = createManagedVeniceMemoryDb();
+    await expect(
+      createManagedVeniceTokenQuote(
+        {
+          userId: "new_user",
+          tokenAmountRaw: QUOTED,
+          depositAddress: TEST_DEPOSIT_ADDRESS,
+          access: computeUserTokenAccess({ phase: "active", cohort: null, now: new Date() }),
+        },
+        memory.db
+      )
+    ).rejects.toBeInstanceOf(HivraNotReadyError);
     expect(memory.tables.managed_venice_token_quotes ?? []).toHaveLength(0);
   });
 

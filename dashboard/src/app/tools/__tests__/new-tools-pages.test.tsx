@@ -119,7 +119,7 @@ describe.each(NEW_SLUGS)("/tools/%s", (slug) => {
   it("has the base URL as canonical, and no rating invented in its structured data", async () => {
     const metadata = await generateMetadata({ params: Promise.resolve({ slug }) });
     expect((metadata.alternates as { canonical: string }).canonical).toBe(`https://hivra.cloud/tools/${slug}`);
-    expect(metadata.title).toBe(entry.metaTitle);
+    expect(metadata.title).toEqual({ absolute: entry.browserTitle });
     expect(entry.metaTitle.length).toBeLessThanOrEqual(55);
     const { container } = render(await ToolPage({ params: Promise.resolve({ slug }) }));
     const [schema] = readJsonLd(container);

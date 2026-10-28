@@ -1,193 +1,61 @@
 "use client";
 
 import Link from "next/link";
-import { pollWhenVisible } from "@/lib/poll-when-visible";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
 import { RollingNumber } from "@/components/ui/RollingNumber";
 import { Sparkline } from "@/components/stats/Sparkline";
-import { useAgentsDeployedPolling } from "@/hooks/useAgentsDeployedPolling";
 import { useLocale } from "@/components/i18n/LocaleProvider";
-import type { PublicStats } from "@/lib/public-stats";
+import type { TokenSurfaceView } from "@/lib/compliance/token-surface-view";
+import { DEFAULT_LOCALE } from "@/lib/i18n";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
+import StatsEditorial from "./StatsEditorial.client";
+import {
+  StatCard,
+  TokenOdometer,
+  heroLabelStyle,
+  heroNumberStyle,
+  hasDeployedCount,
+  heroPanelStyle,
+  useStatsData,
+  type StatsPageProps,
+} from "./stats-parts.client";
 
-interface Stats {
-  total: number;
-  last24h: number;
-  last7d: number;
-  series?: { date: string; count: number }[];
-  generatedAt?: string;
-}
-
-interface Props {
-  initial: Stats | null;
-  firstDeployIso: string | null;
-  platform: PublicStats | null;
-}
-
-const heroPanelStyle: CSSProperties = {
-  padding: "clamp(2.5rem, 6vw, 4.5rem) clamp(1rem, 4vw, 3rem)",
-  textAlign: "center",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
+type Props = StatsPageProps & {
+  /** What the token surfaces may show this viewer; resolved on the server. */
+  tokenView: TokenSurfaceView;
 };
-
-const heroLabelStyle: CSSProperties = {
-  display: "block",
-  fontSize: 10,
-  textTransform: "uppercase",
-  letterSpacing: "0.22em",
-  fontWeight: 700,
-  marginBottom: "1.25rem",
-};
-
-const heroNumberStyle: CSSProperties = {
-  fontSize: "clamp(2.75rem, 11vw, 7rem)",
-  fontWeight: 300,
-  lineHeight: 1,
-  letterSpacing: "-0.02em",
-  display: "inline-block",
-};
-
-// Deterministic odometer value: linearly play prev→curr over the wall-clock
-// span between the two checkpoints. Same inputs ⇒ same output for every viewer.
-function computeTokenDisplay(
-  prevVal: number | null,
-  prevAt: string | null,
-  currVal: number | null,
-  currAt: string | null,
-  fallback: number
-): number {
-  if (prevVal == null || currVal == null || !prevAt || !currAt) return fallback;
-  const p = Date.parse(prevAt);
-  const c = Date.parse(currAt);
-  const span = c - p;
-  if (!Number.isFinite(span) || span <= 0 || currVal < prevVal) return currVal;
-  const frac = Math.min(Math.max((Date.now() - c) / span, 0), 1);
-  return Math.round(prevVal + (currVal - prevVal) * frac);
-}
 
 /**
- * Smooth, deterministic "tokens processed" odometer. Given two hourly
- * cumulative-token checkpoints, it linearly plays the older→newer delta over a
- * full wall-clock hour — so it climbs at the last hour's real token velocity,
- * ~1h behind reality, identical for every viewer — and re-anchors when fresh
- * checkpoints poll in. The accurate base only counts toward an already-measured
- * value (never runs ahead of reality) and holds steady if a checkpoint is late;
- * a small ±low-digit flicker is layered on purely for "alive" motion, and every
- * other beat lands exactly back on the real figure.
+ * /stats. The English page carries Ash's copy (StatsEditorial). A visitor browsing in
+ * another language keeps the translated page below until the copy is translated.
  */
-function TokenOdometer({
-  prevVal,
-  prevAt,
-  currVal,
-  currAt,
-  fallback,
-  locale,
-  reduceMotion,
-}: {
-  prevVal: number | null;
-  prevAt: string | null;
-  currVal: number | null;
-  currAt: string | null;
-  fallback: number;
-  locale: string;
-  reduceMotion: boolean;
-}) {
-  // Stable first paint (no Date.now ⇒ no hydration mismatch); the effect's
-  // first (async) tick swaps in the live value on mount.
-  const [value, setValue] = useState<number>(() => prevVal ?? currVal ?? fallback);
-
-  useEffect(() => {
-    // Alternate, on a calm randomized cadence (~0.35–0.65s), between the EXACT
-    // accurate total and that total + a small random low-digit offset. The
-    // number visibly churns ("random") but lands back on the real figure every
-    // other beat — and re-anchors to fresh checkpoints on each 15s poll.
-    let exact = true;
-    let timer = setTimeout(function tick() {
-      const base = computeTokenDisplay(prevVal, prevAt, currVal, currAt, fallback);
-      setValue(exact || reduceMotion ? base : base + Math.floor(Math.random() * 1000));
-      exact = !exact;
-      timer = setTimeout(tick, reduceMotion ? 2000 : 350 + Math.random() * 300);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [prevVal, prevAt, currVal, currAt, fallback, reduceMotion]);
-
-  return (
-    <span
-      className="serif"
-      aria-label="Tokens processed, counting live"
-      style={{
-        display: "block",
-        fontSize: "clamp(1.75rem, 6vw, 4.5rem)",
-        fontWeight: 300,
-        color: "var(--ink-black)",
-        lineHeight: 1,
-        letterSpacing: "-0.02em",
-        fontVariantNumeric: "tabular-nums",
-      }}
-    >
-      {value.toLocaleString(locale)}
-    </span>
-  );
+export default function StatsPageContent(props: Props) {
+  const { locale } = useLocale();
+  if (locale === DEFAULT_LOCALE) return <StatsEditorial {...props} />;
+  return <TranslatedStats initial={props.initial} firstDeployIso={props.firstDeployIso} platform={props.platform} />;
 }
 
-export default function StatsPageContent({ initial, firstDeployIso, platform }: Props) {
+function TranslatedStats({ initial, firstDeployIso, platform }: StatsPageProps) {
   const reduceMotion = useReducedMotion();
   const { copy, locale } = useLocale();
   const t = copy.stats.page;
-  const { stats, bumped } = useAgentsDeployedPolling({ initial, includeSeries: true });
+  const data = useStatsData({ initial, firstDeployIso, platform }, locale);
 
-  // Live refresh of the platform counters — 30s cadence, edge-cacheable (the
-  // route returns `public, s-maxage`), so viewers ride Vercel's edge cache
-  // instead of each tick hitting the Fluid function. runningNow is a live
-  // count; harvested/synced aggregates move on their crons.
-  const [platformStats, setPlatformStats] = useState<PublicStats | null>(platform);
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      try {
-        const res = await fetch("/api/stats/public");
-        if (res.ok && alive) setPlatformStats((await res.json()) as PublicStats);
-      } catch {
-        /* keep last good values */
-      }
-    };
-    tick();
-    const id = setInterval(pollWhenVisible(tick), 30_000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  const total = stats?.total ?? null;
-  const last24h = stats?.last24h ?? null;
-  const last7d = stats?.last7d ?? null;
-  const series = stats?.series ?? null;
-
-  const runningNow = platformStats?.runningNow ?? null;
-  const tokensProcessed = platformStats?.tokensProcessed ?? null;
-  const tokenAnchorPrev = platformStats?.tokensAnchorPrev ?? null;
-  const tokenAnchorPrevAt = platformStats?.tokensAnchorPrevAt ?? null;
-  const tokenAnchorCurr = platformStats?.tokensAnchorCurr ?? null;
-  const tokenAnchorCurrAt = platformStats?.tokensAnchorCurrAt ?? null;
-  const models = platformStats?.models ?? 0;
-  const providers = platformStats?.providers ?? 0;
-
-  const rtf = useMemo(() => {
-    try {
-      return new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
-    } catch {
-      return null;
-    }
-  }, [locale]);
+  const { series, bumped, runningNow, tokensProcessed, models, providers } = data;
+  // A failed lookup comes back as all zeros: show no figure rather than a false 0.
+  const countAvailable = hasDeployedCount({
+    total: data.total ?? Number.NaN,
+    last24h: data.last24h ?? Number.NaN,
+    last7d: data.last7d ?? Number.NaN,
+  });
+  const total = countAvailable ? data.total : null;
+  const last24h = countAvailable ? data.last24h : null;
+  const last7d = countAvailable ? data.last7d : null;
 
   const firstDeployFormatted = useMemo(() => {
-    if (!firstDeployIso) return "—";
+    if (!firstDeployIso) return "-";
     try {
       return new Date(firstDeployIso).toLocaleDateString(locale, {
         year: "numeric",
@@ -199,20 +67,9 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
     }
   }, [firstDeployIso, locale]);
 
-  const [mountedAtMs] = useState(() => Date.now());
-
-  const firstDeployRelative = useMemo(() => {
-    if (!firstDeployIso || !rtf) return null;
-    const ms = mountedAtMs - new Date(firstDeployIso).getTime();
-    const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-    if (days <= 0) return rtf.format(0, "day");
-    if (days < 30) return rtf.format(-days, "day");
-    const months = Math.floor(days / 30);
-    return rtf.format(-months, "month");
-  }, [firstDeployIso, rtf, mountedAtMs]);
-
   return (
     <main
+      id="main-content"
       style={{
         maxWidth: 1000,
         margin: "0 auto",
@@ -311,7 +168,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
             </span>
             {total === null ? (
               <span className="serif" style={{ ...heroNumberStyle, color: "var(--text-muted)" }}>
-                —
+                -
               </span>
             ) : (
               <RollingNumber
@@ -324,7 +181,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
             )}
           </div>
 
-          {/* Agents live now */}
+          {/* Agents and computers running now */}
           <div
             className="min-w-0 border-t border-[var(--etched-border)] sm:border-t-0 sm:border-l"
             style={heroPanelStyle}
@@ -353,17 +210,17 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
                   display: "inline-block",
                 }}
               />
-              Agents live now
+              Agents and computers running now
             </span>
             {runningNow === null ? (
               <span className="serif" style={{ ...heroNumberStyle, color: "var(--text-muted)" }}>
-                —
+                -
               </span>
             ) : (
               <RollingNumber
                 value={runningNow}
                 locale={locale}
-                ariaLabel={`${runningNow.toLocaleString(locale)} agents live now`}
+                ariaLabel={`${runningNow.toLocaleString(locale)} agents and computers running now`}
                 className="serif"
                 style={{ ...heroNumberStyle, color: "var(--gold-leaf)" }}
               />
@@ -372,7 +229,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
         </div>
       </motion.div>
 
-      {/* Tokens processed — headline throughput, the third top-line stat */}
+      {/* Tokens processed: headline throughput, the third top-line stat */}
       {tokensProcessed !== null && tokensProcessed > 0 && (
         <div
           style={{
@@ -391,10 +248,10 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
             Tokens processed
           </span>
           <TokenOdometer
-            prevVal={tokenAnchorPrev}
-            prevAt={tokenAnchorPrevAt}
-            currVal={tokenAnchorCurr}
-            currAt={tokenAnchorCurrAt}
+            prevVal={data.tokenAnchorPrev}
+            prevAt={data.tokenAnchorPrevAt}
+            currVal={data.tokenAnchorCurr}
+            currAt={data.tokenAnchorCurrAt}
             fallback={tokensProcessed}
             locale={locale}
             reduceMotion={!!reduceMotion}
@@ -433,7 +290,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
         <StatCard
           label={t.cards.firstDeploy}
           valueText={firstDeployFormatted}
-          subtext={firstDeployRelative}
+          subtext={data.firstDeployRelative}
           locale={locale}
         />
       </div>
@@ -463,7 +320,7 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
                 fontWeight: 600,
               }}
             >
-              Cumulative — tap or hover a day for its count
+              Cumulative: tap or hover a day for its count
             </p>
           </header>
           <Sparkline
@@ -517,78 +374,5 @@ export default function StatsPageContent({ initial, firstDeployIso, platform }: 
         </p>
       </div>
     </main>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  valueText,
-  subtext,
-  accent,
-  locale,
-}: {
-  label: string;
-  value?: number | null;
-  valueText?: string;
-  subtext?: string | null;
-  accent?: boolean;
-  locale: string;
-}) {
-  const display =
-    valueText ??
-    (value === null || value === undefined ? "—" : `+${value.toLocaleString(locale)}`);
-  return (
-    <div
-      style={{
-        border: "1px solid var(--etched-border)",
-        background: "rgba(255, 44, 45, 0.025)",
-        padding: "1.75rem 1.5rem",
-        textAlign: "center",
-      }}
-    >
-      <span
-        className="mono"
-        style={{
-          display: "block",
-          fontSize: 10,
-          textTransform: "uppercase",
-          letterSpacing: "0.18em",
-          color: "var(--text-muted)",
-          fontWeight: 600,
-          marginBottom: "0.85rem",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        className="serif"
-        style={{
-          display: "block",
-          fontSize: "clamp(1.5rem, 3.5vw, 2.25rem)",
-          fontWeight: 300,
-          color: accent ? "var(--gold-leaf)" : "var(--ink-black)",
-          lineHeight: 1.1,
-        }}
-      >
-        {display}
-      </span>
-      {subtext && (
-        <span
-          className="mono"
-          style={{
-            display: "block",
-            marginTop: "0.5rem",
-            fontSize: 9,
-            textTransform: "uppercase",
-            letterSpacing: "0.16em",
-            color: "var(--text-muted)",
-            fontWeight: 600,
-          }}
-        >
-          {subtext}
-        </span>
-      )}
-    </div>
   );
 }

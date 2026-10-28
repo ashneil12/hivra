@@ -23,6 +23,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getCreditSummary, deriveReservedCreditBalance } from "@/lib/billing/credits";
 import { getLatestHermesTokenHoldingSnapshot } from "@/lib/billing/token-holdings";
 
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 jest.mock("@/lib/billing/credits", () => ({
   getCreditSummary: jest.fn(),

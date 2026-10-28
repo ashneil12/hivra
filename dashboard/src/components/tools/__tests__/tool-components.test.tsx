@@ -11,6 +11,7 @@ import HostingCostCalculatorTool from "../HostingCostCalculatorTool";
 import LimitResetCalculatorTool from "../LimitResetCalculatorTool";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 import { TOOLS_CTA } from "@/lib/tools/tool-catalog";
+import { KEEP_AWAKE_DEFAULTS, buildKeepAwake } from "@/lib/tools/keep-awake";
 import { unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
 
@@ -106,11 +107,11 @@ describe("PlanCalculatorTool", () => {
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "never" } });
     expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/^Pro at \$20\/month is the cheapest plan that fits/);
 
-    // One short Sonnet session a week costs a little less at API list price than Pro.
+    // One short Sonnet session a week costs less at API list price than Pro.
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "1" } });
     fireEvent.change(container.querySelector("#pc-hours") as HTMLInputElement, { target: { value: "1" } });
     fireEvent.change(container.querySelector("#pc-opus") as HTMLInputElement, { target: { value: "0" } });
-    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/API billing is estimated cheaper: about \$19\.42\/month/);
+    expect(screen.getByTestId("pc-verdict")).toHaveTextContent(/API billing is estimated cheaper: about \$12\.55\/month/);
 
     // Without a Pro reading the tool refuses to guess a cap.
     fireEvent.change(container.querySelector("#pc-pro-hit") as HTMLSelectElement, { target: { value: "unknown" } });
@@ -121,7 +122,7 @@ describe("PlanCalculatorTool", () => {
     fireEvent.change(container.querySelector("#pc-days") as HTMLInputElement, { target: { value: "7" } });
     expect(screen.getByText("7h")).toBeInTheDocument();
 
-    expect(container).toHaveTextContent(/Prices and plan facts as of September 2026, from Anthropic/);
+    expect(container).toHaveTextContent(/Prices and plan facts as of September 2026 \(API rates as of October 2026\), from Anthropic/);
     // The button promises Claude Code, so it preselects the runtime.
     expect(screen.getByRole("link", { name: /run claude code on hivra/i })).toHaveAttribute(
       "href",
@@ -183,6 +184,12 @@ describe("AgentSurvivalCheckTool", () => {
     expect(initialScore).toBeLessThan(80);
     // The lid fix is honest about what caffeinate cannot do.
     expect(screen.getByText(/closed-display mode with an external display/)).toBeInTheDocument();
+    // Its snippet carries the flags the keep-awake builder prints when plugged in (-i idle sleep, -s system
+    // sleep), not the longer -dimsu set it once printed: -d keeps the display lit and -u does nothing here.
+    const builderFlags = buildKeepAwake(KEEP_AWAKE_DEFAULTS).headline.split(" ")[1];
+    expect(builderFlags).toBe("-is");
+    expect(screen.getByText(`caffeinate ${builderFlags}`, { selector: "pre" })).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/dimsu/);
 
     fireEvent.click(screen.getByLabelText("A managed always-on computer (Hivra or similar)"));
     const updated = screen.getByRole("img", { name: /survival score \d+ out of 100/i });
@@ -234,6 +241,9 @@ describe("HostingCostCalculatorTool", () => {
 
     // Default preset is the same size as Hivra's computer.
     expect(screen.getByText(/Same CPU and memory as Hivra's 2 vCPU, 4 GB computer/)).toBeInTheDocument();
+    // Hetzner says servers in that range are limited, so the default preset carries a note and the others do not.
+    const limited = "Hetzner says the number of servers in this range is limited, so you may not be able to order one when you look.";
+    expect(screen.getByText(limited)).toBeInTheDocument();
     expect(screen.getAllByText(/Hivra \$9\.99 plan/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("$120 over 12 monthly payments")).toBeInTheDocument();
     expect(screen.getByTestId("hc-verdict")).toHaveTextContent(/^The server was never the cost/);
@@ -259,6 +269,7 @@ describe("HostingCostCalculatorTool", () => {
     // A smaller preset is flagged as not like for like.
     fireEvent.change(container.querySelector("#hc-vps") as HTMLSelectElement, { target: { value: "vultr1gb" } });
     expect(screen.getByText(/Smaller than Hivra's 2 vCPU, 4 GB computer/)).toBeInTheDocument();
+    expect(screen.queryByText(limited)).not.toBeInTheDocument();
 
     expect(screen.getByText(/Prices as of September 2026/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /start on the \$9\.99 plan/i })).toHaveAttribute("href", "/get-started?plan=operator");

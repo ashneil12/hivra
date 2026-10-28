@@ -1,74 +1,52 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, Copy } from "lucide-react";
 import styles from "./TokenFacts.module.css";
 import PublicSite from "@/components/public-site/PublicSite";
-import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { HivraTokenPhase } from "@/lib/billing/token-registry";
-import { RESTRICTED_TOKEN_PAGE_COPY, getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import type { TokenPageAirdropFacts } from "@/lib/claim/conversion-state";
+import { DORMANT_TOKEN_PAGE_COPY, RESTRICTED_TOKEN_PAGE_COPY } from "@/lib/token-phase-copy";
 import {
-  formatLaunchInstantUtc,
   tokenPhaseFromEntries,
   tokenVerificationContent,
   type TokenPageEntry,
   type TokenPageEntryStatus,
 } from "@/lib/token-verification-content";
+import { CopyAddressButton } from "./CopyAddressButton";
 import { TokenGeoNotice } from "./TokenGeoNotice";
+import TokenLaunchedView from "./TokenLaunchedView";
+import PrelaunchSections from "./PrelaunchSections";
 
 const STATUS_LABEL: Record<TokenPageEntryStatus, string> = {
   live: "LIVE",
   legacy: "LEGACY",
-  // $HIVRA is on Base; the note under it names the instant Hivra starts using it.
+  // $HIVRA is on Base. Whether Hivra's token access and payments use it is a separate switch (see Billing).
   scheduled: "LIVE ON BASE",
   not_launched: "NOT LAUNCHED YET",
 };
 
+// Once $HIVRA is on Base, no note says new accounts use it or when Hivra starts to: new $HIVRA-based
+// access and payments appear in Billing only when their own published conditions are met.
 const ENTRY_NOTE: Record<"hermesos" | "hivra", Record<TokenPageEntryStatus, string>> = {
   hermesos: {
     live: "The existing $HermesOS contract. $HIVRA has not launched.",
-    legacy: "The legacy $HermesOS contract. Accounts that used it before $HIVRA launched can keep using it; new accounts use $HIVRA.",
+    legacy: "The legacy $HermesOS contract. Accounts that used it before $HIVRA launched can keep using it.",
     scheduled: "The existing $HermesOS contract.",
     not_launched: "The existing $HermesOS contract.",
   },
   hivra: {
-    live: "The $HIVRA contract. New token payments and holdings use it.",
+    live: "The $HIVRA contract.",
     legacy: "The $HIVRA contract.",
-    scheduled: "The $HIVRA contract. Hivra starts using it at the published switch time.",
+    scheduled: "The $HIVRA contract.",
     not_launched: "",
   },
 };
 
-/** The note under a listed contract. Only the scheduled phase needs more than the status. */
+/** The note under a listed contract. */
 function entryNote(entry: TokenPageEntry, phase: HivraTokenPhase): string {
-  if (phase === "scheduled") {
-    // $HIVRA is on Base but Hivra has not switched yet: never say "$HIVRA has not launched".
-    if (entry.key === "hermesos") return ENTRY_NOTE.hermesos.scheduled;
-    if (entry.activatesAt) {
-      return `The $HIVRA contract. Hivra starts using it at ${formatLaunchInstantUtc(entry.activatesAt)}.`;
-    }
-  }
+  // $HIVRA is on Base but not necessarily in use yet: never say "$HIVRA has not launched".
+  if (phase === "scheduled" && entry.key === "hermesos") return ENTRY_NOTE.hermesos.scheduled;
   return ENTRY_NOTE[entry.key][entry.status];
-}
-
-type CopyState = "idle" | "copied" | "failed";
-
-function CopyAddressButton({ value }: { value: string }) {
-  const [state, setState] = useState<CopyState>("idle");
-  useEffect(() => {
-    if (state === "idle") return;
-    const timer = window.setTimeout(() => setState("idle"), 2000);
-    return () => window.clearTimeout(timer);
-  }, [state]);
-  return <>
-    <button type="button" className="mono" onClick={async () => setState(await copyTextToClipboard(value) ? "copied" : "failed")}
-      style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, margin: "12px 0 16px", padding: "0 16px", border: "1px solid var(--public-line)", background: "transparent", color: "var(--public-text)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer" }}>
-      {state === "copied" ? <Check size={14} aria-hidden="true" style={{ color: "var(--public-accent)" }} /> : <Copy size={14} aria-hidden="true" />}
-      {state === "copied" ? "Address copied" : "Copy address"}
-    </button>
-    <span role="status" className="sr-only">{state === "copied" ? "Contract address copied" : state === "failed" ? "Copy failed. Select the address to copy it." : ""}</span>
-  </>;
 }
 
 /**
@@ -76,22 +54,48 @@ function CopyAddressButton({ value }: { value: string }) {
  * the $HIVRA phase, and with it the phase-dependent copy, is read from them.
  * `geoNotice` is set only when the token geo-policy blocks this viewer: the page then keeps the
  * factual contract, official account and access sections, adds the notice, and drops the proposals.
+ *
+ * Once $HIVRA is launched (scheduled or active), a viewer the geo-policy does not block reads
+ * Ash's website pack page (TokenLaunchedView). The layout below is the dormant page, and the
+ * page a blocked viewer reads in every phase; only the note under a launched contract changed,
+ * which no longer says new accounts use $HIVRA.
  */
 export default function TokenPageClient({
   entries,
   geoNotice = null,
+  airdropFacts = null,
+  airdropLookupHref = null,
+  migrationHref = null,
+  tokenSurfaces,
 }: {
   entries: TokenPageEntry[];
   geoNotice?: string | null;
+  /** The published snapshot and Airdrop wallet, set by the server once $HIVRA is launched and the viewer is not blocked. */
+  airdropFacts?: TokenPageAirdropFacts | null;
+  /** /token/airdrop, set by the server only when that lookup is served and the viewer is not blocked. */
+  airdropLookupHref?: string | null;
+  /** /token/migration, set by the server only when that page is served and the viewer is not blocked. */
+  migrationHref?: string | null;
+  /**
+   * HIVRA_NEW_TOKEN_SURFACES as the server read it. The switch is server-only, so
+   * a client render that is left to read it sees "off": the header would drop the
+   * litepaper link the server rendered and React would report a hydration mismatch.
+   */
+  tokenSurfaces?: boolean;
 }) {
   const phase = tokenPhaseFromEntries(entries);
-  const phaseCopy = getTokenPhaseCopy(phase).tokenPage;
+  if (phase !== "dormant" && !geoNotice) {
+    return <TokenLaunchedView entries={entries} airdropFacts={airdropFacts} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} tokenSurfaces={tokenSurfaces} />;
+  }
+  // Reached only while $HIVRA is dormant, or by a blocked viewer, who reads none of
+  // the phase copy below (the restricted copy replaces it and the prelaunch sections are dropped).
+  const phaseCopy = DORMANT_TOKEN_PAGE_COPY;
   // A blocked viewer reads the contracts and the access they already have, not the
   // status, proposal or qualify-for-compute lines (RESTRICTED_TOKEN_PAGE_COPY).
   const restricted = geoNotice ? RESTRICTED_TOKEN_PAGE_COPY : null;
   const copy = { ...phaseCopy, heroTitle: restricted?.heroTitle ?? phaseCopy.heroTitle, heroLead: restricted?.heroLead ?? phaseCopy.heroLead };
   const { officialAccounts, noTelegram, lookalikeWarning, riskLine } = tokenVerificationContent;
-  return <PublicSite>
+  return <PublicSite tokenSurfaces={tokenSurfaces}>
     <main className={styles.content} id="main-content" style={{ maxWidth: 1000, margin: "0 auto", padding: "clamp(3rem, 8vw, 7rem) var(--public-gutter)", lineHeight: 1.7 }}>
       <Link href="/ecosystem">Ecosystem</Link>
       <header style={{ margin: "2rem 0 3rem", maxWidth: 760 }}>
@@ -149,21 +153,13 @@ export default function TokenPageClient({
         <h2 id="access-title">Existing holder access</h2>
         {restricted
           ? <p>{restricted.accessParagraph}</p>
-          : <p>Eligible $HermesOS holdings are one way to qualify for compute access. Your account shows the verified wallet, balance and access status where holder access is enabled. Existing token payment options are shown only where available.</p>}
+          : <p>{phaseCopy.accessParagraph}</p>}
         <p>Open Billing to check your plan or manage an existing entitlement. Connecting a wallet is an optional action; ordinary card billing does not require one.</p>
         <Link href="/dashboard/billing">Open Billing</Link>
         <p style={{ color: "var(--public-muted)" }}>Self-hosting requires neither a token nor a Hivra account. A token balance never grants wider permissions on a computer or access to another person’s credentials.</p>
       </section>
-      {geoNotice ? null : <section id="proposals" aria-labelledby="proposals-title" style={{ borderTop: "1px solid var(--public-line)", padding: "2rem 0" }}>
-        <p className="mono" style={{ fontSize: 11 }}>{copy.migrationEyebrow}</p>
-        <h2 id="proposals-title">{copy.migrationHeading}</h2>
-        <p>{copy.migrationParagraphs[0]}</p>
-        <p>{copy.migrationParagraphs[1]}</p>
-        <h3>Utility and treasury proposals</h3>
-        <p>The wider proposal includes payments for useful work, publisher payouts, certification and agent budgets. Each depends on its own implementation and published terms. The ecosystem map shows which products are Next, Then or Research.</p>
-        <p>Proposed treasury spending would support development, operations and contributors. Spending rules, wallets and signing authority must be published before it starts. These proposals create no holder payout, company ownership, revenue claim, staking or yield.</p>
-        <p><a href="/docs/litepaper/">Read the full litepaper and economy proposal</a></p>
-      </section>}
+      {/* Reached by an unblocked viewer only while $HIVRA is dormant: the planned launch facts (token-launch-status.ts). */}
+      {geoNotice ? null : <PrelaunchSections />}
     </main>
   </PublicSite>;
 }

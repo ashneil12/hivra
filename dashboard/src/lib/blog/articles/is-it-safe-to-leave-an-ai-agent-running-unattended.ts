@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Mostly yes, if you control what the agent can touch, what it can spend, where it runs and what happens when it crashes. How to handle each risk.",
   publishedDate: "2026-08-04",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The scary failure is rare. The boring failure happens weekly.",
@@ -73,7 +73,7 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Try it with the boundaries already built",
+      heading: "Run it with the boundaries already built",
       paragraphs: [
         `If you want to run an agent unattended without assembling the isolation pieces yourself, [Hivra](/) launches Hermes, Claude Code or Codex on a private VM. [Plans start at ${ENTRY_PLAN_PRICE} a month](/pricing) for ${ENTRY_PLAN_SIZE}, paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. You bring your own AI login, keep your own spending limits, and can check on the agent from any browser. The permission decisions stay yours, including the Manage tab setting that decides how much a Claude Code or Codex agent may do on its computer.`,
       ],

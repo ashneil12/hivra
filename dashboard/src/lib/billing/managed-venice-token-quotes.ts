@@ -9,6 +9,7 @@ import {
   type PlatformTokenKey,
 } from "./token-registry";
 import { TokenNotAllowedError, resolveUserTokenAccess, type UserTokenAccess } from "./token-access";
+import { assertHivraReadyFor } from "./hivra-readiness";
 import { ensureManagedVeniceWalletAccount } from "./managed-venice-wallets";
 import {
   MANAGED_VENICE_HIDDEN_USER_BONUS_CAP_MICRO_USD,
@@ -1099,6 +1100,8 @@ async function resolveDepositToken(params: {
   const access = params.access ?? (await resolveUserTokenAccess(params.userId, { now: params.now }));
   const tokenKey = params.token ?? access.paymentToken;
   if (!access.allowedTokens.includes(tokenKey)) throw new TokenNotAllowedError(tokenKey, access.allowedTokens);
+  // A new $HIVRA deposit quote needs $HIVRA usable (live and passing the price gate).
+  await assertHivraReadyFor(access, tokenKey, { now: params.now });
   return requirePlatformToken(tokenKey);
 }
 

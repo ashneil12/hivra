@@ -1,0 +1,333 @@
+/* /about layout. The frame (.page, .main, .breadcrumbs, .masthead, .questions) comes from
+   components/public-editorial/secondary-site.module.css and is not touched; everything here is local.
+
+   The page is long prose, so it is laid out as a ledger of rows rather than a stack of cards:
+   - story rows: the section title in a left column, the text in a 68 character column;
+   - "what you can do today": a definition list whose terms line up with those titles;
+   - "what Hivra is not": four statements in two columns, separated by hairlines;
+   - one callout for the lookalike-domain warning.
+   Colours are the public site tokens only, so light and dark both follow the frame. */
+
+/* The masthead shares the section grid, so the supporting paragraphs start where every section's text starts. */
+.mastheadGrid,
+.sections,
+.notice {
+  --about-label: minmax(180px, 280px);
+  --about-gap: clamp(32px, 6vw, 96px);
+}
+
+.mastheadGrid {
+  display: grid;
+  grid-template-columns: var(--about-label) minmax(0, 1fr);
+  column-gap: var(--about-gap);
+}
+
+.mastheadGrid > h1,
+.mastheadGrid > p {
+  grid-column: 1 / -1;
+}
+
+.mastheadMore {
+  grid-column: 2;
+  display: grid;
+  gap: 18px;
+  max-width: 62ch;
+  margin-top: 28px;
+}
+
+.mastheadMore p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+/* A section whose title sits in the left column. */
+.row {
+  display: grid;
+  grid-template-columns: var(--about-label) minmax(0, 1fr);
+  column-gap: var(--about-gap);
+  padding-block: 56px;
+  border-top: 1px solid var(--etched-border);
+  scroll-margin-top: 110px;
+}
+
+.row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* A section whose title sits above full-width content. */
+.wide {
+  padding-block: 56px;
+  border-top: 1px solid var(--etched-border);
+  scroll-margin-top: 110px;
+}
+
+.row > h2,
+.wide > h2,
+.notice > h2 {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(22px, 2vw, 28px);
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.row > h2 {
+  position: sticky;
+  top: 110px;
+  align-self: start;
+}
+
+.wide > h2 {
+  margin-bottom: 36px;
+}
+
+.prose {
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.85;
+  overflow-wrap: break-word;
+}
+
+.prose p {
+  max-width: 68ch;
+  margin: 0 0 22px;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+.prose a,
+.ledger a,
+.statement a,
+.notice a {
+  color: var(--ink-black);
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 4px;
+}
+
+.prose a:hover,
+.ledger a:hover,
+.statement a:hover,
+.notice a:hover {
+  color: var(--gold-leaf);
+}
+
+.prose strong,
+.statement strong,
+.notice strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* The tools Hivra is planning: a dashed rule marks them as plans, not products. */
+.planned {
+  padding-left: 22px;
+  border-left: 2px dashed var(--gold-leaf);
+}
+
+/* What you can do today: the term lines up with the section titles above and below it. */
+.ledger {
+  margin: 0;
+}
+
+.ledgerRow {
+  display: grid;
+  grid-template-columns: var(--about-label) minmax(0, 1fr);
+  column-gap: var(--about-gap);
+  padding-block: 26px;
+  border-top: 1px solid var(--etched-border);
+}
+
+.ledger dt {
+  color: var(--ink-black);
+  font-size: 19px;
+  line-height: 1.45;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ledger dd {
+  max-width: 68ch;
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+/* What Hivra is not: four statements, two columns, hairlines instead of boxes. */
+.statements {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--about-gap);
+}
+
+.statement {
+  margin: 0;
+  padding: 24px 0 40px;
+  border-top: 1px solid var(--etched-border);
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.statement strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 19px;
+  line-height: 1.45;
+  letter-spacing: -0.02em;
+}
+
+/* Contact: the link and what it is for, side by side from 700px. */
+.contactList {
+  max-width: 760px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--etched-border);
+}
+
+.contactList li {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 4px 28px;
+  max-width: none;
+  margin: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--etched-border);
+}
+
+.contactList strong {
+  color: var(--ink-black);
+  font-weight: 600;
+}
+
+/* The lookalike-domain warning: the one boxed block on the page. Its columns line up with the rows above. */
+.notice {
+  display: grid;
+  grid-template-columns: minmax(150px, calc(280px - 51px)) minmax(0, 1fr);
+  column-gap: var(--about-gap);
+  margin-top: 8px;
+  padding: 36px 48px;
+  border: 1px solid var(--etched-border);
+  border-left: 3px solid var(--gold-leaf);
+  background: var(--public-surface);
+  scroll-margin-top: 110px;
+}
+
+.notice > h2 {
+  grid-column: 1;
+}
+
+.notice p {
+  grid-column: 2;
+  max-width: 62ch;
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black));
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+/* The shared FAQ heading is set small; here it is a section title like the others. */
+.faq > section > h2 {
+  color: var(--ink-black);
+  font-size: clamp(22px, 2vw, 28px);
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+
+/* Answers keep a reading measure, as the pricing and home questions do. */
+.faq section details > p,
+.faq section details > div {
+  max-width: 68ch;
+}
+
+@media (max-width: 900px) {
+  .statements {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .statement {
+    max-width: 68ch;
+    padding-bottom: 28px;
+  }
+}
+
+@media (max-width: 800px) {
+  .mastheadGrid {
+    display: block;
+  }
+
+  .notice {
+    display: block;
+    padding: 28px 22px;
+  }
+
+  .notice > h2 {
+    margin-bottom: 14px;
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: 40px;
+  }
+
+  .row > h2 {
+    position: static;
+    margin-bottom: 20px;
+  }
+
+  .wide {
+    padding-block: 40px;
+  }
+
+  .wide > h2 {
+    margin-bottom: 24px;
+  }
+
+  .ledgerRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding-block: 22px;
+  }
+}
+
+@media (max-width: 700px) {
+  .mastheadMore p,
+  .prose,
+  .ledger dd,
+  .statement,
+  .notice p {
+    font-size: 16px;
+  }
+
+  .contactList li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .planned {
+    padding-left: 16px;
+  }
+}
+
+@media print {
+  .row > h2 {
+    position: static;
+  }
+
+  .row,
+  .wide,
+  .notice {
+    break-inside: avoid;
+  }
+}

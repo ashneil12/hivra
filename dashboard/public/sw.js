@@ -15,7 +15,9 @@
 //
 // Scope guard: authenticated pages, APIs, streams, gateway traffic, agent data,
 // signed URLs, cross-origin traffic, and mutations never reach CacheStorage.
-self.HERMES_SW_BUILD = "2026-08-24T00:00Z-workspace-public-shell";
+// Bump this whenever the /offline page changes: an installed PWA keeps the shell it cached under the
+// old marker until the marker changes. (Last bumped for the 2026-10 copy overhaul of /offline.)
+self.HERMES_SW_BUILD = "2026-10-21T00:00Z-workspace-public-shell";
 
 // Cache name is keyed off the build marker so a deploy that bumps
 // HERMES_SW_BUILD lands in a fresh cache and the old one is purged on activate.

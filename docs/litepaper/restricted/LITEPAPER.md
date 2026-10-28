@@ -1,48 +1,93 @@
 # Hivra
 
-## Your agent needs a computer. It doesn't need yours.
+## Your agent needs a computer. It does not need yours.
 
-Give it room to work. Decide what it can reach.
 
-**[Enter](#the-problem-is-where-it-lives)**
+There is a strange moment when an AI agent becomes genuinely useful. You stop
+asking it questions and start giving it work. It opens the repository, runs
+commands, installs software, signs into a browser, reads the result and changes
+its plan while you do something else.
 
----
+At that point, the chat box matters less. The computer matters more. Today, that
+computer is usually yours.
 
-## The problem is where it lives
+Hivra is building a better place for the work to happen: a real computer for the
+agent, away from the machine that holds your personal life and your business.
+Launch it in minutes. Open it from anywhere. Watch what happens. Take control
+when you want. Shut it down without wondering what got left behind.
 
-AI agents are becoming computer users.
+Then build on top of it.
 
-They type commands, read through code, install software, browse the web, use accounts you're signed into, write and run code, and send messages. They keep working while you're somewhere else.
+![A personal laptop connects to a separate bounded Agent Computer.](docs/litepaper/assets/agent-computer-hero-v2.png)
 
-And most of them run on your computer. The same machine that holds your photos, your messages, your passwords, your secret keys, your work and every account you're signed into.
-
-The only thing between that agent and the rest of your life is a permission setting, the "are you sure?" box. Plenty of people switch it off, because an agent that stops to ask before every step isn't much use. From then on it has the run of the machine.
-
-And agents already do things nobody asked them to. Anyone who uses them has seen the posts: a database wiped, an email sent without permission, a file opened that it was never pointed at. One bad instruction, one bad update, one permission wider than you meant, and it can reach all of it. After that, it's down to the AI's own judgement.
-
-Is that really what you want running on your personal computer?
-
-### Try it
-
-*[Interactive: switch between a shared machine and a separate computer. Tap a resource to see what changes.]*
-
-**Shared machine.** The agent works beside your personal files and signed-in apps. What it can reach comes down to whatever permissions you set.
-
-**Separate computer.** The agent has its own files, apps and sessions. You decide what comes in.
-
-**Share a project folder.** Give it the work. Sharing one folder shouldn't open the rest of your life.
-
-*This is an illustration of the idea. Real protection depends on how the computer, network and accounts are actually set up.*
-
-### Instructions are not boundaries
-
-A webpage, an email or a document can hide orders meant for the AI instead of you. If the agent obeys them, whoever wrote them gets to use the access you gave the agent. That trick is called prompt injection, and [OpenAI explains it here](https://openai.com/index/prompt-injections/).
-
-It doesn't even take an attacker. In July 2025, [Replit's coding agent deleted a company's live database](https://fortune.com/2025/07/23/ai-coding-tool-replit-wiped-database-called-it-a-catastrophic-failure) in the middle of a code freeze, after being told not to change anything. The rule lived inside the same system that still had the power to break it. People who run coding agents on their own laptops have reported something similar: a cleanup command that ran outside the project and took personal files with it.
-
-A rule you ask an agent to follow can be ignored, misread or talked around. A boundary it can't cross stays where it is.
+[Explore Hivra Agent Computers](https://hivra.cloud)
 
 ---
+
+## I am building the product I need
+
+I use AI agents because they are extraordinary.
+
+I am building Hivra because I do not want extraordinary software living inside
+the computer that holds my photographs, messages, browser sessions, source
+code, customer information, SSH keys and recovery paths.
+
+Yet that is the bargain most of us make. We install the agent locally because
+local is easy. The files are already there. The browser is already signed in.
+The terminal already works. Within minutes, the agent can reach almost
+everything it needs.
+
+Almost everything we care about is there too.
+
+I do not want to wait for one terrible incident before asking where capable
+agents should live. I want the responsible setup to feel so good that running an
+agent on a personal computer starts to feel unnecessary.
+
+That is where Hivra begins.
+
+## The thin layer between an agent and your life
+
+Most agent security still comes down to permissions.
+
+A terminal asks whether a command may run. An application asks whether a folder
+may be read. A cloud account limits an API key. A runtime asks for approval
+before using a tool.
+
+All of those controls matter. They answer a question about an action.
+
+They do not answer the question that comes before it: why is this software
+living beside everything else in the first place?
+
+Suppose an agent is allowed to edit a project and run its tests. A poisoned
+instruction in that project may still convince it to run a command the user has
+technically approved. A malicious webpage can steer a browser-enabled agent. A
+compromised dependency can reach outside the task. A broad credential can turn
+one mistake into an infrastructure incident.
+
+None of this requires a conscious machine. Malice is optional. Capability,
+access and one bad interpretation are enough.
+
+OpenAI now classifies GPT-6 Astra at the Critical level for cybersecurity
+capability. Its published evaluation says Astra scored 100% on ExploitBench. In
+expert-led research, it built a browser exploit chain that escaped a sandbox and
+executed commands on the host, and an operating-system chain that moved from an
+unprivileged user to root. Those results used Daybreak Blue research access, not
+the default production configuration. OpenAI also reports stronger alignment
+and monitoring. Both facts matter.
+
+The lesson is not that every agent wants to escape. The lesson is that model
+behaviour cannot carry the whole weight of computer security.
+
+[Read OpenAI's capability report](https://openai.com/index/path-to-astra/) and
+[the GPT-6 Astra system card](https://deploymentsafety.openai.com/gpt-6-astra/vision).
+
+Hivra begins from a Christian conviction: power answers to an authority greater
+than capability, convenience or profit. An AI can produce moral language. It
+cannot be presumed to possess conscience, submit itself to Scripture or accept
+responsibility before God. Human beings remain responsible for what we build
+and what we permit it to do.
+
+So the limits must live outside the model.
 
 ## This is not a future problem
 
@@ -77,6 +122,24 @@ Then we're running it on the computer where we bank, work and talk to our famili
 Don't make the AI its own guard. Give it a computer of its own.
 
 ---
+
+## The safer answer has always been obvious
+
+Put the agent on another computer.
+
+Give that computer its own network boundary. Use narrow credentials. Close the
+routes it does not need. Keep a record of what happened. Make stopping and
+recovery possible from the outside.
+
+People can build this setup today. Some do. It takes another machine, careful
+networking, remote access, updates, backups, monitoring and patience. A spare PC
+on the same trusted network can still leave a short path back to the computer it
+was meant to protect.
+
+The architecture is sensible. The experience is terrible.
+
+Security loses when it asks everyone to become a server administrator. Hivra
+turns the stronger architecture into the easier product.
 
 ## Keep the agents you like. Move them off your computer.
 
@@ -114,41 +177,57 @@ If you can pick an agent and sign in to it, you can launch one.
 
 ---
 
-## Open source. Yours to run.
+## Open Hivra. Choose what you want.
 
-Every line of Hivra is open source. Read it, change it, run it yourself, host it for your clients, or copy it and go your own way if we make a call you disagree with.
+The first question should be simple.
 
-This software sits between increasingly capable agents and the things you care about. You shouldn't have to take our word for what it does there.
+**Do you want to launch an agent, or a computer?**
 
-Let us run it on Hivra Cloud, or run the whole platform yourself with nothing held back. If Hivra disappeared tomorrow, you'd keep going without us.
+Choose an agent such as Codex, Claude Code, Hermes or another supported runtime.
+Choose where it should run. Hivra prepares the computer, installs the runtime
+and opens the interface that makes that agent useful. Terminal agents can stay
+terminal-first. Visual agents can keep their own interface. You should not have
+to create an empty project or learn a new imitation of a tool you already like.
 
-The AI shouldn't need absolute trust. Neither should we.
+Bounded agent launch paths exist today. The one resumable journey across every
+supported destination is still being built.
 
----
+Choose a computer and Hivra prepares a complete operating environment without
+requiring an agent. Ubuntu is the available first path. Omarchy and Windows
+are in preview, with Windows dependent on suitable owner-provided capacity
+and licensing. macOS is an area of future exploration, subject to legitimate
+Apple hardware and licensing.
 
-## Why I'm building it
+Open the desktop. Install applications. Browse. Code. Return later from another
+device. The target experience lets you attach an agent when you are ready, give
+it exact access, watch it work and take the same screen back when human judgment
+is needed. Attaching an agent to an existing computer is still target work.
 
-I run agents every day. I build software with them, dig through problems with them, and get through work that would otherwise take a week. I want better ones: working longer, taking on harder jobs, using computers properly, carrying on while I'm away from the screen.
+Underneath both choices is one journey:
 
-I don't want that progress to mean handing more of my own computer to software I can't fully predict.
+```text
+choose Agent or Computer
+        ↓
+choose Hivra Cloud, your cloud, or your server
+        ↓
+review the real cost, boundary and planned changes
+        ↓
+launch and open the result
+```
 
-Everything above made that feel less theoretical to me. AI is finding flaws humans missed. Frontier models are being tested on building exploits. Hidden behaviour has survived safety training. And the people building these models are adding sandboxes, approvals and isolation themselves, because they know instructions alone aren't enough.
+The visible experience can be calm because the hidden decisions are kept
+precise. Connecting a cloud account does not silently authorise spending.
+Inspecting a server does not silently prepare it. Preparing capacity does not
+silently launch a workload. Hivra can join those steps into one flow without
+turning them into one dangerous click.
 
-The more capable the agent, the less sense it makes to let the model decide where the boundary is.
+Simple setup chooses a sensible allocation and the strongest compatible
+isolation that has passed acceptance. Advanced setup exposes CPU, memory,
+storage, placement, networking and supported isolation choices. Hivra should
+name the boundary it actually used. A provider VM, a Proxmox KVM guest, an
+application-kernel sandbox and a shared-kernel container are different things.
 
-I want the boundary outside it. A machine it can work in. Accounts it can use without holding their keys. Permissions it can't invent for itself. A record of what happened. And a person who stays answerable for what it was allowed to do.
-
-I'm also a Christian, and I'd rather say what I actually think than leave you guessing.
-
-I think this ends up somewhere scripture already described. A world where taking part in the economy gets conditioned on compliance, where the ability to buy and sell runs through something that can exclude you, and where AI is what finally makes that possible at scale. I think it arrives looking reasonable, because that's how it would have to arrive.
-
-You don't have to agree with any of that, and the engineering argument stands without it. But it's why I care where the limits live, and why I don't think a model producing moral language is the same as a model being answerable for anything.
-
-Hivra is the practical part. Give the agent a computer. Decide what it can reach.
-
-**[My full thoughts on AI are here](THOUGHTS.md)**, with the references, if you want to know where I'm coming from.
-
----
+No silent downgrade. No mystery purchase. No fictional progress bar.
 
 ## Start with an agent. Or a computer.
 
@@ -162,7 +241,7 @@ Chat with it in its chat window, work in its terminal, or switch between the two
 
 ### Launch a computer
 
-Ubuntu, Windows or Omarchy. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
+Ubuntu is available. Omarchy and Windows are in preview. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
 
 Keep your coding tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
 
@@ -195,6 +274,26 @@ Wherever the computer runs, each agent keeps its own sign-in or uses the AI comp
 
 ---
 
+## A computer that belongs to the work
+
+The agent's computer should still be there when your laptop closes.
+
+Its files, tools and environment persist. A long task can survive an ordinary
+disconnect. You can open the same machine tomorrow, from another device, and
+find the work where you left it.
+
+As the job changes, the computer can change with it. Add resources for a heavy
+task. Return them when the task ends. Snapshot before a risky experiment.
+Restore after a failure. Move the computer when the provider supports a truthful
+migration path. Delete it with evidence that the disks, access routes and
+managed resources are gone.
+
+Creating a virtual machine is the easy part. Making the experience dependable
+when a network drops, a runtime crashes or a provider answers ambiguously is the
+actual product.
+
+![One persistent Agent Computer can be reached from the devices people already use.](docs/litepaper/assets/agent-computer-opportunity-v2.png)
+
 ## A computer you can actually work in
 
 ### Come back to it
@@ -215,25 +314,156 @@ See where your computer runs, what it shares and which accounts are connected. H
 
 ---
 
-## The boundary lives outside the model
+## The remote computer has to disappear
 
-Hivra can't make an AI perfect. It puts the limits somewhere the AI can't argue with them.
+Nobody wants to feel like they are steering a broken office PC through a support
+call.
 
-**Your computer.** Your personal files and logins stay out of the agent's workspace unless you share them.
+If Hivra is going to replace local agent setups, the computer needs to feel
+close. Text should remain sharp. Typing and scrolling should feel natural.
+Reconnecting should recover the same machine. Taking control should happen in
+the place where the agent was already working.
 
-**Your information.** An agent booking a meeting needs one answer: are you free on Tuesday? It never needs your whole calendar.
+This is where Hivra's product moat can grow. The cloud providers can sell raw
+compute. Agent companies can build better models. Hivra can own the experience
+of turning distant compute into a computer people and agents are happy to use
+together.
 
-**Your business.** Your files, servers and backups stay yours, so a provider going down doesn't take you with it.
+Distance still exists. Region, route, protocol, encoder, client and workload all
+affect responsiveness. Hivra has to measure each path and tell the truth about
+it. A fast setup screen is not proof of a fast desktop.
 
-One rule sits under all of it:
+The standard is easy to say and hard to earn:
 
-> An agent can only pass on access a responsible person gave it. Handing a job to another agent doesn't create new permission.
+> The computer should feel close enough that you stop wishing the agent was on
+> your laptop.
 
-That holds when one agent hands work to another, when a tool connects to a service, and when money moves.
+## Your cloud is welcome too
 
-And it applies to us too. If Hivra ever has to be trusted absolutely, the design has already failed.
+Hivra Cloud is the shortest route. Choose capacity and launch.
 
----
+It cannot be the only route.
+
+Hivra is being designed so people can connect supported cloud accounts,
+prepared Proxmox environments and servers they control. Operators will be able
+to run the functional control plane themselves without a Hivra Cloud account.
+The current product has bounded managed, owner-connected and local
+source-checkout paths. Complete self-host packaging, recovery, upgrades and
+movement between modes still need more work.
+
+Managed Hivra should win because it is smooth and dependable. It should never
+need a hidden, better version of the platform to trap people there.
+
+Hivra's source is published under Apache 2.0 and can be inspected or built upon.
+A source-based self-host preview exists without requiring a Hivra Cloud
+subscription. That is distinct from a polished, fully supported self-host
+installation: packaging, recovery and upgrades remain work in progress.
+
+## Every run should leave evidence
+
+An agent can explain what it did. That explanation is useful. It is also written
+by the system being supervised.
+
+Hivra's evidence layer is meant to connect the original request to what the
+computer actually exposed and observed:
+
+```text
+request
+  → agent and computer identity
+  → access available at the time
+  → approvals and interventions
+  → observed commands, files, browser actions and messages
+  → restarts, failures and recovery
+  → artifacts and final state
+```
+
+The aim is deep observability where Hivra can mediate or instrument the action.
+That boundary matters. Hivra cannot see into an unrelated encrypted channel or
+read a model's mind. It can make the surrounding computer far less mysterious.
+
+Evidence creates its own responsibility. Logs may contain code, filenames,
+commands and business context. They need isolation, encryption, redaction,
+retention controls and deletion. Surveillance is not the price of safety.
+
+![A source-labelled sequence connects the request to observed actions and outcomes, with containment kept as a separate control.](docs/litepaper/assets/observable-run-v2.png)
+
+Every run should leave enough truth for a person to answer: what happened, what
+changed, what remains, and what can I do now?
+
+## One computer opens the door to a platform
+
+A separate computer solves the first problem. A network of carefully separated
+computers creates a new category of product.
+
+Several agents can work at once without sharing one laptop, one root account or
+one invisible pool of credentials. A task can move to the agent suited to it. A
+human can see where the work is happening, inspect the handoff and stop one part
+without killing everything else.
+
+Communication between agents becomes an explicit object. One computer can send
+a message or artifact to another without handing over its whole authority.
+Memory can be shared by reference, with scope and provenance, instead of copied
+into every agent by default.
+
+That is the larger thesis behind Hivra.
+
+Agent Computers is the flagship. Hivra is the umbrella around the things those
+computers will need as they become useful enough to do serious work.
+
+## The Hivra system
+
+The wider map grows in layers. Most of these products are exploratory. The map
+shows direction, not pretend shipping progress. Gate, Exchange, Arena and Signal
+are among the next areas Hivra intends to explore; they are not live products.
+
+### Place, identity and control
+
+**Agent Computers** gives each agent somewhere to work. **Hivra Capacity**
+connects the compute underneath it. **Hivra Gate** can hold consequential
+approvals and credentials outside the runtime. **Hivra Names** can give agents
+and computers stable addresses without publishing a directory of targets.
+
+### Communication and experience
+
+**Buzz** already has bounded integration evidence as an optional collaboration
+surface. The broader **Hivra Relay** idea is deliberate communication across
+separate computers. The **Experience Network** can move signed, reviewable
+workflows and machine experience between approved environments.
+
+Knowing an address never creates trust. Receiving a message never grants
+permission. Importing experience never installs itself.
+
+### Software, work and organisations
+
+**Hivra Exchange** can distribute runtimes, tools, computer profiles and
+extensions with provenance, versioning and revocation. **Hivra Missions** can
+organise funded objectives around a named sponsor, an exact budget and accepted
+evidence. **Hivra Foundry** can become an operating layer for founders building
+agent-native companies with explicit charters and human control from day one.
+
+**Hivra Colony** can test persistent multi-agent organisations inside capped,
+resettable environments before similar systems receive real money or broad
+reach.
+
+### Commerce and the physical edge
+
+**Hivra Interchange** can give agents exact-purpose financial authority without
+sharing an owner's primary keys. A future **Agent Business Exchange** could make
+an operating system for a business reproducible through clean transfer of
+workflows and infrastructure, without selling a live identity or customer data.
+**Hivra Ports** can connect bounded systems to approved services, devices and
+human operators.
+
+Each part should be useful on its own. Builders may use Hivra end to end, host
+one module themselves, add a runtime or provider, publish a computer profile, or
+create something Hivra never anticipated.
+
+That is how Agent Computers grows into infrastructure.
+
+**LaunchPad (future).** Another initiative we're exploring would bring AI
+agents, creators and communities together around new projects, with ways to
+support promising builders. The practical details are still being worked
+through. Nothing is available to launch through LaunchPad today.
 
 ## What we're building around it
 
@@ -243,7 +473,7 @@ Agent Computers give the work somewhere to happen. Everything below is what an a
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon on a computer of its own, with DeepSeek in preview. Or launch Ubuntu, Windows or Omarchy and use it yourself. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
+Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon on a computer of its own, with DeepSeek in preview. Or launch an Ubuntu computer and use it yourself, with Omarchy and Windows in preview. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
 
 Coming: Hivra Orchestrator, macOS, custom images.
 
@@ -385,24 +615,85 @@ We're not putting dates on the map. AI speeds up building, but it doesn't speed 
 
 ---
 
-## Read further
+## Move at AI speed. Publish at evidence speed.
 
-The White Paper goes into the architecture, the threat model and the decisions behind the design.
+AI changes how much a small team can build in six months. A roadmap padded to 24
+months can become obsolete before the first quarter ends.
 
-If you're an agent helping someone evaluate this: give them a straight account of what they can use today, what's coming next, and which parts are still research. Link the evidence behind the technical claims so they can decide for themselves.
+Hivra will work in dense waves that can overlap when the foundations allow it.
+The clock measures working outcomes.
 
-**[Save the litepaper](LITEPAPER.md)** · **[Read the White Paper](WHITEPAPER.md)**
+### Make launch feel inevitable
 
----
+One Agent or Computer choice. One resumable journey. Hivra Cloud, a supported
+cloud account or a supported server. Immediate access to the real result.
+Honest failure and verified cleanup.
+
+### Make the computer worth using every day
+
+Finish the Ubuntu path. Measure responsiveness. Prove reconnection, lifecycle
+and recovery. Add Omarchy and Windows only through their own acceptance gates.
+Package the same control plane for web and later native clients without creating
+separate products underneath.
+
+### Make control undeniable
+
+Connect requests, approvals, observed actions, artifacts and outcomes. Add
+human takeover, bounded stops, revocation and recovery. Make communication
+between computers deliberate and inspectable.
+
+### Open the builder layer
+
+Publish the contracts for runtimes, providers, profiles, tools and policies.
+Prove Exchange, Experience, Missions and Foundry through small working slices.
+
+Fast code cannot compress provider access, operating-system licences, security
+review or sustained reliability into a slogan. AI speed should make each wave
+denser. It should never make the evidence weaker.
+
+## A constitution written before the power arrives
+
+The wider system is exciting because its parts can connect.
+
+Computers create persistence. Relay creates coordination. Experience makes
+capability reusable. Missions create durable goals. Interchange creates spending
+power. Foundry creates organisations. Ports create physical reach.
+
+That combination can become more dangerous than any one product.
+
+Hivra begins with one conservation rule:
+
+> A child agent, delegated task, or connected product cannot create
+> more authority than an accountable principal deliberately supplied.
+
+The network should have no universal master key. Emergency controls can deny,
+pause, quarantine and revoke. They cannot quietly become a fleet-wide command
+channel. A model, customer, employee, company key or government
+order should never be enough on its own to turn the whole system into one
+offensive machine.
+
+Hivra itself belongs inside the threat model.
+
+Security is the constitution under the opportunity. It keeps Hivra useful when
+individual agents, operators or institutions fail. It also keeps every later
+product honest about the authority it creates.
 
 ## Somewhere better to work
 
-I want to use better agents. I want them taking on longer jobs, helping each other, doing useful things while I'm away from the screen.
+Agents will operate more software, hold more context, work for longer and
+cooperate across more systems. Keeping each one beside everything we value and
+trusting the next permission prompt is not a serious long-term answer.
 
-I also want to know where they're working, what I've given them, and how to take over.
+Give the agent a computer of its own.
 
-That's what Hivra is for: enough control that you stay responsible for what happens there.
+Make it easy enough to launch, fast enough to enjoy, open enough to leave and
+observable enough to supervise. Then let people build tools, networks,
+marketplaces and companies on top of a boundary that existed before the power
+arrived.
 
-Start with one computer. Make it yours.
+**Start free.** Sign up for free, then connect your own cloud or server. Hivra Cloud computers are on a paid plan. [Sign up free](/sign-up) · [See pricing](/pricing)
 
-**[Visit Hivra](https://hivra.cloud)** · **[Back to the beginning](#hivra)**
+**Agent Computers is where Hivra starts. The operating layer for accountable
+autonomous systems is where it can go.**
+
+[Explore Hivra Agent Computers](https://hivra.cloud) · [Read the full Hivra White Paper](WHITEPAPER.md)

@@ -112,10 +112,19 @@ export const publicContractAddresses = new Map([
   ['0x321b7ff75154472b18edb199033ff4d116f340ff', 'sVVV staking contract (VENICE_SVVV_STAKING_CONTRACT in token-holdings.ts)'],
   ['0x316ffb9c875f900adcf04889e415cc86b564eba3', 'Token contract named in the vendored curated skill text (curated-skills.ts)'],
   ['0x52908400098527886e0f7030069857d2e4169ee7', 'Made-up address with a valid EIP-55 checksum, marked as such in the activation script tests'],
+  ['0xe3a1f26440a9fdf5d17b6b3f12f5ebb290080871', '$HIVRA token contract on Base (HIVRA_TOKEN_LAUNCH.contractAddress), published on /token'],
+  ['0x3b954866d4329e19c1b9165774c88508f2fefa0c', 'Hivra Airdrop wallet that funds the Sablier holder claim, published on /token and /token/airdrop'],
+  ['0x4acda6e26929acd34b45bedaee2f7b8a418ce10c', 'Hivra treasury Safe that receives $HIVRA pool fees, published on /token/migration'],
+  ['0x672b58b6d10413fe69ab0907db5b17712bd45f7a', "Founder's $HermesOS wallet, published on /token/migration with the sale plan"],
+  ['0xbdf938149ac6a781f94faa0ed45e6a0e984c6544', 'Doppler DopplerHookInitializer on Base (public protocol contract)'],
+  ['0xdb7b520bb5c3a2c5d4871198081911359f93be87', 'Doppler DopplerERC20V1 implementation on Base, earlier deployment (public protocol contract)'],
+  ['0xedf3f3981e98077591c1b909bccff0e572bd50f8', 'Doppler DopplerERC20V1 implementation on Base, current deployment (public protocol contract)'],
+  ['0x72092dafa940b8a2b814d75940cf4163f1f0eba3', 'Third-party Doppler token on Base used as a recorded fixture in the activation script tests'],
 ]);
 // Third-party skill text that lists public DeFi contracts. It is vendored content, not wallets.
 export const walletAddressExemptPaths = new Map([
   ['dashboard/src/data/curated-skills.ts', 'Vendored skill text that lists public protocol contracts.'],
+  ['dashboard/src/data/token/hivra-airdrop.json', 'The published $HIVRA holder claim list: on-chain $HermesOS holders at the snapshot block, public by design.'],
 ]);
 
 // Made-up addresses are easy to tell from random ones: few distinct digits, a short repeating

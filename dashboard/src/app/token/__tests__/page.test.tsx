@@ -6,6 +6,12 @@ import { render, screen, within } from "@testing-library/react";
 
 import TokenVerificationPage from "../page";
 
+// This suite covers the dormant /token page; the committed launch block is filled in, so pin an empty one.
+// The launched page is covered in page.dual-token.test.tsx, page.client-props.test.tsx and TokenLaunchedView.test.tsx.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("next/link", () => {
   const MockLink = ({
     href,
@@ -94,15 +100,16 @@ jest.mock("framer-motion", () => {
 });
 
 describe("/token page", () => {
-  it("separates the verified existing contract and current access from proposals", () => {
+  it("separates the verified existing contract and current access from proposals while $HIVRA is dormant", () => {
     render(<TokenVerificationPage />);
     const main = within(screen.getByRole("main"));
     expect(main.getByRole("heading", { name: "$HermesOS and Hivra." })).toBeInTheDocument();
     expect(main.getByText("0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3")).toBeInTheDocument();
     expect(main.getByRole("link", { name: "View the contract on BaseScan" })).toHaveAttribute("href", "https://basescan.org/token/0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3");
     expect(main.getByRole("heading", { name: "Existing holder access" })).toBeInTheDocument();
-    expect(main.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
-    expect(main.getByText(/No migration action is offered/)).toBeInTheDocument();
+    expect(main.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
+    expect(main.getByRole("heading", { name: "Token launch in preparation" })).toBeInTheDocument();
+    expect(main.getByText(/Migration claims not yet open/)).toBeInTheDocument();
     expect(main.getByText(/Use Hivra and pay by card without connecting a wallet/)).toBeInTheDocument();
     // The dashboard calls this route "Billing" everywhere (nav, Settings row, page eyebrow).
     expect(main.getByRole("link", { name: "Open Billing" })).toHaveAttribute("href", "/dashboard/billing");

@@ -65,8 +65,43 @@ function finalize(raw: { date: string; title: string; body: string[] }): Changel
 }
 
 /**
+ * Release-note sections that name the Bankr wallet. Bankr is token-surface wording (the public
+ * launch rule: a sentence about Bankr renders only while HIVRA_NEW_TOKEN_SURFACES is on and the
+ * viewer is not in a listed country), so with the surfaces hidden the section keeps what is not
+ * about Bankr: the skills half of the 13 June note. The source file keeps the full note.
+ * `heading` is the section's H3 text in hermes_changelog.md; changelog-data.test.ts fails if
+ * the file stops carrying it, so a rename cannot silently leave the Bankr wording visible.
+ */
+export const TOKEN_SURFACE_SECTIONS: ReadonlyArray<{ heading: string; plain: string }> = [
+  {
+    heading: "Bankr wallet and skills for CLI agents",
+    plain:
+      "### Skills for CLI agents\nCLI agents (Codex, Claude Code) now have the ability to install skills from the catalogue.",
+  },
+];
+
+/**
+ * Entries as one viewer may read them. With `tokenSurfacesVisible` false (the switch off, a viewer
+ * in a listed country, and always the static RSS feed) every section in TOKEN_SURFACE_SECTIONS is
+ * swapped for its plain wording; true returns the entries as written.
+ */
+export function resolveChangelogEntries(entries: ChangelogEntry[], tokenSurfacesVisible: boolean): ChangelogEntry[] {
+  if (tokenSurfacesVisible) return entries;
+  return entries.map((entry) => {
+    const body = entry.body
+      .split(/^(?=### )/m)
+      .map((section) => {
+        const gated = TOKEN_SURFACE_SECTIONS.find(({ heading }) => section.startsWith(`### ${heading}\n`));
+        return gated ? gated.plain + (section.match(/\s*$/)?.[0] ?? "") : section;
+      })
+      .join("");
+    return body === entry.body ? entry : { ...entry, body };
+  });
+}
+
+/**
  * Reads dashboard/hermes_changelog.md from disk and returns the parsed structure.
- * Cached after first read — the file ships in the bundle and does not change at runtime.
+ * Cached after first read: the file ships in the bundle and does not change at runtime.
  */
 export function readChangelog(): ParsedChangelog {
   if (cachedParsed) return cachedParsed;

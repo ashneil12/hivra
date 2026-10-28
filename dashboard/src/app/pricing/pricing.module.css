@@ -1,29 +1,176 @@
-/* Three cards (self-host plus the two sizes checkout sells) on the homepage
-   pricing card styles, whose ladder grid is sized for five. The doubled class
-   outranks that grid wherever the two stylesheets load. */
-.sizes.sizes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-@media (max-width: 900px) { .sizes.sizes { grid-template-columns: 1fr; } }
+/* /pricing. The shell (breadcrumbs, masthead, question list) is the shared secondary-site
+   stylesheet; this file adds what the pricing rewrite needs on top of it: a two-line
+   headline, one bordered options panel, the section layouts for the long prose, and
+   the closing band. Colours are the public site tokens, so light and dark both work. */
 
-/* The page's main column already has the gutter; the homepage section adds its
-   own, which would indent the cards past the masthead and the questions. */
-.section.section { width: 100%; padding-inline: 0; }
+.headlineTail { display: block; font-weight: inherit; color: var(--gold-leaf); }
+/* The shared masthead sets no space between its paragraphs. */
+.introLine + .introLine { margin-top: 20px; }
 
-/* The size always sits on its own line under the price. */
-.priceFor { flex-basis: 100%; }
+/* Section frames. The first section sits under the masthead's own rule. */
+.firstSection { margin: 0; }
+.section { margin-top: 112px; }
+.sectionHead { max-width: 760px; margin-bottom: 40px; }
+.sectionHead h2,
+.split > h2,
+.closing h2,
+.questionsHeading {
+  margin: 0;
+  color: var(--ink-black);
+  font-size: clamp(28px, 3.2vw, 44px);
+  line-height: 1.12;
+  font-weight: 500;
+  letter-spacing: -.05em;
+  text-wrap: balance;
+}
+.sectionHead p { margin: 18px 0 0; max-width: 62ch; color: var(--text-secondary); font-size: 17px; line-height: 1.75; }
 
-/* The machine-readable table: the same rows as the cards and the Offer JSON-LD.
-   It scrolls inside its own region on a narrow screen, never the page. */
-.tableBlock { margin-top: 48px; }
-.tableHeading { font: 550 clamp(22px, 2.6vw, 30px)/1.2 var(--public-font, sans-serif); letter-spacing: -.04em; margin: 0 0 20px; }
-.tableScroll { overflow-x: auto; border: 1px solid var(--public-line, var(--etched-border)); }
-.tableScroll:focus-visible { outline: 2px solid var(--public-accent, var(--gold-leaf)); outline-offset: 4px; }
-.table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; line-height: 1.6; color: var(--public-text, var(--ink-black)); }
-.table th, .table td { padding: 14px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--public-line, var(--etched-border)); }
-.table thead th { font: 11px/1.6 var(--public-mono, monospace); text-transform: uppercase; letter-spacing: .04em; color: var(--public-muted, var(--text-secondary)); white-space: nowrap; }
-.table tbody tr:last-child th, .table tbody tr:last-child td { border-bottom: 0; }
-/* A size such as "4 GB" must never break onto two lines, so the row header does not wrap. */
-.table tbody th { font-weight: 650; white-space: nowrap; }
-.table td strong { font-weight: 650; font-variant-numeric: tabular-nums; }
-.priceNote { display: block; font-size: 12px; color: var(--public-muted, var(--text-secondary)); }
-.caption { caption-side: top; text-align: left; padding: 14px 16px; font-size: 12px; color: var(--public-muted, var(--text-secondary)); border-bottom: 1px solid var(--public-line, var(--etched-border)); }
-.asOf { margin: 14px 0 0; font-size: 13px; color: var(--public-muted, var(--text-secondary)); }
+/* The options panel: one ruled frame with a column per option, not three floating cards. */
+.offers { display: grid; grid-template-columns: minmax(0, 1.15fr) repeat(2, minmax(0, 1fr)); border: 1px solid var(--etched-border); }
+.offer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 40px 36px 36px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.75;
+}
+.offer + .offer { border-left: 1px solid var(--etched-border); }
+.offerSelf { background: var(--public-surface); }
+.offerCloud::before { content: ""; position: absolute; inset: -1px 0 auto 0; height: 2px; background: var(--gold-leaf); }
+.offer h3 { margin: 0 0 30px; color: var(--ink-black); font-size: clamp(22px, 2vw, 27px); line-height: 1.2; font-weight: 550; letter-spacing: -.04em; text-wrap: balance; }
+.offer > p { margin: 0 0 18px; max-width: 62ch; }
+.offer > .price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 8px; color: var(--ink-black); }
+.price strong { font-size: clamp(46px, 4.6vw, 64px); line-height: 1; font-weight: 550; letter-spacing: -.06em; font-variant-numeric: tabular-nums; }
+.price span { font: 12px/1.6 var(--public-mono, monospace); color: var(--text-muted); }
+.offer > .meta { margin: 0 0 26px; padding-bottom: 24px; border-bottom: 1px solid var(--etched-border); font: 12px/1.7 var(--public-mono, monospace); color: var(--ink-black); }
+.meta strong { font-weight: 500; }
+
+/* Included / not included on the self-host column. */
+.scope { margin: 8px 0 32px; border-top: 1px solid var(--etched-border); }
+.scope > div { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 4px 14px; padding: 14px 0; border-bottom: 1px solid var(--etched-border); }
+.scope dt { font: 11px/1.9 var(--public-mono, monospace); color: var(--ink-black); }
+.scope dd { margin: 0; font-size: 14px; line-height: 1.7; }
+
+.action {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  min-height: 52px;
+  padding: 14px 18px;
+  border: 1px solid var(--etched-border);
+  color: var(--ink-black);
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background .2s, color .2s, border-color .2s;
+}
+.action svg { flex: none; color: var(--gold-leaf); transition: transform .35s cubic-bezier(.16, 1, .3, 1); }
+.action:hover,
+.action:focus-visible { background: var(--ink-black); border-color: var(--ink-black); color: var(--public-bg, var(--vellum-bg)); }
+.action:hover svg,
+.action:focus-visible svg { transform: translateX(3px); color: inherit; }
+.action:active { transform: translateY(1px); }
+.action:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 4px; }
+.offer > .action { position: relative; margin-top: auto; }
+/* The three buttons share one row, so a rule across the panel above them makes it read as an action row, not as a gap. */
+.offer > .action::before { content: ""; position: absolute; left: -36px; right: -36px; top: -34px; border-top: 1px solid var(--etched-border); pointer-events: none; }
+.offerSelf .action { background: var(--public-bg, var(--vellum-bg)); }
+.offerSelf .action:hover,
+.offerSelf .action:focus-visible { background: var(--ink-black); }
+.actionPrimary { background: var(--gold-leaf); border-color: var(--gold-leaf); color: var(--public-accent-ink, #fff); }
+.actionPrimary svg { color: inherit; }
+
+/* "Already rent a server?": an aside under the panel, not a fourth card. */
+.ownServer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: 20px 48px;
+  align-items: center;
+  padding: 30px 36px;
+  border: 1px solid var(--etched-border);
+  border-top: 0;
+}
+.ownServer h3 { margin: 0 0 8px; color: var(--ink-black); font-size: 21px; line-height: 1.3; font-weight: 550; letter-spacing: -.03em; }
+.ownServer p { margin: 0; max-width: 68ch; color: var(--text-secondary); font-size: 15px; line-height: 1.75; }
+
+.asOf { margin: 16px 0 0; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+
+/* Long prose: the heading on the left, a 68 character measure on the right. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+  gap: 24px clamp(40px, 6vw, 86px);
+  margin-top: 112px;
+  padding-top: 40px;
+  border-top: 1px solid var(--etched-border);
+}
+.split > h2 { position: sticky; top: 120px; align-self: start; font-size: clamp(26px, 2.6vw, 36px); }
+.prose { min-width: 0; font-size: 17px; line-height: 1.85; color: color-mix(in srgb, var(--text-secondary) 50%, var(--ink-black)); overflow-wrap: break-word; }
+.prose > p { max-width: 68ch; margin: 0 0 24px; }
+.prose > p:last-child { margin-bottom: 0; }
+.prose a { color: var(--ink-black); text-decoration: underline; text-decoration-color: var(--gold-leaf); text-underline-offset: 4px; }
+.prose a:hover { color: var(--gold-leaf); }
+.prose strong { color: var(--ink-black); font-weight: 600; }
+.prose > .lede { max-width: 44ch; color: var(--ink-black); font-size: clamp(21px, 2vw, 26px); line-height: 1.5; letter-spacing: -.02em; }
+
+/* The agent differences: a ruled list, the name on the left and the requirement beside it. */
+.rules { list-style: none; max-width: 68ch; margin: 28px 0; padding: 0; border-top: 1px solid var(--etched-border); }
+.rules li { display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 1fr); gap: 6px 32px; margin: 0; padding: 18px 0; border-bottom: 1px solid var(--etched-border); font-size: 16px; line-height: 1.7; }
+
+/* The refund promise, set apart from the two paragraphs that qualify it. */
+.prose > .callout { max-width: calc(68ch * 17 / 19); padding: 24px 28px; border: 1px solid var(--etched-border); border-left: 3px solid var(--gold-leaf); background: var(--public-surface); color: var(--ink-black); font-size: 19px; line-height: 1.65; }
+
+/* Question answers keep a readable line length; link and bold styling come from the shared answer style. */
+.questionsHeading { margin-bottom: 32px; }
+.answer { max-width: calc(68ch + 34px); }
+
+.closing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 32px 64px;
+  align-items: center;
+  margin-top: 24px;
+  padding: 56px 0;
+  border-block: 1px solid var(--etched-border);
+}
+.closing h2 { margin-bottom: 14px; }
+.closing p { margin: 0; max-width: 56ch; color: var(--text-secondary); font-size: 16px; line-height: 1.75; }
+.closing [data-action-links] { margin: 0; }
+
+@media (max-width: 1099px) {
+  .offers { grid-template-columns: 1fr; }
+  .offer + .offer { border-left: 0; border-top: 1px solid var(--etched-border); }
+  .offer > .action { margin-top: 8px; max-width: 360px; }
+  .offer > .action::before { display: none; }
+  .ownServer { grid-template-columns: 1fr; }
+  .ownServer .action { max-width: 360px; }
+}
+
+@media (max-width: 899px) {
+  .split { grid-template-columns: 1fr; gap: 28px; margin-top: 80px; }
+  .split > h2 { position: static; }
+  .closing { grid-template-columns: 1fr; padding: 40px 0; }
+}
+
+@media (max-width: 700px) {
+  .section { margin-top: 80px; }
+  .sectionHead { margin-bottom: 28px; }
+  .offer { padding: 32px 24px 28px; }
+  .ownServer { padding: 26px 24px; }
+  .offer > .action,
+  .ownServer .action { max-width: none; }
+  .rules li { grid-template-columns: 1fr; gap: 2px; }
+  .scope > div { grid-template-columns: 1fr; }
+  .prose { font-size: 16px; }
+  .prose > .callout { padding: 20px 20px; font-size: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action,
+  .action svg { transition: none; }
+}

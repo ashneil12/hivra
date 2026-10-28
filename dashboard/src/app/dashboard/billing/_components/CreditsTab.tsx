@@ -41,7 +41,8 @@ export function CreditsTab({ c, variants }: { c: BillingController; variants: Va
             <>
               <ManagedVeniceWalletPanel
                 summary={summary}
-                tokenPaymentsEnabled={billingV2Enabled && tokenFeatures}
+                tokenPaymentsEnabled={billingV2Enabled && tokenFeatures && c.tokenPayments.available}
+                tokenUnit={c.tokenPayments.displayUnit}
                 onDeposit={(walletType) => c.openManagedVeniceDeposit(walletType)}
               />
               <ManagedVeniceKeysPanel keys={summary.keys} />

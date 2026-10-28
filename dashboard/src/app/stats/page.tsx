@@ -6,9 +6,10 @@ import { cookies, headers } from "next/headers";
 
 import StructuredData from "@/components/StructuredData";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import { buildWebsiteMetadata } from "@/lib/metadata";
+import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
+import { getTokenSurfaceView } from "@/lib/compliance/token-surface-view";
 
 import StatsPageContent from "@/components/stats/StatsPageContent.client";
 import { getAgentsDeployedStats } from "@/lib/agents-deployed-stats";
@@ -16,17 +17,14 @@ import { getPublicStats, type PublicStats } from "@/lib/public-stats";
 import { log } from "@/lib/logger";
 
 const PATH = "/stats";
+const TITLE = "Hivra Statistics | Platform Activity";
+const DESCRIPTION =
+  "Live count of every agent and computer launched on Hivra. Updated as people launch.";
 
 export const metadata: Metadata = {
-  title: "Agents deployed: Hivra live counter",
-  description:
-    "Live count of every agent successfully deployed on Hivra. Updated as people deploy.",
-  ...buildWebsiteMetadata({
-    path: PATH,
-    title: "Agents deployed: Hivra live counter",
-    description:
-      "Live count of every agent successfully deployed on Hivra. Updated as people deploy.",
-  }),
+  title: absoluteTitle(TITLE),
+  description: DESCRIPTION,
+  ...buildWebsiteMetadata({ path: PATH, title: TITLE, description: DESCRIPTION }),
 };
 
 const schema = {
@@ -53,6 +51,7 @@ async function getLandingLocale() {
 export default async function StatsPage() {
   const { userId } = await auth();
   const locale = await getLandingLocale();
+  const tokenView = await getTokenSurfaceView(userId);
 
   let initial: Awaited<ReturnType<typeof getAgentsDeployedStats>> | null = null;
   let platform: PublicStats | null = null;
@@ -73,7 +72,6 @@ export default async function StatsPage() {
       <PublicSite className={styles.livePage} data-page="stats" isSignedIn={Boolean(userId)}>
         <StructuredData schema={schema} />
 
-
         <div className={styles.liveContent}>
           <StatsPageContent
             initial={
@@ -89,9 +87,9 @@ export default async function StatsPage() {
             }
             firstDeployIso={initial?.firstDeployAt ?? null}
             platform={platform}
+            tokenView={tokenView}
           />
         </div>
-
       </PublicSite>
     </LocaleProvider>
   );

@@ -46,6 +46,11 @@ import {
   tierRowTokenCounts,
 } from "@/lib/billing/token-access";
 import { livePlatformTokens, platformTokenByAddress, type PlatformTokenKey } from "@/lib/billing/token-registry";
+import {
+  accessDependsOnHivraReadiness,
+  isHivraUsable,
+  isTokenDerivedComputeTier,
+} from "@/lib/billing/hivra-readiness";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import {
   resolveTierSpec,
@@ -170,6 +175,20 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   const accessByUser = await resolveTokenAccessForUsers(userIds, { db });
   const liveTokenAddresses = livePlatformTokens().map((token) => token.address);
 
+  // No new $HIVRA tier of any kind while $HIVRA is not usable (live and
+  // passing the price gate), not even the price-free 1-token base tier. An
+  // account whose computers already sit on a token tier keeps counting its
+  // holding, so breach and grace run exactly as before. Readiness is asked
+  // once per run, and only when some account depends on it.
+  const anyAccountNeedsHivra = [...accessByUser.values()].some(accessDependsOnHivraReadiness);
+  const hivraUsable = anyAccountNeedsHivra ? await isHivraUsable() : true;
+  const holdingCountsForBaseTier = (userId: string, balances: Partial<Record<PlatformTokenKey, bigint>>) => {
+    const access = accessByUser.get(userId);
+    if (!access || !qualifiesForTokenBaseTier(access, balances)) return false;
+    if (hivraUsable || !accessDependsOnHivraReadiness(access)) return true;
+    return isTokenDerivedComputeTier(tierByUser.get(userId));
+  };
+
   const snapshotsByUser = new Map<
     string,
     {
@@ -213,8 +232,7 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
         entry.display[token.key] = s.balance_raw;
       }
       if (!entry.sawQualifying) {
-        const access = accessByUser.get(s.user_id);
-        if (access && qualifiesForTokenBaseTier(access, { [token.key]: balance })) {
+        if (holdingCountsForBaseTier(s.user_id, { [token.key]: balance })) {
           entry.sawQualifying = true;
         } else {
           entry.belowSince = s.checked_at;
@@ -378,10 +396,7 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     } else if (qual) {
       desiredTier = qual;
       reason = `cron: token-tier qualification ${qual === "fleet" ? "power" : "pro"}`;
-    } else if (
-      snapshot &&
-      qualifiesForTokenBaseTier(accessByUser.get(userId)!, snapshot.balances)
-    ) {
+    } else if (snapshot && holdingCountsForBaseTier(userId, snapshot.balances)) {
       desiredTier = "token_base";
       reason = `cron: balance ${JSON.stringify(snapshot.display)} qualifies`;
     } else {

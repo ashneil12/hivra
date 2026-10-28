@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
 import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "../runtime-facts";
 
 export const article: BlogArticle = {
@@ -10,7 +10,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Where to host an AI agent: your own hardware, a $5-10/month VPS or managed hosting. Serverless is a poor fit. Costs, security basics and upkeep compared.",
   publishedDate: "2026-07-15",
-  lastModified: "2026-10-05",
+  lastModified: "2026-10-21",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "An agent that lives on your laptop isn't really an agent.",
@@ -63,7 +63,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "\"Deploy an AI agent in one click\" is a claim worth checking, because it covers two very different products. The first is a template that spins up a container with a chatbot wrapper and a text box. It demos well and does little, because there's no persistent workspace, no browser, and often no real CLI underneath. The second is a platform that provisions actual infrastructure with the real agent on it.",
         "The test is what exists after the click. You should be able to answer yes to all of these:\n\n- Is the real agent underneath (the vendor's CLI or the open-source project), and does the host tell you which build it runs and with which permission settings?\n- Do you sign in with your own model account, so usage bills at provider rates with no markup?\n- Is there a persistent VM with a workspace, or just a stateless container?\n- Can the agent drive a real browser?\n- Can you reach the terminal, the files and the running session from a browser, including on your phone?",
-        "On Hivra the launch provisions a private VM with the agent running on it, and chat, terminal, files, and browser tabs on top. Six agents are launchable today: Hermes, Claude Code, Codex, [Aeon](/agents/aeon), [OpenClaw](/agents/openclaw), and [Agent Zero](/agents/agent-zero). OpenClaw and Agent Zero need a paid plan. If you're weighing those last two against each other, see [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting).",
+        `On Hivra the launch provisions a private VM with the agent running on it, and chat, terminal, files, and browser tabs on top. Six agents are launchable today: Hermes, Claude Code, Codex, [Aeon](/agents/aeon), [OpenClaw](/agents/openclaw), and [Agent Zero](/agents/agent-zero). If you're weighing OpenClaw against Agent Zero, see [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting). ${HOSTED_COMPUTE_NEEDS_PLAN}`,
       ],
     },
     {

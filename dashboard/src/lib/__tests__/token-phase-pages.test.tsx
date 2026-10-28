@@ -35,7 +35,7 @@ import TokenomicsPage, { generateMetadata as tokenomicsMetadata } from "@/app/to
 import WhyHivraEvolutionPage from "@/app/why-hivra/evolution/page";
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
 import { buildLlmsTxt } from "@/lib/llms-txt";
-import { TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
+import { DORMANT_TOKENOMICS_COPY, DORMANT_TOKEN_PAGE_COPY, TOKEN_PHASE_COPY } from "@/lib/token-phase-copy";
 
 const HIVRA_ADDRESS = "0x1111111111111111111111111111111111111111";
 
@@ -72,24 +72,24 @@ describe("dormant $HIVRA: the copy from before", () => {
     expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
     renderPage(TokenVerificationPage);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HermesOS and Hivra\.$/);
-    expect(screen.getByText(copy.tokenPage.heroLead)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "The proposed $HIVRA migration" })).toBeInTheDocument();
+    expect(screen.getByText(DORMANT_TOKEN_PAGE_COPY.heroLead)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Token launch in preparation" })).toBeInTheDocument();
     expect(screen.getByText("The existing $HermesOS contract. $HIVRA has not launched.")).toBeInTheDocument();
-    for (const paragraph of copy.tokenPage.migrationParagraphs) expect(screen.getByText(paragraph)).toBeInTheDocument();
   });
 
   it("/tokenomics keeps its title, header and migration paragraphs", async () => {
     setPhase("dormant");
-    expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: copy.tokenomics.metadataDescription });
+    expect(await tokenomicsMetadata()).toMatchObject({ title: "Proposed $HIVRA tokenomics", description: DORMANT_TOKENOMICS_COPY.metadataDescription });
     renderPage(TokenomicsPage);
-    expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    for (const paragraph of copy.tokenomics.migrationParagraphs) expect(screen.getByText(whole(paragraph))).toBeInTheDocument();
+    expect(screen.getByText(DORMANT_TOKENOMICS_COPY.headerLead)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Moving from $HermesOS to $HIVRA" })).toBeInTheDocument();
   });
 
   it("/why-hivra/evolution keeps its $HIVRA lines", () => {
     setPhase("dormant");
     const { container } = renderPage(WhyHivraEvolutionPage);
-    expect(screen.getByText("$HIVRA is a proposed new token on Base, to be launched through Bankr. It does not exist yet.")).toBeInTheDocument();
+    expect(screen.getByText("$HIVRA is a planned new token on Base, to be launched through Doppler. Launch is in preparation and it does not exist yet.")).toBeInTheDocument();
     for (const line of copy.evolution.hivraDetails) expect(screen.getByText(line)).toBeInTheDocument();
     expect(container.textContent).toContain("Everything about $HIVRA here is a proposal, not final terms. Check contract addresses only on the token page.");
     expect(screen.getByText("$HermesOS is the live token today. $HIVRA is the proposed next one.")).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe("dormant $HIVRA: the copy from before", () => {
   it("/llms.txt keeps its $HIVRA sentences", () => {
     setPhase("dormant");
     const txt = buildLlmsTxt({ siteUrl: "https://example.test" });
-    expect(txt).toContain("macOS computers and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.\n");
+    expect(txt).toContain("and custom images. $HermesOS is the live token. $HIVRA is a proposed new token and does not exist yet.\n");
     expect(txt).toContain(`(https://example.test/TOKENOMICS.md): ${copy.llmsTxt.tokenomicsNote}\n`);
   });
 });
@@ -117,30 +117,49 @@ describe("dormant $HIVRA: the copy from before", () => {
 describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
   const copy = TOKEN_PHASE_COPY[phase];
 
-  it("/token lists the contract and says it is live, with no proposal copy", async () => {
+  it("/token renders Ash's rewrite with the $HIVRA contract, and no old proposal copy", async () => {
     setPhase(phase);
-    expect(await tokenMetadata()).toMatchObject({ title: copy.tokenPage.metadataTitle, description: copy.tokenPage.metadataDescription });
+    expect(await tokenMetadata()).toMatchObject({
+      title: { absolute: "Hivra tokens | Official contracts, migration and holder access" },
+      description: copy.tokenPage.metadataDescription,
+      openGraph: { title: "Hivra tokens | Official contracts, migration and holder access" },
+    });
     const { container } = renderPage(TokenVerificationPage);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(copy.tokenPage.heroTitle);
-    expect(screen.getByText(copy.tokenPage.heroLead)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Converting from $HermesOS" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HIVRA and \$HermesOS$/);
+    expect(screen.getByRole("heading", { name: "Already hold $HermesOS?" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "The proposed $HIVRA migration" })).not.toBeInTheDocument();
+    // No claim or swap step, and nothing that names Bankr as the launcher.
+    expect(container.textContent).not.toMatch(/Bankr|active claim|ETH proceeds|claims open/);
     const hivra = within(container.querySelector('[data-token="hivra"]') as HTMLElement);
     expect(hivra.getByText(HIVRA_ADDRESS)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\$HIVRA has not launched|There is no \$HIVRA contract yet|proposed \$HIVRA token/);
+    expect(container.textContent).not.toMatch(/[–—]/);
   });
 
-  it("/tokenomics and /why-hivra/evolution say $HIVRA is live on Base", async () => {
+  it("/tokenomics renders Ash's pack page, with its head, and none of the old launched or pricing copy", async () => {
     setPhase(phase);
-    expect(await tokenomicsMetadata()).toMatchObject({ title: "$HIVRA tokenomics" });
-    renderPage(TokenomicsPage);
-    expect(screen.getByText(copy.tokenomics.headerLead)).toBeInTheDocument();
-    expect(screen.getByText(whole(copy.tokenomics.migrationParagraphs[0]))).toBeInTheDocument();
+    expect(await tokenomicsMetadata()).toMatchObject({
+      title: "$HIVRA tokenomics: access, migration and future uses",
+      description: "How Hivra's token access works, how eligible $HermesOS holders claim $HIVRA, and what token-based services Hivra is considering next.",
+    });
+    const { container } = renderPage(TokenomicsPage);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^\$HIVRA: what it's for$/);
+    expect(screen.getByRole("heading", { name: "A snapshot has been taken. Eligible holders can claim." })).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Nothing to claim|Nothing to swap|Airdrop flow|sent one \$HIVRA|new users hold and pay|new Hivra accounts use|Bankr|ETH proceeds/);
+    // The pack drops the token-pricing line and the bonus-credit offer.
+    expect(container.textContent).not.toMatch(/\$49|\$79|bonus credits/);
+    expect(container.textContent).not.toMatch(/[–—]/);
+  });
+
+  it("/why-hivra/evolution says $HIVRA is live on Base and uses Ash's two replacement paragraphs", () => {
+    setPhase(phase);
     const { container } = renderPage(WhyHivraEvolutionPage);
     expect(screen.getByText(copy.evolution.hivraStatus)).toBeInTheDocument();
     expect(screen.getByText(copy.evolution.relationship)).toBeInTheDocument();
+    for (const line of copy.evolution.hivraDetails) expect(screen.getByText(line)).toBeInTheDocument();
     expect(container.textContent).toContain("Check contract addresses only on the token page.");
     expect(container.textContent).not.toMatch(/does not exist yet|Under the proposal, paying in the token keeps its discount/);
+    expect(container.textContent).not.toMatch(/New accounts use \$HIVRA|sent \$HIVRA automatically|nothing to claim|Hivra starts using it/i);
   });
 
   it("/llms.txt says $HIVRA is live on Base", () => {
@@ -152,23 +171,12 @@ describe.each(["scheduled", "active"] as const)("%s $HIVRA", (phase) => {
   });
 });
 
-it("a scheduled /token names the instant Hivra starts using $HIVRA, and does not call it unlaunched", () => {
-  setPhase("scheduled");
-  const { container } = renderPage(TokenVerificationPage);
-  expect(screen.getByText("The $HIVRA contract. Hivra starts using it at 1 October 2099, 16:00 UTC.")).toBeInTheDocument();
-  const hivra = within(container.querySelector('[data-token="hivra"]') as HTMLElement);
-  // The status label agrees with the launched hero: $HIVRA is on Base, not "launching".
-  expect(hivra.getByRole("heading", { level: 3 })).toHaveTextContent(/^\$HIVRA LIVE ON BASE$/);
-  const hermesos = within(container.querySelector('[data-token="hermesos"]') as HTMLElement);
-  expect(hermesos.getByRole("heading", { level: 3 })).toHaveTextContent(/^\$HermesOS LIVE$/);
-  expect(hermesos.getByText("The existing $HermesOS contract.")).toBeInTheDocument();
-  expect(container.textContent).not.toMatch(/soon|launching|not launched/i);
-});
-
-it("an active /token lists $HIVRA first as LIVE and $HermesOS as LEGACY", () => {
-  setPhase("active");
+it.each(["scheduled", "active"] as const)("a %s /token lists $HIVRA first, then $HermesOS, with no launch countdown", (phase) => {
+  setPhase(phase);
   const { container } = renderPage(TokenVerificationPage);
   const listed = Array.from(container.querySelectorAll("[data-token]")).map((node) => node.getAttribute("data-token"));
   expect(listed).toEqual(["hivra", "hermesos"]);
-  expect(screen.getByText("The $HIVRA contract. New token payments and holdings use it.")).toBeInTheDocument();
+  expect(within(container.querySelector('[data-token="hivra"]') as HTMLElement).getByRole("heading", { level: 3 })).toHaveTextContent(/^\$HIVRA · New ecosystem token$/);
+  expect(within(container.querySelector('[data-token="hermesos"]') as HTMLElement).getByRole("heading", { level: 3 })).toHaveTextContent(/^\$HermesOS · Legacy token$/);
+  expect(container.textContent).not.toMatch(/soon|launching|not launched/i);
 });

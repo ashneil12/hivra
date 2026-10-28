@@ -12,7 +12,8 @@ import { buildBlogArticleMetadata } from '@/lib/blog/metadata';
 import { generateMetadata as generateFeatureMetadata } from '../features/[slug]/page';
 import { generateMetadata as generateCompareMetadata } from '../compare/[slug]/page';
 
-// Both token pages generate their metadata from the $HIVRA phase; dormant here.
+// Both token pages generate their metadata from the $HIVRA phase: launched (the committed launch block) here.
+// The dormant titles are covered in token-phase-pages.test.tsx and token-phase-copy.test.ts.
 let tokenomicsMetadata: Metadata;
 let tokenMetadata: Metadata;
 beforeAll(async () => {
@@ -34,29 +35,41 @@ function getTwitterValue(metadataValue: unknown, key: string): unknown {
 }
 
 describe('route Open Graph metadata', () => {
-  it('reflects the current homepage computer choices in metadata', () => {
-    expect(homeMetadata.description).toContain('launch Ubuntu, Windows or Omarchy for yourself');
-    expect(String(homeMetadata.description)).not.toMatch(/launching now/i);
-    // Windows and Omarchy are private-preview templates in the computer catalog, not generally available.
-    expect(String(homeMetadata.description)).not.toContain('Launch Ubuntu, Windows or Omarchy');
-    expect(getTwitterValue(homeMetadata.twitter, 'description')).toContain('launch Ubuntu, Windows or Omarchy for yourself');
-  });
-
-  it('keeps the Hermes OS brand bridge on the homepage, where most search clicks come from', () => {
-    // ~75% of hivra.cloud's Search Console clicks (Jun-Sep 2026) were "hermes os" searches.
-    expect(String(homeMetadata.title)).toMatch(/^Hermes OS is now Hivra \| /);
-    expect(String(homeMetadata.description)).toMatch(/^Hermes OS is now Hivra\./);
+  it('words the homepage description as the website pack does, with no keep-running claim and no token', () => {
+    // Ash's website pack (20 Oct 2026) minus its "Keep them running when your laptop closes."
+    // sentence, which is not true of every run (lib/blog/runtime-facts.ts). The old tests that
+    // required "launch Ubuntu, Windows or Omarchy for yourself" here are retired: the pack's
+    // description does not name an operating system, and the ones the page names carry their
+    // conditions in the page copy, the JSON-LD feature list and llms.txt.
+    expect(homeMetadata.description).toBe(
+      'Run Claude Code, Codex, Hermes and other AI agents on separate computers. Open-source Hivra, hosted from $9.99 a month or self-hosted.',
+    );
     expect(String(homeMetadata.description).length).toBeLessThanOrEqual(160);
-    expect(getOpenGraphValue(homeMetadata.openGraph, 'title')).toBe(homeMetadata.title);
+    expect(String(homeMetadata.description)).not.toMatch(/keep(?:s)? (?:them )?running|\$HIVRA|\$HermesOS|launching now|preview/i);
+    expect(getTwitterValue(homeMetadata.twitter, 'description')).toBe(homeMetadata.description);
+    expect(getOpenGraphValue(homeMetadata.openGraph, 'description')).toBe(homeMetadata.description);
   });
 
-  it('labels the /tokenomics title as proposed and sets its own description', () => {
-    expect(tokenomicsMetadata.title).toBe('Proposed $HIVRA tokenomics');
-    expect(String(tokenomicsMetadata.description)).toMatch(/proposed migration/);
+  it('keeps the Hermes OS brand bridge on the homepage title, where most search clicks come from', () => {
+    // ~75% of hivra.cloud's Search Console clicks (Jun-Sep 2026) were "hermes os" searches.
+    // The title is written finished (absoluteTitle), so the layout does not add " | Hivra" after it.
+    const title = (homeMetadata.title as { absolute: string }).absolute;
+    expect(title).toBe('Hermes OS is now Hivra | Give your AI agent a computer of its own');
+    expect(title).toMatch(/^Hermes OS is now Hivra \| /);
+    expect(getOpenGraphValue(homeMetadata.openGraph, 'title')).toBe(title);
+    expect(getTwitterValue(homeMetadata.twitter, 'title')).toBe(title);
+  });
+
+  it('gives /tokenomics the launched title and its own description', () => {
+    expect(tokenomicsMetadata.title).toBe('$HIVRA tokenomics: access, migration and future uses');
+    expect(String(tokenomicsMetadata.description)).toMatch(/eligible \$HermesOS holders claim \$HIVRA/);
+    expect(String(tokenomicsMetadata.description)).not.toMatch(/proposed migration/);
   });
 
   it('gives /download its own title and description, not the site defaults', () => {
-    expect(downloadMetadata.title).toBe('Download Hivra');
+    expect(downloadMetadata.title).toEqual({ absolute: 'Download Hivra | Desktop Availability' });
+    expect(getOpenGraphValue(downloadMetadata.openGraph, 'title')).toBe('Download Hivra | Desktop Availability');
+    expect(getTwitterValue(downloadMetadata.twitter, 'title')).toBe('Download Hivra | Desktop Availability');
     expect(downloadMetadata.description).toBe('The Hivra desktop app for macOS is coming soon. Open Hivra in your browser today.');
     expect(String(downloadMetadata.description)).not.toMatch(/Windows/);
   });

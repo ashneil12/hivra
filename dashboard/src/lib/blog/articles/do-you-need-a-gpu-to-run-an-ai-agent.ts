@@ -9,7 +9,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Most AI agents don't need a GPU, because a cloud API runs the model. Start with 2 vCPU and 4 GB of RAM. That changes once the model runs locally.",
   publishedDate: "2026-09-01",
-  lastModified: "2026-09-30",
+  lastModified: "2026-10-21",
   readingTimeMin: 9,
   author: "Hivra team",
   tagline: "The model may need a GPU. The machine running your agent often doesn't.",
@@ -69,7 +69,7 @@ export const article: BlogArticle = {
       heading: "Run the agent without buying a GPU",
       paragraphs: [
         "If you want an always-on agent but don't want another machine at home, [Hivra](/) runs agents on private cloud VMs. The official [Codex](/agents/codex) and [Claude Code](/agents/claude-code) CLIs use your own subscription sign-in, so their models still run through the provider. [Hermes](/agents/hermes) can use cloud model providers while its tools, memory, and schedules run on the VM. Hivra is independent and is not affiliated with Anthropic or OpenAI.",
-        `Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and they come with a ${MONEY_BACK_GUARANTEE}, so you can try one agent without buying hardware. Compare the plans on the [pricing page](/pricing). No GPU purchase is needed for these cloud-model setups. The better first investment is enough RAM for the tools your agent uses.`,
+        `Plans start at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and they come with a ${MONEY_BACK_GUARANTEE}. There is no hardware to buy. Compare the plans on the [pricing page](/pricing). No GPU purchase is needed for these cloud-model setups. The better first investment is enough RAM for the tools your agent uses.`,
       ],
     },
   ],

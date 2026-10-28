@@ -1,0 +1,79 @@
+/* ActionLinks: the closing row of a section. One button, any number of text links. */
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 32px;
+  margin: 40px 0 0;
+}
+
+.primary {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 15px 20px;
+  background: var(--gold-leaf);
+  color: var(--public-accent-ink, #ffffff) !important;
+  text-decoration: none !important;
+  font: 13px/1.4 var(--public-mono, monospace);
+  transition: filter 0.2s, transform 0.2s;
+}
+
+.primary:hover {
+  filter: brightness(1.12);
+}
+
+.primary:active {
+  transform: translateY(1px);
+}
+
+.secondary {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-black);
+  font-size: 15px;
+  line-height: 1.5;
+  text-decoration: underline;
+  text-decoration-color: var(--gold-leaf);
+  text-underline-offset: 5px;
+  transition: color 0.2s;
+}
+
+.secondary:hover {
+  color: var(--gold-leaf);
+}
+
+.secondary svg,
+.primary svg {
+  flex-shrink: 0;
+}
+
+.primary:focus-visible,
+.secondary:focus-visible {
+  outline: 2px solid var(--gold-leaf);
+  outline-offset: 4px;
+}
+
+@media (max-width: 700px) {
+  .row {
+    gap: 4px 28px;
+    margin-top: 32px;
+  }
+
+  /* A button is a full-width target on a phone, and a long label may wrap. */
+  .primary {
+    width: 100%;
+    gap: 16px;
+  }
+}
+
+@media print {
+  .row {
+    display: none;
+  }
+}

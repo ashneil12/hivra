@@ -38,7 +38,7 @@ SITE_ROOT_FILES = {
 }
 # App pages the page links to. They are routes rather than files, so they are
 # checked by path; the query picks what Launch opens with.
-SITE_ROUTES = {"/dashboard/launch"}
+SITE_ROUTES = {"/dashboard/launch", "/sign-up", "/pricing"}
 AGENT_LAUNCH = "/dashboard/launch?kind=agent&start=1"
 COMPUTER_LAUNCH = "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop"
 # Tabler's MIT brand-github path; attribution is in vendor/NOTICE.md.
@@ -87,7 +87,7 @@ def render(png, attributes, sizes):
 SITE_URL = "https://hivra.cloud"
 PAGE_URL = SITE_URL + "/docs/litepaper/index.html"
 PAGE_TITLE = "Hivra · Somewhere better to work"
-PAGE_DESCRIPTION = ("Your agent needs a computer. It doesn't need yours. See how Hivra gives AI agents "
+PAGE_DESCRIPTION = ("Your agent needs a computer. It does not need yours. See how Hivra gives AI agents "
                     "computers of their own, with limits the agent can't talk its way past.")
 SHARE_IMAGE = "assets/boundary-monolith-v5.png"
 SHARE_IMAGE_ALT = "Architectural illustration of a bounded computer."
@@ -98,33 +98,40 @@ PRODUCT_GROUPS = {
     "Missions": "Horizon", "Foundry": "Horizon", "Colony": "Horizon",
     "Interchange": "Horizon", "Ports": "Horizon",
 }
-FIT_TITLE = "Keep the agents you like. Move them off your computer."
+# (title, anchor id, short label). The litepaper's sections, in reading order. A section added,
+# removed or renamed in LITEPAPER.md fails the build until it is listed here.
+HERO_TITLE = "Your agent needs a computer. It does not need yours."
+FOUNDER_TITLE = "I am building the product I need"
+ECONOMY_TITLE = "An economy for work the system can prove"
+FINALE_TITLE = "Somewhere better to work"
+THIN_LAYER_TITLE = "The thin layer between an agent and your life"
 THREAT_TITLE = "This is not a future problem"
-BOUNDARY_TITLE = "The boundary lives outside the model"
-REQUIRED_SECTIONS = {
-    "Your agent needs a computer. It doesn't need yours.",
-    "The problem is where it lives", THREAT_TITLE, FIT_TITLE, "Why I'm building it",
-    "Start with an agent. Or a computer.", "A computer you can actually work in",
-    "Open source. Yours to run.", BOUNDARY_TITLE,
-    "What we're building around it", "The economy", "Read further",
-    "Somewhere better to work",
-}
-REQUIRED_SUBSECTIONS = {
-    "The problem is where it lives": {"Try it", "Instructions are not boundaries"},
-    THREAT_TITLE: {"Safety training is not proof", "Think about what we're doing"},
-    FIT_TITLE: {"Who it's for"},
-    "Start with an agent. Or a computer.": {
-        "Launch an agent", "Launch a computer", "Keep several running", "Choose who runs it",
-    },
-    "A computer you can actually work in": {
-        "Come back to it", "Settle in", "Follow the work", "Know what has access",
-    },
-    "What we're building around it": {"Agent Computers · Available now", "Next", "Then", "Research"},
-    "The economy": {
-        "There's already a token, and it already does something", "The migration",
-        "What it's for", "The treasury", "Rules for the token",
-    },
-}
+FIT_TITLE = "Keep the agents you like. Move them off your computer."
+DOORS_TITLE = "Start with an agent. Or a computer."
+QUALITIES_TITLE = "A computer you can actually work in"
+ROADMAP_TITLE = "What we're building around it"
+SECTIONS = (
+    (HERO_TITLE, "opportunity", "The beginning"),
+    (FOUNDER_TITLE, "founder", "Why I\u2019m building it"),
+    (THIN_LAYER_TITLE, "thin-layer", "The thin layer"),
+    (THREAT_TITLE, "threat", "Not a future problem"),
+    ("The safer answer has always been obvious", "safer-answer", "The safer answer"),
+    (FIT_TITLE, "fit", "Where it fits"),
+    ("Open Hivra. Choose what you want.", "experience", "Agent or computer"),
+    (DOORS_TITLE, "doors", "Launch it"),
+    ("A computer that belongs to the work", "persistence", "It stays"),
+    (QUALITIES_TITLE, "qualities", "What you get"),
+    ("The remote computer has to disappear", "close", "It feels close"),
+    ("Your cloud is welcome too", "your-cloud", "Your cloud"),
+    ("Every run should leave evidence", "observability", "Evidence"),
+    ("One computer opens the door to a platform", "platform", "A platform"),
+    ("The Hivra system", "future", "The system"),
+    (ROADMAP_TITLE, "atlas", "The products"),
+    (ECONOMY_TITLE, "economy", "The economy"),
+    ("Move at AI speed. Publish at evidence speed.", "pace", "The pace"),
+    ("A constitution written before the power arrives", "security", "The constitution"),
+    (FINALE_TITLE, "somewhere-better", "Somewhere better"),
+)
 UTILITY_NAMES = (
     "Access to compute", "Metered spending", "Packs", "Reserved capacity",
     "Containment bounties", "Certification bonds", "Threat report payouts",
@@ -241,9 +248,9 @@ def blocks(value):
             items = re.findall(r"^\d+\. (.+)$", block, flags=re.MULTILINE)
             rendered.append("<ol>" + "".join("<li>" + inline(item) + "</li>" for item in items) + "</ol>")
         elif block.startswith("> "):
-            rendered.append("<blockquote>" + inline(block[2:]) + "</blockquote>")
+            rendered.append("<blockquote>" + inline(" ".join(line[2:] if line.startswith("> ") else line for line in block.splitlines())) + "</blockquote>")
         elif block.startswith("```"):
-            rendered.append("<pre>" + escape(block.strip("`\n")) + "</pre>")
+            rendered.append("<pre>" + escape(block.strip("`\n").removeprefix("text\n")) + "</pre>")
         else:
             rendered.append("<p>" + inline(block) + "</p>")
     return glossify("\n".join(rendered), set())
@@ -282,22 +289,23 @@ def check_local_url(value, base):
 
 
 def load_inputs():
-    markdown = (REPO / "LITEPAPER.md").read_text(encoding="utf-8")
+    markdown = re.sub(r"<!--.*?-->\n?", "", (REPO / "LITEPAPER.md").read_text(encoding="utf-8"), flags=re.DOTALL)
     require(not AUTHOR_NOTE.search(markdown), "Author-only note found in LITEPAPER.md")
-    for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", markdown):
+    for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", markdown):
         check_local_url(target, REPO)
     sections = {}
     for chunk in re.split(r"^## ", markdown, flags=re.MULTILINE)[1:]:
         title, body = chunk.split("\n", 1)
         require(title not in sections, "Duplicate section: " + title)
         sections[title] = body.strip().removesuffix("---").strip()
-    check_names(sections, REQUIRED_SECTIONS, "LITEPAPER.md sections")
-    for title, expected in REQUIRED_SUBSECTIONS.items():
-        check_names(split_sub(sections[title])[1], expected, title + " subsections")
+    check_names(sections, [title for title, _, _ in SECTIONS], "LITEPAPER.md sections")
+    return sections
 
-    stages = split_sub(sections["What we're building around it"])[1]
-    products = []
-    roadmap_tail = ""
+
+def load_products(sections):
+    stages = split_sub(sections[ROADMAP_TITLE])[1]
+    check_names(stages, {"Agent Computers \u00b7 Available now", "Next", "Then", "Research"}, "Roadmap stages")
+    products, roadmap_tail = [], ""
     for stage in ("Next", "Then", "Research"):
         group = "Horizon" if stage == "Research" else stage
         for match in re.finditer(
@@ -313,15 +321,14 @@ def load_inputs():
             if remainder:
                 require(stage == "Research" and name == "Ports", "Unexpected copy after Related line for " + name)
                 roadmap_tail = remainder
-            products.append({"name": name, "summary": summary,
-                             "description": story[:related_match.start()].strip(),
+            products.append({"name": name, "summary": summary, "description": story[:related_match.start()].strip(),
                              "related": related, "group": group})
     require(len(products) == 15, "The roadmap must contain exactly 15 complete product stories")
     check_names([product["name"] for product in products], PRODUCT_GROUPS, "Roadmap product names")
     for product in products:
         require(product["group"] == PRODUCT_GROUPS[product["name"]], "Wrong roadmap group for " + product["name"])
     require(bool(roadmap_tail), "Missing roadmap closing paragraph")
-    return sections, products, roadmap_tail
+    return stages, products, roadmap_tail
 
 
 class LocalLinkChecker(HTMLParser):
@@ -347,10 +354,27 @@ def slug(value):
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
-def build_page():
-    sections, products, roadmap_tail = load_inputs()
-    problem, sub = split_sub(sections["The problem is where it lives"])
-    threat_intro, threat_sub = split_sub(sections[THREAT_TITLE])
+def figure(alt, target):
+    """A litepaper image: the generated PNG with its WebP renditions, from docs/litepaper/assets."""
+    png = Path(target).name
+    require(target == "docs/litepaper/assets/" + png, "Images must live in docs/litepaper/assets: " + target)
+    width, height = png_size(OUTPUT.parent / "assets" / png)
+    image = render(png, 'alt="{}" width="{}" height="{}" loading="lazy" decoding="async"'.format(escape(alt, quote=True), width, height),
+                   "(max-width: 999px) 100vw, 960px")
+    return '<figure class="lp-figure">{}</figure>'.format(image)
+
+
+def prose(value):
+    """Markdown blocks as HTML, with the litepaper's own images."""
+    parts = []
+    for block in re.split(r"\n\s*\n", value.strip()):
+        found = re.fullmatch(r"!\[([^\]]*)\]\(([^)]+)\)", block.strip())
+        parts.append(figure(found[1], found[2]) if found else blocks(block))
+    return "".join(parts)
+
+
+
+def fit_section(sections, explore_arrow):
     fit_intro, fit_sub = split_sub(sections[FIT_TITLE])
     fit_blocks = re.split(r"\n\s*\n", fit_intro.strip())
     fit_table_at = next(index for index, block in enumerate(fit_blocks) if block.startswith("|"))
@@ -360,81 +384,167 @@ def build_page():
     fit_lead = "\n\n".join(fit_blocks[:first_option])
     fit_close = "\n\n".join(fit_blocks[first_option + 3:fit_table_at])
     fit_table = "\n\n".join(fit_blocks[fit_table_at:])
-    fit_option_html = "".join(
+    option_html = "".join(
         f'<article class="fit-option" data-option="{index}"><span class="fit-option-mark" aria-hidden="true">{index + 1:02d}</span>{blocks(option)}</article>'
         for index, option in enumerate(fit_options)
     )
-    doors, doors_sub = split_sub(sections["Start with an agent. Or a computer."])
-    qualities, quality_sub = split_sub(sections["A computer you can actually work in"])
-    roadmap_intro, stages = split_sub(sections["What we're building around it"])
-    economy, econ_sub = split_sub(sections["The economy"])
-    feature_names = ["Come back to it", "Settle in", "Follow the work", "Know what has access"]
-    feature_big = ['STAYS.', 'SETTLE.', 'VISIBLE.', 'BOUNDED.']
-    feature_images = ['agent-computer-opportunity-v2.png', 'boundary-monolith-v5.png', 'observable-run-v2.png', 'agent-computer-hero-v2.png']
-    feature_alts = ['One workspace connects to a laptop, tablet and phone.', SHARE_IMAGE_ALT, 'Concept illustration connecting a request, observed actions and result.', 'Personal device beside a separate agent computer.']
-    features = ''
-    for i, name in enumerate(feature_names):
-        image = render(feature_images[i], f'alt="{feature_alts[i]}" width="1536" height="1024" loading="lazy"', '(max-width: 999px) 100vw, 46vw')
-        if feature_images[i] == 'boundary-monolith-v5.png':
-            image = monolith(f'alt="{feature_alts[i]}" width="1672" height="940" loading="lazy"', '(max-width: 999px) 100vw, 46vw')
-        features += f'<article class="quality-panel"><div class="quality-word" aria-hidden="true">{feature_big[i]}</div><div class="quality-layout"><figure>{image}</figure><div class="quality-copy"><span class="quality-position" aria-hidden="true">{i+1:02d} / 04</span><h3>{escape(name)}</h3>{blocks(quality_sub[name])}</div></div></article>'
-    launch_body, launch_list = doors_sub['Choose who runs it'].split('**The launch:**', 1)
-    utility_source = econ_sub["What it's for"]
-    utility_intro = utility_source.split('**Access to compute.**', 1)[0]
-    utilities = []
-    for match in re.finditer(r"^\*\*(.+?)\.\*\* (.*?)(?=^\*\*.+?\.\*\* |\Z)", utility_source, flags=re.MULTILINE | re.DOTALL):
-        name, text = match.groups()
-        utilities.append((name, text.strip()))
-    check_names([name for name, text in utilities], UTILITY_NAMES, "Token utilities")
-    require(len(utilities) == len(UTILITY_NAMES), "Expected exactly {} token utility entries".format(len(UTILITY_NAMES)))
-    utility_html = ''.join(f'<article class="token-utility scene-reveal" id="utility-{slug(name)}"><div class="utility-heading"><span class="utility-index" aria-hidden="true">{i+1:02d}</span><h4>{escape(name)}.</h4></div><div class="utility-copy">{blocks(text)}</div></article>' for i, (name, text) in enumerate(utilities))
-    economy_html = ''
-    for name, text in econ_sub.items():
-        if name == "What it's for":
-            content = f'<div class="prose">{blocks(utility_intro)}</div><div class="token-utilities">{utility_html}</div>'
+    who_for = fit_sub["Who it's for"]
+    return (f'<section class="fit chapter shell" id="fit" data-chapter="Where it fits"><div class="chapter-heading"><h2>Keep the agents you like.<br><span class="muted-text">Move them off your computer.</span></h2><div class="intro-copy">{blocks(fit_lead)}</div></div>'
+            f'<div class="fit-options">{option_html}</div><div class="fit-verdict"><span class="fit-verdict-rule" aria-hidden="true"></span><div class="prose">{blocks(fit_close)}</div></div>{blocks(fit_table)}'
+            f'<div class="fit-who"><h3>Who it\'s for</h3><div class="prose">{blocks(who_for)}</div></div></section>')
+
+
+def threat_section(sections):
+    intro, sub = split_sub(sections[THREAT_TITLE])
+    check_names(sub, {"Safety training is not proof", "Think about what we're doing"}, "Threat subsections")
+    think = sub["Think about what we're doing"]
+    return (f'<section class="threat chapter shell" id="threat" data-chapter="Not a future problem"><div class="chapter-heading"><h2>This is not<br><span class="muted-text">a future problem</span></h2></div><div class="prose threat-intro">{blocks(intro)}</div>'
+            f'<div class="problem-prose threat-turn"><h3>Safety training is not proof</h3><div class="prose">{blocks(sub["Safety training is not proof"])}</div></div>'
+            f'<div class="problem-prose threat-turn threat-close"><h3>Think about what we\'re doing</h3><div class="prose">{blocks(think)}</div></div></section>')
+
+
+def doors_section(sections):
+    doors, sub = split_sub(sections[DOORS_TITLE])
+    check_names(sub, {"Launch an agent", "Launch a computer", "Keep several running", "Choose who runs it"}, "Doors subsections")
+    launch_body, launch_list = sub["Choose who runs it"].split("**The launch:**", 1)
+    return (f'<section class="doors-section chapter shell" id="doors" data-chapter="Launch it"><div class="chapter-heading"><h2>Start with an agent.<br>Or a computer.</h2><div class="intro-copy">{blocks(doors)}</div></div>'
+            '<div class="doors"><article class="door door-agent scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol">&gt;_</span></div>'
+            f'<h3>Launch an agent</h3>{blocks(sub["Launch an agent"])}</article>'
+            '<article class="door door-computer scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol"><svg viewBox="0 0 80 70"><rect x="7" y="5" width="66" height="44" rx="3"/><path d="M40 50v12M24 64h32"/></svg></span></div>'
+            f'<h3>Launch a computer</h3>{blocks(sub["Launch a computer"])}</article></div>'
+            f'<div class="two-column-copy"><div><h3>Keep several running</h3>{blocks(sub["Keep several running"])}</div><div id="operation"><h3>Choose who runs it</h3>{blocks(launch_body)}</div></div>'
+            f'<div class="launch-journey"><p>The launch:</p>{blocks(launch_list)}</div></section>')
+
+
+def qualities_section(sections):
+    qualities, sub = split_sub(sections[QUALITIES_TITLE])
+    names = ["Come back to it", "Settle in", "Follow the work", "Know what has access"]
+    check_names(sub, names, "Qualities subsections")
+    words = ["STAYS.", "SETTLES.", "VISIBLE.", "BOUNDED."]
+    words[1] = "SETTLE."
+    images = ["agent-computer-opportunity-v2.png", "boundary-monolith-v5.png", "observable-run-v2.png", "agent-computer-hero-v2.png"]
+    alts = ["One workspace connects to a laptop, tablet and phone.", SHARE_IMAGE_ALT, "Concept illustration connecting a request, observed actions and result.", "Personal device beside a separate agent computer."]
+    panels = ""
+    for i, name in enumerate(names):
+        if images[i] == "boundary-monolith-v5.png":
+            image = monolith(f'alt="{alts[i]}" width="1672" height="940" loading="lazy"', "(max-width: 999px) 100vw, 46vw")
         else:
-            content = f'<div class="prose">{blocks(text)}</div>'
-        economy_html += f'<section class="economy-subsection scene-reveal" id="economy-{slug(name)}"><h3>{escape(name)}</h3>{content}</section>'
-    hero_title = "Your agent needs a computer. It doesn't need yours."
-    hero_intro = sections[hero_title].split('\n\n')[0]
-    hero_caption = ''.join(f'<span>{inline(part)}</span>' for part in re.split(r'(?<=\.)\s+', hero_intro, maxsplit=1))
-    reading_copy, reading_links = sections['Read further'].rsplit('\n\n', 1)
-    finale_copy, finale_links = sections['Somewhere better to work'].rsplit('\n\n', 1)
-    source_reading_links = inline(reading_links).replace('<a ', '<a class="text-link" ')
-    source_finale_links = inline(finale_links).replace('<a ', '<a class="text-link" ')
-    try_it_copy = blocks(sub['Try it'])
-    # Tabler's MIT arrow-down-right path; attribution is in vendor/NOTICE.md.
-    explore_arrow = '<svg class="action-arrow" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg>'
-    node_html = ''
-    panel_html = ''
-    paths = ''
-    # Product stories sit in source order around a single ring; this is not a dependency graph.
-    for i,p in enumerate(products):
-        group = p['group']
-        angle=math.radians(-90 + i * (360 / len(products)))
-        radius=285
-        x = 350 + math.cos(angle) * radius
-        y = 350 + math.sin(angle) * radius
-        s = slug(p['name'])
-        paths+=f'<path data-line="{s}" d="M350 350 Q{350+(x-350)*.3:.1f} {y:.1f} {x:.1f} {y:.1f}"/>'
-        node_html+=f'<button class="atlas-node" data-product="{s}" aria-controls="product-{s}" aria-expanded="true" style="--x:{x/7:.2f}%;--y:{y/7:.2f}%"><span class="node-name">{p["name"]}</span><span class="node-invitation">Explore {explore_arrow}</span></button>'
-        related=''.join(f'<button data-product="{slug(r)}">{escape(r)} {explore_arrow}</button>' for r in p['related'])
+            image = render(images[i], f'alt="{alts[i]}" width="1536" height="1024" loading="lazy"', "(max-width: 999px) 100vw, 46vw")
+        panels += (f'<article class="quality-panel"><div class="quality-word" aria-hidden="true">{words[i]}</div><div class="quality-layout"><figure>{image}</figure>'
+                   f'<div class="quality-copy"><span class="quality-position" aria-hidden="true">{i + 1:02d} / 04</span><h3>{escape(name)}</h3>{blocks(sub[name])}</div></div></article>')
+    return (f'<section class="qualities chapter" id="qualities" data-chapter="What you get"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div>'
+            f'<div class="quality-stage"><div class="quality-track">{panels}</div></div></section>')
+
+
+def roadmap_section(sections, explore_arrow):
+    stages, products, roadmap_tail = load_products(sections)
+    roadmap_intro = split_sub(sections[ROADMAP_TITLE])[0]
+    available_now = stages["Agent Computers \u00b7 Available now"]
+    node_html = panel_html = paths = ""
+    for i, p in enumerate(products):
+        group = p["group"]
+        angle = math.radians(-90 + i * (360 / len(products)))
+        x, y = 350 + math.cos(angle) * 285, 350 + math.sin(angle) * 285
+        key = slug(p["name"])
+        paths += f'<path data-line="{key}" d="M350 350 Q{350 + (x - 350) * .3:.1f} {y:.1f} {x:.1f} {y:.1f}"/>'
+        node_html += f'<button class="atlas-node" data-product="{key}" aria-controls="product-{key}" aria-expanded="true" style="--x:{x / 7:.2f}%;--y:{y / 7:.2f}%"><span class="node-name">{p["name"]}</span><span class="node-invitation">Explore {explore_arrow}</span></button>'
+        related = "".join(f'<button data-product="{slug(r)}">{escape(r)} {explore_arrow}</button>' for r in p["related"])
         extra = f'<div class="product-depth">{blocks(p["description"])}<p class="related-invitation"><span data-input-verb>Click</span> a related idea to keep exploring</p><div class="related"><span>Related:</span>{related}</div></div>'
-        stage_label = 'Research' if group == 'Horizon' else group
-        panel_html += f'<article class="product-panel" id="product-{s}" tabindex="-1" data-stage="{group}"><button class="back-to-atlas">{explore_arrow} All products</button><p class="product-stage">{stage_label}</p><h3>{p["name"]}.</h3><p class="product-summary">{inline(p["summary"])}</p>{extra}<div class="product-pagination"><button data-product="{slug(products[(i-1)%15]["name"])}" aria-label="Previous product: {products[(i-1)%15]["name"]}">← Previous</button><span>{i+1:02d} / 15</span><button data-product="{slug(products[(i+1)%15]["name"])}" aria-label="Next product: {products[(i+1)%15]["name"]}">Next →</button></div></article>'
-    boundary_markup = (OUTPUT.parent / "boundary.html").read_text(encoding="utf-8")
-    protection = sections[BOUNDARY_TITLE]
-    before_quote, quote_and_after = protection.split('\n\n> ', 1)
-    quote, after_quote = quote_and_after.split('\n\n', 1)
-    problem_paragraphs = problem.split('\n\n')
-    problem_opening = '\n\n'.join(problem_paragraphs[:3])
-    problem_context = '\n\n'.join(problem_paragraphs[3:])
-    chapter_links = [('opportunity', 'The problem'), ('threat', 'Not a future problem'), ('fit', 'Where it fits'), ('platform', 'Open source'), ('founder', "Why I’m building it"), ('experience', 'Agent or computer'), ('observability', 'The product'), ('security', 'The boundary'), ('future', 'The ecosystem'), ('economy', 'The economy'), ('reading-room', 'Read further')]
-    index_links = ''.join(f'<a href="#{target}"><span class="index-number">{i+1:02d}</span><span>{label}</span>{explore_arrow}</a>' for i, (target, label) in enumerate(chapter_links))
+        stage_label = "Research" if group == "Horizon" else group
+        panel_html += (f'<article class="product-panel" id="product-{key}" tabindex="-1" data-stage="{group}"><button class="back-to-atlas">{explore_arrow} All products</button><p class="product-stage">{stage_label}</p>'
+                       f'<h3>{p["name"]}.</h3><p class="product-summary">{inline(p["summary"])}</p>{extra}'
+                       f'<div class="product-pagination"><button data-product="{slug(products[(i - 1) % 15]["name"])}" aria-label="Previous product: {products[(i - 1) % 15]["name"]}">\u2190 Previous</button><span>{i + 1:02d} / 15</span>'
+                       f'<button data-product="{slug(products[(i + 1) % 15]["name"])}" aria-label="Next product: {products[(i + 1) % 15]["name"]}">Next \u2192</button></div></article>')
+    return (f'<section class="roadmap chapter" id="atlas" data-chapter="The products"><div class="shell chapter-heading"><h2>What we\'re building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div>'
+            f'<div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers \u00b7 Available now</h3>{blocks(available_now)}</div></div>'
+            '<div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div>'
+            '<div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div>'
+            f'<div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg>'
+            f'<div class="atlas-core" aria-hidden="true">{BRAND_MARK}<strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren\'t implemented connections.</p></div><div class="product-panels">{panel_html}</div></div>'
+            f'<div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>')
+
+
+def economy_subsections(body):
+    """The economy chapter's subsections; "What it's for" becomes its twelve use cards."""
+    intro, sub = split_sub(body)
+    html_out = '<div class="economy-intro prose">{}</div>'.format(prose(intro))
+    for name, text in sub.items():
+        if name == "What it's for":
+            source = text
+            lead = source.split("**Access to compute.**", 1)[0]
+            uses = [(m[1], m[2].strip()) for m in re.finditer(r"^\*\*(.+?)\.\*\* (.*?)(?=^\*\*.+?\.\*\* |\Z)", source, flags=re.MULTILINE | re.DOTALL)]
+            check_names([n for n, _ in uses], UTILITY_NAMES, "Token utilities")
+            cards = "".join(f'<article class="token-utility scene-reveal" id="utility-{slug(n)}"><div class="utility-heading"><span class="utility-index" aria-hidden="true">{i + 1:02d}</span><h4>{escape(n)}.</h4></div><div class="utility-copy">{blocks(t)}</div></article>' for i, (n, t) in enumerate(uses))
+            content = f'<div class="prose">{blocks(lead)}</div><div class="token-utilities">{cards}</div>'
+        else:
+            content = f'<div class="prose">{prose(text)}</div>'
+        html_out += f'<section class="economy-subsection scene-reveal" id="economy-{slug(name)}"><h3>{escape(name)}</h3>{content}</section>'
+    return html_out
+
+
+def build_page():
+    sections = load_inputs()
+    ids = {title: anchor for title, anchor, _ in SECTIONS}
+    labels = {title: label for title, _, label in SECTIONS}
+    hero_intro = sections[HERO_TITLE].split("\n\n")
+    hero_sentence = next(p for p in hero_intro if p.startswith("Hivra is building"))
+    hero_caption = "".join("<span>{}</span>".format(inline(part)) for part in re.split(r"(?<=\.)\s+", hero_sentence, maxsplit=1)[:1])
+    explore_arrow = '<svg class="action-arrow" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg>'
+
+    def subsections(body, wrap="problem-prose"):
+        intro, subs = split_sub(body)
+        html_out = '<div class="prose">{}</div>'.format(prose(intro)) if intro else ""
+        for name, text in subs.items():
+            html_out += '<div class="{} scene-reveal" id="{}-{}"><h3>{}</h3><div class="prose">{}</div></div>'.format(
+                wrap, "sub", slug(name), escape(name), prose(text))
+        return html_out
+
+    chapters = ""
+    heading_labels = []
+    restored = {THREAT_TITLE: lambda: threat_section(sections), FIT_TITLE: lambda: fit_section(sections, explore_arrow),
+                DOORS_TITLE: lambda: doors_section(sections), QUALITIES_TITLE: lambda: qualities_section(sections),
+                ROADMAP_TITLE: lambda: roadmap_section(sections, explore_arrow)}
+    for title, anchor, label in SECTIONS:
+        if title in (FINALE_TITLE,):
+            continue
+        body = sections[title]
+        if title in restored:
+            chapters += restored[title]()
+            heading_labels.append(label)
+            continue
+        if title == HERO_TITLE:
+            content = '<div class="prose problem-intro">{}</div>'.format(prose(body))
+        elif title == FOUNDER_TITLE:
+            chapters += ('<section class="founder chapter shell" id="{}" data-chapter="{}"><div class="founder-heading"><span class="founder-rule" aria-hidden="true"></span>'
+                         '<h2>{}</h2></div><div class="prose founder-copy">{}</div></section>').format(anchor, escape(label), escape(title), prose(body))
+            continue
+        elif title == ECONOMY_TITLE:
+            content = economy_subsections(body)
+        else:
+            content = subsections(body)
+            if title == THIN_LAYER_TITLE:
+                # The interactive boundary lab: the reader sees what a permission prompt does and does not protect.
+                content += '<div class="problem-layout">{}</div>'.format((OUTPUT.parent / "boundary.html").read_text(encoding="utf-8"))
+        heading_labels.append(label)
+        klass = "economy chapter shell" if title == ECONOMY_TITLE else "lp-chapter chapter shell"
+        chapters += ('<section class="{}" id="{}" data-chapter="{}"><div class="chapter-heading"><h2>{}</h2></div>{}</section>').format(
+            klass, anchor, escape(label), escape(title), content)
+        if title == "The safer answer has always been obvious":
+            chapters += ('<section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{}</div>'
+                         '<p><span class="passage-room">Give it room to work.</span><br><span class="passage-decide">Decide what it can reach.</span></p></section>').format(
+                             "".join("<i></i>" for _ in range(8)))
+
+    finale_copy, finale_links = sections[FINALE_TITLE].rsplit("\n\n", 1)
+    source_finale_links = inline(finale_links).replace("<a ", '<a class="text-link" ')
+    index_entries = [(anchor, label) for title, anchor, label in SECTIONS if title != FINALE_TITLE]
+    index_links = "".join('<a href="#{}"><span class="index-number">{:02d}</span><span>{}</span>{}</a>'.format(target, i + 1, label, explore_arrow)
+                          for i, (target, label) in enumerate(index_entries))
     share_width, share_height = png_size(OUTPUT.parent / SHARE_IMAGE)
     HERO_SIZES = "(max-width: 999px) 100vw, 62vw"
-    # Reader copy is rendered at build time. Chapter headings and diagrams are intentionally shaped below.
-    page=f'''<!doctype html>
+    css_v = hashlib.sha256((OUTPUT.parent / "litepaper.css").read_bytes()).hexdigest()[:12]
+    js_v = hashlib.sha256((OUTPUT.parent / "litepaper.js").read_bytes()).hexdigest()[:12]
+    motion_v = hashlib.sha256((OUTPUT.parent / "experience-motion.js").read_bytes()).hexdigest()[:12]
+    page = f'''<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -455,53 +565,39 @@ def build_page():
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/apple-icon.png">
 <link rel="preload" as="image" type="image/webp" href="/images/home/monolith-1600.webp" imagesrcset="{MONOLITH_WEBP}" imagesizes="{HERO_SIZES}" fetchpriority="high">
-<link rel="stylesheet" href="litepaper.css?v={hashlib.sha256((OUTPUT.parent / "litepaper.css").read_bytes()).hexdigest()[:12]}">
+<link rel="stylesheet" href="litepaper.css?v={css_v}">
 <link rel="preload" as="font" type="font/ttf" crossorigin href="assets/fonts/Manrope-Variable.ttf">
 <script defer src="vendor/gsap-3.15.0.min.js"></script>
 <script defer src="vendor/ScrollTrigger-3.15.0.min.js"></script>
-<script defer src="litepaper.js?v={hashlib.sha256((OUTPUT.parent / "litepaper.js").read_bytes()).hexdigest()[:12]}"></script>
-<script defer src="experience-motion.js?v={hashlib.sha256((OUTPUT.parent / "experience-motion.js").read_bytes()).hexdigest()[:12]}"></script>
+<script defer src="litepaper.js?v={js_v}"></script>
+<script defer src="experience-motion.js?v={motion_v}"></script>
 </head>
 <body>
 <div id="top" aria-hidden="true"></div>
 <a class="skip-link" href="#main">Skip to the litepaper</a>
-<header class="site-header"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><nav aria-label="Primary navigation"><a href="#opportunity">Why Hivra</a><a href="#fit">Where it fits</a><a href="#platform">Open source</a><a href="#experience">How it works</a><a href="#future">What's next</a></nav><div class="reader-tools"><button class="chapter-index-toggle" aria-controls="chapter-index" aria-expanded="false">Index<span aria-hidden="true" class="index-icon"></span></button><button class="reading-toggle" aria-pressed="false">Read</button><button class="motion-toggle" aria-pressed="false" aria-label="Pause animation">Motion on</button><button class="theme-toggle" aria-label="Switch to light theme">Light</button></div></header>
+<header class="site-header"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><nav aria-label="Primary navigation"><a href="#thin-layer">Why Hivra</a><a href="#experience">How it works</a><a href="#fit">Where it fits</a><a href="#future">The system</a><a href="#pace">What's next</a></nav><div class="reader-tools"><button class="chapter-index-toggle" aria-controls="chapter-index" aria-expanded="false">Index<span aria-hidden="true" class="index-icon"></span></button><button class="reading-toggle" aria-pressed="false">Read</button><button class="motion-toggle" aria-pressed="false" aria-label="Pause animation">Motion on</button><button class="theme-toggle" aria-label="Switch to light theme">Light</button></div></header>
 <dialog class="chapter-index-panel" id="chapter-index" aria-labelledby="index-title"><div class="index-top"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><button class="chapter-index-close" aria-label="Close chapter index">Close <span aria-hidden="true">×</span></button></div><div class="index-layout"><div class="index-intro"><p class="mini-label">The Hivra litepaper</p><h2 id="index-title">Find your<br>place.</h2><p>Give it room to work.<br>Decide what it can reach.</p></div><nav class="index-links" aria-label="Chapter index">{index_links}</nav></div><div class="index-bottom"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../LITEPAPER.md">Save the litepaper {explore_arrow}</a></div></dialog>
 <main id="main">
 <section class="hero" id="beginning" data-chapter="The beginning">
 <div class="hero-art" aria-hidden="true"><div class="hero-object-stage"><div class="hero-object">{monolith('alt="" width="1672" height="940" fetchpriority="high"', HERO_SIZES)}<div class="hero-object-edge"></div></div><div class="hero-coordinate coordinate-top">HIVRA / AGENT COMPUTERS</div><div class="hero-coordinate coordinate-bottom">A place of its own.</div></div><div class="hero-shade"></div><canvas id="field-canvas"></canvas></div><div class="hero-watermark" aria-hidden="true">HIVRA</div>
-<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It doesn't need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><div class="hero-links"><a class="hero-open" href="https://github.com/ashneil12/hivra">{GITHUB_MARK}Open source · Run it yourself</a><a class="hero-open hero-token" href="#economy">Tokenomics<span aria-hidden="true">&rarr;</span></a></div></div>
+<div class="hero-content"><p class="hero-kicker">The Hivra litepaper</p><h1><span class="line">Your agent</span><span class="line">needs a</span><span class="line hero-emphasis">computer.</span><span class="hero-answer">It does not need yours.</span></h1><a class="text-link enter-link" href="#opportunity">Enter <span class="enter-arrow" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10"/><path d="M17 8l0 9l-9 0"/></svg></span></a><div class="hero-links"><a class="hero-open" href="/sign-up">Sign up free<span aria-hidden="true">&rarr;</span></a><a class="hero-open" href="https://github.com/ashneil12/hivra">{GITHUB_MARK}Open source · Run it yourself</a><a class="hero-open hero-token" href="#economy">Economy<span aria-hidden="true">&rarr;</span></a></div></div>
 <div class="hero-caption"><span class="hero-caption-mark" aria-hidden="true">H / 00</span>{hero_caption}<span class="hero-scroll" aria-hidden="true">SCROLL TO EXPLORE<span></span></span></div>
 <div class="hero-transition" aria-hidden="true">Give it room<br>to work.</div>
 </section>
-<section class="problem chapter shell" id="opportunity" data-chapter="The problem">
-<div class="chapter-heading"><h2>The problem is<br>where it lives</h2></div>
-<div class="prose problem-intro">{blocks(problem_opening)}</div><div class="problem-layout">{boundary_markup}<div class="prose problem-context">{blocks(problem_context)}<h3>Try it</h3>{try_it_copy}</div></div><div class="problem-prose"><h3>Instructions are not boundaries</h3><div class="prose">{blocks(sub["Instructions are not boundaries"])}</div></div>
-</section>
-<section class="threat chapter shell" id="threat" data-chapter="Not a future problem"><div class="chapter-heading"><h2>This is not<br><span class="muted-text">a future problem</span></h2></div><div class="prose threat-intro">{blocks(threat_intro)}</div><div class="problem-prose threat-turn"><h3>Safety training is not proof</h3><div class="prose">{blocks(threat_sub["Safety training is not proof"])}</div></div><div class="problem-prose threat-turn threat-close"><h3>Think about what we're doing</h3><div class="prose">{blocks(threat_sub["Think about what we're doing"])}</div></div></section>
-<section class="fit chapter shell" id="fit" data-chapter="Where it fits"><div class="chapter-heading"><h2>Keep the agents you like.<br><span class="muted-text">Move them off your computer.</span></h2><div class="intro-copy">{blocks(fit_lead)}</div></div><div class="fit-options">{fit_option_html}</div><div class="fit-verdict"><span class="fit-verdict-rule" aria-hidden="true"></span><div class="prose">{blocks(fit_close)}</div></div>{blocks(fit_table)}<div class="fit-who"><h3>Who it's for</h3><div class="prose">{blocks(fit_sub["Who it's for"])}</div></div></section>
-<section class="open-section chapter shell" id="platform" data-chapter="Open source"><div class="open-visual" aria-hidden="true"><div class="open-frame frame-one"></div><div class="open-frame frame-two"></div><div class="open-frame frame-three"></div><span>OPEN.</span></div><div class="open-copy"><h2>Open source.<br>Yours to run.</h2><div class="prose">{blocks(sections['Open source. Yours to run.'])}</div></div></section>
-<section class="founder chapter shell" id="founder" data-chapter="Why I’m building it"><div class="founder-heading"><span class="founder-rule" aria-hidden="true"></span><h2>Why I'm<br>building it</h2></div><div class="prose founder-copy">{blocks(sections["Why I'm building it"])}</div></section>
-<section class="boundary-passage" aria-label="The central principle"><div class="passage-lines" aria-hidden="true">{''.join('<i></i>' for _ in range(8))}</div><p><span class="passage-room">Give it room to work.</span><br><span class="passage-decide">Decide what it can reach.</span></p></section>
-<section class="doors-section chapter shell" id="experience" data-chapter="Agent or computer"><div class="chapter-heading"><h2>Start with an agent.<br>Or a computer.</h2><div class="intro-copy">{blocks(doors)}</div></div><div class="doors"><article class="door door-agent scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol">&gt;_</span></div><h3>Launch an agent</h3>{blocks(doors_sub['Launch an agent'])}</article><article class="door door-computer scene-reveal"><div class="door-art" aria-hidden="true"><span class="door-frame"></span><span class="door-frame"></span><span class="door-frame"></span><span class="door-symbol"><svg viewBox="0 0 80 70"><rect x="7" y="5" width="66" height="44" rx="3"/><path d="M40 50v12M24 64h32"/></svg></span></div><h3>Launch a computer</h3>{blocks(doors_sub['Launch a computer'])}</article></div><div class="two-column-copy"><div><h3>Keep several running</h3>{blocks(doors_sub['Keep several running'])}</div><div id="operation"><h3>Choose who runs it</h3>{blocks(launch_body)}</div></div><div class="launch-journey"><p>The launch:</p>{blocks(launch_list)}</div></section>
-<section class="qualities chapter" id="observability" data-chapter="What you get"><div class="shell chapter-heading"><h2>A computer you can<br>actually work in</h2><div class="intro-copy">{blocks(qualities)}</div></div><div class="quality-stage"><div class="quality-track">{features}</div></div></section>
-<section class="constitution chapter shell" id="security" data-chapter="The rule"><div class="chapter-heading"><h2>The boundary lives<br>outside the model</h2></div><div class="constitution-layout"><div class="prose">{blocks(before_quote)}</div><div class="constitution-statement"><span class="constitutional-frame" aria-hidden="true"></span><p class="mini-label">The rule</p><blockquote>{inline(quote)}</blockquote></div></div>{DELEGATION}<div class="constitution-foot">{blocks(after_quote)}</div></section>
-<section class="roadmap chapter" id="future" data-chapter="The ecosystem"><div class="shell chapter-heading"><h2>What we're building<br><span class="muted-text">around it</span></h2><div class="intro-copy">{blocks(roadmap_intro)}</div></div><div class="shell foundation"><span class="foundation-mark" aria-hidden="true"></span><div><h3>Agent Computers · Available now</h3>{blocks(stages['Agent Computers · Available now'])}</div></div><div class="shell interaction-invitation atlas-invitation"><span class="invitation-label">Explore the ecosystem</span><p><span data-input-verb>Click</span> any product to open its story.</p></div><div class="shell atlas-header"><div class="atlas-filter-set"><p class="atlas-filter-label"><span data-input-verb>Click</span> a stage to highlight its ideas</p><div class="atlas-filters" role="group" aria-label="Highlight roadmap stage"><button data-stage-filter="all" aria-pressed="true">All products</button><button data-stage-filter="Next" aria-pressed="false">Next</button><button data-stage-filter="Then" aria-pressed="false">Then</button><button data-stage-filter="Horizon" aria-pressed="false">Research</button></div></div><button class="expand-products" aria-pressed="false">Read all 15</button></div><div class="atlas-layout shell"><div class="atlas-map"><svg viewBox="0 0 700 700" aria-hidden="true" class="atlas-lines"><circle cx="350" cy="350" r="112"/><circle cx="350" cy="350" r="202"/><circle cx="350" cy="350" r="294"/>{paths}</svg><div class="atlas-core" aria-hidden="true">{BRAND_MARK}<strong>Hivra</strong><span>Agent Computers</span></div>{node_html}<p class="atlas-note">Positions group ideas; lines aren't implemented connections.</p></div><div class="product-panels">{panel_html}</div></div><div class="shell roadmap-foot">{blocks(roadmap_tail)}</div></section>
-<section class="economy chapter shell" id="economy" data-chapter="The economy"><div class="chapter-heading"><h2>The economy</h2></div><div class="economy-intro prose">{blocks(economy)}</div><div class="economy-visual scene-reveal" aria-hidden="true"><span class="economy-wordmark">HIVRA</span><div class="economy-token">{BRAND_MARK}</div><div class="economy-visual-caption"><span>COMPUTE · TOOLS · WORK · KNOWLEDGE</span><span>ONE CONNECTED ECONOMY</span></div></div>{economy_html}</section>
-<section class="reading-room chapter shell" id="reading-room" data-chapter="Read further"><h2>Read further</h2><div class="prose">{blocks(reading_copy)}</div><div class="reading-actions"><p class="source-links">{source_reading_links}</p><button class="text-link reading-toggle" aria-pressed="false">Continuous reading <span aria-hidden="true">↗</span></button></div></section>
+{chapters}
 <section class="finale chapter" id="somewhere-better" data-chapter="Somewhere better"><div class="finale-art" aria-hidden="true">{monolith('alt="" width="1672" height="940" loading="lazy" decoding="async"', '100vw')}</div><div class="shell"><h2>Somewhere<br><span>better to work</span></h2><div class="prose finale-copy">{blocks(finale_copy)}</div><div class="finale-actions"><a class="finale-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><a class="finale-computer" href="{COMPUTER_LAUNCH}">Start with a computer {explore_arrow}</a></div><div class="finale-links source-links">{source_finale_links}</div></div></section>
 </main>
-<footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper {explore_arrow}</a></div></footer>
-<nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#opportunity" aria-label="The problem">The problem</a><a href="#fit" aria-label="Where it fits">Where it fits</a><a href="#platform" aria-label="Open source">Open source</a><a href="#experience" aria-label="The computer">The computer</a><a href="#security" aria-label="The boundary">The boundary</a><a href="#future" aria-label="The ecosystem">The ecosystem</a><a href="#economy" aria-label="The economy">The economy</a><a class="dock-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><div class="reading-progress" aria-hidden="true"></div></nav>
+<footer class="shell site-footer"><a class="brand" href="/" aria-label="Back to the Hivra homepage">{BRAND_MARK}Hivra</a><p>Give it room to work.<br>Decide what it can reach.</p><div class="footer-links"><a href="/">Back to Hivra {explore_arrow}</a><a href="../../WHITEPAPER.md">White Paper {explore_arrow}</a><a href="../../LITEPAPER.md">Litepaper (Markdown) {explore_arrow}</a></div></footer>
+<nav class="chapter-dock" aria-label="Chapters"><button class="chapter-index-toggle dock-index-toggle" aria-label="Open chapter index"><span class="index-icon" aria-hidden="true"></span><span class="dock-index-label">Index</span><span class="dock-current">The beginning</span></button><a href="#thin-layer" aria-label="The problem">The problem</a><a href="#experience" aria-label="Agent or computer">Agent or computer</a><a href="#future" aria-label="The system">The system</a><a href="#economy" aria-label="The economy">The economy</a><a href="#security" aria-label="The constitution">The constitution</a><a class="dock-launch" href="{AGENT_LAUNCH}">Launch an agent {explore_arrow}</a><div class="reading-progress" aria-hidden="true"></div></nav>
 </body></html>'''
-    # Chapter markers are navigational metadata; the approved narrative stays intact.
-    markers = iter(('The problem', 'Not a future problem', 'Where it fits', 'The computer', 'The experience', 'The boundary', 'The ecosystem', 'The economy'))
     marker_number = 0
+    marker_labels = iter(heading_labels)
+
     def masthead(match):
         nonlocal marker_number
         marker_number += 1
-        label = next(markers)
-        return match[0].replace('chapter-heading', 'chapter-heading chapter-masthead') + f'<div class="chapter-marker"><span>{label}</span><i aria-hidden="true"></i><span aria-hidden="true">H / {marker_number:02d}</span></div>'
+        return match[0].replace("chapter-heading", "chapter-heading chapter-masthead") + '<div class="chapter-marker"><span>{}</span><i aria-hidden="true"></i><span aria-hidden="true">H / {:02d}</span></div>'.format(next(marker_labels), marker_number)
+
     page = re.sub(r'<div class="(?:shell )?chapter-heading">', masthead, page)
     page = enhance_links(page)
     require(not AUTHOR_NOTE.search(page), "Author-only note found in generated HTML")
@@ -512,7 +608,7 @@ def build_page():
 def build_tokenomics():
     # Keep the standalone download on the same wording source as the website.
     markdown = (REPO / "LITEPAPER.md").read_text(encoding="utf-8")
-    economy = markdown.split("\n## The economy\n", 1)[1].split("\n## ", 1)[0]
+    economy = markdown.split("\n## " + ECONOMY_TITLE + "\n", 1)[1].split("\n## ", 1)[0]
     return "# Hivra tokenomics\n\n" + economy.strip().replace("### ", "## ") + "\n"
 
 
@@ -537,7 +633,7 @@ def main():
             if stale:
                 print("Stale " + ", ".join(stale) + "; run python3 docs/litepaper/build.py", file=sys.stderr)
                 return 1
-            print("Current: page and tokenomics download (15 products, {} token uses)".format(len(UTILITY_NAMES)))
+            print("Current: page and tokenomics download")
         else:
             for path, content in outputs.items():
                 path.parent.mkdir(parents=True, exist_ok=True)

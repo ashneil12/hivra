@@ -4,7 +4,7 @@ import { PUBLIC_START_HREF } from "@/lib/public-start";
 
 export const metadata: Metadata = {
   title: "Get Started",
-  description: "Create your account and launch an agent or a computer on Hivra.",
+  description: "Create your Hivra account. A free account works with a computer or server you connect yourself. Every Hivra Cloud computer needs a paid plan.",
   robots: { index: false, follow: true },
 };
 
