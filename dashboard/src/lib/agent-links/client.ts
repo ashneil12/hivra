@@ -7,7 +7,7 @@ export interface LinksViewData {
   subject: { id: string; kind: "agent" | "computer"; available: boolean; reason?: string };
   links: { id: string; agentId: string; agentName: string; computerId: string; computerName: string; computerKind: string;
     createdAt: string; lastUsedAt: string | null }[];
-  candidates: { id: string; name: string; kind: string; linked: boolean; available: boolean; reason?: string }[];
+  candidates: { id: string; name: string; kind: string; status?: string; linked: boolean; available: boolean; reason?: string }[];
   kit?: { state: KitState; message?: string };
 }
 
