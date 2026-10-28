@@ -126,3 +126,23 @@ describe("airdropFacts", () => {
     expect(JSON.stringify(props)).not.toMatch(/36000000|0x3333/);
   });
 });
+
+describe("receiptsHref", () => {
+  it("is /token/receipts once $HIVRA is launched, on both paths", async () => {
+    expect((await clientProps()).receiptsHref).toBe("/token/receipts");
+    mockPolicyActive = true;
+    expect((await clientProps()).receiptsHref).toBe("/token/receipts");
+  });
+
+  it("is null while $HIVRA is dormant or the switch is off, and for a blocked viewer", async () => {
+    mockLaunch.current = DORMANT_LAUNCH;
+    expect((await clientProps()).receiptsHref).toBeNull();
+    mockLaunch.current = LIVE_LAUNCH;
+    process.env[SWITCH] = "";
+    expect((await clientProps()).receiptsHref).toBeNull();
+    process.env[SWITCH] = "1";
+    mockPolicyActive = true;
+    mockGeo = { blocked: true, message: "Token features aren't available here." } as TokenGeoDecision;
+    expect((await clientProps()).receiptsHref).toBeNull();
+  });
+});

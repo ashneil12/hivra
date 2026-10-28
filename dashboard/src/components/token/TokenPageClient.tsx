@@ -66,6 +66,7 @@ export default function TokenPageClient({
   airdropFacts = null,
   airdropLookupHref = null,
   migrationHref = null,
+  receiptsHref = null,
   tokenSurfaces,
 }: {
   entries: TokenPageEntry[];
@@ -76,6 +77,8 @@ export default function TokenPageClient({
   airdropLookupHref?: string | null;
   /** /token/migration, set by the server only when that page is served and the viewer is not blocked. */
   migrationHref?: string | null;
+  /** /token/receipts, set by the server only when that page is served and the viewer is not blocked. */
+  receiptsHref?: string | null;
   /**
    * HIVRA_NEW_TOKEN_SURFACES as the server read it. The switch is server-only, so
    * a client render that is left to read it sees "off": the header would drop the
@@ -85,7 +88,7 @@ export default function TokenPageClient({
 }) {
   const phase = tokenPhaseFromEntries(entries);
   if (phase !== "dormant" && !geoNotice) {
-    return <TokenLaunchedView entries={entries} airdropFacts={airdropFacts} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} tokenSurfaces={tokenSurfaces} />;
+    return <TokenLaunchedView entries={entries} airdropFacts={airdropFacts} airdropLookupHref={airdropLookupHref} migrationHref={migrationHref} receiptsHref={receiptsHref} tokenSurfaces={tokenSurfaces} />;
   }
   // Reached only while $HIVRA is dormant, or by a blocked viewer, who reads none of
   // the phase copy below (the restricted copy replaces it and the prelaunch sections are dropped).

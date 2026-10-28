@@ -68,7 +68,7 @@ const PHASES = {
 
 function renderLaunched(
   entries: readonly TokenPageEntry[] = PHASES.active,
-  hrefs: { airdropLookupHref: string | null; migrationHref: string | null } = { airdropLookupHref: "/token/airdrop", migrationHref: "/token/migration" },
+  hrefs: { airdropLookupHref: string | null; migrationHref: string | null; receiptsHref?: string | null } = { airdropLookupHref: "/token/airdrop", migrationHref: "/token/migration" },
 ) {
   const hivra = entries.find((entry) => entry.key === "hivra");
   const { snapshot, senderAddress } = resolveAirdropFacts(mockAirdrop, hivra?.contractAddress ?? HIVRA_ADDRESS, new Date("2026-11-01T00:00:00Z"));
@@ -247,6 +247,12 @@ describe("launched /token leaves out whatever is not published", () => {
     expect(container.textContent).not.toMatch(/Snapshot date|Snapshot block|Airdrop wallet|\[|\]/);
     // The prose that does not depend on data is still there.
     expect(screen.getByRole("heading", { name: "Already hold $HermesOS?" })).toBeInTheDocument();
+  });
+
+  it("links the on-chain receipts when that page is served, and only then", () => {
+    mockAirdrop = { senderAddress: null, snapshotBlock: null, snapshotTakenAt: null, snapshotUrl: null, claim: { campaignUrl: null, opensAt: null, closesAt: null } };
+    renderLaunched(PHASES.active, { airdropLookupHref: null, migrationHref: null, receiptsHref: "/token/receipts" });
+    expect(within(screen.getByTestId("token-holder-links")).getByRole("link", { name: /Check the on-chain receipts/ })).toHaveAttribute("href", "/token/receipts");
   });
 
   it("shows the Airdrop wallet alone when only it is published", () => {

@@ -66,6 +66,9 @@
  *                   txHash  0x + 64 hex;
  *                   note    a short plain-English line, or null.
  *                 A group with no receipts shows nothing on the page.
+ *                 Liquidity and founder transactions go in the receipts ledger
+ *                 (lib/token-receipts/token-receipts-config.ts) instead: the page
+ *                 adds them from there, so enter only claim receipts here.
  *
  * A set but invalid value is dropped and logged ("HIVRA migration config
  * rejected"), never rendered: a bad address, tx hash or date, or dates in the
