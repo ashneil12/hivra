@@ -96,7 +96,8 @@ lookup_map() { # $1 = gateway host → instance id or empty
 }
 
 extract_forward_auth_id() { # $1 = vhost file → instance id or empty
-  grep -o 'agent-stream-auth?instance_id=[A-Za-z0-9-]*' "$1" 2>/dev/null \
+  # No match is a normal outcome; under pipefail it must not abort the rollout.
+  { grep -o 'agent-stream-auth?instance_id=[A-Za-z0-9-]*' "$1" 2>/dev/null || true; } \
     | head -1 | sed 's/.*instance_id=//'
 }
 
