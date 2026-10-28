@@ -23,7 +23,6 @@ import { putHermesConfigWithBindMountFallback } from "@/lib/hermes-config-write"
 import { resolveHermesHomeDirFromConfig } from "@/lib/hermes-home";
 import {
   buildHermesConfigWithTools,
-  readInstalledHermesToolNames,
   type HermesToolServerEntry,
 } from "@/lib/hivra/hermes-tool-config";
 import { getHermesGuestSshTarget, type ProxmoxLifecycleRow } from "@/lib/services/proxmox-infrastructure";

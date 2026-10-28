@@ -14,6 +14,7 @@ import { HIVRA_DISPLAY_UNIT, getHivraTokenPhase } from "@/lib/billing/token-regi
 import { HERMESOS_DISPLAY_UNIT } from "@/lib/billing/token-plan-prices";
 import { resolveSubscriptionManagementView } from "@/lib/billing/subscription-management-copy";
 import { clientLog } from "@/lib/client/logger";
+import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { planReturnParams, safeReturnPath, withReturnParams } from "@/lib/safe-return-path";
 import { LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
@@ -886,6 +887,7 @@ export function useBillingController() {
     setYearlyTokenLoading(false);
   };
 
+  const yearlyQuotePollInFlightRef = useRef(false);
   // While a yearly $HermesOS quote is active, an expired quote may still
   // receive a late payment, OR an activated sub still has
   // sweep_status='pending', poll every 15 s so the dashboard banner animates
@@ -900,9 +902,15 @@ export function useBillingController() {
       (recentYearlySubs.pro !== null && recentYearlySubs.pro.sweepStatus === "pending") ||
       (recentYearlySubs.power !== null && recentYearlySubs.power.sweepStatus === "pending");
     if (!hasActiveQuote && !hasLatePaymentWatch && !hasPendingSweep) return;
-    const handle = window.setInterval(() => {
-      void loadYearlyQuotes();
-    }, 15_000);
+    const handle = window.setInterval(pollWhenVisible(() => {
+      // Skip a tick while the previous read is still pending, so a slow
+      // response does not stack requests behind it.
+      if (yearlyQuotePollInFlightRef.current) return;
+      yearlyQuotePollInFlightRef.current = true;
+      void loadYearlyQuotes().finally(() => {
+        yearlyQuotePollInFlightRef.current = false;
+      });
+    }), 15_000);
     return () => window.clearInterval(handle);
   }, [
     activeYearlyQuotes.pro,

@@ -693,6 +693,7 @@ export async function runRecoverOrphanProvisioningSweep(
       source: SOURCE,
       failureType: "recover_orphan_query_failed",
       errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: error.message,
     });
     return { candidates: 0, recovered: 0, notFound: 0, errors: 1 };
   }

@@ -33,12 +33,16 @@ import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
-// Up to 100 sequential Clerk fetches + Resend sends per run can exceed the
-// default function budget. Give it a real ceiling.
+// A full batch is up to 500 rows of Clerk fetches + Resend sends; even at
+// SEND_CONCURRENCY parallel jobs this needs a real ceiling, not the default.
 export const maxDuration = 800;
 
 const LOG_SOURCE = "cron:cold-storage-notifications";
 const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
+// Each send job is Clerk fetch + Resend send + marker write — three remote
+// round trips. Bounded fan-out keeps a large batch inside the function budget;
+// jobs are row-independent (idempotencyKey and notifications_sent are per-row).
+const SEND_CONCURRENCY = 8;
 
 type NotificationsRow = {
   id: string;
@@ -168,13 +172,15 @@ async function handle(req: NextRequest) {
     failed: 0,
   };
 
+  // Plan phase (cheap, serial): decide which kind each candidate needs.
+  type SendJob = {
+    row: NotificationsRow;
+    kind: "cold_archived" | "cold_pending_deletion" | "cold_final_notice" | "cold_deleted";
+  };
+  const jobs: SendJob[] = [];
+
   for (const row of candidates) {
-    let kind:
-      | "cold_archived"
-      | "cold_pending_deletion"
-      | "cold_final_notice"
-      | "cold_deleted"
-      | null = null;
+    let kind: SendJob["kind"] | null = null;
 
     if (row.lifecycle_state === "deleted" && row.deleted_at) {
       if (!notificationAlreadySent(row, "cold_deleted")) kind = "cold_deleted";
@@ -216,101 +222,123 @@ async function handle(req: NextRequest) {
       continue;
     }
 
-    let clerkUser: ClerkUser | null;
-    try {
-      clerkUser = await fetchClerkUser(clerkSecret, row.user_id);
-    } catch (err) {
-      summary.failed += 1;
-      log.warn("clerk fetch failed", {
-        source: LOG_SOURCE,
-        instanceId: row.id,
-        userId: row.user_id,
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      continue;
-    }
-    if (!clerkUser) {
-      summary.skipped_no_email += 1;
-      continue;
-    }
-    const email = chooseEmail(clerkUser);
-    if (!email) {
-      summary.skipped_no_email += 1;
-      continue;
-    }
-
-    const idem = `${row.id}:${kind}:${row.archived_at ?? "unknown"}`;
-    const baseParams = {
-      email,
-      firstName: clerkUser.first_name ?? null,
-      agentName: row.name ?? null,
-      agentType: row.agent_type ?? null,
-      idempotencyKey: idem,
-    };
-
-    let res: ColdStorageEmailSendResult;
-    try {
-      if (kind === "cold_archived") {
-        res = await sendColdArchivedEmail(baseParams);
-      } else if (kind === "cold_pending_deletion" || kind === "cold_final_notice") {
-        const scheduled = row.scheduled_deletion_at ?? new Date().toISOString();
-        const daysUntil = Math.max(
-          1,
-          Math.ceil((Date.parse(scheduled) - Date.now()) / 86400_000)
-        );
-        res = await sendColdPendingDeletionEmail({
-          ...baseParams,
-          daysUntilDeletion: daysUntil,
-          scheduledDeletionDateIso: scheduled,
-        });
-      } else {
-        res = await sendColdDeletedEmail(baseParams);
-      }
-    } catch (err) {
-      summary.failed += 1;
-      log.warn("email send threw", {
-        source: LOG_SOURCE,
-        instanceId: row.id,
-        kind,
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      continue;
-    }
-
-    if (res.sent) {
-      try {
-        await markNotificationSent(row, kind);
-      } catch (err) {
-        // Email went out but the idempotency marker didn't persist. Count it
-        // as failed (not a clean send) and move on — Resend's idempotencyKey
-        // dedupes a re-send within its window, and the row will be retried.
-        summary.failed += 1;
-        log.warn("failed to persist notification-sent marker; email may re-send next run", {
-          source: LOG_SOURCE,
-          instanceId: row.id,
-          kind,
-          errorMessage: err instanceof Error ? err.message : String(err),
-        });
-        continue;
-      }
-      switch (kind) {
-        case "cold_archived":
-          summary.archived_sent += 1;
-          break;
-        case "cold_pending_deletion":
-          summary.pending_sent += 1;
-          break;
-        case "cold_final_notice":
-          summary.final_sent += 1;
-          break;
-        case "cold_deleted":
-          summary.deleted_sent += 1;
-          break;
-      }
-    } else {
-      summary.failed += 1;
-    }
+    jobs.push({ row, kind });
   }
+
+  // Send phase: each job is three serial remote calls (Clerk fetch, Resend
+  // send, marker write). A fully serial loop makes a large batch blow the
+  // function budget; a bounded worker pool keeps it inside it. Jobs are
+  // row-independent (idempotencyKey + notifications_sent are per-row), so
+  // bounded fan-out is safe.
+  let cursor = 0;
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < Math.min(SEND_CONCURRENCY, jobs.length); i++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const idx = cursor++;
+          if (idx >= jobs.length) return;
+          const { row, kind } = jobs[idx];
+
+          let clerkUser: ClerkUser | null;
+          try {
+            clerkUser = await fetchClerkUser(clerkSecret as string, row.user_id);
+          } catch (err) {
+            summary.failed += 1;
+            log.warn("clerk fetch failed", {
+              source: LOG_SOURCE,
+              instanceId: row.id,
+              userId: row.user_id,
+              errorMessage: err instanceof Error ? err.message : String(err),
+            });
+            continue;
+          }
+          if (!clerkUser) {
+            summary.skipped_no_email += 1;
+            continue;
+          }
+          const email = chooseEmail(clerkUser);
+          if (!email) {
+            summary.skipped_no_email += 1;
+            continue;
+          }
+
+          const idem = `${row.id}:${kind}:${row.archived_at ?? "unknown"}`;
+          const baseParams = {
+            email,
+            firstName: clerkUser.first_name ?? null,
+            agentName: row.name ?? null,
+            agentType: row.agent_type ?? null,
+            idempotencyKey: idem,
+          };
+
+          let res: ColdStorageEmailSendResult;
+          try {
+            if (kind === "cold_archived") {
+              res = await sendColdArchivedEmail(baseParams);
+            } else if (kind === "cold_pending_deletion" || kind === "cold_final_notice") {
+              const scheduled = row.scheduled_deletion_at ?? new Date().toISOString();
+              const daysUntil = Math.max(
+                1,
+                Math.ceil((Date.parse(scheduled) - Date.now()) / 86400_000)
+              );
+              res = await sendColdPendingDeletionEmail({
+                ...baseParams,
+                daysUntilDeletion: daysUntil,
+                scheduledDeletionDateIso: scheduled,
+              });
+            } else {
+              res = await sendColdDeletedEmail(baseParams);
+            }
+          } catch (err) {
+            summary.failed += 1;
+            log.warn("email send threw", {
+              source: LOG_SOURCE,
+              instanceId: row.id,
+              kind,
+              errorMessage: err instanceof Error ? err.message : String(err),
+            });
+            continue;
+          }
+
+          if (res.sent) {
+            try {
+              await markNotificationSent(row, kind);
+            } catch (err) {
+              // Email went out but the idempotency marker didn't persist. Count it
+              // as failed (not a clean send) and move on — Resend's idempotencyKey
+              // dedupes a re-send within its window, and the row will be retried.
+              summary.failed += 1;
+              log.warn("failed to persist notification-sent marker; email may re-send next run", {
+                source: LOG_SOURCE,
+                instanceId: row.id,
+                kind,
+                errorMessage: err instanceof Error ? err.message : String(err),
+              });
+              continue;
+            }
+            switch (kind) {
+              case "cold_archived":
+                summary.archived_sent += 1;
+                break;
+              case "cold_pending_deletion":
+                summary.pending_sent += 1;
+                break;
+              case "cold_final_notice":
+                summary.final_sent += 1;
+                break;
+              case "cold_deleted":
+                summary.deleted_sent += 1;
+                break;
+            }
+          } else {
+            summary.failed += 1;
+          }
+        }
+      })()
+    );
+  }
+  await Promise.all(workers);
 
   log.info("cold-storage notifications cron complete", {
     source: LOG_SOURCE,

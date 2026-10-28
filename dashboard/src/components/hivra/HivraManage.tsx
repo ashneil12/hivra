@@ -60,6 +60,7 @@ import {
   type ManageCap, type ManageSectionId,
 } from "@/lib/hivra/manage-sections";
 import type { ChatReadiness } from "@/lib/hivra/chat-readiness";
+import { hasSafeHttpAccessUrl } from "@/lib/safe-http-url";
 
 // The server's resource-gate denial for browser-on-free (403 from launch/resize)
 // and the client-side pre-check below both funnel into the same paywall modal.
@@ -411,16 +412,18 @@ function HivraManageContent({
     if (typeof window === "undefined") return false;
     try { return new URLSearchParams(window.location.search).get("addAgent") === "1"; } catch { return false; }
   });
-  const refreshMcp = useCallback(async () => {
+  const refreshMcp = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!isChatCli || !agent.chat_url) return;
     const r = await listBoxMcp(agent.chat_url, agent.api_token);
+    // A reply that arrives after the box changed (stop/start moves its URL) is stale.
+    if (!isCurrent()) return;
     if (r.error) { setMcpSupported(false); return; }
     setMcpSupported(true);
     setMcp(r.servers);
   }, [isChatCli, agent.chat_url, agent.api_token]);
   useEffect(() => {
     let alive = true;
-    void (async () => { if (alive) await refreshMcp(); })();
+    void refreshMcp(() => alive);
     return () => { alive = false; };
   }, [refreshMcp]);
 
@@ -585,9 +588,16 @@ function HivraManageContent({
   }, [updateConnectionService, onChanged]);
 
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
   const copyEndpoint = useCallback(async () => {
     if (!agent.chat_url) return;
-    try { await navigator.clipboard.writeText(agent.chat_url); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* ignore */ }
+    try { await navigator.clipboard.writeText(agent.chat_url); setCopied(true); copiedTimerRef.current = setTimeout(() => setCopied(false), 1600); } catch { /* ignore */ }
   }, [agent.chat_url]);
 
   const toggleBrowser = useCallback(async (next: boolean) => {
@@ -1618,7 +1628,10 @@ function HivraManageContent({
                   <span style={{ ...valStyle, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 160px", minWidth: 0 }}>{agent.chat_url.replace(/^https?:\/\//, "")}</span>
                   <span style={{ display: "inline-flex", gap: 8, flexShrink: 0 }}>
                     <button type="button" onClick={() => void copyEndpoint()} title="Copy URL" className="mono" style={{ ...label, border: "1px solid var(--etched-border)", background: "transparent", padding: "4px 10px", minHeight: 40, cursor: "pointer", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}>{copied ? <Check size={11} /> : <Copy size={11} />}{copied ? "Copied" : "Copy"}</button>
-                    <a href={agent.chat_url} target="_blank" rel="noopener noreferrer" title="Open" aria-label="Open endpoint" style={{ color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 40, minHeight: 40, border: "1px solid var(--etched-border)", boxSizing: "border-box" }}><ExternalLink size={13} /></a>
+                    {/* chat_url is server-returned data — never let a non-http(s) scheme reach an href. */}
+                    {hasSafeHttpAccessUrl(agent.chat_url) ? (
+                      <a href={agent.chat_url} target="_blank" rel="noopener noreferrer" title="Open" aria-label="Open endpoint" style={{ color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 40, minHeight: 40, border: "1px solid var(--etched-border)", boxSizing: "border-box" }}><ExternalLink size={13} /></a>
+                    ) : null}
                   </span>
                 </div>
               ) : null}

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -12,13 +13,16 @@ import { RESTRICTED_TOKEN_METADATA } from "@/lib/token-phase-copy";
 // Per request: the page reads the geo decision, the $HIVRA phase and the clock.
 export const dynamic = "force-dynamic";
 
+// One geo decision per request: generateMetadata and the page both read it.
+const resolveGeoBlock = cache(() => resolveTokenGeoBlockForPage());
+
 // Ash's pack, 02-token-migration.md: browser title and search description, verbatim.
 const TITLE = "$HermesOS to $HIVRA | Migration, claims and on-chain records | Hivra";
 const DESCRIPTION = "How the $HermesOS to $HIVRA transition works, who can claim through Sablier, what happens to existing access, and where to verify the contracts and transactions.";
 
 export async function generateMetadata(): Promise<Metadata> {
   if (!getServedHivraMigration()) return { robots: { index: false, follow: false } };
-  const restricted = (await resolveTokenGeoBlockForPage()).blocked;
+  const restricted = (await resolveGeoBlock()).blocked;
   const { title, description } = restricted ? RESTRICTED_TOKEN_METADATA : { title: TITLE, description: DESCRIPTION };
   return {
     // The pack's title already ends in "| Hivra", so it skips the root layout's "%s | Hivra" template.
@@ -42,7 +46,7 @@ export default async function HivraMigrationPage() {
 
   // The token geo list names GB (token-geo-list.ts): a blocked viewer gets the
   // notice and no migration details.
-  const geo = await resolveTokenGeoBlockForPage();
+  const geo = await resolveGeoBlock();
   const state: MigrationViewState = geo.blocked
     ? { kind: "blocked", notice: geo.message }
     : {

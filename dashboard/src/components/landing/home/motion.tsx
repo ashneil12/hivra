@@ -13,7 +13,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { LazyMotion, domAnimation, transform, useAnimationControls, useTransform, type MotionValue, type TargetAndTransition, type Transition } from "framer-motion";
 
 export const EASE_OUT = [0.16, 1, 0.3, 1] as const;
-export const EASE_IN_OUT = [0.65, 0, 0.35, 1] as const;
 
 const STORAGE_KEY = "hivra-motion";
 const MOTION_EVENT = "hivra-motion-change";
@@ -35,7 +34,7 @@ const MotionPrefContext = createContext<MotionPref>({ off: false, ready: false, 
 const noopSubscribe = () => () => {};
 
 /** False on the server and while hydrating, true afterwards. */
-export function useHydrated(): boolean {
+function useHydrated(): boolean {
   return useSyncExternalStore(noopSubscribe, () => true, () => false);
 }
 

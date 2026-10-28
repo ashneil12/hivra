@@ -174,3 +174,31 @@ it("reloads the stored conversation when asked, without losing what the owner is
   expect(mockHistory).toHaveBeenCalledTimes(2);
   expect(screen.getByLabelText("Message Builder")).toHaveValue("half a thought");
 });
+
+it("reads a starting session back on a backing-off schedule, and skips reads while the tab is hidden", async () => {
+  jest.useFakeTimers();
+  const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(false);
+  try {
+    mockGet.mockReset();
+    mockGet.mockResolvedValue({ ...session, status: "provisioning" });
+    const flush = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+    render(<ManagedSessionChat initialSession={{ ...session, status: "provisioning" }} />);
+    await flush();
+    expect(mockGet).not.toHaveBeenCalled();
+    hidden.mockReturnValue(true);
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    // The next read waits for this one to settle, and then backs off to 5 s.
+    await flush();
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  } finally {
+    hidden.mockRestore();
+    jest.useRealTimers();
+  }
+});

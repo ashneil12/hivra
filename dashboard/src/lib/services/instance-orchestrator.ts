@@ -952,10 +952,20 @@ fi
     // previously-active row is left orphaned with no recovery path — the cause
     // of the 7 stuck instances on 2026-06-09 (a whole fleet-sync wave failed on
     // a shared host and none of the rows ever became recovery candidates).
-    await supabaseAdmin
+    const { error: failedStateError } = await supabaseAdmin
       .from("hermes_instances")
       .update(buildInstanceLifecyclePatch("failed"))
       .eq("id", instance.id);
+    if (failedStateError) {
+      // Without this stamp the row is not a recovery candidate; make it visible.
+      log.error("update launch failed and the failed state write also failed", new Error("live_update_state_write_failed"), {
+        source: LOG_SOURCE,
+        failureType: "live_update_state_write_failed",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        redactedMessage: redactSensitiveCommandOutput(failedStateError.message, 600),
+      });
+    }
     return {
       applied: false as const,
       error: launchResult.stderr || launchResult.error || "Failed to start update process on server",
@@ -1038,7 +1048,7 @@ fi
   // bump every run would re-roll the same ~50 VMs and the fleet never
   // converges. Every applyLiveUpdate caller (fleet-sync, manual redeploy,
   // resize, recovery) recreates from :stable, so all of them advance the cursor.
-  await supabaseAdmin
+  const { error: redeployStateError } = await supabaseAdmin
     .from("hermes_instances")
     .update({
       ...buildInstanceLifecyclePatch("redeploying"),
@@ -1050,6 +1060,20 @@ fi
       last_synced_at: new Date().toISOString(),
     })
     .eq("id", instance.id);
+  if (redeployStateError) {
+    // The update is already running on the box, but the row still shows the
+    // old state. Log it so the stale row is visible.
+    const message = redeployStateError.message;
+    log.error("live update launched but the redeploying state write failed", new Error("live_update_state_write_failed"), {
+      source: LOG_SOURCE,
+      failureType: "live_update_state_write_failed",
+      instanceId: instance.id,
+      userId: instance.user_id,
+      redactedMessage: redactSensitiveCommandOutput(message, 600),
+    });
+    // Still report the launch: the update is running, and a caller that saw
+    // applied:false could start a second one on top of it.
+  }
 
   log.info("update launched in background", {
     source: LOG_SOURCE,

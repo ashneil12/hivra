@@ -115,8 +115,11 @@ function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Mana
   }
   const busy = operationInProgress(row);
   const stopped = row.status === "stopped";
+  const errored = row.status === "error";
   const start = busy ? blocked("operation_in_progress", WAIT)
-    : stopped ? available : blocked("already_on", "This computer is already on.");
+    : stopped ? available
+      : errored ? blocked("needs_check", "This computer reported an error. Check it before you start it.")
+        : blocked("already_on", "This computer is already on.");
   const stop = busy ? blocked("operation_in_progress", WAIT)
     : stopped ? blocked("already_stopped", "This computer is already stopped.") : available;
   const restartCap = busy ? blocked("operation_in_progress", WAIT)

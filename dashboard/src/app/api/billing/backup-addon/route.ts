@@ -32,7 +32,12 @@ export async function POST(req: NextRequest) {
     if (!clerkUserId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
-    const body = await req.json();
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return apiError("Invalid JSON body", 400, { failureType: "backup_addon_invalid_json" });
+    }
     const parsed = Schema.safeParse(body);
     if (!parsed.success) return apiError(parsed.error.issues[0].message, 400);
 

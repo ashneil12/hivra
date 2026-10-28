@@ -118,7 +118,9 @@ export type AuthorizeManagedVeniceChatResult =
   // (and, through the Worker, to the box). OpenAI-compatible bodies preserved.
   | { ok: false; response: Response };
 
-const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let lastWarnedStaleCatalogAt: string | null = null;
+
+const REFERENCE_ID_PATTERN =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function requestsStrippedThinking(body: Record<string, unknown>): boolean {
   const veniceParameters = body.venice_parameters;
@@ -272,7 +274,9 @@ export async function authorizeManagedVeniceChat(params: {
   // 503 the user. But page hard so the operator can refresh the catalog
   // before the drift compounds across many requests.
   const staleness = checkVeniceChatPricingCatalogStaleness();
-  if (staleness.stale) {
+  // Warn once per catalog snapshot per process, not on every request.
+  if (staleness.stale && staleness.updatedAt !== lastWarnedStaleCatalogAt) {
+    lastWarnedStaleCatalogAt = staleness.updatedAt;
     log.warn(
       "Managed Venice pricing catalog is stale; settlements may drift from Venice's live prices",
       {
@@ -547,25 +551,4 @@ export async function settleManagedVeniceChatUsage(params: {
     pauseKey: false,
   });
   return { settled: false, reconciled: true };
-}
-
-/** Shared SSE usage-frame extraction (used by the in-Vercel streamer + Worker). */
-export function readUsageFromSseFrame(frame: string) {
-  const dataLines = frame
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim());
-
-  for (const data of dataLines) {
-    if (!data || data === "[DONE]") continue;
-    try {
-      const parsed = JSON.parse(data) as Record<string, unknown>;
-      if (parsed?.usage) return parsed.usage;
-    } catch {
-      // non-JSON keep-alive / comment frame
-    }
-  }
-
-  return null;
 }

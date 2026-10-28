@@ -105,7 +105,7 @@ const TIER_LIMITS: Record<TierKey, TierProvisioningLimits> = {
 };
 
 export function resolveTierSpec(tier: TierKey | string): TierSpec {
-  if (tier in TIER_SPECS) return TIER_SPECS[tier as TierKey];
+  if (Object.hasOwn(TIER_SPECS, tier)) return TIER_SPECS[tier as TierKey];
   // Unknown tier → fall back to free. Loud-but-harmless: log so we notice
   // typos in callers.
   log.warn("unknown tier, falling back to free tier", {
@@ -130,7 +130,7 @@ export function resolveEffectiveTierSpec(
 }
 
 export function resolveTierProvisioningLimits(tier: TierKey | string): TierProvisioningLimits {
-  if (tier in TIER_LIMITS) return TIER_LIMITS[tier as TierKey];
+  if (Object.hasOwn(TIER_LIMITS, tier)) return TIER_LIMITS[tier as TierKey];
   log.warn("unknown tier limits, falling back to free tier", {
     source: LOG_SOURCE,
     failureType: "unknown_tier_limits_fallback",

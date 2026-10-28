@@ -395,6 +395,10 @@ const INSTANCE_FINGERPRINT_PRIME_TIMEOUT_MS = 15_000;
 const INSTANCE_SSH_READY_TIMEOUT_MS = 15_000;
 const RUNTIME_STARTUP_MESSAGE = "Instance runtime is still starting. Try again in a moment.";
 const INSTANCE_UPDATE_FAILURE_MESSAGE = "Update failed. Check the instance logs and try again.";
+// Negative cache for Proxmox fleet discovery in GET (per instance, best effort).
+const PROXMOX_DISCOVERY_MISS_TTL_MS = 60_000;
+const PROXMOX_DISCOVERY_MISS_CACHE_MAX = 500;
+const proxmoxDiscoveryMisses = new Map<string, number>();
 const INSTANCE_ACTION_FAILURE_MESSAGE = "Failed to perform instance action.";
 const LEGACY_CREDIT_SUSPENSION_REASON = "insufficient_credits";
 const LEGACY_CREDIT_SUSPENSION_CLEARED_REASON = "credit_compute_gate_disabled";
@@ -604,6 +608,31 @@ async function updateInstanceAndHostStatus(params: {
     });
     throw error;
   }
+}
+
+/**
+ * Persists a lifecycle/status patch and reports whether it landed. supabase-js
+ * returns { error } instead of throwing, so an unchecked write looks like
+ * success. Callers only report a transition after this returns true.
+ */
+async function persistInstanceLifecyclePatch(
+  instanceId: string,
+  patch: Record<string, unknown>,
+  context: { method: string; failureType: string },
+): Promise<boolean> {
+  const { error } = await supabaseAdmin!
+    .from("hermes_instances")
+    .update(patch)
+    .eq("id", instanceId);
+  if (!error) return true;
+  log.error("failed to persist instance lifecycle patch", error, {
+    source: "instances",
+    route: "/api/instances/[id]",
+    method: context.method,
+    instanceId,
+    failureType: context.failureType,
+  });
+  return false;
 }
 
 async function getInstanceOrError(id: string, userId: string) {
@@ -1007,13 +1036,27 @@ export async function GET(
       ["provisioning", "running", "redeploying", "error"].includes(status)
     ) {
       const recoveryHostConfig = getProxmoxHostRoutingConfigFromInfrastructure(null, { host_id: instance!.host_id ?? null });
-      const recoveredInfrastructure = await discoverProxmoxInfrastructureForInstance({
-        instanceId: id,
-        instanceName: instance!.name,
-        subdomain: instance!.subdomain ?? null,
-      }, {
-        hostConfig: recoveryHostConfig,
-      });
+      // Fleet discovery fans out to every Proxmox host. The dashboard polls this
+      // GET, so a row that stays without infrastructure would re-run that fan-out
+      // on every poll; remember a recent miss for this instance instead.
+      const discoveryMissedAt = proxmoxDiscoveryMisses.get(id);
+      const discoveryMissIsFresh =
+        discoveryMissedAt !== undefined && Date.now() - discoveryMissedAt < PROXMOX_DISCOVERY_MISS_TTL_MS;
+      const recoveredInfrastructure = discoveryMissIsFresh
+        ? null
+        : await discoverProxmoxInfrastructureForInstance({
+            instanceId: id,
+            instanceName: instance!.name,
+            subdomain: instance!.subdomain ?? null,
+          }, {
+            hostConfig: recoveryHostConfig,
+          });
+      if (recoveredInfrastructure) {
+        proxmoxDiscoveryMisses.delete(id);
+      } else if (!discoveryMissIsFresh) {
+        if (proxmoxDiscoveryMisses.size >= PROXMOX_DISCOVERY_MISS_CACHE_MAX) proxmoxDiscoveryMisses.clear();
+        proxmoxDiscoveryMisses.set(id, Date.now());
+      }
 
       if (recoveredInfrastructure) {
         proxmoxInfrastructure = recoveredInfrastructure;
@@ -1037,18 +1080,15 @@ export async function GET(
           }) ?? `https://${recoveredInfrastructure.gatewayHost}`;
         publicIpv4 = recoveredInfrastructure.privateIpv4;
 
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update({
-            gateway_url: gatewayUrl,
-            ipv4_address: publicIpv4,
-            infrastructure_provider: "proxmox",
-            proxmox_node: recoveredInfrastructure.node ?? null,
-            proxmox_vmid: recoveredInfrastructure.vmid,
-            config: responseConfig,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", id);
+        await persistInstanceLifecyclePatch(id, {
+          gateway_url: gatewayUrl,
+          ipv4_address: publicIpv4,
+          infrastructure_provider: "proxmox",
+          proxmox_node: recoveredInfrastructure.node ?? null,
+          proxmox_vmid: recoveredInfrastructure.vmid,
+          config: responseConfig,
+          updated_at: new Date().toISOString(),
+        }, { method: "GET", failureType: "instance_recovered_infrastructure_write_failed" });
       }
     }
 
@@ -1073,12 +1113,15 @@ export async function GET(
         PROXMOX_ORPHAN_PROVISIONING_STALE_MS
     ) {
       const now = new Date().toISOString();
-      status = "error";
-      lastLifecycleTransitionAt = now;
-      await supabaseAdmin!
-        .from("hermes_instances")
-        .update(buildInstanceLifecyclePatch(status, { now }))
-        .eq("id", id);
+      const orphanFlipped = await persistInstanceLifecyclePatch(
+        id,
+        buildInstanceLifecyclePatch("error", { now }),
+        { method: "GET", failureType: "instance_orphan_provisioning_flip_failed" },
+      );
+      if (orphanFlipped) {
+        status = "error";
+        lastLifecycleTransitionAt = now;
+      }
     }
 
     if (
@@ -1105,14 +1148,14 @@ export async function GET(
 
         await response.text().catch(() => {});
 
-        if (response.ok) {
+        const now = new Date().toISOString();
+        if (response.ok && await persistInstanceLifecyclePatch(
+          id,
+          buildInstanceLifecyclePatch("running", { now }),
+          { method: "GET", failureType: "instance_error_recovery_promote_failed" },
+        )) {
           status = "running";
-          const now = new Date().toISOString();
           lastLifecycleTransitionAt = now;
-          await supabaseAdmin!
-            .from("hermes_instances")
-            .update(buildInstanceLifecyclePatch(status, { now }))
-            .eq("id", id);
           // Post-ready SOUL.md seed. This error→running self-heal is exactly
           // how a >25-min slow provision resurfaces (stale-sweeper flipped it
           // to error; the box finally answered) — the in-band seed lost the
@@ -1159,14 +1202,14 @@ export async function GET(
           const t = setTimeout(() => ctrl.abort(), 5_000);
           const hr = await fetch(healthUrl, { headers: redeployProbe.headers, signal: ctrl.signal }).catch(() => null);
           clearTimeout(t);
-          if (hr && hr.ok) {
+          const now = new Date().toISOString();
+          if (hr && hr.ok && await persistInstanceLifecyclePatch(
+            id,
+            buildInstanceLifecyclePatch("running", { now }),
+            { method: "GET", failureType: "instance_redeploy_promote_failed" },
+          )) {
             status = "running";
-            const now = new Date().toISOString();
             lastLifecycleTransitionAt = now;
-            await supabaseAdmin!
-              .from("hermes_instances")
-              .update(buildInstanceLifecyclePatch(status, { now }))
-              .eq("id", id);
             // Post-ready SOUL.md seed: a config redeploy re-runs bootstrap in
             // update mode, whose in-band seed has the same timing exposure as
             // provisioning. Re-seed now that the new container answered.
@@ -1365,28 +1408,30 @@ export async function GET(
         // factory-default write (the in-band provision seed races it and loses
         // on slow provisions; see soul-seed-reconcile.ts).
         const promotedToRunning = nextStatus === "running" && status !== "running";
+        let statusPersisted = true;
         if (nextStatus !== status || Object.keys(metadataPatch).length > 0) {
           const now = new Date().toISOString();
           const statusPatch =
             nextStatus !== status
               ? buildInstanceLifecyclePatch(nextStatus, { now })
               : { updated_at: now };
-          if (nextStatus !== status) {
-            lastLifecycleTransitionAt = now;
+          // When Proxmox reports the VM missing, terminal metadata must
+          // win over the stopped/status lifecycle patch so stale rows do
+          // not keep occupying a free-tier/proxmox_vmid slot.
+          statusPersisted = await persistInstanceLifecyclePatch(
+            id,
+            { ...statusPatch, ...metadataPatch },
+            { method: "GET", failureType: "instance_proxmox_status_sync_write_failed" },
+          );
+          // Only report the new state once the row actually holds it.
+          if (statusPersisted) {
+            if (nextStatus !== status) {
+              lastLifecycleTransitionAt = now;
+            }
+            status = nextStatus;
           }
-          status = nextStatus;
-          await supabaseAdmin!
-            .from("hermes_instances")
-            .update({
-              ...statusPatch,
-              // When Proxmox reports the VM missing, terminal metadata must
-              // win over the stopped/status lifecycle patch so stale rows do
-              // not keep occupying a free-tier/proxmox_vmid slot.
-              ...metadataPatch,
-            })
-            .eq("id", id);
         }
-        if (promotedToRunning && isWebfreeBackend(instance!.backend)) {
+        if (promotedToRunning && statusPersisted && isWebfreeBackend(instance!.backend)) {
           scheduleSoulSeedReconcileAfterResponse({
             instanceId: id,
             trigger: "poll_provision_promote",
@@ -1481,23 +1526,28 @@ export async function GET(
 
         if (nextStatus !== status) {
           const promotedToRunning = nextStatus === "running";
-          status = nextStatus;
           const now = new Date().toISOString();
-          lastLifecycleTransitionAt = now;
-          await supabaseAdmin!
-            .from("hermes_instances")
-            .update({
-              ...buildInstanceLifecyclePatch(status, { now }),
+          const hetznerStatusPersisted = await persistInstanceLifecyclePatch(
+            id,
+            {
+              ...buildInstanceLifecyclePatch(nextStatus, { now }),
               gateway_url: gatewayUrl,
-            })
-            .eq("id", id);
-          // Post-ready SOUL.md seed on the Hetzner promotion path — same race,
-          // same fix as the Proxmox branch above.
-          if (promotedToRunning && isWebfreeBackend(instance!.backend)) {
-            scheduleSoulSeedReconcileAfterResponse({
-              instanceId: id,
-              trigger: "poll_provision_promote",
-            });
+            },
+            { method: "GET", failureType: "instance_hetzner_status_sync_write_failed" },
+          );
+          // Only report the new state once the row actually holds it; a failed
+          // write keeps the stored status and the next poll retries the sync.
+          if (hetznerStatusPersisted) {
+            status = nextStatus;
+            lastLifecycleTransitionAt = now;
+            // Post-ready SOUL.md seed on the Hetzner promotion path — same race,
+            // same fix as the Proxmox branch above.
+            if (promotedToRunning && isWebfreeBackend(instance!.backend)) {
+              scheduleSoulSeedReconcileAfterResponse({
+                instanceId: id,
+                trigger: "poll_provision_promote",
+              });
+            }
           }
         }
       }
@@ -1779,10 +1829,13 @@ export async function PATCH(
         .single<HermesHostRow>();
       if (!host) return apiError("Host not found", 404);
 
+      // Soft-deleted siblings keep their host_id and caps, so they must not
+      // count against the host (the budget check below filters them the same way).
       const { data: siblings } = await supabaseAdmin!
         .from("hermes_instances")
         .select("id, cpu_limit, ram_limit")
-        .eq("host_id", instance!.host_id);
+        .eq("host_id", instance!.host_id)
+        .not("status", "in", '("deleted")');
 
       const targetCpu = cpuLimit ?? instance!.cpu_limit ?? 1;
       const targetRam = ramLimit ?? instance!.ram_limit ?? 2048;
@@ -2265,7 +2318,7 @@ export async function DELETE(
         },
       );
       const now = new Date().toISOString();
-      await supabaseAdmin!
+      const { error: terminalDeleteError } = await supabaseAdmin!
         .from("hermes_instances")
         .update({
           status: "deleted",
@@ -2274,6 +2327,21 @@ export async function DELETE(
           updated_at: now,
         })
         .eq("id", id);
+      if (terminalDeleteError) {
+        log.error("idempotent terminal delete write failed", terminalDeleteError, {
+          source: "instances",
+          route: "/api/instances/[id]",
+          method: "DELETE",
+          instanceId: id,
+          userId,
+          failureType: "instance_delete_terminal_row_update_failed",
+        });
+        return apiError(
+          "The record could not be updated. Retry deletion to finish.",
+          500,
+          { failureType: "instance_delete_terminal_row_update_failed", retryable: true },
+        );
+      }
       return apiSuccess({ deleted: true });
     }
 
@@ -2542,7 +2610,7 @@ export async function DELETE(
     // deleted row would keep claiming the VMID slot on that host, and the
     // next provision that picks the same VMID off `qm list` would 23505-fail
     // at post-provision update.
-    await supabaseAdmin!
+    const { error: softDeleteError } = await supabaseAdmin!
       .from("hermes_instances")
       .update({
         status: "deleted",
@@ -2552,6 +2620,26 @@ export async function DELETE(
         updated_at: new Date().toISOString(),
       })
       .eq("id", id);
+    if (softDeleteError) {
+      // The provider teardown already ran, so the row must not claim success.
+      // Teardown is idempotent: a retry finishes the soft-delete safely.
+      log.error("instance soft-delete write failed after provider teardown", softDeleteError, {
+        source: "instances",
+        route: "/api/instances/[id]",
+        method: "DELETE",
+        instanceId: id,
+        userId,
+        failureType: "instance_delete_row_update_failed",
+        failureOwner: "control-plane",
+        failurePhase: "delete",
+        recoveryAction: "retry_delete",
+      });
+      return apiError(
+        "The runtime was removed, but its record could not be updated. Retry deletion to finish.",
+        500,
+        { failureType: "instance_delete_row_update_failed", retryable: true },
+      );
+    }
 
     // If it was linked to a host, mark the host as deleted too since we
     // just deleted the Hetzner Server. ONLY do so when no other live
@@ -2559,14 +2647,25 @@ export async function DELETE(
     // / multiple instances per Hetzner server), one user deleting their
     // instance must not flip the host away from everyone else.
     if (instance!.host_id && instance!.hetzner_server_id) {
-      const { count: liveInstancesOnHost } = await supabaseAdmin!
+      const { count: liveInstancesOnHost, error: liveCountError } = await supabaseAdmin!
         .from("hermes_instances")
         .select("id", { count: "exact", head: true })
         .eq("host_id", instance!.host_id)
         .neq("id", id)
         .neq("status", "deleted");
 
-      if ((liveInstancesOnHost ?? 0) === 0) {
+      if (liveCountError) {
+        // An unknown count is not zero: leave the shared host's status alone.
+        log.error("live-instance count failed; leaving shared host status unchanged", liveCountError, {
+          source: "instances",
+          route: "/api/instances/[id]",
+          method: "DELETE",
+          instanceId: id,
+          userId,
+          hostId: instance!.host_id,
+          failureType: "instance_delete_host_count_failed",
+        });
+      } else if ((liveInstancesOnHost ?? 0) === 0) {
         await supabaseAdmin!
           .from("hermes_hosts")
           .update({ status: "deleted" })
@@ -3326,10 +3425,7 @@ export async function POST(
         if (!ipv4) return apiError("No IPv4 address", 400);
         hostIpForOps = ipv4;
         
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update(buildInstanceLifecyclePatch("provisioning"))
-          .eq("id", id);
+        await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("provisioning"), { method: "POST", failureType: "instance_action_status_write_failed" });
         
         log.info("restarting docker container", {
           source: "instances",
@@ -3370,10 +3466,7 @@ export async function POST(
              );
            }
 
-           await supabaseAdmin!
-             .from("hermes_instances")
-             .update(buildInstanceLifecyclePatch("error"))
-             .eq("id", id);
+           await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("error"), { method: "POST", failureType: "instance_action_status_write_failed" });
            return apiError(
              formatSshActionFailure("Restart failed"),
              500,
@@ -3383,10 +3476,8 @@ export async function POST(
            );
         }
         
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update(buildInstanceLifecyclePatch("running"))
-          .eq("id", id);
+        // The action already ran; a failed status write is logged and the next GET resyncs the row.
+        await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("running"), { method: "POST", failureType: "instance_action_status_write_failed" });
         break;
       }
 
@@ -3401,10 +3492,7 @@ export async function POST(
             ? await discoverContainerName(ipv4, id, proxmoxHostConfig)
             : await discoverContainerName(ipv4, id);
 
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update(buildInstanceLifecyclePatch("provisioning"))
-          .eq("id", id);
+        await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("provisioning"), { method: "POST", failureType: "instance_action_status_write_failed" });
 
         log.info("restarting Hermes gateway inside container", {
           source: "instances",
@@ -3433,10 +3521,7 @@ export async function POST(
         if (!res.ok) {
           const detail = res.stderr?.trim() || res.error?.trim() || res.stdout?.trim() || "";
           if (isMissingInstanceHostError(detail)) {
-            await supabaseAdmin!
-              .from("hermes_instances")
-              .update(buildInstanceLifecyclePatch("error"))
-              .eq("id", id);
+            await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("error"), { method: "POST", failureType: "instance_action_status_write_failed" });
             return apiError(
               "This instance's VM is unreachable or no longer exists on the host. Runtime repair and gateway restart cannot fix a missing VM; please contact support so Hermes can clean up the stale record and recreate the agent.",
               409,
@@ -3456,10 +3541,7 @@ export async function POST(
             );
           }
 
-          await supabaseAdmin!
-            .from("hermes_instances")
-            .update(buildInstanceLifecyclePatch("error"))
-            .eq("id", id);
+          await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("error"), { method: "POST", failureType: "instance_action_status_write_failed" });
           const configRecord = readPlainRecord(instance?.config);
           const isUpdateFailed = configRecord?.lastUpdateReportStatus === "failed";
           const failureMessage = isUpdateFailed
@@ -3474,10 +3556,8 @@ export async function POST(
           );
         }
 
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update(buildInstanceLifecyclePatch("running"))
-          .eq("id", id);
+        // The action already ran; a failed status write is logged and the next GET resyncs the row.
+        await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("running"), { method: "POST", failureType: "instance_action_status_write_failed" });
         break;
       }
 
@@ -3502,10 +3582,7 @@ export async function POST(
           });
           if (!result.applied) {
             if (isMissingInstanceHostError(result.error)) {
-              await supabaseAdmin!
-                .from("hermes_instances")
-                .update(buildInstanceLifecyclePatch("error"))
-                .eq("id", id);
+              await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("error"), { method: "POST", failureType: "instance_action_status_write_failed" });
               return apiError(
                 "This instance's VM is unreachable or no longer exists on the host. Runtime repair cannot fix a missing VM; please contact support so Hermes can clean up the stale record and recreate the agent.",
                 409,
@@ -3563,20 +3640,14 @@ export async function POST(
           action,
           hostIp: ipv4,
         });
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update(buildInstanceLifecyclePatch("redeploying"))
-          .eq("id", id);
+        await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("redeploying"), { method: "POST", failureType: "instance_action_status_write_failed" });
 
         const result = await sshExec(ipv4, agentScript);
 
         if (!result.ok) {
           const detail = result.stderr?.trim() || result.error?.trim() || "";
           if (isMissingInstanceHostError(detail)) {
-            await supabaseAdmin!
-              .from("hermes_instances")
-              .update(buildInstanceLifecyclePatch("error"))
-              .eq("id", id);
+            await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("error"), { method: "POST", failureType: "instance_action_status_write_failed" });
             return apiError(
               "This instance's VM is unreachable or no longer exists on the host. Redeploy cannot fix a missing VM; please contact support so Hermes can clean up the stale record and recreate the agent.",
               409,
@@ -3587,10 +3658,7 @@ export async function POST(
           }
           const retryableActionMessage = normalizeRetryableInstanceActionError(detail);
           if (retryableActionMessage) {
-            await supabaseAdmin!
-              .from("hermes_instances")
-              .update(buildInstanceLifecyclePatch("provisioning"))
-              .eq("id", id);
+            await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("provisioning"), { method: "POST", failureType: "instance_action_status_write_failed" });
             return apiError(
               retryableActionMessage,
               409,
@@ -3600,10 +3668,7 @@ export async function POST(
             );
           }
 
-          await supabaseAdmin!
-            .from("hermes_instances")
-            .update(buildInstanceLifecyclePatch("error"))
-            .eq("id", id);
+          await persistInstanceLifecyclePatch(id, buildInstanceLifecyclePatch("error"), { method: "POST", failureType: "instance_action_status_write_failed" });
           return apiError(
             formatSshActionFailure(`${actionLabel} failed`),
             500,
@@ -3619,14 +3684,12 @@ export async function POST(
         // "Apply your new tier" banner. (Proxmox rows already have
         // tier_change_pending=false from tier-change-service; this
         // covers the Hetzner path that needs an explicit redeploy.)
-        await supabaseAdmin!
-          .from("hermes_instances")
-          .update({
-            ...buildInstanceLifecyclePatch("provisioning"),
-            gateway_url: gatewayUrl,
-            tier_change_pending: false,
-          })
-          .eq("id", id);
+        // The redeploy already ran; a failed write is logged rather than inviting a second redeploy.
+        await persistInstanceLifecyclePatch(id, {
+          ...buildInstanceLifecyclePatch("provisioning"),
+          gateway_url: gatewayUrl,
+          tier_change_pending: false,
+        }, { method: "POST", failureType: "instance_action_status_write_failed" });
         break;
       }
 

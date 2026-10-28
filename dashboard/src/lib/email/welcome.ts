@@ -8,6 +8,7 @@
 
 import { Resend } from "resend";
 
+import { escapeHtml } from "@/lib/email/escape-html";
 import { log } from "@/lib/logger";
 import { SITE_URL } from "@/lib/seo-urls";
 
@@ -93,7 +94,7 @@ function buildHtml(params: SendParams): string {
               <td style="padding:36px 36px 8px;">
                 <p style="margin:0 0 18px;font-family:${monoStack};font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#b3261e;font-weight:700;">Welcome</p>
                 <h1 style="margin:0 0 20px;font-family:${serifStack};font-size:30px;line-height:1.15;font-weight:700;color:#1a1a1a;">You're set up.</h1>
-                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
+                <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(greeting(params.firstName))}</p>
                 <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Your account is live. Connect a computer of yours, or pick a plan and Hivra runs one for you. A Hivra computer stays on, with no Docker and no babysitting.</p>
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 24px;">
                   <tr>

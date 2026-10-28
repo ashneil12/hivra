@@ -150,14 +150,6 @@ function thresholdsModule() {
       };
     }
 
-    function getTierThresholds(now: Date = new Date()) {
-      const active = resolveActiveThresholds(now);
-      return {
-        source: "configured" as const,
-        thresholds: { pro: active.pro.amount, power: active.power.amount },
-      };
-    }
-
     return {
       ...actual,
       PRO_THRESHOLD_LAUNCH_TOKEN_UNITS,
@@ -170,7 +162,6 @@ function thresholdsModule() {
       REQUALIFICATION_CAP_PER_YEAR: 2,
       REQUALIFICATION_WINDOW_DAYS: 365,
       resolveActiveThresholds,
-      getTierThresholds,
     };
   });
 

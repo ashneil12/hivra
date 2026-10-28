@@ -78,6 +78,7 @@ export function fakeConfig(overrides: Record<string, unknown> = {}) {
     PLAYWRIGHT_SLOW_MO_MS: 0,
     DEFAULT_NAVIGATION_TIMEOUT_MS: 30_000,
     DEFAULT_ACTION_TIMEOUT_MS: 15_000,
+    SIDECAR_ALLOW_UNAUTHENTICATED: false,
     ...overrides,
   } as unknown);
 }

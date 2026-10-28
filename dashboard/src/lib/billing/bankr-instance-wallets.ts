@@ -1163,7 +1163,7 @@ function bankrUserFetchImpl(fetchImpl?: BankrUserFetch): BankrUserFetch {
  * accepts any valid key (read-only included) and returns the account's
  * addresses, so it proves the key works without moving anything.
  */
-export async function lookupBankrApiKeyWallet(params: {
+async function lookupBankrApiKeyWallet(params: {
   apiKey: string;
   env?: Record<string, string | undefined>;
   fetchImpl?: BankrUserFetch;

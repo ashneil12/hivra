@@ -1,5 +1,6 @@
 import "server-only";
 
+import { chunk } from "@/lib/array-utils";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -35,6 +36,7 @@ const RAM_MIN_SAMPLES = 1;
 const CPU_WINDOW_HOURS = 24;
 const CPU_MIN_INTERVAL_HOURS = 12;
 const FLEET_BATCH_LIMIT = 200;
+const WATCHDOG_EVALUATE_CONCURRENCY = 10;
 
 type WatchdogInstance = {
   id: string;
@@ -429,129 +431,136 @@ export async function runResourceWatchdog(
     errors: 0,
   };
 
-  for (const instance of instances) {
-    const tier = instance.resource_tier?.trim() ?? "";
-    try {
-      if (FREE_TIER_VALUES.has(tier)) {
-        const samples = await loadRecentMeteringSamples(instance.id, ramSince);
-        const ramFinding = evaluateFreeRam(samples, instance.ram_limit ?? 0);
-        if (!ramFinding) continue;
+  // Evaluate in bounded batches: each instance's metering read and any pause
+  // or flag are independent, so a serial loop of up to FLEET_BATCH_LIMIT
+  // round-trips per run is needlessly slow.
+  for (const batch of chunk(instances, WATCHDOG_EVALUATE_CONCURRENCY)) {
+    await Promise.all(
+      batch.map(async (instance) => {
+        const tier = instance.resource_tier?.trim() ?? "";
+        try {
+          if (FREE_TIER_VALUES.has(tier)) {
+            const samples = await loadRecentMeteringSamples(instance.id, ramSince);
+            const ramFinding = evaluateFreeRam(samples, instance.ram_limit ?? 0);
+            if (!ramFinding) return;
 
-        if (ramFinding.kind === "cap_inconsistent") {
-          // The VM's real footprint dwarfs its ram_limit — the row is
-          // mislabeled (e.g. a Command-sized VM still tagged credit_base).
-          // Pausing here would wrongly shut down and RAM-shame a paid
-          // workload, so skip the pause and raise an ops event so the stale
-          // resource_tier/ram_limit gets reconciled.
-          //
-          // De-dup like the ram_cap_hit / cpu_sustained branches: only emit
-          // once per open mismatch. Without this guard the */15 cron re-fired
-          // an identical warn every tick until the row was reconciled (6×
-          // alert-spam from a single row, 2026-06-09 incident).
-          if (await hasOpenFlag(instance.id, "ram_cap_inconsistent")) continue;
-          summary.ramCapInconsistencies += 1;
-          log.warn("watchdog skipped RAM pause: ram_limit looks stale", {
+            if (ramFinding.kind === "cap_inconsistent") {
+              // The VM's real footprint dwarfs its ram_limit — the row is
+              // mislabeled (e.g. a Command-sized VM still tagged credit_base).
+              // Pausing here would wrongly shut down and RAM-shame a paid
+              // workload, so skip the pause and raise an ops event so the stale
+              // resource_tier/ram_limit gets reconciled.
+              //
+              // De-dup like the ram_cap_hit / cpu_sustained branches: only emit
+              // once per open mismatch. Without this guard the */15 cron re-fired
+              // an identical warn every tick until the row was reconciled (6×
+              // alert-spam from a single row, 2026-06-09 incident).
+              if (await hasOpenFlag(instance.id, "ram_cap_inconsistent")) return;
+              summary.ramCapInconsistencies += 1;
+              log.warn("watchdog skipped RAM pause: ram_limit looks stale", {
+                source: LOG_SOURCE,
+                failureType: "ram_cap_inconsistent",
+                instanceId: instance.id,
+                userId: instance.user_id,
+                ...ramFinding,
+              });
+              await reportOpsEvent({
+                source: LOG_SOURCE,
+                title: "ram_cap_inconsistent",
+                message: `Instance ${instance.name ?? instance.id} metered ${ramFinding.max_ram_mb}MB against a ${ramFinding.ram_limit_mb}MB cap (${ramFinding.over_cap_ratio}x) — resource_tier/ram_limit is stale; not pausing.`,
+                severity: "warn",
+                instanceId: instance.id,
+                userId: instance.user_id,
+                metadata: { ...ramFinding, resourceTier: tier },
+              });
+              await insertFlag({
+                instanceId: instance.id,
+                userId: instance.user_id,
+                flagType: "ram_cap_inconsistent",
+                flagData: ramFinding,
+              });
+              return;
+            }
+
+            if (await hasOpenFlag(instance.id, "ram_cap_hit")) return;
+            await pauseForRamCap(instance, ramFinding, now);
+            summary.ramCapHits += 1;
+            log.info("watchdog paused free-tier instance for RAM cap", {
+              source: LOG_SOURCE,
+              instanceId: instance.id,
+              userId: instance.user_id,
+              ...ramFinding,
+            });
+            return;
+          }
+
+          if (PAID_TIER_VALUES.has(tier)) {
+            const samples = await loadRecentMeteringSamples(instance.id, cpuSince);
+            const cpuFinding = evaluatePaidCpu(samples, instance.cpu_limit ?? 0);
+            if (!cpuFinding) return;
+            if (await hasOpenFlag(instance.id, "cpu_sustained")) return;
+            await insertFlag({
+              instanceId: instance.id,
+              userId: instance.user_id,
+              flagType: "cpu_sustained",
+              flagData: cpuFinding,
+            });
+            summary.cpuSustainedFlags += 1;
+            const customerEmail = await getCustomerEmail(instance.user_id);
+            if (customerEmail) {
+              await sendResourceWatchdogCustomerEmail({
+                email: customerEmail,
+                agentName: instance.name ?? "your agent",
+                avgCpuPct: cpuFinding.avg_cpu_pct,
+                windowHours: cpuFinding.window_hours,
+                idempotencyKey: `watchdog-cpu/${instance.id}/${now
+                  .toISOString()
+                  .slice(0, 10)}`,
+              });
+            }
+            await sendResourceWatchdogAdminEmail({
+              instanceId: instance.id,
+              userId: instance.user_id,
+              agentName: instance.name ?? null,
+              resourceTier: tier,
+              flagData: cpuFinding,
+              idempotencyKey: `watchdog-cpu-admin/${instance.id}/${now
+                .toISOString()
+                .slice(0, 10)}`,
+            });
+            log.info("watchdog raised paid CPU flag", {
+              source: LOG_SOURCE,
+              instanceId: instance.id,
+              userId: instance.user_id,
+              ...cpuFinding,
+            });
+          }
+        } catch (err) {
+          summary.errors += 1;
+          const message = err instanceof Error ? err.message : String(err);
+          log.error("watchdog evaluation failed", err, {
             source: LOG_SOURCE,
-            failureType: "ram_cap_inconsistent",
+            failureType: "watchdog_eval_failed",
             instanceId: instance.id,
             userId: instance.user_id,
-            ...ramFinding,
+            resourceTier: tier,
           });
-          await reportOpsEvent({
-            source: LOG_SOURCE,
-            title: "ram_cap_inconsistent",
-            message: `Instance ${instance.name ?? instance.id} metered ${ramFinding.max_ram_mb}MB against a ${ramFinding.ram_limit_mb}MB cap (${ramFinding.over_cap_ratio}x) — resource_tier/ram_limit is stale; not pausing.`,
-            severity: "warn",
-            instanceId: instance.id,
-            userId: instance.user_id,
-            metadata: { ...ramFinding, resourceTier: tier },
-          });
-          await insertFlag({
-            instanceId: instance.id,
-            userId: instance.user_id,
-            flagType: "ram_cap_inconsistent",
-            flagData: ramFinding,
-          });
-          continue;
+          try {
+            await reportOpsEvent({
+              source: LOG_SOURCE,
+              title: "watchdog_eval_failed",
+              message: "watchdog failed to evaluate instance",
+              severity: "error",
+              instanceId: instance.id,
+              userId: instance.user_id,
+              metadata: { error: message },
+            });
+          } catch {
+            // ops-event logging is best-effort
+          }
         }
-
-        if (await hasOpenFlag(instance.id, "ram_cap_hit")) continue;
-        await pauseForRamCap(instance, ramFinding, now);
-        summary.ramCapHits += 1;
-        log.info("watchdog paused free-tier instance for RAM cap", {
-          source: LOG_SOURCE,
-          instanceId: instance.id,
-          userId: instance.user_id,
-          ...ramFinding,
-        });
-        continue;
-      }
-
-      if (PAID_TIER_VALUES.has(tier)) {
-        const samples = await loadRecentMeteringSamples(instance.id, cpuSince);
-        const cpuFinding = evaluatePaidCpu(samples, instance.cpu_limit ?? 0);
-        if (!cpuFinding) continue;
-        if (await hasOpenFlag(instance.id, "cpu_sustained")) continue;
-        await insertFlag({
-          instanceId: instance.id,
-          userId: instance.user_id,
-          flagType: "cpu_sustained",
-          flagData: cpuFinding,
-        });
-        summary.cpuSustainedFlags += 1;
-        const customerEmail = await getCustomerEmail(instance.user_id);
-        if (customerEmail) {
-          await sendResourceWatchdogCustomerEmail({
-            email: customerEmail,
-            agentName: instance.name ?? "your agent",
-            avgCpuPct: cpuFinding.avg_cpu_pct,
-            windowHours: cpuFinding.window_hours,
-            idempotencyKey: `watchdog-cpu/${instance.id}/${now
-              .toISOString()
-              .slice(0, 10)}`,
-          });
-        }
-        await sendResourceWatchdogAdminEmail({
-          instanceId: instance.id,
-          userId: instance.user_id,
-          agentName: instance.name ?? null,
-          resourceTier: tier,
-          flagData: cpuFinding,
-          idempotencyKey: `watchdog-cpu-admin/${instance.id}/${now
-            .toISOString()
-            .slice(0, 10)}`,
-        });
-        log.info("watchdog raised paid CPU flag", {
-          source: LOG_SOURCE,
-          instanceId: instance.id,
-          userId: instance.user_id,
-          ...cpuFinding,
-        });
-      }
-    } catch (err) {
-      summary.errors += 1;
-      const message = err instanceof Error ? err.message : String(err);
-      log.error("watchdog evaluation failed", err, {
-        source: LOG_SOURCE,
-        failureType: "watchdog_eval_failed",
-        instanceId: instance.id,
-        userId: instance.user_id,
-        resourceTier: tier,
-      });
-      try {
-        await reportOpsEvent({
-          source: LOG_SOURCE,
-          title: "watchdog_eval_failed",
-          message: "watchdog failed to evaluate instance",
-          severity: "error",
-          instanceId: instance.id,
-          userId: instance.user_id,
-          metadata: { error: message },
-        });
-      } catch {
-        // ops-event logging is best-effort
-      }
-    }
+      }),
+    );
   }
 
   return summary;
