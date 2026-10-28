@@ -19,7 +19,7 @@ const INSTANCE_ID = "11111111-2222-3333-4444-555555555555";
 const mockedFrom = supabaseAdmin!.from as unknown as jest.Mock;
 
 function lookupReturns(result: { data: unknown; error: unknown }) {
-  const chain = {
+  const chain: { select: jest.Mock; eq: jest.Mock; maybeSingle: jest.Mock } = {
     select: jest.fn(() => chain),
     eq: jest.fn(() => chain),
     maybeSingle: jest.fn(async () => result),
