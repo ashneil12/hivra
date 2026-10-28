@@ -104,6 +104,9 @@ g "sudo test -f $V/cron/jobs.json && sudo cat $V/cron/jobs.json" > /tmp/_jobs.$$
 # Per-profile: config/SOUL/skills/orgs only.
 if g "sudo test -d $V/profiles" 2>/dev/null; then
   for p in $(g "sudo ls $V/profiles 2>/dev/null"); do
+    # SEC-05: $p comes from a tenant-controlled guest directory listing and is
+    # re-interpolated into guest shell commands + host paths — allowlist before use.
+    [[ "$p" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || continue
     mkdir -p "$STAGE/hermes/profiles/$p"
     for f in config.yaml SOUL.md; do
       g "sudo test -f $V/profiles/$p/$f && sudo cat $V/profiles/$p/$f" > "$STAGE/hermes/profiles/$p/$f" 2>/dev/null && [ -s "$STAGE/hermes/profiles/$p/$f" ] || rm -f "$STAGE/hermes/profiles/$p/$f"

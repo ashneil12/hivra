@@ -771,4 +771,150 @@ describe("managed Venice token deposit quotes", () => {
     expect(tables.managed_venice_token_lots).toHaveLength(1);
     expect(tables.managed_venice_reconciliation_items).toHaveLength(0);
   });
+
+  it("surfaces a second transfer in the settled tx when its amount differs from the recorded settlement", async () => {
+    const { db, tables } = createMemoryDb();
+    const quote = await createManagedVeniceTokenQuote(
+      {
+        userId: "user_1",
+        tokenAmountRaw,
+        depositAddress: "0xmanagedvenice",
+        now,
+        priceQuote: freshPrimary,
+        crossCheckQuote: freshCrossCheck,
+      },
+      db
+    );
+
+    // Legacy-style settlement: the claim records the settled amount but no
+    // log index, so redelivery identity falls back to the tx + amount.
+    await settleManagedVeniceTokenQuote(
+      {
+        quoteId: quote.id,
+        transactionHash: "0xbatched",
+        tokenAmountRaw,
+        observedAt: "2026-05-12T12:00:30.000Z",
+      },
+      db
+    );
+
+    // A second, DISTINCT transfer in the same tx (a batched double-send) with
+    // a different amount inside the over-send band. Before the fix this
+    // matched the band and was silently dropped as a redelivery.
+    const replay = await settleManagedVeniceTokenQuote(
+      {
+        quoteId: quote.id,
+        transactionHash: "0xbatched",
+        tokenAmountRaw: "1100000000000000000000",
+        observedAt: "2026-05-12T12:00:31.000Z",
+      },
+      db
+    );
+
+    expect(replay.status).toBe("manual_review_required");
+    expect(replay).not.toMatchObject({ idempotent: true });
+    expect(tables.managed_venice_token_lots).toHaveLength(1);
+    expect(tables.managed_venice_reconciliation_items).toContainEqual(
+      expect.objectContaining({
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.replayedAfterSettlement,
+        dedupe_key: managedVeniceTokenTransferDedupeKey("0xbatched", "0xmanagedvenice"),
+      })
+    );
+  });
+
+  it("surfaces a different-amount delivery when the claim named its log but the delivery does not", async () => {
+    const { db, tables } = createMemoryDb();
+    const quote = await createManagedVeniceTokenQuote(
+      {
+        userId: "user_1",
+        tokenAmountRaw,
+        depositAddress: "0xmanagedvenice",
+        now,
+        priceQuote: freshPrimary,
+        crossCheckQuote: freshCrossCheck,
+      },
+      db
+    );
+
+    await settleManagedVeniceTokenQuote(
+      {
+        quoteId: quote.id,
+        transactionHash: "0xbatched",
+        tokenAmountRaw,
+        observedAt: "2026-05-12T12:00:30.000Z",
+        logIndex: 4,
+      },
+      db
+    );
+
+    // A recovery path that cannot name the delivery's log: the recorded
+    // settled amount is still the redelivery identity, so a different amount
+    // is a different transfer — surfaced, not swallowed.
+    const replay = await settleManagedVeniceTokenQuote(
+      {
+        quoteId: quote.id,
+        transactionHash: "0xbatched",
+        tokenAmountRaw: "1050000000000000000000",
+        observedAt: "2026-05-12T12:00:31.000Z",
+      },
+      db
+    );
+
+    expect(replay.status).toBe("manual_review_required");
+    expect(replay).not.toMatchObject({ idempotent: true });
+    expect(tables.managed_venice_token_lots).toHaveLength(1);
+    expect(tables.managed_venice_reconciliation_items).toContainEqual(
+      expect.objectContaining({
+        reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.replayedAfterSettlement,
+      })
+    );
+  });
+
+  it("keeps the amount band as redelivery identity for a settled quote with no recorded claim", async () => {
+    const { db, tables } = createMemoryDb();
+    const quote = await createManagedVeniceTokenQuote(
+      {
+        userId: "user_1",
+        tokenAmountRaw,
+        depositAddress: "0xmanagedvenice",
+        now,
+        priceQuote: freshPrimary,
+        crossCheckQuote: freshCrossCheck,
+      },
+      db
+    );
+
+    await settleManagedVeniceTokenQuote(
+      {
+        quoteId: quote.id,
+        transactionHash: "0xlegacy",
+        tokenAmountRaw,
+        observedAt: "2026-05-12T12:00:30.000Z",
+      },
+      db
+    );
+
+    // A truly legacy settled quote recorded no settlement claim at all: only
+    // the tx + quoted..ceiling band identifies a redelivery, so an in-band
+    // amount still passes as the same transfer.
+    const row = tables.managed_venice_token_quotes.find((r) => r.id === quote.id)!;
+    row.metadata = {};
+
+    const replay = await settleManagedVeniceTokenQuote(
+      {
+        quoteId: quote.id,
+        transactionHash: "0xlegacy",
+        tokenAmountRaw: "1100000000000000000000",
+        observedAt: "2026-05-12T12:00:31.000Z",
+      },
+      db
+    );
+
+    expect(replay).toEqual({
+      status: "settled",
+      quoteId: quote.id,
+      idempotent: true,
+    });
+    expect(tables.managed_venice_reconciliation_items).toHaveLength(0);
+  });
 });
