@@ -23,6 +23,7 @@ import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { cdpRequestRejection } from "./cdp-request-guard.mjs";
 
 // Two-port contract (matches the dashboard's webui-instance-builder):
 //   AGENT_CDP_PORT       — Chrome's own remote-debugging port (127.0.0.1 only).
@@ -152,6 +153,14 @@ function launchChrome() {
 
 // ── HTTP proxy (with /json host rewrite) ───────────────────────────────────
 const server = http.createServer((creq, cres) => {
+  // Refuse DNS-rebound hosts and foreign page origins (see cdp-request-guard.mjs).
+  const rejection = cdpRequestRejection(creq.headers);
+  if (rejection) {
+    log(`refused ${creq.method} ${creq.url}: ${rejection}`);
+    cres.writeHead(403, { "content-type": "text/plain" });
+    cres.end("forbidden");
+    return;
+  }
   const incomingHost = creq.headers.host || `localhost:${LISTEN_PORT}`;
   const isJson = (creq.url || "").startsWith("/json");
 
@@ -196,6 +205,12 @@ const server = http.createServer((creq, cres) => {
 
 // ── WebSocket upgrade passthrough ──────────────────────────────────────────
 server.on("upgrade", (creq, csock, head) => {
+  const rejection = cdpRequestRejection(creq.headers);
+  if (rejection) {
+    log(`refused upgrade ${creq.url}: ${rejection}`);
+    csock.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    return;
+  }
   const usock = net.connect(CHROME_PORT, CHROME_HOST, () => {
     const headers = { ...creq.headers, host: `${CHROME_HOST}:${CHROME_PORT}` };
     let raw = `${creq.method} ${creq.url} HTTP/1.1\r\n`;
