@@ -5,11 +5,23 @@ import {
   Info, FileSearch, Copy, ChevronLeft, ChevronRight, Download
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import dynamic from 'next/dynamic';
 import { FileIcon } from './FileIcon';
 import { FileEditor } from './FileEditor';
 import { DEFAULT_EXPLORER_ROOT, resolveExplorerHome } from '@/lib/explorer-home';
+
+// The markdown renderer and its GFM plugin are only needed to preview a .md file,
+// so they load on first use instead of with every visit to the explorer.
+const MarkdownPreview = dynamic(
+  () => Promise.all([import('react-markdown'), import('remark-gfm')]).then(([markdown, gfm]) => {
+    const Markdown = markdown.default;
+    const remarkPlugins = [gfm.default];
+    function MarkdownPreview({ children }: { children: string }) {
+      return <Markdown remarkPlugins={remarkPlugins}>{children}</Markdown>;
+    }
+    return MarkdownPreview;
+  }),
+);
 
 interface FileExplorerProps {
   instanceId: string;
@@ -154,9 +166,14 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
   const lastPointerTypeRef = useRef<string>('mouse');
   const breadcrumbScrollRef = useRef<HTMLDivElement>(null);
   const editorSectionRef = useRef<HTMLElement>(null);
+  const listRequestRef = useRef(0);
 
   const fetchFiles = useCallback(async (path: string) => {
     const safePath = clampPathToRoot(path, explorerRoot);
+    // Only the newest listing may write to the screen: an earlier folder's
+    // response that arrives late must not replace the one now on screen.
+    const requestId = ++listRequestRef.current;
+    const isCurrent = () => requestId === listRequestRef.current;
     try {
       setLoading(true);
       setError(null);
@@ -166,15 +183,17 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
         body: JSON.stringify({ action: 'list', path: safePath }),
       });
       const data = await res.json();
+      if (!isCurrent()) return;
       if (data.ok) {
         setFiles(data.files || []);
       } else {
         setError(data.error || 'Failed to list directory');
       }
     } catch (err: unknown) {
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : 'Network error');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [explorerRoot, instanceId]);
 
@@ -913,9 +932,9 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                         ) : isMarkdownFile(selectedFile.name) ? (
                           <div className="max-h-[420px] overflow-auto border border-[var(--etched-border)] bg-[var(--bg-elevated)] p-5 text-sm leading-6">
                             <div className="prose prose-sm max-w-none prose-headings:text-[var(--ink-black)] prose-p:text-[var(--text-secondary)] prose-strong:text-[var(--ink-black)]">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              <MarkdownPreview>
                                 {previewContent || '*Empty markdown file.*'}
-                              </ReactMarkdown>
+                              </MarkdownPreview>
                             </div>
                           </div>
                         ) : (

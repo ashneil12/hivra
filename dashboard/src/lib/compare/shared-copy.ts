@@ -16,8 +16,6 @@ import type { CompareBlock, CompareClosing, CompareSection, CompareSources } fro
 
 /** "$9.99 a month for 2 vCPU and 4 GB of RAM" */
 export const ENTRY_PRICE_PROSE = formatPlanSize("entry");
-/** "$19.99 a month for 4 vCPU and 8 GB of RAM" */
-export const LARGER_PRICE_PROSE = formatPlanSize("larger");
 
 /** The guarantee as a link, for table cells and sentences. */
 export const REFUND_LINKED = `[${MONEY_BACK_GUARANTEE}](/terms)`;

@@ -93,6 +93,8 @@ export type ColdArchiveResult =
       instanceId: string;
       /** When the source VM still exists but archive failed before destroy. */
       retryable: boolean;
+      /** True when the paused revert did not land: the row is still stuck in `archiving`. */
+      revertFailed?: boolean;
     };
 
 export type ColdRestoreResult =
@@ -125,6 +127,8 @@ export type ColdRestoreResult =
       message: string;
       instanceId: string;
       retryable: boolean;
+      /** True when the revert to the cold state did not land: the row is still stuck in `restoring`. */
+      revertFailed?: boolean;
       /** Populated for reason='health_pending': the live restored VM. */
       newVmid?: number;
       newPveHost?: string;
@@ -406,11 +410,10 @@ export async function archiveInstance(
     reason: ColdArchiveResult & { ok: false },
     extra?: { pausedReasonOverride?: string }
   ): Promise<ColdArchiveResult> => {
-    // Chain .select().maybeSingle() so callers (and tests) can observe the
-    // revert. If revert fails the row stays in `archiving` and ops must
-    // intervene — we surface that via the returned reason being marked
-    // non-retryable in extreme cases.
-    await supabase
+    // If the revert does not land (DB error, or the row is no longer in
+    // `archiving`) the row stays locked and ops must intervene: log it and
+    // flag the returned reason so the caller can report it.
+    const { data: revertedRow, error: revertError } = await supabase
       .from("hermes_instances")
       .update({
         lifecycle_state: "paused",
@@ -422,6 +425,16 @@ export async function archiveInstance(
       .eq("lifecycle_state", "archiving")
       .select("id")
       .maybeSingle();
+    if (revertError || !revertedRow) {
+      log.error("archive revert to paused did not land; row may be stuck in archiving", new Error("cold_archive_revert_failed"), {
+        source: "cold-storage-service",
+        failureType: "cold_archive_revert_failed",
+        instanceId,
+        originalReason: reason.reason,
+        redactedMessage: revertError?.message ?? "no row in archiving state",
+      });
+      return { ...reason, revertFailed: true };
+    }
     return reason;
   };
 
@@ -847,7 +860,7 @@ export async function restoreInstance(
   const revertToCold = async (
     reason: ColdRestoreResult & { ok: false }
   ): Promise<ColdRestoreResult> => {
-    await supabase
+    const { data: revertedRow, error: revertError } = await supabase
       .from("hermes_instances")
       .update({
         lifecycle_state: previousState,
@@ -858,6 +871,16 @@ export async function restoreInstance(
       .eq("lifecycle_state", "restoring")
       .select("id")
       .maybeSingle();
+    if (revertError || !revertedRow) {
+      log.error("restore revert did not land; row may be stuck in restoring", new Error("cold_restore_revert_failed"), {
+        source: "cold-storage-service",
+        failureType: "cold_restore_revert_failed",
+        instanceId,
+        originalReason: reason.reason,
+        redactedMessage: revertError?.message ?? "no row in restoring state",
+      });
+      return { ...reason, revertFailed: true };
+    }
     return reason;
   };
 

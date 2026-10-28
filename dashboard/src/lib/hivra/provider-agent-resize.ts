@@ -423,6 +423,8 @@ export async function quoteProviderResize(input: {
     return saved.quote;
   } catch (error) {
     if (error instanceof ProviderAgentResizeError) throw error;
+    // A store outage is not a conflict: surface it so the route answers 503.
+    if (error instanceof ProviderAgentResizeStoreError && error.code === "unavailable") throw error;
     if (!(error instanceof ProviderAgentResizeStoreError) || error.code !== "not_found") {
       throw new ProviderAgentResizeError("operation_conflict");
     }
@@ -860,7 +862,7 @@ export async function applyProviderResize(input: {
     throw new ProviderAgentResizeError("operation_conflict");
   }
   const operationInput = { userId: input.userId, agentId: input.agentId, operationId: input.operationId };
-  let operation = await deps.load(operationInput);
+  const operation = await deps.load(operationInput);
   if (operation.quote.quoteFingerprint !== input.quoteFingerprint) {
     throw new ProviderAgentResizeError("operation_conflict");
   }
@@ -879,7 +881,6 @@ export async function applyProviderResize(input: {
     const claim = await deps.claim(operationInput, input.quoteFingerprint);
     if (claim === "expired") throw new ProviderAgentResizeError("quote_expired");
     if (claim === "rejected") throw new ProviderAgentResizeError("operation_conflict");
-    operation = await deps.load(operationInput);
     return advanceProviderResize(operationInput, claim === "dispatch" ? "dispatch" : "observe", deps);
   }
   return advanceProviderResize(operationInput, "dispatch", deps);

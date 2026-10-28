@@ -7,6 +7,7 @@ import {
   supportsPublicLiveModelDiscovery,
   type ProviderModelOption,
 } from "@/lib/provider-models";
+import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export interface ProviderModelSyncResult {
@@ -102,7 +103,7 @@ class SupabaseProviderModelCatalogStore implements ProviderModelCatalogStore {
   }): Promise<void> {
     if (!supabaseAdmin) return;
 
-    await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from("provider_model_catalogs")
       .upsert(
         {
@@ -119,12 +120,14 @@ class SupabaseProviderModelCatalogStore implements ProviderModelCatalogStore {
         },
         { onConflict: "provider" }
       );
+    // A failed save must not look like a successful check.
+    if (error) throw new Error("Failed to save provider model catalog");
   }
 
   async markError(provider: string, checkedAt: string, error: string): Promise<void> {
     if (!supabaseAdmin) return;
 
-    await supabaseAdmin
+    const { error: upsertError } = await supabaseAdmin
       .from("provider_model_catalogs")
       .upsert(
         {
@@ -135,6 +138,7 @@ class SupabaseProviderModelCatalogStore implements ProviderModelCatalogStore {
         },
         { onConflict: "provider" }
       );
+    if (upsertError) throw new Error("Failed to record provider model sync error");
   }
 }
 
@@ -212,7 +216,15 @@ export async function syncProviderModelCatalogs(options: {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown provider model sync error";
-      await store.markError(provider, checkedAt, message);
+      // Recording the failure is best effort: if that save fails too, still report
+      // this provider as not checked and keep the rest of the run going.
+      await store.markError(provider, checkedAt, message).catch((markErr: unknown) => {
+        log.warn(
+          "failed to record provider model sync error",
+          { source: "provider-model-sync", failureType: "model_catalog_error_record_failed", provider },
+          markErr
+        );
+      });
       results.push({
         provider,
         checked: false,

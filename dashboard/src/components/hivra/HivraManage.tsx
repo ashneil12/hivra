@@ -411,16 +411,18 @@ function HivraManageContent({
     if (typeof window === "undefined") return false;
     try { return new URLSearchParams(window.location.search).get("addAgent") === "1"; } catch { return false; }
   });
-  const refreshMcp = useCallback(async () => {
+  const refreshMcp = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!isChatCli || !agent.chat_url) return;
     const r = await listBoxMcp(agent.chat_url, agent.api_token);
+    // A reply that arrives after the box changed (stop/start moves its URL) is stale.
+    if (!isCurrent()) return;
     if (r.error) { setMcpSupported(false); return; }
     setMcpSupported(true);
     setMcp(r.servers);
   }, [isChatCli, agent.chat_url, agent.api_token]);
   useEffect(() => {
     let alive = true;
-    void (async () => { if (alive) await refreshMcp(); })();
+    void refreshMcp(() => alive);
     return () => { alive = false; };
   }, [refreshMcp]);
 
@@ -585,9 +587,16 @@ function HivraManageContent({
   }, [updateConnectionService, onChanged]);
 
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
   const copyEndpoint = useCallback(async () => {
     if (!agent.chat_url) return;
-    try { await navigator.clipboard.writeText(agent.chat_url); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* ignore */ }
+    try { await navigator.clipboard.writeText(agent.chat_url); setCopied(true); copiedTimerRef.current = setTimeout(() => setCopied(false), 1600); } catch { /* ignore */ }
   }, [agent.chat_url]);
 
   const toggleBrowser = useCallback(async (next: boolean) => {

@@ -130,12 +130,11 @@ function ResourceSwitcherTrigger({
     }, 0);
   }, []);
 
+  // The parent's state update stays outside the setOpen updater, which React may re-run.
   const toggle = useCallback(() => {
-    setOpen((value) => {
-      if (!value) onFirstOpen();
-      return !value;
-    });
-  }, [onFirstOpen]);
+    if (!open) onFirstOpen();
+    setOpen(!open);
+  }, [open, onFirstOpen]);
 
   return (
     <>

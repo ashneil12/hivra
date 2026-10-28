@@ -1,5 +1,6 @@
 import "server-only";
 import { chunk } from "@/lib/array-utils";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
@@ -34,6 +35,8 @@ const HOUR_MS = 3_600_000;
 // fetch pages explicitly with a deterministic order.
 const PAGE_SIZE = 1000;
 const IN_CHUNK_SIZE = 200;
+/** Parallel PostgREST chains for the per-200-user fan-outs; bounded so a large signup window cannot flood the API. */
+const IN_CHUNK_CONCURRENCY = 4;
 
 export interface FunnelSubscriptionRow {
   user_id: string;
@@ -286,20 +289,20 @@ async function fetchInstancesForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<FunnelInstanceRow[]> {
-  const rows: FunnelInstanceRow[] = [];
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    rows.push(
-      ...(await fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    IN_CHUNK_CONCURRENCY,
+    (ids) =>
+      fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
         client
           .from("hermes_instances")
           .select("user_id, created_at, first_active_at, last_activity_at")
           .in("user_id", ids)
           .order("id")
           .range(from, to)
-      ))
-    );
-  }
-  return rows;
+      )
+  );
+  return groups.flat();
 }
 
 function fetchPayments(
@@ -352,17 +355,21 @@ export async function fetchEngagedFreeUserIds(
   );
   const userIds = [...new Set(liveActive.map((r) => r.user_id).filter((id): id is string => !!id))];
   const engaged = new Set<string>();
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    const { data, error } = await client
-      .from("hermes_subscriptions")
-      .select("user_id")
-      .eq("plan", "free")
-      .in("user_id", ids);
-    if (error) throw queryError("funnel engaged free pool", error);
-    for (const row of data ?? []) {
-      if (row.user_id) engaged.add(row.user_id);
+  await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    IN_CHUNK_CONCURRENCY,
+    async (ids) => {
+      const { data, error } = await client
+        .from("hermes_subscriptions")
+        .select("user_id")
+        .eq("plan", "free")
+        .in("user_id", ids);
+      if (error) throw queryError("funnel engaged free pool", error);
+      for (const row of data ?? []) {
+        if (row.user_id) engaged.add(row.user_id);
+      }
     }
-  }
+  );
   return [...engaged].sort();
 }
 

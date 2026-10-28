@@ -26,6 +26,8 @@ import "server-only";
 
 import { createHash } from "crypto";
 
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
+
 // ---------------------------------------------------------------------------------------
 // Host staging script
 // ---------------------------------------------------------------------------------------
@@ -375,23 +377,29 @@ export async function pushSnapshotToGitHub(cfg: GitHubPushConfig): Promise<GitHu
   // Build the new tree. Reuse the existing blob sha when content is byte-identical
   // (no POST); upload a blob only for new/changed files.
   const newRepoPaths = new Set<string>();
-  const treeEntries: Array<{ path: string; mode: string; type: "blob"; sha: string | null }> = [];
-  let blobsUploaded = 0;
-  for (const file of cfg.files) {
-    const repoPath = SNAPSHOT_PREFIX + file.path;
-    newRepoPaths.add(repoPath);
-    const localSha = gitBlobSha(file.content);
-    if (existingSnapshotShaByPath.get(repoPath) === localSha) {
-      treeEntries.push({ path: repoPath, mode: "100644", type: "blob", sha: localSha });
-      continue;
+  // Changed blobs upload a few at a time; mapWithConcurrencyLimit keeps the results
+  // in the original file order, so the tree is the same as a serial walk.
+  const uploaded = await mapWithConcurrencyLimit(
+    cfg.files,
+    4,
+    async (file): Promise<{ entry: { path: string; mode: string; type: "blob"; sha: string }; uploaded: boolean }> => {
+      const repoPath = SNAPSHOT_PREFIX + file.path;
+      newRepoPaths.add(repoPath);
+      const localSha = gitBlobSha(file.content);
+      if (existingSnapshotShaByPath.get(repoPath) === localSha) {
+        return { entry: { path: repoPath, mode: "100644", type: "blob", sha: localSha }, uploaded: false };
+      }
+      const blob = (await gh({ token }, "POST", `/repos/${repo}/git/blobs`, {
+        content: file.content.toString("base64"),
+        encoding: "base64",
+      })) as { sha: string };
+      return { entry: { path: repoPath, mode: "100644", type: "blob", sha: blob.sha }, uploaded: true };
     }
-    const blob = (await gh({ token }, "POST", `/repos/${repo}/git/blobs`, {
-      content: file.content.toString("base64"),
-      encoding: "base64",
-    })) as { sha: string };
-    blobsUploaded += 1;
-    treeEntries.push({ path: repoPath, mode: "100644", type: "blob", sha: blob.sha });
-  }
+  );
+  const treeEntries: Array<{ path: string; mode: string; type: "blob"; sha: string | null }> = uploaded.map(
+    (u) => u.entry
+  );
+  const blobsUploaded = uploaded.filter((u) => u.uploaded).length;
 
   // Deletions: any prior snapshot/ blob no longer present in the new set. Only safe on a
   // COMPLETE base tree — if GitHub truncated the recursive listing (only happens for huge

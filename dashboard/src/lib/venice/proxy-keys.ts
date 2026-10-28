@@ -29,8 +29,10 @@ type DbInsertChain = {
 
 type DbUpdateFilter = {
   eq: (...args: unknown[]) => DbUpdateFilter;
+  neq: (...args: unknown[]) => DbUpdateFilter;
   select: (...args: unknown[]) => {
     single: () => Promise<{ data: unknown; error: QueryError }>;
+    maybeSingle: () => Promise<{ data: unknown; error: QueryError }>;
   };
   then: Promise<{ error: QueryError }>["then"];
 };
@@ -346,6 +348,12 @@ export class AgentModelKeyInUseError extends Error {
   }
 }
 
+export class ManagedVeniceProxyKeyNotFoundError extends Error {
+  constructor() {
+    super("Managed Venice proxy key not found");
+  }
+}
+
 export async function revokeManagedVeniceProxyKey(
   params: { userId: string; keyId: string },
   db: SupabaseLike | null | undefined = supabaseAdmin
@@ -364,12 +372,29 @@ export async function revokeManagedVeniceProxyKey(
     })
     .eq("id", params.keyId)
     .eq("user_id", params.userId)
+    // A repeat revoke matches no row, so the first revoked_at is kept.
+    .neq("status", "revoked" satisfies ManagedVeniceProxyKeyStatus)
     .select(SELECT_COLUMNS)
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
-    if (error?.code === "55000") throw new AgentModelKeyInUseError();
-    throw new Error(error?.message || "Failed to revoke managed Venice proxy key");
+  if (error) {
+    if (error.code === "55000") throw new AgentModelKeyInUseError();
+    throw new Error(error.message || "Failed to revoke managed Venice proxy key");
+  }
+
+  if (!data) {
+    // Nothing was updated: the key is already revoked (a no-op, as before),
+    // or it is missing or not this user's key (not found).
+    const { data: existing, error: lookupError } = await table(client, "managed_venice_proxy_keys")
+      .select(SELECT_COLUMNS)
+      .eq("id", params.keyId)
+      .eq("user_id", params.userId)
+      .maybeSingle();
+    if (lookupError) {
+      throw new Error(lookupError.message || "Failed to revoke managed Venice proxy key");
+    }
+    if (!existing) throw new ManagedVeniceProxyKeyNotFoundError();
+    return { revoked: true, key: asPublicKey(existing as ProxyKeyRow) };
   }
 
   return { revoked: true, key: asPublicKey(data as ProxyKeyRow) };

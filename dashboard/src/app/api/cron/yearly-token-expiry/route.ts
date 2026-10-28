@@ -230,6 +230,32 @@ async function runYearlyTokenExpiry(
       expiredEmailSkipped += 1;
       continue;
     }
+    // Claim the row before sending, as pass 1 does. If the stamp were written
+    // only after a successful send, a failed stamp would email the user again on
+    // every later run inside the retry window.
+    const claimStamp = now.toISOString();
+    const { data: claimedEnded, error: claimEndedErr } = await supabaseAdmin
+      .from("yearly_token_subscriptions")
+      .update({ expired_email_sent_at: claimStamp, updated_at: claimStamp })
+      .eq("id", row.id)
+      .eq("status", "expired")
+      .is("expired_email_sent_at", null)
+      .select("id");
+    if (claimEndedErr) {
+      expiredEmailFailed += 1;
+      log.warn("yearly-token-expiry could not claim ended email; not sending", {
+        source: "yearly-token-expiry",
+        route: "/api/cron/yearly-token-expiry",
+        failureType: "yearly_token_ended_claim_failed",
+        errorMessage: claimEndedErr.message || claimEndedErr.code || "unknown",
+      });
+      continue;
+    }
+    if (!Array.isArray(claimedEnded) || claimedEnded.length === 0) {
+      expiredEmailSkipped += 1;
+      continue;
+    }
+    let sent = false;
     try {
       const result = await sendYearlyTokenSubscriptionNotification({
         userId: row.user_id,
@@ -237,18 +263,20 @@ async function runYearlyTokenExpiry(
         transition: "expired",
         expiresAt: new Date(row.expires_at),
       });
-      if (result.sent) {
-        expiredEmailSent += 1;
-        await supabaseAdmin
-          .from("yearly_token_subscriptions")
-          .update({ expired_email_sent_at: now.toISOString(), updated_at: now.toISOString() })
-          .eq("id", row.id)
-          .is("expired_email_sent_at", null);
-      } else {
-        expiredEmailFailed += 1;
-      }
+      sent = result.sent;
     } catch {
+      sent = false;
+    }
+    if (sent) {
+      expiredEmailSent += 1;
+    } else {
       expiredEmailFailed += 1;
+      // Release the claim so a later tick retries the email.
+      await supabaseAdmin
+        .from("yearly_token_subscriptions")
+        .update({ expired_email_sent_at: null, updated_at: now.toISOString() })
+        .eq("id", row.id)
+        .eq("expired_email_sent_at", claimStamp);
     }
   }
 

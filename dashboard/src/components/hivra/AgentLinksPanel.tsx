@@ -42,10 +42,20 @@ export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string;
 
   const view = load.state === "ready" ? load.view : null;
   const kitPending = view?.kit?.state === "pending";
+  // One read at a time, and none while the tab is hidden.
   useEffect(() => {
     if (!kitPending) return;
-    const timer = window.setInterval(() => { void refresh(); }, LINKS_POLL_MS);
-    return () => window.clearInterval(timer);
+    let alive = true;
+    let timer: number | undefined;
+    const tick = async () => {
+      try {
+        if (!document.hidden) await refresh();
+      } finally {
+        if (alive) timer = window.setTimeout(tick, LINKS_POLL_MS);
+      }
+    };
+    timer = window.setTimeout(tick, LINKS_POLL_MS);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [kitPending, refresh]);
 
   if (load.state === "not_offered") return null;

@@ -225,6 +225,35 @@ describe('/api/instances/[id]/health', () => {
     );
   });
 
+  it('closes the SSE stream at once for a stopped instance instead of polling to the deadline', async () => {
+    jest.useFakeTimers();
+    (getSecureUserInstance as jest.Mock).mockResolvedValueOnce({
+      instance: {
+        id: 'inst-123',
+        status: 'stopped',
+        gateway_url: 'https://203-0-113-11.sslip.io',
+      },
+      apiServerKey: 'secret-key',
+      instanceIpv4: '203.0.113.11',
+      error: null,
+    });
+
+    const req = new NextRequest('http://localhost/api/instances/inst-123/health', {
+      method: 'GET',
+      headers: { accept: 'text/event-stream' },
+    });
+
+    const res = await GET(req, { params: Promise.resolve({ id: 'inst-123' }) });
+    // No timers are advanced: the stream must already be finished after the first check.
+    const body = await res.text();
+
+    expect(body).toContain('event: unavailable');
+    expect(body).toContain('"status":"stopped"');
+    expect(body).not.toContain('event: timeout');
+    expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('does not expose unexpected top-level health route failures', async () => {
     (auth as unknown as jest.Mock).mockRejectedValueOnce(new Error('health-route-secret-leak'));
 

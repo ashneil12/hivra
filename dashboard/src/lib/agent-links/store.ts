@@ -141,12 +141,14 @@ export interface KeyRecord {
  * still goes out once it runs again.
  */
 export async function markKitDirty(userId: string, agentIds: string[]): Promise<void> {
-  for (const agentId of new Set(agentIds)) {
-    await db().from("hivra_agent_link_keys").upsert({ agent_id: agentId, user_id: userId }, { onConflict: "agent_id", ignoreDuplicates: true });
-    const { error } = await db().from("hivra_agent_link_keys").update({ kit_sha256: null, updated_at: new Date().toISOString() })
-      .eq("agent_id", agentId).eq("user_id", userId);
-    if (error) throw new Error("database_unavailable");
-  }
+  const ids = [...new Set(agentIds)];
+  if (ids.length === 0) return;
+  // Seeding missing key rows is best effort, as before; the dirty flag below is what must land.
+  await db().from("hivra_agent_link_keys")
+    .upsert(ids.map((agentId) => ({ agent_id: agentId, user_id: userId })), { onConflict: "agent_id", ignoreDuplicates: true });
+  const { error } = await db().from("hivra_agent_link_keys").update({ kit_sha256: null, updated_at: new Date().toISOString() })
+    .in("agent_id", ids).eq("user_id", userId);
+  if (error) throw new Error("database_unavailable");
 }
 
 export async function loadKeyRecord(agentId: string): Promise<KeyRecord | null> {

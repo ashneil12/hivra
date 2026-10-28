@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { HetznerCloudApiError } from "@/lib/hetzner/client";
 import { POST } from "../route";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -276,6 +277,48 @@ describe("POST /api/ops/instances/[id]/force-delete", () => {
     expect(res.status).toBe(200);
     expect(deleteHetznerServer).toHaveBeenCalledWith(99999);
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+  });
+
+  it("treats a Hetzner 404 as already gone and still marks the row deleted", async () => {
+    const { updateQuery } = buildSupabaseStub({
+      id: "inst_hetz_gone",
+      user_id: "user_hetz",
+      hetzner_server_id: 99999,
+      host_id: null,
+      config: {},
+      status: "running",
+      lifecycle_state: "active",
+    });
+    (deleteHetznerServer as jest.Mock).mockRejectedValue(
+      new HetznerCloudApiError(404, "DELETE", "/servers/99999", "request_failed", "not_found")
+    );
+
+    const res = await POST(makeRequest(), makeParams("inst_hetz_gone"));
+
+    expect(res.status).toBe(200);
+    expect(updateQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "deleted", lifecycle_state: "deleted" })
+    );
+  });
+
+  it("keeps a non-404 Hetzner failure as a 502 and does not mark the row deleted", async () => {
+    const { updateQuery } = buildSupabaseStub({
+      id: "inst_hetz_err",
+      user_id: "user_hetz",
+      hetzner_server_id: 99999,
+      host_id: null,
+      config: {},
+      status: "running",
+      lifecycle_state: "active",
+    });
+    (deleteHetznerServer as jest.Mock).mockRejectedValue(
+      new HetznerCloudApiError(500, "DELETE", "/servers/99999", "request_failed")
+    );
+
+    const res = await POST(makeRequest(), makeParams("inst_hetz_err"));
+
+    expect(res.status).toBe(502);
+    expect(updateQuery.update).not.toHaveBeenCalled();
   });
 
   it("is idempotent on an already-deleted row (still flips lifecycle + logs ops_events)", async () => {

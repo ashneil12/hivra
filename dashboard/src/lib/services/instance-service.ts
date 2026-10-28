@@ -3472,7 +3472,7 @@ export class InstanceService {
     }
     if (infraProvider === "hetzner" && !finalHostId && result.serverId) {
       const specs = getServerSpecs(result.serverType || "cx23");
-      const { data: newHost } = await supabaseAdmin
+      const { data: newHost, error: newHostError } = await supabaseAdmin
         .from("hermes_hosts")
         .insert({
           user_id: userId,
@@ -3486,7 +3486,20 @@ export class InstanceService {
         })
         .select()
         .single();
-      if (newHost) finalHostId = newHost.id;
+      if (newHost) {
+        finalHostId = newHost.id;
+      } else {
+        // The server exists and the instance keeps its hetzner_server_id, so it
+        // stays reachable through the legacy single-node path. Make the missing
+        // host row visible instead of silently continuing without one.
+        log.error("hetzner host row insert failed; instance is saved without a host_id", newHostError ?? new Error("hermes_hosts insert returned no row"), {
+          source: LOG_SOURCE,
+          failureType: "hetzner_host_row_insert_failed",
+          userId,
+          instanceId: instance.id,
+          hetznerServerId: result.serverId,
+        });
+      }
     }
 
     const infrastructure =

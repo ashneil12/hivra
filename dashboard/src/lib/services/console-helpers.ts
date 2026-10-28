@@ -21,13 +21,19 @@ export async function validateConsoleAccess(params: Promise<{ id: string }>) {
     return { errorResponse: apiError('Invalid ID format', 400) };
   }
 
-  const { data: instance } = await supabaseAdmin!
+  // Same soft-delete filter as the instance route (getInstanceOrError): a
+  // deleted row must not reach the SSH-backed console routes.
+  const { data: instance, error: instanceError } = await supabaseAdmin!
     .from('hermes_instances')
     .select('*')
     .eq('id', id)
     .eq('user_id', userId)
-    .single();
+    .neq('status', 'deleted')
+    .maybeSingle();
 
+  if (instanceError) {
+    return { errorResponse: apiError('Failed to load instance', 500) };
+  }
   if (!instance) {
     return { errorResponse: apiError('Instance not found', 404) };
   }

@@ -601,12 +601,16 @@ export async function ensureManagedSidecarScript(
     ? DASHBOARD_SIDECAR_SCRIPT_VERSION
     : SIDECAR_SCRIPT_VERSION;
   const cached = managedSidecarRefreshCache.get(cacheKey);
-  if (
-    cached &&
-    cached.version === expectedVersion &&
-    Date.now() - cached.refreshedAt < MANAGED_SIDECAR_REFRESH_TTL_MS
-  ) {
-    return true;
+  if (cached) {
+    if (
+      cached.version === expectedVersion &&
+      Date.now() - cached.refreshedAt < MANAGED_SIDECAR_REFRESH_TTL_MS
+    ) {
+      return true;
+    }
+    // Stale entry — drop it so the map doesn't grow one dead key per
+    // instance over the process lifetime.
+    managedSidecarRefreshCache.delete(cacheKey);
   }
 
   const refreshed = await refreshManagedSidecarScript({

@@ -231,7 +231,7 @@ export function readCryptoTopUpIntent(value: Record<string, unknown> | null): Cr
 export function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
-export function isManagedVeniceDiscountRate(value: unknown): value is ManagedVeniceDashboardSummary["discount"]["rate"] {
+function isManagedVeniceDiscountRate(value: unknown): value is ManagedVeniceDashboardSummary["discount"]["rate"] {
   return (
     value === "launch_20" ||
     value === "standard_10" ||
@@ -239,7 +239,7 @@ export function isManagedVeniceDiscountRate(value: unknown): value is ManagedVen
     value === "none"
   );
 }
-export function readManagedVeniceKeySummary(value: unknown): ManagedVeniceKeySummary | null {
+function readManagedVeniceKeySummary(value: unknown): ManagedVeniceKeySummary | null {
   if (!isRecord(value)) return null;
   if (
     typeof value.id !== "string" ||
@@ -330,7 +330,4 @@ export function readManagedVeniceSummary(value: unknown): ManagedVeniceDashboard
 }
 export function usdToMicroUsd(amountUsd: number) {
   return Math.round(normalizeManagedVeniceTopUpAmount(amountUsd) * 1_000_000);
-}
-export function shortenAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }

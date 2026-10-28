@@ -132,45 +132,61 @@ async function fetchLiveVenicePricing(): Promise<Map<string, LiveModelPricing> |
   }
 
   const controller = new AbortController();
+  // The timeout covers the body read as well as the headers: a body that stalls
+  // or never finishes must not hang the cron.
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let response: Response;
   try {
-    response = await fetch(VENICE_LIVE_MODELS_URL, {
-      headers: { Authorization: `Bearer ${resolvedKey.key}` },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-  } catch (error) {
-    log.warn("venice-pricing-drift-check live fetch failed", {
-      source: SOURCE,
-      route: ROUTE,
-      failureType: "venice_live_fetch_failed",
-      errorName: error instanceof Error ? error.name : typeof error,
-      errorMessage: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+    let response: Response;
+    try {
+      response = await fetch(VENICE_LIVE_MODELS_URL, {
+        headers: { Authorization: `Bearer ${resolvedKey.key}` },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      log.warn("venice-pricing-drift-check live fetch failed", {
+        source: SOURCE,
+        route: ROUTE,
+        failureType: "venice_live_fetch_failed",
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+
+    if (!response.ok) {
+      log.warn("venice-pricing-drift-check live fetch returned non-2xx", {
+        source: SOURCE,
+        route: ROUTE,
+        failureType: "venice_live_fetch_non_2xx",
+        status: response.status,
+      });
+      return null;
+    }
+
+    let json: { data?: unknown };
+    try {
+      json = (await response.json()) as { data?: unknown };
+    } catch (error) {
+      log.warn("venice-pricing-drift-check live body read failed", {
+        source: SOURCE,
+        route: ROUTE,
+        failureType: "venice_live_body_failed",
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+    const items = Array.isArray(json.data) ? json.data : [];
+    const map = new Map<string, LiveModelPricing>();
+    for (const item of items) {
+      const parsed = parseLiveEntry(item);
+      if (parsed) map.set(parsed.id, parsed.pricing);
+    }
+    return map;
   } finally {
     clearTimeout(timer);
   }
-
-  if (!response.ok) {
-    log.warn("venice-pricing-drift-check live fetch returned non-2xx", {
-      source: SOURCE,
-      route: ROUTE,
-      failureType: "venice_live_fetch_non_2xx",
-      status: response.status,
-    });
-    return null;
-  }
-
-  const json = (await response.json()) as { data?: unknown };
-  const items = Array.isArray(json.data) ? json.data : [];
-  const map = new Map<string, LiveModelPricing>();
-  for (const item of items) {
-    const parsed = parseLiveEntry(item);
-    if (parsed) map.set(parsed.id, parsed.pricing);
-  }
-  return map;
 }
 
 function buildDriftReport(

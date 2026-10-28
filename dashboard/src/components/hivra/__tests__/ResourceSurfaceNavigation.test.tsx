@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ResourceSurfaceNavigation } from "../ResourceSurfaceNavigation";
 
 const surfaces = ["chat", "terminal", "desktop", "files", "git", "skills", "box", "manage"]
@@ -62,7 +62,7 @@ it("keeps the computer's short set of surfaces directly available", () => {
   expect(screen.queryByRole("button", { name: "Tools" })).not.toBeInTheDocument();
 });
 
-it("repositions an open menu when the usable screen space changes", () => {
+it("repositions an open menu when the usable screen space changes", async () => {
   const bottomNav = document.createElement("nav");
   bottomNav.dataset.testid = "pwa-bottom-navigation";
   document.body.append(bottomNav);
@@ -78,7 +78,8 @@ it("repositions an open menu when the usable screen space changes", () => {
     expect(menu.style.maxHeight).toBe("303px");
     anchorTop = 410;
     fireEvent(window, new Event("resize"));
-    expect(menu.style.maxHeight).toBe("394px");
+    // The reposition runs on the next animation frame.
+    await waitFor(() => expect(menu.style.maxHeight).toBe("394px"));
     expect(menu.style.bottom).toBe("calc(100% + 8px)");
   } finally {
     unmount();

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { chunk } from "@/lib/array-utils";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { decryptApiKey } from "@/lib/crypto";
 import { isPausedLifecycleState } from "@/lib/instance-lifecycle";
@@ -62,6 +63,9 @@ interface InstanceEgressProbeResult {
 }
 
 const PROBE_TIMEOUT_MS = 8000;
+
+/** Max simultaneous egress probes — matches instance-health-sweep. */
+const PROBE_BATCH_SIZE = 25;
 
 /** Targets the agent should probe. Kept narrow on purpose — adding more
  *  upstreams just to "be thorough" turns the cron into a noisy alarm
@@ -268,15 +272,24 @@ export async function runInstanceEgressSweep(): Promise<InstanceEgressSweepResul
       row.api_server_key_encrypted.length > 0,
   );
 
-  const results = await Promise.all(probable.map(probeInstanceEgressForRow));
+  // Probe in bounded batches (same fix as instance-health-sweep): within a
+  // batch probes run in parallel, but only PROBE_BATCH_SIZE are in flight at
+  // once so a large fleet can't stampede one invocation into self-inflicted
+  // AbortErrors. Worst case is ~ceil(N/25) * probe timeout.
+  const results: Awaited<ReturnType<typeof probeInstanceEgressForRow>>[] = [];
+  for (const batch of chunk(probable, PROBE_BATCH_SIZE)) {
+    results.push(...(await Promise.all(batch.map(probeInstanceEgressForRow))));
+  }
 
   let endpointMissing = 0;
   let endpointFailed = 0;
   let targetFailures = 0;
 
-  await Promise.all(
-    results.map(async (result, index) => {
-      const row = probable[index];
+  // Persist/alert per result in bounded batches too — the per-result work is
+  // DB writes, and an unbounded wave has the same stampede problem.
+  const indexedResults = results.map((result, index) => ({ result, row: probable[index] }));
+  for (const batch of chunk(indexedResults, PROBE_BATCH_SIZE)) {
+    await Promise.all(batch.map(async ({ result, row }) => {
 
       if (result.endpointStatus === "missing") {
         endpointMissing += 1;
@@ -372,8 +385,8 @@ export async function runInstanceEgressSweep(): Promise<InstanceEgressSweepResul
           }),
         ),
       );
-    }),
-  );
+    }));
+  }
 
   return {
     probed: probable.length,

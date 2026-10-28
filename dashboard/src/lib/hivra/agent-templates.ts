@@ -95,19 +95,15 @@ async function generateUniqueSlug(name: string | null | undefined, type: string)
   if (!supabaseAdmin) return `${slugifyBase(name, type)}-${randomSuffix()}`;
   const base = slugifyBase(name, type);
   const candidates = [base, ...Array.from({ length: 5 }, () => `${base}-${randomSuffix()}`)];
-  for (const candidate of candidates) {
-    const { data, error } = await supabaseAdmin
-      .from("agent_templates")
-      .select("id")
-      .eq("slug", candidate)
-      .maybeSingle();
-    if (error) {
-      // Lookup failed — don't block the create; jump straight to a random slug.
-      break;
-    }
-    if (!data) return candidate;
-  }
-  return `${base}-${randomSuffix(8)}`;
+  // One lookup for every candidate. A failed lookup doesn't block the create:
+  // jump straight to a random slug.
+  const { data, error } = await supabaseAdmin
+    .from("agent_templates")
+    .select("slug")
+    .in("slug", candidates);
+  if (error) return `${base}-${randomSuffix(8)}`;
+  const taken = new Set((data ?? []).map((row: { slug: string }) => row.slug));
+  return candidates.find((candidate) => !taken.has(candidate)) ?? `${base}-${randomSuffix(8)}`;
 }
 
 function mintShareToken(): string {

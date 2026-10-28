@@ -9,7 +9,6 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   shutdownProxmoxInstance,
   getProxmoxInfrastructure,
-  getProxmoxHostRoutingConfigFromInfrastructure,
   isProxmoxVmMissingResult,
 } from "@/lib/services/proxmox-instance-service";
 import {

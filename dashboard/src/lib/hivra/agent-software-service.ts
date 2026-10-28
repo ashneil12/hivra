@@ -93,12 +93,6 @@ export function observeAgentSoftware(agent: AgentSoftwareAgentRow, subject: Agen
   return read;
 }
 
-export function agentSoftwareViewFor(agent: AgentSoftwareAgentRow, record: AgentSoftwareRecord | null, now: number): AgentSoftwareView | null {
-  const subject = agentSoftwareSubject(agent);
-  if (!subject) return null;
-  return deriveAgentSoftware({ subject, status: agent.status, tested: testedVersionFor(subject), previous: previousVersionsFor(subject), record, now });
-}
-
 /** The agents list's per-agent summary (no computer is read for it). */
 export function agentSoftwareSummaryFor(agent: AgentSoftwareAgentRow, record: AgentSoftwareRecord | null, now: number): AgentSoftwareSummary | null {
   const subject = agentSoftwareSubject(agent);
