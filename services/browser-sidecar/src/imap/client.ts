@@ -83,17 +83,26 @@ async function scanOnce(
 ): Promise<string | undefined> {
   const lock = await client.getMailboxLock(mailbox);
   try {
-    for await (const msg of client.fetch({ since }, { envelope: true, source: true, uid: true })) {
+    // Pass 1: envelopes only. Bodies are the expensive part of every poll, so
+    // they are downloaded below for matching messages only.
+    const matches: { uid: number; subject: string }[] = [];
+    for await (const msg of client.fetch({ since }, { envelope: true, uid: true })) {
       const subject = msg.envelope?.subject ?? "";
-      if (!subjectRegex.test(subject)) continue;
+      if (subjectRegex.test(subject)) matches.push({ uid: msg.uid, subject });
+    }
+    // Newest first (UIDs grow as mail arrives), so a fresh code wins over an
+    // already-used one that is still inside the window.
+    matches.sort((a, b) => b.uid - a.uid);
 
+    for (const { uid, subject } of matches) {
       // Try the subject first — many providers include the code in the subject line.
       const inSubject = subject.match(CODE_RE);
       if (inSubject) return inSubject[1];
 
-      // Then parse the body. simpleParser handles MIME, HTML→text, etc.
-      if (msg.source) {
-        const parsed = await simpleParser(msg.source);
+      // Then parse the body of this one message. simpleParser handles MIME, HTML→text, etc.
+      const full = await client.fetchOne(uid, { source: true }, { uid: true });
+      if (full && full.source) {
+        const parsed = await simpleParser(full.source);
         const text = parsed.text ?? "";
         const inBody = text.match(CODE_RE);
         if (inBody) return inBody[1];
