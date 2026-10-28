@@ -27,7 +27,8 @@ const RPC_MIGRATIONS = fs
   .filter(
     (name) =>
       name !== "20260923150000_dual_platform_token_foundation.sql" &&
-      name !== "20260923203000_reconcile_token_base_any_allowed_token.sql"
+      name !== "20260923203000_reconcile_token_base_any_allowed_token.sql" &&
+      name !== "20261028200000_remove_token_base_tier.sql"
   )
   .sort()
   .filter((name) =>

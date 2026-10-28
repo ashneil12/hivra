@@ -1,6 +1,5 @@
 export const LEGACY_FREE_RESOURCE_TIER = "credit_base" as const;
 export const FREE_PLAN_KEY = "free" as const;
-const TOKEN_BASE_RESOURCE_TIER = "token_base" as const;
 
 const FREE_RESOURCE_TIER_ALIASES = new Set<string>([
   FREE_PLAN_KEY,
@@ -12,10 +11,7 @@ const FREE_RESOURCE_TIER_VALUES = [
   LEGACY_FREE_RESOURCE_TIER,
 ] as const;
 
-export const SINGLE_INSTANCE_BASE_RESOURCE_TIER_VALUES = [
-  ...FREE_RESOURCE_TIER_VALUES,
-  TOKEN_BASE_RESOURCE_TIER,
-] as const;
+export const SINGLE_INSTANCE_BASE_RESOURCE_TIER_VALUES = FREE_RESOURCE_TIER_VALUES;
 
 function normalizeResourceTier(value: string | null | undefined): string | null {
   const normalized = value?.trim().toLowerCase();
@@ -33,7 +29,7 @@ export function isFreeResourceTier(value: string | null | undefined): boolean {
 
 export function isBaseResourceTierForUpgradePrompt(value: string | null | undefined): boolean {
   const tier = normalizeResourceTier(value);
-  return !tier || isFreeResourceTier(tier) || tier === TOKEN_BASE_RESOURCE_TIER;
+  return !tier || isFreeResourceTier(tier);
 }
 
 export function isSingleInstanceBaseResourceTier(value: string | null | undefined): boolean {

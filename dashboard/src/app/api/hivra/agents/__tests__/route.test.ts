@@ -110,6 +110,8 @@ jest.mock("@/lib/billing/hosted-compute", () => {
     ...actual,
     isFreeAccountEntitlement: (sub: unknown) =>
       mockEnforceFreeAccountRefusal && actual.isFreeAccountEntitlement(sub),
+    paysForHostedCompute: (sub: unknown) =>
+      !mockEnforceFreeAccountRefusal || actual.paysForHostedCompute(sub),
   };
 });
 let mockExistingAgents: Array<Record<string, unknown>>;
@@ -2797,6 +2799,28 @@ describe("POST /api/hivra/agents", () => {
 
   it("refuses a Hivra-hosted launch for a Free account before any allocation", async () => {
     mockEnforceFreeAccountRefusal = true;
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      browser: false,
+    }) as never);
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(/paid plan/i);
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Hivra-hosted launch on a trial before any allocation (no trials)", async () => {
+    mockEnforceFreeAccountRefusal = true;
+    mockSubscriptionRow = {
+      plan: "operator", status: "trialing", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
 
     const response = await POST(makeRequest({
       type: "claude-code",

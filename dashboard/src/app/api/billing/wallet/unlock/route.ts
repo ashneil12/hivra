@@ -34,8 +34,7 @@ import {
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
 import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
-import { qualifiesForTokenBaseTier, resolveUserTokenAccess } from "@/lib/billing/token-access";
-import { isTokenDerivedComputeTier, newHivraTiersAllowed } from "@/lib/billing/hivra-readiness";
+import { resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { evaluateAndRecordVeniceComputeBoost } from "@/lib/billing/venice-compute-boost";
 import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -61,20 +60,6 @@ const LOG_CONTEXT = {
   route: "/api/billing/wallet/unlock",
   method: "POST",
 };
-
-/** The compute tier the account's computers are on now (null with none). */
-async function currentComputeTier(userId: string): Promise<string | null> {
-  if (!supabaseAdmin) return null;
-  const { data, error } = await supabaseAdmin
-    .from("hermes_instances")
-    .select("resource_tier")
-    .eq("user_id", userId)
-    .not("status", "in", '("deleted","scheduled_for_deletion")')
-    .limit(1);
-  // Unknown counts as no token tier: nothing new is granted on a failed read.
-  if (error || !Array.isArray(data) || data.length === 0) return null;
-  return (data[0] as { resource_tier: string | null }).resource_tier ?? null;
-}
 
 // Minimum seconds between full unlocks per user. A press inside this window
 // short-circuits to the current state — bounds the RPC read + Proxmox resize.
@@ -166,19 +151,10 @@ export async function POST(req?: NextRequest) {
 
     // ── 4. Resolve effective tier and live-apply compute ───────────────
     const sub = await resolveEffectiveSubscription(userId);
-    let desiredTier: TierKey;
-    if (sub && isPaidTier(sub.plan)) {
-      desiredTier = tierFromPlanKey(sub.plan);
-    } else if (
-      qualifiesForTokenBaseTier(access, balances) &&
-      // No new $HIVRA tier while $HIVRA is not usable, not even the 1-token
-      // base tier: only an account already on a token tier keeps it.
-      ((await newHivraTiersAllowed(access)) || isTokenDerivedComputeTier(await currentComputeTier(userId)))
-    ) {
-      desiredTier = "token_base";
-    } else {
-      desiredTier = "credit_base";
-    }
+    // Holding a token below the Pro threshold gives no compute tier: hosted
+    // computers are paid only, so anything short of a paid plan is Free.
+    const desiredTier: TierKey =
+      sub && isPaidTier(sub.plan) ? tierFromPlanKey(sub.plan) : "credit_base";
 
     // The effective per-instance caps the user now has (tier + boost). This is
     // the single source of truth applyTierChange writes, so we surface it for

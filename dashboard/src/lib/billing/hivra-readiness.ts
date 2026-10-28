@@ -148,7 +148,7 @@ export async function resolveTokenPaymentAvailability(
  * whose computers are on one of these already holds a token tier: keeping it
  * is not a new tier. The same set the token-tier cron's downgrade grace uses.
  */
-export const TOKEN_DERIVED_COMPUTE_TIERS: readonly string[] = ["token_base", "operator", "fleet"];
+export const TOKEN_DERIVED_COMPUTE_TIERS: readonly string[] = ["operator", "fleet"];
 
 export function isTokenDerivedComputeTier(tier: string | null | undefined): boolean {
   return !!tier && TOKEN_DERIVED_COMPUTE_TIERS.includes(tier);
@@ -165,8 +165,7 @@ type ExistingTierQuery = PromiseLike<{ data: unknown; error: { message?: string 
 
 /**
  * True when the account already holds a token tier: a Pro/Power qualification
- * row (in any state), or computers on a token-derived compute tier (the
- * 1-token base tier has no row of its own). Such an account keeps seeing and
+ * row (in any state), or computers on a token-derived compute tier. Such an account keeps seeing and
  * refreshing its holding while new $HIVRA tiers are off. Throws on a read
  * error, so a caller that refuses on "no tier" fails closed.
  */
@@ -193,8 +192,7 @@ export async function hasExistingTokenTier(userId: string, db: ExistingTierDb | 
  * Whether a $HIVRA balance may grant a token tier the account does not
  * already have. False only for an account that depends on $HIVRA readiness
  * while $HIVRA is not usable: such an account keeps a token tier it already
- * holds (breach and grace run as always) but gains no new one, including the
- * price-free 1-token base tier.
+ * holds (breach and grace run as always) but gains no new one.
  */
 export async function newHivraTiersAllowed(
   access: Pick<UserTokenAccess, "phase" | "grandfathered">,

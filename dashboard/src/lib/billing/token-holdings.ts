@@ -1109,8 +1109,8 @@ async function reportOverdueStandingRereads(
  * An account the crons are judging has no verification wallet (its primary is
  * missing or is a platform deposit wallet). Its verified holding is zero, so
  * record that for every token whose latest snapshot still shows a balance:
- * refresh-token-tiers honours the latest snapshot for token_base, and the
- * snapshot is the audit trail for the zero-balance eligibility evaluation.
+ * the wallet page shows the latest snapshot, and the snapshot is the audit
+ * trail for the zero-balance eligibility evaluation.
  * Idempotent: once the latest snapshot is zero nothing more is written.
  */
 async function recordUnbackedTokenHoldings(params: {

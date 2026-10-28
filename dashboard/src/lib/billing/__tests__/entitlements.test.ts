@@ -7,7 +7,6 @@ describe("evaluateComputeEntitlement", () => {
       subscription: { plan: "operator", status: "active" },
       creditBalanceCredits: null,
       reservedCredits: 0,
-      tokenHolding: { verified: false, balance: 0 },
       activeInstances: [],
       requestedInstance: { cpu: 0.5, ram: 1024 },
     });
@@ -36,7 +35,6 @@ describe("evaluateComputeEntitlement", () => {
       subscription: { plan: "operator", status: "trialing" },
       creditBalanceCredits: null,
       reservedCredits: 0,
-      tokenHolding: { verified: false, balance: 0 },
       activeInstances: [],
       requestedInstance: { cpu: 0.5, ram: 1024 },
     });
@@ -55,7 +53,6 @@ describe("evaluateComputeEntitlement", () => {
       subscription: null,
       creditBalanceCredits: null,
       reservedCredits: 0,
-      tokenHolding: { verified: false, balance: 0 },
       activeInstances: [{ id: "inst_1", cpu: 1, ram: 2048, state: "active" }],
       requestedInstance: { cpu: 0.5, ram: 1024 },
     });
@@ -68,33 +65,7 @@ describe("evaluateComputeEntitlement", () => {
       shouldPause: true,
       shouldResume: false,
     });
-    expect(decision.reasons).toContain("No verified subscription or token entitlement.");
-  });
-
-  it("unlocks the configured free base tier from a verified Hivra token holding", () => {
-    const decision = evaluateComputeEntitlement({
-      userId: "user_123",
-      subscription: null,
-      creditBalanceCredits: null,
-      reservedCredits: 0,
-      tokenHolding: { verified: true, balance: 1 },
-      activeInstances: [],
-      requestedInstance: { cpu: 0.5, ram: 1024 },
-    });
-
-    expect(decision).toMatchObject({
-      verified: true,
-      allowedTier: "token_base",
-      canProvision: true,
-      shouldPause: false,
-      payAsYouGoEnabled: false,
-    });
-    expect(decision.limits).toMatchObject({
-      totalCpu: 0.5,
-      totalRam: 1024,
-      maxCpuPerInstance: 0.5,
-      maxRamPerInstance: 1024,
-    });
+    expect(decision.reasons).toContain("No verified subscription entitlement.");
   });
 
   it("does not unlock compute from credit balance alone", () => {
@@ -103,7 +74,6 @@ describe("evaluateComputeEntitlement", () => {
       subscription: null,
       creditBalanceCredits: 500,
       reservedCredits: 250,
-      tokenHolding: { verified: false, balance: 0 },
       activeInstances: [],
       requestedInstance: { cpu: 0.5, ram: 1024 },
     });
@@ -122,10 +92,9 @@ describe("evaluateComputeEntitlement", () => {
   it("blocks provisioning when the requested instance exceeds the selected tier", () => {
     const decision = evaluateComputeEntitlement({
       userId: "user_123",
-      subscription: null,
+      subscription: { plan: "free", status: "active" },
       creditBalanceCredits: 500,
       reservedCredits: 0,
-      tokenHolding: { verified: true, balance: 1 },
       activeInstances: [],
       requestedInstance: { cpu: 2, ram: 4096 },
     });

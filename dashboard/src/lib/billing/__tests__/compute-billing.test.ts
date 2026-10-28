@@ -128,27 +128,6 @@ function creditInstance(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function tokenSnapshot(qualifiesBaseTier: boolean) {
-  return {
-    id: "snapshot_1",
-    userId: "user_1",
-    walletId: "wallet_1",
-    walletAddress: "0x000000000000000000000000000000000000dEaD",
-    normalizedWalletAddress: "0x000000000000000000000000000000000000dead",
-    chainId: 8453,
-    tokenAddress: "0x95ccfd2b81a9667b0cc979992632f98fc853eba3",
-    tokenSymbol: "Hivra",
-    tokenDecimals: 18,
-    balanceRaw: qualifiesBaseTier ? "1000000000000000000" : "0",
-    balanceDisplay: qualifiesBaseTier ? "1" : "0",
-    balance: qualifiesBaseTier ? 1 : 0,
-    qualifiesBaseTier,
-    blockNumber: 16,
-    source: "base_rpc" as const,
-    checkedAt: "2026-04-24T12:00:00.000Z",
-  };
-}
-
 describe("compute billing worker", () => {
   it("reads hourly base compute price from configuration with a safe default", () => {
     expect(getBaseHourlyComputeCredits({})).toBe(100);
@@ -164,11 +143,10 @@ describe("compute billing worker", () => {
   });
 
   it("does not touch credit_base instances — credits-as-compute-gate is disabled", async () => {
-    // Hermes' compute model is plan-based (free/paid/token-holding) — credit
-    // balances no longer gate compute. This test pins that the credit_base
-    // loops in billHourlyComputeUsage are no-ops so a future refactor can't
-    // accidentally re-enable them. Token_base behavior is exercised by the
-    // tests below.
+    // Hermes' compute model is plan-based — credit balances no longer gate
+    // compute. This test pins that the credit_base loops in
+    // billHourlyComputeUsage are no-ops so a future refactor can't
+    // accidentally re-enable them.
     const { db } = createDb([
       creditInstance({ id: "inst_active" }),
       creditInstance({ id: "inst_suspended", lifecycle_state: "suspended", status: "stopped" }),
@@ -562,133 +540,31 @@ describe("compute billing worker", () => {
     }));
   });
 
-  it("starts a grace period when a token-backed instance loses qualification", async () => {
+  it("leaves rows on the removed Starter tier alone — a token holding is no compute gate", async () => {
+    // token_base (1 token = a free Starter computer) is gone: hosted computers
+    // are paid only, and the migration moves these rows to credit_base. A row
+    // the migration has not reached yet is neither graced, paused nor resumed
+    // on a token balance.
     const { db, instances } = createDb([
+      creditInstance({ id: "inst_starter", resource_tier: "token_base" }),
       creditInstance({
+        id: "inst_starter_suspended",
         resource_tier: "token_base",
-        entitlement_state: "ok",
-      }),
-    ]);
-
-    const result = await billHourlyComputeUsage({
-      db,
-      now,
-      gracePeriodHours: 24,
-      readBalance: jest.fn(async () => 0),
-      readReserved: jest.fn(async () => 0),
-      recordDebit: jest.fn(),
-      readTokenSnapshot: jest.fn(async () => tokenSnapshot(false)),
-      pauseCompute: jest.fn(),
-    });
-
-    expect(result).toMatchObject({
-      checked: 1,
-      tokenChecked: 1,
-      tokenGrace: 1,
-      tokenSuspended: 0,
-    });
-    expect(result.results[0]).toMatchObject({
-      status: "token_grace_started",
-      instanceId: "inst_1",
-      graceEndsAt: "2026-04-25T12:30:00.000Z",
-    });
-    expect(instances[0]).toEqual(expect.objectContaining({
-      status: "running",
-      lifecycle_state: "active",
-      entitlement_state: "grace",
-      entitlement_grace_started_at: "2026-04-24T12:30:00.000Z",
-      entitlement_grace_ends_at: "2026-04-25T12:30:00.000Z",
-      entitlement_reason: "token_holding_below_minimum",
-    }));
-  });
-
-  it("suspends token-backed compute after token grace expires", async () => {
-    const { db, instances } = createDb([
-      creditInstance({
-        resource_tier: "token_base",
-        entitlement_state: "grace",
-        entitlement_grace_started_at: "2026-04-24T10:30:00.000Z",
-        entitlement_grace_ends_at: "2026-04-24T12:00:00.000Z",
-      }),
-    ]);
-    const pauseCompute = jest.fn(async () => ({ ok: true }));
-
-    const result = await billHourlyComputeUsage({
-      db,
-      now,
-      readBalance: jest.fn(async () => 0),
-      readReserved: jest.fn(async () => 0),
-      recordDebit: jest.fn(),
-      readTokenSnapshot: jest.fn(async () => tokenSnapshot(false)),
-      pauseCompute,
-    });
-
-    expect(result).toMatchObject({
-      checked: 1,
-      tokenChecked: 1,
-      tokenSuspended: 1,
-      tokenFailed: 0,
-    });
-    expect(result.results[0]).toMatchObject({
-      status: "token_suspended",
-      instanceId: "inst_1",
-    });
-    expect(pauseCompute).toHaveBeenCalledWith(expect.objectContaining({ id: "inst_1" }));
-    expect(instances[0]).toEqual(expect.objectContaining({
-      status: "stopped",
-      lifecycle_state: "suspended",
-      entitlement_state: "suspended",
-      entitlement_reason: "token_holding_below_minimum",
-      entitlement_suspended_at: "2026-04-24T12:30:00.000Z",
-    }));
-  });
-
-  it("resumes suspended token-backed compute when qualification returns", async () => {
-    const { db, instances } = createDb([
-      creditInstance({
-        resource_tier: "token_base",
-        status: "stopped",
         lifecycle_state: "suspended",
         entitlement_state: "suspended",
-        entitlement_grace_started_at: "2026-04-24T10:30:00.000Z",
-        entitlement_grace_ends_at: "2026-04-24T11:30:00.000Z",
-        entitlement_suspended_at: "2026-04-24T12:00:00.000Z",
+        status: "stopped",
       }),
     ]);
-    const startCompute = jest.fn(async () => ({ ok: true }));
+    const pauseCompute = jest.fn();
+    const startCompute = jest.fn();
 
-    const result = await billHourlyComputeUsage({
-      db,
-      now,
-      readBalance: jest.fn(async () => 0),
-      readReserved: jest.fn(async () => 0),
-      recordDebit: jest.fn(),
-      readTokenSnapshot: jest.fn(async () => tokenSnapshot(true)),
-      startCompute,
-    });
+    const result = await billHourlyComputeUsage({ db, now, pauseCompute, startCompute });
 
-    expect(result).toMatchObject({
-      checked: 1,
-      tokenChecked: 1,
-      tokenResumed: 1,
-      tokenWaiting: 0,
-      tokenFailed: 0,
-    });
-    expect(result.results[0]).toMatchObject({
-      status: "token_resumed",
-      instanceId: "inst_1",
-    });
-    expect(startCompute).toHaveBeenCalledWith(expect.objectContaining({ id: "inst_1" }));
-    expect(instances[0]).toEqual(expect.objectContaining({
-      status: "provisioning",
-      lifecycle_state: "provisioning",
-      entitlement_state: "ok",
-      entitlement_grace_started_at: null,
-      entitlement_grace_ends_at: null,
-      entitlement_reason: "token_holding_restored",
-      entitlement_suspended_at: null,
-      entitlement_last_resumed_at: "2026-04-24T12:30:00.000Z",
-    }));
+    expect(pauseCompute).not.toHaveBeenCalled();
+    expect(startCompute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ checked: 0, suspended: 0, resumed: 0, failed: 0 });
+    expect(result).not.toHaveProperty("tokenChecked");
+    expect(instances.map((instance) => instance.entitlement_state)).toEqual(["ok", "suspended"]);
   });
 
   it.skip("LEGACY: continues billing later instances when one instance fails", async () => {
