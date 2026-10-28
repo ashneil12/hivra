@@ -39,7 +39,6 @@ function resetTables() {
 }
 
 let lastInsert: Record<string, unknown> | null = null;
-let lastUpdate: Record<string, unknown> | null = null;
 
 function makeBuilder(table: string) {
   const store = tables[table];
@@ -71,7 +70,6 @@ function makeBuilder(table: string) {
     update(payload: Record<string, unknown>) {
       op = "update";
       updatePayload = payload;
-      lastUpdate = payload;
       return builder;
     },
     delete() {
@@ -124,7 +122,6 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 beforeEach(() => {
   resetTables();
   lastInsert = null;
-  lastUpdate = null;
   mockSnapshot.mockReset();
   mockSnapshot.mockResolvedValue([]);
 });

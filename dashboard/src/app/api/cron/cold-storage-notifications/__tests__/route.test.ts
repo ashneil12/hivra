@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 
 import { GET } from "../route";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
-import { supabaseAdmin } from "@/lib/supabase";
+
 import {
   sendColdArchivedEmail,
   sendColdDeletedEmail,

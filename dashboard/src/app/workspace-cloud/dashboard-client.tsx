@@ -537,7 +537,7 @@ export function DashboardClient() {
   const [instances, setInstances] = useState<LaneInstance[]>([]);
   const [status, setStatus] = useState<LaneStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [, setRefreshing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [subscribing, setSubscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);

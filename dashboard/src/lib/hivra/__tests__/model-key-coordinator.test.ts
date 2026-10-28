@@ -4,7 +4,7 @@ import { modelKeyBinding, type ModelKeyAgent, type ModelKeyOperation, type Model
 import { expectedGuestLlmReceipt, type GuestLlmApplication, type GuestLlmDelivery } from "../guest-llm-transport";
 import { ensureManagedVeniceWalletAccount } from "@/lib/billing/managed-venice-wallets";
 import { generateManagedVenicePlaintextKey, hashManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
-import { log } from "@/lib/logger";
+
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));

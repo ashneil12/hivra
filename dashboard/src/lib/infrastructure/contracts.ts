@@ -9,8 +9,6 @@ import {
 // `proxmox` is retained for backwards compatibility with existing prepared
 // connections. New host-first connections use `host`; discovery decides which
 // isolation driver, if any, can safely prepare and launch on that host.
-const INFRASTRUCTURE_PROVIDERS = ["proxmox", "host", "hetzner-cloud", "digitalocean"] as const;
-const INFRASTRUCTURE_OPERATING_MODES = ["self-managed"] as const;
 const INFRASTRUCTURE_SETUP_MODES = ["simple", "advanced"] as const;
 export const INFRASTRUCTURE_CONNECTION_STATUSES = [
   "pending",

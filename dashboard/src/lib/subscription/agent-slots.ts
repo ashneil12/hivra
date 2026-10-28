@@ -30,12 +30,6 @@ export const SCHEDULING_PRIORITY = {
 
 type SlotPlanKey = keyof typeof AGENT_SLOTS;
 
-// Marketing aliases used by the Hivra catalog UI.
-const PLAN_ALIASES: Record<string, SlotPlanKey> = { pro: "operator", power: "fleet" };
-
-function resolveKey(key: string): SlotPlanKey {
-  return (PLAN_ALIASES[key] ?? key) as SlotPlanKey;
-}
 
 // hermes_instances.resource_tier uses credit_base/token_base for the free tiers.
 const RESOURCE_TIER_PRIORITY: Record<string, number> = {
