@@ -76,12 +76,11 @@ interface WithdrawRequestBody {
 // 409 instead of being queued — the user shouldn't be retrying that fast
 // anyway, and queueing would just delay an inevitable double-submit.
 //
-// NOTE: this is process-local. Horizontal scaling (multiple Node
-// instances behind the load balancer) is NOT covered. The proper fix is
-// a DB-level `(user_id) UNIQUE WHERE status='in_flight'` claim row in a
-// `withdrawals` table — see supabase migration referenced in the Pass 1
-// security report. Keep this in-process guard as defense-in-depth even
-// after the DB lock lands.
+// This in-process map is the first of two layers. It only covers one Node
+// instance. The second layer is the cross-process claim: the `in_flight` row
+// inserted into `bankr_withdrawals` (lib/billing/bankr-withdraw.ts), which the
+// partial unique index `uq_bankr_withdrawals_one_in_flight_per_user` makes
+// exclusive per user across instances. Keep both.
 const inFlightByUser = new Map<string, Promise<unknown>>();
 // How long new tier breaches are held after a lock-wallet move is submitted.
 const LOCK_MOVE_BREACH_HOLD_MS = 30 * 60 * 1000;
