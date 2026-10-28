@@ -97,7 +97,11 @@ Usage: proxmox-host-perimeter-guard.sh [--check|--apply] [--cloudflare-origin-on
                          the diff, and apply it (restoring on failure).
 --cloudflare-origin-only Also restrict 80/443 to Cloudflare's ranges. --apply
                          refuses unless every Caddy site resolves only to
-                         Cloudflare (no sslip.io, raw IPs or unproxied names).
+                         Cloudflare (no sslip.io, raw IPs, catch-all :80/:443
+                         blocks, env placeholders or unproxied names). This
+                         is a point-in-time check: the dashboard can still
+                         mint an sslip.io gateway later when the Cloudflare
+                         DNS mint fails, and that tenant would be cut off.
 --rewrite-nft-only       Rewrite an nftables.conf file in place (no root, only
                          python3). For unit tests.
 --write-sshd-dropin-only Write the sshd hardening drop-in to a path (no root).
@@ -218,7 +222,22 @@ VMBR1_INPUT_BLOCK = [
     'iifname "vmbr1" ct state new drop',
 ]
 
-HOST_SERVICE_PORT = re.compile(r"\b(22|80|443|8006)\b")
+HOST_SERVICE_PORTS = (22, 80, 443, 8006)
+
+
+def opens_host_service_port(dport_expr):
+    # True when a dport expression (single port, set, or range) covers any
+    # host service port. Unparseable expressions count as covering one.
+    for token in re.findall(r"[0-9]+(?:-[0-9]+)?|[A-Za-z_]+", dport_expr):
+        if token.isalpha() or "_" in token:
+            if token in ("accept", "jump", "goto", "comment", "counter"):
+                break
+            return True
+        lo, _, hi = token.partition("-")
+        lo, hi = int(lo), int(hi or lo)
+        if any(lo <= port <= hi for port in HOST_SERVICE_PORTS):
+            return True
+    return False
 
 CLOUDFLARE_ACCEPTS = [
     'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept',
@@ -235,6 +254,10 @@ FWD_DROP = (
 
 def norm(line):
     return line.split("#", 1)[0].strip()
+
+
+def strip_comment(n):
+    return re.sub(r'\s+comment\s+"[^"]*"$', "", n)
 
 
 def block_end(lines, start):
@@ -266,20 +289,6 @@ def drop_named_blocks(lines, kind, name):
     return out
 
 
-NON_WAN_PREFIXES = (
-    "ct ", "ip protocol", "ip6 ", "meta ", "type ", "policy",
-    "jump", "goto", "counter", "limit ", "reject", "drop", "oifname",
-)
-
-
-def is_wan_accept(n):
-    if "accept" not in n or not n:
-        return False
-    if n.startswith('iifname "vmbr1"') or n.startswith('iifname "lo"') or n.startswith('iif "lo"'):
-        return False
-    return not n.startswith(NON_WAN_PREFIXES)
-
-
 def is_fwd_wan_accept(n):
     return (
         n.startswith('iifname "vmbr1"')
@@ -293,13 +302,24 @@ def is_hoistable_guest_allow(n):
     # An explicit guest allow (DHCP, DNS, a jump to a hivra_* service chain)
     # must stay ahead of the catch-all drop. A blanket accept, or one that
     # opens a host service port, is not hoisted: the drop is meant to shadow it.
+    n = strip_comment(n)
     if not n.startswith('iifname "vmbr1"') or n in MANAGED_INPUT or "oifname" in n:
         return False
     if " jump " in n or " goto " in n:
         return True
     if not n.endswith(" accept") or "dport" not in n:
         return False
-    return not HOST_SERVICE_PORT.search(n.split("dport", 1)[1])
+    return not opens_host_service_port(n.split("dport", 1)[1])
+
+
+def is_chain_preamble(n):
+    # Lines the guest block may follow: the chain's type/policy statement,
+    # loopback accepts, blank lines and comments.
+    return (
+        not n
+        or n.startswith(("type ", "policy"))
+        or n in ('iif "lo" accept', 'iifname "lo" accept')
+    )
 
 
 def harden_input(inner):
@@ -315,10 +335,13 @@ def harden_input(inner):
             out.extend(RULE_INDENT + r for r in CLOUDFLARE_ACCEPTS)
             continue
         out.append(line)
-    anchor = next(
-        (i for i, line in enumerate(out) if is_wan_accept(norm(line))),
-        len(out),
-    )
+    # The block goes right after the chain preamble, ahead of every other
+    # accept or jump, so no host service rule can sit above it. Because the
+    # drops only match new/invalid connections this is safe above the
+    # established/related accept too.
+    anchor = 0
+    while anchor < len(out) and is_chain_preamble(norm(out[anchor])):
+        anchor += 1
     hoisted = [line for line in out[anchor:] if is_hoistable_guest_allow(norm(line))]
     rest = [line for line in out[anchor:] if not is_hoistable_guest_allow(norm(line))]
     return out[:anchor] + hoisted + [RULE_INDENT + r for r in VMBR1_INPUT_BLOCK] + rest
@@ -405,7 +428,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 SSHD_DROPIN_BACKUP=""
 SSHD_LEGACY_BACKUP=""
 
-# Backups live outside sshd_config.d so sshd never loads them.
+# Backups sit next to the drop-ins without a .conf suffix, so sshd's
+# `Include sshd_config.d/*.conf` never loads them.
 write_sshd_dropin() {
   if [ -f "$SSHD_DROPIN" ]; then
     SSHD_DROPIN_BACKUP="$SSHD_DROPIN.bak-hermes-$STAMP"
@@ -497,22 +521,49 @@ files = [p for p in root.rglob("*") if p.is_file() and (p.name == "Caddyfile" or
 if not files:
     sys.exit("no Caddy site config under %s; cannot prove every site is proxied" % root)
 
+def addresses(text):
+    return [a for a in re.split(r"[\s,]+", text.strip()) if a]
+
+
+# At the top level a Caddyfile holds only the global options block, snippet
+# definitions, imports and site address lists (which may span lines joined by
+# commas) followed by their block.
 hosts = set()
+bad = []
 for f in files:
     depth = 0
+    pending = []
     for raw in f.read_text(errors="replace").split("\n"):
         line = raw.split("#", 1)[0].strip()
-        if depth == 0 and line.endswith("{") and not line.startswith(("(", "{")):
-            for addr in re.split(r"[\s,]+", line[:-1].strip()):
-                if addr:
-                    hosts.add(addr)
+        if depth == 0 and line:
+            words = line.split()
+            if words[0] == "import":
+                target = words[1] if len(words) > 1 else ""
+                if target.startswith("/") and not target.startswith(str(root)):
+                    bad.append("import %s (outside %s; cannot verify)" % (target, root))
+                pending = []
+            elif line.startswith("("):
+                pending = []
+            elif line == "{":
+                hosts.update(pending)
+                pending = []
+            elif line.endswith("{"):
+                hosts.update(pending + addresses(line[:-1]))
+                pending = []
+            else:
+                pending += addresses(line)
         depth += raw.count("{") - raw.count("}")
 
-bad = []
 for addr in sorted(hosts):
     host = re.sub(r"^[a-z]+://", "", addr).split("/", 1)[0]
     host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host.strip("[]")
-    if host in ("", "localhost") or host.startswith(("127.", "unix")):
+    if "{$" in addr or "{env." in addr:
+        bad.append(addr + " (placeholder address; cannot verify)")
+        continue
+    if host == "":
+        bad.append(addr + " (catch-all site serves direct-IP traffic)")
+        continue
+    if host == "localhost" or host.startswith(("127.", "unix")):
         continue
     if host.endswith((".sslip.io", ".nip.io")):
         bad.append(host + " (direct-IP hostname)")

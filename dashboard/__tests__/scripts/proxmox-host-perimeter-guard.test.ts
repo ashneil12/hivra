@@ -443,6 +443,50 @@ fi
       expect(output.search(/^\s*iifname "vmbr1" accept$/m)).toBeGreaterThan(newDropIdx);
     });
 
+    it("puts the guest block ahead of every accept or jump, whatever its prefix", () => {
+      const conf = `table inet filter {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iif "lo" accept
+		meta l4proto tcp tcp dport 8006 accept
+		jump host_services
+		ip6 saddr ::/0 tcp dport 22 accept
+		ct state established,related accept
+		counter drop
+	}
+	chain host_services {
+		tcp dport 22 accept
+	}
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+	}
+}
+`;
+      const { output } = rewriteInPlace(conf);
+      const input = output.slice(output.indexOf("chain input"), output.indexOf("chain host_services"));
+      const blockIdx = input.indexOf(NTP_ACCEPT);
+      expect(blockIdx).toBeGreaterThan(input.indexOf('iif "lo" accept'));
+      for (const later of [
+        "meta l4proto tcp tcp dport 8006 accept",
+        "jump host_services",
+        "ip6 saddr ::/0 tcp dport 22 accept",
+        "counter drop",
+      ]) {
+        expect(input.indexOf(VMBR1_NEW_DROP)).toBeLessThan(input.indexOf(later));
+      }
+    });
+
+    it("does not hoist a port range covering a host port, and hoists commented guest allows", () => {
+      const conf = WAN_FIRST_NFT.replace(
+        '\t\tiifname "vmbr1" udp dport 53 accept',
+        '\t\tiifname "vmbr1" udp dport 53 accept comment "dns"\n\t\tiifname "vmbr1" tcp dport 1-1024 accept',
+      );
+      const { output } = rewriteInPlace(conf);
+      const newDropIdx = output.indexOf(VMBR1_NEW_DROP);
+      expect(output.indexOf('iifname "vmbr1" udp dport 53 accept comment "dns"')).toBeLessThan(newDropIdx);
+      expect(output.indexOf('iifname "vmbr1" tcp dport 1-1024 accept')).toBeGreaterThan(newDropIdx);
+    });
+
     it("upgrades a bare vmbr1 drop written by an earlier guard release", () => {
       const legacy = INLINE_CHAIN_NFT.replace(
         "\t\ttcp dport 22 accept",
@@ -546,6 +590,26 @@ esac
         }
         expect(stderr).toContain("--cloudflare-origin-only refused");
         expect(stderr).toContain(site);
+        expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
+      }
+    });
+
+    it("refuses --cloudflare-origin-only for comma-continued, catch-all and placeholder sites", () => {
+      for (const [caddyfile, reported] of [
+        ["agent-2.198-51-100-8.sslip.io,\nwww.example.com {\n\trespond ok\n}\n", "agent-2.198-51-100-8.sslip.io"],
+        [":443 {\n\trespond ok\n}\n", ":443"],
+        ["{$GATEWAY_HOST} {\n\trespond ok\n}\n", "{$GATEWAY_HOST}"],
+        ["import /srv/other/sites/*\n", "/srv/other/sites/*"],
+      ]) {
+        const { nftConf, apply } = setupApply({ caddyfile });
+        let stderr = "";
+        try {
+          apply(CF_ONLY);
+        } catch (err) {
+          stderr = String((err as { stderr?: string }).stderr);
+        }
+        expect(stderr).toContain("--cloudflare-origin-only refused");
+        expect(stderr).toContain(reported);
         expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
       }
     });
