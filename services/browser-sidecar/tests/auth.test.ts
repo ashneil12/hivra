@@ -222,6 +222,23 @@ describe("signed-url", () => {
   // A far-future `ts` makes `now - ts` negative, so the expiry check never
   // trips: the URL stays valid until real time catches up to the forged ts.
   // Signatures cover ts, so craft one with the same formula the module uses.
+  it("accepts a ts a few minutes ahead (box clock behind the dashboard)", () => {
+    const tsNum = Date.now() + 3 * 60_000;
+    const nonce = "fedcba9876543210fedcba9876543210";
+    const scope = "novnc:vex";
+    const sig = createHmac("sha256", secret)
+      .update(`/x|${tsNum}|${nonce}|${scope}`)
+      .digest("hex");
+    const result = verifySignedUrl({
+      path: "/x",
+      query: { ts: String(tsNum), nonce, sig, scope, ttl: "60000" },
+      expectedScope: "novnc:vex",
+      secret,
+      maxTtlMs: 60_000,
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects a far-future ts even with a valid signature", () => {
     const tsNum = Date.now() + 10 * 60_000;
     const nonce = "0123456789abcdef0123456789abcdef";

@@ -1,6 +1,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { NOVNC_TTL_MS } from "../config.js";
 
+const MAX_CLOCK_SKEW_MS = 5 * 60_000;
+
 // HMAC-signed URL scheme:
 //   ?ts=<unix-ms>&nonce=<hex16>&scope=<scope>&sig=<hex hmac-sha256>&ttl=<ms>
 //
@@ -81,7 +83,9 @@ export function verifySignedUrl(opts: {
     requestedTtl ?? NOVNC_TTL_MS,
     opts.maxTtlMs ?? NOVNC_TTL_MS,
   );
-  if (tsNum - Date.now() > 60_000) return { ok: false, reason: "expired" };
+  // Box clocks drift from the dashboard's; allow a few minutes of skew, but a
+  // forged far-future ts must not keep a URL alive indefinitely.
+  if (tsNum - Date.now() > MAX_CLOCK_SKEW_MS) return { ok: false, reason: "expired" };
   if (Date.now() - tsNum > effectiveTtl) return { ok: false, reason: "expired" };
 
   const expected = sign(opts.path, tsNum, nonce, opts.expectedScope, opts.secret);
