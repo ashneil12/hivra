@@ -9,7 +9,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { getPlan } from "@/lib/subscription";
-import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, isFreeAccountEntitlement } from "@/lib/billing/hosted-compute";
+import {
+  HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+  isFreeAccountEntitlement,
+  paysForHostedCompute,
+} from "@/lib/billing/hosted-compute";
 import { BASE_FLOOR, BROWSER_ADD, isPoolExempt } from "@/lib/hivra/agent-catalog";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 
@@ -176,15 +180,18 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   const plan = getPlan(sub.plan);
   const isFreePlan = sub.plan === "free" || sub.source === "free";
 
-  // A Free account never launches a Hivra-hosted computer. This gate only
-  // runs for hivra-managed launches (self-managed, bring-your-own computers
-  // skip subscription checks), so refusing here keeps the free account free to
-  // use and connect your own box without giving it hosted compute. Resize and
-  // attach keep working for boxes an account already has.
-  if (params.mode === "launch" && isFreeAccountEntitlement(sub)) {
-    log.warn("hivra resource gate: a Free account cannot launch Hivra-hosted compute", {
+  // A Free account never launches a Hivra-hosted computer, and neither does a
+  // trial: hosted compute is paid only. This gate only runs for hivra-managed
+  // launches (self-managed, bring-your-own computers skip subscription
+  // checks), so refusing here keeps the free account free to use and connect
+  // your own box without giving it hosted compute. Resize and attach keep
+  // working for boxes an account already has.
+  if (params.mode === "launch" && !paysForHostedCompute(sub)) {
+    log.warn("hivra resource gate: an account without a paid plan cannot launch Hivra-hosted compute", {
       source: "hivra/resource-gate",
-      failureType: "hivra_agent_free_account_hosted_compute_denied",
+      failureType: isFreeAccountEntitlement(sub)
+        ? "hivra_agent_free_account_hosted_compute_denied"
+        : "hivra_agent_trial_hosted_compute_denied",
       userId: params.userId,
       agentType: params.type,
     });

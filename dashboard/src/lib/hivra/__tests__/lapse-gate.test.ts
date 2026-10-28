@@ -20,6 +20,12 @@ describe("ownerHasNoPaidPlan", () => {
     resolve.mockResolvedValue(free);
     expect(await ownerHasNoPaidPlan("owner")).toBe(true);
   });
+  it("is true for a trial on any plan or source: Hivra has no trials", async () => {
+    resolve.mockResolvedValue({ plan: "operator", source: "stripe", status: "trialing" });
+    expect(await ownerHasNoPaidPlan("owner")).toBe(true);
+    resolve.mockResolvedValue({ plan: "fleet", source: "apple_iap", status: "trialing" });
+    expect(await ownerHasNoPaidPlan("owner")).toBe(true);
+  });
   it("is false for a token tier inside its 24 hour grace, with or without a Free row", async () => {
     inTokenGrace.mockResolvedValue(true);
     expect(await ownerHasNoPaidPlan("owner")).toBe(false);

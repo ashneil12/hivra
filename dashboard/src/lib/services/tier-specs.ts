@@ -36,7 +36,6 @@ const LOG_SOURCE = "tier-specs";
 /** All tier keys recognised by the system. Keep in sync with warden. */
 export type TierKey =
   | "credit_base"     //  Legacy persisted Free tier alias
-  | "token_base"      //  $HERMES holder
   | "operator"        //  Paid Pro plan ($9.99/mo)
   | "fleet"           //  Paid Power plan ($19.99/mo)
   | "command";        //  Paid Command plan ($49/mo)
@@ -54,11 +53,6 @@ const TIER_SPECS: Record<TierKey, TierSpec> = {
     cpuLimit: 0.5,
     ramLimitMb: 1024,
     label: "Free",
-  },
-  token_base: {
-    cpuLimit: 0.5,
-    ramLimitMb: 1024,
-    label: "Starter (Token Holder)",
   },
   // Pro/Power/Command pull from PLANS so a price/spec change in
   // subscription/plans.ts propagates everywhere.
@@ -81,13 +75,6 @@ const TIER_SPECS: Record<TierKey, TierSpec> = {
 
 const TIER_LIMITS: Record<TierKey, TierProvisioningLimits> = {
   credit_base: {
-    maxInstances: 1,
-    totalCpu: 0.5,
-    totalRam: 1024,
-    maxCpuPerInstance: 0.5,
-    maxRamPerInstance: 1024,
-  },
-  token_base: {
     maxInstances: 1,
     totalCpu: 0.5,
     totalRam: 1024,

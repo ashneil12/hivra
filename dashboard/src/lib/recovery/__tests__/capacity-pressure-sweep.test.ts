@@ -156,7 +156,7 @@ function buildHotHostInstances(node: string): CandidateRow[] {
       last_activity_at: daysAgo(30),
     }),
     buildInstance(`${node}_free_older`, node, {
-      resource_tier: "token_base",
+      resource_tier: "credit_base",
       last_activity_at: daysAgo(10),
     }),
     buildInstance(`${node}_free_idle`, node, {
@@ -273,7 +273,7 @@ describe("runCapacityPressureSweep", () => {
     // and the (default-excluded) paid agent are never candidates.
     expect(hot.parked).toEqual([
       { id: "fixturenode2_free_oldest", tier: "credit_base", idleDays: 30 },
-      { id: "fixturenode2_free_older", tier: "token_base", idleDays: 10 },
+      { id: "fixturenode2_free_older", tier: "credit_base", idleDays: 10 },
     ]);
 
     const cold = summary.hosts[1];
@@ -306,7 +306,7 @@ describe("runCapacityPressureSweep", () => {
     const hot = summary.hosts[0];
     expect(hot.parked).toEqual([
       { id: "fixturenode2_free_oldest", tier: "credit_base", idleDays: 30 },
-      { id: "fixturenode2_free_older", tier: "token_base", idleDays: 10 },
+      { id: "fixturenode2_free_older", tier: "credit_base", idleDays: 10 },
     ]);
   });
 
@@ -388,7 +388,7 @@ describe("runCapacityPressureSweep", () => {
         last_lifecycle_transition_at: daysAgo(0),
       }),
       buildInstance("fixturenode2_free_older", "fixturenode2", {
-        resource_tier: "token_base",
+        resource_tier: "credit_base",
         last_activity_at: daysAgo(10),
         last_lifecycle_transition_at: daysAgo(0),
       }),
@@ -409,7 +409,7 @@ describe("runCapacityPressureSweep", () => {
     // agents, with idleDays from real activity (not the recent transition).
     expect(summary.hosts[0].parked).toEqual([
       { id: "fixturenode2_free_oldest", tier: "credit_base", idleDays: 30 },
-      { id: "fixturenode2_free_older", tier: "token_base", idleDays: 10 },
+      { id: "fixturenode2_free_older", tier: "credit_base", idleDays: 10 },
     ]);
   });
 

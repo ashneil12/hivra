@@ -27,7 +27,7 @@ export type ManagedHivraHostReadinessResult =
       error: Record<string, unknown>;
     };
 
-export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "runtime-update";
+export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "resize" | "runtime-update";
 type ManagedHivraHostEnvironment = Record<string, string | undefined>;
 
 export function managedHivraHostReadinessScript(
@@ -69,11 +69,21 @@ bash -n "$PROVISIONER_DIR/provision-claude-code-box.sh"`
   const runtimeUpdateCapabilities = purpose === "runtime-update"
     ? `need_file "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"`
     : "";
+  // Launch and resize run the host's capacity admission helper before any VM
+  // mutation. Older compatible bundles (2026.09.08.3 and earlier) lack it, so
+  // a launch placed there exits 127 before allocation. Refuse the host here so
+  // placement moves on to one that can take the launch. Start and restart keep
+  // working on those hosts: their own start helper never calls it.
+  const needsCapacityAdmission = purpose === "provision" || purpose === "resize";
+  const capacityAdmissionCapabilities = needsCapacityAdmission
+    ? `need_file "$CAPACITY_ADMISSION"`
+    : "";
   return `#!/usr/bin/env bash
 set -euo pipefail
 PROVISIONER_DIR=${shellQuote(runtimePaths.provisionerDirectory)}
 PROVISION_SCRIPT="$PROVISIONER_DIR/hivra-provision-on-host.sh"
 START_SCRIPT="$PROVISIONER_DIR/hivra-start-on-host.sh"
+CAPACITY_ADMISSION="$PROVISIONER_DIR/hivra-host-capacity-admission"
 missing=""
 need_file() {
   if [ ! -f "$1" ]; then missing="$missing $1"; fi
@@ -88,6 +98,7 @@ need_readable ${shellQuote(runtimePaths.vmSshKeyPath)}
 ${provisionPrerequisites}
 ${modelCapabilities}
 ${runtimeUpdateCapabilities}
+${capacityAdmissionCapabilities}
 if [ -n "$missing" ]; then
   echo "missing required Hivra provisioner prerequisites:$missing" >&2
   exit 1
@@ -111,6 +122,7 @@ grep -Fq "printf 'HIVRA_OPERATION_ID %s\\n' \\\"\\\$OPERATION_ID\\\"" "$START_SC
   || { echo "Hivra start helper lacks a durable operation receipt" >&2; exit 1; }
 bash -n "$START_SCRIPT"
 ${purpose === "runtime-update" ? 'bash -n "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"' : ""}
+${needsCapacityAdmission ? 'bash -n "$CAPACITY_ADMISSION"' : ""}
 printf 'HIVRA_HOST_READY\\n'
 `;
 }

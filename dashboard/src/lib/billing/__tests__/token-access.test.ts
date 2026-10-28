@@ -31,7 +31,6 @@ import {
   computeUserTokenAccess,
   convertGrandfatheredUserToHivra,
   ensureHivraActivationRecorded,
-  qualifiesForTokenBaseTier,
   resolveTokenAccessForUsers,
   resolveUserTokenAccess,
   tierRowTokenCounts,
@@ -197,15 +196,6 @@ describe("computeUserTokenAccess", () => {
     const after = computeUserTokenAccess({ phase: "active", cohort, now: new Date(NOW.getTime() + 72 * HOUR_MS) });
     expect(after.allowedTokens).toEqual(["hivra"]);
     expect(tierRowTokenCounts(after, "hermesos")).toBe(true);
-  });
-
-  it("the base tier counts one whole token of an allowed token only", () => {
-    const newUser = computeUserTokenAccess({ phase: "active", cohort: null, now: NOW });
-    expect(qualifiesForTokenBaseTier(newUser, { hermesos: 5n * ONE_TOKEN })).toBe(false);
-    expect(qualifiesForTokenBaseTier(newUser, { hivra: ONE_TOKEN })).toBe(true);
-    const dormant = computeUserTokenAccess({ phase: "dormant", cohort: null, now: NOW });
-    expect(qualifiesForTokenBaseTier(dormant, { hermesos: ONE_TOKEN })).toBe(true);
-    expect(qualifiesForTokenBaseTier(dormant, { hermesos: ONE_TOKEN - 1n })).toBe(false);
   });
 });
 

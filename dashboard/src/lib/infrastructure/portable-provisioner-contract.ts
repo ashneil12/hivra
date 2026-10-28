@@ -168,6 +168,28 @@ export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
   return (PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS as readonly unknown[]).includes(version);
 }
 
+/** Exact reviewed releases that ship hivra-host-capacity-admission. Launch and
+ * resize run it from the host's bundle before any VM mutation, so an older
+ * compatible lifecycle ABI (2026.09.08.3 and earlier) can still start, stop and
+ * restart its computers but cannot take a new launch: the call exits 127 and
+ * no VM is ever created. 2026.09.15.2 is the first release carrying it. */
+const PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS = [
+  "2026.09.15.2",
+  "2026.09.21.1",
+  "2026.09.22.1",
+  "2026.09.22.2",
+  "2026.09.24.1",
+  "2026.09.24.2",
+  "2026.09.24.3",
+  "2026.09.24.4",
+  "2026.10.07.1",
+  "2026.10.20.1",
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+] as const;
+export function provisionerSupportsHostCapacityAdmission(version: unknown): boolean {
+  return (PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS as readonly unknown[]).includes(version);
+}
+
 /** Legacy provider runtimes; desktop admission is separately version-bound. */
 export const PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS = [
   ...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS,

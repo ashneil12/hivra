@@ -6,12 +6,11 @@ import {
   evaluateComputeEntitlement,
   normalizeEntitlementInstance,
 } from "@/lib/billing/entitlements";
-import { getLatestAccessTokenHoldingSnapshot } from "@/lib/billing/token-access";
 import type { TierKey } from "@/lib/services/tier-specs";
 
 // Single source of truth for "is this user entitled to a Pro+ feature?".
 //
-// Pro+ = operator | fleet | command. Everything else (credit_base, token_base,
+// Pro+ = operator | fleet | command. Everything else (credit_base,
 // undefined) returns false. Network/DB failures fail closed — better to deny
 // access during a transient outage than leak a paid feature to a free user.
 //
@@ -35,7 +34,7 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
     return { ok: false, tier: null, reason: "no_db" };
   }
   try {
-    const [{ data: subscription }, { data: instances }, creditSummary, reservedCredits, tokenSnapshot] =
+    const [{ data: subscription }, { data: instances }, creditSummary, reservedCredits] =
       await Promise.all([
         supabaseAdmin
           .from("hermes_subscriptions")
@@ -56,7 +55,6 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
           .not("status", "in", '("deleted")'),
         getCreditSummary(userId, null),
         deriveReservedCreditBalance(userId),
-        getLatestAccessTokenHoldingSnapshot(userId),
       ]);
 
     const decision = evaluateComputeEntitlement({
@@ -70,9 +68,6 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
         : null,
       creditBalanceCredits: creditSummary.balance,
       reservedCredits,
-      tokenHolding: tokenSnapshot
-        ? { verified: true, balance: tokenSnapshot.balance }
-        : { verified: false, balance: 0 },
       activeInstances: (instances ?? []).map(normalizeEntitlementInstance),
     });
 

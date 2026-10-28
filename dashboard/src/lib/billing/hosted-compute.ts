@@ -20,3 +20,15 @@ export function isFreeAccountEntitlement(
 ): boolean {
   return !!sub && sub.source === "free" && sub.plan === "free";
 }
+
+/**
+ * True when the entitlement pays for a Hivra-hosted computer. The Free account
+ * does not, and neither does a 'trialing' one (a Stripe sub from before trials
+ * were removed, or an App Store intro offer): Hivra has no trials, so a trial
+ * is refused here exactly as createInstance and the mobile launch refuse it.
+ */
+export function paysForHostedCompute(
+  sub: Pick<EffectiveSubscription, "plan" | "source" | "status"> | null | undefined
+): boolean {
+  return !!sub && !isFreeAccountEntitlement(sub) && sub.status !== "trialing";
+}
