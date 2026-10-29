@@ -15,6 +15,7 @@ import {
   resolveProxmoxLifecycleTarget,
 } from "@/lib/services/proxmox-infrastructure";
 import { deleteHetznerServer } from "@/lib/services/hetzner-instance-service";
+import { countOtherLiveRowsOnHetznerServer } from "@/lib/services/hetzner-server-tenants";
 import { HetznerCloudApiError } from "@/lib/hetzner/client";
 import {
   deriveDnsDomainFromGatewayUrl,
@@ -170,22 +171,41 @@ export async function POST(
         providerError = err instanceof Error ? err.message : String(err);
       }
     } else if (instance.hetzner_server_id) {
-      try {
-        await deleteHetznerServer(instance.hetzner_server_id);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Only Hetzner's own not_found answer proves absence; a proxy 404 does not.
-        if (err instanceof HetznerCloudApiError && err.status === 404 && err.providerCode === "not_found") {
-          // Already gone: same as hosts/[id] DELETE. The lifecycle write below still runs.
-          log.warn("hetzner server already gone during force-delete; marking row deleted", {
-            source: "ops-force-delete",
-            route: "/api/ops/instances/[id]/force-delete",
-            failureType: "force_delete_hetzner_already_gone",
-            instanceId: id,
-            hetznerServerId: instance.hetzner_server_id,
-          });
-        } else {
-          providerError = msg;
+      // A Hetzner server can host several agents. Destroy it only when no
+      // other live row still runs on it; otherwise only this row is marked
+      // deleted below. An unknown count is not zero, so it refuses.
+      const serverTenants = await countOtherLiveRowsOnHetznerServer(supabaseAdmin, {
+        instanceId: id,
+        hetznerServerId: instance.hetzner_server_id,
+      });
+      if (!serverTenants.ok) {
+        providerError = `could not confirm no other agents use the Hetzner server: ${serverTenants.message}`;
+      } else if (serverTenants.otherLiveRows > 0) {
+        log.info("hetzner server still used by other live instances during force-delete; keeping server", {
+          source: "ops-force-delete",
+          route: "/api/ops/instances/[id]/force-delete",
+          instanceId: id,
+          hetznerServerId: instance.hetzner_server_id,
+          remainingInstances: serverTenants.otherLiveRows,
+        });
+      } else {
+        try {
+          await deleteHetznerServer(instance.hetzner_server_id);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Only Hetzner's own not_found answer proves absence; a proxy 404 does not.
+          if (err instanceof HetznerCloudApiError && err.status === 404 && err.providerCode === "not_found") {
+            // Already gone: same as hosts/[id] DELETE. The lifecycle write below still runs.
+            log.warn("hetzner server already gone during force-delete; marking row deleted", {
+              source: "ops-force-delete",
+              route: "/api/ops/instances/[id]/force-delete",
+              failureType: "force_delete_hetzner_already_gone",
+              instanceId: id,
+              hetznerServerId: instance.hetzner_server_id,
+            });
+          } else {
+            providerError = msg;
+          }
         }
       }
     }

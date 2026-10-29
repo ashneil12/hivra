@@ -13,6 +13,7 @@ import {
   buildAgentDeployScript,
   buildAutoUpdateTimerProvisioningScript,
 } from "@/lib/services/hetzner-instance-service";
+import { countOtherLiveRowsOnHetznerServer } from "@/lib/services/hetzner-server-tenants";
 import {
   deleteProxmoxInstance,
   discoverProxmoxInfrastructureForInstance,
@@ -2497,60 +2498,110 @@ export async function DELETE(
             );
       }
     } else if (instance!.hetzner_server_id) {
-      // Try Hetzner delete and only mark the row deleted if it succeeds
-      // (or if the server is already gone — 404). Previously, any
-      // transient Hetzner error left the DB row marked deleted while
-      // the VM kept billing forever — silent recurring cost.
-      try {
-        await deleteHetznerServer(instance!.hetzner_server_id);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const alreadyGone = msg.includes("→ 404");
-        if (!alreadyGone) {
-          log.error("hetzner delete failed; refusing to mark instance deleted (avoid orphan billable VM)", e, {
+      // A Hetzner server can host several agents (multi-agent host). Destroy it
+      // only when no other live row still runs on it; otherwise only this row
+      // is removed below. The count runs first, and an unknown count refuses.
+      const serverTenants = await countOtherLiveRowsOnHetznerServer(supabaseAdmin!, {
+        instanceId: id,
+        hetznerServerId: instance!.hetzner_server_id,
+      });
+      if (!serverTenants.ok) {
+        log.error("hetzner server tenant count failed; refusing to delete the server", new Error(serverTenants.message), {
+          source: "instances",
+          route: "/api/instances/[id]",
+          method: "DELETE",
+          instanceId: id,
+          userId,
+          failureType: "instance_delete_tenant_check_failed",
+          hetznerServerId: instance!.hetzner_server_id,
+        });
+        return apiError(
+          "Could not confirm this server has no other agents on it. The instance has not been removed. Please retry.",
+          500,
+          { failureType: "instance_delete_tenant_check_failed", retryable: true },
+          undefined,
+          {
             source: "instances",
             route: "/api/instances/[id]",
             method: "DELETE",
             instanceId: id,
             userId,
-            failureType: "instance_delete_hetzner_failed",
-            failureOwner: "provider",
-            failurePhase: "delete",
-            recoveryAction: "contact_support",
-            hetznerServerId: instance!.hetzner_server_id,
-          });
-          return apiError(
-            "Hetzner delete failed. Please retry — the instance has not been removed.",
-            502,
-            { failureType: "instance_delete_hetzner_failed" },
-            undefined,
-            {
-              source: "instances",
-              route: "/api/instances/[id]",
-              method: "DELETE",
-              instanceId: id,
-              userId,
-              metadata: {
-                failureOwner: "provider",
-                failurePhase: "delete",
-                failureType: "instance_delete_hetzner_failed",
-                recoveryAction: "contact_support",
-                hetznerServerId: instance!.hetzner_server_id,
-              },
-            }
-          );
-        }
-        // Server already gone (404) — the delete still succeeds, so this is a
-        // benign teardown outcome; log at info to keep warn-level monitoring
-        // clean (canary issue #146). The non-404 failure path above stays error.
-        log.info("hetzner server already gone (404) — proceeding with DB delete", {
+            metadata: {
+              failureOwner: "control-plane",
+              failurePhase: "delete",
+              failureType: "instance_delete_tenant_check_failed",
+              recoveryAction: "retry_delete",
+              hetznerServerId: instance!.hetzner_server_id,
+            },
+          }
+        );
+      }
+      if (serverTenants.otherLiveRows > 0) {
+        log.info("hetzner server still used by other live instances; keeping server, removing only this instance", {
           source: "instances",
           route: "/api/instances/[id]",
           method: "DELETE",
           instanceId: id,
           userId,
           hetznerServerId: instance!.hetzner_server_id,
+          remainingInstances: serverTenants.otherLiveRows,
         });
+      } else {
+        // Try Hetzner delete and only mark the row deleted if it succeeds
+        // (or if the server is already gone — 404). Previously, any
+        // transient Hetzner error left the DB row marked deleted while
+        // the VM kept billing forever — silent recurring cost.
+        try {
+          await deleteHetznerServer(instance!.hetzner_server_id);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const alreadyGone = msg.includes("→ 404");
+          if (!alreadyGone) {
+            log.error("hetzner delete failed; refusing to mark instance deleted (avoid orphan billable VM)", e, {
+              source: "instances",
+              route: "/api/instances/[id]",
+              method: "DELETE",
+              instanceId: id,
+              userId,
+              failureType: "instance_delete_hetzner_failed",
+              failureOwner: "provider",
+              failurePhase: "delete",
+              recoveryAction: "contact_support",
+              hetznerServerId: instance!.hetzner_server_id,
+            });
+            return apiError(
+              "Hetzner delete failed. Please retry — the instance has not been removed.",
+              502,
+              { failureType: "instance_delete_hetzner_failed" },
+              undefined,
+              {
+                source: "instances",
+                route: "/api/instances/[id]",
+                method: "DELETE",
+                instanceId: id,
+                userId,
+                metadata: {
+                  failureOwner: "provider",
+                  failurePhase: "delete",
+                  failureType: "instance_delete_hetzner_failed",
+                  recoveryAction: "contact_support",
+                  hetznerServerId: instance!.hetzner_server_id,
+                },
+              }
+            );
+          }
+          // Server already gone (404) — the delete still succeeds, so this is a
+          // benign teardown outcome; log at info to keep warn-level monitoring
+          // clean (canary issue #146). The non-404 failure path above stays error.
+          log.info("hetzner server already gone (404) — proceeding with DB delete", {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "DELETE",
+            instanceId: id,
+            userId,
+            hetznerServerId: instance!.hetzner_server_id,
+          });
+        }
       }
     }
 
