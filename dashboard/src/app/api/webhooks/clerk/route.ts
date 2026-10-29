@@ -5,6 +5,7 @@ export const maxDuration = 300;
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyClerkWebhookSignature } from "@/lib/email/clerk-webhook-signature";
+import { pickVerifiedEmail } from "@/lib/email/clerk-verified-email";
 import {
   type ClerkAnnouncementUser,
   syncClerkUserToAnnouncementAudience,
@@ -43,10 +44,8 @@ function pickWelcomeRecipient(user: ClerkAnnouncementUser): {
   email: string;
   firstName: string | null;
 } | null {
-  const addresses = user.email_addresses ?? [];
-  const primary = addresses.find((address) => address.id === user.primary_email_address_id);
-  const verified = addresses.find((address) => address.verification?.status === "verified");
-  const email = primary?.email_address || verified?.email_address || addresses[0]?.email_address;
+  // Welcome only a Clerk-verified address; an unverified one may not belong to the user.
+  const email = pickVerifiedEmail(user);
   if (!email) return null;
   return {
     email: email.trim().toLowerCase(),
