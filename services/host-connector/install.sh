@@ -11,6 +11,9 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Every python3 below runs isolated (-I) from a fixed directory: a json.py or other module
+# in the caller's working directory must never be imported while this runs as root.
+cd /
 [ "$(id -u)" -eq 0 ] || { echo "Run this as root (sudo)." >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required." >&2; exit 1; }
 command -v systemctl >/dev/null || { echo "systemd is required." >&2; exit 1; }
@@ -18,7 +21,7 @@ command -v systemctl >/dev/null || { echo "systemd is required." >&2; exit 1; }
 config="$(mktemp)"
 trap 'rm -f "$config"' EXIT
 cat > "$config"
-python3 - "$config" <<'PY'
+python3 -I - "$config" <<'PY'
 import json, sys
 json.load(open(sys.argv[1]))
 PY
@@ -29,7 +32,7 @@ install -m 0644 -o root -g root "$here/hivra_connector.py" /opt/hivra-connector/
 install -d -m 0750 -o root -g hivra-connector /etc/hivra-connector
 install -m 0640 -o root -g hivra-connector "$config" /etc/hivra-connector/config.json
 
-if ! runuser -u hivra-connector -- python3 /opt/hivra-connector/hivra_connector.py check --config /etc/hivra-connector/config.json; then
+if ! runuser -u hivra-connector -- python3 -I /opt/hivra-connector/hivra_connector.py check --config /etc/hivra-connector/config.json; then
   echo "The relay did not accept this connector. Nothing was enabled." >&2
   exit 1
 fi
