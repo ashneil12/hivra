@@ -1,4 +1,4 @@
-import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
+import { redactSensitiveCommandOutput, SECRET_TOKEN_SHAPES } from "@/lib/command-output-redaction";
 
 describe("redactSensitiveCommandOutput", () => {
   it("redacts common token and secret formats before logging", () => {
@@ -141,5 +141,297 @@ describe("redactSensitiveCommandOutput", () => {
     ].join("\n");
 
     expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+  });
+  // Bare token shapes: a provider, bot or infrastructure credential that appears
+  // with no name in front of it, such as an error body that echoes the key. The
+  // synthetic values are built at runtime so no scanner sees a literal key.
+  describe("bare token shapes", () => {
+    const body = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(4).slice(0, n);
+    const hex = (n: number) => "0123456789abcdef".repeat(8).slice(0, n);
+    const telegram = `123456789:${body(35)}`;
+
+    it.each([
+      ["Anthropic", `sk-ant-api03-${body(40)}`],
+      ["OpenRouter", `sk-or-v1-${hex(64)}`],
+      ["OpenAI-style", `sk-${body(48)}`],
+      ["xAI", `xai-${body(40)}`],
+      ["Groq", `gsk_${body(40)}`],
+      ["GitHub classic", `ghp_${body(36)}`],
+      ["GitHub OAuth", `gho_${body(36)}`],
+      ["GitHub fine-grained", `github_pat_${body(22)}_${body(59)}`],
+      ["GitLab", `glpat-${body(20)}`],
+      ["AWS access key", `AKIA${"ABCDEFGH23456789"}`],
+      ["AWS temporary (session) key", `ASIA${"ABCDEFGH23456789"}`],
+      ["Google API", `AIza${body(35)}`],
+      ["Telegram bot", telegram],
+      ["Slack", `xoxb-1234567890-${body(12)}`],
+      ["Stripe live secret", `sk_live_${body(24)}`],
+      ["Stripe restricted", `rk_test_${body(24)}`],
+      ["JWT", `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.${body(20)}`],
+      ["Managed Venice", `hven_live_${body(24)}`],
+      ["Agent link", `hvl_${hex(64)}`],
+      ["Hivra workspace session token", `hws1_${body(43)}`],
+      ["Hivra remote-desktop session token", `hrs1_${body(43)}`],
+      ["Hivra first-boot enrollment token", `hbe1_${body(43)}`],
+      ["Hivra workspace exchange code", `hwe1_${body(43)}`],
+      ["Tailscale API", `tskey-api-${body(16)}`],
+      ["Tailscale client", `tskey-client-${body(16)}`],
+    ])("redacts a bare %s token", (_label, token) => {
+      const raw = `upstream rejected ${token} for this request`;
+
+      const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+      expect(redacted).toBe("upstream rejected [REDACTED] for this request");
+      expect(redacted).not.toContain(token);
+    });
+
+    it("redacts a Telegram token inside a bot API URL", () => {
+      const raw = `GET https://api.telegram.org/bot${telegram}/getMe failed`;
+
+      const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+      expect(redacted).toBe("GET https://api.telegram.org/bot[REDACTED]/getMe failed");
+      expect(redacted).not.toContain(body(35));
+    });
+
+    it("redacts a whole PEM private key block, including its body", () => {
+      const raw = [
+        "ssh failed with key:",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "MIIEowIBAAKCAQEA0synthetic",
+        "-----END RSA PRIVATE KEY-----",
+        "done",
+      ].join("\n");
+
+      const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+      expect(redacted).toContain("[REDACTED]");
+      expect(redacted).not.toContain("MIIEowIBAAKCAQEA0synthetic");
+      expect(redacted).not.toContain("BEGIN RSA PRIVATE KEY");
+      expect(redacted.endsWith("done")).toBe(true);
+    });
+
+    it("keeps ordinary text that only contains a token prefix", () => {
+      const raw = [
+        "task-manager restarted in risk-assessment mode",
+        "sk-learn-based classifier with 11 features",
+        "gh_ is a prefix and ghp_short is too short",
+        "xoxo hugs and AKIA is an access key prefix",
+        "eyJ is the base64 start of a JSON object",
+        "xai-grok-helper-for-everything-in-the-workspace is a project name",
+        "step 3 of 4 at 12:30:45 with 2 bots",
+        "token count: 12",
+        `sha256 digest ${hex(64)} of the release`,
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
+  // Hivra's own bearer families are minted as a fixed prefix plus 43 base64url characters
+  // (session, enrollment and exchange-code tokens). They travel in URLs, host output and
+  // error text, where no key name sits in front of them, so the shape must catch them there.
+  describe("Hivra bearer families in URLs and free text", () => {
+    const body = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(4).slice(0, n);
+    const exchange = `hwe1_${body(43)}`;
+    const session = `hrs1_${body(43)}`;
+
+    it("masks a session token in free text and an exchange code in a callback URL", () => {
+      const raw = [
+        `session ${session} rejected`,
+        `GET /cb?code=${exchange}&state=abc failed`,
+        `?exchange_code=${exchange}`,
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "session [REDACTED] rejected",
+        "GET /cb?code=[REDACTED]&state=abc failed",
+        "?exchange_code=[REDACTED]",
+      ].join("\n"));
+    });
+
+    it("masks a Hivra token that is URL-encoded or glued to a word", () => {
+      const raw = [`x%20hbe1_${body(43)}`, `workspace hws1_${body(43)}`].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "x%20[REDACTED]",
+        "workspace [REDACTED]",
+      ].join("\n"));
+    });
+  });
+
+  // A legacy shape is matched wherever it sits, as the base snapshot scanner did, so a
+  // key glued onto a word or URL-encoded inside a URL is still masked.
+  describe("keys glued to text or URL-encoded", () => {
+    const body = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(4).slice(0, n);
+
+    it.each([
+      ["Anthropic key glued to a word", `notes keysk-ant-api03-${body(40)}`, "notes key[REDACTED]"],
+      ["Anthropic key URL-encoded", `x%20sk-ant-api03-${body(40)}`, "x%20[REDACTED]"],
+      ["GitHub token URL-encoded", `x%20ghp_${body(36)}`, "x%20[REDACTED]"],
+      ["managed Venice key URL-encoded", `x%20hven_live_${body(24)}`, "x%20[REDACTED]"],
+      ["Bankr key with another prefix", `wallet call rejected bk_test_${body(20)} today`, "wallet call rejected [REDACTED] today"],
+    ])("masks an %s", (_label, raw, expected) => {
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(expected);
+    });
+  });
+
+  // A 64-character hex value straight after a token word, however long the value is.
+  it("masks a longer hex value after a token word, not only exactly 64 characters", () => {
+    const hex128 = "0123456789abcdef".repeat(8);
+    const raw = [`token: ${hex128}`, `agent key ${hex128}`].join("\n");
+
+    expect(redactSensitiveCommandOutput(raw, 1000)).toBe("token: [REDACTED]\nagent key [REDACTED]");
+  });
+
+  // A whitespace run after a token word used to take quadratic time: the separator could
+  // split the run two ways before the hex check failed. 100k spaces took about 12 s.
+  it("handles a long whitespace run after a token word in linear time", () => {
+    const raw = `token${" ".repeat(100_000)}`;
+
+    const started = Date.now();
+    const redacted = redactSensitiveCommandOutput(raw, 200_000);
+    const elapsedMs = Date.now() - started;
+
+    expect(redacted).toBe(raw);
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+
+  // Unquoted YAML `name: value` lines, the form agent CLI configs are written in. Only
+  // a key that starts its own line counts, so prose such as "Auth token: missing" is
+  // left alone. Quoted values are covered by the JSON patterns.
+  describe("unquoted YAML secret fields", () => {
+    it("redacts unquoted secret-named values on their own line", () => {
+      const raw = [
+        "client_secret: hunter2hunter2",
+        "api_key: plainvalue123",
+        "  password: hunter2",
+        "- token: abc123def456",
+        "x-api-key: abc123def456",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "client_secret: [REDACTED]",
+        "api_key: [REDACTED]",
+        "  password: [REDACTED]",
+        "- token: [REDACTED]",
+        "x-api-key: [REDACTED]",
+      ].join("\n"));
+    });
+
+    it("keeps quoted YAML values redacted as before", () => {
+      expect(redactSensitiveCommandOutput('api_key: "plainvalue123"', 1000)).toBe('api_key: "[REDACTED]"');
+    });
+
+    // `x-api-key` is the header name agent APIs use. It was masked unquoted (YAML) but not
+    // when quoted, because the JSON and single-quote patterns named `api_key` only.
+    it("masks a quoted hyphenated api-key name in JSON and YAML", () => {
+      expect(redactSensitiveCommandOutput('{"x-api-key": "plainvalue123"}', 1000)).toBe('{"x-api-key": "[REDACTED]"}');
+      expect(redactSensitiveCommandOutput("x-api-key: 'plainvalue123'", 1000)).toBe("x-api-key: '[REDACTED]'");
+    });
+
+    it("keeps ordinary keys and mid-line prose unchanged", () => {
+      const raw = [
+        "monkey: banana",
+        "tokens: 3",
+        "primary_key: id",
+        "sort_key: name",
+        "Auth token: missing for the request",
+        "the token: expired",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+
+    // Names that end in `_key` carry a secret in agent CLI configs (`aws_secret_access_key:`),
+    // as the `=` form already did. Schema key names stay (see the next test).
+    it("redacts unquoted secret-named values whose name ends in _key", () => {
+      const raw = [
+        "secret_key: plainvalue123",
+        "private_key: plainvalue456",
+        "access_key: plainvalue789",
+        "gateway_key: plainvalue012",
+        "aws_secret_access_key: plainvalue345",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "secret_key: [REDACTED]",
+        "private_key: [REDACTED]",
+        "access_key: [REDACTED]",
+        "gateway_key: [REDACTED]",
+        "aws_secret_access_key: [REDACTED]",
+      ].join("\n"));
+    });
+
+    it("keeps schema key names and public keys unchanged", () => {
+      const raw = [
+        "primary_key: id",
+        "foreign_key: user_id",
+        "partition_key: tenant",
+        "sort_key: created_at",
+        "unique_key: email",
+        "public_key: MFkwEXAMPLEpublic",
+        "public_key_id: 42",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
+
+  // A 64-character hex value straight after a token-like word is a credential
+  // (for example an agent link key). A bare sha256 digest is ordinary output and stays.
+  describe("64-character hex values after a token word", () => {
+    const hexKey = "0123456789abcdef".repeat(4);
+
+    it("redacts the hex value after a token-like word", () => {
+      const raw = [`token: ${hexKey}`, `agent key ${hexKey}`, `password="${hexKey}"`].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "token: [REDACTED]",
+        "agent key [REDACTED]",
+        'password="[REDACTED]"',
+      ].join("\n"));
+    });
+
+    it("keeps a bare digest and a digest under an ordinary label", () => {
+      const raw = [`release digest ${hexKey}`, `fingerprint: ${hexKey}`].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
+
+  // The JWT shape used to start a match at every `eyJ` inside a dash-joined run (a `-` is
+  // not a boundary for it), and each start scanned to the end of the run before failing on
+  // the missing `.eyJ`. 200 KB of `eyJ-` took about 10 s. A run must now start one match at
+  // most, so the scan is linear.
+  describe("JWT shape on long dash-joined runs", () => {
+    const jwtShape = SECRET_TOKEN_SHAPES.find(({ kind }) => kind === "jwt")!.pattern;
+    const jwt = `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.${"Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(2)}`;
+
+    it("tests a 200 KB run of eyJ- in linear time", () => {
+      const raw = "eyJ-".repeat(50_000);
+
+      const started = Date.now();
+      const matched = jwtShape.test(raw);
+      const elapsedMs = Date.now() - started;
+
+      expect(matched).toBe(false);
+      expect(elapsedMs).toBeLessThan(1000);
+    });
+
+    it("still masks a JWT after a space, an equals sign, a quote or %20", () => {
+      const raw = [
+        `upstream said ${jwt}`,
+        `x=${jwt}`,
+        `"${jwt}"`,
+        `q%20${jwt}`,
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "upstream said [REDACTED]",
+        "x=[REDACTED]",
+        '"[REDACTED]"',
+        "q%20[REDACTED]",
+      ].join("\n"));
+    });
   });
 });
