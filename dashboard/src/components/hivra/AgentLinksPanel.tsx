@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Link2, Loader2, Monitor, RefreshCw, Trash2 } from "lucide-react";
 
-import { addLink, fetchLinks, removeLink, resendKit, type KitState, type LinksLoad } from "@/lib/agent-links/client";
+import { addLink, fetchLinks, removeLink, resendKit, type KitState, type LinksLoad, type LinksViewData } from "@/lib/agent-links/client";
 import { formatContractTime } from "@/components/hivra/ComputerContractPanel";
 
 import styles from "./ComputerAgentsPanel.module.css";
@@ -25,6 +25,18 @@ const KIT_LINE: Record<KitState, string> = {
   not_needed: "",
   not_supported: "",
 };
+
+type Candidate = LinksViewData["candidates"][number];
+
+const STATUS_WORD: Record<string, string> = { running: "running", stopped: "stopped", provisioning: "starting", error: "needs attention" };
+
+/** Two choices with one name also show whether each is running and the start of its id. */
+export function optionLabel(candidate: Candidate, choices: Candidate[]): string {
+  const shared = choices.filter((choice) => choice.name === candidate.name).length > 1;
+  if (!shared) return `${candidate.name} (${candidate.kind})`;
+  const status = candidate.status ? STATUS_WORD[candidate.status] ?? candidate.status : null;
+  return `${candidate.name} (${[candidate.kind, status, candidate.id.slice(0, 8)].filter(Boolean).join(", ")})`;
+}
 
 export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string; subjectName: string }) {
   const [load, setLoad] = useState<LinksLoad | { state: "loading" }>({ state: "loading" });
@@ -111,7 +123,7 @@ export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string;
         {open.length > 0 ? <div className={styles.actions}>
           <select value={selected} disabled={busy} onChange={(event) => setChoice(event.target.value)}
             aria-label={onAgent ? "Computer to link" : "Agent to link"} className={styles.button}>
-            {open.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} ({candidate.kind})</option>)}
+            {open.map((candidate) => <option key={candidate.id} value={candidate.id}>{optionLabel(candidate, open)}</option>)}
           </select>
           <button type="button" className={styles.primary} disabled={busy || !selected} onClick={() => void link(selected)}>
             {busy ? <Loader2 size={13} className={styles.spinner} aria-hidden /> : <Link2 size={13} aria-hidden />} Link</button>
