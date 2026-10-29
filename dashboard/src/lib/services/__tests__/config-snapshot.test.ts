@@ -146,6 +146,19 @@ describe("redactStagedFiles", () => {
 });
 
 describe("buildConfigSnapshotStagingScript", () => {
+  it("reaches the guest only over the VMID-bound, host-key-pinned path", () => {
+    const script = buildConfigSnapshotStagingScript({
+      instanceId: "00000000-0000-4000-8000-000000000c01",
+      vmid: 1161,
+      guestIp: "10.250.20.61",
+    } as Parameters<typeof buildConfigSnapshotStagingScript>[0]);
+    expect(script).not.toContain("StrictHostKeyChecking=no");
+    expect(script).not.toContain("UserKnownHostsFile=/dev/null");
+    expect(script).toContain('"${GUEST_SSH[@]}"');
+    expect(script).toContain("QEMU Guest Agent");
+    execFileSync("bash", ["-n"], { input: script });
+  });
+
   it("shell-quotes inputs and embeds the allowlist + markers", () => {
     const script = buildConfigSnapshotStagingScript({
       instanceId: "00000000-0000-4000-8000-000000001056",

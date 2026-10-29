@@ -118,7 +118,7 @@ describe("POST /api/hivra/agents/[id]/computer-contract", () => {
     const response = await POST(post({ action }), params);
     expect(response.status).toBe(200);
     expect(mockContext).toHaveBeenCalledWith("user_1", CODEX);
-    expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, { PROXMOX_NODE: "fixturenode10" }, action, { deadline: expect.any(Number) });
+    expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, expect.objectContaining({ env: { PROXMOX_NODE: "fixturenode10" } }), action, { deadline: expect.any(Number) });
   });
 
   it("gives each step a deadline inside the route's 60 s budget", async () => {

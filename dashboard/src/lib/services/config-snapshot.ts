@@ -27,6 +27,7 @@ import "server-only";
 import { createHash } from "crypto";
 
 import { mapWithConcurrencyLimit } from "@/lib/concurrency";
+import { buildHermesVmidBoundGuestSshPrelude, isHermesInstanceId } from "@/lib/proxmox/hermes-guest-ssh";
 
 // ---------------------------------------------------------------------------------------
 // Host staging script
@@ -69,20 +70,36 @@ export function buildConfigSnapshotStagingScript(target: StagingTarget): string 
   const instanceId = shellSingleQuote(target.instanceId);
   const vmid = shellSingleQuote(String(target.vmid));
   const guestIp = shellSingleQuote(target.guestIp?.trim() ?? "");
+  // The snapshot reads the agent's config, so the guest is reached only over the
+  // VMID-bound path: the host checks the VM's configured IP and name, then pins
+  // SSH to the guest host key QEMU Guest Agent attests. A guest that can't be
+  // pinned is refused before anything is read.
+  const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: "hermes",
+    connectTimeoutSeconds: 15,
+    quiet: true,
+    callerOwnsExitTrap: true,
+    ...(isHermesInstanceId(target.instanceId) ? { expectedInstanceId: target.instanceId } : {}),
+  });
   return `set -euo pipefail
 INSTANCE_ID=${instanceId}
 VMID=${vmid}
 GUEST_IP=${guestIp}
 KEY="\${HERMES_VM_ORCHESTRATOR_KEY:-/etc/hivra/keys/vm-orchestrator}"
-SSHO="-i $KEY -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
 if ! [[ "$INSTANCE_ID" =~ ^[0-9a-f-]{36}$ ]]; then echo "UNSAFE_INSTANCE_ID" >&2; exit 1; fi
 if [ -z "$GUEST_IP" ] && [ -n "$VMID" ]; then
   GUEST_IP="$(qm config "$VMID" 2>/dev/null | sed -n 's#^ipconfig0:.*[^0-9]ip=\\([0-9][0-9.]\\{6,\\}\\).*#\\1#p' | head -1)"
 fi
 [ -z "$GUEST_IP" ] && { echo "NO_GUEST_IP vmid=$VMID" >&2; exit 3; }
+STAGE=""
+trap 'rm -rf "\${STAGE:-/nonexistent-stage}"; cleanup_hivra_guest_ssh_identity 2>/dev/null || true' EXIT
+PRIVATE_IP="$GUEST_IP"
+VM_SSH_KEY_PATH="$KEY"
+# No stored VMID: the prelude finds the single running VM configured with the IP.
+case "$VMID" in ""|*[!0-9]*) VMID="" ;; esac
+${guestSshPrelude}
 V="/var/lib/docker/volumes/agent-\${INSTANCE_ID}_webui-state/_data"
 STAGE="$(mktemp -d /tmp/hermes-cfg-stage.XXXXXX)"
-trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/hermes"
 # NOTE: -n is load-bearing. This script is delivered to the host over bash -s stdin
 # (runProxmoxHostScript pipes it to the stream); without -n each inner ssh would inherit
@@ -90,7 +107,7 @@ mkdir -p "$STAGE/hermes"
 # script and truncating execution to silence. -n redirects each inner ssh stdin from
 # /dev/null so the host bash keeps reading its own command stream. (The original
 # host-config-snapshot.sh dodged this by passing its body as an ssh ARG, not via stdin.)
-g() { ssh -n $SSHO "hermes@$GUEST_IP" "$@"; }
+g() { "\${GUEST_SSH[@]}" "$@" </dev/null; }
 # Allowlisted top-level files (skip empties / absent).
 for f in config.yaml SOUL.md channel_directory.json context_length_cache.yaml; do
   g "sudo test -f $V/$f && sudo cat $V/$f" > "$STAGE/hermes/$f" 2>/dev/null && [ -s "$STAGE/hermes/$f" ] || rm -f "$STAGE/hermes/$f"

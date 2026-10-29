@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -13,6 +14,8 @@ import unittest
 import hmac
 
 import hivra_connector as hc
+
+INSTALL_SH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install.sh")
 
 CONNECTION = "11111111-1111-4111-8111-111111111111"
 MASTER = "test-relay-secret-with-at-least-32-characters"
@@ -246,6 +249,47 @@ class ControlSessionTests(unittest.TestCase):
             server_sock.close()
         self.assertEqual(outcome, "revoked")
         self.assertEqual(opened, ["stream0000000000000001"])
+
+
+class InstallerIsolationTests(unittest.TestCase):
+    """install.sh runs as root, so its python3 calls must not import modules from the caller's directory."""
+
+    def setUp(self):
+        with open(INSTALL_SH, encoding="utf-8") as handle:
+            self.lines = handle.read().splitlines()
+
+    def test_every_python3_invocation_is_isolated(self):
+        calls = [
+            line
+            for line in self.lines
+            if "python3" in line and "command -v" not in line and not line.lstrip().startswith("#")
+        ]
+        self.assertTrue(calls)
+        for line in calls:
+            self.assertTrue(
+                line.lstrip().startswith("python3 -I ") or " python3 -I " in line,
+                "python3 without -I: %s" % line,
+            )
+
+    def test_validator_ignores_a_planted_module_in_the_working_directory(self):
+        start = next(i for i, line in enumerate(self.lines) if line.startswith("python3 ") and "<<'PY'" in line)
+        end = self.lines.index("PY", start)
+        validator = "\n".join(self.lines[start : end + 1])
+        with tempfile.TemporaryDirectory() as planted, tempfile.TemporaryDirectory() as work:
+            marker = os.path.join(work, "imported")
+            with open(os.path.join(planted, "json.py"), "w", encoding="utf-8") as handle:
+                handle.write("open(%r, 'w').close()\ndef load(fp):\n    return {}\n" % marker)
+            config = os.path.join(work, "config.json")
+            with open(config, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            result = subprocess.run(
+                ["bash", "-c", 'config="$1"\n' + validator + "\n", "installer", config],
+                cwd=planted,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(os.path.exists(marker), "the validator imported json.py from the working directory")
 
 
 if __name__ == "__main__":

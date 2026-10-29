@@ -1250,11 +1250,34 @@ export class StripeWebhookService {
       return;
     }
 
-    await supabaseAdmin.from("hermes_subscriptions").update({
-      status: "canceled",
-      instance_limit: 0,
-      updated_at: new Date().toISOString(),
-    }).eq("user_id", userId);
+    // Conditional on the id this event names: a checkout that rebinds the row
+    // after the read above must not be cancelled by its predecessor's deletion.
+    const { data: cancelled, error: cancelError } = await supabaseAdmin
+      .from("hermes_subscriptions")
+      .update({
+        status: "canceled",
+        instance_limit: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("stripe_subscription_id", subscription.id)
+      .select("user_id");
+
+    if (cancelError) {
+      // Throw so the webhook answers 500 and Stripe redelivers the deletion.
+      throw new Error(cancelError.message || "failed to cancel hermes_subscriptions for subscription.deleted");
+    }
+    if (currentSub && (cancelled?.length ?? 0) === 0) {
+      // The row was rebound between the read and this write. Whatever wrote it
+      // owns it now: nothing is cancelled, suspended or downgraded here.
+      log.warn("subscription.deleted row changed between read and write; not cancelling", {
+        source: LOG_SOURCE,
+        failureType: "subscription_deleted_row_changed",
+        subscriptionId: subscription.id,
+        userId,
+      });
+      return;
+    }
 
     // Still paid through another lane: move the instances onto that lane's
     // tier and leave them running. Nothing is suspended or scheduled.

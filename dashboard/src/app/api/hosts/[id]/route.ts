@@ -25,6 +25,7 @@ type LinkedInstanceDeleteRow = {
   host_id?: string | null;
   config?: unknown;
   subdomain?: string | null;
+  proxmox_node?: string | null;
 };
 
 // How many provider lanes (one per Proxmox node, one per other instance, one
@@ -98,6 +99,47 @@ async function deleteLinkedProviderResources(params: {
         errors.push({ instanceId: instance.id, reason: "proxmox_delete_failed" });
         return;
       }
+      // The host script exits 0 when the VM is not on the routed host, so a
+      // miss there is not proof of teardown. Only a fleet-wide NOT_FOUND (every
+      // known host checked) counts as gone; otherwise the instance stays visible.
+      const vmMissingOnRoutedHost = (result.stdout || "")
+        .split(/\r?\n/)
+        .some((line) => /^HERMES_PROXMOX_DELETE_VM_MISSING \d+$/.test(line.trim()));
+      if (vmMissingOnRoutedHost) {
+        const { locateProxmoxInstanceAcrossFleet } = await import(
+          "@/lib/recovery/recover-orphan-provisioning"
+        );
+        const recovery = await locateProxmoxInstanceAcrossFleet({
+          id: instance.id,
+          user_id: userId,
+          proxmox_node: instance.proxmox_node ?? null,
+          config:
+            instance.config && typeof instance.config === "object" && !Array.isArray(instance.config)
+              ? (instance.config as Record<string, unknown>)
+              : null,
+          subdomain: instance.subdomain ?? null,
+        });
+        if (recovery.status !== "gone") {
+          log.warn("proxmox vm missing on routed host but not proven gone; instance left visible", {
+            source: "hosts-by-id",
+            route: "/api/hosts/[id]",
+            method: "DELETE",
+            failureType: "host_delete_proxmox_vm_unverified",
+            hostId: host.id,
+            instanceId: instance.id,
+            userId,
+            proxmoxVmid: proxmoxInfra.vmid,
+            recoveryStatus: recovery.status,
+          });
+          errors.push({
+            instanceId: instance.id,
+            reason:
+              recovery.status === "found" ? "proxmox_vm_found_elsewhere" : "proxmox_vm_unverified",
+          });
+          return;
+        }
+      }
+
       proxmoxDeleted += 1;
       deletableInstanceIds.add(instance.id);
 
@@ -254,7 +296,7 @@ export async function DELETE(
 
     const { data: linkedInstances, error: linkedInstancesError } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, hetzner_server_id, host_id, config, subdomain")
+      .select("id, hetzner_server_id, host_id, config, subdomain, proxmox_node")
       .eq("host_id", id)
       .eq("user_id", userId)
       .neq("status", "deleted");

@@ -42,6 +42,101 @@
 
 set -euo pipefail
 
+# >>> VMID-bound guest SSH: identical in backup-vm-restic.sh, archive-vm-cold.sh and restore-vm-cold.sh >>>
+# Bash mirror of buildHermesVmidBoundGuestSshPrelude (dashboard/src/lib/proxmox/hermes-guest-ssh.ts).
+# A guest IP is not an identity: a stale neighbour entry or a recycled IP can route an SSH connection to
+# another tenant. attest_guest_ssh_pin runs before the first connection. It checks that VMID is a running
+# VM configured with GUEST_IP, that it is not a Hivra computer, and that it has a QEMU Guest Agent channel.
+# It then reads the guest's Ed25519 SSH host key through the agent (the VMID's virtio channel, not the
+# network) and pins every later connection to that key in a private known_hosts file.
+# Inputs: VMID, GUEST_IP, VM_SSH_KEY. Output: GUEST_SSH_PIN_OPTS (ssh options, no timeout or log level).
+# On failure it prints a "VMID-bound SSH refused:" line and returns 1; the caller exits before contacting the guest.
+GUEST_SSH_IDENTITY_DIR=""
+GUEST_SSH_PIN_OPTS=()
+guest_ssh_refuse() {
+  printf 'VMID-bound SSH refused: %s; nothing was sent to the guest\n' "$1" >&2
+}
+cleanup_hivra_guest_ssh_identity() {
+  case "${GUEST_SSH_IDENTITY_DIR:-}" in
+    /run/hivra-guest-ssh-identity.*) rm -rf -- "$GUEST_SSH_IDENTITY_DIR" ;;
+    "") ;;
+    *) printf 'refusing to remove unexpected guest identity directory\n' >&2; return 1 ;;
+  esac
+}
+attest_guest_ssh_pin() {
+  # errexit is suspended inside this function when it runs as an if/|| condition,
+  # so every check returns explicitly.
+  local attempts="$1" config conf_ip tags agent attempt up=0 key_json key_line
+  case "${GUEST_IP:-}" in
+    ""|*[!0-9.]*) guest_ssh_refuse "the guest ip is not an IPv4 address"; return 1 ;;
+  esac
+  [ -f "${VM_SSH_KEY:-}" ] || { guest_ssh_refuse "this host has no guest SSH key at ${VM_SSH_KEY:-(unset)}"; return 1; }
+  case "${VMID:-}" in
+    ""|*[!0-9]*) guest_ssh_refuse "the vmid is not a number"; return 1 ;;
+  esac
+  config="$(qm config "$VMID" </dev/null 2>/dev/null)" \
+    || { guest_ssh_refuse "VM $VMID does not exist on this host"; return 1; }
+  [ "$(qm status "$VMID" </dev/null 2>/dev/null | awk '{print $2}')" = running ] \
+    || { guest_ssh_refuse "VM $VMID is not running"; return 1; }
+  conf_ip="$(printf '%s\n' "$config" | awk '
+    /^ipconfig0:/ && !seen {
+      seen = 1
+      line = $0
+      sub(/^ipconfig0:[ \t]*/, "", line)
+      n = split(line, parts, ",")
+      for (i = 1; i <= n; i++) {
+        if (substr(parts[i], 1, 3) == "ip=") {
+          value = substr(parts[i], 4)
+          if (value ~ /^[0-9.]+\/[0-9]+$/) { sub(/\/[0-9]+$/, "", value); print value }
+        }
+      }
+    }')"
+  [ "$conf_ip" = "$GUEST_IP" ] \
+    || { guest_ssh_refuse "VM $VMID is configured with ip ${conf_ip:-none}, not $GUEST_IP"; return 1; }
+  tags="$(printf '%s\n' "$config" | awk '/^tags:/ && !seen { seen = 1; line = $0; sub(/^tags:[ \t]*/, "", line); gsub(/[;, ]+/, ";", line); print line }')"
+  case ";$tags;" in
+    *";hivra-bind-"*) guest_ssh_refuse "VM $VMID is a Hivra computer, not a Hermes instance VM"; return 1 ;;
+  esac
+  agent="$(printf '%s\n' "$config" | awk '/^agent:/ && !seen { seen = 1; line = $0; sub(/^agent:[ \t]*/, "", line); print line }')"
+  case ",$agent," in
+    *,1,*|*,on,*|*,yes,*|*,true,*|*,enabled=1,*|*,enabled=on,*|*,enabled=yes,*|*,enabled=true,*) ;;
+    *) guest_ssh_refuse "VM $VMID has no QEMU Guest Agent channel, so its SSH host key can't be attested"; return 1 ;;
+  esac
+  for attempt in $(seq 1 "$attempts"); do
+    if timeout 5 qm guest cmd "$VMID" ping </dev/null >/dev/null 2>&1; then up=1; break; fi
+    if [ "$attempt" -lt "$attempts" ]; then sleep 5; fi
+  done
+  [ "$up" = 1 ] || { guest_ssh_refuse "QEMU Guest Agent in VM $VMID did not answer, so its SSH host key can't be attested"; return 1; }
+  key_json="$(qm guest exec "$VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub </dev/null 2>/dev/null)" \
+    || { guest_ssh_refuse "VM $VMID SSH host key could not be read through QEMU Guest Agent"; return 1; }
+  key_line="$(printf '%s' "$key_json" | /usr/bin/python3 -c '
+import base64,binascii,json,sys
+try:
+    document=json.load(sys.stdin)
+    fields=document.get("out-data", "").strip().split()
+    raw=base64.b64decode(fields[1], validate=True)
+    expected=b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20"
+    if document.get("exited") != 1 or document.get("exitcode") != 0 or len(fields) < 2 or fields[0] != "ssh-ed25519" or len(raw) != 51 or not raw.startswith(expected):
+        raise ValueError("invalid VMID-bound SSH host key")
+except (AttributeError,IndexError,KeyError,TypeError,ValueError,binascii.Error,json.JSONDecodeError):
+    raise SystemExit(1)
+print("ssh-ed25519 "+fields[1])
+')" || { guest_ssh_refuse "VM $VMID did not attest a valid Ed25519 SSH host key"; return 1; }
+  GUEST_SSH_IDENTITY_DIR="$(mktemp -d /run/hivra-guest-ssh-identity.XXXXXXXX)" \
+    || { guest_ssh_refuse "no private directory for the attested SSH host key"; return 1; }
+  chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
+  GUEST_SSH_KNOWN_HOSTS="$GUEST_SSH_IDENTITY_DIR/known_hosts"
+  GUEST_SSH_HOST_ALIAS="hivra-vmid-$VMID"
+  printf '%s %s\n' "$GUEST_SSH_HOST_ALIAS" "$key_line" > "$GUEST_SSH_KNOWN_HOSTS"
+  chmod 0600 "$GUEST_SSH_KNOWN_HOSTS"
+  GUEST_SSH_PIN_OPTS=(-i "$VM_SSH_KEY" -o BatchMode=yes -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no
+    -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_KNOWN_HOSTS"
+    -o HostKeyAlias="$GUEST_SSH_HOST_ALIAS")
+  return 0
+}
+# <<< VMID-bound guest SSH <<<
+
 INSTANCE_ID="${1:-}"
 ARCHIVE_URI="${2:-}"
 EXPECTED_SHA="${3:-}"
@@ -91,7 +186,7 @@ echo "═══ restore-vm-cold instance=$INSTANCE_ID vmid=$NEW_VMID host=$PVE_H
 # Step 1+2: download archive, verify sha BEFORE any destructive op
 # ──────────────────────────────────────────────────────────────────────────────
 SCRATCH=$(mktemp -d /tmp/hermes-restore-$INSTANCE_ID-XXXX)
-trap 'rm -rf "$SCRATCH"' EXIT
+trap 'rm -rf "$SCRATCH"; cleanup_hivra_guest_ssh_identity || true' EXIT
 LOCAL_ARCHIVE="$SCRATCH/archive.tar.zst"
 
 echo "  step 1/6: download archive cold → $PVE_HOST"
@@ -128,14 +223,25 @@ qm set "$NEW_VMID" \
   --ipconfig0 "ip=$GUEST_IP/24,gw=$GUEST_GW" \
   --nameserver "185.12.64.1 185.12.64.2 1.1.1.1 8.8.8.8" \
   --cpulimit "$CPU_LIMIT" \
+  --agent enabled=1 \
   --onboot 1 >/dev/null
 
 qm start "$NEW_VMID" >/dev/null
 echo "    cloned + booting at $GUEST_IP"
 
+# Attest the guest's SSH host key through QEMU Guest Agent before the first connection.
+# The agent channel comes from the --agent flag above, which the clone needs for the next boot.
+VMID="$NEW_VMID"
+VM_SSH_KEY=/etc/hivra/keys/vm-orchestrator
+if ! attest_guest_ssh_pin 36; then
+  echo "[restore] guest identity not attested; destroying the clone this run just made" >&2
+  qm stop "$NEW_VMID" >/dev/null 2>&1 || true
+  qm destroy "$NEW_VMID" --skiplock --purge >/dev/null 2>&1 || true
+  exit 3
+fi
+SSH_OPTS=("${GUEST_SSH_PIN_OPTS[@]}" -o ConnectTimeout=5 -o LogLevel=ERROR)
+
 # Wait for guest SSH
-SSH_OPTS=(-i /etc/hivra/keys/vm-orchestrator -o BatchMode=yes -o ConnectTimeout=5 \
-          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 SSH_UP=false
 for _ in $(seq 1 36); do  # up to 3 min
   if ssh "${SSH_OPTS[@]}" "hermes@$GUEST_IP" true 2>/dev/null; then

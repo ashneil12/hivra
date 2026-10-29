@@ -103,6 +103,9 @@ export async function POST(req: NextRequest) {
 
     const amountMicroUsd = parsed.data.amountMicroUsd;
     const amountCents = microUsdToCents(amountMicroUsd);
+    // Stripe charges whole cents, so the wallet is credited exactly that charge,
+    // never the finer requested amount.
+    const chargedMicroUsd = amountCents * 10_000;
     const stripe = getStripe();
     const stripeCustomerId = await getOrCreateCreditStripeCustomerId(userId, stripe);
 
@@ -111,8 +114,8 @@ export async function POST(req: NextRequest) {
       type: "managed_venice_card_topup",
       user_id: userId,
       wallet_type: "card",
-      paid_micro_usd: String(amountMicroUsd),
-      credit_micro_usd: String(amountMicroUsd),
+      paid_micro_usd: String(chargedMicroUsd),
+      credit_micro_usd: String(chargedMicroUsd),
     };
 
     const session = await stripe.checkout.sessions.create(
@@ -121,7 +124,7 @@ export async function POST(req: NextRequest) {
         customer: stripeCustomerId,
         client_reference_id: userId,
         metadata,
-        line_items: [buildManagedVeniceLineItem(amountMicroUsd, amountCents)],
+        line_items: [buildManagedVeniceLineItem(chargedMicroUsd, amountCents)],
         success_url: `${appUrl}/dashboard/billing?managedVenice=card_success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${appUrl}/dashboard/billing?managedVenice=card_canceled`,
       },

@@ -192,7 +192,7 @@ async function measureShippedPayloads(): Promise<Measured> {
   const skills = collectBankrSkillFiles();
   expect(skills.length).toBeGreaterThan(0);
   const bankrGuest = buildBankrSkillsGuestScript(".agents/skills", skills);
-  put("bankr-skills", "proxmoxHostScript", "sudo-transport-script", buildBankrSkillsHostScript(TARGET.guestIp, bankrGuest));
+  put("bankr-skills", "proxmoxHostScript", "sudo-transport-script", buildBankrSkillsHostScript({ vmid: 1161, ip: TARGET.guestIp, bindingTag: "hivra-bind-0123456789abcdef0123456789abcdef", vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" }, bankrGuest));
   put("bankr-skills", "providerSeedScript", "provider-guest-seed",
     buildProviderAgentSeedScript([{ part: "bankr-skills", script: bankrGuest }]), true);
 
