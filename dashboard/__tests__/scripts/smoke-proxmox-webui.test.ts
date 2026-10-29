@@ -1,9 +1,11 @@
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { inspect } from "node:util";
 
 import { main } from "../../scripts/smoke-proxmox-webui";
 import {
   deleteProxmoxInstance,
   provisionProxmoxInstance,
+  runProxmoxHostScript,
 } from "../../src/lib/services/proxmox-instance-service";
 
 // Synthetic 64-hex bearer, shaped like the per-instance API server key.
@@ -68,5 +70,50 @@ describe("smoke-proxmox-webui output", () => {
     expect(printed).toContain("https://smoke.example.test");
     expect(printed).not.toContain(BEARER);
     expect(printed).not.toContain(BEARER.slice(0, 6));
+  });
+
+  it("masks bearer-shaped tokens in the host output a failed run prints", async () => {
+    const upstreamKey = `sk-or-v1-${"0f".repeat(32)}`;
+    const hostBearer = `Authorization: Bearer ${"Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(2)}`;
+    (runProxmoxHostScript as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: `qm create failed for ${upstreamKey}`,
+      stderr: hostBearer,
+      error: `host said ${upstreamKey}`,
+    });
+    (provisionProxmoxInstance as jest.Mock).mockImplementation(async (_input, options) => {
+      await options.runHostScript("qm create 4242");
+      return { ok: false, error: "host script failed" };
+    });
+
+    await expect(main()).rejects.toThrow("provisioning returned not-ok");
+
+    const printed = [...logSpy.mock.calls, ...errorSpy.mock.calls, ...warnSpy.mock.calls]
+      .map((args) => inspect(args, { depth: null }))
+      .join("\n");
+    expect(printed).toContain("qm create failed for");
+    expect(printed).not.toContain(upstreamKey);
+    expect(printed).not.toContain("Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw");
+  });
+
+  it("keeps the bearer out of stdout on a KEEP_VM run and writes it to an owner-only file", async () => {
+    process.env.KEEP_VM = "1";
+    try {
+      await main();
+
+      const printed = [...logSpy.mock.calls, ...errorSpy.mock.calls, ...warnSpy.mock.calls]
+        .map((args) => inspect(args, { depth: null }))
+        .join("\n");
+      expect(printed).toContain("KEEP_VM=1");
+      expect(printed).not.toContain(BEARER);
+      const pathLine = printed.split("\n").find((line) => line.includes(".bearer"));
+      expect(pathLine).toBeDefined();
+      const savedPath = /(\S+\.bearer)/.exec(pathLine as string)?.[1] as string;
+      expect(existsSync(savedPath)).toBe(true);
+      expect(readFileSync(savedPath, "utf8").trim()).toBe(BEARER);
+      unlinkSync(savedPath);
+    } finally {
+      delete process.env.KEEP_VM;
+    }
   });
 });

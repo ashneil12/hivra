@@ -12,12 +12,20 @@
 //   ts-node -r ./scripts/register-server-only-noop.cjs -r tsconfig-paths/register scripts/smoke-proxmox-webui.ts
 
 import { randomBytes } from "crypto";
+import { writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { redactSensitiveCommandOutput } from "../src/lib/command-output-redaction";
 import {
   provisionProxmoxInstance,
   deleteProxmoxInstance,
   runProxmoxHostScript,
 } from "../src/lib/services/proxmox-instance-service";
 import type { ProxmoxInfrastructure } from "../src/lib/services/proxmox-instance-service";
+
+// Host output can echo a provider key or a host credential, so it is masked before it is
+// printed. The whole text is kept (no length cap); only the secret-shaped spans change.
+const maskHostOutput = (text: string) => redactSensitiveCommandOutput(text, Number.POSITIVE_INFINITY);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,12 +95,12 @@ export async function main() {
         runHostScript: async (script) => {
           const r = await runProxmoxHostScript(script);
           if (!r.ok) {
-            console.error(`[smoke] runHostScript FAILED — full output below:`);
+            console.error(`[smoke] runHostScript FAILED — full output below (secret-shaped text masked):`);
             console.error(`[smoke] ----- STDOUT (${r.stdout.length} chars) -----`);
-            console.error(r.stdout);
+            console.error(maskHostOutput(r.stdout));
             console.error(`[smoke] ----- STDERR (${r.stderr.length} chars) -----`);
-            console.error(r.stderr);
-            console.error(`[smoke] ----- error: ${r.error || "(none)"}`);
+            console.error(maskHostOutput(r.stderr));
+            console.error(`[smoke] ----- error: ${maskHostOutput(r.error || "(none)")}`);
           }
           return r;
         },
@@ -175,7 +183,12 @@ export async function main() {
     console.log(`[smoke] Or, if KEEP_VM=1, leaving the VM up for manual chat testing.`);
 
     if (process.env.KEEP_VM === "1") {
+      // The bearer for manual chat testing goes to an owner-only file, never to stdout,
+      // so the transcript keeps no copy of it.
+      const bearerPath = join(tmpdir(), `smoke-webui-${instanceId}.bearer`);
+      writeFileSync(bearerPath, `${apiServerKey}\n`, { mode: 0o600 });
       console.log(`[smoke] KEEP_VM=1 set, NOT cleaning up. VMID ${result.vmid} left running.`);
+      console.log(`[smoke] Bearer for manual testing written to ${bearerPath} (owner-only, not printed).`);
       provisionedInfrastructure = null;
       return;
     }
