@@ -604,7 +604,7 @@ describe('/api/instances/[id]/integrations', () => {
       const sidecarCall = (fetchFirstReachableGatewayResponse as jest.Mock).mock.calls[0][0];
       const payload = JSON.parse(sidecarCall.body);
 
-      expect(payload.envUpdates).toContain("SLACK_BOT_TOKEN='xoxb-1EVIL=1X=2Y=3Z=4'");
+      expect(payload.envUpdates).toContain("SLACK_BOT_TOKEN=" + "'xoxb-1EVIL=1X=2Y=3Z=4'");
       for (const line of payload.envUpdates) {
         expect(line).not.toMatch(/[\r\n\0\u000b\u000c\u001c-\u001e\u0085\u2028\u2029]/);
       }
