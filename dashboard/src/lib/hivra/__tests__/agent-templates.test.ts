@@ -467,7 +467,7 @@ describe("managed key prefix never leaves a template (F083)", () => {
 
   it("omits keyPrefix from the launch identity for the owner and for a stranger", async () => {
     tables.agent_templates.rows.push({
-      id: "11111111-1111-4111-8111-111111111199",
+      id: "00000000-0000-4000-8000-000000000199",
       owner_user_id: "owner",
       slug: "launch-managed",
       type: "claude-code",
