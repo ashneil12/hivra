@@ -187,13 +187,25 @@ export async function POST(request: NextRequest) {
         active: boolean | null;
       }>();
 
-    if (operatorError || !operatorSource?.api_key_sha256) {
-      return apiError("Agent not found", 404, undefined, undefined, {
+    if (operatorError) {
+      return apiError("Failed to load agent", 500, undefined, undefined, {
+        route: ROUTE,
+        method: "POST",
+        source: OPERATOR_SOURCE,
+        failureType: "operator_source_lookup_failed",
+        instanceId: parsed.data.instanceId,
+      });
+    }
+    // An unknown or keyless source gets the same 401 as a wrong bearer, so the
+    // response cannot tell which agent ids exist.
+    if (!operatorSource?.api_key_sha256) {
+      return apiError("Unauthorized", 401, undefined, undefined, {
         route: ROUTE,
         method: "POST",
         source: OPERATOR_SOURCE,
         failureType: "source_not_found",
         instanceId: parsed.data.instanceId,
+        logLevel: "warn",
       });
     }
 
