@@ -1851,9 +1851,8 @@ vzdump "$VMID" \\
   --remove 0
 archive_path="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -print 2>/dev/null | sort | comm -13 "$before" - | tail -1)"
 rm -f "$before"
-if [ -z "$archive_path" ]; then
-  archive_path="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -printf "%T@ %p\\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
-fi
+# Only a file this vzdump run created is this archive. An older dump of the same VMID is
+# never picked up here: the sweep removes whatever path this prints when it abandons a reclaim.
 if [ -z "$archive_path" ]; then
   echo "HERMES_DORMANT_ARCHIVE_PATH_NOT_FOUND $VMID" >&2
   exit 1

@@ -120,6 +120,32 @@ describe("dormant archive script (host side)", () => {
     expect(vzdumpCalls()).toHaveLength(1);
     expect(vzdumpCalls()[0]).toContain("--mode stop");
   });
+
+  it("does not report an older dump of the same VMID as this archive when vzdump writes no new file", () => {
+    // vzdump exits 0 but produces no new file, while an older dump of the same VMID sits in the
+    // archive directory. The script must fail, not hand back the older dump: the sweep deletes
+    // whatever path it is given when it abandons a reclaim.
+    const older = path.join(archiveDir, "vzdump-qemu-201-2026_05_01_00_00_00.vma.zst");
+    fs.writeFileSync(older, "vma");
+    const silentVzdump = [
+      'echo "$*" >> "$STUB_ROOT/capture/vzdump-calls"',
+      "exit 0",
+    ].join("\n");
+
+    const result = host.run(
+      buildProxmoxDormantArchiveScript({ vmid: VMID, archiveDir, instanceId: INSTANCE_ID }),
+      {
+        vms: [guest({ status: "stopped" })],
+        serverHostKey: GENUINE_GUEST_HOST_KEY,
+        commands: { vzdump: silentVzdump, stat: "printf '4096\\n'" },
+      }
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("HERMES_DORMANT_ARCHIVE_PATH_NOT_FOUND");
+    expect(result.stdout).not.toContain("HERMES_DORMANT_ARCHIVE_PATH=");
+    expect(fs.existsSync(older)).toBe(true);
+  });
 });
 
 describe("dormant archive removal script (host side)", () => {
