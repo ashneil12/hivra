@@ -140,6 +140,17 @@ describe("native agent-run records",()=>{
     expect(first.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
+  it("keeps kebab-case run ids and tool names whose words end in sk- plus 32 characters",()=>{
+    // "task-" and "disk-" end in "sk-". The legacy OpenAI shape has no token boundary, so
+    // it must not drop these structural values: a dropped session.id loses the whole record.
+    const runId="task-manager-service-configuration-reloaded-on-host";
+    const tool="read-disk-usage-task-manager-service-config";
+    const result=one(native("tool.started",[attr("tool.name",tool)],{runId}));
+    expect(result.rejectedLogRecords).toBe(0);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({runId,toolName:tool});
+  });
+
   it("leaves records without the native namespace on the generic path",()=>{
     const result=one(native("run.started",[attr("tool_name","Read")],{resource:[attr("service.name","codex")]}));
     expect(result.events[0]).toMatchObject({title:"Read used"}); expect(result.events[0].role).toBeUndefined();

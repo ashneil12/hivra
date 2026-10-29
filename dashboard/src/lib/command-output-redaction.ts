@@ -65,6 +65,12 @@ export interface SecretTokenShape {
   kind: string;
   pattern: RegExp;
   blocksPush?: false;
+  /**
+   * Legacy shapes with no token boundary, so they also match inside a word (`task-` ends in
+   * `sk-`). The redactor and the push gate use them. Attribute values, where a dash-joined
+   * identifier is legitimate, skip them (see otlp.ts looksSecret).
+   */
+  unanchored?: true;
 }
 
 const TOKEN_START = "(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{2}))";
@@ -75,18 +81,18 @@ const TOKEN_START = "(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{2}))";
 const JWT_START = "(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2}))";
 export const SECRET_TOKEN_SHAPES: ReadonlyArray<SecretTokenShape> = [
   { kind: "private_key_block", pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/ },
-  { kind: "openai_key", pattern: /sk-[A-Za-z0-9_-]{32,}/ },
-  { kind: "anthropic_key", pattern: /sk-ant-[A-Za-z0-9_-]{32,}/ },
-  { kind: "github_pat", pattern: /gh[pousr]_[A-Za-z0-9_]{36,}/ },
+  { kind: "openai_key", pattern: /sk-[A-Za-z0-9_-]{32,}/, unanchored: true },
+  { kind: "anthropic_key", pattern: /sk-ant-[A-Za-z0-9_-]{32,}/, unanchored: true },
+  { kind: "github_pat", pattern: /gh[pousr]_[A-Za-z0-9_]{36,}/, unanchored: true },
   { kind: "github_pat", pattern: new RegExp(`${TOKEN_START}github_pat_[A-Za-z0-9_]{22,}`) },
   { kind: "gitlab_pat", pattern: new RegExp(`${TOKEN_START}glpat-[A-Za-z0-9_-]{20,}`) },
   // xAI keys are `xai-` plus alphanumerics. Hyphens are left out so prose such as
   // `xai-grok-helper-for-everything` is not a key.
   { kind: "xai_key", pattern: new RegExp(`${TOKEN_START}xai-[A-Za-z0-9]{40,}`) },
   { kind: "groq_key", pattern: new RegExp(`${TOKEN_START}gsk_[A-Za-z0-9]{20,}`) },
-  { kind: "aws_access_key", pattern: /AKIA[0-9A-Z]{16}/ },
+  { kind: "aws_access_key", pattern: /AKIA[0-9A-Z]{16}/, unanchored: true },
   // Temporary (session) AWS key IDs. looksSecret in the OTLP normaliser already treats ASIA as secret.
-  { kind: "aws_session_key", pattern: /ASIA[0-9A-Z]{16}/ },
+  { kind: "aws_session_key", pattern: /ASIA[0-9A-Z]{16}/, unanchored: true },
   { kind: "google_api_key", pattern: new RegExp(`${TOKEN_START}AIza[0-9A-Za-z_-]{35}`) },
   // Telegram bot token: `<bot id>:<35-char secret>`. Also matches inside a bot API URL.
   { kind: "telegram_bot_token", pattern: /(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}/ },
