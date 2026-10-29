@@ -118,8 +118,8 @@ describe('ops-events helper', () => {
       title: 'fetch failed',
       message: 'TypeError',
     };
-    const first = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'a'.repeat(64) });
-    const second = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'b'.repeat(64) });
+    const first = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'at siteA (/app/src/probe.ts:10:5)' });
+    const second = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'at siteB (/app/src/probe.ts:20:5)' });
     expect(first).not.toBe(second);
     expect(first).not.toBe(buildOpsEventFingerprint(base));
   });

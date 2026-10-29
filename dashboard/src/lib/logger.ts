@@ -14,8 +14,6 @@
  * encouraged but optional. Anything else you spread into the context is
  * preserved verbatim (after sanitization).
  */
-import { createHash } from "node:crypto";
-
 import { reportOpsEvent, sanitizeOpsMetadata } from "@/lib/ops-events";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -148,15 +146,17 @@ function opsEventMessage(err: unknown, msg: string, verbose: boolean): string {
 }
 
 /**
- * A digest of the raw error message, used to group ops_events rows. Two errors that share a
- * class and code but carry different messages stay in separate rows, as they did before the
- * message was withheld. Only the digest is passed on, never the text. The digest is folded
- * into the stored fingerprint, so it does not hide a low-entropy message from a reader of
- * that fingerprint (see OpsEventInput.fingerprintDetail).
+ * The code location of a code-less error, used to group its ops_events row: the top stack
+ * frame, which names where the error was thrown and carries no values. A code-less error
+ * is grouped by that site, not by its text. A digest of the raw message was a guessable
+ * oracle: the stored fingerprint is readable, and an internal IP or VMID can be tested
+ * against a digest of it. A verbose error needs no detail here, because its message is
+ * already part of the fingerprint (and is stored on the row by the caller's opt-in).
  */
-function fingerprintDetailFor(err: unknown): string | undefined {
-  if (!(err instanceof Error) || !err.message) return undefined;
-  return createHash("sha256").update(err.message).digest("hex");
+function fingerprintDetailFor(err: unknown, verbose: boolean): string | undefined {
+  if (!(err instanceof Error) || verbose) return undefined;
+  const frame = err.stack?.split("\n").find((line) => /^\s+at\s/.test(line));
+  return frame?.trim() || undefined;
 }
 
 function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): void {
@@ -192,7 +192,7 @@ function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): voi
       source: ctx.source,
       title: msg,
       message: ctx.failureMessage || opsEventMessage(err, msg, verbose),
-      fingerprintDetail: fingerprintDetailFor(err),
+      fingerprintDetail: fingerprintDetailFor(err, verbose),
       severity: "error",
       route: ctx.route,
       userId: ctx.userId ?? null,

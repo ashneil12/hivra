@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { log } from "../logger";
 import { buildOpsEventFingerprint, reportOpsEvent } from "../ops-events";
 
@@ -101,25 +103,49 @@ describe("structured logger", () => {
       expect(payload.sampleStack).toBeUndefined();
     });
 
-    it("keeps errors that share a class and no code apart in the fingerprint", async () => {
-      log.error("fetch failed", new TypeError("connect to host-a refused"), { source: "probe" });
-      log.error("fetch failed", new TypeError("connect to host-b refused"), { source: "probe" });
+    // A code-less error is grouped by where it was thrown (its top stack frame), never by its
+    // text. A digest of the raw message was a guessable oracle: an internal IP or VMID can be
+    // tested against it, so the fingerprint must not depend on the message.
+    it("groups code-less errors from one call site whatever their raw text", async () => {
+      const make = (message: string) => new TypeError(message);
+      log.error("fetch failed", make("connect to host-a refused"), { source: "probe" });
+      log.error("fetch failed", make("connect to host-b refused"), { source: "probe" });
 
       const [first, second] = (reportOpsEvent as jest.Mock).mock.calls.map(([input]) => input);
       expect(first.message).toBe("TypeError");
       expect(second.message).toBe("TypeError");
-      expect(buildOpsEventFingerprint(first)).not.toBe(buildOpsEventFingerprint(second));
-      expect(JSON.stringify(first)).not.toContain("host-a");
+      expect(buildOpsEventFingerprint(first)).toBe(buildOpsEventFingerprint(second));
+      expect(JSON.stringify([first, second])).not.toContain("host-");
     });
 
-    it("groups a curated failureMessage by the raw error, not by the shared sentence", async () => {
+    it("keeps code-less errors from different call sites apart in the fingerprint", async () => {
+      const siteA = (message: string) => new TypeError(message);
+      const siteB = (message: string) => new TypeError(message);
+      log.error("fetch failed", siteA("connection refused"), { source: "probe" });
+      log.error("fetch failed", siteB("connection refused"), { source: "probe" });
+
+      const [first, second] = (reportOpsEvent as jest.Mock).mock.calls.map(([input]) => input);
+      expect(buildOpsEventFingerprint(first)).not.toBe(buildOpsEventFingerprint(second));
+    });
+
+    it("never puts a digest of the raw message into the event", async () => {
+      const raw = "connect to 10.250.20.1 port 22: Connection refused";
+      log.error("fetch failed", new TypeError(raw), { source: "probe" });
+
+      const payload = (reportOpsEvent as jest.Mock).mock.calls[0][0];
+      expect(JSON.stringify(payload)).not.toContain(createHash("sha256").update(raw).digest("hex"));
+      expect(JSON.stringify(payload)).not.toContain("10.250.20.1");
+    });
+
+    it("groups a curated failureMessage by call site, not by the shared sentence or raw text", async () => {
       const curated = { source: "instances", failureMessage: "Proxmox delete failed. Please retry." };
-      log.error("proxmox delete failed", new Error("qm destroy 201 failed"), curated);
-      log.error("proxmox delete failed", new Error("qm destroy 202 failed"), curated);
+      const destroy = (vmid: number) => new Error(`qm destroy ${vmid} failed`);
+      log.error("proxmox delete failed", destroy(201), curated);
+      log.error("proxmox delete failed", destroy(202), curated);
 
       const [first, second] = (reportOpsEvent as jest.Mock).mock.calls.map(([input]) => input);
       expect(first.message).toBe(second.message);
-      expect(buildOpsEventFingerprint(first)).not.toBe(buildOpsEventFingerprint(second));
+      expect(buildOpsEventFingerprint(first)).toBe(buildOpsEventFingerprint(second));
     });
 
     it("stores the log title, not the thrown value, when the error is not an Error", async () => {
