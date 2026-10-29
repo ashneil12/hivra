@@ -742,16 +742,34 @@ export async function POST(
         return apiError(`Integration platform ${platform} not supported yet.`, 400);
     }
 
-    // formatEnvValue wraps the value in single quotes and does not escape a backslash,
-    // so a value that ends in one leaves its closing quote escaped. Compose then
-    // rejects the whole env file (the default-profile env_file, and the managed
-    // compose .env that other paths write). Refuse it on every lane.
+    // formatEnvValue wraps a value in single quotes and escapes only the apostrophe, as
+    // \'. Two shapes then leave compose's quoting unbalanced, and compose rejects the
+    // whole env file: a value that ends in a backslash (the closing quote is escaped),
+    // and a backslash directly before an apostrophe (the escaped quote reads as a close).
+    // The default profile's .env is the compose env_file, so refuse both there. A legacy
+    // sub-profile .env is sourced by a shell, which cannot read the trailing-backslash
+    // form either, so refuse that there too. A webfree sub-profile is read by the profile
+    // loader, which decodes both shapes back to the original value, so it is allowed.
+    const isWebfreeSubProfile = isSubProfile && isWebfreeBackend(instance?.backend);
+    const writtenCredentialValues = Object.values(credentials ?? {}).map((value) => sanitizeEnvValue(value));
     if (
       !disconnect &&
-      Object.values(credentials ?? {}).some((value) => sanitizeEnvValue(value).endsWith('\\'))
+      !isWebfreeSubProfile &&
+      writtenCredentialValues.some((value) => value.endsWith('\\'))
     ) {
       return apiError(
         'Values cannot end with a backslash in integration settings. Remove it and save again.',
+        400,
+        { failureType: 'integration_value_unsupported', retryable: false },
+      );
+    }
+    if (
+      !disconnect &&
+      !isSubProfile &&
+      writtenCredentialValues.some((value) => value.includes("\\'"))
+    ) {
+      return apiError(
+        "Backslashes before an apostrophe (\\') are not supported in integration values on the default profile. Remove them and save again.",
         400,
         { failureType: 'integration_value_unsupported', retryable: false },
       );

@@ -713,7 +713,86 @@ describe('/api/instances/[id]/integrations', () => {
       expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
     });
 
-    it('refuses a value that ends in a backslash on a webfree sub-profile too, so the profile loader never gets a line it cannot close', async () => {
+    it('refuses a backslash before an apostrophe on the default profile, because compose reads the closing quote early and rejects the whole env file', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com', backend: 'webui' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          credentials: { token: "Ab\\'c", appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toMatch(/backslash/i);
+      expect(sshExec).not.toHaveBeenCalled();
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+    });
+
+    it('still saves a plain apostrophe on the default profile, which compose parses as written', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com', backend: 'webui' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          credentials: { token: "Ab'c", appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+
+      expect(res.status).toBe(200);
+      const script = (sshExec as jest.Mock).mock.calls[0][1] as string;
+      const payloadB64 = script.match(/base64\.b64decode\("([A-Za-z0-9+/=]+)"\)/)?.[1];
+      expect(payloadB64).toBeDefined();
+      const payload = JSON.parse(Buffer.from(payloadB64!, 'base64').toString('utf8'));
+      expect(payload.envUpdates).toContain("SLACK_BOT_TOKEN='Ab\\'c'");
+    });
+
+    it('refuses a value that ends in a backslash on a legacy sub-profile, because its .env is sourced by a shell', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+        response: { ok: true, status: 200 },
+      });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          profile: 'marcus',
+          credentials: { token: 'xoxb-1\\', appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toMatch(/backslash/i);
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+      expect(sshExec).not.toHaveBeenCalled();
+    });
+
+    it('saves a value that ends in a backslash on a webfree sub-profile, and the profile loader reads it back unchanged', async () => {
       (getSecureUserInstance as jest.Mock).mockResolvedValue({
         instance: { gateway_url: 'https://agent.example.com', backend: 'gateway' },
         apiServerKey: 'secret',
@@ -733,11 +812,11 @@ describe('/api/instances/[id]/integrations', () => {
       });
 
       const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
-      const data = await res.json();
 
-      expect(res.status).toBe(400);
-      expect(data.error).toMatch(/backslash/i);
-      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      const payload = JSON.parse((fetchFirstReachableGatewayResponse as jest.Mock).mock.calls[0][0].body);
+      const line = payload.envUpdates.find((update: string) => update.startsWith('SLACK_BOT_TOKEN='));
+      expect(decodeLikeProfileLoader(line)).toBe('xoxb-1\\');
     });
 
     it('does not log or report raw sidecar rejection payloads', async () => {
