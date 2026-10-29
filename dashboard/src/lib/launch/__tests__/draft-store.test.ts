@@ -190,13 +190,14 @@ describe("launch draft storage", () => {
     expect(read()).toBeNull();
   });
 
-  it("moves a draft this tab saved before drafts moved to localStorage", () => {
+  it("discards a draft this tab saved before drafts moved to localStorage instead of adopting it", () => {
     const draft = { ...createLaunchDraft(), stage: "review" as const, resourceKind: "agent" as const, profileId: "codex" as const, name: "Codex 1" };
     window.sessionStorage.setItem(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify(draft));
 
-    expect(read()).toEqual(draft);
+    expect(readLaunchDraft("user_someone_else")).toBeNull();
     expect(window.sessionStorage.getItem(LAUNCH_DRAFT_STORAGE_KEY)).toBeNull();
-    expect(JSON.parse(window.localStorage.getItem(KEY) || "{}")).toMatchObject({ launchRequestId: draft.launchRequestId });
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    expect(read()).toBeNull();
   });
 
   it("restores drafts saved with the separate type, profile and capacity stages", () => {

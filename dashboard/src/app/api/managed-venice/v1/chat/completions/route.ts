@@ -28,6 +28,7 @@ import {
 // semantics. See docs/PRODUCT-ARCHITECTURE.md.
 import { authorizeManagedVeniceChat } from "@/lib/venice/proxy-chat-core";
 import { readSurchargeEvidence } from "@/lib/venice/chat-surcharges";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 const ROUTE = "/api/managed-venice/v1/chat/completions";
 
@@ -35,12 +36,6 @@ const ROUTE = "/api/managed-venice/v1/chat/completions";
 // what it read, so the platform never kills a request with its hold
 // unsettled (security review 2026-09).
 export const maxDuration = 300;
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 function jsonResponseFromText(text: string, status: number) {
   return new Response(text, {

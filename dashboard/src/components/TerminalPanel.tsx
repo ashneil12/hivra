@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import styles from './TerminalPanel.module.css';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { clientLog } from '@/lib/client/logger';
+import { matchesMedia } from '@/lib/client/media-query';
 import { getHermesTuiTheme, resolveHermesTuiColorMode, type HermesTuiColorMode } from '@/lib/tui-theme';
 interface TerminalPanelProps {
     instanceId: string; isActive: boolean; sessionMode?: 'shell' | 'tui'; colorMode?: HermesTuiColorMode; surfaceKey?: string;
@@ -56,11 +57,6 @@ function applyCtrlModifier(data: string) {
     if (code >= 0x61 && code <= 0x7a) return String.fromCharCode(code - 0x60);
     if (code >= 0x40 && code <= 0x5f) return String.fromCharCode(code & 0x1f);
     return data;
-}
-function matchesMedia(query: string) {
-    return typeof window !== 'undefined'
-        && typeof window.matchMedia === 'function'
-        && window.matchMedia(query).matches;
 }
 function isPhoneViewport() {
     return matchesMedia('(max-width: 767px)');

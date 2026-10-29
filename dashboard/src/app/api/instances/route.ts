@@ -47,7 +47,7 @@ import {
   buildInstanceLifecyclePatch,
   getLifecycleStateForStatus,
 } from "@/lib/instance-lifecycle";
-import { isWebfreeBackend } from "@/lib/types/instance";
+import { buildReadinessProbeOptions, isWebfreeBackend } from "@/lib/types/instance";
 import { scheduleSoulSeedReconcileAfterResponse } from "@/lib/recovery/soul-seed-reconcile";
 import { scheduleAgentReadyPushAfterResponse } from "@/lib/push/agent-ready-push";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
@@ -81,49 +81,6 @@ interface InstanceRow {
   entitlement_grace_started_at?: string | null;
   entitlement_grace_ends_at?: string | null;
   entitlement_suspended_at?: string | null;
-}
-
-function buildReadinessProbeOptions(params: {
-  backend?: string | null;
-  apiServerKey?: string | null;
-}) {
-  // Modern webfree box (backend='gateway'): probe the CHAT lane, not the
-  // dashboard shell. The box Caddyfile routes '/health' to the
-  // official-dashboard web server only, which comes up seconds (idle canary)
-  // to minutes (loaded prod host) BEFORE the gateway api_server that actually
-  // answers chat — measured on a fresh canary box 2026-07-10 (audit run
-  // fixturecase04): '/health' 200'd and the row flipped 'running' 8s before the
-  // box accepted its first WS upgrade; prod run fixturecase05 showed the same gap
-  // stretched past 190s, so a new user's workspace painted while their first
-  // message died. '/api/sessions' with the instance bearer traverses
-  // caddy → dashboard-sidecar → official-dashboard → gateway and flips 200
-  // in the same probe window as the WS upgrade, so 'running' (and the
-  // workspace it unlocks) means "you can chat". Keyless rows keep the legacy
-  // '/health' probe rather than never promoting (fail-open; the apiServerKey
-  // self-heal backfills the key). Legacy backend='webui' boxes don't serve
-  // the sessions route and keep '/health' too.
-  if (params.backend === "gateway" && params.apiServerKey) {
-    return {
-      pathname: "/api/sessions",
-      headers: {
-        Authorization: `Bearer ${params.apiServerKey}`,
-      } as Record<string, string>,
-    };
-  }
-
-  if (isWebfreeBackend(params.backend)) {
-    return {
-      pathname: "/health",
-      headers: {} as Record<string, string>,
-    };
-  }
-
-  return {
-    pathname: "/v1/models",
-    headers: params.apiServerKey
-      ? { Authorization: `Bearer ${params.apiServerKey}` }
-      : ({} as Record<string, string>),
-  };
 }
 
 export async function GET(request: NextRequest) {
@@ -425,6 +382,10 @@ export async function GET(request: NextRequest) {
           }
         } else if (needsSync) {
           const hs = await getHetznerInstanceStatus(inst.hetzner_server_id as number);
+          // A failed Hetzner lookup says nothing about the server. Keep the
+          // stored status for this poll instead of writing 'error' over a
+          // running agent (the Proxmox branch above does the same).
+          if (hs.lookupFailed) return inst;
           let nextStatus = hs.status;
 
           if (

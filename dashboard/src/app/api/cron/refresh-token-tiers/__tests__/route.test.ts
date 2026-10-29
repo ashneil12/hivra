@@ -119,10 +119,41 @@ function mockSupabase(opts: {
   appleError?: string;
   boosts?: string[];
 }) {
-  const instancesBuilder = {
-    select: jest.fn().mockReturnThis(),
-    not: jest.fn().mockResolvedValue({ data: opts.instances, error: null }),
-  };
+  // hermes_instances is read keyset-paged (order by id, gt cursor, limit), the way
+  // PostgREST would cap it at 1000 rows per response. Rows get stable ids here.
+  const instanceRows = opts.instances.map((row, index) => ({
+    id: `inst-${String(index).padStart(6, "0")}`,
+    ...row,
+  }));
+  const instancesBuilder = (() => {
+    let cursor: string | null = null;
+    let limit = Infinity;
+    const builder: Record<string, unknown> = {
+      select: jest.fn(() => {
+        cursor = null;
+        limit = Infinity;
+        return builder;
+      }),
+      not: jest.fn(() => builder),
+      gt: jest.fn((_column: string, value: string) => {
+        cursor = value;
+        return builder;
+      }),
+      order: jest.fn(() => builder),
+      limit: jest.fn((count: number) => {
+        limit = count;
+        return builder;
+      }),
+      then: (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) =>
+        Promise.resolve({
+          data: instanceRows
+            .filter((row) => cursor === null || row.id > cursor)
+            .slice(0, Math.min(limit, 1000)),
+          error: null,
+        }).then(onFulfilled, onRejected),
+    };
+    return builder;
+  })();
   const snapshotsBuilder = {
     select: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
@@ -278,6 +309,54 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       from: "credit_base",
       to: "fleet",
     });
+  });
+
+  it("re-tiers a holder past the 1000-row PostgREST cap instead of silently dropping them", async () => {
+    // Before the fix the instance scan stopped at the first 1000 rows, so user_1004
+    // was never scanned and kept a stale tier, however strong their qualification.
+    const instances = Array.from({ length: 1005 }, (_, i) => ({
+      user_id: `user_${i}`,
+      resource_tier: "credit_base",
+      cpu_limit: BASE_CPU,
+      ram_limit: BASE_RAM,
+    }));
+    mockSupabase({
+      instances,
+      snapshots: [],
+      subscriptions: [],
+      qualifications: [{ user_id: "user_1004", tier: "power", currently_eligible: true }],
+    });
+    (applyTierChange as jest.Mock).mockResolvedValue({});
+
+    const res = await POST(makeRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.users_scanned).toBe(1005);
+    expect(applyTierChange).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user_1004", newTier: "fleet" })
+    );
+  });
+
+  it("fails the run before any tier change when a user-id scan reaches the row cap", async () => {
+    // A truncated qualification read would read paid holders as "no entitlement"
+    // and downgrade them, so the run must stop instead.
+    mockSupabase({
+      instances: [{ user_id: "user_0", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM }],
+      snapshots: [],
+      subscriptions: [],
+      qualifications: Array.from({ length: 1000 }, () => ({
+        user_id: "user_0",
+        tier: "pro" as const,
+        currently_eligible: true,
+      })),
+    });
+    (applyTierChange as jest.Mock).mockResolvedValue({});
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(500);
+    expect(applyTierChange).not.toHaveBeenCalled();
   });
 
   it("upgrades a Pro-qualified token holder from credit_base to operator", async () => {

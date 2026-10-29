@@ -16,8 +16,7 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 import { COMPUTER_HISTORY_LABELS, COMPUTER_HISTORY_LIMIT, computerHistoryLabel } from "@/lib/hivra/computer-history";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -26,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
     const { id } = await params;
-    if (!UUID.test(id)) return apiError("Agent not found", 404);
+    if (!UUID_V1_TO_8.test(id)) return apiError("Agent not found", 404);
 
     const { data: agent, error: agentError } = await supabaseAdmin
       .from("hivra_agents")

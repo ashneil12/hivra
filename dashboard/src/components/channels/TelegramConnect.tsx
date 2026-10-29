@@ -366,7 +366,14 @@ export function TelegramConnect({
     if (busy) return;
     setBusy(true);
     pollAbortRef.current?.abort();
-    await adapter.disconnect();
+    try {
+      await adapter.disconnect();
+    } catch (e) {
+      // The bot may still be live on the box: keep the connected state and say so.
+      setError(`Couldn't disconnect Telegram (${(e as Error).message || "unknown error"}). Your bot is still connected. Try again.`);
+      setBusy(false);
+      return;
+    }
     setConnectedUsername(null);
     setStep("token");
     setBotToken("");

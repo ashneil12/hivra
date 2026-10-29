@@ -277,6 +277,15 @@ describe("replaceServerEnrollmentAccess (T30, T46)", () => {
     expectNothingChanged("connection_failed");
   });
 
+  it("still reports verification_failed when recording the failed check itself throws", async () => {
+    run.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: ECONNRESET" });
+    store.failServerEnrollmentReplacement.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(replaceServerEnrollmentAccess(USER, ENROLLMENT_ID, request, deps()))
+      .rejects.toEqual(new ServerEnrollmentError("verification_failed", "connection_failed"));
+    expect(store.failServerEnrollmentReplacement).toHaveBeenCalledWith(expect.objectContaining({ failure: "connection_failed" }));
+    expect(store.completeServerEnrollmentReplacement).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["no match", null],
     ["a login connection in use", known({ offer: "none", reason: "login_in_use", sshUser: "root" })],

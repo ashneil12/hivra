@@ -4,6 +4,7 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
+  currentUser: jest.fn(() => Promise.resolve(null)),
 }));
 
 jest.mock("@/lib/seo-urls", () => ({
@@ -22,6 +23,7 @@ jest.mock("@/lib/rate-limit", () => ({
 describe("POST /api/indexnow", () => {
   const originalIndexNowKey = process.env.INDEXNOW_KEY;
   const originalTriggerSecret = process.env.INDEXNOW_TRIGGER_SECRET;
+  const originalOpsAdminUserIds = process.env.OPS_ADMIN_USER_IDS;
   const mockedAuth = auth as jest.MockedFunction<typeof auth>;
   let consoleErrorSpy: jest.SpyInstance;
 
@@ -30,11 +32,19 @@ describe("POST /api/indexnow", () => {
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     delete process.env.INDEXNOW_KEY;
     delete process.env.INDEXNOW_TRIGGER_SECRET;
+    // user_123 is the ops admin for the signed-in success paths below.
+    process.env.OPS_ADMIN_USER_IDS = "user_123";
     global.fetch = jest.fn();
   });
 
   afterEach(() => {
     consoleErrorSpy.mockRestore();
+
+    if (originalOpsAdminUserIds === undefined) {
+      delete process.env.OPS_ADMIN_USER_IDS;
+    } else {
+      process.env.OPS_ADMIN_USER_IDS = originalOpsAdminUserIds;
+    }
 
     if (originalIndexNowKey === undefined) {
       delete process.env.INDEXNOW_KEY;
@@ -57,6 +67,16 @@ describe("POST /api/indexnow", () => {
 
     expect(response.status).toBe(500);
     expect(body.error).toMatch(/indexnow key is not configured/i);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a signed-in user who is not an ops admin, even with a sitemap to submit", async () => {
+    process.env.INDEXNOW_KEY = "indexnow-public-key";
+    mockedAuth.mockResolvedValue({ userId: "user_999" } as Awaited<ReturnType<typeof auth>>);
+
+    const response = await POST(new Request("https://hivra.cloud/api/indexnow", { method: "POST" }));
+
+    expect(response.status).toBe(403);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 

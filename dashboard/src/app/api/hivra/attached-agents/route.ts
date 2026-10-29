@@ -20,6 +20,7 @@ import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment
 import { attachSupported } from "@/lib/agent-computers/attach-plan";
 import { attachDependencies, readAttachChoices, type AttachChoice } from "@/lib/agent-computers/attach-routes";
 import { supabaseAdmin } from "@/lib/supabase";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 /** The owner's computers the first pair supports; an unreadable list offers none. */
 async function supportedComputers(userId: string): Promise<Array<{ id: string; deploymentMode: string | null; chatUrl: string | null }>> {
@@ -42,8 +43,6 @@ async function supportedComputers(userId: string): Promise<Array<{ id: string; d
 }
 
 const UNCHECKED = "Hivra couldn't check this computer right now. Open it to try again.";
-
-const noStore = <T extends Response>(response: T): T => { response.headers.set("Cache-Control", "no-store"); return response; };
 
 export async function GET(req: NextRequest) {
   try {

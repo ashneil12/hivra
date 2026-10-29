@@ -26,7 +26,7 @@ import { launchProfileForTemplate, safeTemplateRef } from "./launch-template";
  * signed-in owner's id, so a draft survives a closed tab, a second tab and
  * the Stripe round trip, and one account never resumes another's draft on a
  * shared browser. Older drafts were kept per tab in sessionStorage under the
- * bare prefix; they are moved over on first read. */
+ * bare prefix; they carry no owner and are discarded on read. */
 export const LAUNCH_DRAFT_STORAGE_KEY = "hivra.launch-draft.v1";
 
 export function launchDraftStorageKey(ownerId: string): string {
@@ -380,17 +380,14 @@ export function readLaunchDraft(ownerId: string | null): LaunchDraft | null {
   } catch {
     return null;
   }
-  // A draft this tab saved before drafts moved to localStorage.
-  const legacy = legacyTabDrafts();
-  let migrated: LaunchDraft | null = null;
+  // A draft this tab saved before drafts moved to localStorage has no owner,
+  // so it cannot be proven to belong to this account. Discard it, never adopt it.
   try {
-    migrated = parseStoredDraft(legacy?.getItem(LAUNCH_DRAFT_STORAGE_KEY) ?? null);
-    legacy?.removeItem(LAUNCH_DRAFT_STORAGE_KEY);
+    legacyTabDrafts()?.removeItem(LAUNCH_DRAFT_STORAGE_KEY);
   } catch {
-    return null;
+    // Nothing else to clear.
   }
-  if (migrated) writeLaunchDraft(migrated, ownerId);
-  return migrated;
+  return null;
 }
 
 export function writeLaunchDraft(draft: LaunchDraft, ownerId: string | null): void {

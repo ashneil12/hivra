@@ -13,6 +13,7 @@ import {
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { sendCapacityPausedEmail } from "@/lib/email/capacity-pause";
+import { fetchClerkUser } from "@/lib/recovery/lifecycle-email-sweep";
 
 /**
  * Capacity-pressure sweep — when a Proxmox host runs hot on tenant COUNT
@@ -66,7 +67,6 @@ const RELIEF_MARGIN = 0.05;
 // guard against a runaway query.
 const HOST_INSTANCE_BATCH_LIMIT = 500;
 
-const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
 const NOTIFICATION_KEY = "capacity_paused";
 
 type HostRow = {
@@ -382,17 +382,6 @@ async function parkInstance(
     );
   }
   return { outcome: "paused", pausedAtIso };
-}
-
-async function fetchClerkUser(secretKey: string, userId: string): Promise<ClerkUser | null> {
-  const response = await fetch(`${CLERK_API_BASE_URL}/users/${userId}`, {
-    headers: { Authorization: `Bearer ${secretKey}` },
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Clerk user fetch failed for ${userId}: ${response.status}`);
-  }
-  return (await response.json()) as ClerkUser;
 }
 
 function chooseEmail(user: ClerkUser): string | null {

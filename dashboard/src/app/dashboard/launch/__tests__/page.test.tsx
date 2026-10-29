@@ -1846,12 +1846,13 @@ describe("LaunchPage", () => {
     expect(screen.queryByText(/Continue your/)).not.toBeInTheDocument();
   });
 
-  it("resumes a draft another tab saved and moves a draft this tab saved before", async () => {
+  it("discards an owner-less draft this tab saved before drafts moved to localStorage", async () => {
+    // A legacy per-tab draft has no owner, so adopting it could hand one
+    // account's launch to whoever signs in next in that tab. It is dropped.
     const legacy = { ...createLaunchDraft(), stage: "capacity", resourceKind: "agent", profileId: "codex", name: "Codex 1" };
     window.sessionStorage.setItem("hivra.launch-draft.v1", JSON.stringify(legacy));
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
-    expect(storedDraftJson().launchRequestId).toBe(legacy.launchRequestId);
+    expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
     expect(window.sessionStorage.getItem("hivra.launch-draft.v1")).toBeNull();
   });
 

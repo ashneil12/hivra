@@ -16,9 +16,10 @@
  *
  * Every amount is wei as a decimal string, handled with BigInt only.
  *
- * Client-safe: type-only imports.
+ * Client-safe: type-only imports, plus the dependency-free isRecord helper.
  */
 import type { HivraClaimPhase } from "./hivra-claim";
+import { isRecord } from "@/lib/billing/db-utils";
 
 export const HIVRA_AIRDROP_DATA_VERSION = 2;
 const DECIMALS = 18;
@@ -48,10 +49,6 @@ export type ParsedHivraAirdrop = {
 };
 
 export type AirdropParseResult = { ok: true; airdrop: ParsedHivraAirdrop } | { ok: false; problems: string[] };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;

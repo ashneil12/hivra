@@ -55,22 +55,34 @@ steps:
       selector: button[type="submit"]
 
   # Clerk may or may not require an email verification code depending on the
-  # account's MFA config. If a code field appears, we poll IMAP. If not, the
-  # wait_for below times out and we proceed straight to the URL check.
+  # account's MFA config. Wait for either the code field or the dashboard, then
+  # probe for the code field. The probe is optional: if it times out, the flow
+  # records code_field_found=false and goes straight to the URL check. IMAP is
+  # polled only when the code field was actually found.
   - id: wait_for_code_input_or_dashboard
     type: wait_for
     args:
       selector: 'input[name="code"], [data-localization-key*="dashboard"]'
       timeout_ms: 15000
 
+  - id: probe_code_input
+    type: wait_for
+    optional: true
+    args:
+      selector: input[name="code"]
+      timeout_ms: 2000
+      into: code_field_found
+
   - id: maybe_fill_code
     type: imap_wait_code
+    when: code_field_found
     args:
       since_ms: 120000
       into: clerk_code
 
   - id: enter_code
     type: fill
+    when: code_field_found
     args:
       selector: input[name="code"]
       value: ${state:clerk_code}

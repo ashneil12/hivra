@@ -459,6 +459,71 @@ describe("Hivra token holdings", () => {
       })
     );
   });
+
+  it("stores no VVV snapshot when the staked read fails, instead of a liquid-only undercount", async () => {
+    // Regression: a failed sVVV read used to fall back to the liquid balance and
+    // store it as the VVV snapshot, dropping a staked-only holder below the boost.
+    const STAKING_ADDRESS = "0x000000000000000000000000000000000000bEEF";
+    const previousStaking = process.env.VVV_STAKING_CONTRACT_ADDRESS;
+    process.env.VVV_STAKING_CONTRACT_ADDRESS = STAKING_ADDRESS;
+    try {
+      const lockWalletQuery = buildSingleQuery(null);
+      const primaryWalletQuery = buildSingleQuery({
+        id: "wallet_1",
+        user_id: "user_1",
+        address: "0x000000000000000000000000000000000000dEaD",
+        normalized_address: "0x000000000000000000000000000000000000dead",
+        chain_type: "evm",
+        chain_id: BASE_CHAIN_ID,
+        is_primary: true,
+        verified_at: "2026-04-24T12:00:00.000Z",
+        verification_method: "signature",
+        metadata: {},
+      });
+      const insertSnapshots = buildInsertSnapshotTable([snapshotRow()]);
+      const db = {
+        from: jest.fn()
+          .mockReturnValueOnce(lockWalletQuery)
+          .mockReturnValueOnce(primaryWalletQuery)
+          .mockReturnValueOnce(insertSnapshots),
+      };
+      const fetchMock = jest.fn(async (_url: string, init: { body: string }) => {
+        const request = JSON.parse(init.body) as {
+          method: string;
+          params: Array<{ to?: string }>;
+        };
+        if (request.method === "eth_blockNumber") {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result: "0x10" }) };
+        }
+        const to = request.params[0]?.to?.toLowerCase();
+        if (to === STAKING_ADDRESS.toLowerCase()) {
+          // Deterministic 4xx: the staking read fails fast with no retry.
+          return { ok: false, status: 400, json: async () => ({}) };
+        }
+        const result = to === VVV_TOKEN_ADDRESS.toLowerCase() ? "0x22b1c8c1227a0000" : "0xde0b6b3a7640000";
+        return { ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", id: 1, result }) };
+      });
+
+      const result = await refreshPrimaryVerifiedTokenHoldings({
+        userId: "user_1",
+        db,
+        fetchImpl: fetchMock,
+      });
+
+      expect(result.status).toBe("refreshed");
+      expect(insertSnapshots.insert).toHaveBeenCalledTimes(1);
+      expect(insertSnapshots.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ token_address: HERMESOS_TOKEN_ADDRESS })
+      );
+      expect(result.snapshots.map((snapshot) => snapshot.tokenAddress)).toEqual([
+        HERMESOS_TOKEN_ADDRESS,
+      ]);
+      expect(result).toMatchObject({ balances: { hermesos: 1000000000000000000n } });
+    } finally {
+      if (previousStaking === undefined) delete process.env.VVV_STAKING_CONTRACT_ADDRESS;
+      else process.env.VVV_STAKING_CONTRACT_ADDRESS = previousStaking;
+    }
+  });
 });
 
 describe("staked VVV (Venice boost)", () => {

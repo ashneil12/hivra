@@ -101,13 +101,6 @@ export class NonceStore {
     this.pruneTimer.unref?.();
   }
 
-  stopPruner(): void {
-    if (this.pruneTimer) {
-      clearInterval(this.pruneTimer);
-      this.pruneTimer = null;
-    }
-  }
-
   /** Test-only: inspect store size. */
   size(): number {
     return this.entries.size;
