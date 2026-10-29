@@ -13,6 +13,11 @@ interface FlowStep {
   type: string;
   args?: Record<string, unknown>;
   on_match?: "return_ok" | "continue";
+  // optional: a failure of this step is logged and the flow carries on. A
+  // wait_for with args.into then records false under that key.
+  optional?: boolean;
+  // when: a state key; the step runs only if that key is set and truthy.
+  when?: string;
 }
 
 interface FlowDefinition {
@@ -79,6 +84,10 @@ export class FlowRunner {
     const stepLog = this.logger.child({ flow: opts.flow_id, session_id: opts.session_id });
 
     for (const rawStep of def.steps) {
+      if (rawStep.when && !state[rawStep.when]) {
+        stepLog.debug({ step_id: rawStep.id, when: rawStep.when }, "step skipped");
+        continue;
+      }
       const step: FlowStep = {
         ...rawStep,
         args: interpolate(rawStep.args ?? {}, process.env, flowArgs, state) as Record<string, unknown>,
@@ -91,6 +100,12 @@ export class FlowRunner {
           return { ok: true, output: state };
         }
       } catch (err) {
+        if (step.optional) {
+          // A wait that times out means "not there", so the flow records that and goes on.
+          if (step.type === "wait_for" && step.args?.into) state[String(step.args.into)] = false;
+          stepLog.info({ step_id: step.id ?? step.type, reason: (err as Error).message }, "optional step failed; continuing");
+          continue;
+        }
         return {
           ok: false,
           error: (err as Error).message,
@@ -129,6 +144,7 @@ export class FlowRunner {
           state: (a.state as "visible" | "attached" | "hidden" | "detached") ?? "visible",
           timeout: typeof a.timeout_ms === "number" ? a.timeout_ms : undefined,
         });
+        if (a.into) state[String(a.into)] = true;
         return;
       }
       case "assert_visible": {

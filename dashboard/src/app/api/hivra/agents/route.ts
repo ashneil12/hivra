@@ -1451,8 +1451,19 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       }
     }
     const releaseLlmKeyOnFailure = async () => {
-      if (llmConfig?.proxyKeyId) {
-        await revokeManagedVeniceProxyKey({ userId, keyId: llmConfig.proxyKeyId }).catch(() => {});
+      const proxyKeyId = llmConfig?.proxyKeyId;
+      if (proxyKeyId) {
+        // A failed revoke leaves a live managed key behind, and an error-marked
+        // row is terminal, so log it with the key id (never key material) for
+        // ops to revoke by hand.
+        await revokeManagedVeniceProxyKey({ userId, keyId: proxyKeyId }).catch((revokeError) => {
+          log.error("managed Venice proxy key revoke failed after a launch failure", revokeError, {
+            source: "hivra/agents",
+            failureType: "managed_venice_key_release_failed",
+            userId,
+            keyId: proxyKeyId,
+          });
+        });
       }
     };
 

@@ -1263,7 +1263,9 @@ describe("InstanceService.createInstance rollback handling", () => {
     };
     const siblingCapacityQuery = {
       select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockResolvedValue({ data: [] }),
+      eq: jest.fn().mockReturnValue({
+        not: jest.fn().mockReturnValue({ not: jest.fn().mockResolvedValue({ data: [] }) }),
+      }),
     };
     const resourceUsageQuery = {
       select: jest.fn().mockReturnThis(),
@@ -1388,7 +1390,9 @@ describe("InstanceService.createInstance rollback handling", () => {
     };
     const siblingCapacityQuery = {
       select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockResolvedValue({ data: [] }),
+      eq: jest.fn().mockReturnValue({
+        not: jest.fn().mockReturnValue({ not: jest.fn().mockResolvedValue({ data: [] }) }),
+      }),
     };
     const resourceUsageQuery = {
       select: jest.fn().mockReturnThis(),
@@ -1521,7 +1525,9 @@ describe("InstanceService.createInstance rollback handling", () => {
     };
     const siblingCapacityQuery = {
       select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockResolvedValue({ data: [] }),
+      eq: jest.fn().mockReturnValue({
+        not: jest.fn().mockReturnValue({ not: jest.fn().mockResolvedValue({ data: [] }) }),
+      }),
     };
     const insertQuery = {
       insert: jest.fn().mockReturnThis(),

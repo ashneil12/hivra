@@ -23,7 +23,10 @@ jest.mock("@/lib/stripe", () => ({
 }));
 
 describe("POST /api/billing/managed-venice/card/top-up", () => {
-  const mockUserId = "user_123";
+  // The per-user rate limit keeps counters in module memory, so each test signs
+  // in as a fresh user and never counts against another test.
+  let userCounter = 0;
+  let mockUserId = "user_123";
   const originalNodeEnv = process.env.NODE_ENV;
   const originalManagedVeniceProductId = process.env.STRIPE_MANAGED_VENICE_CREDITS_PRODUCT_ID;
   let mockStripeSessionsCreate: jest.Mock;
@@ -43,6 +46,8 @@ describe("POST /api/billing/managed-venice/card/top-up", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    userCounter += 1;
+    mockUserId = `user_managed_card_${userCounter}`;
     jest.useFakeTimers().setSystemTime(new Date("2026-05-13T09:00:00Z"));
 
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: mockUserId });
@@ -52,7 +57,11 @@ describe("POST /api/billing/managed-venice/card/top-up", () => {
       emailAddresses: [{ emailAddress: "hermes@example.com" }],
     });
     (getCreditAccountStripeCustomerId as jest.Mock).mockResolvedValue("cus_existing");
-    (setCreditAccountStripeCustomerId as jest.Mock).mockResolvedValue(undefined);
+    // The claim returns the customer the account stores: the id passed in, unless a
+    // concurrent request claimed the account first.
+    (setCreditAccountStripeCustomerId as jest.Mock).mockImplementation(
+      async (_userId: string, customerId: string) => customerId
+    );
 
     mockStripeSessionsCreate = jest.fn().mockResolvedValue({
       id: "cs_managed_venice",
@@ -195,5 +204,35 @@ describe("POST /api/billing/managed-venice/card/top-up", () => {
       expect.objectContaining({ customer: "cus_new" }),
       expect.anything()
     );
+  });
+
+  it("uses the customer a concurrent top-up stored first instead of its own", async () => {
+    // Two first top-ups both read no customer. This request creates cus_new, but the
+    // account already holds cus_winner from the other request, so Stripe must use that.
+    (getCreditAccountStripeCustomerId as jest.Mock).mockResolvedValueOnce(null);
+    (setCreditAccountStripeCustomerId as jest.Mock).mockResolvedValueOnce("cus_winner");
+
+    const response = await POST(createRequest());
+
+    expect(response.status).toBe(200);
+    expect(setCreditAccountStripeCustomerId).toHaveBeenCalledWith(mockUserId, "cus_new");
+    expect(mockStripeSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ customer: "cus_winner" }),
+      expect.anything()
+    );
+  });
+
+  it("rate limits one person's card top-up starts before any Stripe work", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      statuses.push((await POST(createRequest())).status);
+    }
+
+    expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
+    expect(mockStripeSessionsCreate).toHaveBeenCalledTimes(5);
+
+    // Another person is not held back by the first one.
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: `${mockUserId}_other` });
+    expect((await POST(createRequest())).status).toBe(200);
   });
 });

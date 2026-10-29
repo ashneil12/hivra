@@ -9,15 +9,7 @@ import {
   loadOmarchyNativeActivationGrant,
   revokeRemoteDesktopSession,
 } from "@/lib/remote-computers/session-broker";
-import { supabaseAdmin } from "@/lib/supabase";
-
-const AGENT_FIELDS = [
-  "id", "user_id", "type", "computer_profile", "status", "desired_state", "operation_id", "operation_kind",
-  "vmid", "ip", "chat_url", "computer_substrate", "provider_capacity_order_id",
-  "provider_enrollment_attempt_id", "provider_server_id", "deployment_mode", "proxmox_host",
-  "infrastructure_connection_id", "deployment_target_id", "infrastructure_connection_revision",
-  "infrastructure_binding_token_hash", "infrastructure_binding_token_enforced", "managed_provisioner_channel",
-].join(",");
+import { loadRemoteDesktopAgentForUser, waitForMilliseconds } from "@/lib/remote-computers/agent-row";
 
 type Dependencies = {
   loadAgent: (userId: string, computerId: string) => Promise<RemoteDesktopAgentRow | null>;
@@ -27,20 +19,12 @@ type Dependencies = {
   wait: (milliseconds: number) => Promise<void>;
 };
 
-async function loadAgent(userId: string, computerId: string): Promise<RemoteDesktopAgentRow | null> {
-  if (!supabaseAdmin) throw new Error("Native desktop database is unavailable.");
-  const { data, error } = await supabaseAdmin.from("hivra_agents").select(AGENT_FIELDS)
-    .eq("id", computerId).eq("user_id", userId).maybeSingle();
-  if (error) throw new Error("Native desktop lookup failed.");
-  return data as unknown as RemoteDesktopAgentRow | null;
-}
-
 const DEFAULTS: Dependencies = {
-  loadAgent,
+  loadAgent: loadRemoteDesktopAgentForUser,
   loadGrant: loadOmarchyNativeActivationGrant,
   executeGuardian: executeOmarchyGuardianAction,
   revokeSession: revokeRemoteDesktopSession,
-  wait: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  wait: waitForMilliseconds,
 };
 
 const STOP_ATTEMPTS = 40;

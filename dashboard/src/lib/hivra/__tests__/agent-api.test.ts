@@ -688,7 +688,7 @@ describe("telegram box calls are bounded (regression: silent hang)", () => {
     expect(res).toEqual({ connected: false, active: false, ownerId: null });
   });
 
-  it("telegramDisconnect sends an AbortSignal and never throws (best-effort)", async () => {
+  it("telegramDisconnect sends an AbortSignal and resolves when the box disconnects", async () => {
     const dcFetch = jest.fn().mockResolvedValue({ ok: true } as Response);
     global.fetch = dcFetch;
     await expect(telegramDisconnect(BOX, "tok")).resolves.toBeUndefined();
@@ -696,6 +696,18 @@ describe("telegram box calls are bounded (regression: silent hang)", () => {
       expect.stringContaining("/api/telegram/disconnect"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("telegramDisconnect throws when the box refuses or the request fails (the bot may still be live)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "failed" }),
+    } as unknown as Response);
+    await expect(telegramDisconnect(BOX, "tok")).rejects.toThrow("failed");
+
+    global.fetch = jest.fn().mockRejectedValue(new TypeError("fetch failed"));
+    await expect(telegramDisconnect(BOX, "tok")).rejects.toThrow("fetch failed");
   });
 });
 

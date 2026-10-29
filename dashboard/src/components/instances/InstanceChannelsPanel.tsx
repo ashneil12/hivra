@@ -22,16 +22,9 @@ import { SafePortal } from "@/components/ui/SafePortal";
 import { InstanceTelegramConnect } from "@/components/instances/InstanceTelegramConnect";
 import { InstanceChannelConnect } from "@/components/instances/InstanceChannelConnect";
 import { CHANNEL_SURFACE } from "@/lib/integrations/channel-surface";
+import { readJson } from "@/lib/client/read-json";
 
 type StatusMap = Record<string, { configured?: boolean; partial?: boolean }>;
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try {
-    return (await r.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
 
 // Under 640px a channel's connect flow replaces the tile grid in place rather
 // than stacking a second full-screen dialog over the channels modal.

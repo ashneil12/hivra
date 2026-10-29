@@ -154,9 +154,12 @@ export async function databaseRestorePreamble(sqlFile) {
     lines.close();
   }
   if (tables.size === 0) fail("The database backup contains no restorable tables.");
+  // No CASCADE: PostgreSQL would also empty every table outside the dump that
+  // references these tables. Without it, TRUNCATE refuses and psql (ON_ERROR_STOP)
+  // aborts the restore before any data is loaded.
   return [
     "SET session_replication_role = replica;",
-    `TRUNCATE TABLE ${[...tables].sort().join(", ")} RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE ${[...tables].sort().join(", ")} RESTART IDENTITY;`,
     "",
   ].join("\n");
 }

@@ -28,6 +28,7 @@ import {
   getChannelSurfaceMeta,
   type ChannelConnectStyle,
 } from "@/lib/integrations/channel-surface";
+import { readJson } from "@/lib/client/read-json";
 
 // Instrumentation must never make the connect flow throw.
 function captureChannelEvent(event: string, properties: Record<string, unknown>) {
@@ -51,14 +52,6 @@ function isAbortError(e: unknown): boolean {
 
 const SAVE_TIMEOUT_MESSAGE =
   "Saving is taking longer than expected — your agent may still be restarting. Try again in a moment.";
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try {
-    return (await r.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
 
 const mono: React.CSSProperties = {
   fontFamily: "var(--font-mono), monospace",

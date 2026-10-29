@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useMediaQuery } from '@/lib/client/media-query';
 import { UserButton } from '@clerk/nextjs';
 import { AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
@@ -53,13 +54,6 @@ export function getDashboardSidebarToggleStyle(isExpanded: boolean): React.CSSPr
 }
 
 const COMPACT_RAIL_QUERY = '(min-width: 768px) and (max-width: 1023px)';
-function subscribeCompactRail(onChange: () => void) {
-  const query = window.matchMedia(COMPACT_RAIL_QUERY);
-  query.addEventListener('change', onChange);
-  return () => query.removeEventListener('change', onChange);
-}
-function compactRailSnapshot() { return window.matchMedia(COMPACT_RAIL_QUERY).matches; }
-function serverCompactRailSnapshot() { return false; }
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
   userName, userEmail, accountCode, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
@@ -71,7 +65,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const { copy } = useLocale();
   const dashboard = copy.dashboard;
   const [isExpanded, setIsExpanded] = useState(true);
-  const compactRail = useSyncExternalStore(subscribeCompactRail, compactRailSnapshot, serverCompactRailSnapshot);
+  const compactRail = useMediaQuery(COMPACT_RAIL_QUERY);
   const [compactExpanded, setCompactExpanded] = useState(false);
   const toggleButton = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);

@@ -435,6 +435,37 @@ describe("Base RPC 429 resilience (issue #362)", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it("times out a stalled Base RPC request with a signal and retries it (no unbounded hang)", async () => {
+    const settleQuote = jest.fn();
+    const sleeps: number[] = [];
+    // Every attempt is aborted by its request timeout, as a stalled provider would be.
+    const fetchImpl = jest.fn(async (_url: string, init: { signal?: AbortSignal }) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: createMemoryDb([quoteRow]),
+      rpcUrl: "https://base.test",
+      fetchImpl: fetchImpl as never,
+      settleQuote,
+      now: new Date("2026-05-16T10:22:00.000Z"),
+      interQuoteDelayMs: 0,
+      rpcRetryConfig: { maxAttempts: 3, baseDelayMs: 5, maxDelayMs: 20 },
+      rpcSleepImpl: async (ms: number) => {
+        sleeps.push(ms);
+      },
+      rpcRandom: () => 1,
+    });
+
+    expect(summary.failed).toBe(1);
+    expect(summary.results[0].errorMessage).toBe("Base RPC eth_blockNumber timed out after 10000 ms");
+    expect(settleQuote).not.toHaveBeenCalled();
+    // The timeout is retryable: all 3 attempts were made, with 2 backoff sleeps.
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleeps).toHaveLength(2);
+  });
+
   it("does NOT retry a deterministic JSON-RPC error body (no wasted rate-limit budget)", async () => {
     const settleQuote = jest.fn();
     const sleeps: number[] = [];

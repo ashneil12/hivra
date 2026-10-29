@@ -170,13 +170,30 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if user already has a subscription record
-    const { data: existingSub } = await supabaseAdmin
+    const { data: existingSub, error: existingSubError } = await supabaseAdmin
       .from("hermes_subscriptions")
       .select(
         "stripe_customer_id, stripe_subscription_id, plan, status, updated_at, signup_attribution"
       )
       .eq("user_id", clerkUserId)
       .maybeSingle();
+
+    // A failed read is not "no subscription". Treating it as new would create a
+    // second Stripe customer and overwrite a live paid row, so stop before any
+    // Stripe or DB write and let the client retry.
+    if (existingSubError) {
+      return apiError(
+        "Unable to check your subscription right now. Please try again.",
+        503,
+        {
+          failureType: "billing_subscribe_existing_read_failed",
+          errorCode:
+            typeof existingSubError.code === "string" ? existingSubError.code : undefined,
+          detailsPresent: Boolean(existingSubError.details),
+          hintPresent: Boolean(existingSubError.hint),
+        }
+      );
+    }
 
     // Write-once first-touch attribution: persist only when the client sent a
     // stash AND the row doesn't already carry one. Otherwise the field is

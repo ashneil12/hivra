@@ -21,8 +21,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ authenticated: false }, { status: 401 });
     }
     const state = await loadLocalOperatorState();
+    // The session stays in the httpOnly cookie. The token is never echoed into
+    // the body, where page scripts could read it; server routes accept the cookie.
     return NextResponse.json({
-      accessToken: token,
       authenticated: true,
       user: createLocalOperatorUser(state.publicMetadata),
     });

@@ -274,27 +274,56 @@ export async function POST(req: NextRequest) {
     });
 
     // ── 6. Optimistic DB update (webhook will also confirm this) ─────────────
-    await supabaseAdmin
-      .from("hermes_subscriptions")
-      .update({
-        plan: newPlan,
-        instance_limit: targetPlan.maxAgents,
-        total_cpu_budget: targetPlan.totalCpu,
-        total_ram_budget: targetPlan.totalRam,
-        excess_resources: false,
-        updated_at: new Date().toISOString(),
-        // Conversion stamp (write-once): only a free->paid transition counts
-        // as the first upgrade. Paid->paid plan changes OMIT the keys so the
-        // original conversion timestamp can never move. (Free rows are
-        // currently routed to checkout above, so this is defensive.)
-        ...(wasFreePlan
-          ? {
-              upgraded_at: new Date().toISOString(),
-              upgrade_source: "change_plan",
-            }
-          : {}),
-      })
-      .eq("user_id", clerkUserId);
+    // Stripe has already applied the proration, so a failed local write must not
+    // pass silently: retry once, then log and say so in the response. The
+    // customer.subscription.updated webhook rewrites this row from the Stripe
+    // subscription metadata (which carries newPlan) and is the backstop.
+    const optimisticPlanUpdate = {
+      plan: newPlan,
+      instance_limit: targetPlan.maxAgents,
+      total_cpu_budget: targetPlan.totalCpu,
+      total_ram_budget: targetPlan.totalRam,
+      excess_resources: false,
+      updated_at: new Date().toISOString(),
+      // Conversion stamp (write-once): only a free->paid transition counts
+      // as the first upgrade. Paid->paid plan changes OMIT the keys so the
+      // original conversion timestamp can never move. (Free rows are
+      // currently routed to checkout above, so this is defensive.)
+      ...(wasFreePlan
+        ? {
+            upgraded_at: new Date().toISOString(),
+            upgrade_source: "change_plan",
+          }
+        : {}),
+    };
+
+    let dbSyncFailure: { code?: unknown; message?: string } | null = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { error: planWriteError } = await supabaseAdmin
+        .from("hermes_subscriptions")
+        .update(optimisticPlanUpdate)
+        .eq("user_id", clerkUserId);
+      dbSyncFailure = planWriteError;
+      if (!planWriteError) break;
+    }
+
+    if (dbSyncFailure) {
+      log.error(
+        "change-plan applied the Stripe plan change but the local plan write failed",
+        new Error(dbSyncFailure.message || "change_plan_db_sync_failed"),
+        {
+          source: "billing-change-plan",
+          route: "/api/billing/change-plan",
+          method: "POST",
+          failureType: "change_plan_db_sync_failed",
+          userId: clerkUserId,
+          subscriptionId: sub.stripe_subscription_id,
+          previousPlan: currentPlan,
+          newPlan,
+          errorCode: typeof dbSyncFailure.code === "string" ? dbSyncFailure.code : undefined,
+        }
+      );
+    }
 
     // ── 7. Apply the tier change inline (idempotent) ─────────────────────────
     // The resulting customer.subscription.updated webhook ALSO calls
@@ -366,6 +395,15 @@ export async function POST(req: NextRequest) {
       message: isUpgrade
         ? `Successfully upgraded to ${targetPlan.name}. Prorated charge applied.`
         : `Switched to ${targetPlan.name}. You'll get account credit for the unused time on your previous plan.`,
+      // Only present when the local row could not be written after Stripe
+      // accepted the change; the webhook is expected to bring the row in line.
+      ...(dbSyncFailure
+        ? {
+            syncPending: true,
+            warning:
+              "Your plan change was saved with Stripe, but your account limits have not updated yet. They will update automatically; contact support if they do not.",
+          }
+        : {}),
     });
   } catch (err) {
     if (err instanceof Stripe.errors.StripeError) {

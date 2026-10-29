@@ -98,6 +98,22 @@ describe("workspace-cloud-billing-service", () => {
       expect(opts).toEqual({ onConflict: "user_id" });
     });
 
+    it("never accepts an inherited Object.prototype member as the plan key from metadata", async () => {
+      // Regression: `plan in WORKSPACE_CLOUD_PLANS` is true for "constructor"
+      // and "toString" (inherited), so a bogus metadata plan was written as-is.
+      const upsert = jest.fn().mockResolvedValue({ error: null });
+      (supabaseAdmin!.from as jest.Mock).mockReturnValue({ upsert });
+
+      await handleWorkspaceCloudSubscriptionChange(
+        makeSubscription({
+          items: { data: [{ price: { id: "price_unknown" }, current_period_end: 1893456000 }] } as unknown as Stripe.Subscription["items"],
+          metadata: { surface: "workspace_cloud", user_id: "user_abc", plan: "constructor" } as Stripe.Metadata,
+        })
+      );
+
+      expect(upsert.mock.calls[0][0]).toMatchObject({ plan: "ws_cloud_pro" });
+    });
+
     it("maps non-entitling Stripe statuses to canceled", async () => {
       const upsert = jest.fn().mockResolvedValue({ error: null });
       (supabaseAdmin!.from as jest.Mock).mockReturnValue({ upsert });

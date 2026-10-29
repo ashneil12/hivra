@@ -21,7 +21,7 @@ import {
 } from "@/lib/venice/managed-credit-topup";
 import {
   PlatformTokenPriceGateError,
-  fetchHermesPriceCrossCheck,
+  fetchPlatformTokenPriceCrossCheckForQuote,
   fetchPlatformTokenPriceUsd,
   isHermesPriceFresh,
   priceGateRefusalFromError,
@@ -1160,10 +1160,11 @@ export async function createManagedVeniceTokenQuote(
   // price was already checked against), not an independent source. The gated
   // price is already min(spot, median), so this only bites for an injected
   // price quote that sits more than MANAGED_VENICE_PRICE_MAX_DISAGREEMENT_BPS
-  // above the median.
+  // above the median. It is read from the pool pair the gated price came from,
+  // so the deposit does not read the spot pool a second time.
   const crossCheckQuote =
     params.crossCheckQuote === undefined
-      ? await fetchHermesPriceCrossCheck(token).catch((error: unknown) => {
+      ? await fetchPlatformTokenPriceCrossCheckForQuote(token, priceQuote).catch((error: unknown) => {
           throw new ManagedVeniceTokenQuotePriceError(
             `Managed Venice token deposits are temporarily disabled: ${error instanceof Error ? error.message : String(error)}`,
             {

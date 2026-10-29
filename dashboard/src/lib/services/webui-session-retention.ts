@@ -1,3 +1,5 @@
+import { shellSingleQuote } from "@/lib/tools/tmux-sheet";
+
 /**
  * How long a web-chat session keeps running after its browser tab goes away,
  * and how many such sessions stay in memory.
@@ -493,11 +495,6 @@ if __name__ == "__main__":
         print(LABEL + " " + str(error) + "; no further config changes applied", file=sys.stderr)
         sys.exit(1)
 `;
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 /**
  * Update-mode step for buildWebUIBootstrapScript: pin the web-chat session
  * retention settings in the persisted /state/config.yaml (and the instance-dir

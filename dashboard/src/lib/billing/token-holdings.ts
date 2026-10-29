@@ -759,8 +759,9 @@ async function storeTokenHoldingSnapshot(params: {
 /**
  * Fold a wallet's staked VVV into its VVV balance check so the Venice boost
  * counts liquid + staked together. No-op for non-VVV tokens or when no staking
- * contract is configured. A staking-read failure is swallowed (counts 0 staked)
- * so a transient staking-RPC error can never strip a user's liquid-VVV boost.
+ * contract is configured. Returns null when the staked balance could not be
+ * read: the liquid-only figure would undercount, so the caller stores no VVV
+ * snapshot this tick and the last good snapshot keeps counting.
  */
 async function withStakedVvv(
   balance: HermesTokenBalanceCheck,
@@ -770,7 +771,7 @@ async function withStakedVvv(
     env?: Record<string, string | undefined>;
     rpcOptions?: RpcCallOptions;
   }
-): Promise<HermesTokenBalanceCheck> {
+): Promise<HermesTokenBalanceCheck | null> {
   if (balance.tokenAddress !== VVV_TOKEN_ADDRESS) return balance;
   if (!getVvvStakingContractAddress(opts.env)) return balance;
 
@@ -784,7 +785,7 @@ async function withStakedVvv(
       rpcOptions: opts.rpcOptions,
     });
   } catch {
-    return balance;
+    return null;
   }
   if (stakedRaw <= 0n) return balance;
 
@@ -841,6 +842,9 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
         rpcOptions: params.rpcOptions,
       }
     );
+    // Staked VVV could not be read: store no VVV snapshot this tick, so the
+    // Venice boost keeps the last good one instead of an undercount.
+    if (!balance) continue;
     snapshots.push(await storeTokenHoldingSnapshot({
       db: admin,
       userId: params.userId,

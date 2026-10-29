@@ -16,8 +16,7 @@ import {
   startWindowsIsoDownload,
   WindowsByoIsoError,
 } from "@/lib/infrastructure/windows-byo-iso";
-
-function noStore(response: Response) { response.headers.set("Cache-Control", "no-store"); return response; }
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 function errorResponse(error: WindowsByoIsoError) {
   const status = error.code === "invalid_request" ? 400

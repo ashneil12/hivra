@@ -86,6 +86,15 @@ export interface ParkIdleHivraOptions {
   limit?: number;
 }
 
+// The cron route runs with maxDuration 300s and each park can take up to ~40s on
+// the host (graceful shutdown, then stop). Stop starting new parks once this much
+// of the run is spent; the rows not reached stay `running` and the next run takes them.
+export const IDLE_PARK_SWEEP_TIME_BUDGET_MS = 200_000;
+
+export function idleParkTimeBudgetSpent(startedAtMs: number, nowMs: number): boolean {
+  return nowMs - startedAtMs >= IDLE_PARK_SWEEP_TIME_BUDGET_MS;
+}
+
 function idleDaysSince(createdAt: string, nowMs: number): number {
   const t = Date.parse(createdAt);
   if (!Number.isFinite(t)) return 0;
@@ -156,6 +165,7 @@ export async function runParkIdleHivraAgentsSweep(
   const rows = (data ?? []) as IdleAgentRow[];
   summary.scanned = rows.length;
 
+  const sweepStartedAt = Date.now();
   for (const row of rows) {
     const idleDays = idleDaysSince(row.created_at, nowMs);
     if (!row.vmid) {
@@ -165,6 +175,15 @@ export async function runParkIdleHivraAgentsSweep(
     if (dryRun) {
       summary.results.push({ agentId: row.id, vmid: row.vmid, host: row.proxmox_host, action: "would_park", idleDays });
       continue;
+    }
+    if (idleParkTimeBudgetSpent(sweepStartedAt, Date.now())) {
+      log.warn("idle Hivra park sweep reached its time budget; remaining candidates wait for the next run", {
+        source: LOG_SOURCE,
+        failureType: "park_time_budget_spent",
+        parkedSoFar: summary.parked,
+        failedSoFar: summary.failed,
+      });
+      break;
     }
 
     try {

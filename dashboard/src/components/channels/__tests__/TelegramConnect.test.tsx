@@ -25,6 +25,20 @@ function adapter(status: TelegramConnectStatus, overrides: Partial<TelegramConne
 }
 
 describe("TelegramConnect", () => {
+  it("keeps the connected state and shows an error when disconnect fails", async () => {
+    const connected = adapter({ connected: true, active: true, ownerId: "42" }, {
+      disconnect: jest.fn().mockRejectedValue(new Error("HTTP 500")),
+    });
+    render(<TelegramConnect adapter={connected} agentName="Atlas" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect this bot" }));
+    await waitFor(() => expect(connected.disconnect).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Your bot is still connected/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Bot token" })).not.toBeInTheDocument();
+  });
+
   it("asks before disconnecting the bot, and Cancel keeps the binding", async () => {
     const connected = adapter({ connected: true, active: true, ownerId: "42" });
     render(<TelegramConnect adapter={connected} agentName="Atlas" />);

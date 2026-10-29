@@ -213,5 +213,40 @@ class StreamRequestTests(unittest.TestCase):
         self.assertEqual(len(started), hc.MAX_STREAMS)
 
 
+class ControlSessionTests(unittest.TestCase):
+    def test_non_object_json_from_the_relay_does_not_end_the_session(self):
+        # ws:// because the socketpair stands in for the relay; no TLS in the test.
+        connector = hc.Connector({"relay": "ws://127.0.0.1:1", "connectionId": CONNECTION, "generation": 1, "secret": SECRET, "target": ("127.0.0.1", 22)})
+        opened = []
+        connector.open_stream = opened.append
+        client_sock, server_sock = socket.socketpair()
+        server = ServerSide(server_sock)
+
+        def relay():
+            server.handshake()
+            for payload in [
+                b"[1, 2]",
+                b'"open"',
+                b"42",
+                b"null",
+                b'{"type":"open","stream":"stream0000000000000001"}',
+                b'{"type":"closing","reason":"revoked"}',
+            ]:
+                server.send_frame(0x1, payload)
+
+        thread = threading.Thread(target=relay)
+        thread.start()
+        original = socket.create_connection
+        socket.create_connection = lambda *args, **kwargs: client_sock
+        try:
+            outcome = connector.control_session()
+        finally:
+            socket.create_connection = original
+            thread.join()
+            server_sock.close()
+        self.assertEqual(outcome, "revoked")
+        self.assertEqual(opened, ["stream0000000000000001"])
+
+
 if __name__ == "__main__":
     unittest.main()

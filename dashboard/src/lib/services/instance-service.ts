@@ -2562,10 +2562,14 @@ export class InstanceService {
     }
 
     if (resolvedHost) {
+      // Same slot-freeing exclusions as the user budget below: a deleted or
+      // archived instance keeps its host_id and limits, and must not count.
       const { data: siblings } = await supabaseAdmin
         .from("hermes_instances")
         .select("cpu_limit, ram_limit")
-        .eq("host_id", resolvedHost.id);
+        .eq("host_id", resolvedHost.id)
+        .not("status", "in", '("deleted")')
+        .not("lifecycle_state", "in", SLOT_FREEING_LIFECYCLE_IN_LIST);
       const usedCpu = (siblings || []).reduce(
         (acc, row) => acc + (row.cpu_limit || 0),
         0
@@ -3535,20 +3539,26 @@ export class InstanceService {
     }
     if (infraProvider === "hetzner" && !finalHostId && result.serverId) {
       const specs = getServerSpecs(result.serverType || "cx23");
-      const { data: newHost, error: newHostError } = await supabaseAdmin
-        .from("hermes_hosts")
-        .insert({
-          user_id: userId,
-          hetzner_server_id: result.serverId,
-          name: `Host - ${name}`,
-          ipv4_address: result.ipv4,
-          ssh_host_fingerprint_sha256: result.sshHostFingerprint ?? null,
-          total_cpu: specs.cpu,
-          total_ram: specs.ram,
-          status: "provisioning",
-        })
-        .select()
-        .single();
+      const insertHostRow = () =>
+        supabaseAdmin!
+          .from("hermes_hosts")
+          .insert({
+            user_id: userId,
+            hetzner_server_id: result.serverId,
+            name: `Host - ${name}`,
+            ipv4_address: result.ipv4,
+            ssh_host_fingerprint_sha256: result.sshHostFingerprint ?? null,
+            total_cpu: specs.cpu,
+            total_ram: specs.ram,
+            status: "provisioning",
+          })
+          .select()
+          .single();
+      // The server is already billed and is never deleted here. One retry covers
+      // a transient insert failure before the gap is reported with the server id.
+      let hostInsert = await insertHostRow();
+      if (!hostInsert.data) hostInsert = await insertHostRow();
+      const { data: newHost, error: newHostError } = hostInsert;
       if (newHost) {
         finalHostId = newHost.id;
       } else {
