@@ -13,7 +13,8 @@ import { fakeConfig, silentLogger } from "./_fakes.js";
 // X-Forwarded-Uri (and X-Forwarded-Method) to the client's request URI. The
 // client cannot choose those values, so the verifier must read them. Its
 // X-Original-URI header is nothing Caddy sets, and a client can send it freely.
-const SECRET = "test-secret-at-least-16-chars-long";
+// The shared test signing key from _fakes, so no secret-shaped literal lives here.
+const SECRET = (fakeConfig() as { SIGNING_SECRET: string }).SIGNING_SECRET;
 const PAGE_PATH = "/browser-sidecar/novnc/vnc.html";
 const WEBSOCKET_PATH = "/browser-sidecar/novnc/websockify";
 
