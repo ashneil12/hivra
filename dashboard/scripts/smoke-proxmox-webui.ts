@@ -115,7 +115,7 @@ export async function main() {
       ok: result.ok,
       ...(result.ok
         ? { vmid: result.vmid, ipv4: result.ipv4, gatewayUrl: result.gatewayUrl }
-        : { error: result.error }),
+        : { error: maskHostOutput(result.error) }),
     });
 
     if (!result.ok) {

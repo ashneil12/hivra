@@ -96,6 +96,22 @@ describe("smoke-proxmox-webui output", () => {
     expect(printed).not.toContain("Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw");
   });
 
+  it("masks a secret-shaped provisioning error in the summary it prints", async () => {
+    const upstreamKey = `sk-or-v1-${"0f".repeat(32)}`;
+    (provisionProxmoxInstance as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: `host said ${upstreamKey}`,
+    });
+
+    await expect(main()).rejects.toThrow("provisioning returned not-ok");
+
+    const printed = [...logSpy.mock.calls, ...errorSpy.mock.calls, ...warnSpy.mock.calls]
+      .map((args) => inspect(args, { depth: null }))
+      .join("\n");
+    expect(printed).toContain("host said");
+    expect(printed).not.toContain(upstreamKey);
+  });
+
   it("keeps the bearer out of stdout on a KEEP_VM run and writes it to an owner-only file", async () => {
     process.env.KEEP_VM = "1";
     try {
