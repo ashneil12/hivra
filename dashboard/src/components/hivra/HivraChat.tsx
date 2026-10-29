@@ -19,6 +19,7 @@ import { getAdapter, type AgentKind, type ChatSink, type ToolStatus, type TurnOu
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { AGENT_MARKDOWN_COMPONENTS } from "@/components/markdown/agent-markdown-image";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { MemoryUsageBanner } from "@/components/memory/MemoryUsageBanner";
 import styles from "./HivraChat.module.css";
@@ -44,6 +45,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: stri
 });
 
 export const CHAT_MARKDOWN_COMPONENTS = {
+ ...AGENT_MARKDOWN_COMPONENTS,
  pre(props: { children?: React.ReactNode }) {
  const child = Children.toArray(props.children)[0];
  if (isValidElement<{ className?: string; children?: React.ReactNode }>(child)) {

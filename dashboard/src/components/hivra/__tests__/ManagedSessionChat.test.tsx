@@ -23,7 +23,8 @@ jest.mock("@/lib/hivra/managed-session-client", () => {
   };
 });
 
-import { ManagedSessionChat } from "../ManagedSessionChat";
+import { ManagedSessionChat, MD_COMPONENTS } from "../ManagedSessionChat";
+import { AgentMarkdownImage } from "@/components/markdown/agent-markdown-image";
 import type { ManagedSessionDto } from "@/lib/hivra/managed-session-contracts";
 
 class FakeEventSource {
@@ -201,4 +202,10 @@ it("reads a starting session back on a backing-off schedule, and skips reads whi
     hidden.mockRestore();
     jest.useRealTimers();
   }
+});
+
+describe("ManagedSessionChat markdown", () => {
+  it("routes agent-written images through the placeholder, so they never load on render", () => {
+    expect(MD_COMPONENTS.img).toBe(AgentMarkdownImage);
+  });
 });

