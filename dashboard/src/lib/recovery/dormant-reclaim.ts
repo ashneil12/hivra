@@ -8,6 +8,7 @@ import {
   deleteProxmoxInstance,
   getProxmoxHostRoutingConfigFromInfrastructure,
   getProxmoxInfrastructure,
+  removeProxmoxDormantArchive,
   type ProxmoxInfrastructure,
 } from "@/lib/services/proxmox-instance-service";
 import { DORMANT_ARCHIVE_NOT_STOPPED_MARKER } from "@/lib/services/proxmox/script-builders";
@@ -16,6 +17,8 @@ import { stripProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructur
 const LOG_SOURCE = "dormant-reclaim";
 const DEFAULT_RECLAIM_AFTER_DAYS = 7;
 const DEFAULT_BATCH_LIMIT = 10;
+
+type ProxmoxHostRoutingConfigArg = Parameters<typeof removeProxmoxDormantArchive>[1]["hostConfig"];
 
 type DormantCandidate = {
   id: string;
@@ -278,11 +281,13 @@ async function recordDormancyArchive(input: {
 
 // The row as it stands now. The sweep reads it at selection and again before each
 // destructive step, because the owner can start or edit the row in between (the
-// archive takes minutes). Every write bumps updated_at (hermes_instances trigger),
-// and the start route clears paused_reason.
+// archive takes minutes). Every write bumps updated_at (hermes_instances trigger), but
+// only a lifecycle change (the start route, a pause) moves last_lifecycle_transition_at,
+// and the start route also clears paused_reason.
 type DormantRowState = {
   lifecycle_state: string | null;
   paused_reason: string | null;
+  last_lifecycle_transition_at: string | null;
   updated_at: string | null;
   config: Record<string, unknown> | null;
 };
@@ -292,7 +297,7 @@ async function readDormantRowState(instanceId: string): Promise<DormantRowState 
 
   const { data, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("lifecycle_state, paused_reason, updated_at, config")
+    .select("lifecycle_state, paused_reason, last_lifecycle_transition_at, updated_at, config")
     .eq("id", instanceId)
     .maybeSingle();
 
@@ -303,18 +308,19 @@ async function readDormantRowState(instanceId: string): Promise<DormantRowState 
 }
 
 // True only while the row is still the paused row the sweep decided on: the same
-// pause reason and the same updated_at. Missing values never match.
-function rowStillMatches(
+// pause reason and the same lifecycle transition. Owner activity and settings saves
+// do not move either, so they do not count as the row changing. Missing values never match.
+function rowStillPaused(
   row: DormantRowState | null,
-  expected: { paused_reason: string | null; updated_at: string | null }
+  expected: { paused_reason: string | null; last_lifecycle_transition_at: string | null }
 ): row is DormantRowState {
   return (
     row !== null &&
     expected.paused_reason !== null &&
-    expected.updated_at !== null &&
+    expected.last_lifecycle_transition_at !== null &&
     row.lifecycle_state === "paused" &&
     row.paused_reason === expected.paused_reason &&
-    row.updated_at === expected.updated_at
+    row.last_lifecycle_transition_at === expected.last_lifecycle_transition_at
   );
 }
 
@@ -388,23 +394,25 @@ function readRecordedDormantArchive(
 
 // Records the archive on the row and moves it to the intermediate 'dormant_reclaiming'
 // reason, which the candidate query still selects, so a crash before the destroy is
-// retried by a later sweep. The write only lands while the row is still the paused
-// row the sweep selected (same reason, same updated_at), so a Start or settings save
-// during the archive leaves the row alone. Returns the updated_at it wrote, or null
-// when the row changed and the VM must not be destroyed.
+// retried by a later sweep. The write only lands while the row is still the paused row
+// the sweep selected (same lifecycle transition and reason), so an owner Start during the
+// archive leaves the row alone. Owner activity during the archive does not abort it.
+// Returns false when the row changed and the VM must not be destroyed.
 async function markDormantArchiveRecorded(input: {
   candidate: DormantCandidate;
   archiveId: string;
   archivePath: string;
   nowIso: string;
-}): Promise<string | null> {
+}): Promise<boolean> {
   if (!supabaseAdmin) throw new Error("Database not configured");
   const { candidate } = input;
-  if (!candidate.paused_reason || !candidate.updated_at) return null;
+  if (!candidate.paused_reason || !candidate.last_lifecycle_transition_at) return false;
 
-  // Merge into the config as it is now, not the snapshot taken at selection.
+  // Re-read right before the write. The config merge then keeps any settings the owner
+  // saved during the archive, and the compare-and-swap on updated_at below fails only
+  // for a write that lands between this read and the update.
   const current = await readDormantRowState(candidate.id);
-  if (!rowStillMatches(current, candidate)) return null;
+  if (!current?.updated_at || !rowStillPaused(current, candidate)) return false;
 
   const { data, error } = await supabaseAdmin
     .from("hermes_instances")
@@ -436,16 +444,48 @@ async function markDormantArchiveRecorded(input: {
     .eq("id", candidate.id)
     .eq("lifecycle_state", "paused")
     .eq("paused_reason", candidate.paused_reason)
-    .eq("updated_at", candidate.updated_at)
-    .select("updated_at")
+    .eq("last_lifecycle_transition_at", candidate.last_lifecycle_transition_at)
+    .eq("updated_at", current.updated_at)
+    .select("id")
     .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to mark dormant archive recorded: ${error.message}`);
   }
-  return data && typeof data === "object" && "updated_at" in data
-    ? String(data.updated_at)
-    : null;
+  return data !== null;
+}
+
+// The row changed while the disk was being archived, so the VM stays as the owner has
+// it and the dump is no use to anyone: a copy of a guest that still runs. Remove the file
+// first, and only then the manifest row that points at it, so a failed removal leaves
+// both in place and consistent.
+async function discardAbandonedDormantArchive(input: {
+  infrastructure: ProxmoxInfrastructure;
+  hostConfig: ProxmoxHostRoutingConfigArg;
+  archiveDir: string;
+  archiveId: string;
+  archivePath: string;
+}) {
+  if (!supabaseAdmin) throw new Error("Database not configured");
+
+  const removed = await removeProxmoxDormantArchive(input.infrastructure, {
+    archiveDir: input.archiveDir,
+    archivePath: input.archivePath,
+    hostConfig: input.hostConfig,
+  });
+  if (!removed.ok) {
+    throw new Error(
+      removed.error || removed.stderr || "Failed to remove the abandoned dormant archive"
+    );
+  }
+
+  const { error } = await supabaseAdmin
+    .from("instance_dormancy_archives")
+    .delete()
+    .eq("id", input.archiveId);
+  if (error) {
+    throw new Error(`Failed to remove abandoned dormancy archive record: ${error.message}`);
+  }
 }
 
 // Logs a reclaim the sweep abandoned because the owner changed the row (or started
@@ -578,14 +618,10 @@ export async function runDormantReclaimSweep(
 
       let archiveId: string;
       let archivePath: string;
-      // The updated_at the destroy must find the row at. A write by anyone else
-      // moves it, and the VM is left alone.
-      let expectedUpdatedAt: string | null;
 
       if (recorded) {
         archiveId = recorded.archiveId;
         archivePath = recorded.archivePath;
-        expectedUpdatedAt = candidate.updated_at;
         log.info("dormant reclaim resuming from recorded archive", {
           source: LOG_SOURCE,
           instanceId: candidate.id,
@@ -596,7 +632,7 @@ export async function runDormantReclaimSweep(
         // The owner may have started the VM after the sweep read this row. Don't
         // dump a row that has moved on: the dump can stop a running guest.
         const beforeArchive = await readDormantRowState(candidate.id);
-        if (!rowStillMatches(beforeArchive, candidate)) {
+        if (!rowStillPaused(beforeArchive, candidate)) {
           skipped += 1;
           logDormantRowChanged(candidate, "before archive", infrastructure);
           continue;
@@ -645,20 +681,25 @@ export async function runDormantReclaimSweep(
           nowIso,
         });
         archivePath = resolvedPath;
-        archived += 1;
 
-        // Mark the archive recorded BEFORE destroy, keeping the row in the
-        // reclaimable 'dormant_reclaiming' state so a crash before destroy is
-        // retried by a later sweep instead of orphaning a live VM. If the row has
-        // changed since selection, the archive record and file stay as a backup of
-        // the VM at archive time.
-        const markedUpdatedAt = await markDormantArchiveRecorded({
+        // Mark the archive recorded BEFORE destroy, keeping the row in the reclaimable
+        // 'dormant_reclaiming' state so a crash before destroy is retried by a later
+        // sweep instead of orphaning a live VM. If an owner Start landed during the
+        // archive, the dump is discarded and the VM is left as the owner has it.
+        const marked = await markDormantArchiveRecorded({
           candidate,
           archiveId,
           archivePath,
           nowIso,
         });
-        if (markedUpdatedAt === null) {
+        if (!marked) {
+          await discardAbandonedDormantArchive({
+            infrastructure,
+            hostConfig,
+            archiveDir,
+            archiveId,
+            archivePath,
+          });
           skipped += 1;
           logDormantRowChanged(candidate, "while archiving", infrastructure, {
             archiveId,
@@ -666,16 +707,17 @@ export async function runDormantReclaimSweep(
           });
           continue;
         }
-        expectedUpdatedAt = markedUpdatedAt;
+        archived += 1;
       }
 
       // Last check before the destroy: the row must still be the dormant_reclaiming
-      // row this run recorded or resumed. Any start or save since then aborts.
+      // row this run recorded or resumed. A Start since then aborts. Owner activity
+      // and settings saves do not, and the terminal write keeps the config as it is.
       const beforeDestroy = await readDormantRowState(candidate.id);
       if (
-        !rowStillMatches(beforeDestroy, {
+        !rowStillPaused(beforeDestroy, {
           paused_reason: "dormant_reclaiming",
-          updated_at: expectedUpdatedAt,
+          last_lifecycle_transition_at: candidate.last_lifecycle_transition_at,
         })
       ) {
         skipped += 1;

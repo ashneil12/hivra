@@ -59,6 +59,7 @@ import {
   PROXMOX_VM_MISSING_MARKER,
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxDeleteScript,
+  buildProxmoxDormantArchiveRemoveScript,
   buildProxmoxDormantArchiveScript,
   buildProxmoxInfrastructureDiscoveryScript,
   buildProxmoxMetricsScript,
@@ -105,6 +106,7 @@ export {
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxCaddySiteCleanupScript,
   buildProxmoxDeleteScript,
+  buildProxmoxDormantArchiveRemoveScript,
   buildProxmoxDormantArchiveScript,
   buildProxmoxGuestBootstrapScript,
   buildProxmoxInfrastructureDiscoveryScript,
@@ -2548,6 +2550,29 @@ export async function archiveProxmoxDormantInstance(
     vmid: infrastructure.vmid,
     archiveDir: params.archiveDir,
     instanceId: params.instanceId,
+  });
+  const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
+  return runner(script);
+}
+
+/** Removes a dormant dump the reclaim sweep abandoned. Only a vzdump file in archiveDir is removed. */
+export async function removeProxmoxDormantArchive(
+  infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
+  params: {
+    archiveDir: string;
+    archivePath: string;
+    hostConfig?: ProxmoxHostRoutingConfig | null;
+  },
+  deps: ProxmoxHostAwareDeps = {}
+): Promise<HostScriptResult> {
+  const env = params.hostConfig
+    ? resolveProxmoxHostEnv(params.hostConfig, deps.env ?? process.env)
+    : deps.hostConfig
+      ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
+      : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
+  const script = buildProxmoxDormantArchiveRemoveScript({
+    archiveDir: params.archiveDir,
+    archivePath: params.archivePath,
   });
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
   return runner(script);

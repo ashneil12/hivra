@@ -6,6 +6,7 @@ import {
   deleteProxmoxInstance,
   getProxmoxInfrastructure,
   getProxmoxHostRoutingConfigFromInfrastructure,
+  removeProxmoxDormantArchive,
 } from "@/lib/services/proxmox-instance-service";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
@@ -17,6 +18,7 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
   deleteProxmoxInstance: jest.fn(),
   getProxmoxInfrastructure: jest.fn(),
   getProxmoxHostRoutingConfigFromInfrastructure: jest.fn(() => null),
+  removeProxmoxDormantArchive: jest.fn(),
 }));
 
 const NOW = new Date("2026-05-14T20:30:00.000Z");
@@ -136,8 +138,11 @@ type InstanceDb = {
   ownerStarts: () => void;
   /** The owner saves settings: config replaced, updated_at bumped. */
   ownerSavesConfig: (config: Row) => void;
+  /** The owner's activity lands: last_activity_at and updated_at bumped, lifecycle untouched. */
+  ownerRecordsActivity: () => void;
   instanceUpdate: jest.Mock;
   archiveInsert: jest.Mock;
+  archiveDelete: jest.Mock;
 };
 
 // A stand-in for public.hermes_instances. The candidate query reads the
@@ -184,12 +189,19 @@ function installDatabase(options: {
     ownerSavesConfig: (config: Row) => {
       live = { ...live, config, updated_at: stamp() };
     },
+    ownerRecordsActivity: () => {
+      const at = new Date(Date.parse("2026-05-14T20:00:00.000Z") + writes * 1000 + 500).toISOString();
+      live = { ...live, last_activity_at: at, updated_at: stamp() };
+    },
     instanceUpdate,
     archiveInsert: jest.fn().mockReturnValue({
       select: jest.fn().mockReturnValue({
         single: jest.fn().mockResolvedValue({ data: { id: "archive_610" }, error: null }),
       }),
     }),
+    archiveDelete: jest.fn(() => ({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    })),
   };
 
   const instanceSelect = () => {
@@ -207,7 +219,9 @@ function installDatabase(options: {
     if (table === "hermes_instances") {
       return { select: jest.fn(() => instanceSelect()), update: instanceUpdate };
     }
-    if (table === "instance_dormancy_archives") return { insert: db.archiveInsert };
+    if (table === "instance_dormancy_archives") {
+      return { insert: db.archiveInsert, delete: db.archiveDelete };
+    }
     if (table === "instance_usage_snapshots") return makeAgentUsageQuery(options.usage ?? {});
     throw new Error(`Unexpected table: ${table}`);
   });
@@ -235,6 +249,11 @@ describe("runDormantReclaimSweep", () => {
     (deleteProxmoxInstance as jest.Mock).mockResolvedValue({
       ok: true,
       stdout: "deleted",
+      stderr: "",
+    });
+    (removeProxmoxDormantArchive as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout: "HERMES_DORMANT_ARCHIVE_REMOVED /mnt/hermes-dormant/vzdump-qemu-610.vma.zst\n",
       stderr: "",
     });
   });
@@ -528,6 +547,64 @@ describe("runDormantReclaimSweep", () => {
       // The owner's running row is left as the owner wrote it, not stamped
       // dormant_reclaiming by the sweep.
       expect(db.live()).toMatchObject({ status: "running", lifecycle_state: "active", paused_reason: null });
+      // The dump of the still-running guest is removed from the host first, and only then
+      // its manifest row, so the record never points at a file that is gone.
+      expect(removeProxmoxDormantArchive).toHaveBeenCalledWith(
+        infra,
+        expect.objectContaining({
+          archiveDir: "/mnt/hermes-dormant",
+          archivePath: "/mnt/hermes-dormant/vzdump-qemu-610.vma.zst",
+        })
+      );
+      expect(db.archiveDelete).toHaveBeenCalledTimes(1);
+      expect((removeProxmoxDormantArchive as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        db.archiveDelete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("keeps the record when the host cannot remove the abandoned dump", async () => {
+      setCommitEnv();
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (archiveProxmoxDormantInstance as jest.Mock).mockImplementationOnce(async () => {
+        db.ownerStarts();
+        return archiveOk();
+      });
+      (removeProxmoxDormantArchive as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "rm: permission denied",
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ reclaimed: 0, failed: 1 });
+      // The file is still there, so its manifest row must stay too.
+      expect(db.archiveDelete).not.toHaveBeenCalled();
+      expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    });
+
+    it("keeps archiving when the owner only records activity or saves settings during the archive", async () => {
+      // Owner activity writes updated_at without a lifecycle change. It must not abort the
+      // reclaim, which would leave a full dump on disk to be taken again tomorrow.
+      setCommitEnv();
+      const ownerConfig = { infrastructure: infra, settings: { model: "owner-choice" } };
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (archiveProxmoxDormantInstance as jest.Mock).mockImplementationOnce(async () => {
+        db.ownerRecordsActivity();
+        db.ownerSavesConfig(ownerConfig);
+        return archiveOk();
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ archived: 1, reclaimed: 1, skipped: 0, failed: 0 });
+      expect(removeProxmoxDormantArchive).not.toHaveBeenCalled();
+      expect(db.archiveDelete).not.toHaveBeenCalled();
+      expect(deleteProxmoxInstance).toHaveBeenCalledTimes(1);
+      // The marker is written from the row as the owner left it, so the settings survive.
+      expect(db.instanceUpdate.mock.calls[0]?.[0].config).toEqual(
+        expect.objectContaining({ settings: { model: "owner-choice" } })
+      );
     });
 
     it("does not destroy a VM whose owner started after the archive was recorded", async () => {

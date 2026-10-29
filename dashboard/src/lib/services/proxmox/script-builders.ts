@@ -1867,6 +1867,29 @@ echo "HERMES_DORMANT_ARCHIVE_PATH=$archive_path"
 echo "HERMES_DORMANT_ARCHIVE_SIZE_BYTES=$archive_size_bytes"
 `;
 }
+
+/**
+ * Removes a dormant dump the sweep abandoned. The path must be a vzdump file held
+ * directly in the archive directory; any other path is refused (exit 46) and left alone.
+ */
+export function buildProxmoxDormantArchiveRemoveScript(params: {
+  archiveDir: string;
+  archivePath: string;
+}): string {
+  const archiveDir = params.archiveDir.replace(/\/+$/g, "");
+  return `#!/usr/bin/env bash
+set -euo pipefail
+ARCHIVE_DIR=${shQuote(archiveDir)}
+ARCHIVE_PATH=${shQuote(params.archivePath)}
+if [ "$(dirname -- "$ARCHIVE_PATH")" != "$ARCHIVE_DIR" ] || [[ "$(basename -- "$ARCHIVE_PATH")" != vzdump-qemu-* ]]; then
+  echo "HERMES_DORMANT_ARCHIVE_REMOVE_REFUSED $ARCHIVE_PATH" >&2
+  exit 46
+fi
+rm -f -- "$ARCHIVE_PATH"
+echo "HERMES_DORMANT_ARCHIVE_REMOVED $ARCHIVE_PATH"
+`;
+}
+
 export function buildProxmoxResizeScript(params: {
   vmid: number;
   /** The row's instance id. A VMID holding any other VM is never resized. */
