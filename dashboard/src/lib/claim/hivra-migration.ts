@@ -33,10 +33,13 @@ import { getOpenHivraAirdrop } from "./hivra-airdrop-data";
 import { lookupHivraAirdrop } from "./hivra-airdrop-lookup";
 import { resolveAirdropFacts, type AirdropSnapshot } from "./conversion-state";
 import { NO_CLAIM, readSablierCampaignUrl, readUtcInstant, type ResolvedHivraClaim } from "./hivra-claim";
+import { TOKEN_RECEIPTS, type TokenReceiptEntry, type TokenReceiptKind } from "@/lib/token-receipts/token-receipts-config";
+
 import {
   HIVRA_MIGRATION,
   type HivraMigrationConfig,
   type HivraMigrationFee,
+  type HivraMigrationReceipt,
   type HivraMigrationReceiptKind,
 } from "./hivra-migration-config";
 
@@ -105,7 +108,8 @@ export type ServedHivraMigration = ValidatedHivraMigration & {
   claim: ResolvedHivraClaim;
 };
 
-function readDate(value: string | null | undefined): (MigrationDate & { ms: number }) | null {
+/** A real UTC date ("2026-11-04") or instant to the second, else null. */
+export function readMigrationDate(value: string | null | undefined): (MigrationDate & { ms: number }) | null {
   const text = typeof value === "string" ? value.trim() : "";
   const dateOnly = UTC_DATE.test(text);
   if (!dateOnly && !UTC_INSTANT.test(text)) return null;
@@ -174,7 +178,7 @@ export function validateHivraMigrationConfig(
   const nowMs = now.getTime();
   const claimClosesMs = typeof claimClosesAt === "string" ? readUtcInstant(claimClosesAt) : null;
 
-  let announced = config.announcedAt ? readDate(config.announcedAt) : null;
+  let announced = config.announcedAt ? readMigrationDate(config.announcedAt) : null;
   if (config.announcedAt && (!announced || announced.dateOnly)) {
     problems.push("announcedAt must be a real UTC instant to the second, e.g. 2026-10-21T16:00:00Z");
     announced = null;
@@ -219,7 +223,7 @@ export function validateHivraMigrationConfig(
     const headStartDays = field("headStartDays", f.headStartDays !== null, isWholeInRange(f.headStartDays, 365) ? f.headStartDays : null);
     const weeks = field("weeks", f.weeks !== null, isWholeInRange(f.weeks, 104) ? f.weeks : null);
 
-    let saleStart = f.saleStart ? readDate(f.saleStart) : null;
+    let saleStart = f.saleStart ? readMigrationDate(f.saleStart) : null;
     if (f.saleStart && !saleStart) problems.push("founder.saleStart must be a real UTC date or instant");
     if (saleStart && announced) {
       const earliest = announced.ms + (headStartDays ?? 0) * DAY_MS;
@@ -248,7 +252,7 @@ export function validateHivraMigrationConfig(
       saleDay = null;
     }
 
-    let burnDate = f.burnDate ? readDate(f.burnDate) : null;
+    let burnDate = f.burnDate ? readMigrationDate(f.burnDate) : null;
     if (f.burnDate && !burnDate) problems.push("founder.burnDate must be a real UTC date or instant");
     if (burnDate) {
       const lastSaleMs = saleStart ? saleStart.ms + ((weeks ?? 1) - 1) * 7 * DAY_MS : announced?.ms ?? null;
@@ -282,7 +286,7 @@ export function validateHivraMigrationConfig(
   const seen = new Set<string>();
   (Array.isArray(config.receipts) ? config.receipts : []).forEach((receipt, index) => {
     const where = `receipts[${index}]`;
-    const date = readDate(receipt?.date);
+    const date = readMigrationDate(receipt?.date);
     if (!date) return void problems.push(`${where}.date must be a real UTC date or instant`);
     if (!RECEIPT_KINDS.includes(receipt.kind)) return void problems.push(`${where}.kind is not one of ${RECEIPT_KINDS.join(", ")}`);
     if (typeof receipt.txHash !== "string" || !TX_HASH.test(receipt.txHash.trim())) {
@@ -318,6 +322,36 @@ export function validateHivraMigrationConfig(
   };
 }
 
+const LEDGER_GROUPS: Partial<Record<TokenReceiptKind, HivraMigrationReceiptKind>> = {
+  "liquidity-add": "liquidity",
+  "liquidity-lock": "liquidity",
+  "founder-sale": "founder-sale",
+  "founder-burn": "founder-sale",
+};
+
+/**
+ * The liquidity and founder entries of the receipts ledger (TOKEN_RECEIPTS), as
+ * this page's records, so a transaction is entered once and shows on both pages.
+ * An addition and a lock in one transaction show once, as the lock. A lock or a
+ * burn without a note gets one, because each shares its group with other kinds.
+ * Fee claims have no group on this page and stay on /token/receipts.
+ */
+export function migrationReceiptsFromLedger(ledger: readonly TokenReceiptEntry[]): HivraMigrationReceipt[] {
+  const byKey = new Map<string, HivraMigrationReceipt>();
+  const entries: readonly TokenReceiptEntry[] = Array.isArray(ledger) ? ledger : [];
+  for (const entry of entries) {
+    const kind = entry ? LEDGER_GROUPS[entry.kind] : undefined;
+    if (!kind || typeof entry.txHash !== "string") continue;
+    const key = `${kind}:${entry.txHash.trim().toLowerCase()}`;
+    const fallback = entry.kind === "liquidity-lock" && entry.lock?.locker
+      ? `Liquidity locked with ${entry.lock.locker}`
+      : entry.kind === "founder-burn" ? "Remaining founder $HermesOS sent to the burn address" : null;
+    const receipt = { date: entry.date, kind, txHash: entry.txHash, note: entry.note ?? fallback };
+    if (!byKey.has(key) || entry.kind === "liquidity-lock") byKey.set(key, receipt);
+  }
+  return [...byKey.values()];
+}
+
 export type HivraMigrationInputs = {
   /** Test seams; default to process.env, the clock, the registry and the committed configs. */
   env?: Record<string, string | undefined>;
@@ -327,6 +361,8 @@ export type HivraMigrationInputs = {
   airdrop?: HivraAirdropConfig;
   /** The committed airdrop list (null, or the parsed-JSON shape); defaults to src/data/token/hivra-airdrop.json. */
   airdropList?: unknown;
+  /** The receipts ledger; defaults to TOKEN_RECEIPTS. */
+  ledger?: readonly TokenReceiptEntry[];
 };
 
 const reported = new Set<string>();
@@ -382,7 +418,9 @@ export function getServedHivraMigration(inputs: HivraMigrationInputs = {}): Serv
   if (config.published !== true) return null;
 
   const airdrop = inputs.airdrop ?? HIVRA_AIRDROP;
-  const { migration, problems } = validateHivraMigrationConfig(config, {
+  const ledgerReceipts = migrationReceiptsFromLedger(inputs.ledger ?? TOKEN_RECEIPTS);
+  const withLedger = ledgerReceipts.length > 0 ? { ...config, receipts: [...(Array.isArray(config.receipts) ? config.receipts : []), ...ledgerReceipts] } : config;
+  const { migration, problems } = validateHivraMigrationConfig(withLedger, {
     hivraAddress: hivra.address,
     now,
     claimClosesAt: airdrop.claim?.closesAt ?? null,

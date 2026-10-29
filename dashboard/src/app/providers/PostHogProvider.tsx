@@ -16,6 +16,12 @@ import {
 } from '@/lib/telemetry/posthog-client'
 import { sendGaEvent } from '@/lib/telemetry/ga-client'
 import { readStoredConsent } from '@/lib/consent/cookie-consent'
+import {
+  SIGNUP_ATTRIBUTION_STORAGE_KEY,
+  cleanSignupAttribution,
+  readHeardAboutAnswer,
+  readStoredSignupAttribution,
+} from '@/lib/signup/heard-about'
 
 // ---------------------------------------------------------------------------
 // Project token — environment ONLY. A missing key means analytics OFF.
@@ -106,8 +112,8 @@ function clearCheckoutRedirectContext() {
 // utm_* param OR arrives from an external referrer, stash the UTM set +
 // referrer + landing page once. The billing client forwards the stash to
 // /api/billing/subscribe, which persists it write-once on the subscription
-// row. Never overwritten — first touch wins.
-const SIGNUP_ATTRIBUTION_STORAGE_KEY = 'hermes:signup_attribution';
+// row (and /sign-up hands it to Clerk with the new user). Never overwritten —
+// first touch wins.
 const UTM_PARAM_KEYS = [
   'utm_source',
   'utm_medium',
@@ -813,6 +819,11 @@ type ClerkSignupUser = {
   id: string;
   createdAt: Date | null;
   lastSignInAt: Date | null;
+  // Set by /sign-up: the "How did you hear about Hivra?" answer and the
+  // first-touch stash (lib/signup/heard-about.ts).
+  unsafeMetadata?: unknown;
+  externalAccounts?: ReadonlyArray<{ provider?: string | null }> | null;
+  primaryEmailAddress?: unknown;
 };
 
 function isFreshClerkSignup(user: ClerkSignupUser): boolean {
@@ -829,20 +840,21 @@ function isFreshClerkSignup(user: ClerkSignupUser): boolean {
 // Fold the first-touch attribution stash (UTM set + external referrer +
 // landing page — see captureSignupAttribution) into the signup event so the
 // conversion carries its acquisition source without a person-property join.
-function readSignupAttributionForEvent(): Record<string, string> {
-  const props: Record<string, string> = {};
-  try {
-    const raw = window.localStorage.getItem(SIGNUP_ATTRIBUTION_STORAGE_KEY);
-    if (!raw) return props;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const key of [...UTM_PARAM_KEYS, 'referrer', 'landing_page']) {
-      const value = parsed[key];
-      if (typeof value === 'string') props[key] = value;
-    }
-  } catch {
-    // localStorage unavailable or stash unparseable — attribution is best-effort.
-  }
-  return props;
+// /sign-up also saved it on the Clerk user, which covers a browser whose stash
+// is gone by the time the first signed-in page loads.
+function readSignupAttributionForEvent(unsafeMetadata: unknown): Record<string, string> {
+  const stored = readStoredSignupAttribution()
+  if (Object.keys(stored).length > 0) return stored
+  return cleanSignupAttribution(
+    (unsafeMetadata as { signup_attribution?: unknown } | null | undefined)?.signup_attribution
+  )
+}
+
+// GA4's sign_up `method`: the OAuth provider, or email. Never an address.
+function signupMethod(user: ClerkSignupUser): string {
+  const provider = user.externalAccounts?.find((account) => typeof account?.provider === 'string')?.provider
+  if (provider) return provider.replace(/^oauth_/, '')
+  return user.primaryEmailAddress ? 'email' : 'clerk'
 }
 
 function maybeCaptureSignupCompleted(user: ClerkSignupUser): void {
@@ -864,14 +876,25 @@ function maybeCaptureSignupCompleted(user: ClerkSignupUser): void {
   } catch {
     // Best-effort.
   }
+  const heardAbout = readHeardAboutAnswer(user.unsafeMetadata);
+  const method = signupMethod(user);
   captureClient('signup_completed', {
-    ...readSignupAttributionForEvent(),
+    ...readSignupAttributionForEvent(user.unsafeMetadata),
+    ...(heardAbout ?? {}),
+    signup_method: method,
     signup_created_at: user.createdAt ? user.createdAt.toISOString() : null,
+    // The self-reported source stays on the person, so any later event or
+    // cohort can break down by it. First answer wins.
+    ...(heardAbout ? { $set_once: heardAbout } : {}),
   });
   // GA4's recommended sign-up event, so Google Analytics can attribute
   // sign-ups to the organic landing page. Mark `sign_up` as a key event in the
-  // GA4 property. No personal data in the params.
-  sendGaEvent('sign_up', { method: 'clerk' });
+  // GA4 property. No personal data in the params: heard_about is one of a fixed
+  // list of values (the free-text detail stays out of GA).
+  sendGaEvent('sign_up', {
+    method,
+    ...(heardAbout ? { heard_about: heardAbout.heard_about } : {}),
+  });
 }
 
 export function PostHogIdentify() {

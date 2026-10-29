@@ -437,6 +437,39 @@ describe("getServedHivraMigration / hivraMigrationHref", () => {
     expect(hivraMigrationHref(inputs)).toBeNull();
   });
 
+  it("shows the receipts ledger's liquidity and founder entries in its groups, once each, without fee claims", () => {
+    const lock = { locker: "UNCX", lockerAddress: "0x2222222222222222222222222222222222222222", url: null, unlocksAt: "never" };
+    const served = getServedHivraMigration({
+      ...ready,
+      config: config({ receipts: [{ date: "2026-11-02", kind: "claim", txHash: HASH(9), note: null }] }),
+      ledger: [
+        { date: "2026-11-04", kind: "fee-claim", txHash: HASH(1), note: null },
+        { date: "2026-11-11", kind: "liquidity-add", txHash: HASH(2), note: "Week 1" },
+        { date: "2026-11-11", kind: "liquidity-lock", txHash: HASH(2), note: null, lock },
+        { date: "2026-11-06", kind: "founder-sale", txHash: HASH(3), note: null },
+        { date: "2026-11-20", kind: "founder-burn", txHash: HASH(4), note: null },
+      ],
+    });
+    expect(served?.receipts).toEqual([
+      { date: { iso: "2026-11-20T00:00:00.000Z", dateOnly: true }, kind: "founder-sale", txHash: HASH(4), note: "Remaining founder $HermesOS sent to the burn address" },
+      { date: { iso: "2026-11-11T00:00:00.000Z", dateOnly: true }, kind: "liquidity", txHash: HASH(2), note: "Liquidity locked with UNCX" },
+      { date: { iso: "2026-11-06T00:00:00.000Z", dateOnly: true }, kind: "founder-sale", txHash: HASH(3), note: null },
+      { date: { iso: "2026-11-02T00:00:00.000Z", dateOnly: true }, kind: "claim", txHash: HASH(9), note: null },
+    ]);
+  });
+
+  it("logs a transaction entered both in its own receipts and in the ledger", () => {
+    const warn = jest.mocked(log.warn);
+    warn.mockClear();
+    const served = getServedHivraMigration({
+      ...ready,
+      config: config({ receipts: [{ date: "2026-11-06", kind: "founder-sale", txHash: HASH(7), note: null }] }),
+      ledger: [{ date: "2026-11-06", kind: "founder-sale", txHash: HASH(7), note: null }],
+    });
+    expect(served?.receipts).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith("HIVRA migration config rejected", expect.objectContaining({ problems: expect.stringContaining("repeats a founder-sale transaction") }));
+  });
+
   it("is not served from the committed configs (dormant launch, unpublished page)", () => {
     expect(getServedHivraMigration({ env: ON })).toBeNull();
   });
