@@ -6,6 +6,7 @@ import {
   fetchEngagedFreeUserIds,
   getConversionFunnel,
   groupInstancesByUser,
+  hivraAgentToFunnelInstance,
   instanceUsedPastDay1,
   isPaidPlan,
   lastNDayKeys,
@@ -169,6 +170,23 @@ describe("buildWeeklyCohorts", () => {
   });
 });
 
+describe("hivraAgentToFunnelInstance", () => {
+  it("treats provisioned_at as the boot stamp and has no activity timestamp", () => {
+    expect(
+      hivraAgentToFunnelInstance({
+        user_id: "u1",
+        created_at: "2026-06-08T10:00:00Z",
+        provisioned_at: "2026-06-08T10:04:00Z",
+      })
+    ).toEqual({
+      user_id: "u1",
+      created_at: "2026-06-08T10:00:00Z",
+      first_active_at: "2026-06-08T10:04:00Z",
+      last_activity_at: null,
+    });
+  });
+});
+
 describe("buildDailySeries", () => {
   it("counts each event type per UTC day and drops out-of-window timestamps", () => {
     const dayKeys = lastNDayKeys(14, NOW);
@@ -325,6 +343,7 @@ describe("getConversionFunnel", () => {
         }
         return { data: [{ created_at: "2026-06-08T11:00:00Z" }] };
       }
+      if (query.table === "hivra_agents") return { data: [] };
       throw new Error(`unexpected table ${query.table}`);
     });
 
@@ -354,6 +373,61 @@ describe("getConversionFunnel", () => {
     expect(stats.upgradeSplit).toEqual({ day0: 0, later: 1, unclear: 0 });
   });
 
+  it("counts Hivra-lane agents as deploys and activations", async () => {
+    mockSupabase((query) => {
+      if (query.table === "hermes_subscriptions") {
+        if (has(query, "limit")) return { data: [] };
+        if (has(query, "select", (args) => (args[1] as { head?: boolean })?.head === true)) {
+          return { count: 0 };
+        }
+        if (has(query, "or") || has(query, "eq")) return { data: [] };
+        return {
+          data: [
+            sub({ user_id: "hermes_user", created_at: "2026-06-08T10:00:00Z" }),
+            sub({ user_id: "hivra_user", plan: "operator", created_at: "2026-06-09T10:00:00Z" }),
+          ],
+        };
+      }
+      if (query.table === "hermes_instances") {
+        if (has(query, "in")) {
+          return { data: [inst({ user_id: "hermes_user", first_active_at: "2026-06-08T11:00:00Z" })] };
+        }
+        return { data: [] };
+      }
+      if (query.table === "hivra_agents") {
+        if (has(query, "in")) {
+          expect(selectCols(query)).toBe("user_id, created_at, provisioned_at");
+          return {
+            data: [
+              {
+                user_id: "hivra_user",
+                created_at: "2026-06-09T11:00:00Z",
+                provisioned_at: "2026-06-09T11:05:00Z",
+              },
+            ],
+          };
+        }
+        if (selectCols(query) === "provisioned_at") {
+          return { data: [{ provisioned_at: "2026-06-09T11:05:00Z" }] };
+        }
+        return { data: [{ created_at: "2026-06-09T11:00:00Z" }] };
+      }
+      throw new Error(`unexpected table ${query.table}`);
+    });
+
+    const stats = await getConversionFunnel(NOW);
+
+    expect(stats.weeklyCohorts[7]).toMatchObject({
+      signups: 2,
+      deployed: 2,
+      wentActive: 2,
+      usedPastDay1: 0,
+      paidNow: 1,
+    });
+    const june9 = stats.daily.find((d) => d.date === "2026-06-09")!;
+    expect(june9).toMatchObject({ deploys: 1, activations: 1 });
+  });
+
   it("falls back to current_period_start when upgraded_at does not exist", async () => {
     mockSupabase((query) => {
       if (query.table === "hermes_subscriptions") {
@@ -381,6 +455,7 @@ describe("getConversionFunnel", () => {
         return { data: [] };
       }
       if (query.table === "hermes_instances") return { data: [] };
+      if (query.table === "hivra_agents") return { data: [] };
       throw new Error(`unexpected table ${query.table}`);
     });
 
@@ -428,6 +503,7 @@ describe("getConversionFunnel", () => {
         return { data: [sub({ user_id: "u_last", created_at: "2026-06-09T10:00:00Z" })] };
       }
       if (query.table === "hermes_instances") return { data: [] };
+      if (query.table === "hivra_agents") return { data: [] };
       throw new Error(`unexpected table ${query.table}`);
     });
 
@@ -462,6 +538,7 @@ describe("fetchEngagedFreeUserIds", () => {
         // user_b is on a paid plan → not in the free membership result
         return { data: [{ user_id: "user_c" }, { user_id: "user_a" }] };
       }
+      if (query.table === "hivra_agents") return { data: [] };
       throw new Error(`unexpected table ${query.table}`);
     });
 
