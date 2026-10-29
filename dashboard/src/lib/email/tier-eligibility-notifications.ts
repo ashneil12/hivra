@@ -22,6 +22,7 @@ import type {
   EligibilityTransition,
   TierKey,
 } from "@/lib/billing/token-tier-eligibility";
+import { pickVerifiedSdkEmail } from "@/lib/email/clerk-verified-email";
 
 interface SendParams {
   userId: string;
@@ -195,11 +196,7 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
   try {
     const clerk = await clerkClient();
     const user = await clerk.users.getUser(userId);
-    const primary =
-      user.primaryEmailAddress?.emailAddress ||
-      user.emailAddresses?.[0]?.emailAddress ||
-      null;
-    return primary;
+    return pickVerifiedSdkEmail(user);
   } catch {
     return null;
   }

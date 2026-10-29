@@ -14,6 +14,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 
 import { resolveFromEmail, resolveReplyToEmail } from "@/lib/email/config";
 import { SITE_URL } from "@/lib/seo-urls";
+import { pickVerifiedSdkEmail } from "@/lib/email/clerk-verified-email";
 
 export interface HivraComputerStoppedParams {
   userId: string;
@@ -51,7 +52,7 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
   try {
     const client = await clerkClient();
     const user = await client.users.getUser(userId);
-    return user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    return pickVerifiedSdkEmail(user);
   } catch {
     return null;
   }

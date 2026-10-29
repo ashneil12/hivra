@@ -26,3 +26,27 @@ export function pickVerifiedEmail(user: ClerkUserWithEmails): string | null {
   const primary = verified.find((address) => address.id === user.primary_email_address_id);
   return (primary ?? verified[0])?.email_address ?? null;
 }
+
+/**
+ * The same rule for a Clerk backend SDK user (camelCase, as clerkClient().users.getUser
+ * returns it): only an address Clerk reports as verified is returned.
+ */
+export type ClerkSdkUserWithEmails = {
+  primaryEmailAddressId?: string | null;
+  emailAddresses?: Array<{
+    id: string;
+    emailAddress: string;
+    verification?: { status?: string | null } | null;
+  }> | null;
+};
+
+export function pickVerifiedSdkEmail(user: ClerkSdkUserWithEmails | null | undefined): string | null {
+  return pickVerifiedEmail({
+    primary_email_address_id: user?.primaryEmailAddressId,
+    email_addresses: (user?.emailAddresses ?? []).map((address) => ({
+      id: address.id,
+      email_address: address.emailAddress,
+      verification: address.verification,
+    })),
+  });
+}

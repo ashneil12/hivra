@@ -13,7 +13,7 @@ const originalEnv = { ...process.env };
 beforeEach(() => {
   process.env = { ...originalEnv, RESEND_API_KEY: "re_test" };
   mockSend.mockReset().mockResolvedValue({ error: null });
-  mockGetUser.mockReset().mockResolvedValue({ primaryEmailAddress: { emailAddress: "owner@example.com" } });
+  mockGetUser.mockReset().mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "owner@example.com", verification: { status: "verified" } }] });
 });
 afterAll(() => { process.env = originalEnv; });
 
@@ -46,6 +46,7 @@ describe("the stopped-computer email", () => {
     ["no API key", () => { delete process.env.RESEND_API_KEY; }, "not_configured"],
     ["no email address", () => mockGetUser.mockResolvedValue({ emailAddresses: [] }), "no_email"],
     ["the owner lookup failing", () => mockGetUser.mockRejectedValue(new Error("clerk down")), "no_email"],
+    ["only an address Clerk has not verified (F106)", () => mockGetUser.mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "victim@example.com", verification: { status: "unverified" } }] }), "no_email"],
     ["Resend rejecting it", () => mockSend.mockResolvedValue({ error: { message: "bad" } }), "send_failed"],
     ["Resend throwing", () => mockSend.mockRejectedValue(new Error("network")), "send_failed"],
   ])("returns not sent, and never throws, for %s", async (_name, arrange, reason) => {
