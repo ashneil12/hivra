@@ -451,6 +451,13 @@ CONTAINEREOF
     reader: "shell" | "compose" = "shell",
   ): string {
     const shellSourced = reader === "shell";
+    // The python below writes str(value). For an array or object that is a Python
+    // repr with its own quotes, which would break out of the shell-quoted line.
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== null && value !== undefined && typeof value !== "string") {
+        throw new Error(`Refusing to write ${key}: env values must be strings`);
+      }
+    }
     for (const [key, value] of Object.entries(updates)) {
       if (/[\r\n\0]/.test(String(value ?? ""))) {
         throw new Error(`Refusing to write ${key}: line breaks are not supported in env values`);

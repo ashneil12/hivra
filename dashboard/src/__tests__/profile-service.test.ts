@@ -130,6 +130,14 @@ describe('Profile Service Unit Tests', () => {
         .toThrow(/line breaks/i);
     });
 
+    it('refuses a non-string value, because Python str() of an array puts quotes into the shell line', () => {
+      const updates = { K: ['$(touch /tmp/pwned)'] } as unknown as Record<string, string>;
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', updates))
+        .toThrow(/must be strings/i);
+      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', updates, 'compose'))
+        .toThrow(/must be strings/i);
+    });
+
     it('falls back to the WebUI agent virtualenv before system python so hermes_cli imports succeed', () => {
       // The Hetzner image ships /opt/venv with httpx; the WebUI image keeps its
       // venv at $HERMES_HOME/hermes-agent/.venv. Without this fallback, the
