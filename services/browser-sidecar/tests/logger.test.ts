@@ -63,6 +63,10 @@ describe("redactArgs", () => {
     });
   });
 
+  it("does not log an opaque-scheme url, whose whole value sits where a host would be", () => {
+    expect(redactArgs({ url: "magic:OPAQUECANARY?x=1" })).toEqual({ url: "[REDACTED]" });
+  });
+
   it("redacts a logged url that does not parse", () => {
     expect(redactArgs({ url: "not a url?ticket=CANARYTICKET" })).toEqual({ url: "[REDACTED]" });
   });

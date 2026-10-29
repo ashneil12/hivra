@@ -83,10 +83,14 @@ function isSecretKey(key: string): boolean {
 }
 
 // A url in a request body can carry a one-time token (a sign-in ticket or magic
-// link) in its query or fragment, so the log keeps the scheme, host and path only.
+// link) in its query or fragment, so the log keeps only the scheme, host and
+// path. A token written into the path itself is still logged, so one-time
+// links belong in the query. An opaque url such as "magic:TOKEN" has no host
+// and its whole value sits in the path, so it is not logged at all.
 function logSafeUrl(raw: string): string {
   try {
     const u = new URL(raw);
+    if (!u.host) return "[REDACTED]";
     return `${u.protocol}//${u.host}${u.pathname}`;
   } catch {
     return "[REDACTED]";
