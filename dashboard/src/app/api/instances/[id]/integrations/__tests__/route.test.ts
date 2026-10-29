@@ -542,6 +542,35 @@ describe('/api/instances/[id]/integrations', () => {
       }
     });
 
+    it('refuses an apostrophe in a sub-profile integration value before anything reaches the shell-sourced .env', async () => {
+      (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+        response: {
+          ok: true,
+          status: 200,
+        },
+      });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          profile: 'marcus',
+          credentials: {
+            token: "xoxb-1';touch /tmp/pwned;#",
+            appToken: 'xapp-123',
+          },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toMatch(/apostrophe/i);
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+      expect(sshExec).not.toHaveBeenCalled();
+    });
+
     it('does not log or report raw sidecar rejection payloads', async () => {
       (log.error as jest.Mock).mockClear();
 

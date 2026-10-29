@@ -440,8 +440,17 @@ CONTAINEREOF
    * It base64 encodes the payload to avoid bash string escaping nightmares.
    */
   static buildEnvPatchCommand(envPath: string, updates: Record<string, string>): string {
+    // The gateway supervisor sources this .env as shell. Each value is written
+    // in single quotes, which the shell reads literally, so a value holding a
+    // quote or line break cannot end the quote early. An apostrophe has no
+    // escape that both the shell and the dotenv readers agree on, so refuse it.
+    for (const [key, value] of Object.entries(updates)) {
+      if (/['\r\n\0]/.test(String(value ?? ""))) {
+        throw new Error(`Refusing to write ${key}: apostrophes and line breaks are not supported in env values`);
+      }
+    }
     const updatesB64 = Buffer.from(JSON.stringify(updates)).toString("base64");
-    
+
     const pythonScript = `
 import json, re, sys, base64
 try:
@@ -454,10 +463,11 @@ for k, v in updates.items():
     if v == '' or v is None:
         content = re.sub(r'^' + k + r'=.*\\n?', '', content, flags=re.MULTILINE)
     else:
+        line = k + "='" + str(v) + "'"
         if re.search(r'^' + k + r'=', content, flags=re.MULTILINE):
-            content = re.sub(r'^' + k + r'=.*', k + '=' + str(v), content, flags=re.MULTILINE)
+            content = re.sub(r'^' + k + r'=.*', lambda m: line, content, flags=re.MULTILINE)
         else:
-            content += '\\n' + k + '=' + str(v) + '\\n'
+            content += '\\n' + line + '\\n'
 
 content = re.sub(r'\\n{2,}', '\\n', content)
 

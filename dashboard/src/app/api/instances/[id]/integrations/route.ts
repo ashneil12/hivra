@@ -742,6 +742,17 @@ export async function POST(
         return apiError(`Integration platform ${platform} not supported yet.`, 400);
     }
 
+    // A sub-profile's .env is sourced by the gateway supervisor (set -a; . .env).
+    // formatEnvValue's \' escape is not a shell quote, so an apostrophe would end
+    // the quote early and run the rest as a command. Refuse the value instead.
+    if (isSubProfile && !disconnect && Object.values(credentials ?? {}).some((value) => typeof value === 'string' && value.includes("'"))) {
+      return apiError(
+        "Apostrophes (') are not supported in integration values for a sub-profile. Remove them and save again.",
+        400,
+        { failureType: 'integration_value_unsupported', retryable: false },
+      );
+    }
+
     // Try Sidecar API First (Phase 3 Architect Update)
     if (!isWebUIBackend && instance && instance.gateway_url && apiServerKey) {
       try {
@@ -841,7 +852,9 @@ export async function POST(
     }
 
     // FALLBACK: Build a bash script to safely update the .env file and restart the container via SSH
-    // We base64 encode the env updates to prevent ANY shell injection on the remote.
+    // We base64 encode the env update lines so they cross SSH intact. That protects
+    // the transport only: the .env is then sourced by a shell, so sub-profile
+    // apostrophes are refused above.
     const b64Updates = envUpdates.map((line) => Buffer.from(line).toString('base64'));
     
     // We conditionally apply the script to either the main instance or the specific sub-profile using docker exec.
