@@ -193,9 +193,9 @@ Bounded agent launch paths exist today. The one resumable journey across every
 supported destination is still being built.
 
 Choose a computer and Hivra prepares a complete operating environment without
-requiring an agent. Ubuntu is the available first path. Omarchy and Windows
-are in preview, with Windows dependent on suitable owner-provided capacity
-and licensing. macOS is an area of future exploration, subject to legitimate
+requiring an agent. Ubuntu is available. Omarchy is offered as a prepared
+computer, and Windows on suitable owner-provided capacity with the owner's own
+licensed image. macOS is an area of future exploration, subject to legitimate
 Apple hardware and licensing.
 
 Open the desktop. Install applications. Browse. Code. Return later from another
@@ -241,7 +241,7 @@ Chat with it in its chat window, work in its terminal, or switch between the two
 
 ### Launch a computer
 
-Ubuntu is available. Omarchy and Windows are in preview. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
+Ubuntu is available. Omarchy is offered as a prepared computer, and Windows on your own server with your licensed image. A normal desktop in the cloud for installing apps, browsing, writing code and running programs that stay on. No agent required.
 
 Keep your coding tools off your personal machine, run that one Windows app, or give a project a space of its own. When you want help, bring an agent onto the same computer and take the screen back whenever you like.
 
@@ -473,7 +473,7 @@ Agent Computers give the work somewhere to happen. Everything below is what an a
 
 ### Agent Computers · Available now
 
-Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon on a computer of its own, with DeepSeek in preview. Or launch an Ubuntu computer and use it yourself, with Omarchy and Windows in preview. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
+Run Claude Code, Codex, Hermes, OpenClaw, Agent Zero or Aeon on a computer of its own, with DeepSeek in preview. Or launch an Ubuntu computer and use it yourself, with Omarchy as a prepared computer and Windows on your own server. On Hivra Cloud, your own server or your own hardware (Hermes runs on Hivra Cloud only, and Windows uses your own licensed image).
 
 Coming: Hivra Orchestrator, macOS, custom images.
 

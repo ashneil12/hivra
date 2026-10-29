@@ -6,6 +6,10 @@
 
 **Product direction updated:** 2026-09-04
 
+**What is available today:** [`STATUS.md`](STATUS.md) is the single source of
+truth. This document is the target architecture and a dated current-state map;
+where it and that file disagree about availability, that file wins.
+
 **Approved target experience:** Agent and Computer are sibling entry choices in
 one resumable Launch journey. Web/Canary is the authorized implementation and
 acceptance surface for this reset. Code implementation, Canary deployment, and
@@ -31,7 +35,8 @@ DeepSeek has a pinned private runtime/gateway and provider installer with real
 native UI, BYOK model inference, PTY, restart, revocation and cleanup evidence;
 its guest identity is now attested before secret delivery instead of trusting
 an unauthenticated bootstrap SSH connection. ACP and public launch authority
-remain closed. Omarchy has a pinned, non-launchable profile
+remain closed. Omarchy has a pinned profile, offered as a
+prepared computer since the owner's 2026-09-30 decision (see STATUS.md),
 whose exact KVM install, owner desktop, reboot, Sunshine guest preparation and
 claim-bound teardown passed on fixturenodea. The deployment catalog links to all three with those exact states;
 neither a preview card nor installed code is release acceptance. Desktop

@@ -1,5 +1,7 @@
 # Production cutover packet: hivra.cloud → public `main`
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 This is the procedure for the **first** Promote of a public-repository build to
 hivra.cloud. Nothing in this document has been executed against production.
 Every production write and the Promote itself are owner actions.

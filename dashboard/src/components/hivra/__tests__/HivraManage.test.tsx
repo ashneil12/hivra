@@ -581,7 +581,7 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Updates", "Advanced"]);
     openSection("Resources");
-    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent(`This ${name} preview has a fixed size of 2 CPU / 4 GB. Hivra can't resize prepared computers yet.`);
+    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent(`This prepared ${name} computer has a fixed size of 2 CPU / 4 GB. Hivra can't resize prepared computers yet.`);
     expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create restore point" })).not.toBeInTheDocument();

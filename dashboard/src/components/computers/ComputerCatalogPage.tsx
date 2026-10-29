@@ -416,7 +416,7 @@ export function ComputerCatalogPage(
               className={`${styles.osCard} ${styles.previewCard}`}
             >
               <div className={styles.osIcon}>O.</div>
-              <span className={styles.previewBadge}>Preview</span>
+              <span className={styles.previewBadge}>Prepared computer</span>
               <h3>Omarchy</h3>
               <p>{OMARCHY_TEMPLATE.summary}</p>
               <div className={styles.osFacts}>
