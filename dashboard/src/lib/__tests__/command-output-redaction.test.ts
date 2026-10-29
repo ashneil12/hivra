@@ -221,4 +221,65 @@ describe("redactSensitiveCommandOutput", () => {
       expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
     });
   });
+  // Unquoted YAML `name: value` lines, the form agent CLI configs are written in. Only
+  // a key that starts its own line counts, so prose such as "Auth token: missing" is
+  // left alone. Quoted values are covered by the JSON patterns.
+  describe("unquoted YAML secret fields", () => {
+    it("redacts unquoted secret-named values on their own line", () => {
+      const raw = [
+        "client_secret: hunter2hunter2",
+        "api_key: plainvalue123",
+        "  password: hunter2",
+        "- token: abc123def456",
+        "x-api-key: abc123def456",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "client_secret: [REDACTED]",
+        "api_key: [REDACTED]",
+        "  password: [REDACTED]",
+        "- token: [REDACTED]",
+        "x-api-key: [REDACTED]",
+      ].join("\n"));
+    });
+
+    it("keeps quoted YAML values redacted as before", () => {
+      expect(redactSensitiveCommandOutput('api_key: "plainvalue123"', 1000)).toBe('api_key: "[REDACTED]"');
+    });
+
+    it("keeps ordinary keys and mid-line prose unchanged", () => {
+      const raw = [
+        "monkey: banana",
+        "tokens: 3",
+        "primary_key: id",
+        "sort_key: name",
+        "Auth token: missing for the request",
+        "the token: expired",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
+
+  // A 64-character hex value straight after a token-like word is a credential
+  // (for example an agent link key). A bare sha256 digest is ordinary output and stays.
+  describe("64-character hex values after a token word", () => {
+    const hexKey = "0123456789abcdef".repeat(4);
+
+    it("redacts the hex value after a token-like word", () => {
+      const raw = [`token: ${hexKey}`, `agent key ${hexKey}`, `password="${hexKey}"`].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "token: [REDACTED]",
+        "agent key [REDACTED]",
+        'password="[REDACTED]"',
+      ].join("\n"));
+    });
+
+    it("keeps a bare digest and a digest under an ordinary label", () => {
+      const raw = [`release digest ${hexKey}`, `fingerprint: ${hexKey}`].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
 });

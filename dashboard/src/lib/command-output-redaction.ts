@@ -17,10 +17,24 @@ const ASSIGNMENT_SECRET_PATTERN = new RegExp(
   `(?<![A-Za-z0-9_])([A-Za-z0-9_]*(?:${ASSIGNMENT_SECRET_WORDS}))=([^\\s"'\`]+)`,
   "gi",
 );
+// Unquoted `name: value` lines, the form agent CLI configs are written in. Only a key
+// that starts its own line counts (after indentation or a list dash), so prose such as
+// "Auth token: missing" is left alone. Quoted values are covered by the JSON patterns
+// above, and a value that is already [REDACTED] is skipped. `_key` is not a YAML
+// secret word here: sort_key and primary_key are ordinary schema names.
+const YAML_SECRET_WORDS =
+  "access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|api-key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token";
+const YAML_SECRET_PATTERN = new RegExp(
+  `^([ \\t]*(?:-[ \\t]+)?)([A-Za-z0-9_-]*(?:${YAML_SECRET_WORDS}))([ \\t]*:[ \\t]*)(?!["'\\[{|>])[^\\s"'\`,}\\]]+`,
+  "gim",
+);
 const PUBLIC_KEY_NAME_PATTERN = /(?:^|_)public_?key$/i;
 const QUERY_PARAM_SECRET_PATTERN =
   /([?&](?:key|api_key|access_token|refresh_token|client_secret|session_token|authorization_code|token)=)([^&#\s]+)/gi;
 const BEARER_SECRET_PATTERN = /(\bBearer\s+)([A-Za-z0-9._-]+)/gi;
+// A 64-character hex value straight after a token-like word (`token: <hex>`, `agent key <hex>`).
+// A bare hex digest is not matched: sha256 digests are ordinary output and ops fingerprints are hex.
+const HEX_AFTER_SECRET_WORD_PATTERN = /((?:token|secret|password|key)[ \t]*[:=]?[ \t]*["']?)[0-9a-f]{64}(?![0-9a-f])/gi;
 // Bare token shapes: a provider, bot, cloud or infrastructure credential that
 // appears with no name in front of it (for example an error body that echoes the
 // key). The redactor masks every match, and the config snapshot scanner
@@ -74,6 +88,10 @@ export function redactSensitiveCommandOutput(raw: string, maxLength = 300): stri
     .replace(ASSIGNMENT_SECRET_PATTERN, (match, name: string) =>
       PUBLIC_KEY_NAME_PATTERN.test(name) ? match : `${name}=[REDACTED]`,
     )
+    .replace(YAML_SECRET_PATTERN, (match, lead: string, name: string, sep: string) =>
+      PUBLIC_KEY_NAME_PATTERN.test(name) ? match : `${lead}${name}${sep}[REDACTED]`,
+    )
+    .replace(HEX_AFTER_SECRET_WORD_PATTERN, '$1[REDACTED]')
     .replace(QUERY_PARAM_SECRET_PATTERN, '$1[REDACTED]')
     .replace(BEARER_SECRET_PATTERN, '$1[REDACTED]');
 
