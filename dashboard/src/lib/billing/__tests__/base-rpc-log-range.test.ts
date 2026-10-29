@@ -459,3 +459,49 @@ describe("eth_getLogs call sites", () => {
     expect(offenders).toEqual([path.join("lib", "billing", "base-rpc-logs.ts")]);
   });
 });
+
+describe("getLogsInBlockChunks with a provider result-size limit", () => {
+  it("splits a range whose result is too big instead of failing the scan", async () => {
+    // 1,500 matching logs in one 2,000-block chunk, a provider that refuses
+    // more than 500 results per request.
+    const logBlocks = Array.from({ length: 1_500 }, (_, i) => 100 + i);
+    const ranges: Array<[number, number]> = [];
+    const call = jest.fn(async (_method: string, params: unknown[]) => {
+      const filter = params[0] as { fromBlock: string; toBlock: string };
+      const from = Number.parseInt(filter.fromBlock, 16);
+      const to = Number.parseInt(filter.toBlock, 16);
+      ranges.push([from, to]);
+      const hits = logBlocks.filter((block) => block >= from && block <= to);
+      if (hits.length > 500) {
+        throw new Error("Base RPC eth_getLogs returned an error: query returned more than 500 results");
+      }
+      return hits.map((block) => ({ blockNumber: block }));
+    });
+
+    const logs = await getLogsInBlockChunks<{ blockNumber: number }>({
+      call: call as never,
+      filter: { address: USDC_BASE_TOKEN_ADDRESS, topics: [] },
+      fromBlock: 0,
+      toBlock: 1_999,
+    });
+
+    expect(logs.map((log) => log.blockNumber)).toEqual(logBlocks);
+    expect(ranges.length).toBeGreaterThan(1);
+  });
+
+  it("does not split on any other error", async () => {
+    const call = jest.fn(async () => {
+      throw new Error("Base RPC eth_getLogs returned an error: invalid params");
+    });
+
+    await expect(
+      getLogsInBlockChunks({
+        call: call as never,
+        filter: { address: USDC_BASE_TOKEN_ADDRESS, topics: [] },
+        fromBlock: 0,
+        toBlock: 1_999,
+      })
+    ).rejects.toThrow("invalid params");
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+});

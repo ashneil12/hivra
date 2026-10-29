@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { getRequestContext } from "@/lib/request-context";
 import { removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
 import {
@@ -18,7 +19,7 @@ import {
 const PURGE_INSTANCE_FAILURE_MESSAGE = "Failed to purge instance";
 const SOURCE = "cron/purge-expired";
 const PURGE_INSTANCE_SELECT =
-  "id, user_id, name, hetzner_server_id, host_id, config, infrastructure_provider, proxmox_node, proxmox_vmid, ipv4_address, gateway_url, subdomain, status, lifecycle_state, resource_tier, cpu_limit, ram_limit, disk_size_gb, created_at, last_lifecycle_transition_at, scheduled_deletion_at, entitlement_state";
+  "id, user_id, name, hetzner_server_id, host_id, config, infrastructure_provider, proxmox_node, proxmox_vmid, ipv4_address, gateway_url, subdomain, status, lifecycle_state, resource_tier, cpu_limit, ram_limit, disk_size_gb, created_at, last_lifecycle_transition_at, scheduled_deletion_at, entitlement_state, deleted_at";
 const ARCHIVE_TTL_DAYS = 30;
 
 type PurgeCandidate = {
@@ -44,6 +45,7 @@ type PurgeCandidate = {
   last_lifecycle_transition_at: string | null;
   scheduled_deletion_at: string | null;
   entitlement_state: string | null;
+  deleted_at?: string | null;
 };
 
 /**
@@ -98,18 +100,25 @@ function inferDeletionReason(instance: PurgeCandidate): string {
  * Compare-and-set claim on the row the sweep selected, run right before any
  * destroy. The candidates were read at the start of the run, and a payment can
  * restore a row in the meantime, so the claim only matches while the row still
- * has the status and lifecycle it was selected under (and a scheduled row is
- * still due). A restored row matches nothing and is skipped. Returns false when
+ * has the status, lifecycle and deleted_at it was selected under (and a
+ * scheduled row is still due). A restored row matches nothing and is skipped.
+ *
+ * The claim stamps deleted_at and changes nothing else, so every other sweep
+ * sees the row exactly as before. Both payment writers leave a row with
+ * deleted_at set alone (the scheduled-deletion restore and the billing resume
+ * each require deleted_at null at write time), so purge and restore cannot both
+ * win: whichever writes first decides. Returns the claim time, or null when
  * the row changed.
  */
 async function claimPurgeCandidate(
   db: NonNullable<typeof supabaseAdmin>,
   instance: PurgeCandidate,
   dueBeforeIso: string,
-): Promise<boolean> {
+): Promise<string | null> {
+  const claimedAt = new Date().toISOString();
   let query = db
     .from("hermes_instances")
-    .update({ updated_at: new Date().toISOString() })
+    .update({ deleted_at: claimedAt, updated_at: claimedAt })
     .eq("id", instance.id);
   query =
     instance.status === null ? query.is("status", null) : query.eq("status", instance.status);
@@ -117,6 +126,9 @@ async function claimPurgeCandidate(
     instance.lifecycle_state === null
       ? query.is("lifecycle_state", null)
       : query.eq("lifecycle_state", instance.lifecycle_state);
+  query = instance.deleted_at
+    ? query.eq("deleted_at", instance.deleted_at)
+    : query.is("deleted_at", null);
   if (instance.status === "scheduled_for_deletion") {
     query = query.lte("scheduled_deletion_at", dueBeforeIso);
   }
@@ -124,7 +136,39 @@ async function claimPurgeCandidate(
   if (error) {
     throw new Error(`Failed to claim instance for purge: ${error.message || "unknown"}`);
   }
-  return data != null;
+  return data != null ? claimedAt : null;
+}
+
+/** Undo a claim whose teardown did not finish, so the row is retried as before. */
+async function releasePurgeClaim(
+  db: NonNullable<typeof supabaseAdmin>,
+  instance: PurgeCandidate,
+  claimedAt: string,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("hermes_instances")
+    .update({ deleted_at: instance.deleted_at ?? null, updated_at: new Date().toISOString() })
+    .eq("id", instance.id)
+    .eq("deleted_at", claimedAt)
+    .select("id")
+    .maybeSingle();
+  return !error && data != null;
+}
+
+/**
+ * Whether the owner of a scheduled row is entitled right now, on any lane
+ * (Stripe including past_due in grace, Apple, token tiers), by the same
+ * resolver the lapse checks use. Such a row is only still scheduled because a
+ * payment's restore lost the race with the claim, so it must not be
+ * destroyed. null when the lookup failed.
+ */
+async function ownerPaysNow(userId: string): Promise<boolean | null> {
+  try {
+    const effective = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
+    return Boolean(effective && effective.plan !== "free");
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -295,6 +339,7 @@ export async function GET(req: NextRequest) {
   }
 
   for (const instance of purgeCandidates) {
+    let claimedAt: string | null = null;
     try {
       // Every application path writes user_id from a Clerk user id (or the
       // self-host operator). Any other owner means the row did not come from
@@ -446,8 +491,8 @@ export async function GET(req: NextRequest) {
       // Destroy only what is still the row we selected. A payment that restored
       // the row since the candidate read changes its status/lifecycle, so the
       // claim matches nothing and the row is left alone.
-      const claimed = await claimPurgeCandidate(supabaseAdmin, instance, now);
-      if (!claimed) {
+      claimedAt = await claimPurgeCandidate(supabaseAdmin, instance, now);
+      if (!claimedAt) {
         log.warn("skipping purge: instance changed after selection (restored or re-scheduled)", {
           ...ctx,
           instanceId: instance.id,
@@ -487,6 +532,36 @@ export async function GET(req: NextRequest) {
           failureType: "deletion_archive_write_failed",
           errorName: archiveError.name ?? typeof archiveError,
         });
+      }
+
+      // A scheduled row whose owner pays now is a payment whose restore lost
+      // the race to the claim (neither the restore nor the resume can touch a
+      // claimed row). Checked as late as possible, right before the destroy,
+      // and the row is handed back to the payment instead of destroyed.
+      if (instance.status === "scheduled_for_deletion") {
+        const pays = await ownerPaysNow(instance.user_id);
+        if (pays !== false) {
+          const released = await releasePurgeClaim(supabaseAdmin, instance, claimedAt);
+          claimedAt = null;
+          if (pays && released) {
+            const { StripeWebhookService } = await import("@/lib/services/stripe-webhook-service");
+            await StripeWebhookService.restoreScheduledDeletions(instance.user_id);
+            await StripeWebhookService.resumeBillingSuspendedInstances(instance.user_id);
+          }
+          log.warn("skipping purge: owner pays now, or their subscription could not be read", {
+            ...ctx,
+            instanceId: instance.id,
+            failureType: pays ? "purge_skipped_owner_pays" : "purge_skipped_owner_lookup_failed",
+            claimReleased: released,
+          });
+          results.push({
+            id: instance.id,
+            name: instance.name,
+            success: false,
+            error: pays ? "skipped: owner pays now" : "skipped: subscription lookup failed",
+          });
+          continue;
+        }
       }
 
       // Step 1: Tear down the runtime, branching on infra type.
@@ -644,6 +719,23 @@ export async function GET(req: NextRequest) {
         );
       }
 
+      // The claim fences the row from a restore, so a payment that landed
+      // during the teardown was a no-op. Say so loudly for a manual restore.
+      if (instance.status === "scheduled_for_deletion" && (await ownerPaysNow(instance.user_id))) {
+        await reportOpsEvent({
+          source: "instance.purge_owner_paid_during_teardown",
+          severity: "error",
+          title: "Purged an instance whose owner paid during the teardown",
+          message:
+            `purge-expired destroyed instance ${instance.id} while its owner's subscription became active. ` +
+            `The payment's restore could not touch the claimed row. Check the account and restore from the archive.`,
+          route: "/api/cron/purge-expired",
+          userId: instance.user_id,
+          instanceId: instance.id,
+          metadata: { deletion_reason: deletionReason, archive_expires_at: archiveExpiresAt },
+        });
+      }
+
       log.info("instance fully purged", {
         ...ctx,
         instanceId: instance.id,
@@ -652,6 +744,14 @@ export async function GET(req: NextRequest) {
       });
       results.push({ id: instance.id, name: instance.name, success: true });
     } catch (err) {
+      let claim: "released" | "release_failed" | null = null;
+      if (claimedAt) {
+        try {
+          claim = (await releasePurgeClaim(supabaseAdmin, instance, claimedAt)) ? "released" : "release_failed";
+        } catch {
+          claim = "release_failed";
+        }
+      }
       // Only error class name in logs — the original error may contain
       // Hetzner / SSH output with embedded credentials.
       log.error("failed to purge instance", new Error("purge_instance_failed"), {
@@ -659,6 +759,7 @@ export async function GET(req: NextRequest) {
         instanceId: instance.id,
         failureType: "purge_instance_failed",
         errorName: err instanceof Error ? err.name : typeof err,
+        ...(claim ? { purgeClaim: claim } : {}),
       });
       results.push({
         id: instance.id,

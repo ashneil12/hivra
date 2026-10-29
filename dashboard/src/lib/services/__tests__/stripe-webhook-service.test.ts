@@ -2732,9 +2732,9 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -2805,9 +2805,9 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -2925,9 +2925,9 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -3044,9 +3044,9 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -3118,9 +3118,9 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -3183,9 +3183,9 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -3232,6 +3232,7 @@ describe("StripeWebhookService", () => {
         stack: "poweron-stack-leak",
       });
       const updatedInstanceIds: string[] = [];
+      const restoreWriteFilters: unknown[][] = [];
 
       (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
         const builder = createMockBuilder();
@@ -3258,9 +3259,14 @@ describe("StripeWebhookService", () => {
 
           builder.update.mockImplementation(() => {
             const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedInstanceIds.push(value);
-              return Promise.resolve({ error: null });
+            updateBuilder.eq.mockImplementation((column: string, value: string) => {
+              restoreWriteFilters.push(["eq", column, value]);
+              if (column === "id") updatedInstanceIds.push(value);
+              return updateBuilder;
+            });
+            updateBuilder.is.mockImplementation((column: string, value: unknown) => {
+              restoreWriteFilters.push(["is", column, value]);
+              return updateBuilder;
             });
             return updateBuilder;
           });
@@ -3278,6 +3284,20 @@ describe("StripeWebhookService", () => {
       await StripeWebhookService.restoreScheduledDeletions("user_1");
 
       expect(updatedInstanceIds).toEqual(["inst_1"]);
+      // The restore writes only while the row is still scheduled and not
+      // claimed by the purge cron (which stamps deleted_at), so it can never
+      // revive a row whose VM is being destroyed.
+      expect(restoreWriteFilters).toEqual(
+        expect.arrayContaining([
+          ["eq", "status", "scheduled_for_deletion"],
+          ["is", "deleted_at", null],
+        ])
+      );
+      expect(log.error).not.toHaveBeenCalledWith(
+        "failed to restore instance lifecycle row",
+        expect.anything(),
+        expect.anything()
+      );
       const contextCalls = (log.error as jest.Mock).mock.calls.map((call) => call[2]);
       expect(JSON.stringify(contextCalls)).not.toContain("poweron-secret-leak");
     });
