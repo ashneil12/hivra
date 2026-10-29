@@ -75,6 +75,18 @@ describe("AgentLinksPanel", () => {
     expect(calls.find((call) => call.init?.method === "DELETE")?.url).toBe("/api/hivra/agent-links/link-1");
   });
 
+  it("tells apart two computers with the same name", async () => {
+    views = [agentView({ candidates: [
+      { id: STUDIO, name: "My Ubuntu", kind: "Ubuntu desktop", status: "stopped", linked: false, available: true },
+      { id: OMARCHY, name: "My Ubuntu", kind: "Ubuntu desktop", status: "running", linked: false, available: true },
+      { id: "e", name: "Arch", kind: "Omarchy desktop", status: "running", linked: false, available: true },
+    ] })];
+    render(<AgentLinksPanel subjectId={AGENT} subjectName="Claude" />);
+    expect(await screen.findByRole("option", { name: "My Ubuntu (Ubuntu desktop, stopped, cccccccc)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "My Ubuntu (Ubuntu desktop, running, dddddddd)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Arch (Omarchy desktop)" })).toBeInTheDocument();
+  });
+
   it("links agents from the computer's page", async () => {
     views = [{ subject: { id: STUDIO, kind: "computer", available: true }, links: [],
       candidates: [{ id: AGENT, name: "Claude", kind: "claude-code", linked: false, available: true }] }];
