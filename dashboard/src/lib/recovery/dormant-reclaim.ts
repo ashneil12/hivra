@@ -204,6 +204,9 @@ async function fetchDormantCandidates(cutoffIso: string): Promise<DormantCandida
     // sweep rather than leaving a live, orphaned VM no reconciler can see.
     .in("paused_reason", ["inactivity", "capacity_pressure", "dormant_reclaiming"])
     .lt("last_lifecycle_transition_at", cutoffIso)
+    // Oldest pause first. A row that keeps failing stays selectable, so without an order
+    // a few such rows could take every slot in the batch on every run.
+    .order("last_lifecycle_transition_at", { ascending: true })
     .limit(DEFAULT_BATCH_LIMIT);
 
   if (error) {

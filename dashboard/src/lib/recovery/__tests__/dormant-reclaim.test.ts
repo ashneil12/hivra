@@ -117,6 +117,7 @@ function mockCandidateQuery(
   candidateQuery.eq = jest.fn().mockReturnValue(candidateQuery);
   candidateQuery.in = jest.fn().mockReturnValue(candidateQuery);
   candidateQuery.lt = jest.fn().mockReturnValue(candidateQuery);
+  candidateQuery.order = jest.fn().mockReturnValue(candidateQuery);
   candidateQuery.limit = jest.fn().mockResolvedValue({ data: rows, error: null });
   // The sweep re-reads the live row before it dumps and destroys. Here the live
   // row is the candidate itself, so nothing has changed.
@@ -196,6 +197,7 @@ function installDatabase(options: {
     query.eq = jest.fn(() => query);
     query.in = jest.fn(() => query);
     query.lt = jest.fn(() => query);
+    query.order = jest.fn(() => query);
     query.limit = jest.fn(async () => ({ data: options.candidates, error: null }));
     query.maybeSingle = jest.fn(async () => ({ data: live, error: null }));
     return query;
@@ -279,6 +281,21 @@ describe("runDormantReclaimSweep", () => {
     });
     expect(archiveProxmoxDormantInstance).not.toHaveBeenCalled();
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+  });
+
+  it("reads the oldest paused rows first, so rows that keep failing cannot take the whole batch", async () => {
+    process.env.HERMES_DORMANT_RECLAIM_ENABLED = "true";
+    const candidateQuery = mockCandidateQuery([dormantRow]);
+
+    await runDormantReclaimSweep({ now: NOW });
+
+    expect(candidateQuery.order).toHaveBeenCalledWith("last_lifecycle_transition_at", {
+      ascending: true,
+    });
+    // The order is applied before the batch limit, or it would not choose which rows the limit keeps.
+    expect(candidateQuery.order.mock.invocationCallOrder[0]).toBeLessThan(
+      candidateQuery.limit.mock.invocationCallOrder[0]
+    );
   });
 
   it("does not delete a VM when the Proxmox backup fails", async () => {
