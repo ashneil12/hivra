@@ -34,6 +34,14 @@ function fixture() {
   );
   // Templates never run.
   writeFileSync(path.join(qemu, "9000.conf"), "template: 1\nnet0: virtio=BC:24:11:AA:BB:03,bridge=vmbr1\n");
+  // The "model=...,macaddr=..." form and a long e1000 model name, both real Proxmox shapes.
+  writeFileSync(path.join(qemu, "2100.conf"), "name: a\nnet0: model=virtio,macaddr=BC:24:11:AA:BB:08,bridge=vmbr1\nipconfig0: ip=10.250.20.80/24\n");
+  writeFileSync(path.join(qemu, "2101.conf"), "name: b\nnet0: e1000-82540em=BC:24:11:AA:BB:09,bridge=vmbr1\n");
+  // ipconfig changed while running: the guest still has the value on its cloud-init drive.
+  writeFileSync(
+    path.join(qemu, "2102.conf"),
+    "name: c\nnet0: virtio=BC:24:11:AA:BB:0A,bridge=vmbr1\nipconfig0: ip=10.250.20.91/24\n\n[special:cloudinit]\nipconfig0: ip=10.250.20.90/24\n",
+  );
   writeFileSync(
     path.join(lxc, "1010.conf"),
     "hostname: ct\nnet0: name=eth0,bridge=vmbr1,hwaddr=BC:24:11:AA:BB:04,ip=10.250.20.70/24,gw=10.250.20.1,type=veth\n",
@@ -78,7 +86,7 @@ describe("proxmox-host-vm-antispoof --render", () => {
 
   it("pins guests without a static IPv4 by MAC only, per NIC", () => {
     expect(out).toContain('iifname "tap2097i0" ether saddr != bc:24:11:aa:bb:02 drop');
-    expect(out).not.toMatch(/iifname "tap2097i0" (arp saddr ip|ip saddr)/);
+    expect(out).not.toMatch(/iifname "tap2097i0" (arp saddr ip !=|ip saddr !=)/);
     expect(out).toContain('iifname "tap2099i0" ether saddr != bc:24:11:aa:bb:06 drop');
     expect(out).not.toMatch(/iifname "tap2099i0" ip saddr !=/);
     expect(out).toContain('iifname "tap2099i1" ip saddr != 10.250.20.77 drop');
@@ -89,8 +97,49 @@ describe("proxmox-host-vm-antispoof --render", () => {
     expect(out).toContain('iifname "veth1010i0" ip saddr != 10.250.20.70 drop');
   });
 
+  it("drops VLAN-tagged frames first, so a VID 0 tag cannot hide spoofed ARP", () => {
+    for (const port of ["tap1148i0", "tap2097i0", "veth1010i0"]) {
+      const vlan = out.indexOf(`iifname "${port}" ether type { 8021q, 8021ad } drop`);
+      expect(vlan).toBeGreaterThan(-1);
+      expect(vlan).toBeLessThan(out.indexOf(`iifname "${port}" ether saddr`));
+    }
+  });
+
+  it("keeps MAC-only NICs from claiming any pinned address or gateway", () => {
+    expect(out).toMatch(/set pinned_v4 \{\n\t\ttype ipv4_addr\n\t\telements = \{ 10\.250\.20\.1, 10\.250\.20\.51, 10\.250\.20\.70, 10\.250\.20\.77, 10\.250\.20\.80, 10\.250\.20\.90 \}/);
+    expect(out).toContain('iifname "tap2097i0" arp saddr ip @pinned_v4 drop');
+    expect(out).toContain('iifname "tap2097i0" ip saddr @pinned_v4 drop');
+    expect(out).toContain('iifname "tap2099i0" arp saddr ip @pinned_v4 drop');
+    expect(out).not.toContain('iifname "tap1148i0" arp saddr ip @pinned_v4');
+  });
+
+  it("drops guest router advertisements and redirects", () => {
+    expect(out).toContain('iifname "tap1148i0" icmpv6 type { nd-router-advert, nd-redirect } drop');
+  });
+
+  it("reads macaddr= and long model names, and prefers the applied cloud-init address", () => {
+    expect(out).toContain('iifname "tap2100i0" ether saddr != bc:24:11:aa:bb:08 drop');
+    expect(out).toContain('iifname "tap2101i0" ether saddr != bc:24:11:aa:bb:09 drop');
+    expect(out).toContain('iifname "tap2102i0" ip saddr != 10.250.20.90 drop');
+    expect(out).not.toContain("10.250.20.91");
+  });
+
   it("reports what it pinned", () => {
-    expect(out.trim().split("\n").pop()).toBe("# pinned 5 NIC(s), 3 with a static IPv4");
+    const tail = out.trim().split("\n");
+    expect(tail.pop()).toBe("# pinned 8 NIC(s), 5 with a static IPv4");
+    expect(tail.pop()).toBe("# skipped_count=0");
+  });
+});
+
+describe("proxmox-host-vm-antispoof --render with bad configs", () => {
+  it("skips an unreadable or MAC-less NIC without failing the whole table", () => {
+    const f = fixture();
+    writeFileSync(path.join(f.qemu, "3000.conf"), Buffer.from([0x6e, 0x65, 0x74, 0x30, 0x3a, 0x20, 0xff, 0xfe, 0x0a]));
+    writeFileSync(path.join(f.qemu, "3001.conf"), "name: x\nnet0: virtio,bridge=vmbr1\n");
+    const out = render(f);
+    expect(out).toContain('iifname "tap1148i0" ether saddr != bc:24:11:aa:bb:01 drop');
+    expect(out).toContain("# skipped: qemu 3001 net0: no MAC in config");
+    expect(out).toMatch(/# skipped_count=[12]\n/);
   });
 });
 
@@ -111,7 +160,9 @@ describe("proxmox-host-vm-antispoof --apply and --check", () => {
       LXC_CONF_DIR: f.lxc,
       ANTISPOOF_LOCK: path.join(f.root, "lock"),
       ANTISPOOF_TMPDIR: f.root,
+      SYS_CLASS_NET: path.join(f.root, "sys-class-net"),
     };
+    mkdirSync(env.SYS_CLASS_NET);
     return { f, env, log };
   }
 
@@ -131,6 +182,20 @@ describe("proxmox-host-vm-antispoof --apply and --check", () => {
     expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
+  it("refuses to load an empty table while guest ports exist (configs not mounted)", () => {
+    const { f, env, log } = stubs("exit 0");
+    writeFileSync(path.join(env.SYS_CLASS_NET, "tap1148i0"), "");
+    const empty = path.join(f.root, "empty");
+    mkdirSync(empty);
+    const res = spawnSync("bash", [scriptPath, "--apply"], {
+      encoding: "utf8",
+      env: { ...env, QEMU_CONF_DIR: empty, LXC_CONF_DIR: empty },
+    });
+    expect(res.status).toBe(2);
+    expect(res.stderr).toContain("refusing to load an empty table");
+    expect(() => readFileSync(log, "utf8")).toThrow();
+  });
+
   it("refuses --apply without root", () => {
     const { env } = stubs("exit 0");
     writeFileSync(path.join(env.PATH.split(":")[0], "id"), "#!/usr/bin/env bash\necho 1000\n");
@@ -140,7 +205,8 @@ describe("proxmox-host-vm-antispoof --apply and --check", () => {
 
   it("--check passes when the live table matches and fails on drift", () => {
     const { f, env } = stubs("exit 0");
-    const rendered = render(f);
+    // nft lists the hook priority by name.
+    const rendered = render(f).replace("priority -300;", "priority dstnat;");
     const live = path.join(f.root, "live.nft");
     writeFileSync(live, rendered.replace(/^\s*#.*$/gm, ""));
     writeFileSync(path.join(env.PATH.split(":")[0], "nft"), `#!/usr/bin/env bash\ncat "${live}"\n`);
@@ -149,5 +215,17 @@ describe("proxmox-host-vm-antispoof --apply and --check", () => {
     const drift = spawnSync("bash", [scriptPath, "--check"], { encoding: "utf8", env });
     expect(drift.status).toBe(1);
     expect(drift.stdout).toContain("DRIFT");
+  });
+
+  it("--check fails when the table is missing, a NIC is unpinned, or a live port has no config", () => {
+    const { f, env } = stubs("exit 1");
+    expect(spawnSync("bash", [scriptPath, "--check"], { encoding: "utf8", env }).stdout).toContain("is not loaded");
+    const live = path.join(f.root, "live.nft");
+    writeFileSync(live, render(f).replace("priority -300;", "priority dstnat;").replace(/^\s*#.*$/gm, ""));
+    writeFileSync(path.join(env.PATH.split(":")[0], "nft"), `#!/usr/bin/env bash\ncat "${live}"\n`);
+    writeFileSync(path.join(env.SYS_CLASS_NET, "tap4000i0"), "");
+    const orphan = spawnSync("bash", [scriptPath, "--check"], { encoding: "utf8", env });
+    expect(orphan.status).toBe(1);
+    expect(orphan.stdout).toContain("tap4000i0");
   });
 });
