@@ -43,7 +43,7 @@ describe("Hivra computer-image catalog", () => {
     expect(getComputerTemplate("omarchy")).toBe(OMARCHY_TEMPLATE);
     expect(OMARCHY_TEMPLATE).toMatchObject({
       kind: "operating-system",
-      status: "private-preview",
+      status: "available",
       launchable: true,
       launchMode: "prepared-canary",
       runtimeId: "linux-desktop",
@@ -65,7 +65,7 @@ describe("Hivra computer-image catalog", () => {
     expect(getComputerTemplate("windows")).toBe(WINDOWS_TEMPLATE);
     expect(WINDOWS_TEMPLATE).toMatchObject({
       kind: "operating-system",
-      status: "private-preview",
+      status: "available",
       launchable: true,
       launchMode: "prepared-canary",
       requirements: { cpu: 4, ramGb: 8, diskGb: 64 },

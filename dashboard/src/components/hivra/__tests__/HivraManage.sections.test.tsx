@@ -180,7 +180,7 @@ describe("stage-1 truthfulness", () => {
   it("says a prepared Windows computer has a fixed size, with its real size", () => {
     renderManage({ ...ubuntuRow, computer_profile: "windows", cpu: 4, ram: 8, managed_provisioner_channel: "canary" });
     openSection("Resources");
-    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("This Windows preview has a fixed size of 4 CPU / 8 GB.");
+    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("This prepared Windows computer has a fixed size of 4 CPU / 8 GB.");
   });
 
   it("describes reserved memory as guaranteed, in plain words", () => {

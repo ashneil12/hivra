@@ -140,7 +140,7 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("linux-terminal"), free)).toEqual({ label: "Needs your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("windows"), free)).toEqual({ label: "Needs your own server", tone: "needs" });
-    expect(launchFit(launchProfileFitSubject("omarchy"), free)).toEqual({ label: "Preview", tone: "neutral" });
+    expect(launchFit(launchProfileFitSubject("omarchy"), free)).toEqual({ label: "Prepared computer", tone: "neutral" });
   });
 
   it("includes the browser on a paid plan that holds it", () => {

@@ -1,5 +1,7 @@
 # Production chain rehearsal
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 Status: **harness and down plan built; the real rehearsal has NOT been run.** The only
 result so far is on a SYNTHETIC schema (section 5). It does not satisfy the Promote
 rehearsal gate.

@@ -5,7 +5,6 @@ describe("Hivra preview catalog", () => {
     expect(HIVRA_PREVIEWS.map((preview) => preview.id)).toEqual([
       "deepseek-harness",
       "buzz",
-      "omarchy",
     ]);
     expect(HIVRA_PREVIEWS.every((preview) => preview.launchable === false)).toBe(true);
     expect(getHivraPreview("buzz")).toMatchObject({ usableNow: true, href: "/dashboard/collaboration#buzz" });

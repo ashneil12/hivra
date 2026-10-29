@@ -15,8 +15,8 @@ Today the codebase contains:
 - a Next.js dashboard and API control plane;
 - hosted Clerk authentication, installation-owned local operator authentication, and Supabase persistence;
 - Hetzner and Proxmox provisioning paths;
-- Hermes instances and a separate Hivra agent-computer pilot;
-- agent catalog support including Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero at varying availability levels;
+- Hermes instances and Hivra agent computers;
+- agent catalog support for Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero (what launches today, and where, is in [`docs/STATUS.md`](docs/STATUS.md));
 - lifecycle, recovery, backup, browser, terminal, file, credential, billing, and observability components; and
 - a presentation-level unified agent model over otherwise separate backend lanes.
 
