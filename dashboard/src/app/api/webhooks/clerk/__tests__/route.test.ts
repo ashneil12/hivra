@@ -200,6 +200,49 @@ describe("POST /api/webhooks/clerk", () => {
     expect(mockedWelcome).toHaveBeenCalledWith({ email: "ash@example.com", firstName: "Ash" });
   });
 
+  it("syncs the audience on user.updated once the address becomes verified (F106)", async () => {
+    // A sign-up that verifies later gets no welcome (user.created fired first), but the
+    // audience must still follow the verification through user.updated.
+    mockedSync.mockResolvedValue({
+      skipped: false,
+      email: "late@example.com",
+      action: "created",
+      unsubscribed: false,
+    });
+    const user = {
+      id: "user_late",
+      primary_email_address_id: "email_late",
+      email_addresses: [
+        { id: "email_late", email_address: "late@example.com", verification: { status: "verified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.updated", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedSync).toHaveBeenCalledTimes(1);
+    expect(mockedSync).toHaveBeenCalledWith(user);
+  });
+
+  it("does not enrol on user.updated while the only address is still unverified (F106)", async () => {
+    // The enrolment decision is made inside the sync, which reads the Clerk
+    // verification state; the route passes the user through unchanged.
+    mockedSync.mockResolvedValue({ skipped: true, reason: "missing_email" });
+    const user = {
+      id: "user_still_unverified",
+      primary_email_address_id: "email_u",
+      email_addresses: [
+        { id: "email_u", email_address: "victim@example.com", verification: { status: "unverified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.updated", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedSync).toHaveBeenCalledWith(user);
+    expect(mockedWelcome).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the webhook secret is missing", async () => {
     delete process.env.CLERK_WEBHOOK_SECRET;
 
