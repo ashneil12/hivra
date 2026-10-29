@@ -4,10 +4,18 @@
 # or replace a path the agent planted. These checks plant the links the agent could
 # create and assert the script refuses them and leaves the link targets alone.
 #
-# Runs without root: on macOS, stand-ins replace runuser and GNU stat, so the agent
-# step runs as the current user. The root-only privilege boundary itself is not
-# exercised here; run this on a Linux guest as root for that.
+# Runs as a non-root user only. The fixtures are owned by the invoking user, and the
+# script refuses a home that root owns, so a root run would fail every case for the
+# wrong reason and pass the link cases without reaching the link logic. On macOS,
+# stand-ins replace runuser and GNU stat, so the agent step runs as the current user.
+# The root-only privilege boundary (runuser to a real agent account) is NOT exercised
+# here and is unverified on a Linux guest.
 set -euo pipefail
+
+if [ "$(id -u)" = 0 ]; then
+  echo "run this test as a non-root user; see the note above" >&2
+  exit 2
+fi
 
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/configure-agent-otel.sh"
@@ -76,17 +84,28 @@ else
   fail "clean home: rerun keeps one block (exit $status)"
 fi
 
+# A refusal writes nothing outside the agent's own files, so no profile.d either.
+no_profile_write() {
+  if [ -e "$sysroot/etc/profile.d/hivra-agent-otel.sh" ]; then
+    fail "$1: no profile.d written on refusal"
+  else
+    pass "$1: no profile.d written on refusal"
+  fi
+}
+
 # 2. The agent plants config.toml as a link to a file it must not reach.
 fixture config-link
 secret="$case_dir/secret.txt"
 printf 'ROOT_ONLY_SECRET=1\n' >"$secret"
 ln -s "$secret" "$home/.codex/config.toml"
 run_script
-if [ "$status" -ne 0 ] && [ -L "$home/.codex/config.toml" ] && [ "$(cat "$secret")" = "ROOT_ONLY_SECRET=1" ]; then
-  pass "config link: refused, link and target untouched"
+# Exit 4 exactly: any other non-zero exit would be a refusal for another reason.
+if [ "$status" -eq 4 ] && [ -L "$home/.codex/config.toml" ] && [ "$(cat "$secret")" = "ROOT_ONLY_SECRET=1" ]; then
+  pass "config link: refused with exit 4, link and target untouched"
 else
-  fail "config link: refused, link and target untouched (exit $status, link=$([ -L "$home/.codex/config.toml" ] && echo yes || echo no))"
+  fail "config link: refused with exit 4, link and target untouched (exit $status, link=$([ -L "$home/.codex/config.toml" ] && echo yes || echo no))"
 fi
+no_profile_write "config link"
 if grep -Fq 'ROOT_ONLY_SECRET' "$case_dir/out" "$case_dir/err" 2>/dev/null; then
   fail "config link: secret not echoed"
 else
@@ -101,11 +120,12 @@ printf 'ELSEWHERE=1\n' >"$elsewhere/config.toml"
 rm -rf "$home/.codex"
 ln -s "$elsewhere" "$home/.codex"
 run_script
-if [ "$status" -ne 0 ] && [ -L "$home/.codex" ] && [ "$(cat "$elsewhere/config.toml")" = "ELSEWHERE=1" ]; then
-  pass "dir link: refused, link and target untouched"
+if [ "$status" -eq 4 ] && [ -L "$home/.codex" ] && [ "$(cat "$elsewhere/config.toml")" = "ELSEWHERE=1" ]; then
+  pass "dir link: refused with exit 4, link and target untouched"
 else
-  fail "dir link: refused, link and target untouched (exit $status)"
+  fail "dir link: refused with exit 4, link and target untouched (exit $status)"
 fi
+no_profile_write "dir link"
 
 # 4. An unmanaged [otel] block is still refused, and left alone.
 fixture unmanaged-otel
@@ -116,6 +136,7 @@ if [ "$status" -eq 3 ] && grep -Fq 'environment = "theirs"' "$home/.codex/config
 else
   fail "unmanaged [otel]: refused with exit 3 (exit $status)"
 fi
+no_profile_write "unmanaged [otel]"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"
