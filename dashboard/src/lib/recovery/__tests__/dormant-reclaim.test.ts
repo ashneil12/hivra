@@ -634,6 +634,29 @@ describe("runDormantReclaimSweep", () => {
       );
     });
 
+    it("keeps the owner's settings when a save lands between the marker's read and its update", async () => {
+      // The marker re-reads the row, then writes a config merged from that read. A settings save
+      // in that one round trip must make the marker's compare-and-swap fail, not be overwritten.
+      setCommitEnv();
+      const ownerConfig = { infrastructure: infra, settings: { model: "owner-choice" } };
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (archiveProxmoxDormantInstance as jest.Mock).mockImplementationOnce(async () => {
+        // The next row read is the marker's re-read; the save lands just after it.
+        db.ownerSavesConfigAfterNextRead(ownerConfig);
+        return archiveOk();
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
+      expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+      // The owner's save is what the row keeps; the sweep did not write its dormant_reclaiming marker.
+      expect(db.live()).toMatchObject({ config: ownerConfig, paused_reason: "inactivity" });
+      // The dump the sweep took is discarded: file first, then its manifest row.
+      expect(removeProxmoxDormantArchive).toHaveBeenCalledTimes(1);
+      expect(db.archiveDelete).toHaveBeenCalledTimes(1);
+    });
+
     it("does not destroy a VM whose owner started after the archive was recorded", async () => {
       setCommitEnv();
       const db = installDatabase({
@@ -649,8 +672,8 @@ describe("runDormantReclaimSweep", () => {
       expect(summary).toMatchObject({ reclaimed: 0, failed: 0 });
       expect(deleteProxmoxInstance).not.toHaveBeenCalled();
       expect(db.live()).toMatchObject({ status: "running", lifecycle_state: "active", paused_reason: null });
-      // The VM is kept, so its dump is removed (file first, then the manifest row) and
-      // nothing is left pointing at it.
+      // The VM is kept, so its dump is removed (file first, then the manifest row). The
+      // row's config still carries the dormantArchive blob; nothing reads it outside the sweep.
       expect(removeProxmoxDormantArchive).toHaveBeenCalledTimes(1);
       expect(db.archiveDelete).toHaveBeenCalledTimes(1);
       expect((removeProxmoxDormantArchive as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
