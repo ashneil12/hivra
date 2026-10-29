@@ -2688,7 +2688,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     const script = buildProxmoxDormantArchiveScript({
       vmid: 610,
       archiveDir: "/mnt/hermes-dormant",
-      instanceId: "inst_610",
+      instanceId: "00000000-0000-4000-8000-000000000610",
     });
 
     expect(script).toContain("vzdump \"$VMID\"");
