@@ -20,15 +20,21 @@ const ASSIGNMENT_SECRET_PATTERN = new RegExp(
 // Unquoted `name: value` lines, the form agent CLI configs are written in. Only a key
 // that starts its own line counts (after indentation or a list dash), so prose such as
 // "Auth token: missing" is left alone. Quoted values are covered by the JSON patterns
-// above, and a value that is already [REDACTED] is skipped. `_key` is not a YAML
-// secret word here: sort_key and primary_key are ordinary schema names.
+// above, and a value that is already [REDACTED] is skipped. `_key` is a YAML secret word
+// as it is in the `=` form (`aws_secret_access_key:`, `gateway_key:`); the schema names
+// listed in SCHEMA_KEY_NAME_PATTERN are the exception.
 const YAML_SECRET_WORDS =
-  "access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|api-key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token";
+  "access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|api-key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token|_key";
 const YAML_SECRET_PATTERN = new RegExp(
   `^([ \\t]*(?:-[ \\t]+)?)([A-Za-z0-9_-]*(?:${YAML_SECRET_WORDS}))([ \\t]*:[ \\t]*)(?!["'\\[{|>])[^\\s"'\`,}\\]]+`,
   "gim",
 );
 const PUBLIC_KEY_NAME_PATTERN = /(?:^|_)public_?key$/i;
+// Database and index key names are field names in config and query output, not credentials:
+// `primary_key: id` or `sort_key: created_at`. Only these named schema roles are exempt from
+// the `_key` rule; any other `*_key` name (secret_key, gateway_key, ...) is redacted.
+const SCHEMA_KEY_NAME_PATTERN =
+  /(?:^|_)(?:primary|foreign|sort|partition|unique|natural|surrogate|composite)_key$/i;
 const QUERY_PARAM_SECRET_PATTERN =
   /([?&](?:key|api_key|access_token|refresh_token|client_secret|session_token|authorization_code|token)=)([^&#\s]+)/gi;
 const BEARER_SECRET_PATTERN = /(\bBearer\s+)([A-Za-z0-9._-]+)/gi;
@@ -113,7 +119,9 @@ export function redactSensitiveCommandOutput(raw: string, maxLength = 300): stri
       PUBLIC_KEY_NAME_PATTERN.test(name) ? match : `${name}=[REDACTED]`,
     )
     .replace(YAML_SECRET_PATTERN, (match, lead: string, name: string, sep: string) =>
-      PUBLIC_KEY_NAME_PATTERN.test(name) ? match : `${lead}${name}${sep}[REDACTED]`,
+      PUBLIC_KEY_NAME_PATTERN.test(name) || SCHEMA_KEY_NAME_PATTERN.test(name)
+        ? match
+        : `${lead}${name}${sep}[REDACTED]`,
     )
     .replace(HEX_AFTER_SECRET_WORD_PATTERN, '$1[REDACTED]')
     .replace(QUERY_PARAM_SECRET_PATTERN, '$1[REDACTED]')

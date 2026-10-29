@@ -305,6 +305,40 @@ describe("redactSensitiveCommandOutput", () => {
 
       expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
     });
+
+    // Names that end in `_key` carry a secret in agent CLI configs (`aws_secret_access_key:`),
+    // as the `=` form already did. Schema key names stay (see the next test).
+    it("redacts unquoted secret-named values whose name ends in _key", () => {
+      const raw = [
+        "secret_key: plainvalue123",
+        "private_key: plainvalue456",
+        "access_key: plainvalue789",
+        "gateway_key: plainvalue012",
+        "aws_secret_access_key: plainvalue345",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "secret_key: [REDACTED]",
+        "private_key: [REDACTED]",
+        "access_key: [REDACTED]",
+        "gateway_key: [REDACTED]",
+        "aws_secret_access_key: [REDACTED]",
+      ].join("\n"));
+    });
+
+    it("keeps schema key names and public keys unchanged", () => {
+      const raw = [
+        "primary_key: id",
+        "foreign_key: user_id",
+        "partition_key: tenant",
+        "sort_key: created_at",
+        "unique_key: email",
+        "public_key: MFkwEXAMPLEpublic",
+        "public_key_id: 42",
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
   });
 
   // A 64-character hex value straight after a token-like word is a credential
