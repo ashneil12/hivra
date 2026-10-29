@@ -52,7 +52,7 @@ async function fetchUntil(
   });
 }
 
-async function main() {
+export async function main() {
   const crofKey = process.env.CROF_KEY;
   if (!crofKey) {
     console.error("CROF_KEY is required");
@@ -101,7 +101,14 @@ async function main() {
     if (result.ok) provisionedInfrastructure = result.infrastructure;
 
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    console.log(`[smoke] provisionProxmoxInstance returned in ${elapsed}s:`, result);
+    // Log an explicit allowlist. The raw result carries the per-instance bearer
+    // (apiServerKey), which must never reach stdout, a transcript or a bug report.
+    console.log(`[smoke] provisionProxmoxInstance returned in ${elapsed}s:`, {
+      ok: result.ok,
+      ...(result.ok
+        ? { vmid: result.vmid, ipv4: result.ipv4, gatewayUrl: result.gatewayUrl }
+        : { error: result.error }),
+    });
 
     if (!result.ok) {
       throw new Error("provisioning returned not-ok");
@@ -110,7 +117,7 @@ async function main() {
     const gatewayUrl = result.gatewayUrl;
     const apiServerKey = result.apiServerKey;
     console.log(`[smoke] Gateway: ${gatewayUrl}`);
-    console.log(`[smoke] Bearer key length: ${apiServerKey.length} (prefix: ${apiServerKey.slice(0, 6)})`);
+    console.log(`[smoke] Bearer key length: ${apiServerKey.length}`);
 
     // 1) Probe /health (public, no auth required by the WebUI Caddyfile).
     // Phase 1 returns as soon as the VM and Caddy route exist; Phase 2 still
@@ -184,7 +191,9 @@ async function main() {
 
 }
 
-main().catch((err) => {
-  console.error("[smoke] FAIL — unexpected error:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[smoke] FAIL — unexpected error:", err);
+    process.exit(1);
+  });
+}
