@@ -3,7 +3,8 @@
 **Date:** 2026-10-19
 
 **Status:** Built behind a Canary-only flag (`isAgentLinksEnabled`). Owner
-approved the agent command endpoint on 2026-10-19. Not yet verified live.
+approved the agent command endpoint on 2026-10-19. Verified live on Canary
+2026-10-28 (Codex agent → Ubuntu desktop).
 
 **Consistent with:** [the canonical agent-computers design](2026-08-24-hivra-agent-computers-design.md)
 ("an identity is not the computer itself"; references do not imply ownership)
@@ -35,7 +36,9 @@ Delivered to the agent's own computer over the seed lane it already uses
 The kit is re-sent whenever its content would change (a link added or removed,
 a rename, a new CLI version): link changes mark it out of date, and the next
 link change, Manage read or agent poll delivers it. With no links left the same
-program removes it.
+program removes the key, `COMPUTERS.md` and the skills; the CLI stays and says
+that no computers are linked. Live-checked on Canary 2026-10-28 (link, kit,
+`run … -- uname -a` on the desktop, remove, refused with the old key).
 
 ## How a command runs
 

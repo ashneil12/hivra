@@ -61,6 +61,7 @@ export default function TokenLaunchedView({
   airdropFacts,
   airdropLookupHref,
   migrationHref,
+  receiptsHref = null,
   tokenSurfaces,
 }: {
   entries: readonly TokenPageEntry[];
@@ -70,6 +71,8 @@ export default function TokenLaunchedView({
   airdropLookupHref: string | null;
   /** /token/migration when that page is served, else null. */
   migrationHref: string | null;
+  /** /token/receipts when that page is served, else null. */
+  receiptsHref?: string | null;
   /** HIVRA_NEW_TOKEN_SURFACES as the server read it (not readable in the browser): the header and footer must render the same on both sides. */
   tokenSurfaces?: boolean;
 }) {
@@ -108,9 +111,10 @@ export default function TokenLaunchedView({
         <p>The snapshot has already been taken. Eligible holders can <strong>claim $HIVRA through Sablier</strong> at a <strong>1:1 ratio</strong>: one $HIVRA for each eligible $HermesOS recorded at the snapshot block.</p>
         <p><strong>This is not an automatic airdrop.</strong> You need to complete the claim through the official Sablier claim flow, and <strong>a small fee applies</strong>. Check the fee shown before confirming. You do not need to buy more $HermesOS to qualify: eligibility was determined by the completed snapshot. The treatment of your original $HermesOS is not described here until the claim mechanics are confirmed.</p>
         <p>Not every address holding $HermesOS is included. Exclusions, including liquidity pools, launch contracts and the founder&apos;s wallet, are documented with the snapshot. Hivra-managed wallets are handled separately as explained on the airdrop page.</p>
-        {airdropLookupHref || migrationHref || snapshot ? <div data-testid="token-holder-links" style={{ margin: "0 0 1rem" }}>
+        {airdropLookupHref || migrationHref || receiptsHref || snapshot ? <div data-testid="token-holder-links" style={{ margin: "0 0 1rem" }}>
           {airdropLookupHref ? <p style={LINK_LINE}><Link href={airdropLookupHref}>Check eligibility and claim through the official Sablier flow</Link></p> : null}
           {migrationHref ? <p style={LINK_LINE}><Link href={migrationHref}>Read the migration details</Link></p> : null}
+          {receiptsHref ? <p data-testid="token-receipts-link" style={LINK_LINE}><Link href={receiptsHref}>Check the on-chain receipts: fees, liquidity, founder sales and burn</Link></p> : null}
           {snapshot ? <p style={LINK_LINE}><ExternalLink href={snapshot.url}>View the published snapshot</ExternalLink></p> : null}
         </div> : null}
         {snapshot || senderAddress ? <div data-testid="token-airdrop-details">

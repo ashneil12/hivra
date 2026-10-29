@@ -10,6 +10,7 @@ import { hivraMigrationHref } from "@/lib/claim/hivra-migration";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { RESTRICTED_TOKEN_METADATA, getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
+import { tokenReceiptsHref } from "@/lib/token-receipts/token-receipts";
 import { getTokenPageEntries, tokenPhaseFromEntries, type TokenPageEntry } from "@/lib/token-verification-content";
 
 // The $HIVRA entry changes at its activation instant: re-render at least every
@@ -56,7 +57,7 @@ export default function TokenVerificationPage() {
   // No country is listed (the list is empty, so the policy is dormant): the
   // page renders as before, without reading the request country.
   if (!isTokenGeoPolicyActive()) {
-    return <TokenPageClient entries={entries} {...launchedAirdropProps(entries)} airdropLookupHref={hivraAirdropLookupHref()} migrationHref={hivraMigrationHref()} tokenSurfaces={tokenSurfaces} />;
+    return <TokenPageClient entries={entries} {...launchedAirdropProps(entries)} airdropLookupHref={hivraAirdropLookupHref()} migrationHref={hivraMigrationHref()} receiptsHref={tokenReceiptsHref()} tokenSurfaces={tokenSurfaces} />;
   }
   // A country is listed (GB today): render per request, with the notice for a blocked viewer.
   return renderForViewer(entries, tokenSurfaces);
@@ -72,6 +73,7 @@ async function renderForViewer(entries: TokenPageEntry[], tokenSurfaces: boolean
       {...(geo.blocked ? {} : launchedAirdropProps(entries))}
       airdropLookupHref={geo.blocked ? null : hivraAirdropLookupHref()}
       migrationHref={geo.blocked ? null : hivraMigrationHref()}
+      receiptsHref={geo.blocked ? null : tokenReceiptsHref()}
       tokenSurfaces={tokenSurfaces}
     />
   );
