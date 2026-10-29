@@ -42,5 +42,8 @@ export function safeInternalPath(value: unknown): string | null {
     return null;
   }
   if (url.origin !== INTERNAL_PATH_BASE || url.username || url.password) return null;
-  return `${url.pathname}${url.search}${url.hash}`;
+  // The URL parser removes dot segments after the checks above, so "/.//host"
+  // canonicalises to "//host". The canonical form must pass the same checks.
+  const canonical = `${url.pathname}${url.search}${url.hash}`;
+  return isSafePathText(canonical) ? canonical : null;
 }

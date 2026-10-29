@@ -131,6 +131,10 @@ describe("SignInPage", () => {
     ["an encoded tab", "/%09/attacker.example"],
     ["an encoded newline", "/%0A/attacker.example"],
     ["an encoded protocol-relative prefix", "/%2F%2Fattacker.example"],
+    ["a dot segment before a protocol-relative prefix", "/.//attacker.example"],
+    ["an encoded dot segment before a protocol-relative prefix", "/%2e//attacker.example"],
+    ["a double-dot segment before a protocol-relative prefix", "/..//attacker.example"],
+    ["a double-dot segment after a dashboard path", "/dashboard/..//attacker.example"],
   ])("does not send sign-in to a redirect using %s", async (_label, redirectUrl) => {
     process.env.HIVRA_AUTH_MODE = "local";
     render(await SignInPage({ searchParams: Promise.resolve({ redirect_url: redirectUrl }) }));

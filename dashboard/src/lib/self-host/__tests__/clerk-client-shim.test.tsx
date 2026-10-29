@@ -80,6 +80,8 @@ describe("local operator sign-in redirect", () => {
   it.each([
     ["a backslash after the leading slash", "/\\attacker.example"],
     ["a literal tab", "/\t/attacker.example"],
+    ["a dot segment before a protocol-relative prefix", "/.//attacker.example"],
+    ["a double-dot segment before a protocol-relative prefix", "/..//attacker.example"],
   ])("sends the operator to the dashboard, not %s, after a successful sign in", async (_label, target) => {
     const assign = jest.fn();
     Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, assign } });
