@@ -2555,7 +2555,11 @@ export async function archiveProxmoxDormantInstance(
 
 export async function deleteProxmoxInstance(
   infrastructure: ProxmoxInfrastructure,
-  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string }
+  deps: ProxmoxHostAwareDeps & {
+    expectedInstanceId: string;
+    /** Dormant reclaim: refuse a running guest instead of shutting it down. */
+    refuseIfRunning?: boolean;
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
@@ -2566,6 +2570,7 @@ export async function deleteProxmoxInstance(
     gatewayHost: infrastructure.gatewayHost,
     caddySitesDir: envValue(env, "PROXMOX_CADDY_SITES_DIR", "/etc/caddy/hermes.d"),
     gracefulShutdownTimeoutSeconds: envInt(env, "PROXMOX_DELETE_GRACEFUL_TIMEOUT_SEC", 30),
+    refuseIfRunning: deps.refuseIfRunning === true,
   });
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
   return runner(script);
