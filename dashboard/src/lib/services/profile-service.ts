@@ -449,6 +449,13 @@ CONTAINEREOF
         throw new Error(`Refusing to write ${key}: apostrophes and line breaks are not supported in env values`);
       }
     }
+    // The same line is read by Docker Compose, where a value that ends in a
+    // backslash leaves its closing quote escaped and the whole env file fails to parse.
+    for (const [key, value] of Object.entries(updates)) {
+      if (String(value ?? "").endsWith("\\")) {
+        throw new Error(`Refusing to write ${key}: a value that ends in a backslash leaves its closing quote escaped`);
+      }
+    }
     const updatesB64 = Buffer.from(JSON.stringify(updates)).toString("base64");
 
     const pythonScript = `

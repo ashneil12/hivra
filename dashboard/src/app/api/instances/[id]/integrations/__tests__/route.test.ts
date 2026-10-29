@@ -688,6 +688,58 @@ describe('/api/instances/[id]/integrations', () => {
       expect(sshExec).not.toHaveBeenCalled();
     });
 
+    it('refuses a value that ends in a backslash on the default profile, because the written value leaves its closing quote escaped and compose rejects the env file', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com', backend: 'webui' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          credentials: { token: 'xoxb-1\\', appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toMatch(/backslash/i);
+      expect(sshExec).not.toHaveBeenCalled();
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+    });
+
+    it('refuses a value that ends in a backslash on a webfree sub-profile too, so the profile loader never gets a line it cannot close', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com', backend: 'gateway' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+        response: { ok: true, status: 200 },
+      });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          profile: 'marcus',
+          credentials: { token: ['xoxb-1\\'], appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toMatch(/backslash/i);
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+    });
+
     it('does not log or report raw sidecar rejection payloads', async () => {
       (log.error as jest.Mock).mockClear();
 

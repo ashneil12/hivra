@@ -742,6 +742,21 @@ export async function POST(
         return apiError(`Integration platform ${platform} not supported yet.`, 400);
     }
 
+    // formatEnvValue wraps the value in single quotes and does not escape a backslash,
+    // so a value that ends in one leaves its closing quote escaped. Compose then
+    // rejects the whole env file (the default-profile env_file, and the managed
+    // compose .env that other paths write). Refuse it on every lane.
+    if (
+      !disconnect &&
+      Object.values(credentials ?? {}).some((value) => sanitizeEnvValue(value).endsWith('\\'))
+    ) {
+      return apiError(
+        'Values cannot end with a backslash in integration settings. Remove it and save again.',
+        400,
+        { failureType: 'integration_value_unsupported', retryable: false },
+      );
+    }
+
     // A legacy sub-profile's .env is sourced by the gateway supervisor (set -a; . .env),
     // and formatEnvValue's \' escape is not a shell quote, so an apostrophe would end
     // the quote early and run the rest as a command. Refuse the value instead. Webfree

@@ -98,6 +98,13 @@ describe('Profile Service Unit Tests', () => {
         .toThrow(/apostrophe/i);
     });
 
+    it('refuses a value that ends in a backslash, because compose reads the closing quote as escaped and rejects the whole env file', () => {
+      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', { BYOK_KEY: 'C:\\models\\' }))
+        .toThrow(/backslash/i);
+      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', { BYOK_KEY: 'abc\\\\' }))
+        .toThrow(/backslash/i);
+    });
+
     it('falls back to the WebUI agent virtualenv before system python so hermes_cli imports succeed', () => {
       // The Hetzner image ships /opt/venv with httpx; the WebUI image keeps its
       // venv at $HERMES_HOME/hermes-agent/.venv. Without this fallback, the
