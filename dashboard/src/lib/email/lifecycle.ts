@@ -185,6 +185,11 @@ function htmlList(items: string[]): string {
   return `<ul style="${LIST_STYLE}">${lis}</ul>`;
 }
 
+/** The greeting as HTML. The first name is user-typed, so it is escaped (F106). */
+function htmlGreeting(firstName?: string | null): string {
+  return htmlParagraph(escapeHtml(greeting(firstName)));
+}
+
 /** Same shell as the other customer emails (see cold-storage.ts). */
 function shellHtml(opts: {
   preheader: string;
@@ -268,7 +273,7 @@ function buildDay1Idle(params: LifecycleEmailContentParams): LifecycleEmailConte
     eyebrow: "Day one",
     title: "Your agent is still waiting.",
     body: [
-      htmlParagraph(greeting(params.firstName)),
+      htmlGreeting(params.firstName),
       htmlParagraph(goalPhrase ? escapeHtml(introText) : introText),
       htmlParagraph("Three things people actually ask theirs:"),
       htmlList(asks),
@@ -311,10 +316,10 @@ function buildDay1Active(params: LifecycleEmailContentParams): LifecycleEmailCon
   const html = shellHtml({
     preheader: "Day one done. Three things worth trying next.",
     eyebrow: "Day one",
-    title: `${agent} made it through day one.`,
+    title: `${escapeHtml(agent)} made it through day one.`,
     body: [
-      htmlParagraph(greeting(params.firstName)),
-      htmlParagraph(`${agent} has been up for a day now. Good start.`),
+      htmlGreeting(params.firstName),
+      htmlParagraph(`${escapeHtml(agent)} has been up for a day now. Good start.`),
       htmlParagraph("Three things worth trying next:"),
       htmlList(capabilities),
     ].join("\n"),
@@ -395,7 +400,7 @@ function buildDay3Usecase(params: LifecycleEmailContentParams): LifecycleEmailCo
     eyebrow: "Day three",
     title: "Give your agent a standing order.",
     body: [
-      htmlParagraph(greeting(params.firstName)),
+      htmlGreeting(params.firstName),
       htmlParagraph(task || goalPhrase ? escapeHtml(introText) : introText),
       htmlParagraph("A worked example. Tell your agent:"),
       htmlParagraph(`<em>${escapeHtml(example)}</em>`),
@@ -450,7 +455,7 @@ function buildDay7Offer(params: LifecycleEmailContentParams): LifecycleEmailCont
     eyebrow: "Day seven",
     title: "What a paid plan adds.",
     body: [
-      htmlParagraph(greeting(params.firstName)),
+      htmlGreeting(params.firstName),
       htmlParagraph(
         "You've had a week with a free account. If you'd like Hivra to run the computer, here is what a paid plan adds. If you're happy on your own computer, skip this email."
       ),
@@ -499,15 +504,15 @@ function buildStalled5d(params: LifecycleEmailContentParams): LifecycleEmailCont
   const html = shellHtml({
     preheader: "Still running. Two things I could be doing right now.",
     eyebrow: "Still running",
-    title: `It's ${agent}.`,
+    title: `It's ${escapeHtml(agent)}.`,
     body: [
-      htmlParagraph(greeting(params.firstName)),
+      htmlGreeting(params.firstName),
       htmlParagraph(
         `You haven't said anything in a few days. I'm still here, running. Two things I could be doing right now:`
       ),
       htmlList(ideas),
       htmlParagraph("Pick one, or tell me something better."),
-      htmlParagraph(`— ${agent}`),
+      htmlParagraph(`— ${escapeHtml(agent)}`),
     ].join("\n"),
     ctaText: "Open the chat",
     ctaUrl,
@@ -578,19 +583,19 @@ function buildActivityDigest(params: LifecycleEmailContentParams): LifecycleEmai
   ].join("\n");
 
   const bodyParts = [
-    htmlParagraph(greeting(params.firstName)),
-    htmlParagraph(`Here's what ${agent} got up to over the last week.`),
-    htmlList(stats),
+    htmlGreeting(params.firstName),
+    htmlParagraph(`Here's what ${escapeHtml(agent)} got up to over the last week.`),
+    htmlList(stats.map(escapeHtml)),
   ];
   if (hasAttention) {
     bodyParts.push(htmlParagraph(attentionIntro));
-    bodyParts.push(htmlList(attention));
+    bodyParts.push(htmlList(attention.map(escapeHtml)));
   }
 
   const html = shellHtml({
     preheader: `${sessionLine}. Here's the recap.`,
     eyebrow: "Weekly recap",
-    title: `What ${agent} did this week.`,
+    title: `What ${escapeHtml(agent)} did this week.`,
     body: bodyParts.join("\n"),
     ctaText: "Open your agent",
     ctaUrl,
