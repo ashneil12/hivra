@@ -166,8 +166,8 @@ describe("getOpenHivraAirdrop", () => {
     expect(open?.airdrop.data.snapshotBlock).toBe(53005062);
     expect(open?.airdrop.data.totals.holders).toBe(open?.airdrop.data.holders.length);
     expect(open?.senderAddress).toBe("0x3B954866d4329E19C1B9165774c88508f2fefA0c");
-    // No Sablier campaign is configured yet, so there is no claim link.
-    expect(open?.claim.phase).toBe("unpublished");
+    // The Sablier campaign is set; on 27 Oct its window (from 29 Oct 13:30 UTC) has not opened.
+    expect(open?.claim.phase).toBe("not_open");
   });
 
   it("is not served from the committed config while the new token surfaces are off", () => {

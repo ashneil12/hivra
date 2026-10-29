@@ -114,6 +114,7 @@ export const publicContractAddresses = new Map([
   ['0x52908400098527886e0f7030069857d2e4169ee7', 'Made-up address with a valid EIP-55 checksum, marked as such in the activation script tests'],
   ['0xe3a1f26440a9fdf5d17b6b3f12f5ebb290080871', '$HIVRA token contract on Base (HIVRA_TOKEN_LAUNCH.contractAddress), published on /token'],
   ['0x3b954866d4329e19c1b9165774c88508f2fefa0c', 'Hivra Airdrop wallet that funds the Sablier holder claim, published on /token and /token/airdrop'],
+  ['0x4131ab8f9797bb4887a72470b8af48fbec37522f', 'Sablier MerkleInstant claim campaign for $HIVRA on Base (HIVRA_AIRDROP.claim.campaignUrl), published on /token and /token/migration'],
   ['0x4acda6e26929acd34b45bedaee2f7b8a418ce10c', 'Hivra treasury Safe that receives $HIVRA pool fees, published on /token/migration'],
   ['0x672b58b6d10413fe69ab0907db5b17712bd45f7a', "Founder's $HermesOS wallet, published on /token/migration with the sale plan"],
   ['0xbdf938149ac6a781f94faa0ed45e6a0e984c6544', 'Doppler DopplerHookInitializer on Base (public protocol contract)'],
