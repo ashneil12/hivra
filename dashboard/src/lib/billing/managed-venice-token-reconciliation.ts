@@ -30,7 +30,10 @@ import {
 import {
   ERC20_TRANSFER_TOPIC,
   encodeErc20TransferToTopic,
+  blockTimestampsFor,
   findBlockForTimestamp,
+  paymentDustFloor,
+  tokenDustFloor,
 } from "@/lib/billing/base-transfer-scan";
 import {
   computeBackoffDelayMs,
@@ -133,8 +136,9 @@ const TRANSFER_SURFACING_LIMIT = 25;
 //     typically 1-3 probes each, and every block timestamp is cached per batch;
 //   - ceil(span / 2,000) eth_getLogs: a window + grace is ~4,200 blocks, so 3;
 //     hard cap MAX_SCAN_SPAN_BLOCKS (50,000) / 2,000 = 25;
-//   - <= MAX_TRANSFER_TIMESTAMP_LOOKUPS (200) block timestamps for logs that
-//     carry no blockTimestamp (usually a handful of transfers, often 0);
+//   - <= 200 block timestamps for logs that carry no blockTimestamp (usually
+//     a handful of transfers, often 0; above 200 blocks, one read and Base's
+//     fixed block time, see blockTimestampsFor);
 //   - 1 confirmed-head block timestamp (the same block for every quote).
 // Worst case, every bound hit and nothing cached:
 //   2 + 75 x (80 + 25 + 200 + 1) = 22,952 calls,
@@ -194,7 +198,6 @@ const DEFAULT_RPC_REQUEST_TIMEOUT_MS = 10_000;
 // Bound per-quote RPC work: a window + grace is ~4,200 blocks and has a
 // handful of transfers; anything far above that is refused, not scanned.
 const MAX_SCAN_SPAN_BLOCKS = 50_000;
-const MAX_TRANSFER_TIMESTAMP_LOOKUPS = 200;
 
 // Base RPC resilience (retry/backoff/jitter on 429/5xx/network) now lives in
 // the shared @/lib/billing/base-rpc-retry module. This file keeps a short
@@ -605,6 +608,12 @@ async function scanQuoteTransfers(params: {
   minConfirmations: number;
   /** Token whose Transfer logs to read. Default: the quote's own token. */
   tokenAddress?: string;
+  /**
+   * Dust floor in base units. A tx whose every log is below it is skipped
+   * before any timestamp lookup, so a spray of tiny transfers cannot stall
+   * the quote. A tx with one real log keeps all its logs.
+   */
+  minAmount?: bigint;
 }) {
   const tokenAddress = (params.tokenAddress ?? params.quote.tokenAddress).toLowerCase();
   const { chain } = params;
@@ -650,17 +659,37 @@ async function scanQuoteTransfers(params: {
     });
   }
 
+  const minAmount = params.minAmount ?? 0n;
+  if (minAmount > 0n) {
+    const realTxs = new Set(
+      [...parsed.values()].filter((entry) => entry.amount >= minAmount).map((entry) => entry.transactionHash)
+    );
+    let dustSkipped = 0;
+    for (const [key, entry] of parsed) {
+      if (realTxs.has(entry.transactionHash)) continue;
+      parsed.delete(key);
+      dustSkipped += 1;
+    }
+    if (dustSkipped > 0) {
+      log.info("managed venice quote scan skipped dust transfers", {
+        source: "managed-venice-token-reconciliation",
+        quoteId: params.quote.id,
+        dustSkipped,
+      });
+    }
+  }
+
   const blocksToFetch = new Set(
     [...parsed.values()]
       .filter((entry) => entry.logTimestampSec === null)
       .map((entry) => entry.blockNumber)
   );
-  if (blocksToFetch.size > MAX_TRANSFER_TIMESTAMP_LOOKUPS) {
-    throw new Error(
-      `Managed Venice quote scan found transfers in ${blocksToFetch.size} blocks; ` +
-        `refusing to look up more than ${MAX_TRANSFER_TIMESTAMP_LOOKUPS}`
-    );
-  }
+  const blockTimes = await blockTimestampsFor(
+    chain,
+    blocksToFetch,
+    { block: latest, timestampSec: latestSec },
+    "Managed Venice quote scan"
+  );
   // A tx's logs share one block, so they are always scanned (and in range,
   // and confirmed) together.
   const logsByTx = new Map<string, Array<{ logIndex: number; amount: bigint }>>();
@@ -672,7 +701,7 @@ async function scanQuoteTransfers(params: {
   }
   const transfers: ScannedTransfer[] = [];
   for (const { logTimestampSec, ...transfer } of parsed.values()) {
-    const timestampSec = logTimestampSec ?? (await chain.blockTimestamp(transfer.blockNumber));
+    const timestampSec = logTimestampSec ?? blockTimes.get(transfer.blockNumber)!;
     const txLogs = logsByTx.get(transfer.transactionHash) ?? [{ logIndex: transfer.logIndex, amount: transfer.amount }];
     const firstLogIndex = Math.min(...txLogs.map((log) => log.logIndex));
     transfers.push({
@@ -865,6 +894,7 @@ async function scanAttributableTransfers(params: {
     quotedAtMs,
     graceEndMs,
     minConfirmations: params.minConfirmations,
+    minAmount: paymentDustFloor(BigInt(quote.tokenAmountRaw)),
   });
   const boundaryMs = await loadAttributionBoundaryMs(db, quote);
   const inRange = scan.transfers.filter(
@@ -890,6 +920,7 @@ async function scanAttributableTransfers(params: {
       graceEndMs,
       minConfirmations: params.minConfirmations,
       tokenAddress: other.address,
+      minAmount: tokenDustFloor(other.decimals),
     });
     const confirmedOther = otherScan.transfers.filter(
       (transfer) => inAttributionRange(transfer) && transfer.confirmations >= params.minConfirmations

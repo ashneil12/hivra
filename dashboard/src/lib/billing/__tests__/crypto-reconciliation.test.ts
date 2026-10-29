@@ -83,6 +83,66 @@ describe("crypto top-up reconciliation", () => {
     );
   });
 
+  it("is not stalled by a spray of dust transfers across more blocks than the timestamp lookup cap", async () => {
+    const { memory, rpc } = setup([makePayment()]);
+    const firstDustBlock = rpc.blockAt("2026-04-24T11:51:00.000Z");
+    for (let i = 0; i < 250; i += 1) {
+      rpc.addTransfer({
+        txHash: `0xdust${i.toString(16).padStart(4, "0")}`,
+        amountRaw: 100,
+        block: firstDustBlock + i,
+        logIndex: 0,
+        to: normalizedDepositAddressOne,
+      });
+    }
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    const result = await run(memory, rpc);
+
+    expect(result).toEqual(expect.objectContaining({ checked: 1, settled: 1, failed: 0 }));
+    // Dust is never looked up, credited or sent to review.
+    expect(rpc.methodCount("eth_getBlockByNumber")).toBeLessThan(200);
+  });
+
+  it("settles through a flood of floor-sized transfers in more blocks than the lookup cap (fixed block time)", async () => {
+    const { memory, rpc } = setup([makePayment()]);
+    const firstBlock = rpc.blockAt("2026-04-24T11:51:00.000Z");
+    for (let i = 0; i < 250; i += 1) {
+      rpc.addTransfer({
+        txHash: `0xflood${i.toString(16).padStart(4, "0")}`,
+        amountRaw: 10_000,
+        block: firstBlock + i,
+        logIndex: 0,
+        to: normalizedDepositAddressOne,
+      });
+    }
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    const result = await run(memory, rpc);
+
+    expect(result).toEqual(expect.objectContaining({ checked: 1, settled: 1, failed: 0 }));
+    expect(rpc.methodCount("eth_getBlockByNumber")).toBeLessThan(200);
+  });
+
+  it("refuses rather than guess block times when the chain's spacing is not the fixed block time", async () => {
+    const memory = createBillingMemoryDb({ payment_transactions: [makePayment()] });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now, blockTimeSec: 1 });
+    const firstBlock = rpc.blockAt("2026-04-24T11:51:00.000Z");
+    for (let i = 0; i < 250; i += 1) {
+      rpc.addTransfer({
+        txHash: `0xflood${i.toString(16).padStart(4, "0")}`,
+        amountRaw: 10_000,
+        block: firstBlock + i,
+        logIndex: 0,
+        to: normalizedDepositAddressOne,
+      });
+    }
+
+    const result = await run(memory, rpc);
+
+    expect(result).toEqual(expect.objectContaining({ settled: 0, failed: 1 }));
+  });
+
   it("settles a pending USDC/Base crypto top-up from a confirmed transfer log", async () => {
     const { memory, rpc } = setup([makePayment()]);
     transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });

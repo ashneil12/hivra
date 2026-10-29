@@ -8,6 +8,11 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { createDnsRecord, type CloudflareDnsConfig } from "@/lib/services/cloudflare-dns";
 import { log } from "@/lib/logger";
+import { shellQuote } from "@/lib/hivra/proxmox-target";
+import {
+  buildEnsureQemuGuestAgentChannelScript,
+  buildHermesVmidBoundGuestSshPrelude,
+} from "@/lib/proxmox/hermes-guest-ssh";
 
 /**
  * Hermes Workspace Cloud — lean provisioner.
@@ -79,7 +84,7 @@ async function allocateVmid(): Promise<{ vmid: number; ip: string }> {
   throw new Error("No free Workspace Cloud VMID in range");
 }
 
-function buildProvisionScript(p: {
+export function buildProvisionScript(p: {
   templateVmid: number;
   vmid: number;
   ip: string;
@@ -89,6 +94,16 @@ function buildProvisionScript(p: {
 }): string {
   // All interpolated values are machine-generated (ints / hex / our own
   // subdomain), so no untrusted shell content.
+  // The guest is reached only over the VMID-bound path: the host checks the
+  // VM's configured IP and running state, then pins SSH to the host key the
+  // QEMU Guest Agent attests. No expectedInstanceId: the clone is named
+  // wc-<subdomain>, not after the instance, so a name check would refuse it.
+  // The VM is still booting, hence the guest agent wait.
+  const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: "hermes",
+    connectTimeoutSeconds: 6,
+    agentAttempts: 24,
+  });
   return `set -euo pipefail
 TEMPLATE=${p.templateVmid}
 VMID=${p.vmid}
@@ -96,18 +111,24 @@ IP=${p.ip}
 FQDN=${p.fqdn}
 SUB=${p.subdomain}
 KEY=${p.apiKey}
-GUEST_SSH="ssh -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=6 -o BatchMode=yes -i ${GUEST_KEY_PATH} hermes@\${IP}"
+PRIVATE_IP="\${IP}"
+VM_SSH_KEY_PATH=${GUEST_KEY_PATH}
 
 echo "[wc] cloning \${TEMPLATE} -> \${VMID}"
 qm clone "\${TEMPLATE}" "\${VMID}" --name "wc-\${SUB}" --full >/dev/null
 qm set "\${VMID}" --ipconfig0 "ip=\${IP}/24,gw=${LANE_GATEWAY}" >/dev/null
+# The guest agent channel that attests the SSH host key only exists if it is
+# configured before boot, so set it here whatever the template carries.
+${buildEnsureQemuGuestAgentChannelScript()}
 qm start "\${VMID}" >/dev/null
 
-echo "[wc] waiting for guest ssh on \${IP}"
+echo "[wc] waiting for guest agent on \${IP}"
 ssh-keygen -R "\${IP}" >/dev/null 2>&1 || true
+${guestSshPrelude}
+echo "[wc] waiting for guest ssh on \${IP}"
 ready=0
 for i in $(seq 1 50); do
-  if \${GUEST_SSH} true >/dev/null 2>&1; then ready=1; echo "[wc] guest ssh ready (iter \${i})"; break; fi
+  if "\${GUEST_SSH[@]}" true </dev/null >/dev/null 2>&1; then ready=1; echo "[wc] guest ssh ready (iter \${i})"; break; fi
   echo "[wc] guest ssh not ready yet (iter \${i})"
   sleep 5
 done
@@ -120,7 +141,7 @@ echo "[wc] injecting API key + clearing baked provider key + restarting gateway"
 # provider key. We deliberately leave API_SERVER_MODEL_NAME (the model id, not a
 # secret) so the gateway still starts and /health stays green; the provider key
 # being blank just means requests fail until the user connects.
-if ! \${GUEST_SSH} "sed -i 's|^API_SERVER_KEY=.*|API_SERVER_KEY=\${KEY}|; s|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=|' /home/hermes/.hermes/.env && sudo systemctl restart hermes-gateway && echo INJECT_OK" 2>&1; then
+if ! "\${GUEST_SSH[@]}" "sed -i 's|^API_SERVER_KEY=.*|API_SERVER_KEY=\${KEY}|; s|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=|' /home/hermes/.hermes/.env && sudo systemctl restart hermes-gateway && echo INJECT_OK" </dev/null 2>&1; then
   echo "[wc] FAIL key injection/restart returned non-zero"; exit 23
 fi
 
@@ -179,7 +200,7 @@ const PROVIDER_KEY_ENV: Record<string, string> = {
   zai: "GLM_API_KEY",
 };
 
-function buildApplyModelScript(p: {
+export function buildApplyModelScript(p: {
   ip: string;
   provider: string;
   model: string;
@@ -208,9 +229,25 @@ PYTHONUNBUFFERED=1 "$H" config set model.provider '${p.provider}'
 ${setModel}${writeKey}sudo systemctl restart hermes-gateway
 echo APPLY_OK`;
   return `set -euo pipefail
-IP=${p.ip}
-GUEST_SSH="ssh -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -o BatchMode=yes -i ${GUEST_KEY_PATH} hermes@\${IP}"
-\${GUEST_SSH} "echo '${b64(guest)}' | base64 -d | bash"
+${guestSshScriptHeader(p.ip)}"\${GUEST_SSH[@]}" "echo '${b64(guest)}' | base64 -d | bash" </dev/null
+`;
+}
+
+/**
+ * The host-side prelude every guest call in this file runs after. The guest is
+ * reached only over the VMID-bound path: the VM is found from its configured
+ * IP (only one running VM may hold it), its SSH host key is attested by the
+ * QEMU Guest Agent and pinned, and nothing is sent before that. VMID is left
+ * to the prelude to resolve because these callers pass only the IP.
+ */
+function guestSshScriptHeader(ip: string): string {
+  const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: "hermes",
+    connectTimeoutSeconds: 8,
+  });
+  return `PRIVATE_IP=${shellQuote(ip)}
+VM_SSH_KEY_PATH=${GUEST_KEY_PATH}
+${guestSshPrelude}
 `;
 }
 
@@ -459,9 +496,7 @@ for i in $(seq 1 25); do grep -q "Enter this code" "$OUT" 2>/dev/null && break; 
 cat "$OUT"
 `;
   return `set -euo pipefail
-IP=${p.ip}
-GUEST_SSH="ssh -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -o BatchMode=yes -i ${GUEST_KEY_PATH} hermes@\${IP}"
-\${GUEST_SSH} "echo '${b64(guest)}' | base64 -d | bash"
+${guestSshScriptHeader(p.ip)}"\${GUEST_SSH[@]}" "echo '${b64(guest)}' | base64 -d | bash" </dev/null
 `;
 }
 
@@ -480,9 +515,7 @@ else
 fi
 `;
   return `set -euo pipefail
-IP=${p.ip}
-GUEST_SSH="ssh -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -o BatchMode=yes -i ${GUEST_KEY_PATH} hermes@\${IP}"
-\${GUEST_SSH} "echo '${b64(guest)}' | base64 -d | bash"
+${guestSshScriptHeader(p.ip)}"\${GUEST_SSH[@]}" "echo '${b64(guest)}' | base64 -d | bash" </dev/null
 `;
 }
 
