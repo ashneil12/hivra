@@ -612,10 +612,30 @@ export async function withdrawAllHermesTokensForUser(
   } catch (transferErr) {
     const transferErrorMessage =
       transferErr instanceof Error ? transferErr.message : String(transferErr);
-    await finalizeClaim("failed", { error_message: transferErrorMessage });
+    // A 4xx answer is Bankr refusing the request, so nothing was broadcast and
+    // the claim can be released. Any other throw (network error, timeout, 5xx)
+    // may mean the transfer already reached Bankr: the in-flight claim stays
+    // held, so a retry cannot send funds a second time. Reconciliation of that
+    // claim is the only thing that may clear it.
+    const refusedBeforeSend =
+      transferErr instanceof BankrTransferHttpError &&
+      transferErr.status >= 400 &&
+      transferErr.status < 500 &&
+      transferErr.status !== 408;
+    if (refusedBeforeSend) {
+      await finalizeClaim("failed", { error_message: transferErrorMessage });
+      return {
+        status: "transfer_failed",
+        errorMessage: transferErrorMessage,
+        recipientAddress: recipient,
+        amountRaw: balance.balanceRaw,
+        amountDisplay: balance.balanceDisplay,
+        gasTopup,
+      };
+    }
     return {
       status: "transfer_failed",
-      errorMessage: transferErrorMessage,
+      errorMessage: `Withdrawal pending verification: ${transferErrorMessage}. Withdrawals stay locked until the outcome is confirmed; try again later.`,
       recipientAddress: recipient,
       amountRaw: balance.balanceRaw,
       amountDisplay: balance.balanceDisplay,

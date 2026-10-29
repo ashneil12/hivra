@@ -6,16 +6,11 @@ import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-bg-remove | Psalm 51:7 | Verse: Wash me, and I shall be whiter than snow.
 const VENICE_BG_REMOVE_URL = "https://api.venice.ai/api/v1/image/background-remove";
 const ENDPOINT_LABEL = "/api/v1/image/background-remove";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

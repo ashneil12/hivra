@@ -23,6 +23,7 @@
  * (20260923150000_dual_platform_token_foundation.sql). Keep them in step.
  */
 import { supabaseAdmin } from "@/lib/supabase";
+import { chunk } from "@/lib/array-utils";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
   TOKEN_CONVERSION_GRACE_HOURS,
@@ -383,9 +384,14 @@ export async function resolveTokenAccessForUsers(
   const db = (params.db ?? (supabaseAdmin as unknown)) as TokenAccessDb | null;
   if (!db) throw new Error("Database not configured");
   await ensureHivraActivationRecorded({ db, now });
-  const { data, error } = await table(db, "token_grandfather_cohort").select(COHORT_SELECT).in("user_id", userIds);
-  if (error) throw new Error(`Failed to load the $HermesOS cohort: ${error.message ?? "unknown"}`);
-  const rows = new Map(((data as CohortRow[] | null) ?? []).map((row) => [row.user_id, row]));
+  // Chunked so the in-list stays short and no chunk can reach the row cap: a
+  // missing cohort row would silently drop a holder's token access.
+  const rows = new Map<string, CohortRow>();
+  for (const ids of chunk(userIds, 200)) {
+    const { data, error } = await table(db, "token_grandfather_cohort").select(COHORT_SELECT).in("user_id", ids);
+    if (error) throw new Error(`Failed to load the $HermesOS cohort: ${error.message ?? "unknown"}`);
+    for (const row of (data as CohortRow[] | null) ?? []) rows.set(row.user_id, row);
+  }
   for (const userId of userIds) {
     out.set(userId, computeUserTokenAccess({ phase, cohort: rows.get(userId) ?? null, now }));
   }

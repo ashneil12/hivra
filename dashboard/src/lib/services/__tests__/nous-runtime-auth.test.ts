@@ -58,6 +58,25 @@ describe("nous-runtime-auth", () => {
     expect(command).not.toContain(`sh -lc '`);
   });
 
+  it("sends the auth store on stdin so the OAuth tokens never appear in the command text", async () => {
+    mockedSshExec.mockResolvedValue({
+      ok: true,
+      stdout: '{"changed":0,"synced":1}',
+      stderr: "",
+    });
+
+    await syncNousRuntimeAuthStore("inst-123", "192.0.2.40", null, bundle, "/opt/data");
+
+    const [, command, options] = mockedSshExec.mock.calls[0] ?? [];
+    expect(typeof options?.stdin).toBe("string");
+    const stdin = options?.stdin as string;
+    expect(Buffer.from(stdin, "base64").toString("utf8")).toContain("refresh-token");
+    expect(command).toContain(`AUTH_B64="$(cat)"`);
+    expect(command).not.toContain(stdin);
+    expect(command).not.toContain("refresh-token");
+    expect(command).not.toContain("access-token");
+  });
+
   it("includes the webfree gateway container among the sync candidates", async () => {
     mockedSshExec.mockResolvedValue({
       ok: true,

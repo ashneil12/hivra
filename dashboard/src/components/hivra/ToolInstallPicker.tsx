@@ -15,6 +15,7 @@ import { Loader2, Check, Plus, X, Wrench, Trash2 } from "lucide-react";
 import { listBoxMcp } from "@/lib/hivra/agent-api";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { useInfrastructureDialog } from "@/components/infrastructure/useInfrastructureDialog";
+import { readJson } from "@/lib/client/read-json";
 
 // Portaled above the app chrome (mobile header z60, bottom bar z80). The overlay
 // covers only the visible viewport, so with the keyboard open the panel centres
@@ -54,14 +55,6 @@ interface ToolMeta {
   mcpName: string;
   env: ToolEnvFieldMeta[];
   skillCount: number;
-}
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try {
-    return (await r.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 export function ToolInstallPicker({

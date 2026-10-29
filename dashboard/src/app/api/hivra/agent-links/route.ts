@@ -19,8 +19,8 @@ import { addLinks, readLinksView } from "@/lib/agent-links/routes";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { log } from "@/lib/logger";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
-const noStore = <T extends Response>(response: T): T => { response.headers.set("Cache-Control", "no-store"); return response; };
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const Body = z.union([
   z.object({ agentId: Uuid.optional(), computerId: Uuid.optional(), all: z.boolean().optional(),

@@ -135,6 +135,33 @@ describe("POST /api/billing/yearly-token-quote/check-now", () => {
     expect(body.data.summary).toMatchObject({ activated: 1, renewed: 1, manualReview: 1, swept: 0 });
   });
 
+  it("stops starting sweeps once the shared budget is spent, leaving the rest to the cron", async () => {
+    // The budget is set when the request starts (0 + 25s). Pass 2 must respect it:
+    // the first sweep starts in time, and the second starts after the budget is gone.
+    const nowSpy = jest.spyOn(Date, "now");
+    nowSpy.mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(26_000);
+    mockLimit.mockResolvedValueOnce({
+      data: [
+        { id: "sub_1", user_id: "user_a" },
+        { id: "sub_2", user_id: "user_a" },
+      ],
+      error: null,
+    });
+    mockSweep.mockResolvedValueOnce({ subscriptionId: "sub_1", userId: "user_a", outcome: "swept", txHash: "0xfeed" });
+
+    try {
+      const res = await POST(makeReq({}));
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(mockSweep).toHaveBeenCalledTimes(1);
+      expect(mockSweep).toHaveBeenCalledWith({ id: "sub_1", user_id: "user_a" }, expect.anything());
+      expect(body.data.sweep).toHaveLength(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("does not leak the underlying error message", async () => {
     const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     mockReconcile.mockRejectedValueOnce(new Error("internal_check_now_secret_should_not_leak"));

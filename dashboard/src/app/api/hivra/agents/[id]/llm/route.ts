@@ -13,6 +13,7 @@ import { createModelKeyCoordinator, ModelKeyError, type ModelKeyProblem } from "
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
 import { createLaunchModelCoordinator } from "@/lib/hivra/launch-model-coordinator";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 const Request = z.discriminatedUnion("action", [
   z.object({ action: z.literal("apply"), operationId: z.string().uuid(), llm: z.unknown() }).strict(),
@@ -24,9 +25,6 @@ const STATUS: Record<ModelKeyProblem, number> = {
   invalid_request: 400, not_found: 404, computer_not_ready: 409, unsupported_runtime: 409,
   guest_upgrade_required: 409, guest_unavailable: 503, operation_conflict: 409, pending_change: 409,
   stored_setting_unavailable: 503, save_unconfirmed: 503, configuration_unavailable: 503,
-};
-const noStore = <T extends Response>(response: T): T => {
-  response.headers.set("Cache-Control", "no-store"); return response;
 };
 const error = (message: string, status: number, code?: string) => noStore(apiError(message, status,
   code ? { failureType: code } : undefined, code ? { code } : undefined));

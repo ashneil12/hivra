@@ -15,10 +15,7 @@ import {
 } from "@/lib/hivra/launch-operation-store";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
 import { findGvisorComputerByLaunchRequest } from "@/lib/hivra/gvisor-computer-service";
-
-const noStore = <T extends Response>(response: T): T => {
-  response.headers.set("Cache-Control", "no-store"); return response;
-};
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 function genericReceiptResponse(saved: HivraLaunchOperationReplay) {
   if (saved.state === "accepted") {

@@ -346,8 +346,8 @@ type ClerkUser = {
   }>;
 };
 
-async function fetchClerkUser(secretKey: string, userId: string): Promise<ClerkUser | null> {
-  const response = await fetch(`${CLERK_API_BASE_URL}/users/${userId}`, {
+export async function fetchClerkUser(secretKey: string, userId: string): Promise<ClerkUser | null> {
+  const response = await fetch(`${CLERK_API_BASE_URL}/users/${encodeURIComponent(userId)}`, {
     headers: { Authorization: `Bearer ${secretKey}` },
   });
   if (response.status === 404) return null;

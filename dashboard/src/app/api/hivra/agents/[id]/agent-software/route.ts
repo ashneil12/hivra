@@ -30,12 +30,12 @@ import {
   observeAgentSoftware,
   type AgentSoftwareAgentRow,
 } from "@/lib/hivra/agent-software-service";
+import { noStore, UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AGENT_COLUMNS = "id, user_id, type, status, deployment_mode, computer_profile, computer_substrate, chat_url, cf_hostname, api_token";
 
 async function ownerAgent(id: string, userId: string): Promise<{ agent: AgentSoftwareAgentRow | null; failed: boolean }> {
-  if (!supabaseAdmin || !UUID.test(id)) return { agent: null, failed: false };
+  if (!supabaseAdmin || !UUID_V1_TO_8.test(id)) return { agent: null, failed: false };
   const { data, error } = await supabaseAdmin
     .from("hivra_agents")
     .select(AGENT_COLUMNS)
@@ -45,11 +45,6 @@ async function ownerAgent(id: string, userId: string): Promise<{ agent: AgentSof
     .maybeSingle();
   if (error) return { agent: null, failed: true };
   return { agent: (data as AgentSoftwareAgentRow | null) ?? null, failed: false };
-}
-
-function noStore(response: Response): Response {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

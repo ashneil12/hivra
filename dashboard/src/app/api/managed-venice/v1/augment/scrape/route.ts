@@ -7,16 +7,11 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { planMediaRequest } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-scrape | Proverbs 18:15 | Verse: The heart of the prudent getteth knowledge; and the ear of the wise seeketh knowledge.
 const VENICE_AUGMENT_SCRAPE_URL = "https://api.venice.ai/api/v1/augment/scrape";
 const ENDPOINT_LABEL = "/api/v1/augment/scrape";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

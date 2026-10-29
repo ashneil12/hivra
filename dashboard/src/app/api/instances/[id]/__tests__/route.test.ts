@@ -3490,10 +3490,12 @@ describe("PATCH /api/instances/[id]", () => {
     let flagServerEq: jest.Mock;
     let flagUserEq: jest.Mock;
     let flagResult: { error: { message: string } | null };
+    let peersResult: { data: unknown; error: { message: string } | null };
 
     beforeEach(() => {
       order = [];
       flagResult = { error: null };
+      peersResult = { data: [{ id: "inst-123" }, { id: "inst-peer" }], error: null };
       instanceRow = { ...instanceRow, backups_enabled: true, hetzner_server_id: 42 };
       (removeBackupAddonBilling as jest.Mock).mockReset().mockImplementation(async () => {
         order.push("stripe");
@@ -3523,7 +3525,7 @@ describe("PATCH /api/instances/[id]", () => {
 
       const peersQuery = {
         eq: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ data: [{ id: "inst-123" }, { id: "inst-peer" }], error: null }),
+          eq: jest.fn(async () => peersResult),
         }),
       };
       (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
@@ -3585,6 +3587,20 @@ describe("PATCH /api/instances/[id]", () => {
       expect(JSON.stringify(json)).not.toContain("sk_live_secret");
       expect(disableServerBackup).not.toHaveBeenCalled();
       expect(flagUpdate).not.toHaveBeenCalled();
+    });
+
+    it("keeps backups on and bills nothing when the sibling lookup fails, instead of removing only this row's add-on", async () => {
+      peersResult = { data: null, error: { message: "peer query timed out" } };
+
+      const response = await patchBackupsOff();
+      const json = await response.json();
+
+      expect(response.status).toBe(502);
+      expect(json.error).toContain("Backups are still on");
+      expect(removeBackupAddonBilling).not.toHaveBeenCalled();
+      expect(disableServerBackup).not.toHaveBeenCalled();
+      expect(flagUpdate).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
     });
 
     it("does not clear the flag when Hetzner refuses, so a retry finishes the job", async () => {
@@ -3764,6 +3780,27 @@ describe("GET /api/instances/[id]", () => {
         lifecycle_state: "active",
         last_lifecycle_transition_at: expect.any(String),
       })
+    );
+  });
+
+  it("keeps the stored status when the Hetzner lookup fails instead of writing 'error'", async () => {
+    instanceRow.host_id = null;
+    instanceRow.hetzner_server_id = 42;
+    (getHetznerInstanceStatus as jest.Mock).mockResolvedValueOnce({
+      status: "error",
+      lookupFailed: true,
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/instances/inst-123"),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.status).toBe("running");
+    expect(instanceUpdateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "error" })
     );
   });
 

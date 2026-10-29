@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from tools.registry import registry
+from tools.venice_extras_tool import fetch_url_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -193,13 +194,10 @@ def _open_image_for_upload(image: str) -> Tuple[bytes, str]:
 
     Raises ``FileNotFoundError`` / ``ValueError`` on bad input.
     """
-    import requests
-
     candidate = image.strip()
     if _is_http_url(candidate):
-        resp = requests.get(candidate, timeout=60)
-        resp.raise_for_status()
-        return resp.content, Path(candidate).name or "image.png"
+        body, _ctype = fetch_url_bytes(candidate, timeout=60)
+        return body, Path(candidate).name or "image.png"
 
     if _is_data_url(candidate):
         data = _decode_data_url_or_base64(candidate)

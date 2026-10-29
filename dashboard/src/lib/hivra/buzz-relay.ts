@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 import { checkOutboundUrlSafety } from "@/lib/url-safety";
+import { discard } from "@/lib/hivra/agent-cli-meta";
 
 const MAX_RELAY_RESPONSE_BYTES = 64 * 1024;
 const RELAY_TIMEOUT_MS = 12_000;
@@ -157,10 +158,6 @@ function nip98Authorization(method: "GET" | "POST", url: string, privateKeyHex: 
   }
   const event = signedEvent(privateKeyHex, { kind: NIP98_KIND, content: "", tags });
   return `Nostr ${Buffer.from(JSON.stringify(event), "utf8").toString("base64")}`;
-}
-
-function discard(response: Response) {
-  void response.body?.cancel().catch(() => undefined);
 }
 
 async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {

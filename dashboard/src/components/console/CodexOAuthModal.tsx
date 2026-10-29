@@ -41,6 +41,17 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
 
+// The authorization URL comes from the agent's response and is opened in a new
+// tab, so only an https URL is accepted. Anything else reads as "no URL".
+function readHttpsAuthorizationUrl(value: unknown): string {
+  if (typeof value !== 'string' || !value) return '';
+  try {
+    return new URL(value).protocol === 'https:' ? value : '';
+  } catch {
+    return '';
+  }
+}
+
 // Sanitize an error before it ships to analytics: cap the length and strip
 // anything token-shaped (JWTs, long base64/hex blobs) so a secret leaking
 // into an upstream error message can never reach PostHog. The messages we
@@ -278,7 +289,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           )
         );
       }
-      const startUrl = typeof data?.data?.url === 'string' ? data.data.url : '';
+      const startUrl = readHttpsAuthorizationUrl(data?.data?.url);
       if (!startUrl) {
         throw new Error('Codex login started but no authorization URL was returned. Please try again.');
       }

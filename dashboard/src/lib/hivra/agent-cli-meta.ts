@@ -47,7 +47,8 @@ function originOf(target: { chatUrl: unknown; cfHostname: unknown }): string | n
   return origin;
 }
 
-function discard(response: Response) {
+/** Drops an unread response body so its connection is released. */
+export function discard(response: Response) {
   void response.body?.cancel().catch(() => undefined);
 }
 

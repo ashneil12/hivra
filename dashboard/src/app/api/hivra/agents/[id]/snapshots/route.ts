@@ -6,11 +6,11 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
+import { UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
 // The database refuses a sixth live restore point (begin_hivra_agent_snapshot counts status <> 'deleted' and stops at 5),
 // so this limit only bounds the read. It is also the maximum returned to the client.
 const SNAPSHOT_MAXIMUM = 5;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function publicSnapshot(row: Record<string, unknown>) {
   return {
@@ -37,7 +37,7 @@ export async function GET(
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
     const { id } = await params;
-    if (!UUID.test(id)) return apiError("Agent not found", 404);
+    if (!UUID_V1_TO_8.test(id)) return apiError("Agent not found", 404);
 
     const { data: agent, error: agentError } = await supabaseAdmin
       .from("hivra_agents")
