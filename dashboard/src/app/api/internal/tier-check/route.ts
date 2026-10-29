@@ -25,6 +25,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { decryptApiKey } from "@/lib/crypto";
 import { isProTierUser } from "@/lib/billing/pro-tier";
+import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -71,7 +72,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // A lookup error is an outage, not a refusal: the sidecar fails closed on
   // 4xx, so it must see 503 here and fail open behind the reconcile backstop.
   if (error) return deny(503);
-  if (!data?.api_server_key_encrypted) return deny(404);
+  // An unknown or keyless instance gets the same 401 as a wrong bearer, so a
+  // caller cannot tell which instance ids exist.
+  if (!data?.api_server_key_encrypted) return deny(401);
 
   let expected: string;
   try {
@@ -99,10 +102,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ...(result.reason ? { reason: result.reason } : {}),
     };
   } catch (err) {
+    // The caller only gets a fixed reason; the error detail stays in the server log.
+    log.warn("tier check threw", {
+      source: "internal/tier-check",
+      failureType: "tier_check_error",
+      instanceId: data.id,
+      errorMessage: String((err as Error)?.message ?? err),
+    });
     tierCheck = {
       tier_ok: false,
       tier: null,
-      reason: `tier_check_error:${(err as Error).message}`,
+      reason: "tier_check_error",
     };
   }
 

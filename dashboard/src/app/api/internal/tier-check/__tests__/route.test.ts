@@ -58,8 +58,38 @@ describe("GET /api/internal/tier-check", () => {
     expect((await res.json()).tier_ok).toBe(false);
   });
 
-  it("answers 404 for an unknown instance", async () => {
+  // An unknown instance, a keyless one and a wrong bearer must look identical
+  // from outside, so the response cannot be used to find live instance ids.
+  it("answers the same 401 for an unknown instance, a keyless one and a wrong bearer", async () => {
+    const wrongBearer = new NextRequest(`http://localhost/api/internal/tier-check?instance_id=${INSTANCE_ID}`, {
+      headers: { authorization: `Bearer ${"w".repeat(64)}` },
+    });
+
+    lookupReturns({ data: { user_id: "user_1", api_server_key_encrypted: "enc" }, error: null });
+    const live = await GET(wrongBearer);
+
     lookupReturns({ data: null, error: null });
-    expect((await GET(req())).status).toBe(404);
+    const unknown = await GET(req());
+
+    lookupReturns({ data: { user_id: "user_1", api_server_key_encrypted: null }, error: null });
+    const keyless = await GET(req());
+
+    for (const res of [live, unknown, keyless]) {
+      expect(res.status).toBe(401);
+      expect(await res.text()).toBe("");
+    }
+  });
+
+  // An unexpected throw must not echo the error text to the caller. The reason is
+  // a fixed code; the detail belongs in the server log.
+  it("returns a fixed reason, not the raw error message, when the check throws", async () => {
+    lookupReturns({ data: { user_id: "user_1", api_server_key_encrypted: "enc" }, error: null });
+    (isProTierUser as jest.Mock).mockRejectedValueOnce(new Error("internal detail: db host 10.250.0.9"));
+
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ tier_ok: false, tier: null, reason: "tier_check_error" });
+    expect(JSON.stringify(body)).not.toContain("10.250.0.9");
   });
 });
