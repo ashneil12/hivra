@@ -11,6 +11,11 @@ export interface OpsEventInput {
   source: string;
   title: string;
   message: string;
+  /**
+   * Extra input to the fingerprint only (for example a digest of a raw error message that
+   * is not stored). It is never written to the row.
+   */
+  fingerprintDetail?: string;
   severity?: OpsEventSeverity;
   route?: string;
   userId?: string | null;
@@ -88,6 +93,7 @@ export function buildOpsEventFingerprint(input: {
   source: string;
   title: string;
   message: string;
+  fingerprintDetail?: string;
   route?: string;
   userId?: string | null;
   instanceId?: string | null;
@@ -103,6 +109,8 @@ export function buildOpsEventFingerprint(input: {
     instanceId: input.instanceId || '',
     conversationId: input.conversationId || '',
     profileName: input.profileName || '',
+    // Added only when given, so events without a detail keep their existing fingerprint.
+    ...(input.fingerprintDetail ? { detail: input.fingerprintDetail } : {}),
   });
 
   return createHash('sha256').update(raw).digest('hex');

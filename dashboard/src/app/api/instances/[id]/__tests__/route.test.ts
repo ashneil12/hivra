@@ -4873,6 +4873,14 @@ describe("DELETE /api/instances/[id] write failures", () => {
     expect(json.success).toBe(false);
     expect(json.data).toBeUndefined();
     expect(hostUpdate).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      "instance soft-delete write failed after provider teardown",
+      expect.anything(),
+      expect.objectContaining({
+        failureMessage: "The runtime was removed, but its record could not be updated. Retry deletion to finish.",
+        failureOwner: "control-plane",
+      })
+    );
   });
 
   it("does not mark a shared host deleted when the live-instance count query fails", async () => {
@@ -5018,6 +5026,7 @@ describe("DELETE /api/instances/[id]", () => {
       "hetzner delete failed; refusing to mark instance deleted (avoid orphan billable VM)",
       expect.any(Error),
       expect.objectContaining({
+        failureMessage: "Hetzner delete failed. Please retry — the instance has not been removed.",
         failureType: "instance_delete_hetzner_failed",
         failureOwner: "provider",
         failurePhase: "delete",
@@ -5268,6 +5277,87 @@ describe("DELETE /api/instances/[id]", () => {
       "proxmox delete failed; refusing to mark instance deleted",
       expect.any(Error),
       expect.objectContaining({
+        failureMessage: "Proxmox delete failed. Please retry — the instance has not been removed.",
+        failureType: "instance_delete_proxmox_failed",
+        failureOwner: "hypervisor",
+        failurePhase: "delete",
+        recoveryAction: "contact_support",
+      })
+    );
+  });
+
+  it("refuses to mark deleted when the Proxmox delete call throws", async () => {
+    const infrastructure = {
+      provider: "proxmox",
+      vmid: 201,
+      privateIpv4: "10.250.20.51",
+      gatewayHost: "abc123.203-0-113-10.sslip.io",
+    };
+    const updateSpy = jest.fn();
+    (deleteProxmoxInstance as jest.Mock).mockRejectedValue(
+      new Error("ssh: connect to host 10.250.20.1 port 22: Connection refused"),
+    );
+    // The post-failure check runs `getProxmoxInstanceStatus` to see if the VM
+    // is already gone. Without this mock the route hits TypeError reading
+    // .vmMissing on undefined and falls into the outer catch block, which
+    // logs a different message than the assertion below expects.
+    (getProxmoxInstanceStatus as jest.Mock).mockResolvedValue({
+      status: "running",
+      vmMissing: false,
+    });
+
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                neq: jest.fn().mockReturnValue({
+                  single: jest.fn().mockResolvedValue({
+                    data: {
+                      id: "inst-123",
+                      user_id: "user_123",
+                      status: "running",
+                      provider: "openai",
+                      hetzner_server_id: null,
+                      host_id: "host-fixturenode2",
+                      config: { infrastructure: { ...infrastructure, hostSlug: "fixturenode2" } },
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }),
+          update: updateSpy,
+        };
+      }
+      return {
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      };
+    });
+
+    const response = await DELETE(confirmedDeleteRequest(), {
+      params: Promise.resolve({ id: "inst-123" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(json.error).toBe("Proxmox delete failed. Please retry — the instance has not been removed.");
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(deleteProxmoxInstance).toHaveBeenCalledWith(
+      expect.objectContaining(infrastructure),
+      expect.objectContaining({
+        hostConfig: expect.objectContaining({ hostId: "host-fixturenode2", hostSlug: "fixturenode2" }),
+      })
+    );
+    expect(log.error).toHaveBeenCalledWith(
+      "proxmox delete threw; refusing to mark instance deleted",
+      expect.any(Error),
+      expect.objectContaining({
+        failureMessage: "Proxmox delete failed. Please retry — the instance has not been removed.",
         failureType: "instance_delete_proxmox_failed",
         failureOwner: "hypervisor",
         failurePhase: "delete",
@@ -5718,6 +5808,14 @@ describe("DELETE /api/instances/[id]", () => {
     );
     expect(updateSpy).not.toHaveBeenCalled();
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      "proxmox-backed row missing an authoritative teardown receipt; refusing to mark deleted",
+      expect.any(Error),
+      expect.objectContaining({
+        failureMessage: "This runtime could not be verified as removed. Its record was preserved while routing recovery runs.",
+        failureOwner: "control-plane",
+      })
+    );
   });
 
   it("refuses DB-only deletion for failed/error rows without teardown evidence", async () => {

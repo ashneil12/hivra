@@ -99,6 +99,31 @@ describe('ops-events helper', () => {
     expect(JSON.stringify(row)).not.toContain(body.slice(0, 35));
   });
 
+  // Events without a fingerprintDetail keep the fingerprint they had before the detail
+  // field existed, so existing ops_events rows keep grouping as they did.
+  it('keeps the fingerprint of an event that carries no detail', () => {
+    expect(buildOpsEventFingerprint({
+      source: 'api',
+      title: 'Responses proxy failed',
+      message: 'Gateway unreachable',
+      route: '/api/instances/123/responses',
+      userId: 'user_123',
+      instanceId: 'inst_123',
+    })).toBe('2342effbd0b4eac721d955ccb33a421c0eeb3c947c358c1ced741499c8e7d6b1');
+  });
+
+  it('separates events that share a stored message but carry different details', () => {
+    const base = {
+      source: 'instance-health',
+      title: 'fetch failed',
+      message: 'TypeError',
+    };
+    const first = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'a'.repeat(64) });
+    const second = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'b'.repeat(64) });
+    expect(first).not.toBe(second);
+    expect(first).not.toBe(buildOpsEventFingerprint(base));
+  });
+
   it('builds a stable fingerprint from the same event shape', () => {
     const first = buildOpsEventFingerprint({
       source: 'api',

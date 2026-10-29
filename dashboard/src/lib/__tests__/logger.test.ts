@@ -1,5 +1,5 @@
 import { log } from "../logger";
-import { reportOpsEvent } from "../ops-events";
+import { buildOpsEventFingerprint, reportOpsEvent } from "../ops-events";
 
 jest.mock("../ops-events", () => {
   const actual = jest.requireActual("../ops-events");
@@ -84,6 +84,42 @@ describe("structured logger", () => {
       const payload = (reportOpsEvent as jest.Mock).mock.calls[0][0];
       expect(payload.message).toBe(upstreamText);
       expect(payload.sampleStack).toEqual(expect.stringContaining("Error"));
+    });
+
+    it("stores the curated failureMessage when a caller supplies one, never the raw message", async () => {
+      const err = new Error(upstreamText);
+
+      log.error("proxmox delete failed", err, {
+        source: "instances",
+        failureOwner: "hypervisor",
+        failureMessage: "Proxmox delete failed. Please retry - the instance has not been removed.",
+      });
+
+      const payload = (reportOpsEvent as jest.Mock).mock.calls[0][0];
+      expect(payload.message).toBe("Proxmox delete failed. Please retry - the instance has not been removed.");
+      expect(JSON.stringify(payload)).not.toContain("ZZZ123");
+      expect(payload.sampleStack).toBeUndefined();
+    });
+
+    it("keeps errors that share a class and no code apart in the fingerprint", async () => {
+      log.error("fetch failed", new TypeError("connect to host-a refused"), { source: "probe" });
+      log.error("fetch failed", new TypeError("connect to host-b refused"), { source: "probe" });
+
+      const [first, second] = (reportOpsEvent as jest.Mock).mock.calls.map(([input]) => input);
+      expect(first.message).toBe("TypeError");
+      expect(second.message).toBe("TypeError");
+      expect(buildOpsEventFingerprint(first)).not.toBe(buildOpsEventFingerprint(second));
+      expect(JSON.stringify(first)).not.toContain("host-a");
+    });
+
+    it("groups a curated failureMessage by the raw error, not by the shared sentence", async () => {
+      const curated = { source: "instances", failureMessage: "Proxmox delete failed. Please retry." };
+      log.error("proxmox delete failed", new Error("qm destroy 201 failed"), curated);
+      log.error("proxmox delete failed", new Error("qm destroy 202 failed"), curated);
+
+      const [first, second] = (reportOpsEvent as jest.Mock).mock.calls.map(([input]) => input);
+      expect(first.message).toBe(second.message);
+      expect(buildOpsEventFingerprint(first)).not.toBe(buildOpsEventFingerprint(second));
     });
 
     it("stores the log title, not the thrown value, when the error is not an Error", async () => {

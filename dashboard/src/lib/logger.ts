@@ -14,6 +14,8 @@
  * encouraged but optional. Anything else you spread into the context is
  * preserved verbatim (after sanitization).
  */
+import { createHash } from "node:crypto";
+
 import { reportOpsEvent, sanitizeOpsMetadata } from "@/lib/ops-events";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -43,6 +45,13 @@ export interface LogContext {
    * are always logged regardless.
    */
   verboseErrors?: boolean;
+  /**
+   * The owner-facing sentence for an error row that an instance owner sees in a failure
+   * banner (failureOwner). When set, the ops_events message is this sentence instead of
+   * the error class, so the owner reads curated copy and never a developer or provider
+   * message. Use it only with a sentence the route already returns to the client.
+   */
+  failureMessage?: string;
   [key: string]: unknown;
 }
 
@@ -138,6 +147,16 @@ function opsEventMessage(err: unknown, msg: string, verbose: boolean): string {
   return label || msg;
 }
 
+/**
+ * A digest of the raw error message, used only to group ops_events rows. Two errors that
+ * share a class and code but carry different messages stay in separate rows, as they did
+ * before the message was withheld. Only the digest is passed on, never the text.
+ */
+function fingerprintDetailFor(err: unknown): string | undefined {
+  if (!(err instanceof Error) || !err.message) return undefined;
+  return createHash("sha256").update(err.message).digest("hex");
+}
+
 function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): void {
   if (!shouldLog(level)) return;
 
@@ -170,7 +189,8 @@ function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): voi
     void reportOpsEvent({
       source: ctx.source,
       title: msg,
-      message: opsEventMessage(err, msg, verbose),
+      message: ctx.failureMessage || opsEventMessage(err, msg, verbose),
+      fingerprintDetail: fingerprintDetailFor(err),
       severity: "error",
       route: ctx.route,
       userId: ctx.userId ?? null,
