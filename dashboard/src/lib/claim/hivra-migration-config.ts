@@ -127,9 +127,9 @@ export type HivraMigrationConfig = {
 };
 
 export const HIVRA_MIGRATION: HivraMigrationConfig = {
-  published: false,
-  announcedAt: null,
-  claimRecordsUrl: null,
+  published: true,
+  announcedAt: "2026-10-28T05:00:00Z",
+  claimRecordsUrl: "https://basescan.org/address/0x4131ab8F9797bB4887A72470B8AF48fBEc37522F",
   treasurySafe: "0x4aCDa6e26929acd34b45beDaEE2f7b8a418ce10C",
   fee: { totalPct: 1.58, protocolSharePct: 5, liquiditySharePct: 20 },
   founder: {
@@ -140,9 +140,9 @@ export const HIVRA_MIGRATION: HivraMigrationConfig = {
     weeklyCapTokens: "500M",
     maxPriceImpactPct: 5,
     weeks: 12,
-    saleStart: null,
-    saleDay: null,
-    burnDate: null,
+    saleStart: "2026-11-12",
+    saleDay: "Thursday",
+    burnDate: "2027-01-29",
     burnAddress: "0x000000000000000000000000000000000000dEaD",
   },
   receipts: [],
