@@ -86,6 +86,8 @@ export interface LinkCandidate {
   id: string;
   name: string;
   kind: string;
+  /** The row's lifecycle status, so two rows with one name can be told apart. */
+  status: string;
   linked: boolean;
   available: boolean;
   reason?: string;
@@ -99,6 +101,7 @@ export function candidatesFor(subject: OwnedRow, rows: OwnedRow[], linkedIds: Se
     return {
       id: row.id, name: linkLabel(row.name, subjectIsComputer ? "Agent" : "Computer"),
       kind: subjectIsComputer ? String(row.type ?? "agent") : computerKindLabel(row),
+      status: String(row.status ?? "unknown"),
       linked: linkedIds.has(row.id), available: side.ok, ...(side.ok ? {} : { reason: side.reason }),
     };
   });
