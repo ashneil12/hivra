@@ -147,7 +147,7 @@ describe("ComputerCatalogPage", () => {
     const omarchyCard = screen
       .getByRole("heading", { name: "Omarchy" })
       .closest("article") as HTMLElement;
-    expect(within(omarchyCard).getByText("Preview")).toBeInTheDocument();
+    expect(within(omarchyCard).getByText("Prepared computer")).toBeInTheDocument();
     expect(
       within(omarchyCard).getByText("Full Linux desktop in your browser"),
     ).toBeInTheDocument();

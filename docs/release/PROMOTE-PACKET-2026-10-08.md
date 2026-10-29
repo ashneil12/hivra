@@ -1,5 +1,7 @@
 # Promote packet: hivra.cloud, first cutover to the public repository
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 Prepared 2026-10-08 against the Canary tip. **Status: PREPARED ONLY. NOTHING HAS BEEN EXECUTED.**
 
 > **PROD HOLD is in force.** The owner has frozen every production action (no Promote,

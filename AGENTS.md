@@ -2,7 +2,9 @@
 
 ## Product Source of Truth
 
-Use product documentation in this order:
+For what is available today (what launches, where, and what is in preview), `docs/STATUS.md` is the single source of truth, together with the owner decisions it records. Do not infer availability from a roadmap, spec, verification note or dated packet. If you change a launch catalog or a status label, update `docs/STATUS.md` in the same pull request. If you find a document that contradicts it, fix that document.
+
+For everything else, use product documentation in this order:
 
 1. `VISION.md` and `docs/PRODUCT-ARCHITECTURE.md`
 2. the current approved design specification for the affected subsystem

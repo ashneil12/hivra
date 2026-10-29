@@ -510,7 +510,7 @@ const AGENT_TILES: readonly ChooseTile[] = ([
 const COMPUTER_TILES: readonly ChooseTile[] = [
   { id: "ubuntu-desktop", name: "Ubuntu Desktop", description: "A desktop, terminal and files you open in your browser.", icon: Monitor },
   { id: "linux-terminal", name: "Linux Sandbox", description: "A lightweight terminal workspace on a Linux server you connected.", icon: TerminalSquare },
-  { id: "omarchy", name: "Omarchy (Preview)", description: "A prepared Omarchy desktop with a setup console.", icon: null },
+  { id: "omarchy", name: "Omarchy", description: "A prepared Omarchy desktop with a setup console.", icon: null },
   { id: "windows", name: "Windows (your ISO)", description: "Install Windows from your own ISO on a server you connected.", icon: AppWindow },
 ];
 
@@ -1399,7 +1399,7 @@ export function LaunchJourney(
   }
   else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
   else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
-  else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "This preview computer runs on Hivra Cloud only.";
+  else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "Omarchy runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) capacityBlocker = "No compatible capacity is ready for this profile.";
   else if (destination.mode === "self-managed" && !selectedTargetFits) {
     // A size the owner chose is never lowered for them, so say how to get out
