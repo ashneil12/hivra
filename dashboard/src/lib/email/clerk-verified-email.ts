@@ -24,7 +24,8 @@ export function pickVerifiedEmail(user: ClerkUserWithEmails): string | null {
     (address) => address.verification?.status === "verified" && Boolean(address.email_address?.trim()),
   );
   const primary = verified.find((address) => address.id === user.primary_email_address_id);
-  return (primary ?? verified[0])?.email_address ?? null;
+  const chosen = (primary ?? verified[0])?.email_address;
+  return chosen ? chosen.trim() : null;
 }
 
 /**
