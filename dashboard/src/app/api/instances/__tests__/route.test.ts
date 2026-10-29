@@ -717,6 +717,7 @@ describe("GET /api/instances", () => {
         status: "running",
         provider: "openai",
         gateway_url: "https://atlas.example.com",
+        api_key_encrypted: "provider-key-ciphertext",
         api_server_key_encrypted: "gateway-secret",
         ipv4_address: "203.0.113.10",
         hetzner_server_id: 42,
@@ -751,6 +752,8 @@ describe("GET /api/instances", () => {
     // server-only secret pulled in by select("*"). Full mode must redact
     // it (the `...inst` spread would otherwise serialize it to the client).
     expect(json.data[0]).not.toHaveProperty("api_server_key_encrypted");
+    // ...and the same for every other encrypted column, the provider key included.
+    expect(Object.keys(json.data[0]).filter((key) => key.endsWith("_encrypted"))).toEqual([]);
     // The probe still RUNS — we just don't act on a single miss for a running box.
     expect(fetchFirstReachableGatewayResponse).toHaveBeenCalledWith(
       expect.objectContaining({

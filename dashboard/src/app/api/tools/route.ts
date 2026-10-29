@@ -63,11 +63,11 @@ export async function GET() {
 async function cliTargetEnv(
   userId: string,
   agent: Record<string, unknown>,
-): Promise<{ env: Record<string, string | undefined> } | { error: string }> {
+): Promise<{ authority: Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>> } | { error: string }> {
   const blocked = catalogToolsUnavailableReason(agent.computer_substrate);
   if (blocked) return { error: blocked };
   try {
-    return { env: (await resolveHivraAgentExecutionContext(userId, agent)).env };
+    return { authority: await resolveHivraAgentExecutionContext(userId, agent) };
   } catch (contextError) {
     const safeError = describeHivraAgentExecutionContextError(contextError);
     if (!safeError) {
@@ -268,16 +268,17 @@ export async function POST(req: NextRequest) {
         id: String(agent.id),
         type: (agent.type as string | null) ?? null,
         ip: (agent.ip as string | null) ?? null,
+        vmid: (agent.vmid as number | null) ?? null,
       };
       if (remove) {
-        const r = await uninstallToolFromBox(box, toolId, resolved.env);
+        const r = await uninstallToolFromBox(box, toolId, resolved.authority);
         results[i] = {
           uid,
           ok: r.ok,
           error: r.ok ? undefined : toolHostFailure({ userId, agentId: box.id, op: "uninstall", error: r.error || "" }),
         };
       } else {
-        const r = await installToolsOnBox(box, [{ id: toolId, env }], resolved.env);
+        const r = await installToolsOnBox(box, [{ id: toolId, env }], resolved.authority);
         const skipped = r.skipped.find((s) => s.id === toolId);
         results[i] = {
           uid,

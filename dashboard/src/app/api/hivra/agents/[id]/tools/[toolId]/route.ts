@@ -62,9 +62,9 @@ export async function DELETE(
       return apiError("Agent isn't running yet", 409);
     }
 
-    let env: Record<string, string | undefined>;
+    let authority: Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>>;
     try {
-      env = (await resolveHivraAgentExecutionContext(userId, agent)).env;
+      authority = await resolveHivraAgentExecutionContext(userId, agent);
     } catch (contextError) {
       const safeError = describeHivraAgentExecutionContextError(contextError);
       if (safeError) return apiError(safeError.message, safeError.status);
@@ -76,9 +76,10 @@ export async function DELETE(
         id: String(agent.id),
         type: (agent.type as string | null) ?? null,
         ip: (agent.ip as string | null) ?? null,
+        vmid: (agent.vmid as number | null) ?? null,
       },
       toolId,
-      env,
+      authority,
     );
 
     if (!result.ok) return apiError(result.error || "Tool uninstall failed", 502);

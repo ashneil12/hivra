@@ -3,6 +3,7 @@ import { apiSuccess, apiError } from '@/lib/api-response';
 import { log } from '@/lib/logger';
 import { sshExec } from '@/lib/hetzner/ssh';
 import { validateConsoleAccess } from '@/lib/services/console-helpers';
+import { isAdvancedCloudAccessEligible } from '@/app/api/instances/[id]/route';
 import {
   buildElevatedModeApplyScript,
   buildElevatedModeReadScript,
@@ -73,6 +74,20 @@ export async function POST(
       return apiError('Request body must include a boolean "enabled" field.', 400);
     }
     const enabled: boolean = body.enabled;
+
+    // Passwordless sudo is the same owner escape hatch as root access, so it
+    // gets the same rule as the settings PATCH: disabling is always allowed,
+    // enabling fails closed unless the row proves an isolated customer VM.
+    if (
+      enabled &&
+      !isAdvancedCloudAccessEligible(
+        access.instance as Parameters<typeof isAdvancedCloudAccessEligible>[0],
+      )
+    ) {
+      return apiError('Elevated mode is only available on isolated customer VMs.', 403, {
+        failureType: 'elevated_mode_requires_isolated_vm',
+      });
+    }
 
     const result = await sshExec(hostIp, buildElevatedModeApplyScript(instanceId, enabled), {
       timeoutMs: ELEVATED_APPLY_TIMEOUT_MS,

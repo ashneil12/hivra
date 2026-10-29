@@ -99,6 +99,27 @@ describe("routes", () => {
     });
   });
 
+  it("POST /goto returns 403 and parks the page when a redirect lands on loopback", async () => {
+    const session = sessions.get("fake-session-id") as unknown as {
+      page: { goto: ReturnType<typeof vi.fn>; url: ReturnType<typeof vi.fn> };
+    };
+    let current = "about:blank";
+    session.page.url.mockImplementation(() => current);
+    session.page.goto.mockImplementation(async (url: string) => {
+      current = url === "about:blank" ? url : "http://127.0.0.1:9090/dashboard-session-check";
+      return null;
+    });
+    const app = await buildApp(sessions, config);
+    const res = await app.inject({
+      method: "POST",
+      url: "/goto",
+      payload: { session_id: "fake-session-id", url: "https://redirector.example/go" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ ok: false, error: "BLOCKED_DESTINATION" });
+    expect(current).toBe("about:blank");
+  });
+
   it("POST /goto returns 404 for unknown session", async () => {
     const app = await buildApp(sessions, config);
     const res = await app.inject({

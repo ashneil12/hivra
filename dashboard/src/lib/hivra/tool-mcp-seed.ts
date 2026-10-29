@@ -23,6 +23,12 @@ import "server-only";
 // SSH stdin, exactly like the skills seeder, so nothing touches an outer command
 // line either.
 
+import {
+  buildPinnedGuestHostScript,
+  resolvePinnedGuestTarget,
+  type PinnedGuestAuthority,
+  type PinnedGuestTarget,
+} from "@/lib/hivra/pinned-guest-seed";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 
 /** Agent type -> the box config flavor. Only CLI boxes with an MCP config qualify. */
@@ -166,19 +172,20 @@ printf '%s' '${specB64}' | sudo -u bux env HOME="$BUX" "$NODE" "$TMP"
 }
 
 /**
- * Host script (runs as root on the Proxmox host). Streams the base64-wrapped guest
- * script to the guest over stdin — same key + ssh opts as the provisioner/skills
- * seeder. No credential ever appears on any command line.
+ * Host script (runs as root on the Proxmox host). The guest script carries the
+ * tool's credentials, so it only travels over the VMID-bound path: the host
+ * checks the VM's owner binding tag and configured IP, then pins SSH to the
+ * guest host key QEMU Guest Agent attests (pinned-guest-seed.ts). No
+ * credential ever appears on any command line.
  */
-export function buildToolMcpHostScript(ip: string, guestScript: string): string {
-  const outer = b64(guestScript);
-  return `#!/usr/bin/env bash
-set -euo pipefail
-KEY=/etc/hivra/keys/vm-orchestrator
-[ -f "$KEY" ] || { echo "vm key $KEY missing" >&2; exit 1; }
-printf '%s' '${outer}' | ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes "ubuntu@${ip}" "base64 -d | sudo bash"
-`;
+export function buildToolMcpHostScript(target: PinnedGuestTarget, guestScript: string): string {
+  return buildPinnedGuestHostScript(target, guestScript);
 }
+
+/** The agent's resolved execution context, as far as tool seeding reads it. */
+export type ToolMcpAuthority = PinnedGuestAuthority & {
+  env: Parameters<typeof runProxmoxHostScript>[1];
+};
 
 /** Build the base64 JSON spec the node program consumes. */
 export function buildToolMcpSpec(
@@ -199,17 +206,21 @@ export function buildToolMcpSpec(
 export async function applyToolMcpOnBox(
   kind: "claude" | "codex",
   op: "add" | "remove",
-  ip: string,
+  box: { ip?: string | null; vmid?: number | null },
   servers: ToolMcpServerSpec[],
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: ToolMcpAuthority,
 ): Promise<{ ok: boolean; error: string }> {
-  if (!/^[0-9.]+$/.test(ip)) return { ok: false, error: "missing or invalid box ip" };
   if (servers.length === 0) return { ok: true, error: "" };
+  // Fails closed: a box that can't be pinned to its VMID gets no credentials.
+  const pinned = resolvePinnedGuestTarget(box, authority);
+  if (!pinned.ok) {
+    return { ok: false, error: `this box's identity can't be verified (${pinned.reason}), so nothing was sent to it` };
+  }
   const specB64 = buildToolMcpSpec(kind, op, servers);
-  const script = buildToolMcpHostScript(ip, buildToolMcpGuestScript(specB64));
+  const script = buildToolMcpHostScript(pinned.target, buildToolMcpGuestScript(specB64));
   let res: HostScriptResult;
   try {
-    res = await runProxmoxHostScript(script, env, 30_000);
+    res = await runProxmoxHostScript(script, authority.env, 30_000);
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

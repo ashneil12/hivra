@@ -48,6 +48,7 @@ COPY caddy/Caddyfile /etc/caddy/Caddyfile
 # against /app/node_modules. Inert unless the entrypoint runs with
 # AGENT_CDP_ENABLED=true (set by the dashboard on canary).
 COPY docker/cdp-proxy.mjs ./cdp-proxy.mjs
+COPY docker/cdp-request-guard.mjs ./cdp-request-guard.mjs
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

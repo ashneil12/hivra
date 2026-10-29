@@ -6,7 +6,7 @@ import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
 import type { SessionManager } from "./session-manager.js";
 import { fetchVerificationCode } from "../imap/client.js";
-import { assertNavigationAllowed } from "../navigation-guard.js";
+import { gotoWithNavigationGuard } from "../navigation-guard.js";
 
 interface FlowStep {
   id?: string;
@@ -123,8 +123,7 @@ export class FlowRunner {
         // Same SSRF policy as the /goto route — a flow's goto url can be
         // interpolated from caller-supplied ${args:...}, so it must not be
         // pointable at loopback / metadata / sibling docker services.
-        assertNavigationAllowed(String(a.url));
-        await page.goto(String(a.url));
+        await gotoWithNavigationGuard(page, String(a.url));
         return;
       }
       case "click_text": {

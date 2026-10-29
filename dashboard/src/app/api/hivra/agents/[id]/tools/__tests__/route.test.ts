@@ -134,7 +134,7 @@ describe("per-agent catalog tool routes", () => {
     expect(mockInstallToolsOnBox).toHaveBeenCalledWith(
       expect.objectContaining({ id: "agent-1" }),
       [{ id: "github", env: {} }],
-      { PROXMOX_NODE: "pve-a" },
+      expect.objectContaining({ env: { PROXMOX_NODE: "pve-a" } }),
     );
   });
 });

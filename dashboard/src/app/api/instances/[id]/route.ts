@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { withoutEncryptedColumns } from "@/lib/instance-record";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -1534,14 +1535,12 @@ export async function GET(
     const failureAlert = failureAlerts[id] ?? null;
 
     return apiSuccess({
-      ...instance,
+      ...withoutEncryptedColumns(instance!),
       status,
       gateway_url: gatewayUrl,
       public_ipv4: publicIpv4,
       config: getPublicInstanceConfig(responseConfig),
       advanced_cloud_access_eligible: isAdvancedCloudAccessEligible(instance!),
-      api_server_key_encrypted: undefined,
-      honcho_api_key_encrypted: undefined,
       has_honcho_api_key: Boolean(instance!.honcho_api_key_encrypted),
       plan_limits: planLimits,
       backups_enabled: backupsEnabled,
@@ -2205,10 +2204,8 @@ export async function PATCH(
 
     return apiSuccess({
       instance: {
-        ...updated,
+        ...withoutEncryptedColumns(updated),
         config: getPublicInstanceConfig(updated.config),
-        api_server_key_encrypted: undefined,
-        honcho_api_key_encrypted: undefined,
         has_honcho_api_key: Boolean(updated.honcho_api_key_encrypted),
       },
       applied,
