@@ -11,6 +11,13 @@ export interface OpsEventInput {
   source: string;
   title: string;
   message: string;
+  /**
+   * Extra input to the fingerprint only: the code location of a code-less error (its top
+   * stack frame, see logger.ts). The detail is never written to the row, but the stored
+   * fingerprint is a hash over it, so it must carry no values. A digest of a raw message
+   * would let a reader test a guessed message (an internal IP or VMID) against the fingerprint.
+   */
+  fingerprintDetail?: string;
   severity?: OpsEventSeverity;
   route?: string;
   userId?: string | null;
@@ -88,6 +95,7 @@ export function buildOpsEventFingerprint(input: {
   source: string;
   title: string;
   message: string;
+  fingerprintDetail?: string;
   route?: string;
   userId?: string | null;
   instanceId?: string | null;
@@ -103,6 +111,8 @@ export function buildOpsEventFingerprint(input: {
     instanceId: input.instanceId || '',
     conversationId: input.conversationId || '',
     profileName: input.profileName || '',
+    // Added only when given, so events without a detail keep their existing fingerprint.
+    ...(input.fingerprintDetail ? { detail: input.fingerprintDetail } : {}),
   });
 
   return createHash('sha256').update(raw).digest('hex');

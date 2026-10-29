@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+import { SECRET_TOKEN_SHAPES } from "@/lib/command-output-redaction";
+
 import {
   NATIVE_PRODUCERS,
   NATIVE_RUN_ROLES,
@@ -85,9 +87,19 @@ const hex = (v: unknown, len: number): string | undefined => {
   return typeof v === "string" && re.test(v) ? v.toLowerCase() : undefined;
 };
 
-/** Credential-shaped identifiers are dropped even when their charset is allowed. */
+/**
+ * Credential-shaped identifiers are dropped even when their charset is allowed. The token
+ * shapes are the redactor's own list (command-output-redaction.ts), so a platform key such
+ * as a managed-Venice, Bankr, agent-link, Google or Telegram token is caught here too.
+ * The unanchored legacy shapes are left out: they match inside a word, so a kebab-case
+ * session id such as `task-manager-...` would be dropped. The start-anchored prefix test
+ * below still covers those keys at the start of a value.
+ */
+const ATTRIBUTE_TOKEN_SHAPES = SECRET_TOKEN_SHAPES.filter((shape) => !shape.unanchored);
 export function looksSecret(candidate: string): boolean {
-  return /^(?:sk-|gh[opsu]_|github_pat_|xox[baprs]-|AKIA|ASIA|eyJ[A-Za-z0-9_-]*\.)/i.test(candidate)||/bearer/i.test(candidate);
+  return /^(?:sk-|gh[opsu]_|github_pat_|xox[baprs]-|AKIA|ASIA|eyJ[A-Za-z0-9_-]*\.)/i.test(candidate)
+    || /bearer/i.test(candidate)
+    || ATTRIBUTE_TOKEN_SHAPES.some(({ pattern }) => pattern.test(candidate));
 }
 
 function anyValue(value: unknown): string | number | boolean | undefined {

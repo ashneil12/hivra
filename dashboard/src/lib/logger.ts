@@ -43,6 +43,13 @@ export interface LogContext {
    * are always logged regardless.
    */
   verboseErrors?: boolean;
+  /**
+   * The owner-facing sentence for an error row that an instance owner sees in a failure
+   * banner (failureOwner). When set, the ops_events message is this sentence instead of
+   * the error class, so the owner reads curated copy and never a developer or provider
+   * message. Use it only with a sentence the route already returns to the client.
+   */
+  failureMessage?: string;
   [key: string]: unknown;
 }
 
@@ -125,6 +132,33 @@ function formatHuman(entry: Record<string, unknown>): string {
   return `[${tsStr}] ${String(level).toUpperCase()} ${msg}${errStr}${ctxStr}`;
 }
 
+/**
+ * The message stored on the ops_events row. It matches what the console line
+ * carries: the error class and code, or the raw message only when the caller
+ * opted in with verboseErrors. A thrown non-Error is stored as the log title.
+ */
+function opsEventMessage(err: unknown, msg: string, verbose: boolean): string {
+  if (!(err instanceof Error)) return msg;
+  if (verbose) return err.message || msg;
+  const code = (err as { code?: unknown }).code;
+  const label = typeof code === "string" && code ? `${err.name} (${code})` : err.name;
+  return label || msg;
+}
+
+/**
+ * The code location of a code-less error, used to group its ops_events row: the top stack
+ * frame, which names where the error was thrown and carries no values. A code-less error
+ * is grouped by that site, not by its text. A digest of the raw message was a guessable
+ * oracle: the stored fingerprint is readable, and an internal IP or VMID can be tested
+ * against a digest of it. A verbose error needs no detail here, because its message is
+ * already part of the fingerprint (and is stored on the row by the caller's opt-in).
+ */
+function fingerprintDetailFor(err: unknown, verbose: boolean): string | undefined {
+  if (!(err instanceof Error) || verbose) return undefined;
+  const frame = err.stack?.split("\n").find((line) => /^\s+at\s/.test(line));
+  return frame?.trim() || undefined;
+}
+
 function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): void {
   if (!shouldLog(level)) return;
 
@@ -137,11 +171,11 @@ function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): voi
     ...sanitizedCtx,
   };
 
+  const verbose = ctx.verboseErrors === true;
   if (err !== undefined) {
-    const serialized = serializeError(err, ctx.verboseErrors === true);
-    // Sanitization is applied to message/stack via reportOpsEvent below; for
-    // the console line we trust the captured Error fields directly.
-    entry.err = serialized;
+    // The console line and the ops_events mirror below both use this one
+    // opt-in: message and stack are withheld unless verboseErrors is set.
+    entry.err = serializeError(err, verbose);
   }
 
   const line = isJsonOutput() ? JSON.stringify(entry) : formatHuman(entry);
@@ -153,12 +187,12 @@ function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): voi
   // Mirror errors to ops_events so the existing audit / alert surfaces keep
   // working. We swallow failures because ops_events is best-effort.
   if (level === "error" && shouldReportOpsEvent) {
-    const errorMessage = err instanceof Error ? err.message : msg;
-    const stack = err instanceof Error ? err.stack : undefined;
+    const stack = verbose && err instanceof Error ? err.stack : undefined;
     void reportOpsEvent({
       source: ctx.source,
       title: msg,
-      message: errorMessage || msg,
+      message: ctx.failureMessage || opsEventMessage(err, msg, verbose),
+      fingerprintDetail: fingerprintDetailFor(err, verbose),
       severity: "error",
       route: ctx.route,
       userId: ctx.userId ?? null,

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { buildColdStorageInstallScript } from "@/lib/cold-storage-ssh";
+import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import {
@@ -67,8 +68,10 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+// Host output goes through the shared redactor, so the same token shapes are masked here as in
+// ops_events and the push gate. A PEM-only copy here let provider keys, bot tokens and AWS keys through.
 function redactHostOutput(value: string, max = 4000): string {
-  return value.replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, "[REDACTED_KEY]").slice(0, max);
+  return redactSensitiveCommandOutput(value, max);
 }
 
 function buildInstallDailyBackupScript(): string {
@@ -396,7 +399,7 @@ async function handle(req: NextRequest) {
         message: result.error ?? result.stderr ?? "unknown error",
       });
       return apiError(
-        result.error ?? result.stderr ?? "host preflight failed",
+        redactHostOutput(result.error ?? result.stderr ?? "host preflight failed"),
         500,
         undefined,
         {
@@ -462,7 +465,7 @@ async function handle(req: NextRequest) {
     };
     if (!result.ok) {
       return apiError(
-        result.error ?? result.stderr ?? "memory headroom repair failed",
+        redactHostOutput(result.error ?? result.stderr ?? "memory headroom repair failed"),
         500,
         undefined,
         payload,
@@ -501,7 +504,7 @@ async function handle(req: NextRequest) {
         stderr: redactHostOutput(result.stderr, 12000),
       };
       return apiError(
-        result.error ?? result.stderr ?? `${manualAction} failed`,
+        redactHostOutput(result.error ?? result.stderr ?? `${manualAction} failed`),
         500,
         undefined,
         payload,
@@ -607,7 +610,7 @@ async function handle(req: NextRequest) {
           ok: false,
           host: row.proxmox_node ?? null,
           reason: "host_script_failed",
-          message: result.error ?? result.stderr ?? "unknown error",
+          message: redactHostOutput(result.error ?? result.stderr ?? "unknown error"),
         });
         log.warn("daily VM backup failed", {
           source: LOG_SOURCE,
