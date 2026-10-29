@@ -39,6 +39,7 @@ Current runbooks.
 - [Regression lockdown](regression-lockdown.md)
 - [Proxmox storage and recovery](self-host/PROXMOX-STORAGE.md) and [workspace migration](self-host/WORKSPACE-MIGRATION.md)
 - [GHCR token rotation](security/GHCR-TOKEN-ROTATION.md) and [key custody inventory](security/KEY-CUSTODY-INVENTORY.md)
+- [Host compromise and guest quarantine runbook](security/HOST-COMPROMISE-RUNBOOK.md)
 - Token runbooks in [`token/`](token/)
 - Dashboard runbooks in [`dashboard/docs/`](../dashboard/docs/)
 
