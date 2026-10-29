@@ -1,5 +1,7 @@
 # No-fork Hermes: feasibility, delta, experiment, plan
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 Status: plan plus a working canary build path. Nothing here has touched a customer box or production
 (PROD HOLD is on). Evidence level is marked on every claim: PROVEN (run, output seen), SOURCE (read in
 code), UNVERIFIED (not run).

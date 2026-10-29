@@ -4,6 +4,8 @@
 
 **Design authority:** [`docs/superpowers/specs/2026-08-24-hivra-agent-computers-design.md`](docs/superpowers/specs/2026-08-24-hivra-agent-computers-design.md)
 
+**What is available today:** [`docs/STATUS.md`](docs/STATUS.md) is the single source of truth. This roadmap orders the work; where it and that file disagree about availability, that file wins.
+
 **Core experience:** the target is a clear Agent-or-Computer entry, followed by revision-bound Canary verification. See [the product architecture](docs/PRODUCT-ARCHITECTURE.md). Target direction does not imply shipped behavior.
 
 **Execution authority:** Code implementation, Canary deployment, and bounded
@@ -70,7 +72,9 @@ existing computer stays Canary-only even then (see Next, item 5).
   Needs: owner decisions on hosting and spend (D2, D3), then engineering.
 - Adding an agent you already have to another computer, or letting an added
   agent use the desktop or browser. Needs: an owner decision and a threat model.
-- Windows and Omarchy out of private preview; macOS computers; custom images.
+- Omarchy built fresh for each customer (today a launch claims the one prepared
+  Omarchy computer a site holds); Hivra-managed Windows; macOS computers; custom
+  images.
 - Complete self-hosting (Phase 4).
 
 **Not planned:** replacing an agent's own interface with a Hivra chat. Hermes,
@@ -90,8 +94,8 @@ current merely because related implementation is pulled forward.
 | Slice 2B — Attach Agent | Adds explicit binding between runtime consolidation and full Computer use. **Status (Canary only):** add Codex to an Ubuntu Desktop you already have on Hivra Cloud or My server (#134, with fixes #138, #140, #143, #144); the first live add, Change access and Remove passed on 2026-09-25. Off on hivra.cloud. See [Slice 2B status](#slice-2b-status). |
 | Slice 3 — Customer-owned capacity | Carries the Phase 1/3 reference path and `UC-PORTABLE-AGENT-01` unchanged. **Status (Canary):** Hetzner guided setup (#96, #99, #108); connect a server you already have with one command (#127, main path passed live on 2026-09-24); DigitalOcean as a Launch destination (#105, not yet tested against the live DigitalOcean API); the home-machine relay is built but not deployed or wired in (#87, #95). This does not close `UC-PORTABLE-AGENT-01`. |
 | Slices 4A-4C — Recovery and linking | Split Phase 4 into self-host control-plane recovery, Computer data portability, and separately threat-modelled optional Cloud linking. |
-| Slice 5 — Linux Computer | Carries Phase 8 desktop performance acceptance. **Status:** Ubuntu Desktop is available in the catalog, and a fix that lets Ubuntu Desktops made by older releases Start again is merged to Canary (#148); Omarchy is in private preview as a prepared Canary computer. Measured desktop performance acceptance is still open. |
-| Slice 6 — Windows guest | Carries the Windows-guest part of Phase 9. **Status:** Windows is in private preview: it runs on the owner's own Proxmox host, from their own licensed Windows ISO. |
+| Slice 5 — Linux Computer | Carries Phase 8 desktop performance acceptance. **Status:** Ubuntu Desktop is available in the catalog, and a fix that lets Ubuntu Desktops made by older releases Start again is merged to Canary (#148); Omarchy is offered as a prepared computer (owner decision 2026-09-30): a launch claims the one prepared Omarchy computer the site holds. Measured desktop performance acceptance is still open. |
+| Slice 6 — Windows guest | Carries the Windows-guest part of Phase 9. **Status:** Windows is offered on the owner's own server (owner decision 2026-09-30): it runs on their own Proxmox host, from their own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | Slice 7 — Native clients | Later separately authorized release track; excluded from current execution scope. |
 | Slice 8 — Orchestration | Carries Phase 7 after real single-agent execution, authority, recovery, and bounded stops; Phase 6 workspace is not a prerequisite. Its identity, memory and messaging substrate is designed (not built) in [the shared brain and agent network spec](docs/superpowers/specs/2026-10-07-shared-brain-and-agent-network.md), whose agent-to-agent package waits for these same gates. |
 
@@ -351,7 +355,7 @@ lifecycle, credentials and each runtime's acceptance.
 - Move every currently supported catalog runtime onto the shared target and execution contracts while retaining its native interface.
 - Integrate Block's Buzz as an optional mediated identity, communication, and collaboration service rather than an infrastructure-control replacement.
 - Add DeepSeek Harness and other runtimes one at a time behind pinned adapters and conformance tests.
-- Follow the [2026-08-31 integration and remote-computers addendum](docs/superpowers/specs/2026-08-31-hivra-remote-computers.md): Buzz now has a real signed cross-agent runtime/reply campaign; DeepSeek Harness has real native UI, model, PTY, restart, revocation and cleanup evidence but remains gated on ACP; Omarchy belongs to computer profiles and now passes exact KVM install, desktop reboot, Sunshine guest preparation and teardown; it is in private preview as a prepared Canary computer, and its native Moonlight access remains gated on a scoped native route and real Moonlight interaction.
+- Follow the [2026-08-31 integration and remote-computers addendum](docs/superpowers/specs/2026-08-31-hivra-remote-computers.md): Buzz now has a real signed cross-agent runtime/reply campaign; DeepSeek Harness has real native UI, model, PTY, restart, revocation and cleanup evidence but remains gated on ACP; Omarchy belongs to computer profiles and now passes exact KVM install, desktop reboot, Sunshine guest preparation and teardown; it is offered as a prepared computer (see docs/STATUS.md), and its native Moonlight access remains gated on a scoped native route and real Moonlight interaction.
 - Stop legacy writes after parity and rollback gates pass.
 - Retire overlapping Workspace Cloud and legacy agent lanes.
 
@@ -391,8 +395,9 @@ optional Phase 6 workspace is not a prerequisite
 
 ## Phase 8 — Full Linux desktop and computer mobility
 
-**Status:** Ubuntu Desktop is available in the catalog, and Omarchy is in
-private preview as a prepared Canary computer. Measured desktop performance
+**Status:** Ubuntu Desktop is available in the catalog, and Omarchy is
+offered as a prepared computer (owner decision 2026-09-30): a launch claims the
+one prepared Omarchy computer the site holds. Measured desktop performance
 acceptance (`UC-DESKTOP-01`) is still open. Projects/tasks and a replacement
 workspace are not prerequisites; each desktop profile remains gated on its own
 lifecycle and security acceptance.
@@ -410,9 +415,10 @@ lifecycle and security acceptance.
 
 ## Phase 9 — Additional operating systems
 
-**Status:** Windows is in private preview: it runs on the owner's own Proxmox
-host, from their own licensed Windows ISO, while ordinary provisioning waits for
-a licensed image pipeline and the full remote-desktop lifecycle. macOS
+**Status:** Windows is offered on the owner's own server (owner decision
+2026-09-30): it runs on their own Proxmox host, from their own licensed Windows
+ISO. Hivra-managed Windows waits for a licensed image pipeline and the full
+remote-desktop lifecycle. macOS
 computers are not in the catalog. The rest of this phase is pending Phase 8.
 
 - Add Windows after Linux lifecycle, access, update, and recovery contracts mature.
