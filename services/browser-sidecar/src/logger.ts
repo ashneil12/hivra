@@ -55,18 +55,25 @@ export function redactArgs(args: unknown): unknown {
   return redactValue(args, false);
 }
 
-// `inUrlField` is true for everything under a key named url, at any depth, so a
-// url sent as a string, an array or an object is logged the same way.
+// `inUrlField` is true for everything under a key that ends in "url" (url,
+// login_url, ...), at any depth, so a url sent as a string, an array or an
+// object is logged the same way. A string that is a whole absolute http(s) url
+// is logged that way under any key, because a url can be passed under any
+// name (for example in flow args).
 function redactValue(value: unknown, inUrlField: boolean): unknown {
-  if (typeof value === "string") return inUrlField ? logSafeUrl(value) : value;
+  if (typeof value === "string") {
+    return inUrlField || HTTP_URL.test(value) ? logSafeUrl(value) : value;
+  }
   if (Array.isArray(value)) return value.map((item) => redactValue(item, inUrlField));
   if (value === null || typeof value !== "object") return value;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = isSecretKey(k) ? "[REDACTED]" : redactValue(v, inUrlField || k.toLowerCase() === "url");
+    out[k] = isSecretKey(k) ? "[REDACTED]" : redactValue(v, inUrlField || /url$/i.test(k));
   }
   return out;
 }
+
+const HTTP_URL = /^https?:\/\//i;
 
 function isSecretKey(key: string): boolean {
   const lower = key.toLowerCase();

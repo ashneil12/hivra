@@ -67,6 +67,18 @@ describe("redactArgs", () => {
     expect(redactArgs({ url: "magic:OPAQUECANARY?x=1" })).toEqual({ url: "[REDACTED]" });
   });
 
+  it("redacts a url-valued argument under any key, not only under url", () => {
+    expect(
+      redactArgs({ args: { login_url: "https://login.example.test/cb?ticket=CANARYARG", next: "https://login.example.test/x?t=CANARYNEXT" } }),
+    ).toEqual({ args: { login_url: "https://login.example.test/cb", next: "https://login.example.test/x" } });
+  });
+
+  it("does not log an opaque url under a key that ends in url", () => {
+    expect(redactArgs({ args: { login_url: "magic:OPAQUECANARY?x=1" } })).toEqual({
+      args: { login_url: "[REDACTED]" },
+    });
+  });
+
   it("redacts a logged url that does not parse", () => {
     expect(redactArgs({ url: "not a url?ticket=CANARYTICKET" })).toEqual({ url: "[REDACTED]" });
   });
