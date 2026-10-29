@@ -18,6 +18,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 // any of it; Clerk's auth() inside resolves from this request's ambient
 // context, so ownership checks run exactly as they do for the web client.
 import { DELETE as deleteInstanceRoute } from "@/app/api/instances/[id]/route";
+// The sweep marker tells the instance handler that these agents are removed
+// together, so a Hetzner server they share is destroyed once, not refused.
+import { attachAccountSweep, createAccountSweep } from "@/lib/services/account-sweep-scope";
 
 /**
  * DELETE /api/mobile/account — in-app account deletion (iOS Phase 2; App
@@ -100,6 +103,7 @@ export async function DELETE(request: NextRequest) {
 
     const deletedInstances: string[] = [];
     const failedInstances: Array<{ id: string; status: number }> = [];
+    const sweep = createAccountSweep(userId, (instanceRows ?? []).map((row) => row.id));
 
     for (const instance of instanceRows ?? []) {
       try {
@@ -113,6 +117,7 @@ export async function DELETE(request: NextRequest) {
             body: JSON.stringify({ confirmation: instance.id }),
           }
         );
+        attachAccountSweep(deleteRequest, sweep);
         const response = await deleteInstanceRoute(deleteRequest, {
           params: Promise.resolve({ id: instance.id }),
         });
