@@ -48,7 +48,8 @@ const PASSING_RESULT = {
   snapshot_time: "2026-10-29T04:03:12+01:00",
   files: 42,
   bytes: 1024,
-  databases: [{ path: "state.db", ok: true, result: "ok" }],
+  databases_total: 1,
+  databases: [{ path: "state.db", ok: true, result: "ok", tables: 4 }],
   compare: { status: "compared", sampled: 3, matched: 3, changed: 0, missing: 0 },
   cleanup: "removed",
 };
@@ -112,7 +113,9 @@ describe("GET /api/cron/daily-instance-backups?action=restore-drill", () => {
     // The lookup is by id, not the rotation query, so any placed instance can be drilled.
     expect(mock.lookups).toContainEqual({ method: "eq", args: ["id", INSTANCE_ID] });
     // A drill never moves the backup rotation cursor.
-    expect(JSON.stringify(mock.from.mock.results.map((r) => r.value.update.mock.calls))).toBe("[[],[]]");
+    for (const built of mock.from.mock.results) {
+      expect(built.value.update).not.toHaveBeenCalled();
+    }
   });
 
   it("reports a failed drill as an error with the drill details", async () => {

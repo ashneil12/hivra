@@ -12,14 +12,17 @@
 //      for another tenant);
 //   4. delete the scratch folder.
 //
-// Nothing is written to the guest, to the restic repo or to the database. The
+// Nothing is written to the guest or the database, and nothing to the restic repo
+// beyond restic's own short-lived read lock. The drill shares the backup's
+// per-instance host lock, refuses a restore that would not fit on the host disk
+// with the floor still free, and sweeps copies a killed run left behind. The
 // daily-instance-backups route runs it on demand with ?action=restore-drill.
 
 const SAFE_INSTANCE_ID = /^[0-9a-f-]{36}$/i;
 
 export type RestoreDrillTarget = { instanceId: string; vmid: number };
 
-export type RestoreDrillDatabase = { path: string; ok: boolean; result: string };
+export type RestoreDrillDatabase = { path: string; ok: boolean; result: string; tables?: number };
 
 export type RestoreDrillResult = {
   pass: boolean;
@@ -28,6 +31,7 @@ export type RestoreDrillResult = {
   snapshot_time: string;
   files: number;
   bytes: number;
+  databases_total: number;
   databases: RestoreDrillDatabase[];
   compare: {
     status: string;
@@ -56,23 +60,40 @@ export function buildRestoreDrillScript(target: RestoreDrillTarget): string {
   const instanceId = target.instanceId.toLowerCase();
   return `INSTANCE_ID='${instanceId}'
 VMID='${target.vmid}'
-REPO="sftp:cold:restic/$INSTANCE_ID"
+REPO="\${HERMES_RESTIC_REPO_OVERRIDE:-sftp:cold:restic/$INSTANCE_ID}"
 export RESTIC_CACHE_DIR="\${RESTIC_CACHE_DIR:-/var/lib/hermes-restic-cache}"
+MIRROR_ROOT="\${HERMES_RESTIC_MIRROR_ROOT:-/var/lib/hermes-restic-src}"
 RESTORE_ROOT="\${HERMES_RESTORE_DRILL_ROOT:-/var/lib/hermes-restore}"
 MIN_DISK_MB="\${HERMES_RESTORE_DRILL_MIN_DISK_MB:-8000}"
-SNAPSHOT_PREFIX="/var/lib/hermes-restic-src/$INSTANCE_ID/webui-state"
+SNAPSHOT_PREFIX="$MIRROR_ROOT/$INSTANCE_ID/webui-state"
 LIVE_VOL="/var/lib/docker/volumes/agent-\${INSTANCE_ID}_webui-state/_data"
+STAGE=""
 
 drill_abort() { echo "RESTORE_DRILL_ABORT reason=$1 instance=$INSTANCE_ID host=$(hostname)" >&2; exit "$2"; }
+free_mb() { df -BM --output=avail "$RESTORE_ROOT" 2>/dev/null | tail -1 | tr -dc '0-9' || true; }
 
 [ -n "\${RESTIC_PASSWORD:-}" ] || drill_abort no_restic_password 4
-command -v restic >/dev/null 2>&1 || drill_abort restic_missing 5
 command -v python3 >/dev/null 2>&1 || drill_abort python3_missing 5
+if ! command -v restic >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y restic >/dev/null 2>&1 || drill_abort restic_missing 5
+fi
 mkdir -p "$RESTORE_ROOT" "$RESTIC_CACHE_DIR"
 chmod 700 "$RESTORE_ROOT"
-AVAIL_MB="$(df -BM --output=avail "$RESTORE_ROOT" 2>/dev/null | tail -1 | tr -dc '0-9' || true)"
-if [ -n "$AVAIL_MB" ] && [ "$AVAIL_MB" -lt "$MIN_DISK_MB" ]; then
-  drill_abort "low_host_disk_avail_mb_$AVAIL_MB" 9
+
+# One run per instance at a time, shared with the backup so a drill never races
+# its prune.
+exec 9>"\${HERMES_RESTIC_LOCK_DIR:-/var/lock}/hermes-restic-$INSTANCE_ID.lock"
+flock -n 9 || drill_abort backup_or_drill_already_running 12
+
+# Copies left by a run that was killed (SIGKILL, reboot) hold decrypted tenant
+# data: remove this instance's drill folders older than six hours.
+find "$RESTORE_ROOT" -mindepth 1 -maxdepth 1 -type d -name "$INSTANCE_ID-drill-*" -mmin +360 \\
+  -exec rm -rf -- {} + 2>/dev/null || true
+
+AVAIL_MB="$(free_mb)"
+if [ "$MIN_DISK_MB" -gt 0 ]; then
+  [ -n "$AVAIL_MB" ] || drill_abort host_disk_unreadable 9
+  [ "$AVAIL_MB" -ge "$MIN_DISK_MB" ] || drill_abort "low_host_disk_avail_mb_$AVAIL_MB" 9
 fi
 
 SNAPSHOTS_JSON="$(restic -r "$REPO" snapshots --json --latest 1 --host "$INSTANCE_ID" 2>/dev/null)" \\
@@ -92,17 +113,27 @@ SNAP_ID="\${SNAP_LINE%% *}"
 SNAP_TIME="\${SNAP_LINE#* }"
 case "$SNAP_ID" in ""|*[!0-9a-f]*) drill_abort bad_snapshot_id 7 ;; esac
 
-STAGE="$RESTORE_ROOT/$INSTANCE_ID-drill-$(date -u +%Y%m%dT%H%M%SZ)"
+# Refuse a restore that would not fit with the floor still free afterwards, so a
+# large tenant can never fill the host root disk that every VM shares. A copy of
+# each database is made too, so count the restore twice.
+RESTORE_MB="$(restic -r "$REPO" stats "$SNAP_ID" --mode restore-size --json 2>/dev/null \\
+  | python3 -c 'import json, sys; print(int(json.load(sys.stdin)["total_size"]) // 1048576 + 1)' 2>/dev/null)" \\
+  || drill_abort restore_size_unknown 9
+if [ "$MIN_DISK_MB" -gt 0 ] && [ $((RESTORE_MB * 2 + MIN_DISK_MB)) -gt "$AVAIL_MB" ]; then
+  drill_abort "restore_too_large_mb_\${RESTORE_MB}_avail_mb_$AVAIL_MB" 9
+fi
+
 drill_cleanup() {
   case "$STAGE" in
+    "") ;;
     "$RESTORE_ROOT"/"$INSTANCE_ID"-drill-*) rm -rf -- "$STAGE" ;;
     *) echo "RESTORE_DRILL_CLEANUP_REFUSED path=$STAGE" >&2; return 1 ;;
   esac
 }
+STAGE="$(mktemp -d "$RESTORE_ROOT/$INSTANCE_ID-drill-XXXXXXXX")" || { STAGE=""; drill_abort stage_create_failed 8; }
 trap drill_cleanup EXIT
-mkdir -m 700 "$STAGE"
 
-echo "RESTORE_DRILL_BEGIN instance=$INSTANCE_ID vmid=$VMID snapshot=$SNAP_ID snapshot_time=$SNAP_TIME host=$(hostname)"
+echo "RESTORE_DRILL_BEGIN instance=$INSTANCE_ID vmid=$VMID snapshot=$SNAP_ID snapshot_time=$SNAP_TIME restore_mb=$RESTORE_MB host=$(hostname)"
 restic -r "$REPO" restore "$SNAP_ID" --target "$STAGE" --include "$SNAPSHOT_PREFIX" >/dev/null 2>&1 \\
   || drill_abort restore_failed 8
 [ -d "$STAGE$SNAPSHOT_PREFIX" ] || drill_abort restored_tree_missing 8
@@ -112,7 +143,7 @@ python3 - "$STAGE$SNAPSHOT_PREFIX" "$STAGE/.check" "$LIVE_VOL" "$VMID" "$SNAP_ID
 import datetime, hashlib, json, os, shutil, sqlite3, subprocess, sys
 
 restored, check_dir, live_vol, vmid, snap_id, snap_time, instance = sys.argv[1:8]
-MAX_DATABASES = 25
+MAX_DATABASES = 50
 SAMPLE = 8
 SKIP_SUFFIXES = (".db", "-wal", "-shm", "-journal", ".log", ".lock", ".pid", ".sock")
 
@@ -123,7 +154,7 @@ def parse_time(value):
     if zone.startswith("."):
         digits = zone[1:]
         cut = len(digits) - len(digits.lstrip("0123456789"))
-        frac, zone = ("." + digits[:cut][:6]) if cut else "", digits[cut:]
+        frac, zone = ("." + digits[:cut][:6].ljust(6, "0")) if cut else "", digits[cut:]
     return datetime.datetime.fromisoformat(main + frac + (zone or "+00:00")).timestamp()
 
 def sha256(path):
@@ -167,9 +198,13 @@ for index, rel in enumerate(sorted(databases)[:MAX_DATABASES]):
     try:
         connection = sqlite3.connect(base, timeout=5)
         rows = connection.execute("PRAGMA integrity_check").fetchall()
+        tables = connection.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0]
         connection.close()
         result = "; ".join(str(row[0]) for row in rows)[:300]
-        db_results.append({"path": rel, "ok": result == "ok", "result": result})
+        # An empty or table-less file opens as a valid database; it is not a backup.
+        if result == "ok" and tables == 0:
+            result = "no tables"
+        db_results.append({"path": rel, "ok": result == "ok", "result": result, "tables": tables})
     except sqlite3.Error as error:
         db_results.append({"path": rel, "ok": False, "result": str(error)[:300]})
 
@@ -214,10 +249,14 @@ try:
 except (OSError, ValueError, subprocess.SubprocessError) as error:
     compare["status"] = "skipped:guest_exec_failed:" + type(error).__name__
 
-databases_ok = all(entry["ok"] for entry in db_results)
-compare_ok = compare["status"] != "compared" or compare["matched"] > 0
+# Every database must be checked and sound, and the comparison with the live box
+# must run: a skipped comparison is reported, never counted as a pass. A file
+# can legitimately change after the snapshot, so three in four must match.
+databases_ok = bool(db_results) and len(db_results) == len(databases) and all(entry["ok"] for entry in db_results)
+compare_ok = compare["status"] == "compared" and compare["matched"] * 4 >= compare["sampled"] * 3
 result = {
     "pass": files > 0 and databases_ok and compare_ok,
+    "databases_total": len(databases),
     "instance": instance,
     "snapshot": snap_id,
     "snapshot_time": snap_time,

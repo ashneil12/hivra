@@ -350,7 +350,7 @@ async function handle(req: NextRequest) {
   }
 
   // Prove one instance's backup restores (?action=restore-drill&instanceId=<id>).
-  // Read-only for the customer: nothing is written to the guest or the repo.
+  // Nothing is written to the guest or the database; see restic-restore-drill.ts.
   if (manualAction === "restore-drill") {
     const instanceId = req.nextUrl.searchParams.get("instanceId")?.trim() ?? "";
     if (!SAFE_INSTANCE_ID.test(instanceId)) return apiError("instanceId is required", 400);
