@@ -316,9 +316,10 @@ describe("POST /api/ops/instances/[id]/force-delete", () => {
     );
   });
 
-  it("keeps the Hetzner server when another live agent still runs on it, and marks only this row deleted (F011)", async () => {
-    // Regression: force-delete destroyed server 99999 even while another
-    // non-deleted row (inst_sibling) still ran on it.
+  it("refuses (409) and leaves the server and row alone when another live agent still runs on the Hetzner server (F011)", async () => {
+    // Regression: force-delete logged "keeping server" and then marked the row
+    // deleted and removed its DNS, while the VM and the other agent kept
+    // running. The kill switch must refuse instead of reporting success.
     const { updateQuery } = buildSupabaseStub(
       {
         id: "inst_shared",
@@ -332,14 +333,16 @@ describe("POST /api/ops/instances/[id]/force-delete", () => {
       undefined,
       { count: 1, error: null },
     );
+    const { removeInstanceDnsBestEffort } = jest.requireMock("@/lib/services/cloudflare-dns");
 
     const res = await POST(makeRequest(), makeParams("inst_shared"));
+    const json = await res.json();
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
+    expect(json.success).toBe(false);
     expect(deleteHetznerServer).not.toHaveBeenCalled();
-    expect(updateQuery.update).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "deleted", lifecycle_state: "deleted" })
-    );
+    expect(removeInstanceDnsBestEffort).not.toHaveBeenCalled();
+    expect(updateQuery.update).not.toHaveBeenCalled();
   });
 
   it("refuses to touch the server or the row when the shared-server sibling count fails (F011)", async () => {

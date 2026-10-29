@@ -4811,10 +4811,11 @@ describe("DELETE /api/instances/[id] write failures", () => {
     const hostUpdate = jest.fn().mockReturnValue({
       eq: jest.fn().mockResolvedValue({ error: null }),
     });
-    // The route runs two awaited counts on this chain: the server-level sibling
-    // count (filters hetzner_server_id, before the delete) and the post-delete
-    // host count (filters host_id). `liveCount` answers only the host count;
-    // the server count is clean, so the delete proceeds.
+    // The route runs three awaited counts on this chain: the server-level
+    // sibling count (filters hetzner_server_id) and a host-level sibling count
+    // (filters host_id), both before the delete, then the post-delete host
+    // count (filters host_id again). The pre-delete counts are clean here, so
+    // the delete proceeds; `liveCount` answers only the post-delete host count.
     let filteredColumns: string[] = [];
     const instanceChain: Record<string, jest.Mock> = {};
     instanceChain.select = jest.fn(() => {
@@ -4838,12 +4839,15 @@ describe("DELETE /api/instances/[id] write failures", () => {
       },
       error: null,
     });
-    (instanceChain as unknown as PromiseLike<unknown>).then = (resolve, reject) =>
-      Promise.resolve(
-        filteredColumns.includes("host_id")
-          ? options.liveCount ?? { count: 0, error: null }
-          : { count: 0, error: null },
-      ).then(resolve, reject);
+    let hostCountReads = 0;
+    (instanceChain as unknown as PromiseLike<unknown>).then = (resolve, reject) => {
+      let answer: { count: number | null; error: { message: string } | null } = { count: 0, error: null };
+      if (filteredColumns.includes("host_id")) {
+        hostCountReads += 1;
+        if (hostCountReads > 1) answer = options.liveCount ?? { count: 0, error: null };
+      }
+      return Promise.resolve(answer).then(resolve, reject);
+    };
 
     (deleteHetznerServer as jest.Mock).mockResolvedValue(undefined);
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
@@ -5015,20 +5019,56 @@ describe("DELETE /api/instances/[id] on a Hetzner server shared by several agent
     (deleteHetznerServer as jest.Mock).mockResolvedValue(undefined);
   });
 
-  it("keeps the server when another live agent still runs on it, and removes only this agent", async () => {
-    // Regression: DELETE used to destroy server 42 unconditionally, taking
-    // agent inst-b (still running, same server) down with it.
+  it("refuses to delete an agent while another live agent still runs on its server, and changes nothing (F011)", async () => {
+    // Regression: DELETE used to soft-delete the row and remove its DNS record
+    // while agent inst-b (still running on the same server) kept running, so
+    // the agent stayed live but invisible. No per-agent teardown exists, so
+    // the delete is refused before any provider call or row/DNS write.
     const rows = [agentRow("inst-123"), agentRow("inst-b")];
     const { hostUpdate } = mockInstancesTable(rows);
 
     const response = await deleteAgent("inst-123");
+    const json = await response.json();
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(409);
+    expect(json.success).toBe(false);
     expect(deleteHetznerServer).not.toHaveBeenCalled();
-    expect(rows.find((row) => row.id === "inst-123")?.status).toBe("deleted");
+    expect(removeInstanceDnsBestEffort).not.toHaveBeenCalled();
+    expect(rows.find((row) => row.id === "inst-123")).toMatchObject({
+      status: "running",
+      lifecycle_state: "running",
+    });
     expect(rows.find((row) => row.id === "inst-b")?.status).toBe("running");
-    // The host row stays alive because inst-b still references it.
-    expect(hostUpdate).not.toHaveBeenCalledWith({ status: "deleted" });
+    expect(hostUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses both agents when two overlapping deletes target the last two agents on one server (F011)", async () => {
+    // Regression: each delete counted the other as live and then soft-deleted
+    // its own row, so both rows ended deleted with the server still billing.
+    // A refusal writes nothing, so neither row can be soft-deleted while the
+    // other still runs.
+    const rows = [agentRow("inst-123"), agentRow("inst-b")];
+    mockInstancesTable(rows);
+
+    const [first, second] = await Promise.all([deleteAgent("inst-123"), deleteAgent("inst-b")]);
+
+    expect(first.status).toBe(409);
+    expect(second.status).toBe(409);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(rows.map((row) => row.status)).toEqual(["running", "running"]);
+  });
+
+  it("counts a sibling linked to the same host even when it has no server id (F011)", async () => {
+    // Regression: the sibling count looked only at hetzner_server_id, so a
+    // host-linked row without a server id was missed and the server destroyed.
+    const rows = [agentRow("inst-123"), agentRow("inst-b", { hetzner_server_id: null })];
+    mockInstancesTable(rows);
+
+    const response = await deleteAgent("inst-123");
+
+    expect(response.status).toBe(409);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(rows.find((row) => row.id === "inst-123")?.status).toBe("running");
   });
 
   it("deletes the server when the other rows on it are already deleted", async () => {

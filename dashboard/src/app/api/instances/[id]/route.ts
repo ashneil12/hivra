@@ -2498,12 +2498,14 @@ export async function DELETE(
             );
       }
     } else if (instance!.hetzner_server_id) {
-      // A Hetzner server can host several agents (multi-agent host). Destroy it
-      // only when no other live row still runs on it; otherwise only this row
-      // is removed below. The count runs first, and an unknown count refuses.
+      // A Hetzner server can host several agents (multi-agent host). The
+      // runtime of every agent on it lives on that server, so this row is only
+      // removed when no other live row still runs on it. The count runs before
+      // any provider call or row/DNS write, and an unknown count refuses.
       const serverTenants = await countOtherLiveRowsOnHetznerServer(supabaseAdmin!, {
         instanceId: id,
         hetznerServerId: instance!.hetzner_server_id,
+        hostId: instance!.host_id ?? null,
       });
       if (!serverTenants.ok) {
         log.error("hetzner server tenant count failed; refusing to delete the server", new Error(serverTenants.message), {
@@ -2537,7 +2539,10 @@ export async function DELETE(
         );
       }
       if (serverTenants.otherLiveRows > 0) {
-        log.info("hetzner server still used by other live instances; keeping server, removing only this instance", {
+        // Refuse rather than soft-delete: a row marked deleted while its
+        // runtime still runs on the shared server is an invisible live agent,
+        // and there is no per-agent teardown that could stop only this one.
+        log.warn("hetzner server still used by other live instances; refusing to delete this instance", {
           source: "instances",
           route: "/api/instances/[id]",
           method: "DELETE",
@@ -2545,7 +2550,28 @@ export async function DELETE(
           userId,
           hetznerServerId: instance!.hetzner_server_id,
           remainingInstances: serverTenants.otherLiveRows,
+          failureType: "instance_delete_shared_server_in_use",
         });
+        return apiError(
+          "This agent shares its server with other live agents, so it was not removed. Nothing was changed.",
+          409,
+          { failureType: "instance_delete_shared_server_in_use", retryable: false },
+          undefined,
+          {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "DELETE",
+            instanceId: id,
+            userId,
+            metadata: {
+              failureOwner: "control-plane",
+              failurePhase: "delete",
+              failureType: "instance_delete_shared_server_in_use",
+              recoveryAction: "contact_support",
+              hetznerServerId: instance!.hetzner_server_id,
+            },
+          }
+        );
       } else {
         // Try Hetzner delete and only mark the row deleted if it succeeds
         // (or if the server is already gone — 404). Previously, any

@@ -27,6 +27,8 @@ import {
  *
  * Admin kill switch — destroys the underlying VM (Proxmox `qm destroy`,
  * Hetzner `deleteServer`) and flips the row to `lifecycle_state = 'deleted'`.
+ * A Hetzner server shared with other live agents is not destroyed, and the
+ * request is refused with 409 (nothing is marked deleted).
  * Idempotent: provider calls are wrapped so we never throw on "already
  * gone" responses, and the lifecycle write is unconditional. A row already
  * marked deleted is re-marked with the new actor in the audit trail.
@@ -171,23 +173,50 @@ export async function POST(
         providerError = err instanceof Error ? err.message : String(err);
       }
     } else if (instance.hetzner_server_id) {
-      // A Hetzner server can host several agents. Destroy it only when no
-      // other live row still runs on it; otherwise only this row is marked
-      // deleted below. An unknown count is not zero, so it refuses.
+      // A Hetzner server can host several agents, and every one runs on it.
+      // Destroy it only when no other live row still runs on it. When another
+      // live row does, refuse: this kill switch cannot stop only this agent,
+      // so it must not mark the row deleted while the runtime keeps running.
+      // An unknown count is not zero, so it refuses too.
       const serverTenants = await countOtherLiveRowsOnHetznerServer(supabaseAdmin, {
         instanceId: id,
         hetznerServerId: instance.hetzner_server_id,
+        hostId: instance.host_id ?? null,
       });
       if (!serverTenants.ok) {
         providerError = `could not confirm no other agents use the Hetzner server: ${serverTenants.message}`;
       } else if (serverTenants.otherLiveRows > 0) {
-        log.info("hetzner server still used by other live instances during force-delete; keeping server", {
+        log.warn("hetzner server still used by other live instances during force-delete; refusing", {
           source: "ops-force-delete",
           route: "/api/ops/instances/[id]/force-delete",
           instanceId: id,
           hetznerServerId: instance.hetzner_server_id,
           remainingInstances: serverTenants.otherLiveRows,
+          failureType: "force_delete_shared_server_in_use",
         });
+        await reportOpsEvent({
+          source: "admin.force_delete_blocked",
+          severity: "warn",
+          title: "Admin force-delete refused: shared Hetzner server",
+          message:
+            `Admin ${userId} attempted force-delete for instance ${id}, but its Hetzner ` +
+            `server is shared with other live agents. Nothing was destroyed or marked deleted.`,
+          route: "/api/ops/instances/[id]/force-delete",
+          userId: instance.user_id,
+          instanceId: id,
+          metadata: {
+            actor_user_id: userId,
+            actor_email: adminEmail,
+            instance_id: id,
+            block_reason: "hetzner_server_shared",
+            remaining_instances: serverTenants.otherLiveRows,
+          },
+        });
+        return apiError(
+          "This agent shares its Hetzner server with other live agents. Nothing was destroyed or marked deleted.",
+          409,
+          { failureType: "force_delete_shared_server_in_use" },
+        );
       } else {
         try {
           await deleteHetznerServer(instance.hetzner_server_id);
