@@ -4,6 +4,7 @@ import posthog from "posthog-js";
 import { X, Sparkles, Loader2, ExternalLink, Copy, CheckCircle2, AlertTriangle } from "lucide-react";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
+import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { verifyNousPortalConnection } from "@/lib/nous-oauth";
 import {
   buildHermesOverlayVariants,
@@ -309,6 +310,10 @@ export function NousPortalOAuthModal({
       }
 
       const data = payload.data as DeviceCodeSession;
+      // The verification address comes from the guest; it is opened and shown only when it is https.
+      if (!readHttpsAuthorizationUrl(data.verification_url)) {
+        throw new Error("Nous Portal did not return a usable sign-in link. Please try again.");
+      }
       setSession(data);
       setConnectStep("waiting");
       if (data.expires_in && data.expires_in > 0) {

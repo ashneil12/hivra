@@ -196,4 +196,29 @@ describe("POST /api/instances/[id]/oauth/providers/[provider]/start", () => {
     expect(response.status).toBe(409);
     expect(json.error).toBe("Instance is still provisioning SSH access. Try again in a moment.");
   });
+
+  it("refuses a Nous Portal verification URL that is not https", async () => {
+    mockedSshExec.mockResolvedValue({
+      ok: true,
+      stdout: JSON.stringify({
+        session_id: "sess-123",
+        flow: "device_code",
+        user_code: "ABCD-EFGH",
+        verification_url: "javascript:alert(1)",
+        poll_interval: 5,
+      }),
+      stderr: "",
+      error: "",
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/providers/nous/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123", provider: "nous" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json.data).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
+  });
 });
