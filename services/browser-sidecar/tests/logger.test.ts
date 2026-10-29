@@ -54,6 +54,15 @@ describe("redactArgs", () => {
     expect(logged).toEqual({ session_id: "s", url: "https://login.example.test/cb" });
   });
 
+  it("redacts a url sent as an array or an object, not only as a string", () => {
+    expect(redactArgs({ url: ["https://login.example.test/cb?ticket=CANARYARR"] })).toEqual({
+      url: ["https://login.example.test/cb"],
+    });
+    expect(redactArgs({ url: { href: "https://login.example.test/cb?ticket=CANARYOBJ" } })).toEqual({
+      url: { href: "https://login.example.test/cb" },
+    });
+  });
+
   it("redacts a logged url that does not parse", () => {
     expect(redactArgs({ url: "not a url?ticket=CANARYTICKET" })).toEqual({ url: "[REDACTED]" });
   });

@@ -52,30 +52,34 @@ export function buildLogger(
 // Pino paths cover known field names; this catches `fill { value }` payloads that
 // might contain a password the caller was inattentive about.
 export function redactArgs(args: unknown): unknown {
-  if (!args || typeof args !== "object") return args;
+  return redactValue(args, false);
+}
+
+// `inUrlField` is true for everything under a key named url, at any depth, so a
+// url sent as a string, an array or an object is logged the same way.
+function redactValue(value: unknown, inUrlField: boolean): unknown {
+  if (typeof value === "string") return inUrlField ? logSafeUrl(value) : value;
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, inUrlField));
+  if (value === null || typeof value !== "object") return value;
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
-    const lower = k.toLowerCase();
-    if (
-      lower.includes("password") ||
-      lower.includes("secret") ||
-      lower.includes("token") ||
-      lower.includes("auth") ||
-      lower.includes("cookie") ||
-      lower.includes("storagestate") ||
-      lower === "value" || // /fill {selector, value} could be a password
-      lower === "file" // /cookies/import {file} is the user's whole session export
-    ) {
-      out[k] = "[REDACTED]";
-    } else if (lower === "url" && typeof v === "string") {
-      out[k] = logSafeUrl(v);
-    } else if (typeof v === "object" && v !== null) {
-      out[k] = redactArgs(v);
-    } else {
-      out[k] = v;
-    }
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = isSecretKey(k) ? "[REDACTED]" : redactValue(v, inUrlField || k.toLowerCase() === "url");
   }
   return out;
+}
+
+function isSecretKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower.includes("password") ||
+    lower.includes("secret") ||
+    lower.includes("token") ||
+    lower.includes("auth") ||
+    lower.includes("cookie") ||
+    lower.includes("storagestate") ||
+    lower === "value" || // /fill {selector, value} could be a password
+    lower === "file" // /cookies/import {file} is the user's whole session export
+  );
 }
 
 // A url in a request body can carry a one-time token (a sign-in ticket or magic
