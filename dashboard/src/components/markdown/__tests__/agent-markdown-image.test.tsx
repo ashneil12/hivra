@@ -24,6 +24,36 @@ describe("AgentMarkdownImage", () => {
     expect(container.querySelector("img")).toHaveAttribute("src", REMOTE);
   });
 
+  it("does not carry an approval over to a different image that reuses the same element", () => {
+    // Chat rows are keyed by index, so a row that is reused when the owner switches
+    // session can hand a new reply's image to an element the owner already approved.
+    const APPROVED = "https://good.example.test/chart.png";
+    const OTHER = "https://leak.example.test/p.png?d=CANARY-SECRET";
+    const { container, rerender } = render(<AgentMarkdownImage src={APPROVED} alt="chart" />);
+    fireEvent.click(screen.getByRole("button", { name: /chart/ }));
+    expect(container.querySelector("img")).toHaveAttribute("src", APPROVED);
+
+    rerender(<AgentMarkdownImage src={OTHER} alt="chart" />);
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: /chart/ })).toHaveAttribute("title", "Load image from leak.example.test");
+  });
+
+  it("asks for a click on the second reply's image when two replies share one list slot", () => {
+    const first = "https://good.example.test/chart.png";
+    const second = "https://leak.example.test/p.png?d=CANARY-SECRET";
+    const Row = ({ src }: { src: string }) => <AgentMarkdownImage src={src} alt="chart" />;
+    const { container, rerender } = render(
+      <div>{[first].map((src, i) => <Row key={i} src={src} />)}</div>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /chart/ }));
+
+    rerender(<div>{[second].map((src, i) => <Row key={i} src={src} />)}</div>);
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: /chart/ })).toBeInTheDocument();
+  });
+
   it.each([
     ["a plain http image", "http://127.0.0.1:9/leak?d=CANARY"],
     ["a protocol-relative image", "//leak.example.test/x.png"],

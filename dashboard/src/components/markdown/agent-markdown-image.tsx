@@ -28,13 +28,15 @@ function imageSourceLabel(src: string): string {
 
 // react-markdown types an image source as string | Blob; only a string can name a URL.
 export function AgentMarkdownImage({ src: rawSrc, alt }: { src?: string | Blob; alt?: string }) {
-  const [loadRequested, setLoadRequested] = useState(false);
+  // The approval names the URL the owner clicked. Chat rows are keyed by index, so this
+  // element can be reused for a different reply; an approval for one URL must not carry over.
+  const [approvedSrc, setApprovedSrc] = useState<string | null>(null);
   const label = alt?.trim() || "Image";
   const src = typeof rawSrc === "string" ? rawSrc : "";
   if (src.length === 0) {
     return <span>{label}</span>;
   }
-  if (loadRequested || INLINE_RASTER_IMAGE.test(src)) {
+  if (approvedSrc === src || INLINE_RASTER_IMAGE.test(src)) {
     // next/image would route the URL through the optimizer; this must be the browser fetching the owner-chosen URL.
     // eslint-disable-next-line @next/next/no-img-element -- a plain img is the owner-approved fetch
     return <img src={src} alt={alt ?? ""} loading="lazy" />;
@@ -42,7 +44,7 @@ export function AgentMarkdownImage({ src: rawSrc, alt }: { src?: string | Blob; 
   return (
     <button
       type="button"
-      onClick={() => setLoadRequested(true)}
+      onClick={() => setApprovedSrc(src)}
       title={`Load image from ${imageSourceLabel(src)}`}
       style={{
         display: "inline-flex",
