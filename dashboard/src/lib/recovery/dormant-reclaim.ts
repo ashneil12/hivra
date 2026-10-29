@@ -335,10 +335,13 @@ async function markDormantReclaimed(input: {
   // Merge into the config as it is now, not the selection snapshot, so settings
   // the owner saved while the VM was being destroyed are kept.
   const current = await readDormantRowState(input.candidate.id);
-  if (!current || current.paused_reason !== "dormant_reclaiming") {
+  if (!current?.updated_at || current.paused_reason !== "dormant_reclaiming") {
     throw new Error("Dormant instance changed before the reclaim was recorded");
   }
 
+  // Compare on the updated_at of that read. A settings save that lands between the read
+  // and this update moves it, so the update refuses instead of writing back a config that
+  // no longer has the owner's save.
   const { data, error } = await supabaseAdmin
     .from("hermes_instances")
     .update({
@@ -365,6 +368,7 @@ async function markDormantReclaimed(input: {
     })
     .eq("id", input.candidate.id)
     .eq("paused_reason", "dormant_reclaiming")
+    .eq("updated_at", current.updated_at)
     .select("id")
     .maybeSingle();
 

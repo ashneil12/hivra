@@ -140,6 +140,8 @@ type InstanceDb = {
   ownerSavesConfig: (config: Row) => void;
   /** The owner's activity lands: last_activity_at and updated_at bumped, lifecycle untouched. */
   ownerRecordsActivity: () => void;
+  /** The owner's settings save lands just after the sweep's next read of the row. */
+  ownerSavesConfigAfterNextRead: (config: Row) => void;
   instanceUpdate: jest.Mock;
   archiveInsert: jest.Mock;
   archiveDelete: jest.Mock;
@@ -158,6 +160,7 @@ function installDatabase(options: {
 }): InstanceDb {
   let live: Row = { ...options.live };
   let writes = 0;
+  let saveAfterRead: Row | null = null;
   const stamp = () => {
     writes += 1;
     return new Date(Date.parse("2026-05-14T20:00:00.000Z") + writes * 1000).toISOString();
@@ -189,6 +192,9 @@ function installDatabase(options: {
     ownerSavesConfig: (config: Row) => {
       live = { ...live, config, updated_at: stamp() };
     },
+    ownerSavesConfigAfterNextRead: (config: Row) => {
+      saveAfterRead = config;
+    },
     ownerRecordsActivity: () => {
       const at = new Date(Date.parse("2026-05-14T20:00:00.000Z") + writes * 1000 + 500).toISOString();
       live = { ...live, last_activity_at: at, updated_at: stamp() };
@@ -211,7 +217,15 @@ function installDatabase(options: {
     query.lt = jest.fn(() => query);
     query.order = jest.fn(() => query);
     query.limit = jest.fn(async () => ({ data: options.candidates, error: null }));
-    query.maybeSingle = jest.fn(async () => ({ data: live, error: null }));
+    query.maybeSingle = jest.fn(async () => {
+      // The read returns the row as it stands; a save armed for "after the read" lands now.
+      const snapshot = live;
+      if (saveAfterRead) {
+        live = { ...live, config: saveAfterRead, updated_at: stamp() };
+        saveAfterRead = null;
+      }
+      return { data: snapshot, error: null };
+    });
     return query;
   };
 
@@ -721,6 +735,30 @@ describe("runDormantReclaimSweep", () => {
         })
       );
       expect(db.instanceUpdate.mock.calls[0]?.[0].config).not.toHaveProperty("infrastructure");
+    });
+
+    it("does not write back a config over a settings save that lands between the terminal read and the update", async () => {
+      // The terminal write merges from a read one round trip before its update. A save in
+      // that gap must make the update refuse, not be overwritten. The VM is already gone, so
+      // the row stays dormant_reclaiming and the next sweep finishes it.
+      setCommitEnv();
+      const ownerConfig = {
+        infrastructure: infra,
+        dormantArchive: (reEntryRow.config as Row).dormantArchive,
+        settings: { model: "owner-choice" },
+      };
+      const db = installDatabase({ candidates: [reEntryRow], live: reEntryRow });
+      (deleteProxmoxInstance as jest.Mock).mockImplementationOnce(async () => {
+        db.ownerSavesConfigAfterNextRead(ownerConfig);
+        return { ok: true, stdout: "deleted", stderr: "" };
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ reclaimed: 0, failed: 1 });
+      expect(db.instanceUpdate).toHaveBeenCalledTimes(1);
+      expect(db.live()).toMatchObject({ paused_reason: "dormant_reclaiming" });
+      expect(db.live().config).toEqual(expect.objectContaining({ settings: { model: "owner-choice" } }));
     });
   });
 });
