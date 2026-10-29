@@ -436,26 +436,43 @@ CONTAINEREOF
   }
 
   /**
-   * Generates a shell command chunk that uses python to patch the .env file cleanly.
+   * Generates a shell command chunk that uses python to patch an env file cleanly.
    * It base64 encodes the payload to avoid bash string escaping nightmares.
+   *
+   * `reader` names what reads the file. "shell" is a file the gateway supervisor
+   * sources (`set -a; . .env`): each value is single-quoted and anything the shell
+   * cannot carry is refused. "compose" is a Docker Compose env_file: each value is
+   * written unquoted, the form Compose parses, and only a line break is refused,
+   * because it would start a new variable.
    */
-  static buildEnvPatchCommand(envPath: string, updates: Record<string, string>): string {
-    // The gateway supervisor sources this .env as shell. Each value is written
-    // in single quotes, which the shell reads literally, so a value holding a
-    // quote or line break cannot end the quote early. An apostrophe has no
-    // escape that both the shell and the dotenv readers agree on, so refuse it.
+  static buildEnvPatchCommand(
+    envPath: string,
+    updates: Record<string, string>,
+    reader: "shell" | "compose" = "shell",
+  ): string {
+    const shellSourced = reader === "shell";
     for (const [key, value] of Object.entries(updates)) {
-      if (/['\r\n\0]/.test(String(value ?? ""))) {
-        throw new Error(`Refusing to write ${key}: apostrophes and line breaks are not supported in env values`);
+      if (/[\r\n\0]/.test(String(value ?? ""))) {
+        throw new Error(`Refusing to write ${key}: line breaks are not supported in env values`);
       }
     }
-    // The same line is read by Docker Compose, where a value that ends in a
-    // backslash leaves its closing quote escaped and the whole env file fails to parse.
-    for (const [key, value] of Object.entries(updates)) {
-      if (String(value ?? "").endsWith("\\")) {
-        throw new Error(`Refusing to write ${key}: a value that ends in a backslash leaves its closing quote escaped`);
+    if (shellSourced) {
+      // Each value is single-quoted below. An apostrophe would end that quote early,
+      // and it has no escape that both the shell and the dotenv readers agree on.
+      for (const [key, value] of Object.entries(updates)) {
+        if (String(value ?? "").includes("'")) {
+          throw new Error(`Refusing to write ${key}: apostrophes are not supported in env values`);
+        }
+      }
+      // Kept from before for shell-sourced files: a value that ends in a backslash
+      // is refused rather than relied on to round-trip through the single-quoted form.
+      for (const [key, value] of Object.entries(updates)) {
+        if (String(value ?? "").endsWith("\\")) {
+          throw new Error(`Refusing to write ${key}: a value that ends in a backslash leaves its closing quote escaped`);
+        }
       }
     }
+    const assignment = shellSourced ? `k + "='" + str(v) + "'"` : `k + "=" + str(v)`;
     const updatesB64 = Buffer.from(JSON.stringify(updates)).toString("base64");
 
     const pythonScript = `
@@ -470,7 +487,7 @@ for k, v in updates.items():
     if v == '' or v is None:
         content = re.sub(r'^' + k + r'=.*\\n?', '', content, flags=re.MULTILINE)
     else:
-        line = k + "='" + str(v) + "'"
+        line = ${assignment}
         if re.search(r'^' + k + r'=', content, flags=re.MULTILINE):
             content = re.sub(r'^' + k + r'=.*', lambda m: line, content, flags=re.MULTILINE)
         else:
@@ -842,7 +859,7 @@ if completed.returncode != 0:
         }
         
         // Instead of messy quoting, use the helper to build a safe base64 pipeline
-        injectScript += ProfileService.buildEnvPatchCommand(`${hermesHome}/profiles/${safeName}/.env`, patchDict);
+        injectScript += ProfileService.buildEnvPatchCommand(`${hermesHome}/profiles/${safeName}/.env`, patchDict, "shell");
       }
 
 

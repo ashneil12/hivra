@@ -98,11 +98,36 @@ describe('Profile Service Unit Tests', () => {
         .toThrow(/apostrophe/i);
     });
 
-    it('refuses a value that ends in a backslash, because compose reads the closing quote as escaped and rejects the whole env file', () => {
-      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', { BYOK_KEY: 'C:\\models\\' }))
+    it('refuses a value that ends in a backslash when the file is sourced as shell', () => {
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', { BYOK_KEY: 'C:\\models\\' }, 'shell'))
         .toThrow(/backslash/i);
-      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', { BYOK_KEY: 'abc\\\\' }))
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', { BYOK_KEY: 'abc\\\\' }, 'shell'))
         .toThrow(/backslash/i);
+    });
+
+    it('writes an apostrophe or a trailing backslash unquoted for a compose env_file, the form Docker Compose parses', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-patch-compose-'));
+      try {
+        const envPath = path.join(dir, '.env');
+        const cmd = ProfileService.buildEnvPatchCommand(
+          envPath,
+          { BYOK_KEY: "it's", TAIL_KEY: 'C:\\models\\' },
+          'compose',
+        );
+        const b64 = cmd.match(/echo "([^"]+)" \| base64 -d/);
+        expect(b64).not.toBeNull();
+        const python = Buffer.from(b64![1], 'base64').toString('utf-8');
+        const patch = spawnSync('python3', ['-I', '-'], { input: python, encoding: 'utf-8' });
+        expect(patch.status).toBe(0);
+        expect(fs.readFileSync(envPath, 'utf-8')).toBe("BYOK_KEY=it's\nTAIL_KEY=C:\\models\\\n");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('still refuses a line break in a compose env value, because it would start a new variable line', () => {
+      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', { K: 'a\nEVIL=1' }, 'compose'))
+        .toThrow(/line breaks/i);
     });
 
     it('falls back to the WebUI agent virtualenv before system python so hermes_cli imports succeed', () => {
