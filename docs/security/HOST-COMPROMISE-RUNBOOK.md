@@ -13,7 +13,7 @@ Use this when one of these is true:
 Read this first, because it decides which steps are real.
 
 - Customer boxes are KVM VMs. A guest escape lands on the host as root. That host holds root SSH into every guest on it (the per-host orchestrator key), the fleet-shared Cloudflare Origin CA key and per-guest tokens. Treat everything on a compromised host as compromised.
-- Guest-to-guest traffic and guest-to-host admin ports are blocked on the host (bridge table `hermes_vm_isolation`, inet `filter` input and forward chains). There is no per-VM MAC/IP anti-spoofing yet, so a guest can impersonate a neighbour's IP towards the host. Assume a hostile guest could read its neighbours' incoming traffic.
+- Guest-to-guest traffic and guest-to-host admin ports are blocked on the host (bridge table `hermes_vm_isolation`, inet `filter` input and forward chains). Per-VM MAC/IP pinning is `dashboard/scripts/proxmox-host-vm-antispoof.sh`. Run it with `--check` on the host. Where it is not installed, a guest can impersonate a neighbour's IP towards the host, so assume a hostile guest could read its neighbours' incoming traffic.
 - There is no working global launch switch. `HERMES_PROVISIONING_DISABLED` exists in `dashboard/src/lib/instance-lifecycle.ts` but no create path reads it. To stop new launches on one host, set its `proxmox_hosts.status` to `maintenance`. Stopping launches everywhere needs every host set to `maintenance`.
 - Stop and force-stop run through the host. On a compromised host they are not proof of anything. Real containment comes from outside the host, at the provider: the server's firewall or a power-off in the provider console.
 - Deleting an account's records does not stop its VMs or servers. Tear each one down at the host or provider and confirm it is gone.
@@ -63,7 +63,7 @@ Vercel env changes, Cloudflare and provider changes, and secret rotation are Ash
 ## 5. Rebuild from trusted sources
 
 1. Reinstall the host from the provider image, then follow the host standup procedure. Never reuse a disk from a compromised host.
-2. Run the perimeter guard with `--check`, then `--apply`, and confirm `hermes_vm_isolation` is present before any guest is placed.
+2. Run the perimeter guard with `--check`, then `--apply`. Install the anti-spoof guard with `--apply`, then `--install-triggers`. Confirm `hermes_vm_isolation` and `hermes_vm_antispoof` are both present before any guest is placed.
 3. Restore guests from backups taken before the first sign of compromise. Each restored guest gets new credentials, and a guest is never restored straight back onto the host it came from.
 4. Return the host to `active` only after a read-only fleet sweep passes for it.
 
