@@ -55,7 +55,10 @@ export function redactArgs(args: unknown): unknown {
       lower.includes("secret") ||
       lower.includes("token") ||
       lower.includes("auth") ||
-      lower === "value" // /fill {selector, value} could be a password
+      lower.includes("cookie") ||
+      lower.includes("storagestate") ||
+      lower === "value" || // /fill {selector, value} could be a password
+      lower === "file" // /cookies/import {file} is the user's whole session export
     ) {
       out[k] = "[REDACTED]";
     } else if (typeof v === "object" && v !== null) {

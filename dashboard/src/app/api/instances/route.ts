@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 // the warden-mvp branch).
 export const maxDuration = 300;
 
+import { withoutEncryptedColumns } from "@/lib/instance-record";
 import { NextRequest } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -558,16 +559,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Full mode. `select("*")` pulls every column into the row, including
-    // `api_server_key_encrypted` — the per-instance gateway bearer, encrypted
-    // at rest. It's a server-only secret and must never reach the client, so
-    // the `...inst` spread is overridden to drop it (JSON serialization omits
-    // `undefined` keys). The single-instance GET handler ([id]/route.ts)
-    // already redacts it the same way; this keeps the list response consistent.
+    // Full mode. `select("*")` pulls every column into the row, including the
+    // encrypted provider key and gateway bearer. Those are server-only secrets
+    // and must never reach the client, so every `*_encrypted` column is
+    // dropped, the same way the single-instance GET ([id]/route.ts) does.
     return apiSuccess(
       synced.map((inst) => ({
-        ...inst,
-        api_server_key_encrypted: undefined,
+        ...withoutEncryptedColumns(inst),
         config: getPublicInstanceConfig(inst.config),
         updateAlert: updateAlerts[inst.id] ?? null,
         failureAlert: failureAlerts[inst.id] ?? null,

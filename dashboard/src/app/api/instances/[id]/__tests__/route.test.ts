@@ -3745,6 +3745,21 @@ describe("GET /api/instances/[id]", () => {
     expect(json.data.public_ipv4).toBe("203.0.113.10");
   });
 
+  it("never returns an encrypted column to the browser", async () => {
+    instanceRow.honcho_api_key_encrypted = "honcho-secret";
+    instanceRow.llm_api_key_encrypted = "llm-secret";
+    const response = await GET(
+      new NextRequest("http://localhost/api/instances/inst-123?no_sync=true"),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(json.data).filter((key) => key.endsWith("_encrypted"))).toEqual([]);
+    expect(json.data.api_key_preview).toBe("sk-...1234");
+    expect(json.data.has_honcho_api_key).toBe(true);
+  });
+
   it("recovers a stale error status when the live gateway is reachable", async () => {
     instanceRow.status = "error";
     (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({

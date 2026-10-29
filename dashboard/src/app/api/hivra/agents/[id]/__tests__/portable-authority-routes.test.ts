@@ -149,9 +149,9 @@ describe("portable Hivra guest-operation authority", () => {
     expect(response.status).toBe(200);
     expect(mockResolveExecutionContext).toHaveBeenCalledWith("user-a", agent);
     expect(mockInstallToolsOnBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61", vmid: 1161 }),
       [{ id: "github", env: { GITHUB_TOKEN: "token" } }],
-      portableEnv,
+      expect.objectContaining({ kind: "self-managed", env: portableEnv }),
     );
   });
 
@@ -163,9 +163,9 @@ describe("portable Hivra guest-operation authority", () => {
 
     expect(response.status).toBe(200);
     expect(mockUninstallToolFromBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61", vmid: 1161 }),
       "github",
-      portableEnv,
+      expect.objectContaining({ kind: "self-managed", env: portableEnv }),
     );
   });
 
