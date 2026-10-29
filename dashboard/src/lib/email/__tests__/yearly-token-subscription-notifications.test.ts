@@ -14,6 +14,7 @@
 jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
 
 const mockSend = jest.fn();
+const mockGetUser = jest.fn();
 
 jest.mock("resend", () => ({
   Resend: jest.fn().mockImplementation(() => ({ emails: { send: (...args: unknown[]) => mockSend(...args) } })),
@@ -21,7 +22,7 @@ jest.mock("resend", () => ({
 
 jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: async () => ({
-    users: { getUser: async () => ({ primaryEmailAddress: { emailAddress: "user@example.com" } }) },
+    users: { getUser: (...args: unknown[]) => mockGetUser(...args) },
   }),
 }));
 
@@ -50,6 +51,7 @@ beforeEach(() => {
   storedCountry = null;
   storedCountryReadFails = false;
   mockSend.mockReset().mockResolvedValue({ error: null });
+  mockGetUser.mockReset().mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "user@example.com", verification: { status: "verified" } }] });
   clerkFetch.mockReset();
   global.fetch = clerkFetch as unknown as typeof fetch;
   mockFrom.mockReset().mockImplementation((table: string) => {
@@ -94,6 +96,20 @@ it("tells the user a renewal before expiry adds a year on top of the current end
   // The link opens the $HermesOS payment for this tier directly (the billing
   // page's Active Plan view has no pay-with-token control of its own).
   expect(email.text).toMatch(/\/dashboard\/billing\?plan=pro&yearly_token=1/);
+});
+
+it("sends nothing when the holder's only address is one Clerk has not verified (F106)", async () => {
+  mockGetUser.mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "victim@example.com", verification: { status: "unverified" } }] });
+
+  const result = await sendYearlyTokenSubscriptionNotification({
+    userId: "user_1",
+    tier: "pro",
+    transition: "expiring_soon",
+    expiresAt: new Date("2026-10-01T00:00:00Z"),
+  });
+
+  expect(result).toEqual({ sent: false, reason: "no_email" });
+  expect(mockSend).not.toHaveBeenCalled();
 });
 
 it("reports not_configured without sending when Resend is not set up", async () => {

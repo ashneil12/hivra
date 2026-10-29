@@ -24,6 +24,7 @@ import {
   restartAgent,
   stopAgent,
 } from "../agent-api";
+import { boxLoginStartRaw } from "../agent-api";
 
 describe("listBoxSessions", () => {
   const originalFetch = global.fetch;
@@ -788,5 +789,35 @@ describe("power actions and live usage", () => {
     const limited = await getComputerUsage("agent-1").catch((error: unknown) => error);
     expect(limited).toBeInstanceOf(ComputerUsageError);
     expect(limited).toMatchObject({ status: 429, retryAfterSeconds: 42, message: "Usage was refreshed a lot just now." });
+  });
+});
+
+describe("boxLoginStartRaw", () => {
+  it.each([
+    ["a javascript: address", "javascript:alert(1)"],
+    ["a plain http address", "http://auth.example.test/device"],
+    ["a value that is not a URL", "not a url"],
+  ])("refuses %s returned by the box", async (_label, url) => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ url }),
+    }) as unknown as typeof fetch;
+
+    await expect(boxLoginStartRaw("https://box.example.test", "token")).rejects.toThrow(/usable sign-in link/i);
+  });
+
+  it("returns an https sign-in address and its code", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ url: "https://auth.openai.com/codex/device", code: "ABCD-EFGH" }),
+    }) as unknown as typeof fetch;
+
+    await expect(boxLoginStartRaw("https://box.example.test", "token")).resolves.toEqual({
+      url: "https://auth.openai.com/codex/device",
+      code: "ABCD-EFGH",
+      deviceAuth: false,
+    });
   });
 });

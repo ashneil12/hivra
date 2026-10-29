@@ -11,6 +11,8 @@ import {
   useState,
 } from "react";
 
+import { safeInternalPath } from "@/lib/safe-internal-path";
+
 interface LocalUser {
   createdAt: Date;
   emailAddresses: Array<{ emailAddress: string; id: string }>;
@@ -124,9 +126,7 @@ export function useReverification<Fetcher extends (...args: never[]) => unknown>
 }
 
 function safeRedirect(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
-    ? value
-    : fallback;
+  return safeInternalPath(value) ?? fallback;
 }
 
 function LocalOperatorSignIn(props: Record<string, unknown>) {

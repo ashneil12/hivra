@@ -1,0 +1,71 @@
+"use client";
+
+// Agent-written markdown can point an image at any URL. A rendered <img> makes
+// the browser request that URL as soon as the reply is shown, so an injected
+// reply could carry chat or workspace text out in its query string with no
+// click. A remote image therefore waits behind a placeholder that shows its
+// alt text and host, and loads only when the owner asks for it. Inline PNG,
+// JPEG, GIF and WebP data URLs need no request and render directly.
+
+import { useState } from "react";
+
+const INLINE_RASTER_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);/i;
+
+// The base only lets a source with no scheme resolve; a source that names a
+// scheme or a host ("https:", "//host", and the backslash forms browsers read
+// as "//") is remote, and its host is the one a click contacts.
+const IMAGE_SOURCE_BASE = "https://image-source.invalid";
+const NAMES_A_SCHEME_OR_HOST = /^(?:[a-z][a-z\d+.-]*:|[\\/]{2})/i;
+
+function imageSourceLabel(src: string): string {
+  if (!NAMES_A_SCHEME_OR_HOST.test(src)) return "this app";
+  try {
+    return new URL(src, IMAGE_SOURCE_BASE).host || "an unknown host";
+  } catch {
+    return "an unknown host";
+  }
+}
+
+// react-markdown types an image source as string | Blob; only a string can name a URL.
+export function AgentMarkdownImage({ src: rawSrc, alt }: { src?: string | Blob; alt?: string }) {
+  // The approval names the URL the owner clicked. Chat rows are keyed by index, so this
+  // element can be reused for a different reply; an approval for one URL must not carry over.
+  const [approvedSrc, setApprovedSrc] = useState<string | null>(null);
+  const label = alt?.trim() || "Image";
+  const src = typeof rawSrc === "string" ? rawSrc : "";
+  if (src.length === 0) {
+    return <span>{label}</span>;
+  }
+  if (approvedSrc === src || INLINE_RASTER_IMAGE.test(src)) {
+    // next/image would route the URL through the optimizer; this must be the browser fetching the owner-chosen URL.
+    // eslint-disable-next-line @next/next/no-img-element -- a plain img is the owner-approved fetch
+    return <img src={src} alt={alt ?? ""} loading="lazy" />;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setApprovedSrc(src)}
+      title={`Load image from ${imageSourceLabel(src)}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        maxWidth: "100%",
+        padding: "4px 8px",
+        border: "1px dashed var(--etched-border)",
+        background: "var(--bg-elevated)",
+        color: "var(--text-secondary)",
+        fontFamily: "var(--font-mono), monospace",
+        fontSize: "0.85em",
+        cursor: "pointer",
+        overflowWrap: "anywhere",
+        textAlign: "left",
+      }}
+    >
+      {label} · Load image from {imageSourceLabel(src)}
+    </button>
+  );
+}
+
+/** The image override every renderer of agent-written markdown spreads in. */
+export const AGENT_MARKDOWN_COMPONENTS = { img: AgentMarkdownImage };

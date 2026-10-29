@@ -11,10 +11,21 @@ import {
 import { verifyLocalOperatorPassword } from "@/lib/self-host/password";
 import { isSameOriginRequest } from "@/lib/self-host/request-origin";
 import { createLocalSessionToken } from "@/lib/self-host/session-token";
-import { enforceRateLimit, getIP } from "@/lib/rate-limit";
+import { resetFailureBudget, reserveFailureBudget } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// There is one operator account, so its guesses share one budget. The key does
+// not use the caller's address: a client can choose the address it presents, so
+// a per-address key let every guess start with a fresh bucket. Attempts past the
+// budget wait out a lockout that doubles on each repeat, up to an hour.
+const OPERATOR_SIGN_IN_BUDGET = "local-login:operator";
+const OPERATOR_SIGN_IN_BUDGET_CONFIG = {
+  maxAttempts: 10,
+  windowMs: 15 * 60 * 1000,
+  maxLockoutMs: 60 * 60 * 1000,
+};
 
 export async function POST(request: Request) {
   try {
@@ -22,11 +33,8 @@ export async function POST(request: Request) {
     if (!isSameOriginRequest(request)) {
       return NextResponse.json({ error: "Cross-origin sign-in is not allowed." }, { status: 403 });
     }
-    const rateLimit = enforceRateLimit(`local-login:${getIP(request)}`, {
-      limit: 10,
-      windowMs: 15 * 60 * 1000,
-    });
-    if (!rateLimit.success) {
+    const budget = reserveFailureBudget(OPERATOR_SIGN_IN_BUDGET, OPERATOR_SIGN_IN_BUDGET_CONFIG);
+    if (!budget.success) {
       return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
     }
 
@@ -45,6 +53,8 @@ export async function POST(request: Request) {
     if (email !== localOperatorEmail() || !passwordValid) {
       return NextResponse.json({ error: "Invalid operator credentials." }, { status: 401 });
     }
+    // A successful sign-in clears the budget, so only unsuccessful attempts build up.
+    resetFailureBudget(OPERATOR_SIGN_IN_BUDGET);
 
     const token = await createLocalSessionToken({
       email,

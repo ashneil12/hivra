@@ -7,6 +7,7 @@
 import type { ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import type { AgentId } from "./agent-catalog";
 import type { ComputerTemplateId } from "./computer-catalog";
+import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
@@ -830,7 +831,10 @@ export async function boxLoginStartRaw(boxUrl: string, token?: string | null): P
   const r = await fetch(`${boxBase(boxUrl)}/api/login/start`, { method: "POST", headers: boxHeaders(token) });
   const j = (await r.json().catch(() => ({}))) as { url?: string; code?: string; deviceAuth?: boolean; error?: string };
   if (!r.ok || !j.url) throw new Error(j.error || "Could not start login");
-  return { url: j.url, code: j.code || null, deviceAuth: Boolean(j.deviceAuth) };
+  // The box's sign-in address is opened and linked by the caller, so only https is returned.
+  const url = readHttpsAuthorizationUrl(j.url);
+  if (!url) throw new Error("The box did not return a usable sign-in link. Please try again.");
+  return { url, code: j.code || null, deviceAuth: Boolean(j.deviceAuth) };
 }
 
 /** Managed-Venice wiring handed to the box at Aeon connect: the box sets these

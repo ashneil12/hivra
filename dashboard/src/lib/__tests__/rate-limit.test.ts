@@ -1,4 +1,4 @@
-import { enforceRateLimit, getIP, reserveRateLimit } from "../rate-limit";
+import { enforceRateLimit, getIP, reserveFailureBudget, reserveRateLimit, resetFailureBudget } from "../rate-limit";
 import { NextRequest } from "next/server";
 
 describe("Rate Limiting Utility", () => {
@@ -282,4 +282,80 @@ describe("reserveRateLimit", () => {
     expect(reserveRateLimit("reserve_once", { limit: 2, windowMs: 60_000 }).success).toBe(true);
     expect(reserveRateLimit("reserve_once", { limit: 2, windowMs: 60_000 }).success).toBe(false);
   });
+});
+
+describe("failure budget", () => {
+  const config = { maxAttempts: 3, windowMs: 60_000, maxLockoutMs: 4 * 60_000 };
+  let clock: number;
+  let dateNowSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    clock = 2_000_000_000;
+    dateNowSpy = jest.spyOn(Date, "now").mockImplementation(() => clock);
+  });
+
+  afterEach(() => {
+    dateNowSpy.mockRestore();
+  });
+
+  test("refuses attempts once the budget is spent and says how long to wait", () => {
+    expect(reserveFailureBudget("budget_refuse", config).success).toBe(true);
+    expect(reserveFailureBudget("budget_refuse", config).success).toBe(true);
+    expect(reserveFailureBudget("budget_refuse", config).success).toBe(true);
+
+    clock += 10_000;
+    const refused = reserveFailureBudget("budget_refuse", config);
+    expect(refused).toEqual({ success: false, retryAfterMs: 50_000 });
+  });
+
+  test("a successful attempt clears the budget", () => {
+    reserveFailureBudget("budget_reset", config);
+    reserveFailureBudget("budget_reset", config);
+    resetFailureBudget("budget_reset");
+
+    expect(reserveFailureBudget("budget_reset", config).success).toBe(true);
+    expect(reserveFailureBudget("budget_reset", config).success).toBe(true);
+    expect(reserveFailureBudget("budget_reset", config).success).toBe(true);
+  });
+
+  test("each repeat lockout doubles and stops at the cap", () => {
+    // Lockouts run 60s, 120s, 240s, then stay at the 240s cap.
+    lockAfterThree("budget_double");
+    clock += 60_001;
+    lockAfterThree("budget_double");
+    expect(reserveFailureBudget("budget_double", config)).toEqual({ success: false, retryAfterMs: 120_000 });
+
+    clock += 120_001;
+    lockAfterThree("budget_double");
+    expect(reserveFailureBudget("budget_double", config)).toEqual({ success: false, retryAfterMs: 240_000 });
+
+    clock += 240_001;
+    lockAfterThree("budget_double");
+    expect(reserveFailureBudget("budget_double", config)).toEqual({ success: false, retryAfterMs: 240_000 });
+  });
+
+  test("a gap with no counted attempt forgets the attempts so far", () => {
+    reserveFailureBudget("budget_quiet", config);
+    reserveFailureBudget("budget_quiet", config);
+
+    clock += 60_001;
+    expect(reserveFailureBudget("budget_quiet", config).success).toBe(true);
+    expect(reserveFailureBudget("budget_quiet", config).success).toBe(true);
+  });
+
+  test("an hour without a lockout starts the backoff again", () => {
+    lockAfterThree("budget_again");
+    clock += 60 * 60 * 1000 + 60_001;
+
+    // The next lockout is the first one again: 60 seconds, not 120.
+    lockAfterThree("budget_again");
+    clock += 60_001;
+    expect(reserveFailureBudget("budget_again", config).success).toBe(true);
+  });
+
+  function lockAfterThree(identifier: string) {
+    reserveFailureBudget(identifier, config);
+    reserveFailureBudget(identifier, config);
+    reserveFailureBudget(identifier, config);
+  }
 });

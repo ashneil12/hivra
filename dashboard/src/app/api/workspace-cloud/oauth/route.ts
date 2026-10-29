@@ -8,6 +8,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { decryptApiKey } from "@/lib/crypto";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
+import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import {
   startWorkspaceCloudOAuth,
   pollWorkspaceCloudOAuth,
@@ -80,7 +81,10 @@ export async function POST(request: NextRequest) {
 
     const r = await startWorkspaceCloudOAuth({ ip: inst.ipv4_address, provider: parsed.data.provider });
     if (!r.ok) return apiError(r.error, 502, undefined, undefined, { route: ROUTE });
-    return apiSuccess({ url: r.url, code: r.code });
+    // The owner is sent to this address, so only an https one is returned.
+    const url = readHttpsAuthorizationUrl(r.url);
+    if (!url) return apiError("Could not start the device login", 502, undefined, undefined, { route: ROUTE });
+    return apiSuccess({ url, code: r.code });
   } catch (err) {
     return handleApiError(err);
   }

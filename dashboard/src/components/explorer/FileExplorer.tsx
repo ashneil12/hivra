@@ -9,6 +9,7 @@ import dynamic from 'next/dynamic';
 import { FileIcon } from './FileIcon';
 import { FileEditor } from './FileEditor';
 import { DEFAULT_EXPLORER_ROOT, resolveExplorerHome } from '@/lib/explorer-home';
+import { AGENT_MARKDOWN_COMPONENTS } from '@/components/markdown/agent-markdown-image';
 
 // The markdown renderer and its GFM plugin are only needed to preview a .md file,
 // so they load on first use instead of with every visit to the explorer.
@@ -17,7 +18,7 @@ const MarkdownPreview = dynamic(
     const Markdown = markdown.default;
     const remarkPlugins = [gfm.default];
     function MarkdownPreview({ children }: { children: string }) {
-      return <Markdown remarkPlugins={remarkPlugins}>{children}</Markdown>;
+      return <Markdown remarkPlugins={remarkPlugins} components={AGENT_MARKDOWN_COMPONENTS}>{children}</Markdown>;
     }
     return MarkdownPreview;
   }),
