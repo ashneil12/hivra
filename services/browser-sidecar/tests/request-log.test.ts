@@ -5,7 +5,9 @@ import { buildLogger } from "../src/logger.js";
 import { attachRequestLog } from "../src/request-log.js";
 import { registerCookieRoutes } from "../src/routes/cookies.js";
 import { registerNavigationRoutes } from "../src/routes/navigation.js";
+import { registerFlowRoutes } from "../src/routes/flows.js";
 import type { SessionManager } from "../src/playwright/session-manager.js";
+import { fakeConfig } from "./_fakes.js";
 
 // End to end: real routes, real request-log hook, real redaction config. The
 // canary values are the secrets a caller sends; none of them may reach the log.
@@ -32,6 +34,11 @@ async function buildApp() {
   attachRequestLog(app, logger);
   registerNavigationRoutes(app, { sessions });
   registerCookieRoutes(app, { sessions });
+  registerFlowRoutes(app, {
+    sessions,
+    config: fakeConfig() as never,
+    logger,
+  });
   await app.ready();
 
   // The onResponse hook runs after the response is sent; let it write its line.
@@ -81,6 +88,44 @@ describe("request log", () => {
     expect(output).toContain('"url":"https://login.example.test/cb"');
     expect(output).not.toContain(TICKET_CANARY);
     expect(output).not.toContain(FRAGMENT_CANARY);
+  });
+
+  it("does not write a ticket in a /goto url sent as an array or an object", async () => {
+    const { app, logged } = await buildApp();
+    const arrayRes = await app.inject({
+      method: "POST",
+      url: "/goto",
+      payload: { session_id: "no-such-session", url: [`https://login.example.test/cb?ticket=${TICKET_CANARY}`] },
+    });
+    const objectRes = await app.inject({
+      method: "POST",
+      url: "/goto",
+      payload: { session_id: "no-such-session", url: { href: `https://login.example.test/cb?ticket=${TICKET_CANARY}` } },
+    });
+    expect(arrayRes.statusCode).toBe(400);
+    expect(objectRes.statusCode).toBe(400);
+
+    const output = await logged();
+    expect(output).toContain('"tool":"/goto"');
+    expect(output).not.toContain(TICKET_CANARY);
+  });
+
+  it("does not write a one-time link passed in run_named_flow args under another key", async () => {
+    const { app, logged } = await buildApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/run_named_flow",
+      payload: {
+        session_id: "no-such-session",
+        flow_id: "login_clerk",
+        args: { login_url: `https://login.example.test/cb?ticket=${TICKET_CANARY}` },
+      },
+    });
+    expect(res.statusCode).toBe(404);
+
+    const output = await logged();
+    expect(output).toContain('"tool":"/run_named_flow"');
+    expect(output).not.toContain(TICKET_CANARY);
   });
 
   it("logs the path, not the query, of a request that matches no route", async () => {
