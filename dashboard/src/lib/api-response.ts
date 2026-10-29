@@ -120,7 +120,10 @@ export function apiError(
     status >= 500 ? "error" : status >= 400 ? "warn" : "info";
   const level = options?.logLevel ?? defaultLevel;
   if (level === "error") {
-    log.error(`API ${status} ${message}`, new Error(message), baseContext);
+    // The stand-in Error carries only the user-facing message, which is what the
+    // client already received, so it is safe to store verbatim. Opting in here keeps
+    // the ops_events message readable; the original cause is never passed in.
+    log.error(`API ${status} ${message}`, new Error(message), { ...baseContext, verboseErrors: true });
   } else if (level === "warn") {
     log.warn(`API ${status} ${message}`, baseContext);
   } else {

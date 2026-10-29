@@ -125,6 +125,19 @@ function formatHuman(entry: Record<string, unknown>): string {
   return `[${tsStr}] ${String(level).toUpperCase()} ${msg}${errStr}${ctxStr}`;
 }
 
+/**
+ * The message stored on the ops_events row. It matches what the console line
+ * carries: the error class and code, or the raw message only when the caller
+ * opted in with verboseErrors. A thrown non-Error is stored as the log title.
+ */
+function opsEventMessage(err: unknown, msg: string, verbose: boolean): string {
+  if (!(err instanceof Error)) return msg;
+  if (verbose) return err.message || msg;
+  const code = (err as { code?: unknown }).code;
+  const label = typeof code === "string" && code ? `${err.name} (${code})` : err.name;
+  return label || msg;
+}
+
 function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): void {
   if (!shouldLog(level)) return;
 
@@ -137,11 +150,11 @@ function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): voi
     ...sanitizedCtx,
   };
 
+  const verbose = ctx.verboseErrors === true;
   if (err !== undefined) {
-    const serialized = serializeError(err, ctx.verboseErrors === true);
-    // Sanitization is applied to message/stack via reportOpsEvent below; for
-    // the console line we trust the captured Error fields directly.
-    entry.err = serialized;
+    // The console line and the ops_events mirror below both use this one
+    // opt-in: message and stack are withheld unless verboseErrors is set.
+    entry.err = serializeError(err, verbose);
   }
 
   const line = isJsonOutput() ? JSON.stringify(entry) : formatHuman(entry);
@@ -153,12 +166,11 @@ function emit(level: LogLevel, msg: string, ctx: LogContext, err?: unknown): voi
   // Mirror errors to ops_events so the existing audit / alert surfaces keep
   // working. We swallow failures because ops_events is best-effort.
   if (level === "error" && shouldReportOpsEvent) {
-    const errorMessage = err instanceof Error ? err.message : msg;
-    const stack = err instanceof Error ? err.stack : undefined;
+    const stack = verbose && err instanceof Error ? err.stack : undefined;
     void reportOpsEvent({
       source: ctx.source,
       title: msg,
-      message: errorMessage || msg,
+      message: opsEventMessage(err, msg, verbose),
       severity: "error",
       route: ctx.route,
       userId: ctx.userId ?? null,
