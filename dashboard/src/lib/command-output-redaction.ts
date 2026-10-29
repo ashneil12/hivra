@@ -102,6 +102,11 @@ export const SECRET_TOKEN_SHAPES: ReadonlyArray<SecretTokenShape> = [
   { kind: "bankr_key_any", pattern: new RegExp(`${TOKEN_START}bk_[A-Za-z0-9][A-Za-z0-9_-]{9,}`), blocksPush: false },
   { kind: "activity_collector_token", pattern: /hvra_otlp_v1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?/i },
   { kind: "agent_link_key", pattern: new RegExp(`${TOKEN_START}hvl_[0-9a-f]{64}(?![0-9a-f])`) },
+  // Hivra's own bearer families: workspace session (hws1_), remote-desktop session (hrs1_),
+  // first-boot enrollment (hbe1_) and workspace exchange code (hwe1_). Each is the prefix
+  // plus 43 base64url characters from 32 random bytes. They reach command output and error
+  // text in callback URLs and host stdout, where no key name sits in front of them.
+  { kind: "hivra_bearer_token", pattern: new RegExp(`${TOKEN_START}(?:hbe1|hws1|hrs1|hwe1)_[A-Za-z0-9_-]{43,}`) },
   { kind: "tailscale_key", pattern: new RegExp(`${TOKEN_START}tskey-(?:auth|api|client)-[A-Za-z0-9_-]+`, "i") },
 ];
 const SECRET_TOKEN_SHAPE_GLOBAL_PATTERNS = SECRET_TOKEN_SHAPES.map(

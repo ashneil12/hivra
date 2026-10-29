@@ -155,6 +155,8 @@ describe("scanForSecrets (fail-closed)", () => {
     ["Anthropic key URL-encoded", "hermes/orgs/x.md", `x%20sk-ant-${synthetic(40)}`],
     ["GitHub token URL-encoded", "hermes/orgs/gh.md", `x%20ghp_${synthetic(36)}`],
     ["managed Venice key URL-encoded", "hermes/SOUL.md", `x%20hven_live_${synthetic(24)}`],
+    ["Hivra workspace session token in SOUL.md", "hermes/SOUL.md", `session hws1_${synthetic(43)}`],
+    ["Hivra exchange code in a callback URL", "hermes/orgs/cb.md", `GET /cb?code=hwe1_${synthetic(43)}&state=x`],
   ])("flags a %s", (_label, path, content) => {
     expect(scanForSecrets([file(path, content)]).length).toBeGreaterThan(0);
   });

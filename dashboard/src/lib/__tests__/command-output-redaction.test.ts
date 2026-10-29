@@ -170,6 +170,10 @@ describe("redactSensitiveCommandOutput", () => {
       ["JWT", `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.${body(20)}`],
       ["Managed Venice", `hven_live_${body(24)}`],
       ["Agent link", `hvl_${hex(64)}`],
+      ["Hivra workspace session token", `hws1_${body(43)}`],
+      ["Hivra remote-desktop session token", `hrs1_${body(43)}`],
+      ["Hivra first-boot enrollment token", `hbe1_${body(43)}`],
+      ["Hivra workspace exchange code", `hwe1_${body(43)}`],
       ["Tailscale API", `tskey-api-${body(16)}`],
       ["Tailscale client", `tskey-client-${body(16)}`],
     ])("redacts a bare %s token", (_label, token) => {
@@ -223,6 +227,38 @@ describe("redactSensitiveCommandOutput", () => {
       expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
     });
   });
+  // Hivra's own bearer families are minted as a fixed prefix plus 43 base64url characters
+  // (session, enrollment and exchange-code tokens). They travel in URLs, host output and
+  // error text, where no key name sits in front of them, so the shape must catch them there.
+  describe("Hivra bearer families in URLs and free text", () => {
+    const body = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(4).slice(0, n);
+    const exchange = `hwe1_${body(43)}`;
+    const session = `hrs1_${body(43)}`;
+
+    it("masks a session token in free text and an exchange code in a callback URL", () => {
+      const raw = [
+        `session ${session} rejected`,
+        `GET /cb?code=${exchange}&state=abc failed`,
+        `?exchange_code=${exchange}`,
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "session [REDACTED] rejected",
+        "GET /cb?code=[REDACTED]&state=abc failed",
+        "?exchange_code=[REDACTED]",
+      ].join("\n"));
+    });
+
+    it("masks a Hivra token that is URL-encoded or glued to a word", () => {
+      const raw = [`x%20hbe1_${body(43)}`, `workspace hws1_${body(43)}`].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "x%20[REDACTED]",
+        "workspace [REDACTED]",
+      ].join("\n"));
+    });
+  });
+
   // A legacy shape is matched wherever it sits, as the base snapshot scanner did, so a
   // key glued onto a word or URL-encoded inside a URL is still masked.
   describe("keys glued to text or URL-encoded", () => {
