@@ -742,10 +742,19 @@ export async function POST(
         return apiError(`Integration platform ${platform} not supported yet.`, 400);
     }
 
-    // A sub-profile's .env is sourced by the gateway supervisor (set -a; . .env).
-    // formatEnvValue's \' escape is not a shell quote, so an apostrophe would end
-    // the quote early and run the rest as a command. Refuse the value instead.
-    if (isSubProfile && !disconnect && Object.values(credentials ?? {}).some((value) => typeof value === 'string' && value.includes("'"))) {
+    // A legacy sub-profile's .env is sourced by the gateway supervisor (set -a; . .env),
+    // and formatEnvValue's \' escape is not a shell quote, so an apostrophe would end
+    // the quote early and run the rest as a command. Refuse the value instead. Webfree
+    // boxes never reach that shell sink (their profile loader decodes \', and the
+    // profile routes that source the .env are webfree-gated), so they are not refused.
+    // Check the String() form that is actually written, so an array or object value
+    // cannot carry a quote past the check.
+    if (
+      isSubProfile &&
+      !disconnect &&
+      !isWebfreeBackend(instance?.backend) &&
+      Object.values(credentials ?? {}).some((value) => sanitizeEnvValue(value).includes("'"))
+    ) {
       return apiError(
         "Apostrophes (') are not supported in integration values for a sub-profile. Remove them and save again.",
         400,
@@ -853,8 +862,8 @@ export async function POST(
 
     // FALLBACK: Build a bash script to safely update the .env file and restart the container via SSH
     // We base64 encode the env update lines so they cross SSH intact. That protects
-    // the transport only: the .env is then sourced by a shell, so sub-profile
-    // apostrophes are refused above.
+    // the transport only. A legacy sub-profile .env is then sourced by a shell, so
+    // its apostrophes are refused above; webfree boxes read it with the profile loader.
     const b64Updates = envUpdates.map((line) => Buffer.from(line).toString('base64'));
     
     // We conditionally apply the script to either the main instance or the specific sub-profile using docker exec.

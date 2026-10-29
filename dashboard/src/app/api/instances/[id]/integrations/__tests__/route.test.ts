@@ -10,6 +10,8 @@ import {
 import { log } from '@/lib/logger';
 import { GATEWAY_SUBPROFILE_SUPERVISOR_SH } from '@/lib/services/gateway-supervisor';
 import { telegramGetMe } from '@/lib/channels/telegram-api';
+import { buildWebUICompose, type WebUIDeployParams } from '@/lib/services/webui-instance-builder';
+import { spawnSync } from 'node:child_process';
 import { makeJsonRequest, makeRequest } from "@/test-utils/request";
 
 jest.mock('@/lib/logger', () => ({
@@ -45,6 +47,41 @@ jest.mock('@/lib/agent-gateway', () => {
     fetchFirstReachableGatewayResponse: jest.fn(),
   };
 });
+
+const LOADER_PARAMS = {
+  instanceId: 'route-loader-test',
+  containerName: 'agent-route-loader-test',
+  fqdn: 'route-loader.invalid',
+  cpuLimit: 1,
+  ramLimit: 1024,
+  llmApiKey: 'test-only-provider-key',
+  inferenceProvider: 'custom',
+  defaultModel: 'test/model',
+  baseUrl: 'https://provider.invalid/v1',
+  webuiPassword: 'test-only-password',
+} as WebUIDeployParams;
+
+// The profile .env loader that a webfree box runs, taken from the Python that
+// buildWebUICompose emits, so a saved line is decoded the way the box decodes it.
+function emittedEnvLoaderDecoder(): string {
+  const compose = buildWebUICompose({ ...LOADER_PARAMS, image: 'webui:test', agentImage: 'agent:test' });
+  const start = compose.indexOf('def decode_quoted_env_value');
+  const end = compose.indexOf('def load_env_file', start);
+  if (start < 0 || end < 0) throw new Error('Generated env decoder was not found');
+  return compose
+    .slice(start, end)
+    .split('\n')
+    .map((line) => line.replace(/^ {10}/, ''))
+    .join('\n')
+    .replace(/\$\$/g, '$');
+}
+
+function decodeLikeProfileLoader(envLine: string): string {
+  const script = `${emittedEnvLoaderDecoder()}\nimport sys\n_key, _value = sys.argv[1].split("=", 1)\nprint(decode_quoted_env_value(_value.strip()), end="")\n`;
+  const run = spawnSync('python3', ['-I', '-c', script, envLine], { encoding: 'utf8' });
+  if (run.status !== 0) throw new Error(run.stderr);
+  return run.stdout;
+}
 
 function stringifyMockCalls(spy: jest.SpyInstance): string {
   return spy.mock.calls
@@ -559,6 +596,86 @@ describe('/api/instances/[id]/integrations', () => {
             token: "xoxb-1';touch /tmp/pwned;#",
             appToken: 'xapp-123',
           },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      const data = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(data.error).toMatch(/apostrophe/i);
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+      expect(sshExec).not.toHaveBeenCalled();
+    });
+
+    it('saves an apostrophe in a sub-profile value on a webfree gateway box and the profile loader reads it back unchanged', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com', backend: 'gateway' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+        response: { ok: true, status: 200 },
+      });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          profile: 'marcus',
+          credentials: { token: "Ash's-xoxb-1", appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+
+      expect(res.status).toBe(200);
+      expect(sshExec).not.toHaveBeenCalled();
+      const payload = JSON.parse((fetchFirstReachableGatewayResponse as jest.Mock).mock.calls[0][0].body);
+      const line = payload.envUpdates.find((update: string) => update.startsWith('SLACK_BOT_TOKEN='));
+      expect(decodeLikeProfileLoader(line)).toBe("Ash's-xoxb-1");
+    });
+
+    it('saves an apostrophe in a sub-profile value on a webui box through the SSH writer and the profile loader reads it back unchanged', async () => {
+      (getSecureUserInstance as jest.Mock).mockResolvedValue({
+        instance: { gateway_url: 'https://agent.example.com', backend: 'webui' },
+        apiServerKey: 'secret',
+        error: null,
+      });
+      (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          profile: 'marcus',
+          credentials: { token: "Ash's-xoxb-1", appToken: 'xapp-123' },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+
+      expect(res.status).toBe(200);
+      expect(fetchFirstReachableGatewayResponse).not.toHaveBeenCalled();
+      const script = (sshExec as jest.Mock).mock.calls[0][1] as string;
+      const payloadB64 = script.match(/base64\.b64decode\("([A-Za-z0-9+/=]+)"\)/)?.[1];
+      expect(payloadB64).toBeDefined();
+      const payload = JSON.parse(Buffer.from(payloadB64!, 'base64').toString('utf8'));
+      const line = payload.envUpdates.find((update: string) => update.startsWith('SLACK_BOT_TOKEN='));
+      expect(decodeLikeProfileLoader(line)).toBe("Ash's-xoxb-1");
+    });
+
+    it('refuses an apostrophe inside an array-valued sub-profile credential, which would be written through String()', async () => {
+      (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+        response: { ok: true, status: 200 },
+      });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          profile: 'marcus',
+          credentials: { token: ["x';touch /tmp/pwned;#"], appToken: 'xapp-123' },
         }),
       });
 
