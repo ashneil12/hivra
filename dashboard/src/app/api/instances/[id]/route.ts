@@ -14,6 +14,7 @@ import {
   buildAutoUpdateTimerProvisioningScript,
 } from "@/lib/services/hetzner-instance-service";
 import { countOtherLiveRowsOnHetznerServer } from "@/lib/services/hetzner-server-tenants";
+import { accountSweepFor } from "@/lib/services/account-sweep-scope";
 import {
   deleteProxmoxInstance,
   discoverProxmoxInfrastructureForInstance,
@@ -2502,10 +2503,16 @@ export async function DELETE(
       // runtime of every agent on it lives on that server, so this row is only
       // removed when no other live row still runs on it. The count runs before
       // any provider call or row/DNS write, and an unknown count refuses.
+      // The account sweep (DELETE /api/mobile/account) deletes its own agents
+      // together, so its rows are not counted as tenants here. Any other live
+      // row still refuses.
+      const sweep = accountSweepFor(req);
+      const ownSweep = sweep && sweep.userId === userId ? sweep : null;
       const serverTenants = await countOtherLiveRowsOnHetznerServer(supabaseAdmin!, {
         instanceId: id,
         hetznerServerId: instance!.hetzner_server_id,
         hostId: instance!.host_id ?? null,
+        excludeInstanceIds: ownSweep ? ownSweep.instanceIds : [],
       });
       if (!serverTenants.ok) {
         log.error("hetzner server tenant count failed; refusing to delete the server", new Error(serverTenants.message), {
@@ -2578,7 +2585,12 @@ export async function DELETE(
         // transient Hetzner error left the DB row marked deleted while
         // the VM kept billing forever — silent recurring cost.
         try {
-          await deleteHetznerServer(instance!.hetzner_server_id);
+          // Within one account sweep the server is destroyed once. Later agents
+          // on it were already removed with it, so they skip the provider call.
+          if (!ownSweep?.removedHetznerServerIds.has(instance!.hetzner_server_id)) {
+            await deleteHetznerServer(instance!.hetzner_server_id);
+            ownSweep?.removedHetznerServerIds.add(instance!.hetzner_server_id);
+          }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           const alreadyGone = msg.includes("→ 404");

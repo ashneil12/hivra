@@ -6,14 +6,22 @@ export type HetznerServerTenantCount =
 
 async function countOtherLiveRows(
   supabase: SupabaseClient,
-  params: { instanceId: string; column: "hetzner_server_id" | "host_id"; value: number | string },
+  params: {
+    instanceId: string;
+    column: "hetzner_server_id" | "host_id";
+    value: number | string;
+    excludeInstanceIds: readonly string[];
+  },
 ): Promise<HetznerServerTenantCount> {
-  const { count, error } = await supabase
+  let query = supabase
     .from("hermes_instances")
     .select("id", { count: "exact", head: true })
     .eq(params.column, params.value)
-    .neq("id", params.instanceId)
-    .neq("status", "deleted");
+    .neq("id", params.instanceId);
+  for (const excludedId of params.excludeInstanceIds) {
+    query = query.neq("id", excludedId);
+  }
+  const { count, error } = await query.neq("status", "deleted");
   if (error) return { ok: false, message: error.message };
   if (count == null) return { ok: false, message: "live-row count was not returned" };
   return { ok: true, otherLiveRows: count };
@@ -32,17 +40,27 @@ async function countOtherLiveRows(
  * result non-zero. The two keys overlap on shared rows, so the counts are not
  * added.
  *
+ * `excludeInstanceIds` leaves out rows that the caller removes in the same
+ * operation, the account sweep's own agents. Any other live row still counts.
+ *
  * Fails closed. A failed or unreadable count on either key comes back as
  * `ok: false`, never as zero, so callers refuse the server-level action.
  */
 export async function countOtherLiveRowsOnHetznerServer(
   supabase: SupabaseClient,
-  params: { instanceId: string; hetznerServerId: number; hostId?: string | null },
+  params: {
+    instanceId: string;
+    hetznerServerId: number;
+    hostId?: string | null;
+    excludeInstanceIds?: readonly string[];
+  },
 ): Promise<HetznerServerTenantCount> {
+  const excludeInstanceIds = params.excludeInstanceIds ?? [];
   const byServer = await countOtherLiveRows(supabase, {
     instanceId: params.instanceId,
     column: "hetzner_server_id",
     value: params.hetznerServerId,
+    excludeInstanceIds,
   });
   if (!byServer.ok) return byServer;
   if (!params.hostId) return byServer;
@@ -51,6 +69,7 @@ export async function countOtherLiveRowsOnHetznerServer(
     instanceId: params.instanceId,
     column: "host_id",
     value: params.hostId,
+    excludeInstanceIds,
   });
   if (!byHost.ok) return byHost;
   return { ok: true, otherLiveRows: Math.max(byServer.otherLiveRows, byHost.otherLiveRows) };

@@ -98,6 +98,31 @@ describe("countOtherLiveRowsOnHetznerServer", () => {
     expect(result).toEqual({ ok: true, otherLiveRows: 1 });
   });
 
+  it("leaves out the rows of the same account sweep, and still counts any other live row", async () => {
+    // F011 sweep: the sweep's own agents are removed together, so they must not
+    // block each other. Any other live row on the server still counts.
+    const { client, queries } = fakeSupabase(() => ok(1));
+
+    const result = await countOtherLiveRowsOnHetznerServer(client, {
+      instanceId: "inst-a",
+      hetznerServerId: 42,
+      excludeInstanceIds: ["inst-b"],
+    });
+
+    expect(result).toEqual({ ok: true, otherLiveRows: 1 });
+    expect(queries).toEqual([
+      {
+        column: "hetzner_server_id",
+        value: 42,
+        neq: [
+          ["id", "inst-a"],
+          ["id", "inst-b"],
+          ["status", "deleted"],
+        ],
+      },
+    ]);
+  });
+
   it("fails closed when the server count errors", async () => {
     const { client } = fakeSupabase((column) =>
       column === "hetzner_server_id" ? failed("connection reset") : ok(0),
