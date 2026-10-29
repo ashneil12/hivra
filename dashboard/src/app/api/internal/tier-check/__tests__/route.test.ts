@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { GET } from "../route";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isProTierUser } from "@/lib/billing/pro-tier";
 
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { from: jest.fn() },
@@ -41,6 +42,20 @@ describe("GET /api/internal/tier-check", () => {
   it("answers 503 when the instance lookup errors", async () => {
     lookupReturns({ data: null, error: { message: "connection reset" } });
     expect((await GET(req())).status).toBe(503);
+  });
+
+  it("answers 503 when the entitlement read fails, so a paying user's sidecar stays up", async () => {
+    lookupReturns({ data: { user_id: "user_1", api_server_key_encrypted: "enc" }, error: null });
+    (isProTierUser as jest.Mock).mockResolvedValueOnce({ ok: false, tier: null, reason: "lookup_failed:subscription read failed" });
+    expect((await GET(req())).status).toBe(503);
+  });
+
+  it("still refuses with tier_ok:false when the user has no entitlement", async () => {
+    lookupReturns({ data: { user_id: "user_1", api_server_key_encrypted: "enc" }, error: null });
+    (isProTierUser as jest.Mock).mockResolvedValueOnce({ ok: false, tier: null, reason: "no_entitlement" });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect((await res.json()).tier_ok).toBe(false);
   });
 
   it("answers 404 for an unknown instance", async () => {

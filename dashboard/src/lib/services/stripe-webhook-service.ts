@@ -512,12 +512,25 @@ export class StripeWebhookService {
       return;
     }
 
-    const { data: instance } = await supabaseAdmin
+    const { data: instance, error: instanceErr } = await supabaseAdmin
       .from("hermes_instances")
       .select("id, name, hetzner_server_id, disk_size_gb, disk_upgraded, status")
       .eq("id", instanceId)
       .eq("user_id", userId)
-      .single();
+      .maybeSingle();
+
+    if (instanceErr) {
+      log.error("failed to load instance for storage addon", instanceErr, {
+        source: LOG_SOURCE,
+        failureType: "storage_addon_instance_lookup_failed",
+        instanceId,
+        userId,
+        errorCode: instanceErr.code,
+      });
+      // A DB error is not a missing instance. Throw so the webhook returns
+      // non-2xx and Stripe redelivers the paid add-on instead of acking it.
+      throw instanceErr;
+    }
 
     if (!instance) {
       log.error(
@@ -1515,7 +1528,7 @@ export class StripeWebhookService {
 
     // Snapshot the rows (with infra) BEFORE the update flips their reason, so we
     // can power the VMs the enforcer stopped back on.
-    const { data: toPowerOn } = await supabaseAdmin
+    const { data: toPowerOn, error: snapshotErr } = await supabaseAdmin
       .from("hermes_instances")
       .select(
         "id, config, proxmox_node, proxmox_vmid, host_id, infrastructure_provider"
@@ -1524,6 +1537,18 @@ export class StripeWebhookService {
       .eq("lifecycle_state", "suspended")
       .in("entitlement_reason", BILLING_SUSPEND_REASONS)
       .is("deleted_at", null);
+
+    if (snapshotErr) {
+      log.error("failed to snapshot billing-suspended instances before resume", snapshotErr, {
+        source: LOG_SOURCE,
+        failureType: "billing_resume_snapshot_failed",
+        userId,
+        errorCode: snapshotErr.code,
+      });
+      // Still resume the rows: yearly and Apple activations call this without a
+      // retry, so throwing would leave a paid user suspended. The VMs the
+      // enforcer stopped may stay off; this error is the signal to power them on.
+    }
 
     const { data: resumed, error } = await supabaseAdmin
       .from("hermes_instances")

@@ -31,8 +31,8 @@ import { sweepYearlyTokenSubscription, type SweepResult } from "@/lib/billing/ye
 import { supabaseAdmin } from "@/lib/supabase";
 import type { TierKey } from "@/lib/billing/tier-thresholds";
 
-// User-facing: keep the button responsive. Quotes not reached in time are
-// reconciled by the cron.
+// User-facing: keep the button responsive. Quotes and sweeps not reached in time
+// are picked up by the cron. One budget covers both passes.
 export const maxDuration = 60;
 const RECONCILE_BUDGET_MS = 25_000;
 
@@ -63,13 +63,15 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as PostBody;
     const tier = isValidTier(body?.tier) ? body.tier : undefined;
 
+    const deadlineMs = Date.now() + RECONCILE_BUDGET_MS;
+
     // Pass 1 — bind payments to this user's open quotes.
     const reconciliation = await reconcilePendingYearlyTokenQuotes({
       db: supabaseAdmin,
       userId,
       tier,
       limit: 10,
-      deadlineMs: Date.now() + RECONCILE_BUDGET_MS,
+      deadlineMs,
     });
 
     // Pass 2 — sweep this user's fresh activations (the cron retries failures).
@@ -84,6 +86,9 @@ export async function POST(req: NextRequest) {
 
     const sweepResults: SweepResult[] = [];
     for (const row of (pendingRows as PendingSweepRow[] | null) ?? []) {
+      // Stop between sweeps once the budget is spent; the cron sweeps the rest.
+      // Each sweep is compare-and-set, so stopping here cannot strand a half-done one.
+      if (Date.now() >= deadlineMs) break;
       sweepResults.push(await sweepYearlyTokenSubscription(row, { db: supabaseAdmin }));
     }
 

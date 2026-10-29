@@ -144,3 +144,21 @@ it("keeps the forget-access phrase uppercase and literal",async()=>{
   expect(input).not.toHaveAccessibleDescription();
   expect(screen.getByRole("button",{name:"Forget access, keep provider resources"})).toBeEnabled();
 });
+it("replays the same idempotency key when a retry follows a failed first call",async()=>{
+  let uuids=0;
+  Object.defineProperty(global.crypto,"randomUUID",{configurable:true,value:()=>{uuids+=1;return uuids===1?key:"44444444-4444-4444-8444-444444444444";}});
+  (advanceCleanup as jest.Mock)
+    .mockRejectedValueOnce(new Error("network down"))
+    .mockResolvedValueOnce({...view,status:"deleted",cleanup:{...state,finishedAt:"2026-08-27T16:02:00Z",absence:{server:true,ipv4:true,ipv6:true,sshKey:true}}});
+  const complete=jest.fn();
+  render(<HetznerCloudCleanupDialog connection={connection} onClose={jest.fn()} onComplete={complete}/>);
+  const input=await screen.findByRole("textbox");await waitFor(()=>expect(input).toBeEnabled());
+  fireEvent.change(input,{target:{value:view.serverName}});
+  fireEvent.click(screen.getByRole("button",{name:"Delete confirmed resources"}));
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button",{name:"Delete confirmed resources"}));
+  await screen.findByRole("heading",{name:"Removal verified."});
+  expect(advanceCleanup).toHaveBeenCalledTimes(2);expect(complete).toHaveBeenCalledTimes(1);
+  expect((advanceCleanup as jest.Mock).mock.calls[0][1]).toMatchObject({idempotencyKey:key});
+  expect((advanceCleanup as jest.Mock).mock.calls[1][1]).toMatchObject({idempotencyKey:key});
+});

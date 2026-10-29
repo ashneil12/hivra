@@ -754,33 +754,45 @@ export async function advanceProviderResize(
     if (mode === "dispatch" && operation.shutdownAttemptedAt === null
       && operation.authority.agent.desired_state === "stopped" && operation.shutdownReadiness !== null) {
       fence();
-      const grant = await deps.beginShutdown(input, operation.shutdownReadiness);
-      fence();
-      if (grant === "dispatch") {
-        try {
-          const beforeShutdown = await provider.getServer(Number(operation.quote.providerServerId));
-          fence();
-          if (deps.now().getTime() - Date.parse(operation.shutdownReadiness.observedAt) >= 15_000) {
-            throw new ProviderAgentResizeError("operation_unverified");
+      // Every pre-dispatch check runs before the one-use shutdown grant is
+      // consumed. A stale readiness or a changed server leaves the marker unused,
+      // so no stop is sent and no marker is burned without a stop.
+      let preDispatchVerified = false;
+      try {
+        const beforeShutdown = await provider.getServer(Number(operation.quote.providerServerId));
+        fence();
+        if (deps.now().getTime() - Date.parse(operation.shutdownReadiness.observedAt) >= 15_000) {
+          throw new ProviderAgentResizeError("operation_unverified");
+        }
+        exactServerIdentity(beforeShutdown, operation.authority, {
+          serverType: { id: target.serverTypeId, name: target.serverType, architecture: target.architecture,
+            cores: target.cores, memoryGb: target.memoryGb, advertisedDiskGb: target.advertisedDiskGb,
+            cpuType: observation.cpuType }, primaryDiskGb: operation.quote.existingDiskGb,
+        });
+        if (beforeShutdown.locked === true
+          // Observation time is local metadata, not provider state. Compare
+          // every stable field against the exact earlier observation.
+          || JSON.stringify({ ...observedServer(beforeShutdown), observedAt: observation.observedAt })
+            !== JSON.stringify(observation)) {
+          throw new ProviderAgentResizeError("operation_conflict");
+        }
+        preDispatchVerified = true;
+      } catch {
+        // Not verified: leave the one-use grant unconsumed and send no power.
+      }
+      if (preDispatchVerified) {
+        fence();
+        const grant = await deps.beginShutdown(input, operation.shutdownReadiness);
+        fence();
+        if (grant === "dispatch") {
+          try {
+            const receipt = await deps.powerClient(loaded.apiToken).dispatch({
+              serverId: Number(operation.quote.providerServerId), kind: "stop",
+            });
+            if (!await deps.recordShutdown(input, receipt)) throw new ProviderAgentResizeError("operation_unverified");
+          } catch {
+            // Durable marker remains even on an uncertain response; no replay.
           }
-          exactServerIdentity(beforeShutdown, operation.authority, {
-            serverType: { id: target.serverTypeId, name: target.serverType, architecture: target.architecture,
-              cores: target.cores, memoryGb: target.memoryGb, advertisedDiskGb: target.advertisedDiskGb,
-              cpuType: observation.cpuType }, primaryDiskGb: operation.quote.existingDiskGb,
-          });
-          if (beforeShutdown.locked === true
-            // Observation time is local metadata, not provider state. Compare
-            // every stable field against the exact earlier observation.
-            || JSON.stringify({ ...observedServer(beforeShutdown), observedAt: observation.observedAt })
-              !== JSON.stringify(observation)) {
-            throw new ProviderAgentResizeError("operation_conflict");
-          }
-          const receipt = await deps.powerClient(loaded.apiToken).dispatch({
-            serverId: Number(operation.quote.providerServerId), kind: "stop",
-          });
-          if (!await deps.recordShutdown(input, receipt)) throw new ProviderAgentResizeError("operation_unverified");
-        } catch {
-          // Durable marker remains even on an uncertain response; no replay.
         }
       }
     }

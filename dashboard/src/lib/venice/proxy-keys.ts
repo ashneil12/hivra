@@ -7,6 +7,7 @@ import {
   getManagedVeniceWalletSummary,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
+import { requireDb } from "@/lib/billing/db-utils";
 
 export type ManagedVeniceProxyKeyStatus = "active" | "revoked" | "paused";
 
@@ -66,11 +67,6 @@ interface ProxyKeyRow {
 const SELECT_COLUMNS =
   "id, account_id, user_id, name, key_hash, key_prefix, status, paused_reason, " +
   "last_used_at, revoked_at, created_at, updated_at, metadata";
-
-function requireDb(db: SupabaseLike | null | undefined): SupabaseLike {
-  if (!db) throw new Error("Database not configured");
-  return db;
-}
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;

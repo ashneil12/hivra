@@ -201,9 +201,17 @@ async function loadStripeCustomerIds(
     });
     for (const customer of byMetadata.data) ids.add(customer.id);
 
+    // An email match is not proof of ownership (an address can belong to someone
+    // else now), so these customers are never cancelled or deleted here. They are
+    // listed for a manual decision instead.
     if (email) {
       const byEmail = await stripe.customers.list({ email, limit: 10 });
-      for (const customer of byEmail.data) ids.add(customer.id);
+      const unverified = byEmail.data.map((customer) => customer.id).filter((id) => !ids.has(id));
+      if (unverified.length > 0) {
+        console.warn(
+          `[delete-user] Stripe customers matching the email but not linked to this user (NOT deleted; review manually): ${unverified.join(", ")}`
+        );
+      }
     }
   }
 
@@ -310,13 +318,26 @@ async function collectStoragePaths(
   const out: { bucket: string; paths: string[] }[] = [];
 
   const migrationPrefix = `migrations/${userId}`;
-  const migrationList = await supabase.storage
-    .from("hermes-attachments")
-    .list(migrationPrefix, { limit: 1000 });
-  if (migrationList.error) {
-    throw new Error(`Failed to list migration uploads: ${migrationList.error.message}`);
+  // Page through the whole folder: one list() call returns at most a page, and
+  // a truncated list would leave uploads behind while the run reports completed.
+  const MIGRATION_LIST_PAGE_SIZE = 1000;
+  const migrationEntries: { name: string }[] = [];
+  for (let offset = 0; ; offset += MIGRATION_LIST_PAGE_SIZE) {
+    const page = await supabase.storage
+      .from("hermes-attachments")
+      .list(migrationPrefix, {
+        limit: MIGRATION_LIST_PAGE_SIZE,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+    if (page.error) {
+      throw new Error(`Failed to list migration uploads: ${page.error.message}`);
+    }
+    const entries = page.data || [];
+    migrationEntries.push(...entries);
+    if (entries.length < MIGRATION_LIST_PAGE_SIZE) break;
   }
-  const migrationPaths = (migrationList.data || [])
+  const migrationPaths = migrationEntries
     .filter((entry) => entry.name)
     .map((entry) => `${migrationPrefix}/${entry.name}`);
   if (migrationPaths.length) out.push({ bucket: "hermes-attachments", paths: migrationPaths });

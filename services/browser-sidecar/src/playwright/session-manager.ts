@@ -1,4 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
+import { installNavigationRouteGuard, installPageNavigationWatchdog } from "../navigation-guard.js";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { chromium } from "playwright";
@@ -25,6 +26,10 @@ interface Session {
 // SCRIPTURE_ANCHOR: session-stewards | 1 Peter 4:10 | Verse: As each has received a gift, employ it in serving one another as good managers of grace.
 export class SessionManager {
   private contexts = new Map<string, BrowserContext>();
+  // Launches still in progress, keyed by identity. Concurrent starts for one
+  // identity share the launch; without this each would launch Chromium on the
+  // same userDataDir and the second one's lock cleanup would break the first.
+  private launching = new Map<string, Promise<BrowserContext>>();
   private sessions = new Map<string, Session>();
 
   constructor(
@@ -47,6 +52,7 @@ export class SessionManager {
 
     const ctx = await this.getOrCreateContext(identity);
     const page = await ctx.newPage();
+    installPageNavigationWatchdog(page);
     page.setDefaultNavigationTimeout(this.config.DEFAULT_NAVIGATION_TIMEOUT_MS);
     page.setDefaultTimeout(this.config.DEFAULT_ACTION_TIMEOUT_MS);
 
@@ -175,6 +181,9 @@ export class SessionManager {
 
   // Wipe an identity's persistent context. Used by `flows/logout.yaml`.
   async resetIdentity(identity: string): Promise<void> {
+    // Let a launch already in progress finish, so the profile is not wiped
+    // while Chromium is still starting on it.
+    await this.launching.get(identity)?.catch(() => {});
     const ctx = this.contexts.get(identity);
     if (ctx) {
       this.contexts.delete(identity);
@@ -237,7 +246,18 @@ export class SessionManager {
   private async getOrCreateContext(identity: string): Promise<BrowserContext> {
     const existing = this.contexts.get(identity);
     if (existing) return existing;
+    // No await before this point, so a concurrent caller always finds the entry.
+    const inFlight = this.launching.get(identity);
+    if (inFlight) return inFlight;
 
+    const launch = this.launchContext(identity).finally(() => {
+      this.launching.delete(identity);
+    });
+    this.launching.set(identity, launch);
+    return launch;
+  }
+
+  private async launchContext(identity: string): Promise<BrowserContext> {
     const dir = this.profileDir(identity);
     await mkdir(dir, { recursive: true });
     // A previous container left Chrome's Singleton* symlinks bound to its
@@ -263,7 +283,13 @@ export class SessionManager {
         // the CDP path's bound. See finding_browser_sidecar_bloat_root_cause.
         `--disk-cache-size=${Number(process.env.SIDECAR_DISK_CACHE_MB ?? 256) * 1024 * 1024}`,
       ],
+      // Service-worker fetches bypass context.route, so they would bypass the
+      // navigation guard below.
+      serviceWorkers: "block",
     });
+    // Abort any request (frames, iframes, subresources) aimed at a blocked
+    // destination, so a page can't redirect itself somewhere /goto refuses.
+    await installNavigationRouteGuard(ctx);
 
     this.contexts.set(identity, ctx);
     this.logger.info({ identity, dir }, "persistent context opened");

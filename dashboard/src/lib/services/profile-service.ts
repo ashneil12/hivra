@@ -1107,6 +1107,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
        .from("hermes_instances")
        .select("subdomain, gateway_url, config, backend")
        .eq("id", instanceId)
+       .eq("user_id", userId)
        .single();
 
     if (!instance) throw new Error("Instance not found");
@@ -1280,7 +1281,12 @@ function buildCaddyReloadWithHealthProbeScript(input: {
    *  only for direct/dev use. */
   probeFqdn: string | null;
 }): string {
-  const escapedCaddyfile = input.caddyfile.replace(/'/g, "'\\''");
+  // The Caddyfile is written verbatim inside a QUOTED heredoc ('CADDYEOF'), which
+  // performs no unescaping, so it must not be shell-escaped here. Fail closed if
+  // a line would terminate the heredoc early.
+  if (input.caddyfile.split("\n").some((line) => line === "CADDYEOF")) {
+    throw new Error("Caddyfile contains the heredoc terminator line");
+  }
   // The fqdn flows into shell variable assignment + curl flags, so be
   // strict about what we accept. Allow only the characters that show up
   // in real per-instance hostnames: alphanumerics, dot, hyphen.
@@ -1314,6 +1320,8 @@ if [ "$HEALTH_OK" != "1" ]; then
   if [ -f "$INST_DIR/Caddyfile.before-reload" ]; then
     mv "$INST_DIR/Caddyfile.before-reload" "$INST_DIR/Caddyfile"
     docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+  else
+    rm -f "$INST_DIR/Caddyfile"
   fi
   exit 1
 fi
@@ -1336,7 +1344,7 @@ if [ -f Caddyfile ]; then
 fi
 
 cat > Caddyfile.new << 'CADDYEOF'
-${escapedCaddyfile}
+${input.caddyfile}
 CADDYEOF
 mv Caddyfile.new Caddyfile
 

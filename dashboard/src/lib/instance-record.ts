@@ -63,3 +63,19 @@ export function buildInstanceInsertPayload(params: BuildInstanceInsertPayloadPar
 
   return payload;
 }
+
+/**
+ * Every `*_encrypted` column on an instance row (provider key, gateway bearer,
+ * Honcho key, LLM key) is a server-only secret: encrypted at rest is not the
+ * same as safe to hand out, since anyone who later holds the encryption key
+ * can open what a browser cached. Responses built from a `select("*")` row
+ * spread it through this so a new encrypted column can't leak by default.
+ * JSON serialization drops the `undefined` keys.
+ */
+export function withoutEncryptedColumns<T extends object>(row: T): T {
+  const out = { ...row } as Record<string, unknown>;
+  for (const key of Object.keys(out)) {
+    if (key.endsWith("_encrypted")) out[key] = undefined;
+  }
+  return out as T;
+}

@@ -47,6 +47,53 @@ export function isWebfreeBackend(backend: string | null | undefined): boolean {
 }
 
 /**
+ * Readiness probe for a freshly provisioned or redeployed instance, shared by
+ * the instance list and [id] routes so both decide "running" the same way.
+ */
+export function buildReadinessProbeOptions(params: {
+  backend?: string | null;
+  apiServerKey?: string | null;
+}) {
+  // Modern webfree box (backend='gateway'): probe the CHAT lane, not the
+  // dashboard shell. The box Caddyfile routes '/health' to the
+  // official-dashboard web server only, which comes up seconds (idle canary)
+  // to minutes (loaded prod host) BEFORE the gateway api_server that actually
+  // answers chat — measured on a fresh canary box 2026-07-10 (audit run
+  // fixturecase04): '/health' 200'd and the row flipped 'running' 8s before the
+  // box accepted its first WS upgrade; prod run fixturecase05 showed the same gap
+  // stretched past 190s, so a new user's workspace painted while their first
+  // message died. '/api/sessions' with the instance bearer traverses
+  // caddy → dashboard-sidecar → official-dashboard → gateway and flips 200
+  // in the same probe window as the WS upgrade, so 'running' (and the
+  // workspace it unlocks) means "you can chat". Keyless rows keep the legacy
+  // '/health' probe rather than never promoting (fail-open; the apiServerKey
+  // self-heal backfills the key). Legacy backend='webui' boxes don't serve
+  // the sessions route and keep '/health' too.
+  if (params.backend === "gateway" && params.apiServerKey) {
+    return {
+      pathname: "/api/sessions",
+      headers: {
+        Authorization: `Bearer ${params.apiServerKey}`,
+      } as Record<string, string>,
+    };
+  }
+
+  if (isWebfreeBackend(params.backend)) {
+    return {
+      pathname: "/health",
+      headers: {} as Record<string, string>,
+    };
+  }
+
+  return {
+    pathname: "/v1/models",
+    headers: params.apiServerKey
+      ? { Authorization: `Bearer ${params.apiServerKey}` }
+      : ({} as Record<string, string>),
+  };
+}
+
+/**
  * The docker-compose service that hosts the Hermes gateway on a webfree box.
  *
  * Legacy boxes provisioned as backend='webui' run a `webui` compose service.

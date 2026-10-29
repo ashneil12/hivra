@@ -87,6 +87,17 @@ export async function POST(req: NextRequest) {
       return apiError("Backup addon price is not configured on the server.", 500);
     }
 
+    // A retry after an earlier attempt billed the item but failed to save the
+    // flag must not bill a second one: look for the item that is already there.
+    const stripe = getStripe();
+    const existingItems = await stripe.subscriptionItems.list({
+      subscription: sub.stripe_subscription_id,
+      limit: 100,
+    });
+    const existingItem = existingItems.data.find(
+      (item) => item.metadata?.type === "backup_addon" && item.metadata?.instance_id === instanceId,
+    );
+
     // ── 3. Enable Hetzner native backups FIRST (before charging) ──────────────
     // MONEY/INFRA invariant: never bill a customer $10/mo for backups that are
     // not actually running. We must confirm Hetzner enablement succeeds before
@@ -95,56 +106,114 @@ export async function POST(req: NextRequest) {
     try {
       await enableServerBackup(instance.hetzner_server_id);
     } catch (hetznerErr) {
-      log.error("hetzner enable_backup failed", hetznerErr, {
+      if (existingItem) {
+        // Retry of an attempt that already enabled backups and billed the item:
+        // a repeat enable can be refused, but the customer is already charged,
+        // so finish the flag write instead of claiming nothing was charged.
+        log.warn("hetzner enable_backup failed on a retry with an existing add-on item", {
+          source: "billing-backup-addon",
+          route: "/api/billing/backup-addon",
+          method: "POST",
+          instanceId,
+          hetznerServerId: instance.hetzner_server_id,
+          stripeSubscriptionItemId: existingItem.id,
+          failureType: "hetzner_enable_backup_retry_failed",
+        });
+      } else {
+        log.error("hetzner enable_backup failed", hetznerErr, {
+          source: "billing-backup-addon",
+          route: "/api/billing/backup-addon",
+          method: "POST",
+          instanceId,
+          hetznerServerId: instance.hetzner_server_id,
+          failureType: "hetzner_enable_backup_failed",
+        });
+        await reportOpsEvent({
+          source: "billing-backup-addon",
+          title: "Hetzner backup enable failed before billing",
+          message:
+            "enableServerBackup failed; aborted before charging the customer so the backup add-on can be retried.",
+          severity: "warn",
+          route: "/api/billing/backup-addon",
+          userId: clerkUserId,
+          instanceId,
+          metadata: {
+            hetznerServerId: instance.hetzner_server_id,
+            failureType: "hetzner_enable_backup_failed",
+          },
+          sampleStack: hetznerErr instanceof Error ? hetznerErr.stack ?? null : null,
+        });
+        return apiError(
+          "Could not enable server backups right now. You have not been charged — please try again shortly.",
+          502,
+          { failureType: "hetzner_enable_backup_failed" },
+        );
+      }
+    }
+
+    // ── 4. Add recurring item to Stripe subscription (at most one per instance) ─
+
+    let subscriptionItemId: string | null = existingItem?.id ?? null;
+    if (!existingItem) {
+      // The idempotency key stops two concurrent requests creating two items.
+      // It is scoped to a one-minute window: a key reused after the add-on was
+      // removed would replay the deleted item instead of billing a new one.
+      const idempotencyWindow = Math.floor(Date.now() / 60_000);
+      const created = await stripe.subscriptionItems.create(
+        {
+          subscription: sub.stripe_subscription_id,
+          price: BACKUP_ADDON.priceId,
+          quantity: 1,
+          proration_behavior: "create_prorations",
+          metadata: {
+            type: "backup_addon",
+            instance_id: instanceId,
+            instance_name: instance.name,
+          },
+        },
+        { idempotencyKey: `backup-addon:${instanceId}:${idempotencyWindow}` },
+      );
+      subscriptionItemId = created.id;
+    }
+
+    // ── 5. Mark instance & peers as backup-enabled ───────────────────────────
+    // The customer may already be billed, so a failed flag write must not look
+    // like success. The retry above reuses the item, so it cannot bill twice.
+    const { error: flagError } = await supabaseAdmin
+      .from("hermes_instances")
+      .update({ backups_enabled: true })
+      .eq("hetzner_server_id", instance.hetzner_server_id);
+    if (flagError) {
+      log.error("backup add-on billed but backups_enabled write failed", flagError, {
         source: "billing-backup-addon",
         route: "/api/billing/backup-addon",
         method: "POST",
         instanceId,
         hetznerServerId: instance.hetzner_server_id,
-        failureType: "hetzner_enable_backup_failed",
+        stripeSubscriptionItemId: subscriptionItemId,
+        failureType: "backup_addon_flag_write_failed",
       });
       await reportOpsEvent({
         source: "billing-backup-addon",
-        title: "Hetzner backup enable failed before billing",
+        title: "Backup add-on billed but backups flag not saved",
         message:
-          "enableServerBackup failed; aborted before charging the customer so the backup add-on can be retried.",
-        severity: "warn",
+          "The Stripe subscription item exists but hermes_instances.backups_enabled could not be set. A retry reuses the item.",
+        severity: "error",
         route: "/api/billing/backup-addon",
         userId: clerkUserId,
         instanceId,
         metadata: {
           hetznerServerId: instance.hetzner_server_id,
-          failureType: "hetzner_enable_backup_failed",
+          stripeSubscriptionItemId: subscriptionItemId,
+          failureType: "backup_addon_flag_write_failed",
         },
-        sampleStack: hetznerErr instanceof Error ? hetznerErr.stack ?? null : null,
       });
       return apiError(
-        "Could not enable server backups right now. You have not been charged — please try again shortly.",
-        502,
-        { failureType: "hetzner_enable_backup_failed" },
+        "Backups were billed but could not be switched on. Please try again; you will not be charged twice.",
+        500,
+        { failureType: "backup_addon_flag_write_failed" },
       );
     }
-
-    // ── 4. Add recurring item to Stripe subscription ──────────────────────────
-    const stripe = getStripe();
-
-    await stripe.subscriptionItems.create({
-      subscription: sub.stripe_subscription_id,
-      price: BACKUP_ADDON.priceId,
-      quantity: 1,
-      proration_behavior: "create_prorations",
-      metadata: {
-        type: "backup_addon",
-        instance_id: instanceId,
-        instance_name: instance.name,
-      },
-    });
-
-    // ── 5. Mark instance & peers as backup-enabled ───────────────────────────
-    await supabaseAdmin
-      .from("hermes_instances")
-      .update({ backups_enabled: true })
-      .eq("hetzner_server_id", instance.hetzner_server_id);
 
     return apiSuccess({
       success: true,

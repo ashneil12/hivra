@@ -141,7 +141,7 @@ describe("POST /api/tools CLI fan-out", () => {
     expect(mockInstallToolsOnBox).toHaveBeenCalledWith(
       expect.objectContaining({ id: "self", ip: "10.251.20.61" }),
       [{ id: "github", env: {} }],
-      selfManagedEnv,
+      expect.objectContaining({ kind: "self-managed", env: selfManagedEnv }),
     );
     expect(mockAmbientTargetConfiguration).not.toHaveBeenCalled();
     expect(mockAmbientHost).not.toHaveBeenCalled();
@@ -149,7 +149,11 @@ describe("POST /api/tools CLI fan-out", () => {
 
   it("uninstalls through the same owner-bound context", async () => {
     expect(await results({ toolId: "github", targets: ["cli-self"], op: "uninstall" })).toEqual([{ uid: "cli-self", ok: true, error: undefined }]);
-    expect(mockUninstallToolFromBox).toHaveBeenCalledWith(expect.objectContaining({ id: "self" }), "github", selfManagedEnv);
+    expect(mockUninstallToolFromBox).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "self" }),
+      "github",
+      expect.objectContaining({ kind: "self-managed", env: selfManagedEnv }),
+    );
     expect(mockAmbientTargetConfiguration).not.toHaveBeenCalled();
   });
 

@@ -48,6 +48,7 @@ import {
   activityDigestKey,
   earliestInstance,
   fetchActivityDigestSummary,
+  fetchClerkUser,
   isoYearWeek,
   runLifecycleEmailSweep,
   selectDueLifecycleEmails,
@@ -1003,5 +1004,54 @@ describe("runLifecycleEmailSweep", () => {
       expect(sendMock).toHaveBeenCalledTimes(1);
       expect(sendMock.mock.calls[0][0]).toBe("stalled_5d");
     });
+  });
+});
+
+describe("fetchClerkUser", () => {
+  const realFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it("requests a normal Clerk user id unchanged", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "user_2abc" }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const user = await fetchClerkUser("sk_test", "user_2abc");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.clerk.com/v1/users/user_2abc");
+    expect(user).toEqual({ id: "user_2abc" });
+  });
+
+  it("encodes the user id so it cannot change the Clerk request path", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "x" }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await fetchClerkUser("sk_test", "user_a/../../other?x=1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.clerk.com/v1/users/user_a%2F..%2F..%2Fother%3Fx%3D1"
+    );
+  });
+
+  it("returns null for a 404 and throws on other failures", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch;
+
+    await expect(fetchClerkUser("sk_test", "user_gone")).resolves.toBeNull();
+    await expect(fetchClerkUser("sk_test", "user_broken")).rejects.toThrow(
+      "Clerk user fetch failed for user_broken: 500"
+    );
   });
 });

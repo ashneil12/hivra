@@ -30,6 +30,7 @@ import {
 import {
   ERC20_TRANSFER_TOPIC,
   encodeErc20TransferToTopic,
+  findBlockForTimestamp,
 } from "@/lib/billing/base-transfer-scan";
 import {
   computeBackoffDelayMs,
@@ -76,6 +77,7 @@ type JsonRpcFetch = (
     method: "POST";
     headers: { "Content-Type": "application/json" };
     body: string;
+    signal?: AbortSignal;
   }
 ) => Promise<{
   ok: boolean;
@@ -126,7 +128,7 @@ const TRANSFER_SURFACING_LIMIT = 25;
 // RPC budget per cron tick (50 open + 25 surface-only quotes = 75 scans; a
 // claimed open quote is recovered without a scan). One head (eth_blockNumber)
 // and its timestamp per batch, then per scanned quote:
-//   - 2 timestamp->block searches, each <= MAX_BLOCK_SEARCH_PROBES (40)
+//   - 2 timestamp->block searches, each <= 40 probes (findBlockForTimestamp);
 //     eth_getBlockByNumber probes; the 2 s/block estimate is verified, so
 //     typically 1-3 probes each, and every block timestamp is cached per batch;
 //   - ceil(span / 2,000) eth_getLogs: a window + grace is ~4,200 blocks, so 3;
@@ -186,13 +188,9 @@ const BASE_BLOCK_TIME_SEC = 2;
 // FINALITY_MARGIN_MS. Settling a transfer that was actually seen is unchanged.
 const FINALITY_MARGIN_BLOCKS = 30;
 const FINALITY_MARGIN_MS = FINALITY_MARGIN_BLOCKS * BASE_BLOCK_TIME_SEC * 1000;
-// A timestamp->block answer may land this many seconds on the SAFE side of the
-// target (earlier for a range start, later for a range end); the extra blocks
-// are filtered out by their timestamps.
-const BLOCK_SEARCH_TOLERANCE_SEC = 60;
-const MAX_BLOCK_SEARCH_PROBES = 40;
-// Estimate-and-correct probes before falling back to plain bisection.
-const INTERPOLATION_PROBES = 4;
+// Each Base RPC request gives up after this long and is retried by the shared
+// retry layer, so one stalled read cannot hold the reconcile tick.
+const DEFAULT_RPC_REQUEST_TIMEOUT_MS = 10_000;
 // Bound per-quote RPC work: a window + grace is ~4,200 blocks and has a
 // handful of transfers; anything far above that is refused, not scanned.
 const MAX_SCAN_SPAN_BLOCKS = 50_000;
@@ -316,16 +314,29 @@ async function rpcCallOnce<T>(
   params: unknown[],
   fetchImpl: JsonRpcFetch
 ): Promise<T> {
-  const response = await fetchImpl(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-  });
+  let response: Awaited<ReturnType<JsonRpcFetch>>;
+  try {
+    response = await fetchImpl(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+      }),
+      // A provider that accepts the connection and then stalls must not hold
+      // the cron tick (or the holdings run budget): time out, and retry below.
+      signal: AbortSignal.timeout(DEFAULT_RPC_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const name = (error as { name?: unknown } | null)?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      // A network-level failure, like fetch's own TypeError: retryable.
+      throw new TypeError(`Base RPC ${method} timed out after ${DEFAULT_RPC_REQUEST_TIMEOUT_MS} ms`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     // Typed error so the retry layer can decide whether this status (429 /
@@ -412,51 +423,6 @@ function createBaseChainReader(params: {
       return cached;
     },
   };
-}
-
-// Map a unix timestamp to a block. 'floor' returns a block at or before the
-// target (a safe range start); 'ceil' returns a block at or after it (a safe
-// range end), or null when the chain has not reached the target yet. The
-// first probe is estimated from the head at 2 s/block; each probe is checked
-// against the real block timestamp and corrected, falling back to bisection
-// between the tightest known bounds, so a wrong estimate costs probes, never
-// correctness.
-async function findBlockForTimestamp(
-  chain: BaseChainReader,
-  params: { targetSec: number; side: "floor" | "ceil"; latest: number; latestSec: number }
-): Promise<number | null> {
-  const { targetSec, side, latest, latestSec } = params;
-  if (side === "floor" && targetSec >= latestSec) return latest;
-  if (side === "ceil" && targetSec > latestSec) return null;
-
-  // "Past" is monotone in block number; the head is past the target here.
-  const isPast = (timestampSec: number) =>
-    side === "floor" ? timestampSec > targetSec : timestampSec >= targetSec;
-  let lo = -1; // greatest block known NOT past the target
-  let hi = latest; // least block known past the target
-  const blocksBack = (latestSec - targetSec) / BASE_BLOCK_TIME_SEC;
-  let guess = side === "floor" ? latest - Math.ceil(blocksBack) : latest - Math.floor(blocksBack);
-
-  for (let probe = 0; probe < MAX_BLOCK_SEARCH_PROBES && hi - lo > 1; probe += 1) {
-    guess = Math.min(hi - 1, Math.max(lo + 1, guess));
-    const timestampSec = await chain.blockTimestamp(guess);
-    const interpolate = probe < INTERPOLATION_PROBES;
-    if (isPast(timestampSec)) {
-      hi = guess;
-      if (side === "ceil" && timestampSec - targetSec <= BLOCK_SEARCH_TOLERANCE_SEC) return guess;
-      guess = interpolate
-        ? guess - Math.max(1, Math.ceil((timestampSec - targetSec) / BASE_BLOCK_TIME_SEC))
-        : Math.floor((lo + hi) / 2);
-    } else {
-      lo = guess;
-      if (side === "floor" && targetSec - timestampSec <= BLOCK_SEARCH_TOLERANCE_SEC) return guess;
-      guess = interpolate
-        ? guess + Math.max(1, Math.floor((targetSec - timestampSec) / BASE_BLOCK_TIME_SEC))
-        : Math.floor((lo + hi) / 2);
-    }
-  }
-
-  return side === "floor" ? Math.max(0, lo) : hi;
 }
 
 // ── Deposit Transfer logs ─────────────────────────────────────────────────

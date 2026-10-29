@@ -401,8 +401,8 @@ export async function replaceDigitalOceanToken(
     .eq("user_id", userId).eq("infrastructure_connection_id", connectionId)
     .eq("computer_substrate", SUBSTRATE).neq("status", "deleted");
   if (boundError) throw new ManagedSessionError("database_failed", "This connection's agents could not be read.");
-  for (const row of (bound ?? []) as unknown as AgentRow[]) {
-    if (!row.do_session_id) continue; // never observed; nothing to prove against
+  await Promise.all(((bound ?? []) as unknown as AgentRow[]).map(async (row) => {
+    if (!row.do_session_id) return; // never observed; nothing to prove against
     try {
       await client.getSession(row.do_session_id);
     } catch (error) {
@@ -412,7 +412,7 @@ export async function replaceDigitalOceanToken(
       }
       throw providerError(error, "token check");
     }
-  }
+  }));
   try {
     await replaceDigitalOceanConnectionToken({ userId, connectionId, expectedRevision: revision, apiToken });
   } catch (error) {

@@ -621,7 +621,15 @@ if (typeof window !== 'undefined' && analyticsEnabled) {
     // at init time so the recorder is never allowed to start on a sensitive
     // landing (#352).
     disable_session_recording: isLocalhost,
-    capture_dead_clicks: isLocalhost ? false : undefined,
+    // Cost: every named event and pageview here is captured by hand, so the
+    // automatic streams only add billable volume nobody reads. Autocapture
+    // (clicks, inputs, rage clicks), dead clicks, heatmaps and web vitals stay
+    // off on every host. Replay sampling, minimum duration and URL triggers are
+    // project settings in PostHog, not client options.
+    autocapture: false,
+    capture_dead_clicks: false,
+    capture_heatmaps: false,
+    capture_performance: false,
     disable_external_dependency_loading: isLocalhost,
     enable_recording_console_log: false,
     session_recording: {

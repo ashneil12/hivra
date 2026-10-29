@@ -76,6 +76,10 @@ import {
 } from "./proxmox/script-builders";
 import type { ProxmoxInstanceMetrics } from "./proxmox/output-parsers";
 import {
+  buildHermesVmidBoundGuestSshPrelude,
+  isHermesInstanceId,
+} from "@/lib/proxmox/hermes-guest-ssh";
+import {
   buildSudoTransportCommand,
   frameSudoTransportInput,
   HIVRA_SUDO_LOADER,
@@ -2822,6 +2826,14 @@ export async function resizeProxmoxVm(
   ).toString("base64");
   const vmSshUser = envValue(env, "PROXMOX_VM_SSH_USER", "hermes");
   const vmSshKeyPath = envValue(env, "PROXMOX_VM_SSH_KEY_PATH", "/etc/hivra/keys/vm-orchestrator");
+  // The cgroup push is pinned to the guest whose SSH host key its QEMU Guest
+  // Agent attests for this VMID, never to whatever answers at the private IP.
+  const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: vmSshUser,
+    connectTimeoutSeconds: 5,
+    quiet: true,
+    ...(isHermesInstanceId(params.expectedInstanceId) ? { expectedInstanceId: params.expectedInstanceId } : {}),
+  });
   // qm set --cpulimit accepts a decimal; --balloon and --memory together
   // give the live RAM cap (ballooning shrinks/grows guest's available RAM).
   const script = `#!/usr/bin/env bash
@@ -2834,7 +2846,6 @@ BALLOON_FLOOR_MB=${shQuote(balloonMb)}
 VM_SSH_USER=${shQuote(vmSshUser)}
 VM_SSH_KEY_PATH=${shQuote(vmSshKeyPath)}
 GUEST_CGROUP_B64=${shQuote(guestCgroupScriptB64)}
-GUEST_KNOWN_HOSTS=""
 
 if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "VM $VMID not found" >&2
@@ -2844,11 +2855,6 @@ ${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}
 # Same ipconfig0 parse the metrics script uses — the guest's private IP is the
 # only route from the Proxmox host into the VM.
 PRIVATE_IP="$(qm config "$VMID" 2>/dev/null | sed -n 's/^ipconfig0: .*ip=\\([^,\\/]*\\).*/\\1/p' | head -n1)"
-
-cleanup_resize() {
-  if [ -n "\${GUEST_KNOWN_HOSTS:-}" ]; then rm -f "$GUEST_KNOWN_HOSTS"; fi
-}
-trap cleanup_resize EXIT
 
 # Push the tier ceiling down into the agent containers' cgroups. ALWAYS
 # best-effort (returns 0 even when it can't run): the VM-level resize is the
@@ -2861,18 +2867,14 @@ reapply_container_caps() {
     echo "[resize] container caps ($label): no guest SSH route available; skipped" >&2
     return 0
   fi
-  if [ -z "$GUEST_KNOWN_HOSTS" ]; then
-    GUEST_KNOWN_HOSTS="$(mktemp /tmp/hermes-resize-known-hosts.XXXXXX)"
-  fi
   attempt=1
   while [ "$attempt" -le "$attempts" ]; do
-    if printf '%s' "$GUEST_CGROUP_B64" | base64 -d | ssh \\
-      -i "$VM_SSH_KEY_PATH" \\
-      -o BatchMode=yes \\
-      -o StrictHostKeyChecking=accept-new \\
-      -o UserKnownHostsFile="$GUEST_KNOWN_HOSTS" \\
-      -o ConnectTimeout=5 \\
-      "$VM_SSH_USER@$PRIVATE_IP" "sudo bash -s"; then
+    # The VMID-bound prelude runs in a subshell: a refused identity check
+    # exits only this attempt, never the (already-applied) resize.
+    if (
+${guestSshPrelude}
+printf '%s' "$GUEST_CGROUP_B64" | base64 -d | "\${GUEST_SSH[@]}" "sudo bash -s"
+    ); then
       return 0
     fi
     attempt=$(( attempt + 1 ))

@@ -105,3 +105,168 @@ export function assertNavigationAllowed(rawUrl: string): URL {
   }
   return parsed;
 }
+
+// Structural slices of Playwright's Request/Response, so the redirect walk is
+// testable without a browser.
+export interface GuardedRequest {
+  url(): string;
+  redirectedFrom(): GuardedRequest | null;
+  response(): Promise<GuardedResponse | null>;
+}
+export interface GuardedResponse {
+  request(): GuardedRequest;
+  serverAddr(): Promise<{ ipAddress: string; port: number } | null>;
+}
+export interface GuardedPage {
+  goto(url: string): Promise<GuardedResponse | null | undefined | void>;
+  url(): string;
+}
+
+const NETWORK_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
+
+function urlHostBlocked(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false; // about:blank, data: etc. have no host to reach
+  }
+  if (!NETWORK_PROTOCOLS.has(parsed.protocol)) return false;
+  return isBlockedNavigationHost(parsed.hostname);
+}
+
+// The pre-flight check above sees only the URL the caller asked for. The
+// browser then follows HTTP redirects on its own, so a public URL that answers
+// `302 Location: http://169.254.169.254/...` (or a name that resolves to
+// 127.0.0.1) would land the page on a blocked target. Walk the whole redirect
+// chain the navigation actually took and check every hop's URL and the IP the
+// browser really connected to.
+export async function navigationChainBlockCode(
+  response: GuardedResponse | null | undefined,
+  finalUrl: string,
+): Promise<NavigationBlockCode | null> {
+  if (urlHostBlocked(finalUrl)) return "BLOCKED_DESTINATION";
+  let req: GuardedRequest | null = response ? response.request() : null;
+  while (req) {
+    if (urlHostBlocked(req.url())) return "BLOCKED_DESTINATION";
+    const res = await req.response().catch(() => null);
+    const addr = res ? await res.serverAddr().catch(() => null) : null;
+    if (addr?.ipAddress && isBlockedNavigationHost(addr.ipAddress)) return "BLOCKED_DESTINATION";
+    req = req.redirectedFrom();
+  }
+  return null;
+}
+
+// Navigate with the full policy: pre-flight URL check, then the redirect-chain
+// check. A page that ended up somewhere blocked is sent to about:blank before
+// the error is thrown, so no later /screenshot or /text call can read it. The
+// chain check also runs when goto throws (a timeout on a page whose `load`
+// never fires), since the page may still be sitting on the blocked URL.
+export async function gotoWithNavigationGuard(page: GuardedPage, rawUrl: string): Promise<void> {
+  assertNavigationAllowed(rawUrl);
+  parkedPages.delete(page);
+  let response: GuardedResponse | null = null;
+  let navigationError: unknown = null;
+  try {
+    response = (await page.goto(rawUrl)) || null;
+  } catch (err) {
+    navigationError = err;
+  }
+  const code = parkedPages.has(page)
+    ? "BLOCKED_DESTINATION"
+    : await navigationChainBlockCode(response, page.url());
+  if (code) {
+    await page.goto("about:blank").catch(() => undefined);
+    throw new BlockedNavigationError(code);
+  }
+  if (navigationError) throw navigationError;
+}
+
+// Pages the watchdog below parked since their last guarded goto.
+const parkedPages = new WeakSet<object>();
+
+export interface WatchedFrame {
+  url(): string;
+}
+export interface WatchedResponse {
+  request(): { resourceType(): string };
+  serverAddr(): Promise<{ ipAddress: string; port: number } | null>;
+}
+export interface WatchedPage {
+  goto(url: string): Promise<unknown>;
+  on(event: "framenavigated", listener: (frame: WatchedFrame) => void): unknown;
+  on(event: "response", listener: (response: WatchedResponse) => void): unknown;
+}
+
+// Last line of defence for what neither the route guard nor the post-goto
+// check sees in time: an HTTP redirect hop that commits after goto already
+// gave up (a timeout), or a public name that resolved to a blocked address.
+// When any frame commits a blocked URL, or a document arrives from a blocked
+// IP, the page is parked on about:blank straight away, before the agent's next
+// /screenshot or /text call can read it.
+export function installPageNavigationWatchdog(page: WatchedPage): void {
+  let parking = false;
+  const park = () => {
+    parkedPages.add(page);
+    if (parking) return;
+    parking = true;
+    void page
+      .goto("about:blank")
+      .catch(() => undefined)
+      .finally(() => {
+        parking = false;
+      });
+  };
+  page.on("framenavigated", (frame) => {
+    if (urlHostBlocked(frame.url())) park();
+  });
+  page.on("response", (response) => {
+    if (response.request().resourceType() !== "document") return;
+    void response
+      .serverAddr()
+      .then((addr) => {
+        if (addr?.ipAddress && isBlockedNavigationHost(addr.ipAddress)) park();
+      })
+      .catch(() => undefined);
+  });
+}
+
+// Structural slice of Playwright's BrowserContext.route, for the same reason.
+export interface GuardedRoute {
+  request(): { url(): string };
+  abort(errorCode?: string): Promise<void>;
+  fallback(): Promise<void>;
+}
+export interface GuardedWebSocketRoute {
+  url(): string;
+  close(options?: { code?: number; reason?: string }): Promise<void>;
+  connectToServer(): unknown;
+}
+export interface GuardedContext {
+  route(url: string, handler: (route: GuardedRoute) => Promise<void>): Promise<unknown>;
+  routeWebSocket(url: RegExp, handler: (ws: GuardedWebSocketRoute) => Promise<void>): Promise<unknown>;
+}
+
+// Request-layer guard for everything the page itself starts after /goto: a
+// meta refresh, a script setting `location`, an iframe or a subresource
+// pointed at loopback, the metadata address or a sibling service. Playwright
+// does not call route handlers for HTTP redirect hops, which is why
+// gotoWithNavigationGuard keeps its redirect-chain check as well.
+export async function installNavigationRouteGuard(ctx: GuardedContext): Promise<void> {
+  await ctx.route("**/*", async (route) => {
+    if (urlHostBlocked(route.request().url())) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.fallback();
+  });
+  // WebSockets skip context.route and the same-origin rules, so a page could
+  // otherwise talk to a WebSocket server on loopback or a sibling container.
+  await ctx.routeWebSocket(/.*/, async (ws) => {
+    if (urlHostBlocked(ws.url())) {
+      await ws.close({ code: 1008, reason: "blocked destination" });
+      return;
+    }
+    ws.connectToServer();
+  });
+}

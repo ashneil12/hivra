@@ -306,6 +306,35 @@ describe("CodexOAuthModal", () => {
     );
   });
 
+  it("refuses an authorization URL that is not https and never offers it to open", async () => {
+    for (const url of ["javascript:alert(1)", "http://example.com/device", "not a url"]) {
+      Object.defineProperty(global, "fetch", {
+        configurable: true,
+        writable: true,
+        value: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { url, code: "ABCD-1234" } }),
+        }),
+      });
+
+      const { unmount } = render(<CodexOAuthModal instanceId={`inst-bad-url-${url.length}`} onClose={jest.fn()} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /start codex login/i }));
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/no authorization url was returned/i)
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByRole("button", { name: /open authorization page/i })).not.toBeInTheDocument();
+      expect(screen.queryByText(url)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("shows actionable retry/redeploy guidance (not the dead Vault link) when the runtime cannot host the device flow (503)", async () => {
     Object.defineProperty(global, "fetch", {
       configurable: true,

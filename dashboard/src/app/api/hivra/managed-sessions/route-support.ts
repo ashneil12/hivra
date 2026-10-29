@@ -60,3 +60,6 @@ export async function readMutationBody(request: NextRequest, maxBytes: number): 
 }
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** RFC 4122 UUID with a version digit of 1-8 (stricter than UUID above). */
+export const UUID_V1_TO_8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

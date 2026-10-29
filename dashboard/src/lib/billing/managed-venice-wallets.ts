@@ -154,14 +154,15 @@ async function selectUserRows<T>(
   db: SupabaseLike,
   tableName: string,
   userId: string,
-  opts?: { status?: string }
+  opts?: { status?: string; columns?: string }
 ): Promise<T[]> {
   // Push a status filter into the query when the caller only needs one status.
   // This table grows ~1 row per inference and is never pruned, so an
   // all-status `.eq(user_id)` read is O(lifetime-requests) on the hottest
   // (authorize/settle) path. Filtering to status='active' engages the existing
   // (user_id, status) partial indexes and reads ~the active rows only.
-  let query = table(db, tableName).select("*").eq("user_id", userId);
+  // `columns` narrows the payload for callers that need one field.
+  let query = table(db, tableName).select(opts?.columns ?? "*").eq("user_id", userId);
   if (opts?.status) {
     query = query.eq("status", opts.status);
   }
@@ -219,26 +220,49 @@ async function loadReservation(
   return (data as ReservationRow | null) ?? null;
 }
 
+async function loadWalletAccountRow(
+  db: SupabaseLike,
+  userId: string
+): Promise<WalletAccountRow | null> {
+  const { data, error } = await table(db, "managed_venice_wallet_accounts")
+    .select("id, user_id, default_payment_wallet")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to load managed Venice wallet account");
+  }
+
+  return (data as WalletAccountRow | null) ?? null;
+}
+
 export async function ensureManagedVeniceWalletAccount(
   userId: string,
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
   requireUserId(userId);
   const client = requireDb(db);
-  const now = new Date().toISOString();
-  const { data, error } = await table(client, "managed_venice_wallet_accounts")
-    .upsert(
-      { user_id: userId, updated_at: now },
-      { onConflict: "user_id" }
-    )
-    .select("id, user_id, default_payment_wallet")
-    .single();
-
-  if (error || !data) {
-    throw new Error(error?.message || "Failed to ensure managed Venice wallet account");
+  // Read first: this runs on every balance read (inference path), so it must
+  // not write the account row each time, which churned its updated_at.
+  let row = await loadWalletAccountRow(client, userId);
+  if (!row) {
+    // First read for this user: create the row. ignoreDuplicates leaves a row
+    // a concurrent first read inserted in the meantime, and the re-read below
+    // returns whichever row won.
+    const { error } = await table(client, "managed_venice_wallet_accounts").upsert(
+      { user_id: userId, updated_at: new Date().toISOString() },
+      { onConflict: "user_id", ignoreDuplicates: true }
+    );
+    if (error) {
+      throw new Error(error.message || "Failed to ensure managed Venice wallet account");
+    }
+    row = await loadWalletAccountRow(client, userId);
   }
 
-  const row = data as WalletAccountRow;
+  if (!row) {
+    throw new Error("Failed to ensure managed Venice wallet account");
+  }
+
   return {
     id: row.id,
     userId: row.user_id,
@@ -258,7 +282,11 @@ export async function getManagedVeniceWalletSummary(
     // Only active lots/reservations feed the balance math below; the card
     // ledger is a running sum so it must NOT be status-filtered.
     selectUserRows<TokenLotRow>(client, "managed_venice_token_lots", userId, { status: "active" }),
-    selectUserRows<CardLedgerRow>(client, "managed_venice_card_ledger_entries", userId),
+    // Only the amount is summed below. Summing in SQL would avoid reading the
+    // whole lifetime ledger, but needs a migration (not written here).
+    selectUserRows<CardLedgerRow>(client, "managed_venice_card_ledger_entries", userId, {
+      columns: "amount_micro_usd",
+    }),
     selectUserRows<ReservationRow>(client, "managed_venice_reservations", userId, { status: "active" }),
   ]);
 
