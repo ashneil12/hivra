@@ -26,6 +26,7 @@ import { PROVIDER_ID_MAP, resolveProviderBaseUrl } from "@/lib/services/provider
 import type { CodexVaultBundle } from "@/lib/codex-oauth";
 import type { NousVaultBundle } from "@/lib/nous-oauth";
 import { sshExec } from "@/lib/hetzner/ssh";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { decryptApiKey } from "@/lib/crypto";
 import {
@@ -112,6 +113,8 @@ export interface InstanceRowForOrchestration {
   name?: string | null;
   subdomain?: string | null;
   hetzner_server_id?: number | null;
+  /** Needed to tell a Hetzner creation receipt from a live server (F090). */
+  status?: string | null;
   gateway_url?: string | null;
   api_key_encrypted: string;
   api_server_key_encrypted?: string | null;
@@ -190,9 +193,11 @@ export async function resolveInstanceIpv4(
     }
   }
 
-  // 2. Try to resolve via direct hetzner_server_id (legacy single-node)
-  if (instance.hetzner_server_id) {
-    const hs = await getHetznerInstanceStatus(instance.hetzner_server_id);
+  // 2. Try to resolve via direct hetzner_server_id (legacy single-node). A
+  // creation receipt is not the live server yet, so it is skipped (F090).
+  const liveHetznerServerId = provisionedHetznerServerId(instance);
+  if (liveHetznerServerId) {
+    const hs = await getHetznerInstanceStatus(liveHetznerServerId);
     if (hs.ipv4 && supabaseAdmin) {
       await supabaseAdmin
         .from("hermes_instances")
@@ -386,7 +391,8 @@ export async function applyLiveUpdate(
 ): Promise<LiveUpdateResult> {
   const { initiator } = options;
   const proxmoxInfrastructure = getProxmoxInfrastructure(instance.config);
-  if (!proxmoxInfrastructure && !instance.host_id && !instance.hetzner_server_id) {
+  const liveHetznerServerId = provisionedHetznerServerId(instance);
+  if (!proxmoxInfrastructure && !instance.host_id && !liveHetznerServerId) {
     return { applied: false as const, error: "No host attached", initiator };
   }
   if (!proxmoxInfrastructure && !ipv4) {
@@ -508,7 +514,7 @@ export async function applyLiveUpdate(
   const backend: InstanceBackend = instance.backend === "webui" ? "webui" : "gateway";
   const isolatedCustomerVm =
     Boolean(proxmoxInfrastructure) ||
-    (!instance.host_id && typeof instance.hetzner_server_id === "number");
+    (!instance.host_id && liveHetznerServerId !== null);
   const gatewayDockerAccess =
     isWebfreeBackend(backend) &&
     isolatedCustomerVm &&
