@@ -209,9 +209,11 @@ async function fetchDormantCandidates(cutoffIso: string): Promise<DormantCandida
     // sweep rather than leaving a live, orphaned VM no reconciler can see.
     .in("paused_reason", ["inactivity", "capacity_pressure", "dormant_reclaiming"])
     .lt("last_lifecycle_transition_at", cutoffIso)
-    // Oldest pause first. A row that keeps failing stays selectable, so without an order
-    // a few such rows could take every slot in the batch on every run.
-    .order("last_lifecycle_transition_at", { ascending: true })
+    // Least recently written first. A row the sweep skips or fails on is moved to the back by
+    // deferCandidateInQueue, which stamps updated_at, so a few such rows cannot take every
+    // slot in the batch on every run. A row nobody has written since its pause keeps the
+    // pause order, because its updated_at is its pause time.
+    .order("updated_at", { ascending: true })
     .limit(DEFAULT_BATCH_LIMIT);
 
   if (error) {
@@ -324,6 +326,45 @@ function rowStillPaused(
     row.paused_reason === expected.paused_reason &&
     row.last_lifecycle_transition_at === expected.last_lifecycle_transition_at
   );
+}
+
+// Moves a candidate the sweep skipped or failed on to the back of the batch. Such a row gets
+// no terminal write, so its updated_at never moves, and the candidate query (ordered on
+// updated_at) would keep it at the front: ten of them would fill every batch and nothing
+// behind them would be reached. The stamp moves updated_at only, which the table's trigger moves on
+// every write anyway, and the row's state is untouched. It is a compare-and-swap on the pause
+// the sweep selected, so an owner's Start or a new pause is left alone. Dry runs write nothing.
+async function deferCandidateInQueue(input: {
+  candidate: DormantCandidate;
+  nowIso: string;
+  commit: boolean;
+}): Promise<void> {
+  const { candidate } = input;
+  if (!input.commit || !supabaseAdmin) return;
+  if (!candidate.paused_reason || !candidate.last_lifecycle_transition_at) return;
+
+  try {
+    const { error } = await supabaseAdmin
+      .from("hermes_instances")
+      .update({ updated_at: input.nowIso })
+      .eq("id", candidate.id)
+      .eq("lifecycle_state", "paused")
+      .eq("paused_reason", candidate.paused_reason)
+      .eq("last_lifecycle_transition_at", candidate.last_lifecycle_transition_at)
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    // Best effort: the sweep's own outcome is already decided. A row that is not moved stays
+    // at the front until a later run can move it.
+    log.warn("dormant reclaim could not move a skipped instance behind the rest of the batch", {
+      source: LOG_SOURCE,
+      instanceId: candidate.id,
+      userId: candidate.user_id,
+      failureType: "dormant_reclaim_defer_failed",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 async function markDormantReclaimed(input: {
@@ -656,6 +697,7 @@ export async function runDormantReclaimSweep(
         userId: candidate.user_id,
         failureType: "dormant_reclaim_missing_proxmox_infrastructure",
       });
+      await deferCandidateInQueue({ candidate, nowIso, commit });
       continue;
     }
 
@@ -673,6 +715,7 @@ export async function runDormantReclaimSweep(
         signal: "instance_usage_snapshots.sessions",
         cutoffIso,
       });
+      await deferCandidateInQueue({ candidate, nowIso, commit });
       continue;
     }
 
@@ -699,6 +742,7 @@ export async function runDormantReclaimSweep(
         failureType: "dormant_reclaim_archive_dir_missing",
         requiredEnv: "HERMES_DORMANT_ARCHIVE_DIR",
       });
+      await deferCandidateInQueue({ candidate, nowIso, commit });
       continue;
     }
 
@@ -758,6 +802,7 @@ export async function runDormantReclaimSweep(
             proxmoxVmid: infrastructure.vmid,
             failureType: "dormant_reclaim_vm_not_stopped",
           });
+          await deferCandidateInQueue({ candidate, nowIso, commit });
           continue;
         }
         const resolvedPath = archiveResult.ok
@@ -862,6 +907,11 @@ export async function runDormantReclaimSweep(
             archiveId,
             archivePath,
           });
+          // A resumed row keeps its dormant_reclaiming record, and nothing else wrote to it, so
+          // it would stay at the front. A fresh one was reverted above, which already moved updated_at.
+          if (recorded !== null) {
+            await deferCandidateInQueue({ candidate, nowIso, commit });
+          }
           continue;
         }
         throw new Error(
@@ -903,6 +953,7 @@ export async function runDormantReclaimSweep(
         proxmoxVmid: infrastructure.vmid,
         failureType: "dormant_reclaim_instance_failed",
       });
+      await deferCandidateInQueue({ candidate, nowIso, commit });
     }
   }
 

@@ -124,6 +124,8 @@ function mockCandidateQuery(
   // The sweep re-reads the live row before it dumps and destroys. Here the live
   // row is the candidate itself, so nothing has changed.
   candidateQuery.maybeSingle = jest.fn().mockResolvedValue({ data: rows[0] ?? null, error: null });
+  // A skipped row is moved to the back of the batch with a write of updated_at (deferCandidateInQueue).
+  candidateQuery.update = jest.fn().mockReturnValue(candidateQuery);
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
     if (table === "instance_usage_snapshots") return makeAgentUsageQuery(usageOpts);
     return candidateQuery;
@@ -243,6 +245,14 @@ function installDatabase(options: {
   return db;
 }
 
+// A row the sweep skips gets no marker and no terminal state. Its only write is the rotation
+// stamp that moves it behind the rest of the batch: updated_at, and nothing else.
+function expectOnlyRotationStamp(calls: unknown[][]) {
+  for (const [payload] of calls) {
+    expect(Object.keys(payload as Row)).toEqual(["updated_at"]);
+  }
+}
+
 function setCommitEnv() {
   process.env.HERMES_DORMANT_RECLAIM_ENABLED = "true";
   process.env.HERMES_DORMANT_RECLAIM_COMMIT = "true";
@@ -297,7 +307,7 @@ describe("runDormantReclaimSweep", () => {
 
   it("dry-runs eligible paused instances without archiving or deleting VMs", async () => {
     process.env.HERMES_DORMANT_RECLAIM_ENABLED = "true";
-    mockCandidateQuery([dormantRow]);
+    const candidateQuery = mockCandidateQuery([dormantRow]);
 
     const summary = await runDormantReclaimSweep({
       now: new Date("2026-05-14T20:30:00.000Z"),
@@ -314,15 +324,18 @@ describe("runDormantReclaimSweep", () => {
     });
     expect(archiveProxmoxDormantInstance).not.toHaveBeenCalled();
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    // A dry run writes nothing, including the rotation stamp.
+    expect(candidateQuery.update).not.toHaveBeenCalled();
   });
 
-  it("reads the oldest paused rows first, so rows that keep failing cannot take the whole batch", async () => {
+  it("reads the least recently written paused rows first, so rows that keep failing cannot take the whole batch", async () => {
     process.env.HERMES_DORMANT_RECLAIM_ENABLED = "true";
     const candidateQuery = mockCandidateQuery([dormantRow]);
 
     await runDormantReclaimSweep({ now: NOW });
 
-    expect(candidateQuery.order).toHaveBeenCalledWith("last_lifecycle_transition_at", {
+    // Skipped rows are moved back by a write of updated_at, so ordering on it is what rotates them.
+    expect(candidateQuery.order).toHaveBeenCalledWith("updated_at", {
       ascending: true,
     });
     // The order is applied before the batch limit, or it would not choose which rows the limit keeps.
@@ -738,7 +751,9 @@ describe("runDormantReclaimSweep", () => {
       const summary = await runDormantReclaimSweep({ now: NOW });
 
       expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
-      expect(db.instanceUpdate).not.toHaveBeenCalled();
+      // The only write is the rotation stamp; the marker and the dump are left as they were.
+      expect(db.instanceUpdate).toHaveBeenCalledTimes(1);
+      expectOnlyRotationStamp(db.instanceUpdate.mock.calls);
       expect(removeProxmoxDormantArchive).not.toHaveBeenCalled();
       expect(db.archiveDelete).not.toHaveBeenCalled();
       expect(db.live()).toMatchObject({ paused_reason: "dormant_reclaiming" });
@@ -789,7 +804,8 @@ describe("runDormantReclaimSweep", () => {
       expect(summary).toMatchObject({ archived: 0, reclaimed: 0, skipped: 1, failed: 0 });
       expect(archiveProxmoxDormantInstance).toHaveBeenCalledTimes(1);
       expect(db.archiveInsert).not.toHaveBeenCalled();
-      expect(db.instanceUpdate).not.toHaveBeenCalled();
+      expect(db.instanceUpdate).toHaveBeenCalledTimes(1);
+      expectOnlyRotationStamp(db.instanceUpdate.mock.calls);
       expect(deleteProxmoxInstance).not.toHaveBeenCalled();
       expect(db.live()).toMatchObject({ lifecycle_state: "paused", paused_reason: "inactivity" });
     });
@@ -809,7 +825,8 @@ describe("runDormantReclaimSweep", () => {
 
       expect(summary).toMatchObject({ archived: 0, reclaimed: 0, failed: 1 });
       expect(db.archiveInsert).not.toHaveBeenCalled();
-      expect(db.instanceUpdate).not.toHaveBeenCalled();
+      expect(db.instanceUpdate).toHaveBeenCalledTimes(1);
+      expectOnlyRotationStamp(db.instanceUpdate.mock.calls);
       expect(deleteProxmoxInstance).not.toHaveBeenCalled();
     });
 
@@ -881,9 +898,197 @@ describe("runDormantReclaimSweep", () => {
       const summary = await runDormantReclaimSweep({ now: NOW });
 
       expect(summary).toMatchObject({ reclaimed: 0, failed: 1 });
-      expect(db.instanceUpdate).toHaveBeenCalledTimes(1);
+      // The terminal write refused; the only write after it is the rotation stamp.
+      expect(db.instanceUpdate).toHaveBeenCalledTimes(2);
+      expectOnlyRotationStamp(db.instanceUpdate.mock.calls.slice(1));
       expect(db.live()).toMatchObject({ paused_reason: "dormant_reclaiming" });
       expect(db.live().config).toEqual(expect.objectContaining({ settings: { model: "owner-choice" } }));
     });
+  });
+
+  describe("a batch of rows the sweep skips", () => {
+    // Ten older paused rows the sweep cannot act on, and one newer row it can reclaim. The batch
+    // holds ten rows, so the newer row is only reached once the older rows stop filling it.
+    const STUCK_ROWS = 10;
+    type StuckKind = "not_stopped" | "identity_mismatch" | "agent_usage";
+
+    function batchRows(): Row[] {
+      return Array.from({ length: STUCK_ROWS + 1 }, (_, index) => {
+        const n = index + 1;
+        const id = `inst_${String(n).padStart(2, "0")}`;
+        const pausedAt =
+          n <= STUCK_ROWS
+            ? `2026-04-${String(n).padStart(2, "0")}T00:00:00.000Z`
+            : "2026-05-01T00:00:00.000Z";
+        return {
+          ...dormantRow,
+          id,
+          user_id: `user_${n}`,
+          subdomain: id,
+          gateway_url: `https://${id}.agents.hermesos.cloud`,
+          last_lifecycle_transition_at: pausedAt,
+          updated_at: pausedAt,
+        };
+      });
+    }
+
+    // A stand-in for public.hermes_instances that applies the candidate query's filters,
+    // its order and its batch limit, and applies conditional updates the way PostgREST does,
+    // with the table's trigger moving updated_at. The fixed candidate list above cannot show
+    // which rows a batch of ten would pick.
+    function installTable(rows: Row[], usageActiveFor: string[]) {
+      let tick = 0;
+      const clock = () => new Date(Date.parse(NOW.toISOString()) + ++tick * 1000).toISOString();
+
+      const instanceUpdate = jest.fn((payload: Row) => {
+        const eqs: Array<[string, unknown]> = [];
+        const query: Record<string, unknown> = {};
+        query.eq = jest.fn((column: string, value: unknown) => {
+          eqs.push([column, value]);
+          return query;
+        });
+        query.select = jest.fn(() => query);
+        query.maybeSingle = jest.fn(async () => {
+          const row = rows.find((r) => eqs.every(([c, v]) => r[c] === v));
+          if (!row) return { data: null, error: null };
+          Object.assign(row, payload, { updated_at: clock() });
+          return { data: { id: row.id }, error: null };
+        });
+        return query;
+      });
+
+      const instanceSelect = () => {
+        const eqs: Array<[string, unknown]> = [];
+        const predicates: Array<(r: Row) => boolean> = [];
+        let orderColumn: string | null = null;
+        let ascending = true;
+        const query: Record<string, unknown> = {};
+        query.eq = jest.fn((column: string, value: unknown) => {
+          eqs.push([column, value]);
+          predicates.push((r) => r[column] === value);
+          return query;
+        });
+        query.in = jest.fn((column: string, values: unknown[]) => {
+          predicates.push((r) => values.includes(r[column]));
+          return query;
+        });
+        query.lt = jest.fn((column: string, value: string) => {
+          predicates.push((r) => String(r[column]) < value);
+          return query;
+        });
+        query.order = jest.fn((column: string, options: { ascending: boolean }) => {
+          orderColumn = column;
+          ascending = options.ascending;
+          return query;
+        });
+        query.limit = jest.fn(async (n: number) => {
+          const matched = rows.filter((r) => predicates.every((p) => p(r)));
+          if (orderColumn) {
+            const column = orderColumn;
+            matched.sort((a, b) => {
+              const left = String(a[column]);
+              const right = String(b[column]);
+              if (left === right) return 0;
+              return (left < right ? -1 : 1) * (ascending ? 1 : -1);
+            });
+          }
+          return { data: matched.slice(0, n).map((r) => ({ ...r })), error: null };
+        });
+        query.maybeSingle = jest.fn(async () => {
+          const row = rows.find((r) => eqs.every(([c, v]) => r[c] === v));
+          return { data: row ? { ...row } : null, error: null };
+        });
+        return query;
+      };
+
+      const usageQuery = () => {
+        let instanceId: unknown = null;
+        const query: Record<string, unknown> = {};
+        query.select = jest.fn(() => query);
+        query.eq = jest.fn((_column: string, value: unknown) => {
+          instanceId = value;
+          return query;
+        });
+        query.gt = jest.fn(() => query);
+        query.gte = jest.fn(() => query);
+        query.limit = jest.fn(async () => ({
+          data: usageActiveFor.includes(String(instanceId)) ? [{ instance_id: instanceId }] : [],
+          error: null,
+        }));
+        return query;
+      };
+
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        if (table === "hermes_instances") {
+          return { select: jest.fn(() => instanceSelect()), update: instanceUpdate };
+        }
+        if (table === "instance_usage_snapshots") return usageQuery();
+        if (table === "instance_dormancy_archives") {
+          return {
+            insert: jest.fn(() => ({
+              select: jest.fn(() => ({
+                single: jest.fn(async () => ({ data: { id: "archive_batch" }, error: null })),
+              })),
+            })),
+            delete: jest.fn(() => ({ eq: jest.fn(async () => ({ error: null })) })),
+          };
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      });
+
+      return {
+        row: (id: string) => rows.find((r) => r.id === id) as Row,
+        instanceUpdate,
+      };
+    }
+
+    it.each([
+      ["a running guest at dump time", "not_stopped"],
+      ["an identity mismatch on the guest", "identity_mismatch"],
+      ["agent-side usage before the pause", "agent_usage"],
+    ] as Array<[string, StuckKind]>)(
+      "a newer reclaimable row is archived by the next run when the older rows have %s",
+      async (_label, kind) => {
+        setCommitEnv();
+        const rows = batchRows();
+        const stuckIds = rows.slice(0, STUCK_ROWS).map((r) => r.id as string);
+        const table = installTable(rows, kind === "agent_usage" ? stuckIds : []);
+        (archiveProxmoxDormantInstance as jest.Mock).mockImplementation(
+          async (_infra: unknown, opts: { instanceId: string }) => {
+            const stuck = stuckIds.includes(opts.instanceId);
+            if (stuck && kind === "not_stopped") {
+              return {
+                ok: false,
+                stdout: "",
+                stderr: `${DORMANT_ARCHIVE_NOT_STOPPED_MARKER} 610 state=running\n`,
+              };
+            }
+            if (stuck && kind === "identity_mismatch") {
+              return { ok: false, stdout: "", stderr: "HERMES_VM_IDENTITY_MISMATCH 610\n" };
+            }
+            return archiveOk();
+          }
+        );
+
+        const first = await runDormantReclaimSweep({ now: NOW });
+        const second = await runDormantReclaimSweep({ now: NOW });
+
+        expect(first.reclaimed).toBe(0);
+        expect(second.reclaimed).toBe(1);
+        expect(table.row("inst_11")).toMatchObject({
+          lifecycle_state: "paused",
+          paused_reason: "dormant_reclaimed",
+        });
+        // Only the newer row is destroyed. The skipped rows stay paused, for the owner.
+        expect(deleteProxmoxInstance).toHaveBeenCalledTimes(1);
+        expect(deleteProxmoxInstance).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ expectedInstanceId: "inst_11" })
+        );
+        for (const id of stuckIds) {
+          expect(table.row(id)).toMatchObject({ lifecycle_state: "paused", paused_reason: "inactivity" });
+        }
+      }
+    );
   });
 });
