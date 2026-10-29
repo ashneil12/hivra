@@ -66,6 +66,39 @@ describe('ops-events helper', () => {
     });
   });
 
+  it('stores bare provider and bot token shapes redacted in the message and sample stack', async () => {
+    // Synthetic tokens, built at runtime.
+    const body = 'Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw'.repeat(2);
+    const anthropicKey = `sk-ant-api03-${body}`;
+    const telegramToken = `123456789:${body.slice(0, 35)}`;
+
+    const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const eq = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const single = jest.fn().mockResolvedValue({ data: { id: 'evt_456' }, error: null });
+    const insert = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq, maybeSingle })
+      .mockReturnValueOnce({ insert, select, single });
+
+    await reportOpsEvent({
+      source: 'provider-probe',
+      severity: 'error',
+      title: 'Provider call failed',
+      message: `upstream rejected ${anthropicKey}; getMe at https://api.telegram.org/bot${telegramToken}/getMe`,
+      sampleStack: `at probe (${anthropicKey})`,
+    });
+
+    const row = insert.mock.calls[0][0];
+    expect(row.message).toBe(
+      'upstream rejected [REDACTED]; getMe at https://api.telegram.org/bot[REDACTED]/getMe',
+    );
+    expect(row.sample_stack).toBe('at probe ([REDACTED])');
+    expect(JSON.stringify(row)).not.toContain(anthropicKey);
+    expect(JSON.stringify(row)).not.toContain(body.slice(0, 35));
+  });
+
   it('builds a stable fingerprint from the same event shape', () => {
     const first = buildOpsEventFingerprint({
       source: 'api',

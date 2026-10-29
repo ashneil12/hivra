@@ -142,4 +142,83 @@ describe("redactSensitiveCommandOutput", () => {
 
     expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
   });
+  // Bare token shapes: a provider, bot or infrastructure credential that appears
+  // with no name in front of it, such as an error body that echoes the key. The
+  // synthetic values are built at runtime so no scanner sees a literal key.
+  describe("bare token shapes", () => {
+    const body = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(4).slice(0, n);
+    const hex = (n: number) => "0123456789abcdef".repeat(8).slice(0, n);
+    const telegram = `123456789:${body(35)}`;
+
+    it.each([
+      ["Anthropic", `sk-ant-api03-${body(40)}`],
+      ["OpenRouter", `sk-or-v1-${hex(64)}`],
+      ["OpenAI-style", `sk-${body(48)}`],
+      ["xAI", `xai-${body(40)}`],
+      ["Groq", `gsk_${body(40)}`],
+      ["GitHub classic", `ghp_${body(36)}`],
+      ["GitHub OAuth", `gho_${body(36)}`],
+      ["GitHub fine-grained", `github_pat_${body(22)}_${body(59)}`],
+      ["GitLab", `glpat-${body(20)}`],
+      ["AWS access key", `AKIA${"ABCDEFGH23456789"}`],
+      ["Google API", `AIza${body(35)}`],
+      ["Telegram bot", telegram],
+      ["Slack", `xoxb-1234567890-${body(12)}`],
+      ["Stripe live secret", `sk_live_${body(24)}`],
+      ["Stripe restricted", `rk_test_${body(24)}`],
+      ["JWT", `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.${body(20)}`],
+      ["Managed Venice", `hven_live_${body(24)}`],
+      ["Agent link", `hvl_${hex(64)}`],
+      ["Tailscale API", `tskey-api-${body(16)}`],
+      ["Tailscale client", `tskey-client-${body(16)}`],
+    ])("redacts a bare %s token", (_label, token) => {
+      const raw = `upstream rejected ${token} for this request`;
+
+      const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+      expect(redacted).toBe("upstream rejected [REDACTED] for this request");
+      expect(redacted).not.toContain(token);
+    });
+
+    it("redacts a Telegram token inside a bot API URL", () => {
+      const raw = `GET https://api.telegram.org/bot${telegram}/getMe failed`;
+
+      const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+      expect(redacted).toBe("GET https://api.telegram.org/bot[REDACTED]/getMe failed");
+      expect(redacted).not.toContain(body(35));
+    });
+
+    it("redacts a whole PEM private key block, including its body", () => {
+      const raw = [
+        "ssh failed with key:",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "MIIEowIBAAKCAQEA0synthetic",
+        "-----END RSA PRIVATE KEY-----",
+        "done",
+      ].join("\n");
+
+      const redacted = redactSensitiveCommandOutput(raw, 1000);
+
+      expect(redacted).toContain("[REDACTED]");
+      expect(redacted).not.toContain("MIIEowIBAAKCAQEA0synthetic");
+      expect(redacted).not.toContain("BEGIN RSA PRIVATE KEY");
+      expect(redacted.endsWith("done")).toBe(true);
+    });
+
+    it("keeps ordinary text that only contains a token prefix", () => {
+      const raw = [
+        "task-manager restarted in risk-assessment mode",
+        "sk-learn-based classifier with 11 features",
+        "gh_ is a prefix and ghp_short is too short",
+        "xoxo hugs and AKIA is an access key prefix",
+        "eyJ is the base64 start of a JSON object",
+        "step 3 of 4 at 12:30:45 with 2 bots",
+        "token count: 12",
+        `sha256 digest ${hex(64)} of the release`,
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
 });

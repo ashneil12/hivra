@@ -128,6 +128,33 @@ describe("scanForSecrets (fail-closed)", () => {
     const files = [file("hermes/orgs/notes.md", "token ghp_" + "A1b2".repeat(10))];
     expect(scanForSecrets(files).some((h) => h.kind === "github_pat")).toBe(true);
   });
+
+  // The snapshot scanner reads the same bare token shapes as the redactor, so a key
+  // that the redactor would mask in a log line also blocks the push in a free-text file.
+  // Tokens are synthetic and built at runtime.
+  const synthetic = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(3).slice(0, n);
+  it.each([
+    ["managed Venice key in a skill", "hermes/skills/x/SKILL.md", `use hven_live_${synthetic(24)}`],
+    ["Bankr key in SOUL.md", "hermes/SOUL.md", `wallet bk_usr_${synthetic(20)}`],
+    ["Telegram bot token in a note", "hermes/orgs/notes.md", `bot 123456789:${synthetic(35)}`],
+    ["Google API key in a script", "hermes/scripts/check.sh", `KEY=AIza${synthetic(35)}`],
+    ["AWS access key in a note", "hermes/orgs/aws.md", "id AKIA" + "ABCDEFGH23456789"],
+    ["GitHub fine-grained PAT in a note", "hermes/orgs/gh.md", `github_pat_${synthetic(22)}_${synthetic(59)}`],
+    ["Slack token in a note", "hermes/orgs/slack.md", `xoxb-1234567890-${synthetic(12)}`],
+    ["PEM block in a skill helper", "hermes/skills/y/key.md", "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"],
+  ])("flags a %s", (_label, path, content) => {
+    const hits = scanForSecrets([file(path, content)]);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].path).toBe(path);
+  });
+
+  it("does not flag ordinary text that only contains a token prefix", () => {
+    const files = [
+      file("hermes/SOUL.md", "task-manager and risk-assessment notes, step 3 of 4 at 12:30:45"),
+      file("hermes/skills/z/SKILL.md", "sha256 digest " + "0123456789abcdef".repeat(4) + " of the build"),
+    ];
+    expect(scanForSecrets(files)).toEqual([]);
+  });
 });
 
 describe("redactStagedFiles", () => {

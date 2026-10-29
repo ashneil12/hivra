@@ -21,17 +21,49 @@ const PUBLIC_KEY_NAME_PATTERN = /(?:^|_)public_?key$/i;
 const QUERY_PARAM_SECRET_PATTERN =
   /([?&](?:key|api_key|access_token|refresh_token|client_secret|session_token|authorization_code|token)=)([^&#\s]+)/gi;
 const BEARER_SECRET_PATTERN = /(\bBearer\s+)([A-Za-z0-9._-]+)/gi;
-const TAILSCALE_AUTH_KEY_PATTERN = /\btskey-auth-[A-Za-z0-9_-]+\b/gi;
-// Managed-Venice proxy keys (hven_live_* / hven_test_*) bill the user's wallet — redact
-// the value wherever it appears, since they ride the provisioner env into command output.
-const MANAGED_VENICE_KEY_PATTERN = /\bhven_(?:live|test)_[A-Za-z0-9_-]+\b/gi;
-// Bankr keys (bk_usr_*, bk_ptr_*, bk_agent_*) move money for a user's wallet. The
-// key is redacted on its own as well as inside an assignment, because it can
-// appear in command output with no name in front of it.
-const BANKR_KEY_PATTERN = /\bbk_[A-Za-z0-9][A-Za-z0-9_-]{9,}/g;
-// Agent-run reporter credentials (hvra_otlp_v1.<claims>.<signature>) ride the
-// launch/start handoff into Proxmox hosts and guests; never echo one.
-const ACTIVITY_COLLECTOR_TOKEN_PATTERN = /hvra_otlp_v1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?/gi;
+// Bare token shapes: a provider, bot, cloud or infrastructure credential that
+// appears with no name in front of it (for example an error body that echoes the
+// key). The redactor masks every match, and the config snapshot scanner
+// (services/config-snapshot.ts) tests the same list, so the two sinks cannot drift.
+// The patterns carry no `g` flag: callers that replace build a global copy, and
+// callers that only test use the pattern as it is.
+//
+// Each shape starts at a token boundary, so `task-` and `risk-` do not match `sk-`.
+// Managed-Venice keys (hven_live_* / hven_test_*) bill a user's wallet; Bankr keys
+// (bk_usr_*, bk_ptr_*, bk_agent_*) move money; reporter credentials
+// (hvra_otlp_v1.<claims>.<signature>) ride the launch handoff into hosts and guests.
+export interface SecretTokenShape {
+  kind: string;
+  pattern: RegExp;
+}
+
+const TOKEN_START = "(?<![A-Za-z0-9])";
+export const SECRET_TOKEN_SHAPES: ReadonlyArray<SecretTokenShape> = [
+  { kind: "private_key_block", pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/ },
+  { kind: "openai_key", pattern: new RegExp(`${TOKEN_START}sk-[A-Za-z0-9_-]{32,}`) },
+  { kind: "anthropic_key", pattern: new RegExp(`${TOKEN_START}sk-ant-[A-Za-z0-9_-]{32,}`) },
+  { kind: "github_pat", pattern: new RegExp(`${TOKEN_START}gh[pousr]_[A-Za-z0-9_]{36,}`) },
+  { kind: "github_pat", pattern: new RegExp(`${TOKEN_START}github_pat_[A-Za-z0-9_]{22,}`) },
+  { kind: "gitlab_pat", pattern: new RegExp(`${TOKEN_START}glpat-[A-Za-z0-9_-]{20,}`) },
+  { kind: "xai_key", pattern: new RegExp(`${TOKEN_START}xai-[A-Za-z0-9_-]{20,}`) },
+  { kind: "groq_key", pattern: new RegExp(`${TOKEN_START}gsk_[A-Za-z0-9]{20,}`) },
+  { kind: "aws_access_key", pattern: new RegExp(`${TOKEN_START}AKIA[0-9A-Z]{16}`) },
+  { kind: "google_api_key", pattern: new RegExp(`${TOKEN_START}AIza[0-9A-Za-z_-]{35}`) },
+  // Telegram bot token: `<bot id>:<35-char secret>`. Also matches inside a bot API URL.
+  { kind: "telegram_bot_token", pattern: /(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}/ },
+  { kind: "slack_token", pattern: new RegExp(`${TOKEN_START}xox[abposr]-[A-Za-z0-9-]{10,}`) },
+  { kind: "stripe_key", pattern: new RegExp(`${TOKEN_START}[rs]k_(?:live|test)_[A-Za-z0-9]{10,}`) },
+  { kind: "jwt", pattern: new RegExp(`${TOKEN_START}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*`) },
+  { kind: "managed_venice_key", pattern: new RegExp(`${TOKEN_START}hven_(?:live|test)_[A-Za-z0-9_-]+`, "i") },
+  { kind: "bankr_key", pattern: new RegExp(`${TOKEN_START}bk_[A-Za-z0-9][A-Za-z0-9_-]{9,}`) },
+  { kind: "activity_collector_token", pattern: /hvra_otlp_v1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?/i },
+  { kind: "agent_link_key", pattern: new RegExp(`${TOKEN_START}hvl_[0-9a-f]{64}(?![0-9a-f])`) },
+  { kind: "tailscale_key", pattern: new RegExp(`${TOKEN_START}tskey-(?:auth|api|client)-[A-Za-z0-9_-]+`, "i") },
+];
+const SECRET_TOKEN_SHAPE_GLOBAL_PATTERNS = SECRET_TOKEN_SHAPES.map(
+  ({ pattern }) => new RegExp(pattern.source, `${pattern.flags}g`),
+);
+
 const GENERIC_SECRET_LIKE_PATTERN =
   /\b(sk-(?:live|test|proj)-[A-Za-z0-9_-]+|(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-secret(?:-[A-Za-z0-9]+)*|secret(?:-[A-Za-z0-9]+)+))\b/gi;
 
@@ -43,12 +75,13 @@ export function redactSensitiveCommandOutput(raw: string, maxLength = 300): stri
       PUBLIC_KEY_NAME_PATTERN.test(name) ? match : `${name}=[REDACTED]`,
     )
     .replace(QUERY_PARAM_SECRET_PATTERN, '$1[REDACTED]')
-    .replace(BEARER_SECRET_PATTERN, '$1[REDACTED]')
-    .replace(TAILSCALE_AUTH_KEY_PATTERN, '[REDACTED]')
-    .replace(MANAGED_VENICE_KEY_PATTERN, '[REDACTED]')
-    .replace(BANKR_KEY_PATTERN, '[REDACTED]')
-    .replace(ACTIVITY_COLLECTOR_TOKEN_PATTERN, '[REDACTED]')
-    .replace(GENERIC_SECRET_LIKE_PATTERN, '[REDACTED]');
+    .replace(BEARER_SECRET_PATTERN, '$1[REDACTED]');
 
-  return redacted.length > maxLength ? redacted.slice(0, maxLength) : redacted;
+  const shaped = SECRET_TOKEN_SHAPE_GLOBAL_PATTERNS.reduce(
+    (text, pattern) => text.replace(pattern, '[REDACTED]'),
+    redacted,
+  );
+  const generic = shaped.replace(GENERIC_SECRET_LIKE_PATTERN, '[REDACTED]');
+
+  return generic.length > maxLength ? generic.slice(0, maxLength) : generic;
 }

@@ -26,6 +26,7 @@ import "server-only";
 
 import { createHash } from "crypto";
 
+import { SECRET_TOKEN_SHAPES } from "@/lib/command-output-redaction";
 import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { buildHermesVmidBoundGuestSshPrelude, isHermesInstanceId } from "@/lib/proxmox/hermes-guest-ssh";
 
@@ -222,14 +223,11 @@ export function redactStagedFiles(files: StagedFile[]): StagedFile[] {
 const FORBIDDEN_PATH_RX =
   /(^|\/)(\.env|[^/]+\.env|auth\.json|[^/]+\.db|[^/]+\.sqlite3?)$|(^|\/)(secrets|sessions|logs)\//i;
 
-// Content secret patterns — port of the Python scanner in host-config-snapshot.sh.
-const CONTENT_PATTERNS: ReadonlyArray<[string, RegExp]> = [
-  ["private_key_block", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
-  ["github_pat", /gh[pousr]_[A-Za-z0-9_]{36,}/],
-  ["openai_key", /sk-[A-Za-z0-9_-]{32,}/],
-  ["anthropic_key", /sk-ant-[A-Za-z0-9_-]{32,}/],
-  ["aws_access_key", /AKIA[0-9A-Z]{16}/],
-];
+// Content secret patterns. Shared with the redactor (command-output-redaction.ts), so a
+// bare token shape that the redactor masks in command output also blocks a push here.
+const CONTENT_PATTERNS: ReadonlyArray<[string, RegExp]> = SECRET_TOKEN_SHAPES.map(
+  ({ kind, pattern }) => [kind, pattern],
+);
 
 const CONFIG_LIKE_EXT = new Set([".yaml", ".yml", ".json", ".toml", ".ini"]);
 const SENSITIVE_FIELD_KEYS = new Set([
