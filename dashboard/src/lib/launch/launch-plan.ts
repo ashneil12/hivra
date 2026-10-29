@@ -32,7 +32,7 @@ type Size = { cpu: number; ram: number };
 export type LaunchFitSubject = {
   /** Catalog runtime whose compatibility evidence a target must carry. */
   placementRuntimeId: string;
-  /** "prepared" is a preview computer Hivra already set up; no plan applies. */
+  /** "prepared" is a computer Hivra already set up; no plan applies. */
   hivraCloud: "plan" | "unavailable" | "prepared";
   minPlan: PlanTier;
   /** Smallest size without an optional browser. */
@@ -230,7 +230,7 @@ export function ownServerHolds(subject: LaunchFitSubject, targets: readonly Depl
  * so instead of reading as an answer, and the badge never promises more than
  * the launch gates allow. */
 export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence): LaunchFit | null {
-  if (subject.hivraCloud === "prepared") return { label: "Preview", tone: "neutral" };
+  if (subject.hivraCloud === "prepared") return { label: "Prepared computer", tone: "neutral" };
   if (evidence.selfHosted && !subject.ownServer) return { label: "Runs on Hivra Cloud only", tone: "needs" };
   if (evidence.selfHosted) {
     if (evidence.targetsLoading) return null;
@@ -549,7 +549,7 @@ export function costSummary({
   planOnHold?: string | null;
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
-  if (profileId === "omarchy") return "Nothing is bought. It uses a prepared preview computer.";
+  if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already prepared.";
   if (substrate === "hivra-cloud" && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
   }
@@ -573,7 +573,7 @@ export function launchChangesSummary({
 }): string {
   const profile = PROFILE_DETAILS[profileId];
   const host = targetName ?? "your server";
-  if (profileId === "omarchy") return "Claims the prepared Omarchy preview computer. Nothing is bought.";
+  if (profileId === "omarchy") return "Claims the prepared Omarchy computer. Nothing is bought.";
   if (profileId === "windows") {
     return `Creates one Windows setup computer on ${host}, attaches the ISO you chose and starts the installer. Nothing is bought or uploaded, and Hivra Cloud isn't used.`;
   }

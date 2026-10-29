@@ -1,5 +1,7 @@
 # Hermes fleet update: recon and plan
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 Status: recon only. Nothing here has been rolled to a customer box. Evidence level
 for each claim is marked (read-only check on 2026-10-08, or UNVERIFIED).
 

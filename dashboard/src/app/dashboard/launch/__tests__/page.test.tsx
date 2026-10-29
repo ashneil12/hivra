@@ -399,7 +399,7 @@ describe("LaunchPage", () => {
     expect(within(computers).getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server");
     expect(within(computers).getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Needs your own server");
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
-    expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Preview");
+    expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Prepared computer");
 
     // Every catalog agent launches here; none hands off to another page.
     expect(within(agents).queryAllByRole("link")).toHaveLength(0);

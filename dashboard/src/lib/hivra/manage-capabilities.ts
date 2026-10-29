@@ -168,7 +168,7 @@ function resizeCap(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCa
   switch (variant) {
     case "prepared": {
       const name = getComputerTemplate(String(row.computer_profile))?.name ?? "prepared";
-      return { kind: "fixed", cap: unavailable("prepared_fixed", `This ${name} preview has a fixed size of ${sizeOf(row)}. Hivra can't resize prepared computers yet.`) };
+      return { kind: "fixed", cap: unavailable("prepared_fixed", `This prepared ${name} computer has a fixed size of ${sizeOf(row)}. Hivra can't resize prepared computers yet.`) };
     }
     case "windows-my-server":
       return { kind: "fixed", cap: unavailable("windows_fixed", `This Windows computer uses ${sizeOf(row)}. Hivra can't resize Windows computers yet.`) };

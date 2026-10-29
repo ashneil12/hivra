@@ -171,7 +171,9 @@ export const OMARCHY_TEMPLATE: ComputerTemplateDefinition = {
   name: "Omarchy",
   kind: "operating-system",
   summary: "An opinionated Arch + Hyprland computer for development and AI work.",
-  status: "private-preview",
+  // Owner decision (2026-09-30): offered, not a preview. Its condition is the
+  // launch mode: a launch claims the deployment's prepared computer.
+  status: "available",
   launchable: true,
   launchMode: "prepared-canary",
   upstream: {
@@ -220,11 +222,11 @@ export const OMARCHY_TEMPLATE: ComputerTemplateDefinition = {
 };
 
 /**
- * Windows is deliberately modeled now so the web app, native app, API, and
- * eventual provisioner share one stable computer-profile identity. Canary can
- * claim the prepared evaluation guest and open its owner-scoped setup console;
- * ordinary target provisioning remains closed until a licensed image pipeline
- * and the complete RDP/Guacamole lifecycle are accepted.
+ * Windows shares one computer-profile identity across the web app, native app,
+ * API, and provisioner. It launches on a server the owner connected, from their
+ * own licensed ISO (the windows-installer runtime). A deployment can also offer
+ * a prepared Windows guest. Hivra-managed Windows capacity stays closed until
+ * the commercial lane in commercialAvailability is evidenced.
  */
 export const WINDOWS_TEMPLATE: ComputerTemplateDefinition = {
   id: "windows",
@@ -232,7 +234,9 @@ export const WINDOWS_TEMPLATE: ComputerTemplateDefinition = {
   name: "Windows",
   kind: "operating-system",
   summary: "A persistent Windows computer with an interactive browser setup console.",
-  status: "private-preview",
+  // Owner decision (2026-09-30): offered on the owner's own server from their
+  // own licensed image. Hivra-managed Windows stays behind commercialAvailability.
+  status: "available",
   launchable: true,
   launchMode: "prepared-canary",
   upstream: {
@@ -324,7 +328,7 @@ export function assessComputerTemplateTarget(
   if (!requirements.architectures.includes(normalizeArchitecture(target.architecture) as "amd64")) {
     issues.push({
       code: "UNSUPPORTED_ARCHITECTURE",
-      message: `The ${template.name} preview currently supports amd64 KVM hosts only.`,
+      message: `${template.name} currently supports amd64 KVM hosts only.`,
     });
   }
   if (!requirements.drivers.includes(target.driver as ComputerIsolationDriver)) {
@@ -362,7 +366,7 @@ export function assessComputerTemplateTarget(
   if (!template.launchable || template.launchMode !== "standard") {
     issues.push({
       code: "CONTROL_PLANE_ADAPTER_UNAVAILABLE",
-      message: "The install contract is pinned, but Hivra launch, access-grant, and teardown acceptance is still in private preview.",
+      message: `Hivra does not build ${template.name} on a new target; it launches only through its own prepared or own-ISO path.`,
     });
   }
 
