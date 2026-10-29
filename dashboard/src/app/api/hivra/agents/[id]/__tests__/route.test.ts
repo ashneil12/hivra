@@ -1393,10 +1393,13 @@ describe("GET /api/hivra/agents/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(mockSeedAgentBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.253.0.90" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.253.0.90", vmid: 1090 }),
       expect.objectContaining({
-        PROXMOX_NODE: "pve-home",
-        HIVRA_USER_INFRA_CONNECTION: "true",
+        env: expect.objectContaining({
+          PROXMOX_NODE: "pve-home",
+          HIVRA_USER_INFRA_CONNECTION: "true",
+        }),
+        infrastructureBindingTagEnforced: true,
       }),
     );
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalled();
@@ -1580,7 +1583,7 @@ describe("GET /api/hivra/agents/[id]", () => {
       // The host environment is resolved only if a round trip is due, and
       // then through the owner-scoped execution context.
       const environment = mockAdvanceComputerContract.mock.calls[0][2] as () => Promise<Record<string, string>>;
-      await expect(environment()).resolves.toEqual(expect.objectContaining({ PROXMOX_NODE: "fixturenode10" }));
+      await expect(environment()).resolves.toEqual(expect.objectContaining({ env: expect.objectContaining({ PROXMOX_NODE: "fixturenode10" }) }));
     });
 
     // Review of D1: a bootstrap retry on the next poll rewrites the same

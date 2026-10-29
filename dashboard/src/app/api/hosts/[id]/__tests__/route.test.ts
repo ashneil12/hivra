@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { deleteHetznerServer } from "@/lib/services/hetzner-instance-service";
 import { deleteProxmoxInstance } from "@/lib/services/proxmox-instance-service";
+import { locateProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
@@ -17,6 +18,10 @@ jest.mock("@/lib/services/hetzner-instance-service", () => ({
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   deleteProxmoxInstance: jest.fn(),
+}));
+
+jest.mock("@/lib/recovery/recover-orphan-provisioning", () => ({
+  locateProxmoxInstanceAcrossFleet: jest.fn(),
 }));
 
 describe("DELETE /api/hosts/[id]", () => {
@@ -487,5 +492,71 @@ describe("DELETE /api/hosts/[id]", () => {
     expect(json.data.deletedResources).toEqual({ proxmoxDeleted: 3, hetznerDeleted: 0 });
     expect(mockedDeleteProxmoxInstance).toHaveBeenCalledTimes(3);
     expect(maxInFlight).toBe(1);
+  });
+
+  describe("a Proxmox VM missing on its routed host", () => {
+    const mockedRecover = locateProxmoxInstanceAcrossFleet as jest.MockedFunction<
+      typeof locateProxmoxInstanceAcrossFleet
+    >;
+    const missingOnRoutedHost = {
+      id: "inst-123",
+      host_id: "host-123",
+      hetzner_server_id: null,
+      config: {
+        infrastructure: {
+          provider: "proxmox",
+          hostId: "host-123",
+          hostSlug: "fixturelegacy",
+          vmid: 301,
+          privateIpv4: "10.250.30.51",
+          gatewayHost: "agent.example",
+        },
+      },
+    };
+
+    beforeEach(() => {
+      mockedAuth.mockResolvedValue({ userId: "user-123" } as Awaited<ReturnType<typeof auth>>);
+      mockedRecover.mockReset();
+      mockedDeleteProxmoxInstance.mockResolvedValueOnce({
+        ok: true,
+        stdout: "HERMES_PROXMOX_DELETE_VM_MISSING 301\n",
+        stderr: "",
+      });
+    });
+
+    it("keeps the instance visible when the fleet cannot prove the VM gone", async () => {
+      mockedRecover.mockResolvedValue({ status: "inconclusive" });
+      mockHostAndInstances(
+        { id: "host-123", name: "FixtureLegacy", status: "running", hetzner_server_id: null },
+        [missingOnRoutedHost],
+      );
+
+      const response = await deleteHost();
+      const json = await response.json();
+
+      expect(response.status).toBe(502);
+      expect(json.error).toBe("Failed to delete linked server resources");
+      expect(mockedRecover).toHaveBeenCalledWith(expect.objectContaining({ id: "inst-123" }));
+      // No soft-delete of the instance and no host soft-delete.
+      const instanceUpdates = mockedFrom.mock.calls.filter(([name]) => name === "hermes_instances");
+      expect(instanceUpdates).toHaveLength(1);
+      const hostUpdates = mockedFrom.mock.calls.filter(([name]) => name === "hermes_hosts");
+      expect(hostUpdates).toHaveLength(1);
+    });
+
+    it("soft-deletes the instance once every known host reports the VM absent", async () => {
+      mockedRecover.mockResolvedValue({ status: "gone" });
+      mockHostAndInstances(
+        { id: "host-123", name: "FixtureLegacy", status: "running", hetzner_server_id: null },
+        [missingOnRoutedHost],
+      );
+
+      const response = await deleteHost();
+      const json = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(json.data.deletedResources).toEqual({ proxmoxDeleted: 1, hetznerDeleted: 0 });
+      expect(mockedRecover).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -95,6 +95,39 @@ function inferDeletionReason(instance: PurgeCandidate): string {
 }
 
 /**
+ * Compare-and-set claim on the row the sweep selected, run right before any
+ * destroy. The candidates were read at the start of the run, and a payment can
+ * restore a row in the meantime, so the claim only matches while the row still
+ * has the status and lifecycle it was selected under (and a scheduled row is
+ * still due). A restored row matches nothing and is skipped. Returns false when
+ * the row changed.
+ */
+async function claimPurgeCandidate(
+  db: NonNullable<typeof supabaseAdmin>,
+  instance: PurgeCandidate,
+  dueBeforeIso: string,
+): Promise<boolean> {
+  let query = db
+    .from("hermes_instances")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", instance.id);
+  query =
+    instance.status === null ? query.is("status", null) : query.eq("status", instance.status);
+  query =
+    instance.lifecycle_state === null
+      ? query.is("lifecycle_state", null)
+      : query.eq("lifecycle_state", instance.lifecycle_state);
+  if (instance.status === "scheduled_for_deletion") {
+    query = query.lte("scheduled_deletion_at", dueBeforeIso);
+  }
+  const { data, error } = await query.select("id").maybeSingle();
+  if (error) {
+    throw new Error(`Failed to claim instance for purge: ${error.message || "unknown"}`);
+  }
+  return data != null;
+}
+
+/**
  * GET /api/cron/purge-expired
  *
  * Invoked daily at midnight by Vercel Cron (see vercel.json).
@@ -410,6 +443,25 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      // Destroy only what is still the row we selected. A payment that restored
+      // the row since the candidate read changes its status/lifecycle, so the
+      // claim matches nothing and the row is left alone.
+      const claimed = await claimPurgeCandidate(supabaseAdmin, instance, now);
+      if (!claimed) {
+        log.warn("skipping purge: instance changed after selection (restored or re-scheduled)", {
+          ...ctx,
+          instanceId: instance.id,
+          failureType: "purge_skipped_row_changed",
+        });
+        results.push({
+          id: instance.id,
+          name: instance.name,
+          success: false,
+          error: "skipped: instance changed after selection",
+        });
+        continue;
+      }
+
       const deletionReason = inferDeletionReason(instance);
 
       // Step 0: Snapshot the row into instance_deletion_archives BEFORE the
@@ -461,6 +513,29 @@ export async function GET(req: NextRequest) {
           throw new Error(
             `proxmox delete failed: ${(result.error || result.stderr || "unknown").slice(0, 240)}`,
           );
+        }
+        // The host script exits 0 when the VM is not on the routed host, so a
+        // miss there is not proof of teardown. Only a fleet-wide NOT_FOUND
+        // (every known host checked) counts as gone; anything else leaves the
+        // row for a later run.
+        const vmMissingOnRoutedHost = (result.stdout || "")
+          .split(/\r?\n/)
+          .some((line) => /^HERMES_PROXMOX_DELETE_VM_MISSING \d+$/.test(line.trim()));
+        if (vmMissingOnRoutedHost) {
+          const { locateProxmoxInstanceAcrossFleet } = await import(
+            "@/lib/recovery/recover-orphan-provisioning"
+          );
+          const recovery = await locateProxmoxInstanceAcrossFleet(instance);
+          if (recovery.status !== "gone") {
+            log.warn("proxmox vm missing on routed host but not proven gone; row left for a later run", {
+              ...ctx,
+              instanceId: instance.id,
+              proxmoxVmid: proxmoxInfra.vmid,
+              failureType: "purge_proxmox_vm_unverified",
+              recoveryStatus: recovery.status,
+            });
+            throw new Error(`proxmox vm not verified removed (${recovery.status})`);
+          }
         }
         log.info("proxmox vm deleted", {
           ...ctx,

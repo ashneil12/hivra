@@ -17,6 +17,12 @@
 
 import { CURATED_SKILLS } from "@/data/curated-skills";
 import { log } from "@/lib/logger";
+import {
+  buildPinnedGuestHostScript,
+  resolvePinnedGuestTarget,
+  type PinnedGuestAuthority,
+  type PinnedGuestTarget,
+} from "@/lib/hivra/pinned-guest-seed";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 import { bankrSkillSlug, loadableSkillContent, SkillContentError } from "./skill-file";
 
@@ -106,25 +112,26 @@ echo HIVRA_BANKR_SKILLS_OK
 `;
 }
 
-// The script that runs ON the selected Proxmox host (as root). STREAMS the
-// base64-wrapped guest script to the guest over STDIN — the suite is large
-// (dozens of skills), so the inline `ssh host "echo '$OUTER' | base64 -d | ..."`
-// form used by agent-bootstrap would blow the inner command-line length limit.
-// Same host->guest key + ssh options the provisioner uses.
-export function buildBankrSkillsHostScript(ip: string, guestScript: string): string {
-  const outer = b64(guestScript);
-  return `#!/usr/bin/env bash
-set -euo pipefail
-KEY=/etc/hivra/keys/vm-orchestrator
-[ -f "$KEY" ] || { echo "vm key $KEY missing" >&2; exit 1; }
-printf '%s' '${outer}' | ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes "ubuntu@${ip}" "base64 -d | sudo bash"
-`;
+// The script that runs ON the selected Proxmox host (as root). It streams the
+// base64-wrapped guest script to the guest over STDIN (the suite is large, so it
+// can't ride a command line) over the VMID-bound path: the host checks the VM's
+// owner binding tag and configured IP, then pins SSH to the guest host key QEMU
+// Guest Agent attests (pinned-guest-seed.ts). A box that can't be pinned gets
+// nothing.
+export function buildBankrSkillsHostScript(target: PinnedGuestTarget, guestScript: string): string {
+  return buildPinnedGuestHostScript(target, guestScript);
 }
+
+/** The agent's resolved execution context, as far as skill seeding reads it. */
+export type SkillSeedAuthority = PinnedGuestAuthority & {
+  env: Parameters<typeof runProxmoxHostScript>[1];
+};
 
 export interface BankrSkillsSeedAgent {
   id: string;
   type?: string | null;
   ip?: string | null;
+  vmid?: number | null;
 }
 
 export interface BankrSkillsSeedResult {
@@ -139,7 +146,7 @@ export interface BankrSkillsSeedResult {
 // next poll if this returns ok:false.
 export async function seedBankrSkillsOntoBox(
   agent: BankrSkillsSeedAgent,
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: SkillSeedAuthority,
 ): Promise<BankrSkillsSeedResult> {
   const dir = bankrSkillsDirForType(agent.type);
   if (!dir) return { ok: false, count: 0, skipped: "unsupported_type" };
@@ -148,7 +155,7 @@ export async function seedBankrSkillsOntoBox(
   const files = collectBankrSkillFiles();
   if (files.length === 0) return { ok: false, count: 0, skipped: "no_skills" };
 
-  const result = await seedSkillFilesOntoBox(dir, ip, files, env);
+  const result = await seedSkillFilesOntoBox(dir, agent, files, authority);
   if (result.ok) return { ok: true, count: files.length };
   return { ok: false, count: 0, error: result.error };
 }
@@ -160,16 +167,21 @@ export async function seedBankrSkillsOntoBox(
 // (skill-install.ts) builds on this so there is ONE SSH path to the box, not two.
 export async function seedSkillFilesOntoBox(
   dir: string,
-  ip: string,
+  box: { ip?: string | null; vmid?: number | null },
   files: BankrSkillFile[],
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: SkillSeedAuthority,
 ): Promise<{ ok: boolean; error: string }> {
-  const script = buildBankrSkillsHostScript(ip, buildBankrSkillsGuestScript(dir, files));
+  // Fails closed: a box that can't be pinned to its VMID gets nothing.
+  const pinned = resolvePinnedGuestTarget(box, authority);
+  if (!pinned.ok) {
+    return { ok: false, error: `this box's identity can't be verified (${pinned.reason}), so nothing was sent to it` };
+  }
+  const script = buildBankrSkillsHostScript(pinned.target, buildBankrSkillsGuestScript(dir, files));
   let res: HostScriptResult;
   try {
     // Cap under the poll route's 60s maxDuration. SSH connect is ~15s; writing a
     // few dozen small files is instant, so a hang can't starve the request budget.
-    res = await runProxmoxHostScript(script, env, 30_000);
+    res = await runProxmoxHostScript(script, authority.env, 30_000);
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

@@ -252,9 +252,9 @@ export async function installToolsOnBox(
   let skillsFailed: string[] | undefined;
   if (skillIds.length > 0) {
     const skillRes = await installCuratedSkillsOnBox(
-      { id: agent.id, type: agent.type ?? null, ip: agent.ip ?? null },
+      { id: agent.id, type: agent.type ?? null, ip: agent.ip ?? null, vmid: agent.vmid ?? null },
       skillIds,
-      authority.env,
+      authority,
     );
     if (!skillRes.ok) {
       // MCP already landed; flag which tools carried skills that didn't seed.

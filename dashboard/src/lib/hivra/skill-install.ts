@@ -22,10 +22,10 @@ import {
   bankrSkillsDirForType,
   seedSkillFilesOntoBox,
   type BankrSkillFile,
+  type SkillSeedAuthority,
 } from "@/lib/hivra/bankr-skills-seed";
 import { loadableSkillContent, SkillContentError } from "@/lib/hivra/skill-file";
 import { log } from "@/lib/logger";
-import type { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 
 const LOG_SOURCE = "hivra/skill-install";
 
@@ -33,6 +33,7 @@ export interface SkillInstallAgent {
   id: string;
   type?: string | null;
   ip?: string | null;
+  vmid?: number | null;
 }
 
 export interface SkillInstallResult {
@@ -151,7 +152,7 @@ function unloadableSkillsError(ids: string[]): string {
 export async function installCuratedSkillsOnBox(
   agent: SkillInstallAgent,
   skillIds: string[],
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: SkillSeedAuthority,
 ): Promise<SkillInstallResult> {
   const dir = bankrSkillsDirForType(agent.type);
   if (!dir) return { ok: false, installed: [], skipped: skillIds, error: "unsupported agent type" };
@@ -170,7 +171,7 @@ export async function installCuratedSkillsOnBox(
     return { ok: skipped.length === 0, installed: [], skipped };
   }
 
-  const res = await seedSkillFilesOntoBox(dir, ip, files, env);
+  const res = await seedSkillFilesOntoBox(dir, agent, files, authority);
   if (!res.ok) return { ok: false, installed: [], skipped, error: res.error };
   return { ok: true, installed: files.map((f) => f.id), skipped };
 }

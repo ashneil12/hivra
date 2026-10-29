@@ -12,7 +12,11 @@ import {
   type ManagedVeniceTokenTransferLogResolution,
 } from "@/lib/billing/managed-venice-token-reconciliation";
 import { log } from "@/lib/logger";
+import { createBaseChainReader } from "@/lib/billing/base-transfer-scan";
 
+// observedAt and blockTimestamp are still accepted so existing callers keep
+// working, but the transfer's time is read from the chain (see
+// readTransferBlockTimestamp) and the caller's values are ignored.
 const SettlementRequestSchema = z.object({
   quoteId: z.string().trim().min(1),
   transactionHash: z.string().trim().min(1),
@@ -51,6 +55,23 @@ function retryLater(
   );
   response.headers.set("Retry-After", String(RETRY_AFTER_SECONDS));
   return response;
+}
+
+// The time a transfer happened is the block it was mined in, read from the
+// chain. The quote window is decided by that time, so a caller-supplied time
+// must never decide it: a late transfer claimed as in-window would be credited.
+// Every log of a tx sits in the tx's one block, so the receipt gives the block.
+// Returns an ISO timestamp; throws when the chain cannot answer.
+async function readTransferBlockTimestamp(transactionHash: string): Promise<string> {
+  const chain = createBaseChainReader({});
+  const receipt = await chain.call<{ blockNumber?: unknown } | null>("eth_getTransactionReceipt", [
+    transactionHash.trim().toLowerCase(),
+  ]);
+  if (!receipt || typeof receipt.blockNumber !== "string" || !/^0x[0-9a-fA-F]+$/.test(receipt.blockNumber)) {
+    throw new Error("Invalid eth_getTransactionReceipt block number from Base RPC");
+  }
+  const blockTimestampSec = await chain.blockTimestamp(Number.parseInt(receipt.blockNumber, 16));
+  return new Date(blockTimestampSec * 1000).toISOString();
 }
 
 function getSettlementSecret() {
@@ -137,12 +158,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    let transferTime: string;
+    try {
+      transferTime = await readTransferBlockTimestamp(parsed.data.transactionHash);
+    } catch (error) {
+      return retryLater("rpc_unavailable", delivery, { cause: error, logLevel: "error" });
+    }
+
     const result = await settleManagedVeniceTokenQuote({
       quoteId: quote.id,
       transactionHash: parsed.data.transactionHash,
       tokenAmountRaw: parsed.data.tokenAmountRaw,
-      observedAt: parsed.data.observedAt,
-      blockTimestamp: parsed.data.blockTimestamp || null,
+      // The quote window is checked against this time, so it is the transfer's
+      // own block time from the chain, never the caller's claimed time.
+      observedAt: transferTime,
+      blockTimestamp: transferTime,
       logIndex: resolution.logIndex,
       dedupeLogIndex: resolution.dedupeLogIndex,
     });

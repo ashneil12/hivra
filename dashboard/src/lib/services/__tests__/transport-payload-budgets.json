@@ -240,9 +240,9 @@
     },
     "bankr-skills": {
       "proxmoxHostScript": {
-        "bytes": 762909,
+        "bytes": 765554,
         "limit": "sudo-transport-script",
-        "percent": 76.3
+        "percent": 76.6
       },
       "providerSeedScript": {
         "bytes": 282839,

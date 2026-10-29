@@ -33,6 +33,7 @@
 import { encryptApiKey } from "@/lib/crypto";
 import { log } from "@/lib/logger";
 import { isClearableStaleProxmoxMetadataRow } from "@/lib/proxmox-metadata-row";
+import { buildHermesVmidBoundGuestSshPrelude, isHermesInstanceId } from "@/lib/proxmox/hermes-guest-ssh";
 import { reconcileSoulSeedAfterReady } from "@/lib/recovery/soul-seed-reconcile";
 import { removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
 import type { ProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructure";
@@ -150,6 +151,12 @@ function configInfraNode(config: Record<string, unknown> | null | undefined): st
  */
 function buildDiscoveryScript(instanceId: string): string {
   const idPrefix = instanceId.slice(0, 8);
+  const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: "hermes",
+    connectTimeoutSeconds: 5,
+    quiet: true,
+    ...(isHermesInstanceId(instanceId) ? { expectedInstanceId: instanceId } : {}),
+  });
   return `
 set -uo pipefail
 
@@ -189,7 +196,17 @@ fi
 # -n is required here: without it, nested guest SSH can consume the remaining
 # host-side discovery script from stdin, leaving stdout empty and making a
 # real VM look unrecoverable.
-BEARER=$(ssh -n -i /etc/hivra/keys/vm-orchestrator -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o BatchMode=yes "hermes@$PRIVIP" "sudo -n grep -oE 'Bearer [a-f0-9]{64}' /opt/hermes/instances/${instanceId}/Caddyfile 2>/dev/null | head -1 | cut -d' ' -f2" 2>/dev/null)
+# The bearer is a secret, so the guest is reached only over the VMID-bound,
+# host-key-pinned path; a guest that can't be pinned yields no bearer.
+# A function (not inline in $(...)): the prelude's case patterns don't parse
+# inside a command substitution. The subshell keeps its exit and trap local.
+read_guest_bearer() (
+  PRIVATE_IP="$PRIVIP"
+  VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator
+${guestSshPrelude}
+  "\${GUEST_SSH[@]}" "sudo -n grep -oE 'Bearer [a-f0-9]{64}' /opt/hermes/instances/${instanceId}/Caddyfile 2>/dev/null | head -1 | cut -d' ' -f2" </dev/null
+)
+BEARER=$(read_guest_bearer 2>/dev/null)
 if [ -z "$BEARER" ]; then
   echo "RESULT NO_BEARER"
   echo "VMID=$VMID"
@@ -601,6 +618,43 @@ export type RecoverProxmoxAcrossFleetResult =
   | { status: "gone" }
   | { status: "inconclusive" }
   | { status: "error"; error: unknown };
+
+export type LocateProxmoxAcrossFleetResult =
+  | { status: "found"; found: FoundProxmoxVm }
+  | { status: "gone" }
+  | { status: "inconclusive" };
+
+/**
+ * Read-only fleet search: says where the row's VM is, without touching the
+ * row. Teardown paths (purge, host delete) use this, because a reconcile
+ * clears scheduled_deletion_at and can mark the row running, which would
+ * revive a box that is being torn down.
+ */
+export async function locateProxmoxInstanceAcrossFleet(
+  row: RecoverableProxmoxRow,
+): Promise<LocateProxmoxAcrossFleetResult> {
+  // "Gone" proves a teardown, so it needs the whole fleet: the env fallback
+  // list used by the recovery sweeps may be partial, and a VM on a host
+  // missing from it would read as gone. No registry, no verdict.
+  if (!supabaseAdmin) return { status: "inconclusive" };
+  const { data, error } = await supabaseAdmin.from("proxmox_hosts").select("id");
+  const slugs = (data ?? [])
+    .map((entry) => (entry as { id?: unknown }).id)
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (error || slugs.length === 0) {
+    log.warn("proxmox fleet locate: host registry unreadable or empty; no verdict", {
+      source: SOURCE,
+      failureType: "proxmox_locate_registry_unavailable",
+      instanceId: row.id,
+      errorMessage: error?.message,
+    });
+    return { status: "inconclusive" };
+  }
+  // Stopped VMs count as present: a teardown must not call a stopped VM gone.
+  const search = await searchAllHosts(row, slugs, true);
+  if (search.found) return { status: "found", found: search.found };
+  return { status: search.gone ? "gone" : "inconclusive" };
+}
 
 /**
  * Resolve a suspected routing miss against the complete configured fleet.

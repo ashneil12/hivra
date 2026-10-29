@@ -5,7 +5,10 @@ import { z } from "zod";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { supabaseAdmin } from "@/lib/supabase";
 import { BACKUP_ADDON } from "@/lib/subscription";
-import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
+import {
+  hasPlanAccessStatus,
+  isLiveStripeSubscriptionId,
+} from "@/lib/billing/subscription-status";
 import { getStripe } from "@/lib/stripe";
 import { enableServerBackup } from "@/lib/hetzner/client";
 import { log } from "@/lib/logger";
@@ -81,6 +84,16 @@ export async function POST(req: NextRequest) {
 
     if (!sub || !hasPlanAccessStatus(sub.status) || !sub.stripe_subscription_id) {
       return apiError("Active subscription required to purchase addons", 403);
+    }
+
+    // A manual grant (manual_ id) has no Stripe subscription to add the item to,
+    // so nothing would bill the backups. Refuse before Hetzner is switched on.
+    if (!isLiveStripeSubscriptionId(sub.stripe_subscription_id)) {
+      return apiError(
+        "This plan is not attached to a live Stripe subscription, so backups cannot be billed. Please use secure checkout first.",
+        409,
+        { failureType: "backup_addon_manual_requires_checkout" }
+      );
     }
 
     if (!BACKUP_ADDON.priceId) {
