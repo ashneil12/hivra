@@ -93,6 +93,7 @@ function published(overrides: Partial<HivraMigrationConfig> = {}): HivraMigratio
     ...HIVRA_MIGRATION,
     published: true,
     announcedAt: "2026-10-21T16:00:00Z",
+    claimRecordsUrl: null,
     // 21 Oct 16:00 UTC + 14 days ends during 4 Nov, so 5 Nov 2026 (a Thursday) is the first sale day.
     // Thirteen weekly sales end on 28 Jan 2027, the day after the claim window's last day (27 Jan).
     founder: { ...HIVRA_MIGRATION.founder!, weeks: 13, saleStart: "2026-11-05", saleDay: "Thursday", burnDate: "2027-02-04" },
@@ -145,8 +146,8 @@ describe("/token/migration", () => {
   });
 
   describe("when it is not served", () => {
-    it("is a 404 with a noindex head while the page is not published (the committed config)", async () => {
-      mockMigration.current = null;
+    it("is a 404 with a noindex head while the page is not published", async () => {
+      mockMigration.current = { ...HIVRA_MIGRATION, published: false };
       await expect(HivraMigrationPage()).rejects.toThrow("NEXT_NOT_FOUND");
       expect(await generateMetadata()).toEqual({ robots: { index: false, follow: false } });
     });
