@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { sanitizeDockerName, ProfileService } from '../lib/services/profile-service';
 
 jest.mock('@/lib/supabase', () => ({
@@ -59,6 +63,79 @@ describe('Profile Service Unit Tests', () => {
       expect(parsedPayload.MODEL).toBe("gpt-4o");
       expect(parsedPayload.API_KEY).toBe("sk-12345");
       expect(parsedPayload.PROVIDER).toBe("");
+    });
+
+    it('writes values so that sourcing the .env as shell cannot run them (the supervisor sources this file)', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-patch-'));
+      try {
+        const envPath = path.join(dir, '.env');
+        const marker = path.join(dir, 'PWNED');
+        const cmd = ProfileService.buildEnvPatchCommand(envPath, { API_KEY: `k$(touch ${marker})` });
+
+        // Run the exact python the command pipes into the interpreter.
+        const b64 = cmd.match(/echo "([^"]+)" \| base64 -d/);
+        expect(b64).not.toBeNull();
+        const python = Buffer.from(b64![1], 'base64').toString('utf-8');
+        const patch = spawnSync('python3', ['-I', '-'], { input: python, encoding: 'utf-8' });
+        expect(patch.status).toBe(0);
+
+        // The gateway supervisor runs `set -a; . "$PROFILE_HOME/.env"`. The
+        // value must come back literal and must not run the command.
+        const sourced = spawnSync(
+          '/bin/sh',
+          ['-c', `set -a; . "${envPath}"; set +a; printf '%s' "$API_KEY"`],
+          { encoding: 'utf-8' },
+        );
+        expect(sourced.stdout).toBe(`k$(touch ${marker})`);
+        expect(fs.existsSync(marker)).toBe(false);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('refuses an apostrophe in an env value rather than writing a quote the shell would end early on', () => {
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', { API_KEY: "it's" }))
+        .toThrow(/apostrophe/i);
+    });
+
+    it('refuses a value that ends in a backslash when the file is sourced as shell', () => {
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', { BYOK_KEY: 'C:\\models\\' }, 'shell'))
+        .toThrow(/backslash/i);
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', { BYOK_KEY: 'abc\\\\' }, 'shell'))
+        .toThrow(/backslash/i);
+    });
+
+    it('writes an apostrophe or a trailing backslash unquoted for a compose env_file, the form Docker Compose parses', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-patch-compose-'));
+      try {
+        const envPath = path.join(dir, '.env');
+        const cmd = ProfileService.buildEnvPatchCommand(
+          envPath,
+          { BYOK_KEY: "it's", TAIL_KEY: 'C:\\models\\' },
+          'compose',
+        );
+        const b64 = cmd.match(/echo "([^"]+)" \| base64 -d/);
+        expect(b64).not.toBeNull();
+        const python = Buffer.from(b64![1], 'base64').toString('utf-8');
+        const patch = spawnSync('python3', ['-I', '-'], { input: python, encoding: 'utf-8' });
+        expect(patch.status).toBe(0);
+        expect(fs.readFileSync(envPath, 'utf-8')).toBe("BYOK_KEY=it's\nTAIL_KEY=C:\\models\\\n");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('still refuses a line break in a compose env value, because it would start a new variable line', () => {
+      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', { K: 'a\nEVIL=1' }, 'compose'))
+        .toThrow(/line breaks/i);
+    });
+
+    it('refuses a non-string value, because Python str() of an array puts quotes into the shell line', () => {
+      const updates = { K: ['$(touch /tmp/pwned)'] } as unknown as Record<string, string>;
+      expect(() => ProfileService.buildEnvPatchCommand('/root/.hermes/profiles/test/.env', updates))
+        .toThrow(/must be strings/i);
+      expect(() => ProfileService.buildEnvPatchCommand('/opt/hermes/instances/x/.env', updates, 'compose'))
+        .toThrow(/must be strings/i);
     });
 
     it('falls back to the WebUI agent virtualenv before system python so hermes_cli imports succeed', () => {

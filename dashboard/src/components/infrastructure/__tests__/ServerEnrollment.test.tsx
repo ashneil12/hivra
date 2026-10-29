@@ -63,11 +63,14 @@ function reported(overrides: Partial<NonNullable<ServerEnrollmentDto["report"]>>
   });
 }
 
+const PROMPT = "trap 'stty echo 2>/dev/null' EXIT; trap 'exit 130' INT TERM HUP; printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
+const SEND = `printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
 const ISSUED: ServerEnrollmentIssueResult = {
   enrollment: enrollment(),
-  command: `curl -fsS --proto '=https' -H 'Authorization: Bearer ${CODE}' https://hivra.example/enroll | sudo bash`,
-  dryRunCommand: `curl -fsS --proto '=https' -H 'Authorization: Bearer ${CODE}' https://hivra.example/enroll | bash -s -- --dry-run`,
-  downloadCommand: `curl -fsS --proto '=https' -H 'Authorization: Bearer ${CODE}' https://hivra.example/enroll -o hivra-enroll.sh`,
+  code: CODE,
+  command: `(${PROMPT}; ${SEND}) | sudo bash`,
+  dryRunCommand: `(${PROMPT}; ${SEND}) | bash -s -- --dry-run`,
+  downloadCommand: `d=$(mktemp -d) && cd "$d" && { (${PROMPT}; ${SEND} -o hivra-enroll.sh); }`,
   uninstallCommand: UNINSTALL,
   finalLine: `{ hivra_enroll_entry "$@" HIVRA_ARGS_V1 'https://hivra.example' '${CODE}' 'ssh-ed25519 AAAA' 'K7QM-2XRA' HIVRA_END_V1; }`,
   downloadSha256: "d".repeat(64), scriptVersion: "2026.09.24.1", scriptSha256: "e".repeat(64), accountCode: "K7QM-2XRA",
@@ -104,6 +107,9 @@ describe("the command panel", () => {
     renderDialog();
     expect(await screen.findByTestId("server-enrollment-command")).toHaveTextContent(ISSUED.command);
     expect(screen.getByRole("button", { name: "Copy the setup command" })).toBeInTheDocument();
+    // The command asks for the code at a prompt, so the panel shows it beside the command.
+    expect(screen.getByTestId("server-enrollment-code")).toHaveTextContent(CODE);
+    expect(ISSUED.command).not.toContain(CODE);
     expect(screen.getByText(/Single use · expires in 15:00/)).toBeInTheDocument();
     act(() => { jest.advanceTimersByTime(8_000); });
     expect(screen.getByText(/Single use · expires in 14:52/)).toBeInTheDocument();
@@ -111,6 +117,14 @@ describe("the command panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "View the script first" }));
     expect(screen.getByText("Published script sha256")).toBeInTheDocument();
     expect(screen.getByText(/The downloaded file contains your one-time code\. Delete it when/)).toBeInTheDocument();
+    // The download is its own single-line copy, so a plain multi-line paste of the
+    // check-and-run block never feeds a prompt its next line as the one-time code.
+    expect(screen.getByRole("button", { name: "Copy the download command" })).toBeInTheDocument();
+    expect(screen.getByText(ISSUED.downloadCommand)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy the check-and-run commands" })).toBeInTheDocument();
+    for (const pre of document.querySelectorAll("pre")) {
+      expect(pre.textContent ?? "").not.toMatch(/One-time code|read -r|hse_code|mktemp/);
+    }
     for (const link of document.querySelectorAll("a")) expect(link.getAttribute("href") ?? "").not.toContain(CODE);
     expect(window.location.href).not.toContain(CODE);
     expect(JSON.stringify({ ...window.localStorage })).not.toContain(CODE);

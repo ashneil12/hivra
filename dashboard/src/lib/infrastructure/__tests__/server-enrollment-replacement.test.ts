@@ -133,8 +133,10 @@ describe("issueServerEnrollment (T1, T4, T5, T25)", () => {
     const reachable = jest.fn().mockResolvedValue(true);
     const issued = await issueServerEnrollment(USER, {}, { reachable, body: async () => BODY, now: () => NOW });
 
-    const code = /Bearer (hse1_[a-z2-7]{32})'/.exec(issued.command)?.[1];
+    const code = issued.code;
     expect(code).toMatch(SERVER_ENROLLMENT_CODE_PATTERN);
+    // The command prompts for the code; it never carries it.
+    expect(issued.command).not.toContain(code);
     expect(issued.accountCode).toBe(accountCode(USER));
     expect(issued.finalLine).toContain(`'${code}'`);
     expect(issued.finalLine).toContain(`'${accountCode(USER)}' HIVRA_END_V1; }`);

@@ -16,7 +16,9 @@ The image is pinned to Collector Contrib `0.161.0`. The exporter uses explicit t
 
 ## Agent producers
 
-Run `configure-agent-otel.sh` as root inside a Hivra guest with the local collector endpoint. It enables Claude Code OTLP logs through `/etc/profile.d`, keeps prompt/assistant/tool-body/raw-API capture explicitly disabled, and adds a bounded `[otel]` block to the user's Codex config. It refuses to replace an existing unmanaged Codex telemetry block.
+Run `configure-agent-otel.sh` as root inside a Hivra guest with the local collector endpoint. It enables Claude Code OTLP logs through `/etc/profile.d`, keeps prompt/assistant/tool-body/raw-API capture explicitly disabled, and adds a bounded `[otel]` block to the user's Codex config. The Codex config is written by the agent user itself, never by root, because the agent owns that path. The script refuses a symlink at `~/.codex` or `~/.codex/config.toml` (exit 4) and refuses an agent home owned by root. It refuses to replace an existing unmanaged Codex telemetry block (exit 3). The agent step runs first, and the root-side `/etc/profile.d` file is written only after it succeeds, so a refused run leaves nothing behind.
+
+`test-configure-agent-otel.sh` checks those refusals and the happy path, and that a refusal writes no `/etc/profile.d` file. Run it as a non-root user only: its fixtures are owned by the invoking user, and the script refuses a root-owned home, so a root run would fail for the wrong reason. The real root `runuser` path, with a separate agent account, is not verified by this harness; it needs a Linux guest test.
 
 Claude Code documents OTLP logs/events and the content gates at <https://code.claude.com/docs/en/monitoring-usage>. Codex documents its user-level `[otel]` exporter and `log_user_prompt = false` at <https://learn.chatgpt.com/docs/config-file/config-advanced>. Neither producer proves host or OS activity; coverage becomes observed only after Hivra receives valid telemetry.
 

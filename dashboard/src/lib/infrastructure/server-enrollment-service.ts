@@ -199,6 +199,8 @@ export async function issueServerEnrollment(
   const finalLine = renderEnrollFinalLine({ origin, code, adminPublicKey: keyPair.publicKey, accountCode: ownerAccountCode });
   return {
     enrollment: serverEnrollmentDto(row, null, deps.now()),
+    // The commands ask for this at a prompt, so the panel shows it beside them.
+    code,
     ...serverEnrollmentCommands(origin, code),
     finalLine,
     downloadSha256: sha256Hex(servedScript(body, finalLine)),
