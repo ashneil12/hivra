@@ -12,8 +12,10 @@ export interface OpsEventInput {
   title: string;
   message: string;
   /**
-   * Extra input to the fingerprint only (for example a digest of a raw error message that
-   * is not stored). It is never written to the row.
+   * Extra input to the fingerprint only (for example a digest of a raw error message). The
+   * detail itself is never written to the row, but the stored fingerprint is a hash over it,
+   * so a reader of the fingerprint can test a guessed raw message against it. Low-entropy
+   * messages (internal IPs, VMIDs) are guessable; a keyed hash is a follow-up decision.
    */
   fingerprintDetail?: string;
   severity?: OpsEventSeverity;

@@ -148,9 +148,11 @@ function opsEventMessage(err: unknown, msg: string, verbose: boolean): string {
 }
 
 /**
- * A digest of the raw error message, used only to group ops_events rows. Two errors that
- * share a class and code but carry different messages stay in separate rows, as they did
- * before the message was withheld. Only the digest is passed on, never the text.
+ * A digest of the raw error message, used to group ops_events rows. Two errors that share a
+ * class and code but carry different messages stay in separate rows, as they did before the
+ * message was withheld. Only the digest is passed on, never the text. The digest is folded
+ * into the stored fingerprint, so it does not hide a low-entropy message from a reader of
+ * that fingerprint (see OpsEventInput.fingerprintDetail).
  */
 function fingerprintDetailFor(err: unknown): string | undefined {
   if (!(err instanceof Error) || !err.message) return undefined;
