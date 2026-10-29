@@ -336,6 +336,10 @@ describe("runCapacityPressureSweep", () => {
     expect(summary.failed).toBe(0);
     expect(summary.emailsSent).toBe(2);
     expect(shutdownProxmoxInstance).toHaveBeenCalledTimes(2);
+    // A parked guest must not come back on a host reboot: onboot is cleared at park.
+    for (const call of (shutdownProxmoxInstance as jest.Mock).mock.calls) {
+      expect(call[1]).toMatchObject({ setOnboot: 0 });
+    }
 
     const pauseUpdates = updates.filter((u) => u.patch.lifecycle_state);
     expect(pauseUpdates.map((u) => u.id)).toEqual([

@@ -324,6 +324,10 @@ async function parkInstance(
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
       host_id: candidate.host_id,
     }),
+    // Clear onboot so a PVE host reboot doesn't auto-start the parked VM. Every VM is
+    // provisioned onboot:1, and the capacity park has to keep relieving pressure after
+    // a reboot. The inactivity sweep does the same.
+    setOnboot: 0,
   });
 
   if (isProxmoxVmMissingResult(result)) {
