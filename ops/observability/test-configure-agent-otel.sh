@@ -6,10 +6,12 @@
 #
 # Runs as a non-root user only. The fixtures are owned by the invoking user, and the
 # script refuses a home that root owns, so a root run would fail every case for the
-# wrong reason and pass the link cases without reaching the link logic. On macOS,
-# stand-ins replace runuser and GNU stat, so the agent step runs as the current user.
-# The root-only privilege boundary (runuser to a real agent account) is NOT exercised
-# here and is unverified on a Linux guest.
+# wrong reason and pass the link cases without reaching the link logic. The agent
+# step always runs through a stand-in for runuser: util-linux runuser refuses a
+# non-root caller, so a Linux CI runner would fail every case before the script
+# reaches the link logic. On macOS a stand-in also replaces GNU stat. The root-only
+# privilege boundary (runuser to a real agent account) is NOT exercised here and is
+# unverified on a Linux guest.
 set -euo pipefail
 
 if [ "$(id -u)" = 0 ]; then
@@ -24,16 +26,15 @@ trap 'rm -rf "$work"' EXIT
 
 fakes="$work/bin"
 mkdir -p "$fakes"
-if ! command -v runuser >/dev/null 2>&1; then
-  cat >"$fakes/runuser" <<'STUB'
+# Always a stand-in, even where runuser exists: see the note at the top.
+cat >"$fakes/runuser" <<'STUB'
 #!/bin/sh
 # Test stand-in: drop "-u USER --" and run the rest as the current user.
 while [ "$1" != "--" ]; do shift; done
 shift
 exec "$@"
 STUB
-  chmod 0755 "$fakes/runuser"
-fi
+chmod 0755 "$fakes/runuser"
 if ! stat -c %U / >/dev/null 2>&1; then
   cat >"$fakes/stat" <<'STUB'
 #!/bin/sh
