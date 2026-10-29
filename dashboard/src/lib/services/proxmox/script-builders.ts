@@ -1811,6 +1811,9 @@ rm -f ${shQuote(siteFile)}
 echo HERMES_PROXMOX_ORPHAN_CLEANUP done
 `;
 }
+/** Stderr marker for a dormant archive refused because the guest is not exactly stopped. */
+export const DORMANT_ARCHIVE_NOT_STOPPED_MARKER = "HERMES_DORMANT_ARCHIVE_VM_NOT_STOPPED";
+
 export function buildProxmoxDormantArchiveScript(params: {
   vmid: number;
   archiveDir: string;
@@ -1823,13 +1826,20 @@ VMID=${shQuote(params.vmid)}
 ARCHIVE_DIR=${shQuote(params.archiveDir)}
 INSTANCE_ID=${shQuote(params.instanceId)}
 mkdir -p "$ARCHIVE_DIR"
-before="$(mktemp)"
-find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -print 2>/dev/null | sort > "$before"
 if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "HERMES_DORMANT_ARCHIVE_VM_MISSING $VMID" >&2
-  rm -f "$before"
   exit 1
 fi
+# vzdump --mode stop shuts a running guest down for the dump. A guest that is running
+# or paused was started by someone other than this row's sweep, so refuse anything
+# that is not exactly stopped, before any dump file is written.
+vm_state="$( (qm status "$VMID" 2>/dev/null || true) | sed -n 's/^status:[[:space:]]*//p' | head -1)"
+if [ "$vm_state" != "stopped" ]; then
+  echo "${DORMANT_ARCHIVE_NOT_STOPPED_MARKER} $VMID state=$vm_state" >&2
+  exit 45
+fi
+before="$(mktemp)"
+find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -print 2>/dev/null | sort > "$before"
 vzdump "$VMID" \\
   --mode stop \\
   --compress zstd \\

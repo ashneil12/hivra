@@ -1,4 +1,5 @@
 import { runDormantReclaimSweep } from "@/lib/recovery/dormant-reclaim";
+import { DORMANT_ARCHIVE_NOT_STOPPED_MARKER } from "@/lib/services/proxmox/script-builders";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   archiveProxmoxDormantInstance,
@@ -541,6 +542,29 @@ describe("runDormantReclaimSweep", () => {
       expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
       expect(deleteProxmoxInstance).not.toHaveBeenCalled();
       expect(db.instanceUpdate).not.toHaveBeenCalled();
+    });
+
+    it("skips a paused row whose guest is running at dump time: nothing dumped, recorded or destroyed", async () => {
+      // A paused row can have a running guest: a PVE host reboot starts onboot guests, or
+      // the owner started it outside the row. The host refuses to dump a guest that is not
+      // exactly stopped, so the sweep must record no archive, write no marker and destroy
+      // nothing, and the row stays paused for the owner.
+      setCommitEnv();
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (archiveProxmoxDormantInstance as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: `${DORMANT_ARCHIVE_NOT_STOPPED_MARKER} 610 state=running\n`,
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ archived: 0, reclaimed: 0, skipped: 1, failed: 0 });
+      expect(archiveProxmoxDormantInstance).toHaveBeenCalledTimes(1);
+      expect(db.archiveInsert).not.toHaveBeenCalled();
+      expect(db.instanceUpdate).not.toHaveBeenCalled();
+      expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+      expect(db.live()).toMatchObject({ lifecycle_state: "paused", paused_reason: "inactivity" });
     });
 
     it("treats a host refusal to destroy a running VM as skipped and writes no terminal state", async () => {

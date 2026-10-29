@@ -10,6 +10,7 @@ import {
   getProxmoxInfrastructure,
   type ProxmoxInfrastructure,
 } from "@/lib/services/proxmox-instance-service";
+import { DORMANT_ARCHIVE_NOT_STOPPED_MARKER } from "@/lib/services/proxmox/script-builders";
 import { stripProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructure";
 
 const LOG_SOURCE = "dormant-reclaim";
@@ -606,6 +607,20 @@ export async function runDormantReclaimSweep(
             hostConfig,
           }
         );
+        // The host refuses to dump a guest that is not exactly stopped. Nothing was
+        // dumped, so nothing is recorded and the row is left exactly as it is.
+        if (!archiveResult.ok && archiveResult.stderr.includes(DORMANT_ARCHIVE_NOT_STOPPED_MARKER)) {
+          skipped += 1;
+          log.warn("dormant reclaim skipped instance whose VM is not stopped", {
+            source: LOG_SOURCE,
+            instanceId: candidate.id,
+            userId: candidate.user_id,
+            proxmoxNode: infrastructure.node ?? null,
+            proxmoxVmid: infrastructure.vmid,
+            failureType: "dormant_reclaim_vm_not_stopped",
+          });
+          continue;
+        }
         const resolvedPath = archiveResult.ok
           ? extractArchivePath(archiveResult.stdout)
           : null;
