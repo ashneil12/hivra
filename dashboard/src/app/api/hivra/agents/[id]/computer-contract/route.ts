@@ -127,7 +127,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (safeError) return noStore(apiError(safeError.message, safeError.status));
       throw contextError;
     }
-    const contract = await advanceProxmoxComputerContract(userId, agent, context.env, action, { deadline });
+    const contract = await advanceProxmoxComputerContract(userId, agent, context, action, { deadline });
     return noStore(apiSuccess({ contract }));
   } catch (error) {
     return noStore(handleApiError(error));

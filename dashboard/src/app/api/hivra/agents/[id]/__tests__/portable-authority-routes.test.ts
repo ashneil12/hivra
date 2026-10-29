@@ -179,9 +179,9 @@ describe("portable Hivra guest-operation authority", () => {
 
     expect(response.status).toBe(200);
     expect(mockInstallCuratedSkillsOnBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61", vmid: 1161 }),
       ["research"],
-      portableEnv,
+      expect.objectContaining({ env: portableEnv }),
     );
   });
 

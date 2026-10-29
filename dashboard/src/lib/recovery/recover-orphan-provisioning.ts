@@ -33,6 +33,7 @@
 import { encryptApiKey } from "@/lib/crypto";
 import { log } from "@/lib/logger";
 import { isClearableStaleProxmoxMetadataRow } from "@/lib/proxmox-metadata-row";
+import { buildHermesVmidBoundGuestSshPrelude, isHermesInstanceId } from "@/lib/proxmox/hermes-guest-ssh";
 import { reconcileSoulSeedAfterReady } from "@/lib/recovery/soul-seed-reconcile";
 import { removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
 import type { ProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructure";
@@ -150,6 +151,12 @@ function configInfraNode(config: Record<string, unknown> | null | undefined): st
  */
 function buildDiscoveryScript(instanceId: string): string {
   const idPrefix = instanceId.slice(0, 8);
+  const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: "hermes",
+    connectTimeoutSeconds: 5,
+    quiet: true,
+    ...(isHermesInstanceId(instanceId) ? { expectedInstanceId: instanceId } : {}),
+  });
   return `
 set -uo pipefail
 
@@ -189,7 +196,17 @@ fi
 # -n is required here: without it, nested guest SSH can consume the remaining
 # host-side discovery script from stdin, leaving stdout empty and making a
 # real VM look unrecoverable.
-BEARER=$(ssh -n -i /etc/hivra/keys/vm-orchestrator -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o BatchMode=yes "hermes@$PRIVIP" "sudo -n grep -oE 'Bearer [a-f0-9]{64}' /opt/hermes/instances/${instanceId}/Caddyfile 2>/dev/null | head -1 | cut -d' ' -f2" 2>/dev/null)
+# The bearer is a secret, so the guest is reached only over the VMID-bound,
+# host-key-pinned path; a guest that can't be pinned yields no bearer.
+# A function (not inline in $(...)): the prelude's case patterns don't parse
+# inside a command substitution. The subshell keeps its exit and trap local.
+read_guest_bearer() (
+  PRIVATE_IP="$PRIVIP"
+  VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator
+${guestSshPrelude}
+  "\${GUEST_SSH[@]}" "sudo -n grep -oE 'Bearer [a-f0-9]{64}' /opt/hermes/instances/${instanceId}/Caddyfile 2>/dev/null | head -1 | cut -d' ' -f2" </dev/null
+)
+BEARER=$(read_guest_bearer 2>/dev/null)
 if [ -z "$BEARER" ]; then
   echo "RESULT NO_BEARER"
   echo "VMID=$VMID"

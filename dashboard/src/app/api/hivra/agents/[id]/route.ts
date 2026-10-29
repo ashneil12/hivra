@@ -86,7 +86,6 @@ import {
   supportsNativeTracing,
 } from "@/lib/activity-observability/collectors";
 
-type ProxmoxEnvironment = Record<string, string | undefined>;
 
 // The one agent-run reporter install line the launch installer and the start
 // helper write into the host log (docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md).
@@ -192,7 +191,7 @@ echo "destroyed $VMID"`;
 async function maybeSeedBootstrap(
   agent: Record<string, unknown>,
   userId: string,
-  env: ProxmoxEnvironment,
+  authority: HivraAgentExecutionContext,
 ): Promise<boolean> {
   if (!supabaseAdmin) return false;
   if (agent.status !== "running" || agent.bootstrapped_at || !agent.ip) return false;
@@ -225,6 +224,7 @@ async function maybeSeedBootstrap(
       name: (agent.name as string | null) ?? null,
       type: (agent.type as string | null) ?? null,
       ip: (agent.ip as string | null) ?? null,
+      vmid: (agent.vmid as number | null) ?? null,
       goal: (agent.goal as string | null) ?? null,
       context: (agent.context as string | null) ?? null,
       personality: (agent.personality as string | null) ?? null,
@@ -236,7 +236,7 @@ async function maybeSeedBootstrap(
       llm,
       sharedMemory,
     },
-    env,
+    authority,
   );
   if (!res.ok) return false; // retry next poll
   await supabaseAdmin
@@ -257,7 +257,7 @@ async function maybeSeedBootstrap(
 async function maybeSeedBankrSkills(
   agent: Record<string, unknown>,
   userId: string,
-  env: ProxmoxEnvironment,
+  authority: HivraAgentExecutionContext,
 ): Promise<boolean> {
   if (!supabaseAdmin) return false;
   if (agent.status !== "running" || agent.bankr_skills_seeded_at || !agent.ip) return false;
@@ -267,8 +267,9 @@ async function maybeSeedBankrSkills(
       id: String(agent.id),
       type: (agent.type as string | null) ?? null,
       ip: (agent.ip as string | null) ?? null,
+      vmid: (agent.vmid as number | null) ?? null,
     },
-    env,
+    authority,
   );
   if (!res.ok) return false; // retry next poll
   await supabaseAdmin
@@ -295,7 +296,7 @@ async function maybeSeedBankrSkills(
 async function maybeSeedTemplateSkills(
   agent: Record<string, unknown>,
   userId: string,
-  env: ProxmoxEnvironment,
+  authority: HivraAgentExecutionContext,
 ): Promise<boolean> {
   if (!supabaseAdmin) return false;
   if (agent.status !== "running" || agent.template_skills_seeded_at || !agent.ip) return false;
@@ -311,9 +312,10 @@ async function maybeSeedTemplateSkills(
       id: String(agent.id),
       type: (agent.type as string | null) ?? null,
       ip: (agent.ip as string | null) ?? null,
+      vmid: (agent.vmid as number | null) ?? null,
     },
     skillIds,
-    env,
+    authority,
   );
   if (!res.ok) return false; // transport failure — retry next poll
   await supabaseAdmin
@@ -972,12 +974,11 @@ fi` : ""}`;
       // the same skills folder, and a template can name a Bankr skill, so those
       // two stay in order and the template's copy still lands last. A seed that
       // throws still fails this poll, as before.
-      const seedEnv = context.env;
       const seeds = await Promise.allSettled([
-        needsBootstrap ? maybeSeedBootstrap(current, userId, seedEnv) : false,
+        needsBootstrap ? maybeSeedBootstrap(current, userId, context) : false,
         (async () => {
-          const bankrStamped = needsBankrSkills && await maybeSeedBankrSkills(current, userId, seedEnv);
-          const templateStamped = needsTemplateSkills && await maybeSeedTemplateSkills(current, userId, seedEnv);
+          const bankrStamped = needsBankrSkills && await maybeSeedBankrSkills(current, userId, context);
+          const templateStamped = needsTemplateSkills && await maybeSeedTemplateSkills(current, userId, context);
           return bankrStamped || templateStamped;
         })(),
       ]);
@@ -1020,7 +1021,7 @@ fi` : ""}`;
       // The owner-scoped host environment is resolved only when a round trip
       // is due, not on every page load.
       runAfterResponse(
-        () => advanceProxmoxComputerContract(userId, snapshot, async () => (await getExecutionContext()).env, "auto",
+        () => advanceProxmoxComputerContract(userId, snapshot, getExecutionContext, "auto",
           { deadline: pollStartedAt + BACKGROUND_UPKEEP_DEADLINE_MS }),
         { source: "hivra/agents/[id]", failureType: "computer_contract_step_skipped", userId, agentId: String(snapshot.id) },
       );

@@ -14,6 +14,11 @@ import "server-only";
 // fixed; the request (block, digests, facts) travels as base64 JSON on stdin.
 
 import { z } from "zod";
+import {
+  buildPinnedGuestHostScript,
+  resolvePinnedGuestTarget,
+  type PinnedGuestAuthority,
+} from "@/lib/hivra/pinned-guest-seed";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 import { runProviderAgentGuestScript, type ProviderGuestSeedRef } from "./provider-guest-seed";
 import { COMPUTER_CONTRACT_END, COMPUTER_CONTRACT_MAX_BYTES, COMPUTER_CONTRACT_START_PREFIX } from "@/lib/agent-computers/computer-contract";
@@ -233,17 +238,10 @@ printf '%s' '${payload}' | python3 -c "$(printf '%s' '${b64(COMPUTER_CONTRACT_GU
 `;
 }
 
-// Same host lane and key as agent-bootstrap.ts; the guest script is wrapped
-// again so no request byte reaches the host's shell unencoded.
-function buildHostScript(ip: string, guestScript: string): string {
-  return `#!/usr/bin/env bash
-set -euo pipefail
-KEY=/etc/hivra/keys/vm-orchestrator
-[ -f "$KEY" ] || { echo "vm key $KEY missing" >&2; exit 1; }
-OUTER='${b64(guestScript)}'
-ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes "ubuntu@${ip}" "echo '$OUTER' | base64 -d | sudo bash"
-`;
-}
+/** The agent's resolved execution context, as far as contract delivery reads it. */
+export type ComputerContractAuthority = PinnedGuestAuthority & {
+  env: Parameters<typeof runProxmoxHostScript>[1];
+};
 
 /** Strict parse of the one result line; anything else is not a receipt. */
 export function parseComputerContractGuestOutput(stdout: string): ComputerContractGuestResult | null {
@@ -269,16 +267,24 @@ function validRequest(request: ComputerContractGuestRequest): boolean {
 
 /** One bounded round trip. A transport failure is "unreachable", never a receipt. */
 export async function runComputerContractSeed(
-  ip: string,
+  box: { ip?: string | null; vmid?: number | null },
   request: ComputerContractGuestRequest,
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: ComputerContractAuthority,
 ): Promise<ComputerContractGuestOutcome> {
-  const address = (ip || "").trim();
+  const address = (box.ip || "").trim();
   if (!/^[0-9.]+$/.test(address) || !validRequest(request)) return { ok: false, error: "invalid_request" };
+  // Only the VMID-bound path (pinned-guest-seed.ts): a box that can't be pinned
+  // is unreachable for delivery, never a receipt.
+  const pinned = resolvePinnedGuestTarget({ ip: address, vmid: box.vmid ?? null }, authority);
+  if (!pinned.ok) return { ok: false, error: "unreachable" };
   let result: HostScriptResult;
   try {
     // Same cap as the identity seed: well under the poll route's budget.
-    result = await runProxmoxHostScript(buildHostScript(address, buildComputerContractGuestScript(request)), env, 25_000);
+    result = await runProxmoxHostScript(
+      buildPinnedGuestHostScript(pinned.target, buildComputerContractGuestScript(request)),
+      authority.env,
+      25_000,
+    );
   } catch {
     return { ok: false, error: "unreachable" };
   }

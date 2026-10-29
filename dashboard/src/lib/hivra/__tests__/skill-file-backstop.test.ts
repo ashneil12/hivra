@@ -64,11 +64,18 @@ describe("collectSkillFilesForIds", () => {
   });
 });
 
+const SEED_AUTHORITY = {
+  env: {},
+  infrastructureBindingTag: "hivra-bind-0123456789abcdef0123456789abcdef",
+  infrastructureBindingTagEnforced: true,
+  paths: { vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" },
+};
+
 describe("installCuratedSkillsOnBox", () => {
-  const agent = { id: "a", type: "codex", ip: "10.250.20.42" };
+  const agent = { id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 };
 
   it("refuses the whole install with a clear error, before touching the computer", async () => {
-    const res = await installCuratedSkillsOnBox(agent, ["picked-ok", "picked-broken"], {});
+    const res = await installCuratedSkillsOnBox(agent, ["picked-ok", "picked-broken"], SEED_AUTHORITY);
     expect(res).toEqual({
       ok: false,
       installed: [],
@@ -78,7 +85,7 @@ describe("installCuratedSkillsOnBox", () => {
     });
     expect(mockedRunScript).not.toHaveBeenCalled();
 
-    const both = await installCuratedSkillsOnBox(agent, ["picked-broken", "bankr-broken"], {});
+    const both = await installCuratedSkillsOnBox(agent, ["picked-broken", "bankr-broken"], SEED_AUTHORITY);
     expect(both.error).toBe(
       "Couldn't install Picked Broken and Broken: their skill files are broken, so your agent couldn't use them. Nothing was installed.",
     );
@@ -88,9 +95,9 @@ describe("installCuratedSkillsOnBox", () => {
     mockedRunScript.mockResolvedValue({ ok: true, stdout: "HIVRA_BANKR_SKILLS_OK\n", stderr: "" } as Awaited<
       ReturnType<typeof runProxmoxHostScript>
     >);
-    const res = await installCuratedSkillsOnBox(agent, ["bankr-unclosed", "bankr-bare"], {});
+    const res = await installCuratedSkillsOnBox(agent, ["bankr-unclosed", "bankr-bare"], SEED_AUTHORITY);
     expect(res).toEqual({ ok: true, installed: ["bankr-unclosed", "bankr-bare"], skipped: [] });
-    const outer = (mockedRunScript.mock.calls[0][0] as string).match(/printf '%s' '([A-Za-z0-9+/=]+)' \| ssh/)![1];
+    const outer = (mockedRunScript.mock.calls[0][0] as string).match(/printf '%s' '([A-Za-z0-9+/=]+)' \| "\$\{GUEST_SSH\[@\]\}"/)![1];
     const guest = Buffer.from(outer, "base64").toString("utf8");
     const written = [...guest.matchAll(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/g)].map((m) =>
       Buffer.from(m[1], "base64").toString("utf8"),
