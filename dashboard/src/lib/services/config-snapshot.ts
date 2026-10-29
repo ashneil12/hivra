@@ -224,10 +224,11 @@ const FORBIDDEN_PATH_RX =
   /(^|\/)(\.env|[^/]+\.env|auth\.json|[^/]+\.db|[^/]+\.sqlite3?)$|(^|\/)(secrets|sessions|logs)\//i;
 
 // Content secret patterns. Shared with the redactor (command-output-redaction.ts), so a
-// bare token shape that the redactor masks in command output also blocks a push here.
-const CONTENT_PATTERNS: ReadonlyArray<[string, RegExp]> = SECRET_TOKEN_SHAPES.map(
-  ({ kind, pattern }) => [kind, pattern],
-);
+// bare token shape that the redactor masks in command output also blocks a push here,
+// except the shapes marked blocksPush: false (documentation samples such as a JWT).
+const CONTENT_PATTERNS: ReadonlyArray<[string, RegExp]> = SECRET_TOKEN_SHAPES.filter(
+  (shape) => shape.blocksPush !== false,
+).map(({ kind, pattern }) => [kind, pattern]);
 
 const CONFIG_LIKE_EXT = new Set([".yaml", ".yml", ".json", ".toml", ".ini"]);
 const SENSITIVE_FIELD_KEYS = new Set([

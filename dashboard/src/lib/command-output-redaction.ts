@@ -32,9 +32,11 @@ const PUBLIC_KEY_NAME_PATTERN = /(?:^|_)public_?key$/i;
 const QUERY_PARAM_SECRET_PATTERN =
   /([?&](?:key|api_key|access_token|refresh_token|client_secret|session_token|authorization_code|token)=)([^&#\s]+)/gi;
 const BEARER_SECRET_PATTERN = /(\bBearer\s+)([A-Za-z0-9._-]+)/gi;
-// A 64-character hex value straight after a token-like word (`token: <hex>`, `agent key <hex>`).
-// A bare hex digest is not matched: sha256 digests are ordinary output and ops fingerprints are hex.
-const HEX_AFTER_SECRET_WORD_PATTERN = /((?:token|secret|password|key)[ \t]*[:=]?[ \t]*["']?)[0-9a-f]{64}(?![0-9a-f])/gi;
+// A hex value of 64 or more characters straight after a token-like word (`token: <hex>`,
+// `agent key <hex>`). A bare hex digest is not matched: sha256 digests are ordinary output
+// and ops fingerprints are hex. The separator is one alternation, not two optional runs, so
+// a long whitespace run after a token word is scanned once (linear, not quadratic).
+const HEX_AFTER_SECRET_WORD_PATTERN = /((?:token|secret|password|key)(?:[ \t]*[:=][ \t]*|[ \t]+)?["']?)[0-9a-f]{64,}/gi;
 // Bare token shapes: a provider, bot, cloud or infrastructure credential that
 // appears with no name in front of it (for example an error body that echoes the
 // key). The redactor masks every match, and the config snapshot scanner
@@ -42,34 +44,49 @@ const HEX_AFTER_SECRET_WORD_PATTERN = /((?:token|secret|password|key)[ \t]*[:=]?
 // The patterns carry no `g` flag: callers that replace build a global copy, and
 // callers that only test use the pattern as it is.
 //
-// Each shape starts at a token boundary, so `task-` and `risk-` do not match `sk-`.
+// Most shapes start at a token boundary, so `task-` and `risk-` do not match `sk-`, and
+// `%20` counts as a boundary, so a key inside a URL query is still found. The legacy
+// shapes (sk-, gh*_, AKIA) are written as plain patterns with no leading boundary, as the
+// snapshot scanner always matched them: a key glued onto a word (`notes keysk-ant-...`)
+// is still masked and still blocks a push. Over-matching in the redactor is fail-closed.
+// `blocksPush: false` keeps a shape out of the snapshot push gate (it still redacts): a
+// JWT is how documentation shows a sample token, and a skill that quotes one must not stop
+// every snapshot that carries it.
 // Managed-Venice keys (hven_live_* / hven_test_*) bill a user's wallet; Bankr keys
-// (bk_usr_*, bk_ptr_*, bk_agent_*) move money; reporter credentials
+// (bk_usr_*, bk_ptr_*, bk_agent_*, bk_scoped_*) move money; reporter credentials
 // (hvra_otlp_v1.<claims>.<signature>) ride the launch handoff into hosts and guests.
 export interface SecretTokenShape {
   kind: string;
   pattern: RegExp;
+  blocksPush?: false;
 }
 
-const TOKEN_START = "(?<![A-Za-z0-9])";
+const TOKEN_START = "(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{2}))";
 export const SECRET_TOKEN_SHAPES: ReadonlyArray<SecretTokenShape> = [
   { kind: "private_key_block", pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/ },
-  { kind: "openai_key", pattern: new RegExp(`${TOKEN_START}sk-[A-Za-z0-9_-]{32,}`) },
-  { kind: "anthropic_key", pattern: new RegExp(`${TOKEN_START}sk-ant-[A-Za-z0-9_-]{32,}`) },
-  { kind: "github_pat", pattern: new RegExp(`${TOKEN_START}gh[pousr]_[A-Za-z0-9_]{36,}`) },
+  { kind: "openai_key", pattern: /sk-[A-Za-z0-9_-]{32,}/ },
+  { kind: "anthropic_key", pattern: /sk-ant-[A-Za-z0-9_-]{32,}/ },
+  { kind: "github_pat", pattern: /gh[pousr]_[A-Za-z0-9_]{36,}/ },
   { kind: "github_pat", pattern: new RegExp(`${TOKEN_START}github_pat_[A-Za-z0-9_]{22,}`) },
   { kind: "gitlab_pat", pattern: new RegExp(`${TOKEN_START}glpat-[A-Za-z0-9_-]{20,}`) },
-  { kind: "xai_key", pattern: new RegExp(`${TOKEN_START}xai-[A-Za-z0-9_-]{20,}`) },
+  // xAI keys are `xai-` plus alphanumerics. Hyphens are left out so prose such as
+  // `xai-grok-helper-for-everything` is not a key.
+  { kind: "xai_key", pattern: new RegExp(`${TOKEN_START}xai-[A-Za-z0-9]{40,}`) },
   { kind: "groq_key", pattern: new RegExp(`${TOKEN_START}gsk_[A-Za-z0-9]{20,}`) },
-  { kind: "aws_access_key", pattern: new RegExp(`${TOKEN_START}AKIA[0-9A-Z]{16}`) },
+  { kind: "aws_access_key", pattern: /AKIA[0-9A-Z]{16}/ },
   { kind: "google_api_key", pattern: new RegExp(`${TOKEN_START}AIza[0-9A-Za-z_-]{35}`) },
   // Telegram bot token: `<bot id>:<35-char secret>`. Also matches inside a bot API URL.
   { kind: "telegram_bot_token", pattern: /(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}/ },
   { kind: "slack_token", pattern: new RegExp(`${TOKEN_START}xox[abposr]-[A-Za-z0-9-]{10,}`) },
   { kind: "stripe_key", pattern: new RegExp(`${TOKEN_START}[rs]k_(?:live|test)_[A-Za-z0-9]{10,}`) },
-  { kind: "jwt", pattern: new RegExp(`${TOKEN_START}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*`) },
+  { kind: "jwt", pattern: new RegExp(`${TOKEN_START}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*`), blocksPush: false },
   { kind: "managed_venice_key", pattern: new RegExp(`${TOKEN_START}hven_(?:live|test)_[A-Za-z0-9_-]+`, "i") },
-  { kind: "bankr_key", pattern: new RegExp(`${TOKEN_START}bk_[A-Za-z0-9][A-Za-z0-9_-]{9,}`) },
+  // Bankr keys carry one of the issued prefixes. The push gate blocks on those only: a bare
+  // `bk_` shape would stop every config snapshot that installs a documentation placeholder
+  // such as `bk_YOUR_API_KEY` from the shipped skill catalogue. The redactor also masks any
+  // other `bk_` token, as it always has.
+  { kind: "bankr_key", pattern: new RegExp(`${TOKEN_START}bk_(?:usr|ptr|agent|scoped)_[A-Za-z0-9_-]{8,}`) },
+  { kind: "bankr_key_any", pattern: new RegExp(`${TOKEN_START}bk_[A-Za-z0-9][A-Za-z0-9_-]{9,}`), blocksPush: false },
   { kind: "activity_collector_token", pattern: /hvra_otlp_v1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?/i },
   { kind: "agent_link_key", pattern: new RegExp(`${TOKEN_START}hvl_[0-9a-f]{64}(?![0-9a-f])`) },
   { kind: "tailscale_key", pattern: new RegExp(`${TOKEN_START}tskey-(?:auth|api|client)-[A-Za-z0-9_-]+`, "i") },

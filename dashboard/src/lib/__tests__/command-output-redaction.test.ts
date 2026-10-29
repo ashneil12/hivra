@@ -213,6 +213,7 @@ describe("redactSensitiveCommandOutput", () => {
         "gh_ is a prefix and ghp_short is too short",
         "xoxo hugs and AKIA is an access key prefix",
         "eyJ is the base64 start of a JSON object",
+        "xai-grok-helper-for-everything-in-the-workspace is a project name",
         "step 3 of 4 at 12:30:45 with 2 bots",
         "token count: 12",
         `sha256 digest ${hex(64)} of the release`,
@@ -221,6 +222,43 @@ describe("redactSensitiveCommandOutput", () => {
       expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
     });
   });
+  // A legacy shape is matched wherever it sits, as the base snapshot scanner did, so a
+  // key glued onto a word or URL-encoded inside a URL is still masked.
+  describe("keys glued to text or URL-encoded", () => {
+    const body = (n: number) => "Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(4).slice(0, n);
+
+    it.each([
+      ["Anthropic key glued to a word", `notes keysk-ant-api03-${body(40)}`, "notes key[REDACTED]"],
+      ["Anthropic key URL-encoded", `x%20sk-ant-api03-${body(40)}`, "x%20[REDACTED]"],
+      ["GitHub token URL-encoded", `x%20ghp_${body(36)}`, "x%20[REDACTED]"],
+      ["managed Venice key URL-encoded", `x%20hven_live_${body(24)}`, "x%20[REDACTED]"],
+      ["Bankr key with another prefix", `wallet call rejected bk_test_${body(20)} today`, "wallet call rejected [REDACTED] today"],
+    ])("masks an %s", (_label, raw, expected) => {
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe(expected);
+    });
+  });
+
+  // A 64-character hex value straight after a token word, however long the value is.
+  it("masks a longer hex value after a token word, not only exactly 64 characters", () => {
+    const hex128 = "0123456789abcdef".repeat(8);
+    const raw = [`token: ${hex128}`, `agent key ${hex128}`].join("\n");
+
+    expect(redactSensitiveCommandOutput(raw, 1000)).toBe("token: [REDACTED]\nagent key [REDACTED]");
+  });
+
+  // A whitespace run after a token word used to take quadratic time: the separator could
+  // split the run two ways before the hex check failed. 100k spaces took about 12 s.
+  it("handles a long whitespace run after a token word in linear time", () => {
+    const raw = `token${" ".repeat(100_000)}`;
+
+    const started = Date.now();
+    const redacted = redactSensitiveCommandOutput(raw, 200_000);
+    const elapsedMs = Date.now() - started;
+
+    expect(redacted).toBe(raw);
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+
   // Unquoted YAML `name: value` lines, the form agent CLI configs are written in. Only
   // a key that starts its own line counts, so prose such as "Auth token: missing" is
   // left alone. Quoted values are covered by the JSON patterns.

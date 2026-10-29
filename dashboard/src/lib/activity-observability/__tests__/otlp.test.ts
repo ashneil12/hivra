@@ -145,3 +145,23 @@ describe("native agent-run records",()=>{
     expect(result.events[0]).toMatchObject({title:"Read used"}); expect(result.events[0].role).toBeUndefined();
   });
 });
+
+describe("OTLP attribute values that carry a token shape",()=>{
+  // The allowlisted attributes are structural, so a platform key in one must be dropped
+  // even when its characters are otherwise allowed. Tokens are synthetic and built at runtime.
+  const body=(n:number)=>"Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(3).slice(0,n);
+  it.each([
+    ["managed Venice key",`hven_live_${body(24)}`],
+    ["Bankr key",`bk_usr_${body(20)}`],
+    ["agent link key",`hvl_${"0123456789abcdef".repeat(4)}`],
+    ["Google API key",`AIza${body(35)}`],
+    ["Telegram bot token",`123456789:${body(35)}`],
+    ["Anthropic key",`sk-ant-api03-${body(40)}`],
+  ])("does not store a %s in a session attribute",(_label,token)=>{
+    const result=normalizeOtlpJson({
+      resourceLogs:[{resource:{attributes:[attr("service.name","claude-code")]},scopeLogs:[{logRecords:[{timeUnixNano:ns,traceId:"c".repeat(32),spanId:"d".repeat(16),attributes:[attr("tool_name","Read"),attr("session.id",token)]}]}]}],
+    },"00000000-0000-4000-8000-000000000001",NOW)!;
+    expect(result.events).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+});

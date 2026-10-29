@@ -148,6 +148,35 @@ describe("scanForSecrets (fail-closed)", () => {
     expect(hits[0].path).toBe(path);
   });
 
+  // The legacy shapes are matched wherever they sit, as before this change, so a key
+  // glued to a word or URL-encoded in a free-text file still blocks the push.
+  it.each([
+    ["Anthropic key glued to a word", "hermes/SOUL.md", `notes keysk-ant-${synthetic(40)}`],
+    ["Anthropic key URL-encoded", "hermes/orgs/x.md", `x%20sk-ant-${synthetic(40)}`],
+    ["GitHub token URL-encoded", "hermes/orgs/gh.md", `x%20ghp_${synthetic(36)}`],
+    ["managed Venice key URL-encoded", "hermes/SOUL.md", `x%20hven_live_${synthetic(24)}`],
+  ])("flags a %s", (_label, path, content) => {
+    expect(scanForSecrets([file(path, content)]).length).toBeGreaterThan(0);
+  });
+
+  // Documentation text that looks like a token must not stop a snapshot every day.
+  it("does not flag a Bankr placeholder in a curated skill", () => {
+    const files = [
+      file("hermes/skills/bankr/SKILL.md", 'curl -H "X-API-Key: bk_YOUR_API_KEY" https://api.bankr.bot/agent/prompt'),
+      file("hermes/skills/bankr/README.md", "Set the key with bankr login --api-key bk_YOUR_KEY_HERE"),
+    ];
+    expect(scanForSecrets(files)).toEqual([]);
+  });
+
+  it("does not flag a JWT sample or a hyphenated xAI-style phrase in a skill document", () => {
+    const jwtSample = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.${synthetic(43)}`;
+    const files = [
+      file("hermes/skills/jwt/SKILL.md", `Decode this sample: ${jwtSample}`),
+      file("hermes/skills/grok/SKILL.md", "xai-grok-helper-for-everything-in-the-workspace"),
+    ];
+    expect(scanForSecrets(files)).toEqual([]);
+  });
+
   it("does not flag ordinary text that only contains a token prefix", () => {
     const files = [
       file("hermes/SOUL.md", "task-manager and risk-assessment notes, step 3 of 4 at 12:30:45"),
