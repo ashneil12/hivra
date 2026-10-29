@@ -1,6 +1,7 @@
 import {
   buildActivationCohorts,
   getActivationCohorts,
+  hivraAgentToActivationInstance,
   isRetained,
   isUsedKnownForWeek,
   pickSubscriptionByUser,
@@ -252,6 +253,11 @@ function has(query: RecordedQuery, method: string, matcher?: (args: unknown[]) =
   return query.calls.some(([m, args]) => m === method && (!matcher || matcher(args)));
 }
 
+function selectCols(query: RecordedQuery): string {
+  const call = query.calls.find(([m]) => m === "select");
+  return typeof call?.[1][0] === "string" ? (call[1][0] as string) : "";
+}
+
 function mockSupabase(respond: (query: RecordedQuery) => MockResponse) {
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
     const query: RecordedQuery = { table, calls: [] };
@@ -272,6 +278,28 @@ function mockSupabase(respond: (query: RecordedQuery) => MockResponse) {
     return builder;
   });
 }
+
+describe("hivraAgentToActivationInstance", () => {
+  it("maps provisioned_at to boot and a deleted status to a deleted marker", () => {
+    const row = {
+      user_id: "u1",
+      created_at: "2026-06-08T10:00:00Z",
+      provisioned_at: "2026-06-08T10:05:00Z",
+      first_usage_at: "2026-06-08T10:20:00Z",
+      status: "deleted",
+    };
+    expect(hivraAgentToActivationInstance(row)).toEqual({
+      user_id: "u1",
+      created_at: "2026-06-08T10:00:00Z",
+      first_active_at: "2026-06-08T10:05:00Z",
+      first_usage_at: "2026-06-08T10:20:00Z",
+      last_activity_at: null,
+      deleted_at: "2026-06-08T10:00:00Z",
+      standing_task_seeded_at: null,
+    });
+    expect(hivraAgentToActivationInstance({ ...row, status: "running" }).deleted_at).toBeNull();
+  });
+});
 
 describe("getActivationCohorts", () => {
   it("assembles cohorts from instances + subscriptions + digest sends", async () => {
@@ -297,6 +325,7 @@ describe("getActivationCohorts", () => {
         expect(has(query, "like", (args) => args[0] === "email_key" && String(args[1]).startsWith("activity_digest"))).toBe(true);
         return { data: [{ user_id: "u1" }] };
       }
+      if (query.table === "hivra_agents") return { data: [] };
       throw new Error(`unexpected table ${query.table}`);
     });
 
@@ -315,6 +344,42 @@ describe("getActivationCohorts", () => {
     expect(current.digestEmailed).toBe(1); // u1
   });
 
+  it("includes Hivra-lane agents in the cohort", async () => {
+    mockSupabase((query) => {
+      if (query.table === "hermes_instances") return { data: [] };
+      if (query.table === "hivra_agents") {
+        expect(selectCols(query)).toBe("user_id, created_at, provisioned_at, first_usage_at, status");
+        return {
+          data: [
+            {
+              user_id: "codex_user",
+              created_at: "2026-06-08T10:00:00Z",
+              provisioned_at: "2026-06-08T10:05:00Z",
+              first_usage_at: "2026-06-08T10:20:00Z",
+              status: "running",
+            },
+            {
+              user_id: "failed_user",
+              created_at: "2026-06-09T10:00:00Z",
+              provisioned_at: null,
+              first_usage_at: null,
+              status: "error",
+            },
+          ],
+        };
+      }
+      if (query.table === "hermes_subscriptions") {
+        return { data: [sub({ user_id: "codex_user", plan: "operator", status: "active" })] };
+      }
+      if (query.table === "lifecycle_email_sends") return { data: [] };
+      throw new Error(`unexpected table ${query.table}`);
+    });
+
+    const stats = await getActivationCohorts(NOW);
+
+    expect(stats.cohorts[7]).toMatchObject({ deployed: 2, booted: 1, used: 1, paid: 1 });
+  });
+
   it("pages digest sends by the unique row id so offset pages cannot skip or repeat rows", async () => {
     const digestQueries: RecordedQuery[] = [];
     mockSupabase((query) => {
@@ -326,6 +391,7 @@ describe("getActivationCohorts", () => {
         digestQueries.push(query);
         return { data: [] };
       }
+      if (query.table === "hivra_agents") return { data: [] };
       throw new Error(`unexpected table ${query.table}`);
     });
 
