@@ -6,6 +6,7 @@
  */
 
 const mockSend = jest.fn();
+const mockGetUser = jest.fn();
 
 jest.mock("resend", () => ({
   Resend: jest.fn().mockImplementation(() => ({ emails: { send: (...args: unknown[]) => mockSend(...args) } })),
@@ -13,7 +14,7 @@ jest.mock("resend", () => ({
 
 jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: async () => ({
-    users: { getUser: async () => ({ primaryEmailAddress: { emailAddress: "owner@example.com" } }) },
+    users: { getUser: (...args: unknown[]) => mockGetUser(...args) },
   }),
 }));
 
@@ -26,6 +27,7 @@ const availableAt = new Date("2026-09-26T10:00:00.000Z");
 beforeEach(() => {
   process.env = { ...originalEnv, RESEND_API_KEY: "re_test", NEXT_PUBLIC_APP_URL: "https://hivra.test" };
   mockSend.mockReset().mockResolvedValue({ error: null });
+  mockGetUser.mockReset().mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "owner@example.com", verification: { status: "verified" } }] });
 });
 
 afterAll(() => {
@@ -84,5 +86,21 @@ it("says 'none' for a first destination and sends nothing without an API key", a
     availableAt,
   });
   expect(result).toEqual({ sent: false, reason: "not_configured" });
+  expect(mockSend).not.toHaveBeenCalled();
+});
+
+it("sends nothing when the owner's only address is one Clerk has not verified (F106)", async () => {
+  mockGetUser.mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "victim@example.com", verification: { status: "unverified" } }] });
+
+  const result = await sendWithdrawDestinationChangedEmail({
+    userId: "user_1",
+    kind: "lock_wallet",
+    previousAddress: null,
+    newAddress: "0x2222222222222222222222222222222222222222",
+    changedAt,
+    availableAt,
+  });
+
+  expect(result).toEqual({ sent: false, reason: "no_email" });
   expect(mockSend).not.toHaveBeenCalled();
 });

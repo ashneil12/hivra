@@ -27,6 +27,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 
 import { isNewTokenQualificationRefused } from "@/lib/compliance/token-geo-gate";
 import { log } from "@/lib/logger";
+import { pickVerifiedSdkEmail } from "@/lib/email/clerk-verified-email";
 
 type YearlyTokenEmailTransition = "expiring_soon" | "expired";
 
@@ -47,11 +48,7 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
   try {
     const client = await clerkClient();
     const user = await client.users.getUser(userId);
-    const primary =
-      user?.primaryEmailAddress?.emailAddress ??
-      user?.emailAddresses?.[0]?.emailAddress ??
-      null;
-    return primary;
+    return pickVerifiedSdkEmail(user);
   } catch {
     return null;
   }

@@ -62,6 +62,28 @@ describe("POST /api/instances/[id]/oauth/gws/setup", () => {
     expect(JSON.stringify(json)).not.toContain("rawOutput");
   });
 
+  it("does not return a plain-http authorization URL, which the owner would be sent to", async () => {
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout: "Open this URL:\nhttp://idp.example.tld/oauth?code=abc",
+      stderr: "",
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/gws/setup", {
+        method: "POST",
+        body: JSON.stringify({
+          credentialsJson: '{"installed":{"client_id":"abc","project_id":"proj"}}',
+        }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(json)).not.toContain("idp.example.tld");
+  });
+
   it("redacts secrets from setup command output before logging parse failures", async () => {
     (sshExec as jest.Mock).mockResolvedValue({
       ok: true,

@@ -22,6 +22,7 @@ import {
 } from "@/lib/billing/crypto-topups";
 import {
   createBaseChainReader,
+  paymentDustFloor,
   scanErc20TransfersInWindow,
   type BaseChainReader,
   type JsonRpcFetch,
@@ -324,6 +325,7 @@ async function reconcileOpenIntent(params: {
     fromMs: window.startMs,
     toMs: window.graceEndMs,
     minConfirmations: params.minConfirmations,
+    minAmount: paymentDustFloor(intent.requiredAmount),
   });
   const nextStartMs = await loadNextIntentStartMs(db, intent);
   const inRange = scan.transfers.filter(

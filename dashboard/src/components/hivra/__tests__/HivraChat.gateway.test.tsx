@@ -30,7 +30,22 @@ import { HivraChat } from "../HivraChat";
 import { isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 
 jest.mock("posthog-js", () => ({ __esModule: true, default: { capture: jest.fn() } }));
-jest.mock("react-markdown", () => ({ __esModule: true, default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+jest.mock("react-markdown", () => ({
+  __esModule: true,
+  // Same image rule as HivraChat.test.tsx: an image renders through components.img, or as a plain <img> without it.
+  default: ({ children, components }: { children?: React.ReactNode; components?: Record<string, React.ElementType> }) => {
+    const text = typeof children === "string" ? children : "";
+    const image = /!\[([^\]]*)\]\(([^)\s]+)\)/.exec(text);
+    if (!image) return <>{children}</>;
+    const Img = components?.img ?? "img";
+    return (
+      <>
+        {text.slice(0, image.index)}
+        <Img src={image[2]} alt={image[1]} />
+      </>
+    );
+  },
+}));
 jest.mock("remark-gfm", () => ({ __esModule: true, default: jest.fn() }));
 jest.mock("@/components/markdown/CodeBlock", () => ({ CodeBlock: ({ value }: { value: string }) => <pre>{value}</pre> }));
 jest.mock("@/lib/telemetry/posthog-client", () => ({ captureClient: jest.fn() }));

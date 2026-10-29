@@ -14,6 +14,7 @@ import { sendResourceWatchdogCustomerEmail } from "@/lib/email/resource-watchdog
 import { sendFreeRamPressureEmail } from "@/lib/email/resource-watchdog-free-ram";
 import { sendResourceWatchdogAdminEmail } from "@/lib/email/resource-watchdog-admin";
 import { cumulativeCounterIncrease } from "@/lib/services/instance-metering";
+import { pickVerifiedSdkEmail } from "@/lib/email/clerk-verified-email";
 
 const LOG_SOURCE = "resource-watchdog";
 
@@ -87,10 +88,8 @@ async function getCustomerEmail(userId: string): Promise<string | null> {
     const { clerkClient } = await import("@clerk/nextjs/server");
     const client = await clerkClient();
     const user = await client.users.getUser(userId);
-    const primary = user.primaryEmailAddress?.emailAddress?.trim();
-    if (primary) return primary;
-    const first = user.emailAddresses?.[0]?.emailAddress?.trim();
-    return first || null;
+    // Only an address Clerk reports as verified; an unverified one may not be the owner's (F106).
+    return pickVerifiedSdkEmail(user);
   } catch (err) {
     log.warn("clerk lookup for watchdog email failed", {
       source: LOG_SOURCE,

@@ -59,6 +59,7 @@ import {
   PROXMOX_VM_MISSING_MARKER,
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxDeleteScript,
+  buildProxmoxDormantArchiveRemoveScript,
   buildProxmoxDormantArchiveScript,
   buildProxmoxInfrastructureDiscoveryScript,
   buildProxmoxMetricsScript,
@@ -105,6 +106,7 @@ export {
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxCaddySiteCleanupScript,
   buildProxmoxDeleteScript,
+  buildProxmoxDormantArchiveRemoveScript,
   buildProxmoxDormantArchiveScript,
   buildProxmoxGuestBootstrapScript,
   buildProxmoxInfrastructureDiscoveryScript,
@@ -2553,9 +2555,36 @@ export async function archiveProxmoxDormantInstance(
   return runner(script);
 }
 
+/** Removes a dormant dump the reclaim sweep abandoned. Only a vzdump file in archiveDir is removed. */
+export async function removeProxmoxDormantArchive(
+  infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
+  params: {
+    archiveDir: string;
+    archivePath: string;
+    hostConfig?: ProxmoxHostRoutingConfig | null;
+  },
+  deps: ProxmoxHostAwareDeps = {}
+): Promise<HostScriptResult> {
+  const env = params.hostConfig
+    ? resolveProxmoxHostEnv(params.hostConfig, deps.env ?? process.env)
+    : deps.hostConfig
+      ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
+      : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
+  const script = buildProxmoxDormantArchiveRemoveScript({
+    archiveDir: params.archiveDir,
+    archivePath: params.archivePath,
+  });
+  const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
+  return runner(script);
+}
+
 export async function deleteProxmoxInstance(
   infrastructure: ProxmoxInfrastructure,
-  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string }
+  deps: ProxmoxHostAwareDeps & {
+    expectedInstanceId: string;
+    /** Dormant reclaim: refuse a running guest instead of shutting it down. */
+    refuseIfRunning?: boolean;
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
@@ -2566,6 +2595,7 @@ export async function deleteProxmoxInstance(
     gatewayHost: infrastructure.gatewayHost,
     caddySitesDir: envValue(env, "PROXMOX_CADDY_SITES_DIR", "/etc/caddy/hermes.d"),
     gracefulShutdownTimeoutSeconds: envInt(env, "PROXMOX_DELETE_GRACEFUL_TIMEOUT_SEC", 30),
+    refuseIfRunning: deps.refuseIfRunning === true,
   });
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
   return runner(script);

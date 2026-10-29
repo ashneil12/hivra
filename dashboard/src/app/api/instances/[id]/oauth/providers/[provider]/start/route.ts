@@ -6,6 +6,7 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { readHermesOAuthProxyError } from "@/lib/hermes-oauth-proxy";
 import { sshExec } from "@/lib/hetzner/ssh";
+import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { getInstanceBackend } from "@/lib/instance-backend";
 import {
   buildNousStartCommand,
@@ -189,7 +190,7 @@ export async function POST(
       if (
         typeof data.session_id !== "string" ||
         typeof data.user_code !== "string" ||
-        typeof data.verification_url !== "string"
+        !readHttpsAuthorizationUrl(data.verification_url)
       ) {
         return apiError("The agent runtime did not return a usable Nous Portal device-code session.", 500);
       }
@@ -225,6 +226,10 @@ export async function POST(
     }
 
     const data = await response.json();
+    // The owner opens verification_url in a browser, so only an https address may leave here.
+    if (data && typeof data === "object" && "verification_url" in data && !readHttpsAuthorizationUrl(data.verification_url)) {
+      delete data.verification_url;
+    }
     return apiSuccess(data);
   } catch (error) {
     return apiError(

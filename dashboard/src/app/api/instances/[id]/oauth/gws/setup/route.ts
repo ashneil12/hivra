@@ -4,6 +4,7 @@ import { apiSuccess, apiError } from '@/lib/api-response';
 import { redactSensitiveCommandOutput } from '@/lib/command-output-redaction';
 import { buildGoogleWorkspaceSetupCommand } from '@/lib/google-workspace-oauth';
 import { sshExec } from '@/lib/hetzner/ssh';
+import { readHttpsAuthorizationUrl } from '@/lib/safe-http-url';
 import { validateConsoleAccess } from '@/lib/services/console-helpers';
 import { log } from '@/lib/logger';
 
@@ -53,8 +54,10 @@ export async function POST(
     // Extract the verification URL from the output
     // The setup script prints the URL on its own line or within text.
     const urlMatch = output.match(/https?:\/\/[^\s\n"']+/);
+    // The owner is sent to this address, so only an https one is returned.
+    const authUrl = urlMatch ? readHttpsAuthorizationUrl(urlMatch[0].replace(/[.,)]+$/, '')) : '';
 
-    if (!urlMatch) {
+    if (!authUrl) {
       log.error("authorization URL missing from command output", new Error("gws_setup_url_missing"), {
         source: "oauth-gws-setup",
         route: "/api/instances/[id]/oauth/gws/setup",
@@ -70,9 +73,7 @@ export async function POST(
       );
     }
 
-    return apiSuccess({
-      url: urlMatch[0].replace(/[.,)]+$/, ''), // strip trailing punctuation
-    });
+    return apiSuccess({ url: authUrl });
   } catch (err: unknown) {
     return apiError('Failed to initialize Google OAuth.', 500, {
       failureType: 'gws_setup_unexpected_error',

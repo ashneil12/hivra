@@ -20,7 +20,7 @@ jest.mock("@/lib/supabase", () => ({
 
 import { reportOpsEvent } from "@/lib/ops-events";
 
-const INSTANCE = "inst-1";
+const INSTANCE = "22222222-2222-4222-8222-222222222222";
 const REPO = "ghcr.io/example/agent";
 const D1 = `sha256:${"1".repeat(64)}`;
 const D2 = `sha256:${"2".repeat(64)}`;

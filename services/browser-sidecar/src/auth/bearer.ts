@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import type { Config } from "../config.js";
-import type { Logger } from "../logger.js";
+import { routeLabel, type Logger } from "../logger.js";
 
 // SCRIPTURE_ANCHOR: bearer-watch | Proverbs 4:23 | Verse: Keep your heart with all vigilance, for from it flow the springs of life.
 
@@ -59,6 +59,7 @@ export function buildBearerAuthPreHandler(config: Config, logger: Logger) {
   ): Promise<void> {
     const url = req.routeOptions.url ?? req.url;
     if (PUBLIC_PATHS.has(url)) return;
+    const tool = routeLabel(req);
 
     const presented = readBearerToken(req);
 
@@ -67,7 +68,7 @@ export function buildBearerAuthPreHandler(config: Config, logger: Logger) {
         // Warn-only mode. Do not log the token itself.
         logger.warn(
           {
-            tool: url,
+            tool,
             method: req.method,
             auth_disabled: true,
             bearer_present: presented !== null,
@@ -78,7 +79,7 @@ export function buildBearerAuthPreHandler(config: Config, logger: Logger) {
       }
       logger.error(
         {
-          tool: url,
+          tool,
           method: req.method,
           auth_disabled: true,
         },
@@ -93,7 +94,7 @@ export function buildBearerAuthPreHandler(config: Config, logger: Logger) {
     if (!presented || !constantTimeEqual(presented, token)) {
       logger.warn(
         {
-          tool: url,
+          tool,
           method: req.method,
           bearer_present: presented !== null,
         },

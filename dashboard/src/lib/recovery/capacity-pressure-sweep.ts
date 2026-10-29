@@ -12,6 +12,7 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { pickVerifiedEmail } from "@/lib/email/clerk-verified-email";
 import { sendCapacityPausedEmail } from "@/lib/email/capacity-pause";
 import { fetchClerkUser } from "@/lib/recovery/lifecycle-email-sweep";
 
@@ -324,6 +325,10 @@ async function parkInstance(
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
       host_id: candidate.host_id,
     }),
+    // Clear onboot so a PVE host reboot doesn't auto-start the parked VM. Every VM is
+    // provisioned onboot:1, and the capacity park has to keep relieving pressure after
+    // a reboot. The inactivity sweep does the same.
+    setOnboot: 0,
   });
 
   if (isProxmoxVmMissingResult(result)) {
@@ -384,11 +389,9 @@ async function parkInstance(
   return { outcome: "paused", pausedAtIso };
 }
 
+// Only a Clerk-verified address: an unverified one may belong to someone who never signed up (F106).
 function chooseEmail(user: ClerkUser): string | null {
-  const addresses = user.email_addresses ?? [];
-  const primary = addresses.find((a) => a.id === user.primary_email_address_id);
-  const verified = addresses.find((a) => a.verification?.status === "verified");
-  return primary?.email_address ?? verified?.email_address ?? addresses[0]?.email_address ?? null;
+  return pickVerifiedEmail(user);
 }
 
 // Best-effort "your agent is napping — wake it anytime" email. A failed

@@ -1,13 +1,24 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
 import {
   provisionWorkspaceCloudAgent,
   applyWorkspaceCloudModelConfig,
+  buildApplyModelScript,
   buildOAuthStartScript,
   buildOAuthStatusScript,
+  buildProvisionScript,
 } from "@/lib/services/workspace-cloud-provisioner";
 import {
   resolveProxmoxTargetConfiguration,
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
+import {
+  GENUINE_GUEST_HOST_KEY,
+  SPOOFED_GUEST_HOST_KEY,
+  createStubProxmoxGuestHost,
+} from "@/test-utils/stub-proxmox-guest-host";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 jest.mock("@/lib/crypto", () => ({
@@ -157,5 +168,140 @@ describe("applyWorkspaceCloudModelConfig (per-user key push)", () => {
       model: "",
     });
     expect(r).toMatchObject({ ok: false });
+  });
+});
+
+// ── Host-to-guest SSH on Workspace Cloud VMs (F009) ─────────────────────────────
+// The agent API key and the customer's model key travel over these calls, so
+// every generated host script must reach the guest only through the VMID-bound,
+// QEMU-Guest-Agent-attested prelude, never with host-key checking disabled.
+
+const PROVISION_SCRIPT = buildProvisionScript({
+  templateVmid: 9100,
+  vmid: 2000,
+  ip: "10.250.30.50",
+  subdomain: "wsc-0123456789abcdef",
+  fqdn: "wsc-0123456789abcdef.hermesos.cloud",
+  apiKey: "a".repeat(64),
+});
+const APPLY_MODEL_SCRIPT = buildApplyModelScript({
+  ip: "10.250.30.51",
+  provider: "openrouter",
+  model: "google/gemini-2.5-flash-lite",
+  apiKey: "sk-or-v1-" + "b".repeat(40),
+  keyEnvVar: "OPENROUTER_API_KEY",
+});
+const OAUTH_START_SCRIPT = buildOAuthStartScript({ ip: "10.250.30.52", provider: "openai-codex" });
+const OAUTH_STATUS_SCRIPT = buildOAuthStatusScript({ ip: "10.250.30.52", provider: "nous" });
+
+const GENERATED_HOST_SCRIPTS: Array<[string, string]> = [
+  ["provision", PROVISION_SCRIPT],
+  ["apply model", APPLY_MODEL_SCRIPT],
+  ["oauth start", OAUTH_START_SCRIPT],
+  ["oauth status", OAUTH_STATUS_SCRIPT],
+];
+
+const bashSyntax = (script: string) => spawnSync("bash", ["-n"], { input: script, encoding: "utf8" });
+
+/** The guest command body a host script ships in its `echo '<b64>' | base64 -d | bash` line. */
+function guestBodyOf(hostScript: string): string | null {
+  const b64 = hostScript.match(/echo '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1];
+  return b64 ? Buffer.from(b64, "base64").toString("utf8") : null;
+}
+
+describe("Workspace Cloud guest SSH never disables host-key checking (F009)", () => {
+  it("the provisioner source no longer carries the StrictHostKeyChecking=no bypass", () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../workspace-cloud-provisioner.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("StrictHostKeyChecking=no");
+  });
+
+  it.each(GENERATED_HOST_SCRIPTS)("%s script pins the guest through the VMID-bound prelude", (_label, script) => {
+    expect(script).not.toContain("StrictHostKeyChecking=no");
+    expect(script).toContain("StrictHostKeyChecking=yes");
+    expect(script).toContain('"hermes@$GUEST_IP"');
+    expect(script).toContain("qm guest exec");
+    // Guest calls use the prelude's array, never the old string form.
+    // (The prelude's own GUEST_SSH_* variables are not the bare array name.)
+    expect(script).not.toMatch(/\$\{?GUEST_SSH\}?(?![\w[])/);
+    expect(script.indexOf("GUEST_SSH=(ssh ")).toBeGreaterThan(0);
+    expect(script.indexOf("GUEST_SSH=(ssh ")).toBeLessThan(script.indexOf('"${GUEST_SSH[@]}"'));
+  });
+
+  it.each(GENERATED_HOST_SCRIPTS)("%s script is accepted by bash -n", (_label, script) => {
+    expect(bashSyntax(script)).toMatchObject({ status: 0, stderr: "" });
+  });
+
+  it.each([
+    ["apply model", APPLY_MODEL_SCRIPT],
+    ["oauth start", OAUTH_START_SCRIPT],
+    ["oauth status", OAUTH_STATUS_SCRIPT],
+  ])("the guest body %s ships is accepted by bash -n and has no host-key bypass", (_label, script) => {
+    const guest = guestBodyOf(script);
+    expect(guest).not.toBeNull();
+    expect(guest).not.toContain("StrictHostKeyChecking=no");
+    expect(bashSyntax(guest ?? "")).toMatchObject({ status: 0, stderr: "" });
+  });
+
+  it("refuses a guest whose IP is configured on a different VM", () => {
+    const host = createStubProxmoxGuestHost();
+    try {
+      const script = APPLY_MODEL_SCRIPT.replace(
+        "VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator",
+        `VM_SSH_KEY_PATH=${host.vmKeyPath}`,
+      );
+      const result = host.run(script, {
+        vms: [{ vmid: 2001, ip: "10.250.30.99" }],
+        serverHostKey: GENUINE_GUEST_HOST_KEY,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("VMID-bound SSH refused");
+      expect(result.sshCalls).toEqual([]);
+      expect(result.delivered).toBe("");
+    } finally {
+      host.cleanup();
+    }
+  });
+
+  it("sends the guest command only to the VM whose attested host key answers", () => {
+    const host = createStubProxmoxGuestHost();
+    try {
+      const script = APPLY_MODEL_SCRIPT.replace(
+        "VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator",
+        `VM_SSH_KEY_PATH=${host.vmKeyPath}`,
+      );
+      const result = host.run(script, {
+        vms: [{ vmid: 2001, ip: "10.250.30.51" }],
+        serverHostKey: GENUINE_GUEST_HOST_KEY,
+      });
+      expect(result.status).toBe(0);
+      expect(result.sshCalls).toHaveLength(1);
+      expect(result.sshCalls[0]).toMatch(/^hermes@10\.250\.30\.51 /);
+      expect(result.sshArgs[0]).toEqual(expect.arrayContaining(["-i", host.vmKeyPath]));
+    } finally {
+      host.cleanup();
+    }
+  });
+
+  it("sends nothing when the machine answering at the guest IP presents another host key", () => {
+    const host = createStubProxmoxGuestHost();
+    try {
+      const script = APPLY_MODEL_SCRIPT.replace(
+        "VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator",
+        `VM_SSH_KEY_PATH=${host.vmKeyPath}`,
+      );
+      // The VM's agent attests the genuine key, but a spoofing neighbour answers at the IP.
+      const result = host.run(script, {
+        vms: [{ vmid: 2001, ip: "10.250.30.51", attestedHostKey: GENUINE_GUEST_HOST_KEY }],
+        serverHostKey: SPOOFED_GUEST_HOST_KEY,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.sshCalls).toEqual([]);
+      expect(result.delivered).toBe("");
+    } finally {
+      host.cleanup();
+    }
   });
 });

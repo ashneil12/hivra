@@ -232,6 +232,55 @@ describe("POST /api/agent-usage/ingest", () => {
     expect(res.status).toBe(401);
   });
 
+  // An unknown id, a deleted or keyless instance and a live id with a wrong bearer
+  // must look identical from outside, or the response reveals which ids are live.
+  it("answers an unknown agent id with the same 401 as a wrong bearer on a live one", async () => {
+    mockInstance({ api_server_key_encrypted: "enc" });
+    const wrongBearer = await POST(makeRequest(VALID_BODY, "Bearer wrong"));
+    const wrongBearerBody = await wrongBearer.json();
+
+    mockOperatorSource(null);
+    const unknown = await POST(makeRequest(VALID_BODY, "Bearer agent-secret"));
+    const unknownBody = await unknown.json();
+
+    expect(wrongBearer.status).toBe(401);
+    expect(unknown.status).toBe(401);
+    expect(unknownBody).toEqual(wrongBearerBody);
+    expect(unknownBody).toEqual({ success: false, error: "Unauthorized" });
+  });
+
+  it("answers a registered operator source whose key was never set with the same 401", async () => {
+    mockOperatorSource({
+      id: VALID_BODY.instanceId,
+      name: "PB10 Augustine",
+      source_type: "internal_operator_canary",
+      api_key_sha256: null,
+      active: true,
+    });
+
+    const res = await POST(makeRequest(VALID_BODY, "Bearer agent-secret"));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ success: false, error: "Unauthorized" });
+  });
+
+  it("reports an operator-source lookup failure as a server error, not as a missing agent", async () => {
+    mockInstance(null);
+    const sourceQuery = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: { message: "connection reset" } }),
+    };
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") return { select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), neq: jest.fn().mockReturnThis(), maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }) };
+      if (table === "operator_usage_sources") return sourceQuery;
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const res = await POST(makeRequest(VALID_BODY, "Bearer agent-secret"));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ success: false, error: "Failed to load agent" });
+  });
+
   it("caps payloads at 90 daily rows", async () => {
     const days = Array.from({ length: 91 }, (_, idx) => ({
       stat_date: `2026-05-${String((idx % 28) + 1).padStart(2, "0")}`,

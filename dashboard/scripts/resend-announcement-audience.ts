@@ -2,6 +2,8 @@ import { Resend } from "resend";
 import * as dotenv from "dotenv";
 import * as path from "path";
 
+import { pickVerifiedEmail } from "../src/lib/email/clerk-verified-email";
+
 dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
 
 const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
@@ -125,11 +127,9 @@ function maskEmail(email: string) {
   return `${visible}${"*".repeat(Math.max(1, local.length - visible.length))}@${domain}`;
 }
 
+// Only a Clerk-verified address may be enrolled; an unverified one may not belong to the user.
 function chooseEmail(user: ClerkUser) {
-  const addresses = user.email_addresses || [];
-  const primary = addresses.find((address) => address.id === user.primary_email_address_id);
-  const verified = addresses.find((address) => address.verification?.status === "verified");
-  return primary?.email_address || verified?.email_address || addresses[0]?.email_address || null;
+  return pickVerifiedEmail(user);
 }
 
 function formatClerkCreatedAt(value: number | null | undefined) {

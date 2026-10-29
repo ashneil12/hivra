@@ -9,8 +9,9 @@ import { NOVNC_TTL_MS } from "../config.js";
 
 // SCRIPTURE_ANCHOR: verify-gate | Psalm 118:20 | Verse: This is the gate of Yahweh; the righteous will enter into it.
 // Caddy's forward_auth target. Returns 200 if the signed URL on
-// X-Original-URI is valid, 401 otherwise. Never 5xx — Caddy treats anything
-// except 2xx as a denial, but we still want to keep this clean.
+// X-Forwarded-Uri (the client's request URI, set by Caddy) is valid, 401
+// otherwise. Never 5xx — Caddy treats anything except 2xx as a denial, but we
+// still want to keep this clean.
 //
 // Scope is derived from the URL path: /browser-sidecar/novnc/<identity>/...
 // or, if a single shared seed scope is used, from the ?scope= query param.
@@ -34,7 +35,10 @@ export function registerNovncVerifyRoute(
   store.startPruner();
 
   app.get("/internal/verify-novnc-url", async (req, reply) => {
-    const original = (req.headers["x-original-uri"] as string | undefined) ?? "";
+    // X-Forwarded-Uri is what Caddy's forward_auth sets from the real request.
+    // The signature is checked against this URI's own path, so a signature
+    // minted for one path cannot open another.
+    const original = (req.headers["x-forwarded-uri"] as string | undefined) ?? "";
     const peer = req.headers["x-forwarded-for"] || req.ip;
 
     const denyAndLog = (reason: string) => {

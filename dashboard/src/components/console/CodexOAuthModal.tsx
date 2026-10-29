@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import posthog from 'posthog-js';
 import { X, Terminal, Loader2, ExternalLink, Copy, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { readCodexAuthenticatedFlag } from '@/lib/codex-oauth';
+import { readHttpsAuthorizationUrl } from '@/lib/safe-http-url';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { normalizeSshWarmupMessage } from '@/lib/ssh-warmup';
 import { SafePortal } from '@/components/ui/SafePortal';
@@ -39,17 +40,6 @@ interface CodexOAuthModalProps {
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
-}
-
-// The authorization URL comes from the agent's response and is opened in a new
-// tab, so only an https URL is accepted. Anything else reads as "no URL".
-function readHttpsAuthorizationUrl(value: unknown): string {
-  if (typeof value !== 'string' || !value) return '';
-  try {
-    return new URL(value).protocol === 'https:' ? value : '';
-  } catch {
-    return '';
-  }
 }
 
 // Sanitize an error before it ships to analytics: cap the length and strip

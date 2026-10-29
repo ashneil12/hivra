@@ -1,4 +1,4 @@
-import { normalizeOtlpJson } from "../otlp";
+import { looksSecret, normalizeOtlpJson } from "../otlp";
 
 const NOW=new Date("2026-09-21T20:00:00.000Z");
 const ns="1790020800000000000";
@@ -140,8 +140,51 @@ describe("native agent-run records",()=>{
     expect(first.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
+  it("keeps kebab-case run ids and tool names whose words end in sk- plus 32 characters",()=>{
+    // "task-" and "disk-" end in "sk-". The legacy OpenAI shape has no token boundary, so
+    // it must not drop these structural values: a dropped session.id loses the whole record.
+    const runId="task-manager-service-configuration-reloaded-on-host";
+    const tool="read-disk-usage-task-manager-service-config";
+    const result=one(native("tool.started",[attr("tool.name",tool)],{runId}));
+    expect(result.rejectedLogRecords).toBe(0);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({runId,toolName:tool});
+  });
+
   it("leaves records without the native namespace on the generic path",()=>{
     const result=one(native("run.started",[attr("tool_name","Read")],{resource:[attr("service.name","codex")]}));
     expect(result.events[0]).toMatchObject({title:"Read used"}); expect(result.events[0].role).toBeUndefined();
+  });
+});
+
+describe("OTLP attribute values that carry a token shape",()=>{
+  // The allowlisted attributes are structural, so a platform key in one must be dropped
+  // even when its characters are otherwise allowed. Tokens are synthetic and built at runtime.
+  const body=(n:number)=>"Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(3).slice(0,n);
+  it.each([
+    ["managed Venice key",`hven_live_${body(24)}`],
+    ["Bankr key",`bk_usr_${body(20)}`],
+    ["agent link key",`hvl_${"0123456789abcdef".repeat(4)}`],
+    ["Google API key",`AIza${body(35)}`],
+    ["Telegram bot token",`123456789:${body(35)}`],
+    ["Anthropic key",`sk-ant-api03-${body(40)}`],
+  ])("does not store a %s in a session attribute",(_label,token)=>{
+    const result=normalizeOtlpJson({
+      resourceLogs:[{resource:{attributes:[attr("service.name","claude-code")]},scopeLogs:[{logRecords:[{timeUnixNano:ns,traceId:"c".repeat(32),spanId:"d".repeat(16),attributes:[attr("tool_name","Read"),attr("session.id",token)]}]}]}],
+    },"00000000-0000-4000-8000-000000000001",NOW)!;
+    expect(result.events).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  // An OTLP attribute value is screened by looksSecret before its length check, and a
+  // guest holding its collector token can send a body up to 1 MiB. A long eyJ- run must
+  // be screened in linear time, not stall the event loop.
+  it("screens a long eyJ- attribute value in linear time",()=>{
+    const value="eyJ-".repeat(50_000);
+    const started=Date.now();
+    const secretLike=looksSecret(value);
+    const elapsedMs=Date.now()-started;
+    expect(secretLike).toBe(false);
+    expect(elapsedMs).toBeLessThan(1000);
   });
 });

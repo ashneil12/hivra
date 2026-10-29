@@ -9,7 +9,8 @@ jest.mock("@/lib/billing/hivra-token-launch", () => ({
   },
 }));
 
-import { buildEmailContent } from "@/lib/email/tier-eligibility-notifications";
+import { clerkClient } from "@clerk/nextjs/server";
+import { buildEmailContent, sendTierEligibilityNotification } from "@/lib/email/tier-eligibility-notifications";
 import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
 
 const ONE = 10n ** 18n;
@@ -69,5 +70,32 @@ describe("tier eligibility emails", () => {
     expect(REQUALIFICATION_GRACE_HOURS).toBe(24);
     expect(suspended.text).toContain("the 24-hour grace period has elapsed");
     expect(suspended.text).not.toContain("48-hour");
+  });
+});
+
+describe("tier-eligibility recipient (F106)", () => {
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("sends nothing when the owner's only address is one Clerk has not verified", async () => {
+    process.env = { ...originalEnv, RESEND_API_KEY: "re_test" };
+    (clerkClient as unknown as jest.Mock).mockResolvedValue({
+      users: {
+        getUser: jest.fn().mockResolvedValue({ primaryEmailAddressId: "email_1", emailAddresses: [{ id: "email_1", emailAddress: "victim@example.com", verification: { status: "unverified" } }] }),
+      },
+    });
+
+    const result = await sendTierEligibilityNotification({
+      userId: "user_1",
+      tier: "pro",
+      transition: "qualified",
+      currentBalance: 5n * ONE,
+      evaluation: evaluation("hermesos", "qualified"),
+    });
+
+    expect(result).toEqual({ sent: false, reason: "no_email" });
   });
 });

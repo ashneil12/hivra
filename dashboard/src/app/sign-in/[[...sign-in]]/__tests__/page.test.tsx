@@ -124,6 +124,38 @@ describe("SignInPage", () => {
     });
   });
 
+  it.each([
+    ["a backslash after the leading slash", "/\\attacker.example"],
+    ["an encoded backslash", "/%5Cattacker.example"],
+    ["a literal tab after the leading slash", "/\t/attacker.example"],
+    ["an encoded tab", "/%09/attacker.example"],
+    ["an encoded newline", "/%0A/attacker.example"],
+    ["an encoded protocol-relative prefix", "/%2F%2Fattacker.example"],
+    ["a dot segment before a protocol-relative prefix", "/.//attacker.example"],
+    ["an encoded dot segment before a protocol-relative prefix", "/%2e//attacker.example"],
+    ["a double-dot segment before a protocol-relative prefix", "/..//attacker.example"],
+    ["a double-dot segment after a dashboard path", "/dashboard/..//attacker.example"],
+  ])("does not send sign-in to a redirect using %s", async (_label, redirectUrl) => {
+    process.env.HIVRA_AUTH_MODE = "local";
+    render(await SignInPage({ searchParams: Promise.resolve({ redirect_url: redirectUrl }) }));
+
+    expect(mockSignIn.mock.calls[0][0]).toMatchObject({
+      fallbackRedirectUrl: "/dashboard",
+    });
+    expect(mockSignIn.mock.calls[0][0]).not.toHaveProperty("forceRedirectUrl");
+  });
+
+  it("keeps a wake return target through sign in", async () => {
+    render(await SignInPage({
+      searchParams: Promise.resolve({ redirect_url: "/wake/33333333-3333-4333-8333-333333333333" }),
+    }));
+
+    expect(mockSignIn.mock.calls[0][0]).toMatchObject({
+      forceRedirectUrl: "/wake/33333333-3333-4333-8333-333333333333",
+      fallbackRedirectUrl: "/wake/33333333-3333-4333-8333-333333333333",
+    });
+  });
+
   it("rejects external redirect targets", async () => {
     process.env.HIVRA_AUTH_MODE = "local";
     const page = await SignInPage({
