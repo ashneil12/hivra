@@ -12,9 +12,15 @@ UPSTREAM_IMAGE="nousresearch/hermes-agent@${DIGEST}"
 echo "upstream: $UPSTREAM_IMAGE (tag $TAG)"
 docker pull -q "$UPSTREAM_IMAGE" >/dev/null
 UPSTREAM_REV=$(docker run --rm --entrypoint sh "$UPSTREAM_IMAGE" -c 'grep -o "\"commit\": \"[0-9a-f]*\"" /opt/hermes/install-stamp.json' | grep -o '[0-9a-f]\{40\}')
+# The web bundles are built from upstream source fetched by commit (a tag can move), so resolve the
+# tag to the commit it peels to here and pass it in.
+UPSTREAM_COMMIT=$(git ls-remote https://github.com/NousResearch/hermes-agent.git "refs/tags/${TAG}^{}" "refs/tags/${TAG}" \
+  | awk '$2 ~ /\^\{\}$/ {peeled=$1} {any=$1} END {print (peeled ? peeled : any)}')
+[[ "$UPSTREAM_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot resolve upstream tag $TAG to a commit" >&2; exit 1; }
+echo "upstream source: $TAG -> $UPSTREAM_COMMIT"
 IMG="hivra-hermes:${TAG}-${VER}-${REPO_SHA}"
 docker buildx build --platform "${PLATFORM:-linux/amd64}" --load \
-  --build-arg UPSTREAM_IMAGE="$UPSTREAM_IMAGE" --build-arg UPSTREAM_TAG="$TAG" \
+  --build-arg UPSTREAM_IMAGE="$UPSTREAM_IMAGE" --build-arg UPSTREAM_TAG="$TAG" --build-arg UPSTREAM_COMMIT="$UPSTREAM_COMMIT" \
   --build-arg OVERLAY_VERSION="$VER" --build-arg VCS_REF="$(git -C "$HERE" rev-parse HEAD)" \
   --build-arg UPSTREAM_REVISION="$UPSTREAM_REV" ${WEB_MODE:+--build-arg WEB_MODE=$WEB_MODE} -t "$IMG" "$HERE"
 "$HERE/scripts/check-overlay.sh" "$IMG" "$UPSTREAM_IMAGE"

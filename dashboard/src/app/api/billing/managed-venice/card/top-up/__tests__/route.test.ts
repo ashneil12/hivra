@@ -149,6 +149,28 @@ describe("POST /api/billing/managed-venice/card/top-up", () => {
     );
   });
 
+  it("credits exactly the whole cents Stripe charges, not a finer requested amount", async () => {
+    // 10_000_005 micro-USD is $10.000005: Stripe charges $10.00 (1000 cents), so the
+    // wallet must be credited $10.00, never the finer $10.000005.
+    const response = await POST(createRequest({ amountMicroUsd: 10_000_005 }));
+
+    expect(response.status).toBe(200);
+    expect(mockStripeSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          paid_micro_usd: "10000000",
+          credit_micro_usd: "10000000",
+        }),
+        line_items: [
+          expect.objectContaining({
+            price_data: expect.objectContaining({ unit_amount: 1000 }),
+          }),
+        ],
+      }),
+      expect.anything()
+    );
+  });
+
   it("uses a distinct idempotency key per request so same-amount top-ups never collide", async () => {
     // Time is frozen by fake timers, so a timestamp-bucketed key would collide.
     // The per-request nonce must still make the two keys differ.

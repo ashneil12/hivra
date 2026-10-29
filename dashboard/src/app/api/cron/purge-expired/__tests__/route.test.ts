@@ -9,8 +9,13 @@ import {
 import { reportOpsEvent } from "@/lib/ops-events";
 import { deleteProxmoxInstance } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { locateProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
+
+jest.mock("@/lib/recovery/recover-orphan-provisioning", () => ({
+  locateProxmoxInstanceAcrossFleet: jest.fn(),
+}));
 
 jest.mock("@/lib/hetzner/client", () => ({
   deleteServer: jest.fn(),
@@ -52,6 +57,27 @@ function strandedDeletedFetch(data: unknown[], error: Error | null = null) {
         }),
       }),
     }),
+  };
+}
+
+// Stand-in for one hermes_instances update. The purge claim is
+// update -> eq/is/lte -> select -> maybeSingle; the mark-deleted write awaits
+// the chain itself and resolves { error }. Every filter returns the same chain.
+function makeUpdate(options: { error?: unknown; claimed?: boolean } = {}) {
+  const chain: Record<string, unknown> = {};
+  for (const method of ["eq", "is", "lte", "select"]) {
+    chain[method] = jest.fn(() => chain);
+  }
+  chain.maybeSingle = jest.fn().mockResolvedValue({
+    data: options.claimed === false ? null : { id: "claimed" },
+    error: null,
+  });
+  chain.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+    Promise.resolve({ error: options.error ?? null }).then(resolve, reject);
+  return {
+    updateMock: jest.fn().mockReturnValue(chain),
+    updateEq: chain.eq as jest.Mock,
+    updateLte: chain.lte as jest.Mock,
   };
 }
 
@@ -151,9 +177,7 @@ describe("GET /api/cron/purge-expired", () => {
 
   it("does not expose raw purge failures in logs or response payloads", async () => {
     process.env.CRON_SECRET = "expected-secret";
-    const updateMock = jest.fn().mockReturnValue({
-      eq: jest.fn().mockResolvedValue({ error: null }),
-    });
+    const { updateMock } = makeUpdate();
     mockedSupabaseAdmin.from.mockImplementation((table: string) => {
       if (table !== "hermes_instances") {
         throw new Error(`Unexpected table ${table}`);
@@ -213,9 +237,7 @@ describe("GET /api/cron/purge-expired", () => {
     // VM teardown succeeds, but the subsequent mark-deleted UPDATE fails.
     // Previously the update error was unchecked, so the cron logged success
     // while leaving a destroyed VM behind a still-present DB row (orphan).
-    const updateMock = jest.fn().mockReturnValue({
-      eq: jest.fn().mockResolvedValue({ error: { message: "db write failed" } }),
-    });
+    const { updateMock } = makeUpdate({ error: { message: "db write failed" } });
     mockedSupabaseAdmin.from
       .mockImplementationOnce((table: string) => {
         if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
@@ -264,8 +286,7 @@ describe("GET /api/cron/purge-expired", () => {
     mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
     mockedDeleteProxmoxInstance.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const updateMock = jest.fn().mockReturnValue({ eq: updateEq });
+    const { updateMock, updateEq } = makeUpdate();
     mockedSupabaseAdmin.from
       .mockImplementationOnce((table: string) => {
         if (table !== "hermes_instances") {
@@ -478,8 +499,7 @@ describe("GET /api/cron/purge-expired", () => {
     mockedDeleteProxmoxInstance.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
 
     const archiveInsert = jest.fn().mockResolvedValue({ error: null });
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const updateMock = jest.fn().mockReturnValue({ eq: updateEq });
+    const { updateMock, updateEq } = makeUpdate();
     mockedSupabaseAdmin.from
       .mockImplementationOnce((table: string) => {
         if (table !== "hermes_instances") {
@@ -577,8 +597,7 @@ describe("GET /api/cron/purge-expired", () => {
     mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
     mockedDeleteProxmoxInstance.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const updateMock = jest.fn().mockReturnValue({ eq: updateEq });
+    const { updateMock, updateEq } = makeUpdate();
     mockedSupabaseAdmin.from
       .mockImplementationOnce((table: string) => {
         if (table !== "hermes_instances") {
@@ -643,8 +662,7 @@ describe("GET /api/cron/purge-expired", () => {
   it("leaves a shared-host server alone — only the Supabase row gets soft-deleted", async () => {
     process.env.CRON_SECRET = "expected-secret";
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const updateMock = jest.fn().mockReturnValue({ eq: updateEq });
+    const { updateMock, updateEq } = makeUpdate();
     mockedSupabaseAdmin.from
       .mockImplementationOnce((table: string) => {
         if (table !== "hermes_instances") {
@@ -851,8 +869,7 @@ describe("GET /api/cron/purge-expired", () => {
     it("still purges the self-host operator's rows in local auth mode", async () => {
       process.env.CRON_SECRET = "expected-secret";
       process.env.HIVRA_AUTH_MODE = "local";
-      const updateEq = jest.fn().mockResolvedValue({ error: null });
-      const updateMock = jest.fn().mockReturnValue({ eq: updateEq });
+      const { updateMock, updateEq } = makeUpdate();
       mockedSupabaseAdmin.from
         .mockImplementationOnce(() =>
           scheduledFetch([
@@ -883,6 +900,216 @@ describe("GET /api/cron/purge-expired", () => {
       expect(mockedDeleteServer).toHaveBeenCalledWith(55);
       expect(body.data.purged).toBe(1);
       expect(updateEq).toHaveBeenCalledWith("id", "local-1");
+    });
+  });
+
+  describe("proxmox teardown proof and claim before destroy", () => {
+    const mockedRecover = locateProxmoxInstanceAcrossFleet as jest.MockedFunction<
+      typeof locateProxmoxInstanceAcrossFleet
+    >;
+    const proxmoxInfra = {
+      provider: "proxmox" as const,
+      vmid: 203,
+      privateIpv4: "10.250.20.55",
+      gatewayHost: "agent-miss.example.com",
+    };
+    const proxmoxRow = {
+      id: "inst-miss",
+      user_id: "user_miss",
+      name: "Miss",
+      hetzner_server_id: null,
+      host_id: null,
+      config: { infrastructure: { provider: "proxmox", vmid: 203 } },
+      status: "scheduled_for_deletion",
+      lifecycle_state: "suspended",
+      proxmox_node: "fixturenode3",
+      proxmox_vmid: 203,
+      scheduled_deletion_at: "2026-04-22T00:00:00Z",
+    };
+
+    beforeEach(() => {
+      process.env.CRON_SECRET = "expected-secret";
+      mockedDeleteProxmoxInstance.mockReset();
+      mockedRecover.mockReset();
+      mockedDeleteServer.mockReset();
+      mockedDeleteServer.mockResolvedValue(undefined);
+    });
+
+    // Routes the staged row through the Proxmox teardown branch.
+    function useProxmoxTeardown() {
+      mockedResolveProxmoxLifecycleTarget.mockReturnValue(proxmoxInfra);
+      mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
+    }
+
+    // Routes the staged row through the Hetzner teardown branch.
+    function useHetznerTeardown() {
+      mockedResolveProxmoxLifecycleTarget.mockReturnValue(null);
+      mockedIsProxmoxBackedInstanceRow.mockReturnValue(false);
+    }
+
+    function stageRows(rows: unknown[], update: ReturnType<typeof makeUpdate>) {
+      mockedSupabaseAdmin.from
+        .mockImplementationOnce(() => scheduledFetch(rows))
+        .mockImplementationOnce(() => strandedDeletedFetch([]))
+        .mockImplementation((table: string) => {
+          if (table === "instance_deletion_archives") {
+            return { insert: jest.fn().mockResolvedValue({ error: null }) };
+          }
+          if (table !== "hermes_instances") throw new Error(`Unexpected table ${table}`);
+          return { update: update.updateMock };
+        });
+    }
+
+    function cronRequest() {
+      return new NextRequest("http://localhost/api/cron/purge-expired", {
+        method: "GET",
+        headers: { authorization: "Bearer expected-secret" },
+      });
+    }
+
+    it("keeps the row when the routed host reports the VM missing and the fleet cannot prove it gone", async () => {
+      // The host script exits 0 when the VMID is not on the routed host. That
+      // is one host's answer, not proof of teardown: the row must stay put.
+      mockedDeleteProxmoxInstance.mockResolvedValue({
+        ok: true,
+        stdout: "HERMES_PROXMOX_DELETE_VM_MISSING 203\n",
+        stderr: "",
+      });
+      useProxmoxTeardown();
+      mockedRecover.mockResolvedValue({ status: "inconclusive" });
+      const update = makeUpdate();
+      stageRows([proxmoxRow], update);
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedRecover).toHaveBeenCalledWith(expect.objectContaining({ id: "inst-miss" }));
+      expect(body.data.purged).toBe(0);
+      expect(body.data.results).toEqual([
+        { id: "inst-miss", name: "Miss", success: false, error: "Failed to purge instance" },
+      ]);
+      expect(update.updateMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: "deleted" }),
+      );
+      expect(reportOpsEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ source: "instance.purge_destroyed" }),
+      );
+    });
+
+    it("keeps the row when the fleet search found the VM on another host (row untouched, retry later)", async () => {
+      mockedDeleteProxmoxInstance.mockResolvedValue({
+        ok: true,
+        stdout: "HERMES_PROXMOX_DELETE_VM_MISSING 203\n",
+        stderr: "",
+      });
+      useProxmoxTeardown();
+      mockedRecover.mockResolvedValue({
+        status: "found",
+        found: {} as never,
+      });
+      const update = makeUpdate();
+      stageRows([proxmoxRow], update);
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(body.data.purged).toBe(0);
+      expect(update.updateMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: "deleted" }),
+      );
+    });
+
+    it("marks the row deleted once every known host reports the VM absent", async () => {
+      mockedDeleteProxmoxInstance.mockResolvedValue({
+        ok: true,
+        stdout: "HERMES_PROXMOX_DELETE_VM_MISSING 203\n",
+        stderr: "",
+      });
+      useProxmoxTeardown();
+      mockedRecover.mockResolvedValue({ status: "gone" });
+      const update = makeUpdate();
+      stageRows([proxmoxRow], update);
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(body.data.purged).toBe(1);
+      expect(update.updateEq).toHaveBeenCalledWith("id", "inst-miss");
+      expect(update.updateMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "deleted", lifecycle_state: "deleted" }),
+      );
+    });
+
+    it("claims the selected row on its status, lifecycle and due time before destroying it", async () => {
+      useHetznerTeardown();
+      const update = makeUpdate();
+      stageRows(
+        [
+          {
+            id: "claim-1",
+            user_id: "user_claim",
+            name: "Claim",
+            hetzner_server_id: 88,
+            host_id: null,
+            config: null,
+            status: "scheduled_for_deletion",
+            lifecycle_state: "suspended",
+            scheduled_deletion_at: "2026-04-22T00:00:00Z",
+          },
+        ],
+        update,
+      );
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(body.data.purged).toBe(1);
+      expect(update.updateEq).toHaveBeenCalledWith("id", "claim-1");
+      expect(update.updateEq).toHaveBeenCalledWith("status", "scheduled_for_deletion");
+      expect(update.updateEq).toHaveBeenCalledWith("lifecycle_state", "suspended");
+      expect(update.updateLte).toHaveBeenCalledWith("scheduled_deletion_at", expect.any(String));
+      // The claim is taken before the Hetzner server is destroyed.
+      const claimOrder = update.updateMock.mock.invocationCallOrder[0];
+      const destroyOrder = mockedDeleteServer.mock.invocationCallOrder[0];
+      expect(claimOrder).toBeLessThan(destroyOrder);
+    });
+
+    it("skips a row a payment restored after the candidate read (claim matches nothing)", async () => {
+      useHetznerTeardown();
+      const update = makeUpdate({ claimed: false });
+      stageRows(
+        [
+          {
+            id: "restored-1",
+            user_id: "user_back",
+            name: "Restored",
+            hetzner_server_id: 88,
+            host_id: null,
+            config: null,
+            status: "scheduled_for_deletion",
+            lifecycle_state: "suspended",
+            scheduled_deletion_at: "2026-04-22T00:00:00Z",
+          },
+        ],
+        update,
+      );
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(mockedDeleteServer).not.toHaveBeenCalled();
+      expect(update.updateMock).toHaveBeenCalledTimes(1);
+      expect(body.data.purged).toBe(0);
+      expect(body.data.results).toEqual([
+        {
+          id: "restored-1",
+          name: "Restored",
+          success: false,
+          error: "skipped: instance changed after selection",
+        },
+      ]);
     });
   });
 });
