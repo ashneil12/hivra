@@ -165,6 +165,31 @@ describe("managed Venice wallet accounting", () => {
     expect(tables.managed_venice_wallet_accounts).toHaveLength(1);
   });
 
+  it("writes the wallet account row once, not on every balance read", async () => {
+    const { db } = createMemoryDb();
+    let accountUpserts = 0;
+    const counted = {
+      from: (name: string) => {
+        const table = db.from(name);
+        if (name !== "managed_venice_wallet_accounts") return table;
+        return {
+          ...table,
+          upsert: (...args: Parameters<typeof table.upsert>) => {
+            accountUpserts += 1;
+            return table.upsert(...args);
+          },
+        };
+      },
+      rpc: db.rpc,
+    };
+
+    await ensureManagedVeniceWalletAccount("user_1", counted);
+    await getManagedVeniceWalletSummary("user_1", counted);
+    await getManagedVeniceWalletSummary("user_1", counted);
+
+    expect(accountUpserts).toBe(1);
+  });
+
   it("subtracts active reservations from available wallet balances", async () => {
     const { db, insertRow } = createMemoryDb();
     const account = await ensureManagedVeniceWalletAccount("user_1", db);

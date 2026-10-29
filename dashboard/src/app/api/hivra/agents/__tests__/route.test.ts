@@ -18,6 +18,7 @@ import {
 } from "@/lib/infrastructure/portable-provisioner-contract";
 import { verifyActivityCollectorToken } from "@/lib/activity-observability/auth";
 import { ACTIVITY_COLLECTOR_TTL_SECONDS } from "@/lib/activity-observability/collectors";
+import { log } from "@/lib/logger";
 
 const mockAuth = jest.fn();
 let mockLocalAuthMode = false;
@@ -2991,6 +2992,28 @@ describe("POST /api/hivra/agents", () => {
     expect(mockFailHivraAgentBeforeAllocation).not.toHaveBeenCalled();
     expect(mockReleaseHivraAgentOperation).not.toHaveBeenCalled();
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("logs a failed managed-key revoke on a failure path instead of dropping it silently", async () => {
+    // releaseLlmKeyOnFailure used to swallow the revoke rejection with no log, so a
+    // minted key stayed active with nothing to show for it. The response stays the same.
+    mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192 };
+    mockCreateManagedVeniceProxyKey.mockResolvedValueOnce({ id: "key-setup", keyPrefix: "test", plaintextKey: "test-key" });
+    mockAgentInsertError = { code: "fixture_insert_rejected" };
+    mockRevokeManagedVeniceProxyKey.mockRejectedValue(new Error("DB unavailable"));
+    const errorSpy = jest.spyOn(log, "error").mockImplementation(() => {});
+    try {
+      const response = await POST(makeRequest({ type: "openclaw", cpu: 2, ram: 4, managedVenice: true, llm: { provider: "venice", mode: "managed", walletType: "hermesos" } }) as never);
+      expect(response.status).toBe(500);
+      expect(mockRevokeManagedVeniceProxyKey).toHaveBeenCalledWith({ userId: "user-free", keyId: "key-setup" });
+      expect(errorSpy).toHaveBeenCalledWith(
+        "managed Venice proxy key revoke failed after a launch failure",
+        expect.any(Error),
+        expect.objectContaining({ failureType: "managed_venice_key_release_failed", keyId: "key-setup", userId: "user-free" }),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("finalizes cancellation after tunnel compensation instead of releasing the provision lease", async () => {

@@ -64,6 +64,8 @@ interface DbState {
   tokenUser?: string | null;
   rowByOriginalTxn?: { user_id: string } | null;
   rowForUser?: Record<string, unknown> | null;
+  // when set, reading the user's stored subscription row errors.
+  rowForUserError?: string;
 }
 
 /**
@@ -101,6 +103,9 @@ function mockDb(state: DbState = {}) {
         maybeSingle: jest.fn(async () => {
           if (eqColumn === "apple_original_transaction_id") {
             return { data: state.rowByOriginalTxn ?? null, error: null };
+          }
+          if (state.rowForUserError) {
+            return { data: null, error: { message: state.rowForUserError } };
           }
           return { data: state.rowForUser ?? null, error: null };
         }),
@@ -279,6 +284,22 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
 
     expect(outcome).toEqual({ action: "skipped_stale", userId: "user_1" });
     expect(upserts).toHaveLength(0);
+    expect(grantMock).not.toHaveBeenCalled();
+  });
+
+  it("fails loudly, and writes nothing, when the stored row cannot be read", async () => {
+    // Without the stored period the stale guard cannot run. A read error must
+    // not be treated as "no row yet", or an older renewal overwrites the newer one.
+    const { upserts, updates } = mockDb({
+      tokenUser: "user_1",
+      rowForUserError: "connection reset",
+    });
+
+    await expect(
+      AppleWebhookService.handleNotification(ctx("DID_RENEW", null))
+    ).rejects.toThrow(/connection reset/);
+    expect(upserts).toHaveLength(0);
+    expect(updates).toHaveLength(0);
     expect(grantMock).not.toHaveBeenCalled();
   });
 

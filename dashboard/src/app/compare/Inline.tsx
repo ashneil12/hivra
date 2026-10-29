@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { isExternalHref } from "@/components/public-editorial/ActionLinks";
-import { parseInline } from "@/lib/compare/inline";
+import { parseInline } from "@/lib/inline-copy";
 import compare from "./compare.module.css";
 
 /**
@@ -24,11 +24,11 @@ export default function Inline({ text }: { text: string }) {
           case "link":
             return isExternalHref(token.href) ? (
               <a key={index} href={token.href} target="_blank" rel="noopener noreferrer">
-                {token.text}
+                {token.label}
               </a>
             ) : (
               <Link key={index} href={token.href}>
-                {token.text}
+                {token.label}
               </Link>
             );
           default:

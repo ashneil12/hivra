@@ -89,6 +89,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   let tierCheck: TierCheckSuccess;
   try {
     const result = await isProTierUser(data.user_id);
+    // A failed entitlement read is an outage, like the row lookup above: answer
+    // 503 so the sidecar keeps its current state instead of dropping a paying
+    // user's Pro services on a database blip.
+    if (!result.ok && result.reason?.startsWith("lookup_failed")) return deny(503);
     tierCheck = {
       tier_ok: result.ok,
       tier: result.tier ?? null,

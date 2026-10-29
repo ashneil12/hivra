@@ -467,14 +467,42 @@ export async function POST(req: NextRequest) {
   );
   const getGlobalSettings = createGlobalSettingsCache();
   const results: RedeployResult[] = [];
-  for (const id of instanceIds) {
-    const row = rowsById.get(id);
-    if (!row) {
-      results.push(skippedResult(id, null, "Instance not found"));
-      continue;
-    }
-    // Operator-initiated targeted rescue: recreate now, no in-flight deferral.
-    results.push(await redeployOne(row, getGlobalSettings, OPERATOR_LIVE_UPDATE));
+  // Same waves as the scheduled sweep: up to 10 serial redeploys (~30-90s each)
+  // would run past maxDuration and lose the results of the ones already done.
+  // Results keep the order of instanceIds.
+  for (let i = 0; i < instanceIds.length; i += CONCURRENT_REDEPLOYS) {
+    const waveIds = instanceIds.slice(i, i + CONCURRENT_REDEPLOYS);
+    const settled = await Promise.allSettled(
+      waveIds.map(async (id) => {
+        const row = rowsById.get(id);
+        if (!row) {
+          return skippedResult(id, null, "Instance not found");
+        }
+        // Operator-initiated targeted rescue: recreate now, no in-flight deferral.
+        return redeployOne(row, getGlobalSettings, OPERATOR_LIVE_UPDATE);
+      }),
+    );
+    settled.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled") {
+        results.push(outcome.value);
+        return;
+      }
+      const id = waveIds[index];
+      log.error("webui redeploy threw", new Error("redeploy_one_threw"), {
+        source: SOURCE,
+        route: ROUTE,
+        method: "POST",
+        instanceId: id,
+        failureType: "webui_redeploy_unexpected_throw",
+        errorName: outcome.reason instanceof Error ? outcome.reason.name : typeof outcome.reason,
+      });
+      results.push({
+        id,
+        name: rowsById.get(id)?.name ?? null,
+        success: false,
+        error: "Redeploy threw unexpectedly",
+      });
+    });
   }
 
   const launched = results.filter((result) => result.success).length;

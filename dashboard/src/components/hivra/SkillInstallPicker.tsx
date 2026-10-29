@@ -14,6 +14,7 @@ import { listBoxSkills } from "@/lib/hivra/agent-api";
 import { isCuratedSkillInstalled } from "@/lib/hivra/curated-skill-match";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { useInfrastructureDialog } from "@/components/infrastructure/useInfrastructureDialog";
+import { readJson } from "@/lib/client/read-json";
 
 // Portaled above the app chrome (mobile header z60, bottom bar z80). The overlay
 // covers only the visible viewport, so the close button and footer stay reachable.
@@ -43,14 +44,6 @@ interface SkillMeta {
   description: string;
   category: string | null;
   installedAs: string | null;
-}
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try {
-    return (await r.json()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 export function SkillInstallPicker({

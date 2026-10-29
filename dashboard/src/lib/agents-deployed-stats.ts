@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 
@@ -49,6 +51,51 @@ function toNumber(value: number | string | null | undefined): number {
   return 0;
 }
 
+// /stats reads these counters on every view and they move slowly, so each flag
+// combination is read at most once every five minutes. A failed read throws
+// inside the cache callback, so it is never stored; the caller still gets the
+// empty stats it always got.
+const readAgentsDeployedRpc = unstable_cache(
+  async (withSeries: boolean, withFirstDeploy: boolean): Promise<RpcResult> => {
+    const { data, error } = await supabaseAdmin!.rpc("get_agents_deployed_stats", {
+      p_with_series: withSeries,
+      p_with_first_deploy: withFirstDeploy,
+    });
+
+    if (error) {
+      log.error(
+        "agents-deployed: rpc failed",
+        new Error(error.message || "rpc returned error without message"),
+        {
+          source: "agents-deployed-stats",
+          code: error.code ?? null,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
+        },
+      );
+      throw new Error(error.message || "rpc returned error without message");
+    }
+
+    if (!data || typeof data !== "object") {
+      log.error(
+        "agents-deployed: rpc returned no data",
+        new Error("rpc returned no data"),
+        {
+          source: "agents-deployed-stats",
+          includeSeries: withSeries,
+          includeFirstDeploy: withFirstDeploy,
+          dataType: data === null ? "null" : typeof data,
+        },
+      );
+      throw new Error("rpc returned no data");
+    }
+
+    return data as RpcResult;
+  },
+  ["agents-deployed-stats-rpc"],
+  { revalidate: 300 },
+);
+
 export async function getAgentsDeployedStats(opts?: {
   series?: boolean;
   firstDeploy?: boolean;
@@ -61,40 +108,12 @@ export async function getAgentsDeployedStats(opts?: {
     return emptyStats();
   }
 
-  const { data, error } = await supabaseAdmin.rpc("get_agents_deployed_stats", {
-    p_with_series: Boolean(opts?.series),
-    p_with_first_deploy: Boolean(opts?.firstDeploy),
-  });
-
-  if (error) {
-    log.error(
-      "agents-deployed: rpc failed",
-      new Error(error.message || "rpc returned error without message"),
-      {
-        source: "agents-deployed-stats",
-        code: error.code ?? null,
-        details: error.details ?? null,
-        hint: error.hint ?? null,
-      },
-    );
+  let payload: RpcResult;
+  try {
+    payload = await readAgentsDeployedRpc(Boolean(opts?.series), Boolean(opts?.firstDeploy));
+  } catch {
     return emptyStats();
   }
-
-  if (!data || typeof data !== "object") {
-    log.error(
-      "agents-deployed: rpc returned no data",
-      new Error("rpc returned no data"),
-      {
-        source: "agents-deployed-stats",
-        includeSeries: Boolean(opts?.series),
-        includeFirstDeploy: Boolean(opts?.firstDeploy),
-        dataType: data === null ? "null" : typeof data,
-      },
-    );
-    return emptyStats();
-  }
-
-  const payload = data as RpcResult;
 
   const result: AgentsDeployedStats = {
     total: toNumber(payload.total),

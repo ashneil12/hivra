@@ -57,7 +57,7 @@ function resolveLanePlanKey(subscription: Stripe.Subscription): WorkspaceCloudPl
   const fromPrice = priceId ? lanePriceIdToPlanKey().get(priceId) : undefined;
   if (fromPrice) return fromPrice;
   const fromMeta = subscription.metadata?.plan;
-  if (fromMeta && fromMeta in WORKSPACE_CLOUD_PLANS) {
+  if (fromMeta && Object.hasOwn(WORKSPACE_CLOUD_PLANS, fromMeta)) {
     return fromMeta as WorkspaceCloudPlanKey;
   }
   return "ws_cloud_pro";

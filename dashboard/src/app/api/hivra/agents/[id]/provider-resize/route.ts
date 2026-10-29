@@ -28,6 +28,7 @@ import {
   type ProviderResizeErrorCode,
 } from "@/lib/hivra/provider-agent-resize";
 import { ProviderAgentResizeStoreError } from "@/lib/hivra/provider-agent-resize-store";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 const BODY_LIMIT = 2_048;
 const AgentId = z.string().uuid();
@@ -45,11 +46,6 @@ const problems: Record<ProviderResizeErrorCode, { status: number; message: strin
   provider_response_invalid: { status: 502, message: "Hetzner returned an unverified resize response. No replacement request was sent." },
   operation_unverified: { status: 503, message: "The original resize is saved but its result is not verified. Check this operation instead of starting another resize." },
 };
-
-function noStore<T extends Response>(response: T): T {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
 
 function failure(cause: unknown): Response {
   const code: ProviderResizeErrorCode = cause instanceof ProviderAgentResizeError

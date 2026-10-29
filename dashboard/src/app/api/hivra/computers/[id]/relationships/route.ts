@@ -11,10 +11,7 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { createCanonicalRelationshipReader } from "@/lib/agent-computers/relationship-reader";
-
-const noStore = <T extends Response>(response: T): T => {
-  response.headers.set("Cache-Control", "no-store"); return response;
-};
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

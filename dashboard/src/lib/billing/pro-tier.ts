@@ -34,28 +34,40 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
     return { ok: false, tier: null, reason: "no_db" };
   }
   try {
-    const [{ data: subscription }, { data: instances }, creditSummary, reservedCredits] =
-      await Promise.all([
-        supabaseAdmin
-          .from("hermes_subscriptions")
-          // grace_period_ends_at feeds the dunning cutoff in
-          // evaluateComputeEntitlement — without it a grace-expired past_due
-          // row keeps every Pro+ feature for Stripe's whole retry window.
-          .select("plan, status, grace_period_ends_at")
-          .eq("user_id", userId)
-          .maybeSingle<{
-            plan: string | null;
-            status: string | null;
-            grace_period_ends_at: string | null;
-          }>(),
-        supabaseAdmin
-          .from("hermes_instances")
-          .select("id, lifecycle_state, status, cpu_limit, ram_limit")
-          .eq("user_id", userId)
-          .not("status", "in", '("deleted")'),
-        getCreditSummary(userId, null),
-        deriveReservedCreditBalance(userId),
-      ]);
+    const [
+      { data: subscription, error: subscriptionError },
+      { data: instances, error: instancesError },
+      creditSummary,
+      reservedCredits,
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("hermes_subscriptions")
+        // grace_period_ends_at feeds the dunning cutoff in
+        // evaluateComputeEntitlement — without it a grace-expired past_due
+        // row keeps every Pro+ feature for Stripe's whole retry window.
+        .select("plan, status, grace_period_ends_at")
+        .eq("user_id", userId)
+        .maybeSingle<{
+          plan: string | null;
+          status: string | null;
+          grace_period_ends_at: string | null;
+        }>(),
+      supabaseAdmin
+        .from("hermes_instances")
+        .select("id, lifecycle_state, status, cpu_limit, ram_limit")
+        .eq("user_id", userId)
+        .not("status", "in", '("deleted")'),
+      getCreditSummary(userId, null),
+      deriveReservedCreditBalance(userId),
+    ]);
+    // A failed read is an outage, not a downgrade: throw so the catch below
+    // reports lookup_failed instead of "no_entitlement".
+    if (subscriptionError) {
+      throw new Error(`subscription read failed: ${subscriptionError.message ?? "unknown error"}`);
+    }
+    if (instancesError) {
+      throw new Error(`instances read failed: ${instancesError.message ?? "unknown error"}`);
+    }
 
     const decision = evaluateComputeEntitlement({
       userId,

@@ -170,6 +170,11 @@
       "path": "agent-overlay/tests/tools/test_video_image_input.py",
       "category": "needs-artifact",
       "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
+    },
+    {
+      "path": "agent-overlay/tests/tools/test_venice_extras_url_policy.py",
+      "category": "needs-artifact",
+      "reason": "Runs inside the Hivra overlay image built on a digest-pinned stock upstream Hermes image, against that tag's upstream test tree: agent-overlay/scripts/run-tests.sh (needs Docker and an upstream checkout, so no hosted CI job)."
     }
   ]
 }

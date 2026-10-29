@@ -20,6 +20,9 @@ const PAID_TIER_VALUES = ["operator", "fleet", "command"] as const;
 
 const FREE_TIER_IDLE_DAYS_DEFAULT = 4;
 const SWEEP_BATCH_LIMIT = 50;
+// Page size of the instance_usage_snapshots read (PostgREST's per-request cap).
+const AGENT_USAGE_PAGE_SIZE = 1000;
+const AGENT_USAGE_MAX_PAGES = 20;
 
 // How stale the agent-side probe may be before we declare activity UNKNOWN.
 // harvest-agent-usage runs hourly; 36h tolerates a long-but-recoverable harvest
@@ -235,29 +238,44 @@ async function fetchLatestAgentUsageByInstance(
   // agent that ran any session on the cutoff day still counts as active.
   const cutoffDay = earliestCutoffIso.slice(0, 10);
 
-  const { data, error } = await supabase
-    .from("instance_usage_snapshots")
-    .select("instance_id, stat_date")
-    .in("instance_id", instanceIds)
-    .gt("sessions", 0)
-    .gte("stat_date", cutoffDay);
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
+  // PostgREST answers at most 1000 rows per request. A silently truncated read
+  // would drop some instances' recent sessions and read them as idle, so page
+  // through every match and fail closed if the result is somehow still growing.
   const latestByInstance = new Map<string, string>();
-  for (const row of (data ?? []) as Array<{
-    instance_id: string;
-    stat_date: string;
-  }>) {
-    const current = latestByInstance.get(row.instance_id);
-    // stat_date is a zero-padded ISO calendar day, so lexicographic max == newest.
-    if (!current || row.stat_date > current) {
-      latestByInstance.set(row.instance_id, row.stat_date);
+  for (let page = 0; ; page += 1) {
+    if (page >= AGENT_USAGE_MAX_PAGES) {
+      return { ok: false, error: "instance_usage_snapshots returned more pages than the sweep reads" };
     }
+    const from = page * AGENT_USAGE_PAGE_SIZE;
+    const { data, error } = await supabase
+      .from("instance_usage_snapshots")
+      .select("instance_id, stat_date")
+      .in("instance_id", instanceIds)
+      .gt("sessions", 0)
+      .gte("stat_date", cutoffDay)
+      // (instance_id, stat_date) is the table's primary key, so this order is
+      // total and consecutive pages cannot overlap or skip rows.
+      .order("instance_id", { ascending: true })
+      .order("stat_date", { ascending: true })
+      .range(from, from + AGENT_USAGE_PAGE_SIZE - 1);
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+
+    const rows = (data ?? []) as Array<{
+      instance_id: string;
+      stat_date: string;
+    }>;
+    for (const row of rows) {
+      const current = latestByInstance.get(row.instance_id);
+      // stat_date is a zero-padded ISO calendar day, so lexicographic max == newest.
+      if (!current || row.stat_date > current) {
+        latestByInstance.set(row.instance_id, row.stat_date);
+      }
+    }
+    if (rows.length < AGENT_USAGE_PAGE_SIZE) return { ok: true, latestByInstance };
   }
-  return { ok: true, latestByInstance };
 }
 
 // Instances whose owner has wired up a messaging channel (Telegram today, Discord

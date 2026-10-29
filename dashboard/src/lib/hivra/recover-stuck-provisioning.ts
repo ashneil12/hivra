@@ -790,6 +790,32 @@ async function compensateFailedOwnedProvision(
   return { ...base, action: "cancelled_delete", reason: "delete superseded an exactly compensated provision" };
 }
 
+// The one-shot provision bearer is consumed into api_token as soon as any
+// recovery branch flips the row to running. Remove it on every such branch,
+// not only the ready:true marker branch, or it stays readable on the host.
+async function removeConsumedProvisionSecret(
+  row: StuckAgentRow,
+  context: HivraAgentExecutionContext,
+  secret: string | null,
+): Promise<void> {
+  if (!row.vmid || !secret) return;
+  const secretPath = hivraAgentProvisionSecretPath(context, row.vmid);
+  const cleanup = await runProxmoxHostScript(
+    `rm -f -- ${shellQuote(secretPath)} && [ ! -e ${shellQuote(secretPath)} ]`,
+    context.env,
+    { timeoutMs: SSH_TIMEOUT_MS },
+  );
+  if (!cleanup.ok) {
+    log.warn("recovered provision secret cleanup failed", {
+      source: LOG_SOURCE,
+      failureType: "hivra_agent_stuck_provisioning_secret_cleanup_failed",
+      agentId: row.id,
+      vmid: row.vmid,
+      errorMessage: cleanup.error ?? cleanup.stderr?.slice(0, 300) ?? null,
+    });
+  }
+}
+
 async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryResult> {
   const base = { agentId: row.id, vmid: row.vmid };
   if (!row.operation_id || !row.operation_started_at) {
@@ -1380,23 +1406,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
     if (!flipped) {
       return { ...base, action: "skipped", reason: "status changed concurrently before recovery" };
     }
-    const secretPath = hivraAgentProvisionSecretPath(context, row.vmid);
-    if (secretPath && secret) {
-      const cleanup = await runProxmoxHostScript(
-        `rm -f -- ${shellQuote(secretPath)} && [ ! -e ${shellQuote(secretPath)} ]`,
-        context.env,
-        { timeoutMs: SSH_TIMEOUT_MS },
-      );
-      if (!cleanup.ok) {
-        log.warn("recovered provision secret cleanup failed", {
-          source: LOG_SOURCE,
-          failureType: "hivra_agent_stuck_provisioning_secret_cleanup_failed",
-          agentId: row.id,
-          vmid: row.vmid,
-          errorMessage: cleanup.error ?? cleanup.stderr?.slice(0, 300) ?? null,
-        });
-      }
-    }
+    await removeConsumedProvisionSecret(row, context, secret);
     return { ...base, action: "recovered_from_log", reason: "orchestrator log marker ready:true" };
   }
 
@@ -1426,6 +1436,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         now,
       );
       if (!flipped) return { ...base, action: "skipped", reason: "running completion was superseded" };
+      await removeConsumedProvisionSecret(row, context, secret);
       return { ...base, action: "recovered_via_tunnel", reason: "marker ready:false but tunnel serves healthz" };
     }
     if (["start", "restart", "resize"].includes(String(row.operation_kind))) {
@@ -1487,6 +1498,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
       now,
     );
     if (!flipped) return { ...base, action: "skipped", reason: "running completion was superseded" };
+    await removeConsumedProvisionSecret(row, context, secret);
     return { ...base, action: "recovered_via_tunnel", reason: "no marker yet but tunnel serves healthz" };
   }
   if (["start", "restart", "resize"].includes(String(row.operation_kind))) {

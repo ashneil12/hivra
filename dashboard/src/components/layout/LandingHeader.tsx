@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { useMediaQuery } from "@/lib/client/media-query";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Menu, X } from "lucide-react";
 import { HivraMark } from "@/components/branding/HivraMark";
@@ -49,14 +50,6 @@ function useSignedInHint(isSignedIn?: boolean): boolean {
 /** Matches the phone header breakpoint in public-site.module.css. */
 const PHONE_MENU_QUERY = "(max-width: 680px)";
 
-function subscribeToPhoneMenu(onChange: () => void) {
-  if (typeof window.matchMedia !== "function") return () => {};
-  const query = window.matchMedia(PHONE_MENU_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-}
-
-const readPhoneMenu = () => typeof window.matchMedia === "function" && window.matchMedia(PHONE_MENU_QUERY).matches;
 
 /** Public error pages: signed-in visitors go to the dashboard instead of the homepage. */
 export function HomeOrDashboardLink({ className, style }: { className?: string; style?: CSSProperties }) {
@@ -93,7 +86,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp, tokenSurface
   const { copy } = useLocale();
   const isSignedIn = useSignedInHint(isSignedInProp);
   // Phones get the account row first; the tablet dialog keeps it at the bottom.
-  const phoneMenu = useSyncExternalStore(subscribeToPhoneMenu, readPhoneMenu, () => false);
+  const phoneMenu = useMediaQuery(PHONE_MENU_QUERY);
   const links = [
     { label: "Agents", href: "/#agents" },
     { label: "Computers", href: "/#computers" },

@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Check, Copy, Loader2, X } from "lucide-react";
 
 import { copyTextToClipboard } from "@/lib/client/clipboard";
+import { useMediaQuery } from "@/lib/client/media-query";
 import { SafePortal } from "@/components/ui/SafePortal";
 import {
   buildDesktopInlineCommand,
@@ -44,21 +45,6 @@ function detectOS(): DesktopLauncherOS {
 // copyable values there instead of a Terminal command or a file download.
 const COARSE_POINTER_QUERY = "(pointer: coarse)";
 
-function subscribeCoarsePointer(onChange: () => void): () => void {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
-  const list = window.matchMedia(COARSE_POINTER_QUERY);
-  list.addEventListener?.("change", onChange);
-  return () => list.removeEventListener?.("change", onChange);
-}
-
-function readCoarsePointer(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(COARSE_POINTER_QUERY).matches;
-}
-
-function useCoarsePointer(): boolean {
-  return useSyncExternalStore(subscribeCoarsePointer, readCoarsePointer, () => false);
-}
-
 const kicker: React.CSSProperties = {
   fontSize: 10,
   textTransform: "uppercase",
@@ -91,7 +77,7 @@ const codeBox: React.CSSProperties = {
 };
 
 function CopyButton({ value, label }: { value: string; label: string }) {
-  const coarse = useCoarsePointer();
+  const coarse = useMediaQuery(COARSE_POINTER_QUERY);
   const [copied, setCopied] = useState(false);
   const onCopy = useCallback(async () => {
     if (await copyTextToClipboard(value)) {
@@ -150,7 +136,7 @@ function CopyField({
   value: string;
   secret?: boolean;
 }) {
-  const coarse = useCoarsePointer();
+  const coarse = useMediaQuery(COARSE_POINTER_QUERY);
   const [revealed, setRevealed] = useState(!secret);
   const shown = revealed ? value : "•".repeat(Math.min(value.length, 40));
   return (
@@ -207,7 +193,7 @@ function NumberedStep({ n, children }: { n: number; children: React.ReactNode })
 }
 
 export function ConnectDesktopModal({ instanceId, onClose }: ConnectDesktopModalProps) {
-  const coarse = useCoarsePointer();
+  const coarse = useMediaQuery(COARSE_POINTER_QUERY);
   const [os, setOs] = useState<DesktopLauncherOS>("macos");
   const [data, setData] = useState<DesktopConnectionData | null>(null);
   const [error, setError] = useState<string | null>(null);

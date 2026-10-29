@@ -54,7 +54,7 @@ const ONE = "1000000000000000000";
 
 function thenable<T>(data: T) {
   const builder: Record<string, unknown> = {};
-  for (const method of ["select", "in", "eq", "gte", "not", "or", "order"]) builder[method] = jest.fn(() => builder);
+  for (const method of ["select", "in", "eq", "gt", "gte", "not", "or", "order", "limit", "range"]) builder[method] = jest.fn(() => builder);
   builder.then = (resolve: (value: { data: T; error: null }) => unknown) =>
     Promise.resolve({ data, error: null }).then(resolve);
   return builder;
