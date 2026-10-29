@@ -12,6 +12,7 @@ import remarkGfm from "remark-gfm";
 import { AlertTriangle, Check, Info, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
 
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { AGENT_MARKDOWN_COMPONENTS } from "@/components/markdown/agent-markdown-image";
 import { computerContractDisplayText } from "@/lib/agent-computers/computer-contract";
 import {
   answerManagedSessionApproval,
@@ -39,7 +40,8 @@ import {
 
 import styles from "./ManagedSessionChat.module.css";
 
-const MD_COMPONENTS = {
+export const MD_COMPONENTS = {
+  ...AGENT_MARKDOWN_COMPONENTS,
   code(props: { className?: string; children?: React.ReactNode }) {
     const text = String(props.children ?? "").replace(/\n$/, "");
     const lang = /language-(\w+)/.exec(props.className || "")?.[1];

@@ -106,6 +106,42 @@ describe('Vault Page', () => {
     jest.restoreAllMocks();
   });
 
+  it('does not offer a Codex sign-in address that is not https', async () => {
+    const fetchMock = jest.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.includes('/api/instances/inst-1/oauth/codex/start')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: {
+              url: 'javascript:alert(1)',
+              code: 'ABCD-EFGH',
+            },
+          }),
+        });
+      }
+
+      return defaultFetchImplementation(input);
+    });
+    Object.defineProperty(global, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: fetchMock,
+    });
+
+    render(<VaultPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /add new key/i }));
+    fireEvent.click(screen.getByLabelText(/automated device auth/i));
+    fireEvent.click(screen.getByRole('button', { name: /connect codex/i }));
+
+    expect(await screen.findByText(/no authorization url was returned/i)).toBeInTheDocument();
+    expect(screen.queryByText(/open sign-in page/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('javascript:alert(1)')).not.toBeInTheDocument();
+  });
+
   it('renders the Global Vault keys header', async () => {
     // Basic safety test rendering check handling async effects gracefully
     render(<VaultPage />);
@@ -724,4 +760,5 @@ describe('Vault Page', () => {
       jest.useRealTimers();
     }
   });
+
 });

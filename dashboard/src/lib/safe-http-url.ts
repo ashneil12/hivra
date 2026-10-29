@@ -58,3 +58,18 @@ export function hasSafeHttpAccessUrl(value: unknown): boolean {
     return false;
   }
 }
+
+/**
+ * An authorization or sign-in address a box or the agent runtime returned.
+ * The owner opens it in a new tab or follows a link to it, so only an https
+ * address is usable. Anything else (javascript:, data:, plain http, text that
+ * is not a URL) reads as no address and returns "".
+ */
+export function readHttpsAuthorizationUrl(value: unknown): string {
+  if (typeof value !== "string" || !value) return "";
+  try {
+    return new URL(value).protocol === "https:" ? value : "";
+  } catch {
+    return "";
+  }
+}

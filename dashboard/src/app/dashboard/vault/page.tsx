@@ -12,6 +12,7 @@ import { ModalPicker, type ModalPickerOption } from '@/components/ui/ModalPicker
 import { buildHermesFadeSlideVariants } from '@/components/ui/motion';
 import Link from "next/link";
 import { normalizeSshWarmupMessage } from '@/lib/ssh-warmup';
+import { readHttpsAuthorizationUrl } from '@/lib/safe-http-url';
 
 interface ApiKey {
   id: string;
@@ -261,7 +262,12 @@ export default function VaultPage() {
           normalizeSshWarmupMessage(data.error, 'Failed to start Codex OAuth')
         );
       }
-      setCodexUrl(data.data.url);
+      // The sign-in address comes from the guest; only an https one is ever shown or opened.
+      const authorizationUrl = readHttpsAuthorizationUrl(data.data.url);
+      if (!authorizationUrl) {
+        throw new Error('Codex login started but no authorization URL was returned. Please try again.');
+      }
+      setCodexUrl(authorizationUrl);
       setCodexCode(data.data.code ?? null);
       setCodexStep('waiting');
 
