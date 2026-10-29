@@ -4,7 +4,7 @@ jest.mock("server-only", () => ({}));
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,12 +168,14 @@ describe("final lines (T7, T8, T20)", () => {
 describe("commands the panel shows (T25)", () => {
   it("never puts the code in the URL, in curl's argument list, or in the typed command; reads it from a prompt; never follows redirects", () => {
     const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
-    const prompt = "printf 'One-time code: ' >&2; IFS= read -rs hse_code; echo >&2";
-    const fetch = `${prompt}; printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
+    const prompt = "printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
+    const send = `printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
     expect(commands).toEqual({
-      command: fetch + " | sudo bash",
-      dryRunCommand: fetch + " | bash -s -- --dry-run",
-      downloadCommand: fetch + " -o hivra-enroll.sh",
+      command: `${prompt}; ${send} | sudo bash`,
+      dryRunCommand: `${prompt}; ${send} | bash -s -- --dry-run`,
+      // One line: it makes its own directory and downloads into it, so the
+      // recipe that checks the file needs no prompting line of its own.
+      downloadCommand: `d=$(mktemp -d) && cd "$d" && { ${prompt}; ${send} -o hivra-enroll.sh; }`,
       uninstallCommand: "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash",
     });
     for (const command of Object.values(commands)) {
@@ -205,6 +207,65 @@ describe("commands the panel shows (T25)", () => {
       expect(result.status).toBe(0);
       expect(readFileSync(join(seen, "argv"), "utf8")).not.toContain(VALID.code);
       expect(readFileSync(join(seen, "stdin"), "utf8")).toBe(`Authorization: Bearer ${VALID.code}\n`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the shown command under every shell a user may paste into, including dash (the POSIX shell)", () => {
+    const shells = ["bash", "/bin/sh", "/bin/dash", "zsh"].filter(shell => shell.startsWith("/") ? existsSync(shell) : true);
+    const root = mkdtempSync(join(tmpdir(), "enroll-shells-"));
+    try {
+      const fakes = join(root, "bin");
+      mkdirSync(fakes);
+      writeFileSync(join(fakes, "curl"), `#!/bin/sh\ncat > "$SEEN/stdin"\necho ':'\n`, { mode: 0o755 });
+      writeFileSync(join(fakes, "sudo"), "#!/bin/sh\nexec cat > /dev/null\n", { mode: 0o755 });
+      const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
+      for (const shell of shells) {
+        const seen = join(root, `seen-${shell.replace(/\W+/g, "_")}`);
+        mkdirSync(seen);
+        const result = spawnSync(shell, ["-c", commands.command], {
+          input: VALID.code + "\n",
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${fakes}:${process.env.PATH ?? ""}`, SEEN: seen },
+        });
+        expect({ shell, status: result.status, stderr: result.stderr }).toEqual({ shell, status: 0, stderr: expect.any(String) });
+        expect(readFileSync(join(seen, "stdin"), "utf8")).toBe(`Authorization: Bearer ${VALID.code}\n`);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("the download command makes a directory, downloads the script into it, and needs no second line", () => {
+    const root = mkdtempSync(join(tmpdir(), "enroll-download-"));
+    try {
+      const fakes = join(root, "bin");
+      const seen = join(root, "seen");
+      mkdirSync(fakes);
+      mkdirSync(seen);
+      // mktemp is stubbed to a directory under the test root (macOS mktemp ignores
+      // TMPDIR). curl records stdin and writes its -o target, as a real download would.
+      writeFileSync(join(fakes, "mktemp"), `#!/bin/sh\nmkdir "$SEEN/tempdir" && printf '%s\\n' "$SEEN/tempdir"\n`, { mode: 0o755 });
+      writeFileSync(
+        join(fakes, "curl"),
+        `#!/bin/sh\ncat > "$SEEN/stdin"\nprev=""\nout=""\nfor a in "$@"; do if [ "$prev" = "-o" ]; then out="$a"; fi; prev="$a"; done\nprintf 'script\\n' > "$out"\n`,
+        { mode: 0o755 },
+      );
+      const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
+      expect(commands.downloadCommand).toContain("mktemp -d");
+      expect(commands.downloadCommand).not.toContain("\n");
+      const result = spawnSync("sh", ["-c", commands.downloadCommand], {
+        cwd: root,
+        input: VALID.code + "\n",
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${fakes}:${process.env.PATH ?? ""}`, SEEN: seen },
+      });
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(join(seen, "stdin"), "utf8")).toBe(`Authorization: Bearer ${VALID.code}\n`);
+      expect(readFileSync(join(seen, "tempdir", "hivra-enroll.sh"), "utf8")).toBe("script\n");
+      expect(existsSync(join(root, "hivra-enroll.sh"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
