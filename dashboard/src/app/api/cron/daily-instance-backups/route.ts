@@ -4,6 +4,7 @@ import { createHmac } from "crypto";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { buildColdStorageInstallScriptOrExit } from "@/lib/cold-storage-ssh";
+import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -109,10 +110,10 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+// Host output goes through the shared redactor, so the same token shapes are masked here as in
+// ops_events and the push gate. A PEM-only copy here let provider keys, bot tokens and AWS keys through.
 function redactHostOutput(value: string, max = 8000): string {
-  return value
-    .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, "[REDACTED_KEY]")
-    .slice(0, max);
+  return redactSensitiveCommandOutput(value, max);
 }
 
 // Per-instance restic repository password, derived deterministically so it never
@@ -355,7 +356,7 @@ async function handle(req: NextRequest) {
       stderr: redactHostOutput(result.stderr, 12000),
     };
     if (!result.ok) {
-      return apiError(result.error ?? result.stderr ?? "run-one failed", 500, undefined, payload, {
+      return apiError(redactHostOutput(result.error ?? result.stderr ?? "run-one failed"), 500, undefined, payload, {
         source: LOG_SOURCE, route: ROUTE, failureType: "daily_instance_backup_run_one_failed", logLevel: "warn",
       });
     }
@@ -430,7 +431,7 @@ async function handle(req: NextRequest) {
           ok: false,
           host: row.proxmox_node ?? null,
           reason: "host_script_failed",
-          message: result.error ?? result.stderr ?? "unknown error",
+          message: redactHostOutput(result.error ?? result.stderr ?? "unknown error"),
         });
         log.warn("daily instance backup failed", {
           source: LOG_SOURCE,
