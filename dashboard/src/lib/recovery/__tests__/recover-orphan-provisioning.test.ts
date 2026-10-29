@@ -1,5 +1,6 @@
 import {
   loadKnownProxmoxHostSlugs,
+  locateProxmoxInstanceAcrossFleet,
   recoverProxmoxInstanceAcrossFleet,
   runRecoverOrphanProvisioningSweep,
 } from "../recover-orphan-provisioning";
@@ -371,6 +372,56 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     expect(updatePayloads[0]).not.toHaveProperty("lifecycle_state");
     expect(mockedEncrypt).not.toHaveBeenCalled();
     expect(mockedSoulSeedAfterReady).not.toHaveBeenCalled();
+  });
+
+  it("locates a VM for teardown without writing the row (never revives a row being deleted)", async () => {
+    mockedFrom.mockReset();
+    mockedFrom.mockImplementation((table: string) => {
+      if (table !== "proxmox_hosts") throw new Error(`Unexpected table: ${table}`);
+      return {
+        select: jest.fn().mockResolvedValue({ data: [{ id: "fixturenode13" }], error: null }),
+      };
+    });
+    mockedRunScript.mockResolvedValue({
+      ok: true,
+      stdout: buildDiscoveryStdout({
+        vmid: 425,
+        privip: "10.250.20.75",
+        fqdn: "elsewhere.example",
+        bearer: "a".repeat(64),
+      }),
+      stderr: "",
+    });
+
+    const result = await locateProxmoxInstanceAcrossFleet(
+      buildOrphanRow({ status: "scheduled_for_deletion", lifecycle_state: "suspended" }),
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "found",
+      found: expect.objectContaining({ vmid: 425 }),
+    }));
+    // Only the host registry is read: no hermes_instances write at all.
+    expect(mockedFrom.mock.calls.map(([table]) => table)).toEqual(["proxmox_hosts"]);
+    expect(mockedEncrypt).not.toHaveBeenCalled();
+  });
+
+  it("gives no teardown verdict when the host registry is unreadable (a fallback list may be partial)", async () => {
+    mockedFrom.mockReset();
+    mockedFrom.mockImplementation((table: string) => {
+      if (table !== "proxmox_hosts") throw new Error(`Unexpected table: ${table}`);
+      return {
+        select: jest.fn().mockResolvedValue({ data: null, error: { message: "boom" } }),
+      };
+    });
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+    const result = await locateProxmoxInstanceAcrossFleet(
+      buildOrphanRow({ status: "scheduled_for_deletion", lifecycle_state: "suspended" }),
+    );
+
+    expect(result).toEqual({ status: "inconclusive" });
+    expect(mockedRunScript).not.toHaveBeenCalled();
   });
 
   it.each([

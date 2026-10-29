@@ -619,6 +619,43 @@ export type RecoverProxmoxAcrossFleetResult =
   | { status: "inconclusive" }
   | { status: "error"; error: unknown };
 
+export type LocateProxmoxAcrossFleetResult =
+  | { status: "found"; found: FoundProxmoxVm }
+  | { status: "gone" }
+  | { status: "inconclusive" };
+
+/**
+ * Read-only fleet search: says where the row's VM is, without touching the
+ * row. Teardown paths (purge, host delete) use this, because a reconcile
+ * clears scheduled_deletion_at and can mark the row running, which would
+ * revive a box that is being torn down.
+ */
+export async function locateProxmoxInstanceAcrossFleet(
+  row: RecoverableProxmoxRow,
+): Promise<LocateProxmoxAcrossFleetResult> {
+  // "Gone" proves a teardown, so it needs the whole fleet: the env fallback
+  // list used by the recovery sweeps may be partial, and a VM on a host
+  // missing from it would read as gone. No registry, no verdict.
+  if (!supabaseAdmin) return { status: "inconclusive" };
+  const { data, error } = await supabaseAdmin.from("proxmox_hosts").select("id");
+  const slugs = (data ?? [])
+    .map((entry) => (entry as { id?: unknown }).id)
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (error || slugs.length === 0) {
+    log.warn("proxmox fleet locate: host registry unreadable or empty; no verdict", {
+      source: SOURCE,
+      failureType: "proxmox_locate_registry_unavailable",
+      instanceId: row.id,
+      errorMessage: error?.message,
+    });
+    return { status: "inconclusive" };
+  }
+  // Stopped VMs count as present: a teardown must not call a stopped VM gone.
+  const search = await searchAllHosts(row, slugs, true);
+  if (search.found) return { status: "found", found: search.found };
+  return { status: search.gone ? "gone" : "inconclusive" };
+}
+
 /**
  * Resolve a suspected routing miss against the complete configured fleet.
  * Discovery binds both the VM-name UUID prefix and the full UUID in its Caddy

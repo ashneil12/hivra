@@ -156,6 +156,28 @@ describe("POST /api/billing/backup-addon", () => {
     expect(body.error).toContain("Active subscription required");
   });
 
+  it("refuses a manual grant before enabling Hetzner backups, since nothing would bill them", async () => {
+    mockSupabaseQuery.maybeSingle
+      .mockResolvedValueOnce({
+        data: { id: mockInstanceId, name: "Test Instance", hetzner_server_id: mockServerId, backups_enabled: false },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { stripe_subscription_id: "manual_grant_123", status: "active" },
+        error: null,
+      });
+
+    const res = await POST(createRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toContain("not attached to a live Stripe subscription");
+    expect(enableServerBackup).not.toHaveBeenCalled();
+    expect(mockStripeItemsList).not.toHaveBeenCalled();
+    expect(mockStripeItemsCreate).not.toHaveBeenCalled();
+    expect(mockSupabaseQuery.update).not.toHaveBeenCalled();
+  });
+
   it("should successfully enable backups and charge via Stripe", async () => {
     mockSupabaseQuery.maybeSingle
       // First call - instance

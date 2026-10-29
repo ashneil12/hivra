@@ -1677,6 +1677,38 @@ describe("StripeWebhookService", () => {
         delete process.env.HERMES_BILLING_LEGACY_HARD_DELETE;
       }
     });
+
+    it("does not cancel or suspend when the row was rebound to another subscription after it was read", async () => {
+      const payloads = mockInstanceUpdateCapture();
+      const fromImpl = (supabaseAdmin!.from as jest.Mock).getMockImplementation() as (table: string) => MockBuilder;
+      const cancelEqs: unknown[][] = [];
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = fromImpl(table);
+        if (table === "hermes_subscriptions") {
+          builder.update.mockImplementation(() => {
+            const write = createMockBuilder();
+            write.eq.mockImplementation((...args: unknown[]) => {
+              cancelEqs.push(args);
+              return write;
+            });
+            // The conditional write matches no row: the row now names another subscription.
+            write.then = (resolve: (value: unknown) => void) => resolve({ data: [], error: null });
+            return write;
+          });
+        }
+        return builder;
+      });
+
+      await StripeWebhookService.handleSubscriptionDeleted({
+        id: "sub_1",
+        metadata: { user_id: "user_1" },
+      } as unknown as Stripe.Subscription);
+
+      // The cancel is only ever written against the subscription the event names.
+      expect(cancelEqs).toContainEqual(["stripe_subscription_id", "sub_1"]);
+      expect(resolveEffectiveSubscription).not.toHaveBeenCalled();
+      expect(payloads.find((p) => p.entitlement_state === "suspended")).toBeUndefined();
+    });
   });
 
   describe("handlePaymentFailed", () => {

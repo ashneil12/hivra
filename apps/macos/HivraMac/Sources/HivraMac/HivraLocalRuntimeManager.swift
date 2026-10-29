@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Darwin
 import Foundation
 import HivraMacCore
 
@@ -66,15 +67,13 @@ final class HivraLocalRuntimeManager: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
+        // Only a checkout the user picked (and saved) is ever used. The app never walks up
+        // from its own bundle to find a launcher to run.
         if let saved = defaults.string(forKey: checkoutKey) {
             let candidate = URL(fileURLWithPath: saved, isDirectory: true)
-            if HivraLocalInstallation(checkoutURL: candidate).isValidCheckout {
+            if HivraLocalLauncherTrust.isTrusted(HivraLocalInstallation(checkoutURL: candidate)) {
                 checkoutURL = candidate
             }
-        }
-
-        if checkoutURL == nil {
-            checkoutURL = Self.detectBundledCheckout()
         }
 
         refreshConfigurationState()
@@ -85,10 +84,11 @@ final class HivraLocalRuntimeManager: ObservableObject {
             .appending(path: ".config/hivra", directoryHint: .isDirectory)
     }
 
+    /// Checked on every use, so a launcher changed after selection is never run.
     var installation: HivraLocalInstallation? {
         guard let checkoutURL else { return nil }
         let installation = HivraLocalInstallation(checkoutURL: checkoutURL)
-        return installation.isValidCheckout ? installation : nil
+        return HivraLocalLauncherTrust.isTrusted(installation) ? installation : nil
     }
 
     var hasConfiguration: Bool {
@@ -119,6 +119,10 @@ final class HivraLocalRuntimeManager: ObservableObject {
         let candidate = HivraLocalInstallation(checkoutURL: url)
         guard candidate.isValidCheckout else {
             state = .failed("That folder is not a Hivra checkout.")
+            return
+        }
+        guard HivraLocalLauncherTrust.isTrusted(candidate) else {
+            state = .failed("That checkout's launcher is not owned only by you, or can be changed by others.")
             return
         }
 
@@ -221,7 +225,12 @@ final class HivraLocalRuntimeManager: ObservableObject {
 
         process.terminationHandler = { [weak self] process in
             let succeeded = process.terminationStatus == 0
+            let processIdentifier = process.processIdentifier
             Task { @MainActor [weak self] in
+                // Sign-in is allowed only while the runtime this app launched is alive.
+                if HivraLocalAuthentication.launchedRuntimeProcessID == processIdentifier {
+                    HivraLocalAuthentication.launchedRuntimeProcessID = nil
+                }
                 guard let self else { return }
                 self.runtimeProcess = nil
                 if self.state != .stopping {
@@ -232,6 +241,7 @@ final class HivraLocalRuntimeManager: ObservableObject {
 
         do {
             try process.run()
+            HivraLocalAuthentication.launchedRuntimeProcessID = process.processIdentifier
         } catch {
             detachOutput(pipe)
             runtimeProcess = nil
@@ -412,15 +422,38 @@ final class HivraLocalRuntimeManager: ObservableObject {
         }
     }
 
-    private static func detectBundledCheckout() -> URL? {
-        var candidate = Bundle.main.bundleURL
-        for _ in 0..<8 {
-            candidate.deleteLastPathComponent()
-            let installation = HivraLocalInstallation(checkoutURL: candidate)
-            if installation.isValidCheckout {
-                return candidate
-            }
+}
+
+/// The launcher runs with this user's full rights, so it runs only from the exact expected path
+/// inside the checkout the user selected, and only when the user owns that path and nobody else
+/// can write to it.
+enum HivraLocalLauncherTrust {
+    static func isTrusted(_ installation: HivraLocalInstallation) -> Bool {
+        guard installation.isValidCheckout else { return false }
+        let checkout = installation.checkoutURL.resolvingSymlinksInPath()
+        let expectedLauncher = checkout.appending(
+            path: "dashboard/scripts/hivra-self-host.mjs",
+            directoryHint: .notDirectory
+        )
+        guard installation.launcherURL.resolvingSymlinksInPath().path == expectedLauncher.path else {
+            return false
         }
-        return nil
+
+        let trail: [(path: String, mode: mode_t)] = [
+            (checkout.path, S_IFDIR),
+            (checkout.appending(path: "dashboard", directoryHint: .isDirectory).path, S_IFDIR),
+            (checkout.appending(path: "dashboard/scripts", directoryHint: .isDirectory).path, S_IFDIR),
+            (expectedLauncher.path, S_IFREG),
+        ]
+        return trail.allSatisfy { entry in
+            var info = stat()
+            guard lstat(entry.path, &info) == 0,
+                  info.st_mode & S_IFMT == entry.mode,
+                  info.st_uid == getuid(),
+                  info.st_mode & 0o022 == 0 else {
+                return false
+            }
+            return true
+        }
     }
 }
