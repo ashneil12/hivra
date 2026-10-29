@@ -81,8 +81,12 @@ describe("the Sablier claim link", () => {
   });
   const served = (config: HivraAirdropConfig, now: Date) => getServedHivraAirdrop({ env: ON, hivraAddress: HIVRA, config, raw: RAW, now });
 
-  it("ships with nothing published: no phase beyond unpublished and no link", () => {
-    expect(HIVRA_AIRDROP.claim).toEqual({ campaignUrl: null, opensAt: null, closesAt: null });
+  it("ships the tested Sablier campaign and its 90-day window; an unset claim gives no link", () => {
+    expect(HIVRA_AIRDROP.claim).toEqual({
+      campaignUrl: "https://app.sablier.com/airdrops/campaign/0x4131ab8f9797bb4887a72470b8af48fbec37522f-8453",
+      opensAt: "2026-10-29T13:30:00Z",
+      closesAt: "2027-01-27T13:30:00Z",
+    });
     const open = served(CONFIG, NOW);
     expect(open?.claim.phase).toBe("unpublished");
     expect(claimHrefOf(open?.claim)).toBeNull();

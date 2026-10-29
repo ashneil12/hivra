@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // hermes_instances.id is a uuid column, so text of any other shape cannot match
 // a row. The route has no credential, so it does not pass such text to the
-// database; it answers the same not_found a missing row gets.
+// database; it answers the same inactive a missing row gets.
 const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -42,16 +42,16 @@ export async function GET(
   // even a malformed id costs the caller one of their 60 requests/minute.
   const rateLimit = enforceRateLimit(`aeon-gate:${getIP(req)}`, { limit: 60, windowMs: 60_000 });
   if (!rateLimit.success) {
-    return NextResponse.json({ active: false, status: "rate_limited" }, { status: 429 });
+    return NextResponse.json({ active: false }, { status: 429 });
   }
 
   const { id } = await params;
   if (!INSTANCE_ID_PATTERN.test(id)) {
-    return NextResponse.json({ active: false, status: "not_found" });
+    return NextResponse.json({ active: false });
   }
   try {
     if (!supabaseAdmin) {
-      return NextResponse.json({ active: false, status: "unconfigured" });
+      return NextResponse.json({ active: false });
     }
     const { data, error } = await supabaseAdmin
       .from("hermes_instances")
@@ -61,10 +61,10 @@ export async function GET(
       .maybeSingle<{ status: string }>();
 
     if (error || !data) {
-      return NextResponse.json({ active: false, status: "not_found" });
+      return NextResponse.json({ active: false });
     }
-    return NextResponse.json({ active: data.status === "running", status: data.status });
+    return NextResponse.json({ active: data.status === "running" });
   } catch {
-    return NextResponse.json({ active: false, status: "error" });
+    return NextResponse.json({ active: false });
   }
 }

@@ -66,6 +66,64 @@ describe('ops-events helper', () => {
     });
   });
 
+  it('stores bare provider and bot token shapes redacted in the message and sample stack', async () => {
+    // Synthetic tokens, built at runtime.
+    const body = 'Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw'.repeat(2);
+    const anthropicKey = `sk-ant-api03-${body}`;
+    const telegramToken = `123456789:${body.slice(0, 35)}`;
+
+    const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const eq = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const single = jest.fn().mockResolvedValue({ data: { id: 'evt_456' }, error: null });
+    const insert = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq, maybeSingle })
+      .mockReturnValueOnce({ insert, select, single });
+
+    await reportOpsEvent({
+      source: 'provider-probe',
+      severity: 'error',
+      title: 'Provider call failed',
+      message: `upstream rejected ${anthropicKey}; getMe at https://api.telegram.org/bot${telegramToken}/getMe`,
+      sampleStack: `at probe (${anthropicKey})`,
+    });
+
+    const row = insert.mock.calls[0][0];
+    expect(row.message).toBe(
+      'upstream rejected [REDACTED]; getMe at https://api.telegram.org/bot[REDACTED]/getMe',
+    );
+    expect(row.sample_stack).toBe('at probe ([REDACTED])');
+    expect(JSON.stringify(row)).not.toContain(anthropicKey);
+    expect(JSON.stringify(row)).not.toContain(body.slice(0, 35));
+  });
+
+  // Events without a fingerprintDetail keep the fingerprint they had before the detail
+  // field existed, so existing ops_events rows keep grouping as they did.
+  it('keeps the fingerprint of an event that carries no detail', () => {
+    expect(buildOpsEventFingerprint({
+      source: 'api',
+      title: 'Responses proxy failed',
+      message: 'Gateway unreachable',
+      route: '/api/instances/123/responses',
+      userId: 'user_123',
+      instanceId: 'inst_123',
+    })).toBe('2342effbd0b4eac721d955ccb33a421c0eeb3c947c358c1ced741499c8e7d6b1');
+  });
+
+  it('separates events that share a stored message but carry different details', () => {
+    const base = {
+      source: 'instance-health',
+      title: 'fetch failed',
+      message: 'TypeError',
+    };
+    const first = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'at siteA (/app/src/probe.ts:10:5)' });
+    const second = buildOpsEventFingerprint({ ...base, fingerprintDetail: 'at siteB (/app/src/probe.ts:20:5)' });
+    expect(first).not.toBe(second);
+    expect(first).not.toBe(buildOpsEventFingerprint(base));
+  });
+
   it('builds a stable fingerprint from the same event shape', () => {
     const first = buildOpsEventFingerprint({
       source: 'api',

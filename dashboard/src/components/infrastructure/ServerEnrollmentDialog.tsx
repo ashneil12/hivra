@@ -261,6 +261,13 @@ export function ServerEnrollmentDialog({
                   <CopyButton value={ready.issued.command} label="Copy the setup command" />
                 </div>
               ) : null}
+              {open ? (
+                <p className={enrollmentStyles.meta}>
+                  The command asks for your one-time code. Paste it when it does:{" "}
+                  <code data-testid="server-enrollment-code">{ready.issued.code}</code>{" "}
+                  <CopyButton value={ready.issued.code} label="Copy the one-time code" />
+                </p>
+              ) : null}
               <p className={enrollmentStyles.meta}>
                 {open ? <>Single use · expires in {clock(expiresIn)} · </> : null}
                 <button type="button" className={enrollmentStyles.linkButton} onClick={() => setScriptOpen((open) => !open)} aria-expanded={scriptOpen}>
@@ -335,9 +342,10 @@ export function ServerEnrollmentDialog({
 /** Verifiable in a few commands: the body is the same for everyone and
  * pinned in the repository; only the final line differs. */
 function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
+  // The download asks for the code, so it is copied on its own, one line. The
+  // checks after it never prompt, so a plain multi-line paste cannot feed them
+  // to the prompt as the code.
   const recipe = [
-    "d=$(mktemp -d) && cd \"$d\"",
-    issued.downloadCommand,
     "sha256sum hivra-enroll.sh                 # matches \"your download\" below",
     "head -n -1 hivra-enroll.sh | sha256sum    # matches the published script",
     "less hivra-enroll.sh",
@@ -358,6 +366,7 @@ function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
         </a>{" "}
         · the same file is in Hivra&apos;s public repository at <code>dashboard/bootstrap/server-enroll.sh</code>.
       </p>
+      <p>The commands that ask for the code expect the same one-time code, <code>{issued.code}</code>.</p>
       <p><strong>Try it without changing anything</strong> (no sudo needed):</p>
       <div className={enrollmentStyles.commandRow}>
         <code className={enrollmentStyles.command}>{issued.dryRunCommand}</code>
@@ -368,9 +377,15 @@ function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
         <SquareTerminal size={14} aria-hidden="true" /> The downloaded file contains your one-time code. Delete it when
         you&apos;re done. The code stops working once it&apos;s used, and after 15 minutes. Downloading doesn&apos;t use it up.
       </p>
+      <p>1. Copy this line and paste it on its own. It asks for the one-time code, then downloads the script into a new folder:</p>
+      <div className={enrollmentStyles.commandRow}>
+        <code className={enrollmentStyles.command}>{issued.downloadCommand}</code>
+        <CopyButton value={issued.downloadCommand} label="Copy the download command" />
+      </div>
+      <p>2. In the same terminal, copy these checks and run them. They do not ask for the code again:</p>
       <div className={enrollmentStyles.commandRow}>
         <pre className={enrollmentStyles.recipe}>{recipe}</pre>
-        <CopyButton value={recipe} label="Copy the download-and-check commands" />
+        <CopyButton value={recipe} label="Copy the check-and-run commands" />
       </div>
       <p className={enrollmentStyles.fine}>To undo it later: <code>{issued.uninstallCommand}</code></p>
     </div>

@@ -320,7 +320,9 @@ describe("runCapacityPressureSweep", () => {
         id: "user_x",
         first_name: "Ash",
         primary_email_address_id: "em_1",
-        email_addresses: [{ id: "em_1", email_address: "owner@example.com" }],
+        email_addresses: [
+          { id: "em_1", email_address: "owner@example.com", verification: { status: "verified" } },
+        ],
       }),
     })) as unknown as typeof fetch;
 
@@ -336,6 +338,10 @@ describe("runCapacityPressureSweep", () => {
     expect(summary.failed).toBe(0);
     expect(summary.emailsSent).toBe(2);
     expect(shutdownProxmoxInstance).toHaveBeenCalledTimes(2);
+    // A parked guest must not come back on a host reboot: onboot is cleared at park.
+    for (const call of (shutdownProxmoxInstance as jest.Mock).mock.calls) {
+      expect(call[1]).toMatchObject({ setOnboot: 0 });
+    }
 
     const pauseUpdates = updates.filter((u) => u.patch.lifecycle_state);
     expect(pauseUpdates.map((u) => u.id)).toEqual([
@@ -374,6 +380,34 @@ describe("runCapacityPressureSweep", () => {
           .capacity_paused
       ).toEqual(expect.any(String));
     }
+  });
+
+  it("parks the instance but does not email an owner whose only address is unverified (F106)", async () => {
+    process.env.CAPACITY_PRESSURE_DRY_RUN = "false";
+    process.env.CLERK_SECRET_KEY = "clerk-secret";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "user_x",
+        first_name: "Ash",
+        primary_email_address_id: "em_1",
+        email_addresses: [
+          { id: "em_1", email_address: "victim@example.com", verification: { status: "unverified" } },
+        ],
+      }),
+    })) as unknown as typeof fetch;
+
+    buildSweepStub({
+      hosts: [buildHost("fixturenode2")],
+      instancesByHost: { "fixturenode2": buildHotHostInstances("fixturenode2") },
+    });
+
+    const summary = await runCapacityPressureSweep({ now: NOW });
+
+    expect(summary.parked).toBe(2);
+    expect(summary.emailsSent).toBe(0);
+    expect(sendCapacityPausedEmail).not.toHaveBeenCalled();
   });
 
   it("parks a dormant instance whose only recent touch was PLATFORM maintenance", async () => {

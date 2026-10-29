@@ -9,6 +9,7 @@ import { isSshWarmupError, SSH_WARMUP_MESSAGE } from '@/lib/ssh-warmup';
 import { validateConsoleAccess } from '@/lib/services/console-helpers';
 import { log } from '@/lib/logger';
 import { isWebfreeBackend } from '@/lib/types/instance';
+import { readHttpsAuthorizationUrl } from '@/lib/safe-http-url';
 import { GUEST_IDENTITY_REFUSED_MESSAGE, GUEST_SSH_REFUSED_MARKER } from "@/lib/proxmox/hermes-guest-ssh";
 
 const CODEX_OAUTH_SSH_READY_TIMEOUT_MS = 8_000;
@@ -288,7 +289,8 @@ export async function POST(
       );
     }
 
-    if (typeof payload.url !== 'string' || !payload.url.trim()) {
+    const deviceUrl = typeof payload.url === 'string' ? readHttpsAuthorizationUrl(payload.url.trim()) : '';
+    if (!deviceUrl) {
       log.error("device URL missing from parsed payload", new Error("codex_device_url_missing"), {
         source: "oauth-codex-start",
         route: "/api/instances/[id]/oauth/codex/start",
@@ -309,7 +311,7 @@ export async function POST(
     }
 
     return apiSuccess({
-      url: payload.url.trim(),
+      url: deviceUrl,
       code: typeof payload.code === 'string' && payload.code.trim() ? payload.code.trim() : null,
     });
   } catch (err: unknown) {

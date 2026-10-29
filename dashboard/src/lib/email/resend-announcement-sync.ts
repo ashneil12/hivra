@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { log } from "@/lib/logger";
 
+import { pickVerifiedEmail } from "./clerk-verified-email";
 import { isInternalNonReceivingRecipient } from "./welcome";
 
 const LOG_SOURCE = "resend-announcement-sync";
@@ -116,11 +117,9 @@ function requireEnv(name: string) {
   return value;
 }
 
+// Only a Clerk-verified address may be enrolled; an unverified one may not belong to the user.
 function chooseEmail(user: ClerkAnnouncementUser) {
-  const addresses = user.email_addresses || [];
-  const primary = addresses.find((address) => address.id === user.primary_email_address_id);
-  const verified = addresses.find((address) => address.verification?.status === "verified");
-  return primary?.email_address || verified?.email_address || addresses[0]?.email_address || null;
+  return pickVerifiedEmail(user);
 }
 
 function formatClerkCreatedAt(value: number | null | undefined) {
@@ -463,6 +462,9 @@ export async function syncClerkUserToAnnouncementAudience(user: ClerkAnnouncemen
   } as const;
 }
 
+// F106: this path enrols the address exactly as typed, with no Clerk check, into the
+// 'Hivra customers' audience. It has no caller today. Do not wire it to a public form
+// until Ash decides whether reservation contacts may join that audience at all.
 export async function syncReservationToAnnouncementAudience(email: string) {
   const recipient = buildReservationRecipient(email);
   if (!recipient) {

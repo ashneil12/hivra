@@ -111,6 +111,22 @@ function mintShareToken(): string {
   return randomBytes(24).toString("hex");
 }
 
+// The model choice a template carries, as an explicit allow-list. keyPrefix is
+// the start of a live managed key and proxyKeyId names the minted key, so neither
+// is stored on a template or returned in any view of one (owner, fork or shared).
+// Listing the fields here means a new field on the agent summary cannot leak in.
+function templateLlmConfig(raw: unknown) {
+  const summary = publicLlmConfig(readStoredLlmConfig(raw));
+  if (!summary) return null;
+  return {
+    provider: summary.provider,
+    mode: summary.mode,
+    model: summary.model,
+    walletType: summary.walletType,
+    enabledAt: summary.enabledAt,
+  };
+}
+
 function toOwnerTemplate(row: Record<string, unknown>): OwnerTemplate {
   const visibility = isVisibility(row.visibility) ? row.visibility : "private";
   return {
@@ -123,7 +139,7 @@ function toOwnerTemplate(row: Record<string, unknown>): OwnerTemplate {
     context: typeof row.context === "string" ? row.context : null,
     personality: typeof row.personality === "string" ? row.personality : null,
     emoji: typeof row.emoji === "string" ? row.emoji : null,
-    llm_config: publicLlmConfig(readStoredLlmConfig(row.llm_config)),
+    llm_config: templateLlmConfig(row.llm_config),
     skills: coerceSkillIds(row.skills),
     visibility,
     share_token: typeof row.share_token === "string" ? row.share_token : null,
@@ -170,9 +186,8 @@ export async function createTemplateFromAgent(
         )
       : [];
 
-  // The stored jsonb is already key-free (the encrypted key lives in a separate
-  // column we never select here). Persist exactly what hivra_agents holds so a
-  // launch from this template reproduces the identity, minus the secret.
+  // The encrypted key lives in a separate column we never select here. The model
+  // choice is stored through the template allow-list, so no key prefix is saved.
   const { data: created, error: insErr } = await supabaseAdmin
     .from("agent_templates")
     .insert({
@@ -185,7 +200,7 @@ export async function createTemplateFromAgent(
       context: typeof row.context === "string" ? row.context : null,
       personality: typeof row.personality === "string" ? row.personality : null,
       emoji: typeof row.emoji === "string" ? row.emoji : null,
-      llm_config: row.llm_config ?? null,
+      llm_config: templateLlmConfig(row.llm_config),
       skills,
       visibility: "private",
     })
@@ -273,9 +288,9 @@ export async function getTemplateForLaunch(
     context: isOwner && typeof row.context === "string" ? row.context : null,
     personality: typeof row.personality === "string" ? row.personality : null,
     emoji: typeof row.emoji === "string" ? row.emoji : null,
-    // jsonb metadata is already key-free. A non-owner gets the same key-free
-    // summary the share page shows, not the raw stored object.
-    llm_config: isOwner ? row.llm_config ?? null : publicLlmConfig(readStoredLlmConfig(row.llm_config)),
+    // Owner and non-owner get the same template allow-list, never the raw stored
+    // object (which can carry a managed key prefix).
+    llm_config: templateLlmConfig(row.llm_config),
     // Skill ids are non-sensitive — carried for owner AND non-owner so a fork
     // from a shared template reproduces the skills (the network-effect lever).
     skills: coerceSkillIds(row.skills),
@@ -363,7 +378,7 @@ export async function getPublicTemplateByShareToken(
     context: null, // never expose the owner's free-text context on a shared view
     personality: typeof row.personality === "string" ? row.personality : null,
     emoji: typeof row.emoji === "string" ? row.emoji : null,
-    llm_config: publicLlmConfig(readStoredLlmConfig(row.llm_config)),
+    llm_config: templateLlmConfig(row.llm_config),
     skills: coerceSkillIds(row.skills), // ids are non-sensitive — safe on a shared view
     visibility,
   };

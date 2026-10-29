@@ -306,9 +306,11 @@ async function applyManagedVeniceToRunningWebUI(params: {
     model: params.model,
     dashboardEnableUrl: params.dashboardEnableUrl,
   });
+  // The instance compose .env is read by Docker Compose as an env_file, not sourced.
   const envPatch = ProfileService.buildEnvPatchCommand(
     `/opt/hermes/instances/${params.instanceId}/.env`,
-    envUpdates
+    envUpdates,
+    "compose"
   ).trim();
 
   const result = await params.ssh(
@@ -602,9 +604,11 @@ async function applyVeniceByokToRunningWebUI(params: {
     apiKey: params.apiKey,
     model: params.model,
   });
+  // The instance compose .env is read by Docker Compose as an env_file, not sourced.
   const envPatch = ProfileService.buildEnvPatchCommand(
     `/opt/hermes/instances/${params.instanceId}/.env`,
-    envUpdates
+    envUpdates,
+    "compose"
   ).trim();
 
   const result = await params.ssh(

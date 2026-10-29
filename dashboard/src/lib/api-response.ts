@@ -120,7 +120,12 @@ export function apiError(
     status >= 500 ? "error" : status >= 400 ? "warn" : "info";
   const level = options?.logLevel ?? defaultLevel;
   if (level === "error") {
-    log.error(`API ${status} ${message}`, new Error(message), baseContext);
+    // The stand-in Error carries only the user-facing message, which is what the
+    // client already received, so the message is safe to store verbatim. Opting in
+    // keeps that message on the ops_events row. The console line also gets this call
+    // site's stack frames (this server's own code, no request data), which it did not
+    // carry before the opt-in. The original cause is never passed in.
+    log.error(`API ${status} ${message}`, new Error(message), { ...baseContext, verboseErrors: true });
   } else if (level === "warn") {
     log.warn(`API ${status} ${message}`, baseContext);
   } else {

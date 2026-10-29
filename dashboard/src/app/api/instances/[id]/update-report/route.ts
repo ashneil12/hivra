@@ -20,6 +20,15 @@ interface InstanceUpdateReportRecord {
   deleted_at: string | null;
 }
 
+const INSTANCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Every refusal (malformed id, unknown or deleted instance, no key, wrong bearer)
+// answers this one 401, so a caller cannot tell which instance ids are live. The
+// real reason is kept in the server log only.
+function refuseUpdateReport(failureType: string) {
+  return apiError("Unauthorized", 401, undefined, undefined, { failureType });
+}
+
 // A late/retried/replayed "succeeded" callback must never resurrect an
 // instance that has since been soft-deleted or moved to a terminal/cold
 // lifecycle state. We still record the ops-event, but skip the status write.
@@ -186,6 +195,8 @@ async function recordUpdateReport(params: {
   release?: ReleaseReport;
 }) {
   if (!supabaseAdmin) return apiError("Database not configured", 500);
+  // A malformed id cannot name an instance, so it is refused before any query.
+  if (!INSTANCE_ID_PATTERN.test(params.id)) return refuseUpdateReport("malformed_instance_id");
 
   const { data: instance, error } = await supabaseAdmin
     .from("hermes_instances")
@@ -194,12 +205,18 @@ async function recordUpdateReport(params: {
     .is("deleted_at", null)
     .maybeSingle<InstanceUpdateReportRecord>();
 
-  if (error || !instance) return apiError("Instance not found", 404);
-  if (!instance.api_server_key_encrypted) return apiError("Unauthorized", 401);
+  // A lookup failure is an outage, not evidence that the instance is missing.
+  if (error) {
+    return apiError("Database lookup failed", 500, undefined, undefined, {
+      failureType: "instance_update_lookup_failed",
+    });
+  }
+  if (!instance) return refuseUpdateReport("unknown_or_deleted_instance");
+  if (!instance.api_server_key_encrypted) return refuseUpdateReport("instance_has_no_key");
 
   const expectedToken = decryptApiKey(instance.api_server_key_encrypted);
   if (!verifyBearerHeader(params.authHeader ?? null, expectedToken)) {
-    return apiError("Unauthorized", 401);
+    return refuseUpdateReport("bearer_mismatch");
   }
 
   const normalized: {
