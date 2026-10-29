@@ -22,6 +22,7 @@ const REDACT_PATHS = [
   "args.value",
   "args.password",
   "args.email",
+  "args.file", // /cookies/import: the user's whole session export
   "config.SIGNING_SECRET",
   "config.IMAP_PASS",
   "config.IMAP_USER",
@@ -30,16 +31,21 @@ const REDACT_PATHS = [
   "config.TIER_CHECK_TOKEN",
 ];
 
-export function buildLogger(config: Pick<Config, "LOG_LEVEL" | "NODE_ENV">) {
+// `destination` defaults to stdout; tests pass a stream to capture what is logged.
+export function buildLogger(
+  config: Pick<Config, "LOG_LEVEL" | "NODE_ENV">,
+  destination?: pino.DestinationStream,
+) {
   const isDev = config.NODE_ENV === "development";
-  return pino({
+  const options = {
     level: config.LOG_LEVEL,
     redact: { paths: REDACT_PATHS, censor: "[REDACTED]" },
     transport: isDev
       ? { target: "pino-pretty", options: { colorize: true, singleLine: false } }
       : undefined,
     timestamp: pino.stdTimeFunctions.isoTime,
-  });
+  };
+  return destination ? pino(options, destination) : pino(options);
 }
 
 // Best-effort redaction for tool-call args before they hit the request log.
@@ -61,6 +67,8 @@ export function redactArgs(args: unknown): unknown {
       lower === "file" // /cookies/import {file} is the user's whole session export
     ) {
       out[k] = "[REDACTED]";
+    } else if (lower === "url" && typeof v === "string") {
+      out[k] = logSafeUrl(v);
     } else if (typeof v === "object" && v !== null) {
       out[k] = redactArgs(v);
     } else {
@@ -68,6 +76,17 @@ export function redactArgs(args: unknown): unknown {
     }
   }
   return out;
+}
+
+// A url in a request body can carry a one-time token (a sign-in ticket or magic
+// link) in its query or fragment, so the log keeps the scheme, host and path only.
+function logSafeUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return "[REDACTED]";
+  }
 }
 
 export type Logger = ReturnType<typeof buildLogger>;

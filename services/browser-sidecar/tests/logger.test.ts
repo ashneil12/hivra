@@ -45,4 +45,16 @@ describe("redactArgs", () => {
       storageState: "[REDACTED]",
     });
   });
+
+  it("keeps only the origin and path of a logged url, so a one-time ticket in the query is not written", () => {
+    const logged = redactArgs({
+      session_id: "s",
+      url: "https://login.example.test/cb?ticket=CANARYTICKET#frag-CANARYFRAG",
+    });
+    expect(logged).toEqual({ session_id: "s", url: "https://login.example.test/cb" });
+  });
+
+  it("redacts a logged url that does not parse", () => {
+    expect(redactArgs({ url: "not a url?ticket=CANARYTICKET" })).toEqual({ url: "[REDACTED]" });
+  });
 });
