@@ -315,3 +315,40 @@ describe("sendLifecycleEmail", () => {
     expect(res).toEqual({ sent: false, reason: "not_configured" });
   });
 });
+
+describe("user-typed text in the HTML body is escaped (F106)", () => {
+  const NAME_MARKUP = `<a href="https://evil.example/x">Sam</a>`;
+  const AGENT_MARKUP = `<img src=x onerror=alert(1)>`;
+
+  it.each(LIFECYCLE_EMAIL_KEYS)("%s escapes a first name carrying markup", (key) => {
+    const { html } = buildLifecycleEmail(key, { ...PARAMS, firstName: NAME_MARKUP });
+    expect(html).not.toContain('<a href="https://evil.example/x">');
+    expect(html).toContain("&lt;a href=&quot;https://evil.example/x&quot;&gt;Sam&lt;/a&gt;");
+  });
+
+  it.each(["day1_active", "stalled_5d", "activity_digest"] as const)(
+    "%s escapes an agent name carrying markup",
+    (key) => {
+      const { html } = buildLifecycleEmail(key, { ...PARAMS, agentName: AGENT_MARKUP });
+      expect(html).not.toContain("<img src=x");
+      expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    }
+  );
+
+  it("escapes the activity digest's attention labels and model name", () => {
+    const { html } = buildLifecycleEmail("activity_digest", {
+      ...PARAMS,
+      activityDigest: {
+        sessionCount: 1,
+        totalMessages: null,
+        topModel: "<b>model</b>",
+        estimatedCostUsd: null,
+        attentionLabels: ["<script>alert(1)</script>"],
+      },
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<b>model</b>");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).toContain("&lt;b&gt;model&lt;/b&gt;");
+  });
+});
