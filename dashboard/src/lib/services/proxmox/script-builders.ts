@@ -1494,9 +1494,10 @@ export function buildProxmoxDeleteScript(params: {
   gracefulShutdownTimeoutSeconds?: number;
   /**
    * Dormant reclaim only. The sweep chose this VM while it was paused, and its
-   * owner may have started it since. With this set, a running guest is refused
-   * (exit 44) before any shutdown or hard stop, and a stopped guest is destroyed
-   * directly. Default false keeps the user-initiated graceful delete.
+   * owner may have started it since, or a PVE onboot may have. With this set, a
+   * guest whose state is not exactly `stopped` is refused (exit 44) before any
+   * shutdown or hard stop, and a stopped guest is destroyed directly. Default
+   * false keeps the user-initiated graceful delete.
    */
   refuseIfRunning?: boolean;
 }): string {
@@ -1511,15 +1512,15 @@ export function buildProxmoxDeleteScript(params: {
   // the user-initiated delete path clean — e.g. a paying user shutting down
   // their own agent doesn't want a kill -9 mid-request.
   //
-  // The dormant path must not touch a guest its owner has started: a running
-  // guest is refused outright, so there is no shutdown or hard stop to take it down.
+  // The dormant path must not touch a guest its owner has started: only a guest
+  // that is exactly stopped is destroyed. Any other state (running, paused, ...)
+  // is refused outright, so there is no shutdown or hard stop to take it down.
   const powerDown = params.refuseIfRunning
-    ? `  case "$(qm status ${params.vmid} 2>/dev/null || true)" in
-    *"status: running"*)
-      echo "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED ${params.vmid}" >&2
-      exit 44
-      ;;
-  esac
+    ? `  vm_state="$( (qm status ${params.vmid} 2>/dev/null || true) | sed -n 's/^status:[[:space:]]*//p' | head -1)"
+  if [ "$vm_state" != "stopped" ]; then
+    echo "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED ${params.vmid} state=$vm_state" >&2
+    exit 44
+  fi
 `
     : `  if qm shutdown ${params.vmid} --timeout ${gracefulTimeout} >/dev/null 2>&1; then
     echo "HERMES_PROXMOX_DELETE_VM_GRACEFUL_SHUTDOWN ${params.vmid}"
