@@ -12,6 +12,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
+import { buildPinnedGuestHostScript, resolvePinnedGuestTarget } from "@/lib/hivra/pinned-guest-seed";
 import { runProviderAgentGuestScript } from "@/lib/hivra/provider-guest-seed";
 import { log } from "@/lib/logger";
 import { computerKindLabel, linkLabel, linkSource } from "./eligibility";
@@ -30,10 +31,6 @@ export type KitState =
 export interface KitDeliveryResult {
   state: KitState;
   message?: string;
-}
-
-function b64(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64");
 }
 
 /** The kit the agent should have now, with the digest of its non-secret parts. */
@@ -61,17 +58,6 @@ function agentReachable(agent: OwnedRow): string | null {
   return null;
 }
 
-// Same host lane and key as the Computer Contract seed: the guest script is
-// wrapped again so no request byte reaches the host's shell unencoded.
-function buildProxmoxHostScript(ip: string, guestScript: string): string {
-  return `#!/usr/bin/env bash
-set -euo pipefail
-KEY=/etc/hivra/keys/vm-orchestrator
-[ -f "$KEY" ] || { echo "vm key $KEY missing" >&2; exit 1; }
-OUTER='${b64(guestScript)}'
-ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes "ubuntu@${ip}" "echo '$OUTER' | base64 -d | sudo bash"
-`;
-}
 
 async function runKit(userId: string, agent: OwnedRow, request: KitRequest): Promise<KitOutcome | null> {
   const script = buildKitGuestScript(request);
@@ -82,9 +68,17 @@ async function runKit(userId: string, agent: OwnedRow, request: KitRequest): Pro
   const ip = String(agent.ip ?? "");
   if (!/^[0-9.]+$/.test(ip)) return null;
   const context = await resolveHivraAgentExecutionContext(userId, agent);
+  // The kit carries a link key, so it only travels over the VMID-bound path
+  // (pinned-guest-seed.ts). A box that can't be pinned gets nothing.
+  const pinned = resolvePinnedGuestTarget({ ip, vmid: agent.vmid as number | null }, context);
+  if (!pinned.ok) {
+    log.warn("agent link kit not sent: box identity can't be verified", { source: "agent-links/kit",
+      failureType: "agent_link_kit_unpinned", userId, agentId: agent.id, reason: pinned.reason });
+    return null;
+  }
   let result: HostScriptResult;
   try {
-    result = await runProxmoxHostScript(buildProxmoxHostScript(ip, script), context.env, PROXMOX_BUDGET_MS);
+    result = await runProxmoxHostScript(buildPinnedGuestHostScript(pinned.target, script), context.env, PROXMOX_BUDGET_MS);
   } catch {
     return null;
   }

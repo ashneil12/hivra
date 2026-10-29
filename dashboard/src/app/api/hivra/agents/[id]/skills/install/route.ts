@@ -95,9 +95,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (skillIds.length === 0) return apiError("skillIds must be a non-empty array", 400);
     if (skillIds.length > 50) return apiError("Too many skills in one install", 400);
 
-    let env: Record<string, string | undefined>;
+    let authority: Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>>;
     try {
-      env = (await resolveHivraAgentExecutionContext(userId, agent)).env;
+      authority = await resolveHivraAgentExecutionContext(userId, agent);
     } catch (contextError) {
       const safeError = describeHivraAgentExecutionContextError(contextError);
       if (safeError) return apiError(safeError.message, safeError.status);
@@ -109,9 +109,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         id: String(agent.id),
         type: (agent.type as string | null) ?? null,
         ip: (agent.ip as string | null) ?? null,
+        vmid: (agent.vmid as number | null) ?? null,
       },
       skillIds,
-      env,
+      authority,
     );
 
     if (!result.ok) {

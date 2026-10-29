@@ -79,14 +79,21 @@ describe("collectSkillFilesForIds", () => {
   });
 });
 
+const SEED_AUTHORITY = {
+  env: {},
+  infrastructureBindingTag: "hivra-bind-0123456789abcdef0123456789abcdef",
+  infrastructureBindingTagEnforced: true,
+  paths: { vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" },
+};
+
 describe("installCuratedSkillsOnBox", () => {
   beforeEach(() => mockedRunScript.mockReset());
 
   it("gates non-codex/claude-code agent types without touching SSH", async () => {
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "aeon", ip: "10.250.20.42" },
+      { id: "a", type: "aeon", ip: "10.250.20.42", vmid: 1161 },
       [FIRST.id],
-      {},
+      SEED_AUTHORITY,
     );
     expect(res.ok).toBe(false);
     expect(res.installed).toEqual([]);
@@ -96,9 +103,9 @@ describe("installCuratedSkillsOnBox", () => {
 
   it("rejects a missing/invalid box ip without touching SSH", async () => {
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "codex", ip: "" },
+      { id: "a", type: "codex", ip: "", vmid: 1161 },
       [FIRST.id],
-      {},
+      SEED_AUTHORITY,
     );
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/ip/i);
@@ -113,9 +120,9 @@ describe("installCuratedSkillsOnBox", () => {
     } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
 
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "codex", ip: "10.250.20.42" },
+      { id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 },
       [FIRST.id],
-      {},
+      SEED_AUTHORITY,
     );
     expect(res.ok).toBe(true);
     expect(res.installed).toEqual([FIRST.id]);
@@ -126,7 +133,7 @@ describe("installCuratedSkillsOnBox", () => {
     const slug = bankrSkillSlug(entry.identifier);
     // The host script wraps the guest script base64 — decode it to assert on the
     // actual writes (codex → .agents/skills, slug dir, SKILL.md, real content).
-    const b64 = sentScript.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| ssh/)?.[1];
+    const b64 = sentScript.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| "\$\{GUEST_SSH\[@\]\}"/)?.[1];
     expect(b64).toBeTruthy();
     const guest = Buffer.from(b64!, "base64").toString("utf8");
     expect(guest).toContain('ROOT="$BUX/.agents/skills"');
@@ -144,14 +151,14 @@ describe("installCuratedSkillsOnBox", () => {
     } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
 
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "claude-code", ip: "10.250.20.42" },
+      { id: "a", type: "claude-code", ip: "10.250.20.42", vmid: 1161 },
       [FIRST.id, SECOND.id],
-      {},
+      SEED_AUTHORITY,
     );
     expect(res.ok).toBe(true);
     expect(res.installed).toEqual([FIRST.id, SECOND.id]);
     const guest = Buffer.from(
-      (mockedRunScript.mock.calls[0][0] as string).match(/printf '%s' '([A-Za-z0-9+/=]+)' \| ssh/)![1],
+      (mockedRunScript.mock.calls[0][0] as string).match(/printf '%s' '([A-Za-z0-9+/=]+)' \| "\$\{GUEST_SSH\[@\]\}"/)![1],
       "base64",
     ).toString("utf8");
     expect(guest).toContain('ROOT="$BUX/.claude/skills"');
@@ -165,9 +172,9 @@ describe("installCuratedSkillsOnBox", () => {
     } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
 
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "codex", ip: "10.250.20.42" },
+      { id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 },
       [FIRST.id, "ghost-id"],
-      {},
+      SEED_AUTHORITY,
     );
     expect(res.ok).toBe(true);
     expect(res.installed).toEqual([FIRST.id]);
@@ -183,9 +190,9 @@ describe("installCuratedSkillsOnBox", () => {
     } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
 
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "codex", ip: "10.250.20.42" },
+      { id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 },
       [FIRST.id],
-      {},
+      SEED_AUTHORITY,
     );
     expect(res.ok).toBe(false);
     expect(res.installed).toEqual([]);
@@ -194,9 +201,9 @@ describe("installCuratedSkillsOnBox", () => {
 
   it("succeeds trivially (no SSH) when only unknown ids are requested", async () => {
     const res = await installCuratedSkillsOnBox(
-      { id: "a", type: "codex", ip: "10.250.20.42" },
+      { id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 },
       ["ghost-id"],
-      {},
+      SEED_AUTHORITY,
     );
     // Nothing installable, but there WAS an unknown id → not a clean no-op.
     expect(res.ok).toBe(false);

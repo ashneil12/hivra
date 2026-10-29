@@ -83,7 +83,13 @@ const AGENT = {
 
 let clock = Date.parse("2026-09-24T12:00:00.000Z");
 const now = () => new Date(clock);
-const seed = jest.fn<Promise<ComputerContractGuestOutcome>, [string, ComputerContractGuestRequest, unknown]>();
+const seed = jest.fn<Promise<ComputerContractGuestOutcome>, [{ ip?: string | null; vmid?: number | null }, ComputerContractGuestRequest, unknown]>();
+const AUTHORITY = {
+  env: {},
+  infrastructureBindingTag: "hivra-bind-0123456789abcdef0123456789abcdef",
+  infrastructureBindingTagEnforced: true,
+  paths: { vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" },
+};
 
 function delivered(request: ComputerContractGuestRequest, overrides: Record<string, unknown> = {}): ComputerContractGuestOutcome {
   return { ok: true, result: { status: "delivered", revision: request.revision, contentSha256: request.contentSha256,
@@ -91,7 +97,7 @@ function delivered(request: ComputerContractGuestRequest, overrides: Record<stri
 }
 
 const advance = (agent: Row, mode: "auto" | "deliver" | "restore" | "check" = "auto") =>
-  advanceProxmoxComputerContract(USER, agent, {}, mode, { seed, now });
+  advanceProxmoxComputerContract(USER, agent, AUTHORITY, mode, { seed, now });
 
 beforeEach(() => {
   table.length = 0;
@@ -103,11 +109,11 @@ beforeEach(() => {
 
 describe("advanceProxmoxComputerContract", () => {
   it("delivers revision 1 over an absent block and shows it only after the read-back receipt", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     const status = await advance(AGENT);
     expect(seed).toHaveBeenCalledTimes(1);
-    const [ip, request] = seed.mock.calls[0];
-    expect(ip).toBe("10.253.0.90");
+    const [box, request] = seed.mock.calls[0];
+    expect(box).toEqual({ ip: "10.253.0.90", vmid: null });
     expect(request).toMatchObject({ mode: "deliver", expected: "absent", revision: 1 });
     expect(request.contentSha256).toBe(sha(request.block));
     expect(request.facts).toMatchObject({ revision: 1, contentSha256: request.contentSha256, account: { user: "bux" } });
@@ -116,7 +122,7 @@ describe("advanceProxmoxComputerContract", () => {
   });
 
   it("does not mint a revision or contact the computer when nothing changed", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     await advance(AGENT);
     clock += COMPUTER_CONTRACT_RETRY_MS * 5;
     const status = await advance({ ...AGENT });
@@ -126,7 +132,7 @@ describe("advanceProxmoxComputerContract", () => {
   });
 
   it("re-renders on a rename and swaps from the revision it last delivered", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     await advance(AGENT);
     const first = table[0];
     const status = await advance({ ...AGENT, name: "Codex 2" });
@@ -137,13 +143,13 @@ describe("advanceProxmoxComputerContract", () => {
   });
 
   it("never shows a revision delivered on a receipt for other bytes (T17)", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request, { contentSha256: "f".repeat(64), observed: "f".repeat(64) }));
+    seed.mockImplementation(async (_box, request) => delivered(request, { contentSha256: "f".repeat(64), observed: "f".repeat(64) }));
     const status = await advance(AGENT);
     expect(status).toMatchObject({ revision: 1, state: "pending", deliveredAt: null, lastError: "readback_mismatch" });
   });
 
   it("never shows a stale revision number as the current delivery (T18)", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request, { revision: request.revision + 1 }));
+    seed.mockImplementation(async (_box, request) => delivered(request, { revision: request.revision + 1 }));
     const status = await advance(AGENT);
     expect(status).toMatchObject({ state: "pending", lastError: "readback_mismatch" });
   });
@@ -154,7 +160,7 @@ describe("advanceProxmoxComputerContract", () => {
     clock += COMPUTER_CONTRACT_RETRY_MS - 1;
     await advance(AGENT);
     expect(seed).toHaveBeenCalledTimes(1);
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     // "Try again" skips the wait.
     expect(await advance(AGENT, "deliver")).toMatchObject({ state: "delivered" });
     expect(seed).toHaveBeenCalledTimes(2);
@@ -166,27 +172,27 @@ describe("advanceProxmoxComputerContract", () => {
     clock += COMPUTER_CONTRACT_RETRY_MS * 2;
     await advance(AGENT);
     expect(seed).toHaveBeenCalledTimes(1);
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     expect(await advance(AGENT, "restore")).toMatchObject({ state: "delivered", revision: 1 });
     expect(seed.mock.calls[1][1].mode).toBe("restore");
   });
 
   it("recovers a lost receipt by swapping from the Hivra revision the computer still holds", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     await advance(AGENT);
     // Revision 1 is on the computer but its receipt never reached the store.
     Object.assign(table[0], { delivery_state: "pending", delivered_at: null, receipt: null });
     const revisionOne = String(table[0].content_sha256);
     seed.mockReset();
     seed.mockResolvedValueOnce({ ok: true, result: { status: "state_conflict", observed: revisionOne, bootId: null } })
-      .mockImplementation(async (_ip, request) => delivered(request));
+      .mockImplementation(async (_box, request) => delivered(request));
     const status = await advance({ ...AGENT, name: "Codex 2" });
     expect(seed.mock.calls.map(([, request]) => request.expected)).toEqual(["absent", revisionOne]);
     expect(status).toMatchObject({ revision: 2, state: "delivered" });
   });
 
   it("checks without writing and reports an edit found later as changed", async () => {
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     await advance(AGENT);
     const content = String(table[0].content_sha256);
     seed.mockReset().mockResolvedValueOnce({ ok: true, result: { status: "observed", observed: content, bootId: null } });
@@ -207,26 +213,26 @@ describe("advanceProxmoxComputerContract", () => {
     await advance(AGENT);
     expect(seed).toHaveBeenCalledTimes(1);
     clock += COMPUTER_CONTRACT_STUCK_RETRY_MS;
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     expect(await advance(AGENT)).toMatchObject({ state: "delivered" });
     expect(seed).toHaveBeenCalledTimes(2);
   });
 
   describe("never starts a round trip that can't finish before the deadline", () => {
     const withDeadline = (agent: Row, deadline: number, mode: "auto" | "deliver" | "check" = "auto") =>
-      advanceProxmoxComputerContract(USER, agent, {}, mode, { seed, now, deadline });
+      advanceProxmoxComputerContract(USER, agent, AUTHORITY, mode, { seed, now, deadline });
 
     it("leaves the revision pending, without counting an attempt, when there is no room", async () => {
       const status = await withDeadline(AGENT, clock + COMPUTER_CONTRACT_SEND_BUDGET_MS - 1);
       expect(seed).not.toHaveBeenCalled();
       expect(status).toMatchObject({ kind: "tracked", revision: 1, state: "pending", lastAttemptAt: null });
       // The next request, with room, sends it at once.
-      seed.mockImplementation(async (_ip, request) => delivered(request));
+      seed.mockImplementation(async (_box, request) => delivered(request));
       expect(await withDeadline(AGENT, clock + COMPUTER_CONTRACT_SEND_BUDGET_MS)).toMatchObject({ state: "delivered" });
     });
 
     it("stops before the second swap when the first round trip used up the room", async () => {
-      seed.mockImplementation(async (_ip, request) => delivered(request));
+      seed.mockImplementation(async (_box, request) => delivered(request));
       await advance(AGENT);
       Object.assign(table[0], { delivery_state: "pending", delivered_at: null, receipt: null });
       const revisionOne = String(table[0].content_sha256);
@@ -248,7 +254,7 @@ describe("advanceProxmoxComputerContract", () => {
 
   describe("keeps Delivered an observation", () => {
     beforeEach(async () => {
-      seed.mockImplementation(async (_ip, request) => delivered(request));
+      seed.mockImplementation(async (_box, request) => delivered(request));
       await advance(AGENT);
       seed.mockReset();
     });
@@ -288,11 +294,11 @@ describe("advanceProxmoxComputerContract", () => {
   });
 
   it("resolves the owner-scoped host environment only when a round trip is due", async () => {
-    const environment = jest.fn(async () => ({ PROXMOX_NODE: "fixturenode10" }));
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    const environment = jest.fn(async () => ({ ...AUTHORITY, env: { PROXMOX_NODE: "fixturenode10" } }));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     await advanceProxmoxComputerContract(USER, AGENT, environment, "auto", { seed, now });
     expect(environment).toHaveBeenCalledTimes(1);
-    expect(seed.mock.calls[0][2]).toEqual({ PROXMOX_NODE: "fixturenode10" });
+    expect(seed.mock.calls[0][2]).toEqual(expect.objectContaining({ env: { PROXMOX_NODE: "fixturenode10" } }));
     // Delivered and recently read: nothing to send, so nothing is resolved.
     await advanceProxmoxComputerContract(USER, AGENT, environment, "auto", { seed, now });
     expect(environment).toHaveBeenCalledTimes(1);
@@ -306,7 +312,7 @@ describe("advanceProxmoxComputerContract", () => {
 
   it("never reports a delivery as recorded when the database write that records it fails", async () => {
     updatesFail = true;
-    seed.mockImplementation(async (_ip, request) => delivered(request));
+    seed.mockImplementation(async (_box, request) => delivered(request));
     const status = await advance(AGENT);
     // The computer took the block, but the store did not record the receipt.
     expect(seed).toHaveBeenCalledTimes(1);
@@ -347,7 +353,7 @@ describe("advanceProviderComputerContract (ATT-05)", () => {
 
   it("never sends a Proxmox agent's note over the provider lane, or the reverse", async () => {
     await advanceProviderComputerContract(USER, AGENT, "deliver", { providerSeed, seed, now });
-    await advanceProxmoxComputerContract(USER, PROVIDER, {}, "deliver", { providerSeed, seed, now });
+    await advanceProxmoxComputerContract(USER, PROVIDER, AUTHORITY, "deliver", { providerSeed, seed, now });
     expect(providerSeed).not.toHaveBeenCalled();
     expect(seed).not.toHaveBeenCalled();
   });
