@@ -104,4 +104,11 @@ function logSafeUrl(raw: string): string {
   }
 }
 
+// The route a request matched, or for a request that matched none, its path
+// without the query string. A one-time token sent in a query is never logged
+// through a route label.
+export function routeLabel(req: { url: string; routeOptions: { url?: string } }): string {
+  return req.routeOptions.url ?? req.url.split("?")[0];
+}
+
 export type Logger = ReturnType<typeof buildLogger>;

@@ -116,6 +116,15 @@ describe("bearer auth preHandler", () => {
       }
     });
 
+    it("does not log the query of an unmatched request it rejects", async () => {
+      const app = await buildApp(buildConfig({ SIDECAR_AUTH_TOKEN: TOKEN }), logger);
+      const res = await app.inject({ method: "GET", url: "/nope?ticket=BEARERCANARY" });
+      expect(res.statusCode).toBe(401);
+      const logged = JSON.stringify(logger.warn.mock.calls);
+      expect(logged).toContain('"/nope"');
+      expect(logged).not.toContain("BEARERCANARY");
+    });
+
     it("lets /health through without a bearer (so the container healthcheck still works)", async () => {
       const app = await buildApp(buildConfig({ SIDECAR_AUTH_TOKEN: TOKEN }), logger);
       const res = await app.inject({ method: "GET", url: "/health" });

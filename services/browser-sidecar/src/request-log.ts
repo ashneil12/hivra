@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { redactArgs, type Logger } from "./logger.js";
+import { redactArgs, routeLabel, type Logger } from "./logger.js";
 
 // Single observability hook: every request emits one structured log line on completion.
 // Kept apart from server.ts so tests can attach it to a Fastify app and read what it logs.
@@ -11,7 +11,7 @@ export function attachRequestLog(app: FastifyInstance, logger: Logger): void {
         : undefined;
     logger.info(
       {
-        tool: req.routeOptions.url ?? req.url,
+        tool: routeLabel(req),
         method: req.method,
         status: reply.statusCode,
         duration_ms: reply.elapsedTime,

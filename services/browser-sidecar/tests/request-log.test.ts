@@ -12,6 +12,7 @@ import type { SessionManager } from "../src/playwright/session-manager.js";
 const COOKIE_CANARY = "CANARYCOOKIE9f3a";
 const TICKET_CANARY = "CANARYTICKET7b2e";
 const FRAGMENT_CANARY = "CANARYFRAG5d1c";
+const QUERY_CANARY = "CANARYQUERY3c8a";
 
 async function buildApp() {
   const chunks: string[] = [];
@@ -80,5 +81,15 @@ describe("request log", () => {
     expect(output).toContain('"url":"https://login.example.test/cb"');
     expect(output).not.toContain(TICKET_CANARY);
     expect(output).not.toContain(FRAGMENT_CANARY);
+  });
+
+  it("logs the path, not the query, of a request that matches no route", async () => {
+    const { app, logged } = await buildApp();
+    const res = await app.inject({ method: "GET", url: `/nope?ticket=${QUERY_CANARY}` });
+    expect(res.statusCode).toBe(404);
+
+    const output = await logged();
+    expect(output).toContain('"tool":"/nope"');
+    expect(output).not.toContain(QUERY_CANARY);
   });
 });
