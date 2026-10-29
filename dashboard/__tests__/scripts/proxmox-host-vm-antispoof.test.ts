@@ -113,6 +113,13 @@ describe("proxmox-host-vm-antispoof --render", () => {
     expect(out).not.toContain('iifname "tap1148i0" arp saddr ip @pinned_v4');
   });
 
+  it("pins the DHCP client hardware address to the NIC's MAC, before the DHCP allowance", () => {
+    const pin = 'iifname "tap1148i0" udp dport 67 @th,288,48 != 0xbc2411aabb01 drop';
+    expect(out).toContain(pin);
+    expect(out.indexOf(pin)).toBeLessThan(out.indexOf('iifname "tap1148i0" ip saddr 0.0.0.0 udp sport 68'));
+    expect(out).toContain('iifname "tap2097i0" udp dport 67 @th,288,48 != 0xbc2411aabb02 drop');
+  });
+
   it("drops guest router advertisements and redirects", () => {
     expect(out).toContain('iifname "tap1148i0" icmpv6 type { nd-router-advert, nd-redirect } drop');
   });
@@ -227,5 +234,41 @@ describe("proxmox-host-vm-antispoof --apply and --check", () => {
     const orphan = spawnSync("bash", [scriptPath, "--check"], { encoding: "utf8", env });
     expect(orphan.status).toBe(1);
     expect(orphan.stdout).toContain("tap4000i0");
+  });
+
+  it("--audit-neighbours reports every guest its pin would cut off and skips unknown MACs and IPv6", () => {
+    const { env } = stubs("exit 0");
+    // The 4-only listing is what the script must ask for; an unknown (destroyed)
+    // guest's MAC comes first and must not stop the scan.
+    writeFileSync(
+      path.join(env.PATH.split(":")[0], "ip"),
+      [
+        "#!/usr/bin/env bash",
+        '[ "$1" = "-4" ] || { echo "fe80::1 lladdr bc:24:11:aa:bb:01 STALE"; exit 0; }',
+        "echo '10.250.20.200 lladdr de:ad:be:ef:00:01 STALE'",
+        "echo '10.250.20.60 lladdr BC:24:11:AA:BB:01 STALE'",
+        "echo '10.250.20.51 lladdr bc:24:11:aa:bb:02 REACHABLE'",
+        "echo '10.250.20.70 FAILED'",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(path.join(env.PATH.split(":")[0], "ip"), 0o755);
+    const res = spawnSync("bash", [scriptPath, "--audit-neighbours"], { encoding: "utf8", env });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("tap1148i0 (mac bc:24:11:aa:bb:01) is seen at 10.250.20.60 but is pinned to 10.250.20.51");
+    expect(res.stderr).toContain("MAC-only tap2097i0 (mac bc:24:11:aa:bb:02) uses 10.250.20.51");
+    expect(res.stderr).not.toContain("fe80::1");
+  });
+
+  it("--audit-neighbours passes when every guest uses its pinned address", () => {
+    const { env } = stubs("exit 0");
+    writeFileSync(
+      path.join(env.PATH.split(":")[0], "ip"),
+      "#!/usr/bin/env bash\necho '10.250.20.51 lladdr bc:24:11:aa:bb:01 REACHABLE'\necho '10.250.20.88 lladdr bc:24:11:aa:bb:02 STALE'\n",
+    );
+    chmodSync(path.join(env.PATH.split(":")[0], "ip"), 0o755);
+    const res = spawnSync("bash", [scriptPath, "--audit-neighbours"], { encoding: "utf8", env });
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain("OK: every guest");
   });
 });

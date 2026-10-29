@@ -220,6 +220,9 @@ for iface, mac, ip, label in nics:
     lines.append(f"\t\t{q} ether type {{ 8021q, 8021ad }} drop")
     lines.append(f"\t\t{q} ether saddr != {mac} drop")
     lines.append(f"\t\t{q} arp saddr ether != {mac} drop")
+    # DHCP leases are keyed on chaddr in the payload, not the frame source:
+    # pin it too, so a guest cannot DECLINE or REQUEST for another's MAC.
+    lines.append(f"\t\t{q} udp dport 67 @th,288,48 != 0x{mac.replace(':', '')} drop")
     if ip:
         lines.append(f"\t\t{q} arp saddr ip != {{ 0.0.0.0, {ip} }} drop")
         lines.append(f"\t\t{q} ip saddr 0.0.0.0 udp sport 68 udp dport 67 accept")
@@ -248,6 +251,30 @@ with_lock() {
     exec 9>"$ANTISPOOF_LOCK"
     flock -w 30 9 || fatal "another run holds $ANTISPOOF_LOCK"
   fi
+}
+
+# Compare the host's IPv4 neighbour table (what guests actually use) with the
+# rendered pins. Prints a line per guest the pins would cut off and returns the
+# count on stdout's last line. Read-only. MACs with no pin (destroyed guests,
+# the host's own ports) are skipped.
+audit_neighbours() {
+  local rendered="$1" bridge="${ANTISPOOF_BRIDGE:-vmbr1}" count=0 ip mac port want
+  while read -r ip mac; do
+    [ -n "$mac" ] || continue
+    port="$(printf '%s\n' "$rendered" | grep -E "ether saddr != $mac drop" | head -1 | sed -E 's/^[[:space:]]*iifname "([^"]+)".*/\1/' || true)"
+    [ -n "$port" ] || continue
+    want="$(printf '%s\n' "$rendered" | sed -n "s/^[[:space:]]*iifname \"$port\" ip saddr != \([0-9.]*\) drop$/\1/p" || true)"
+    if [ -n "$want" ]; then
+      if [ "$want" != "$ip" ]; then
+        log "MISMATCH: $port (mac $mac) is seen at $ip but is pinned to $want" >&2
+        count=$((count + 1))
+      fi
+    elif printf '%s\n' "$rendered" | grep -E '^[[:space:]]+elements = \{' | tr -d '{},' | tr ' ' '\n' | grep -qxF "$ip"; then
+      log "MISMATCH: MAC-only $port (mac $mac) uses $ip, which is another guest's pinned address" >&2
+      count=$((count + 1))
+    fi
+  done < <(ip -4 neigh show dev "$bridge" 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "lladdr") print $1, tolower($(i + 1))}')
+  echo "$count"
 }
 
 case "$MODE" in
@@ -284,31 +311,16 @@ case "$MODE" in
       log "UNPINNED: live guest ports with no matching config entry: $(echo $unconfigured)"
       problems=1
     fi
+    if [ "$(audit_neighbours "$rendered")" != 0 ]; then
+      log "CUT OFF: the guests above use an address their pin refuses"
+      problems=1
+    fi
     [ "$problems" = 0 ] && log "OK: live table matches the guest configs ($summary)"
     exit "$problems"
     ;;
   audit-neighbours)
-    # Read-only pre-rollout check: would the pins cut off a guest whose real
-    # address differs from its config? Compares the host's neighbour table
-    # (what guests actually use) with the rendered pins.
     rendered="$(render)"
-    bridge="${ANTISPOOF_BRIDGE:-vmbr1}"
-    mismatches=0
-    while read -r ip _ _ _ mac _; do
-      [ -n "$mac" ] || continue
-      pin_ip="$(printf '%s\n' "$rendered" | grep -E "ether saddr != $mac drop" | head -1 | sed -E 's/^[[:space:]]*iifname "([^"]+)".*/\1/')"
-      [ -n "$pin_ip" ] || continue
-      if printf '%s\n' "$rendered" | grep -q "iifname \"$pin_ip\" ip saddr != "; then
-        want="$(printf '%s\n' "$rendered" | sed -n "s/^[[:space:]]*iifname \"$pin_ip\" ip saddr != \([0-9.]*\) drop$/\1/p")"
-        if [ "$want" != "$ip" ]; then
-          log "MISMATCH: $pin_ip (mac $mac) is seen at $ip but would be pinned to $want"
-          mismatches=$((mismatches + 1))
-        fi
-      elif printf '%s\n' "$rendered" | grep -q "elements = {.* $ip[,} ]"; then
-        log "MISMATCH: MAC-only $pin_ip (mac $mac) uses $ip, which is another guest's pinned address"
-        mismatches=$((mismatches + 1))
-      fi
-    done < <(ip neigh show dev "$bridge" 2>/dev/null | awk '$2=="lladdr"{print $1, "dev", "x", "lladdr", tolower($3)}' | awk '{print $1, $2, $3, $4, $5}')
+    mismatches="$(audit_neighbours "$rendered")"
     [ "$mismatches" = 0 ] && log "OK: every guest the host has seen uses the address it would be pinned to"
     exit $(( mismatches > 0 ))
     ;;
@@ -371,11 +383,14 @@ EOF
     # a minute of it being deleted.
     [ "$(id -u)" = 0 ] || fatal "--uninstall must run as root"
     systemctl disable --now hivra-vm-antispoof.timer 2>/dev/null || true
+    systemctl stop hivra-vm-antispoof.service 2>/dev/null || true
     rm -f /etc/udev/rules.d/90-hivra-vm-antispoof.rules /etc/systemd/system/hivra-vm-antispoof.timer /etc/systemd/system/hivra-vm-antispoof.service
     systemctl daemon-reload
     udevadm control --reload
-    "$NFT_BIN" delete table bridge "$TABLE_NAME" 2>/dev/null || true
     rm -f "$INSTALL_PATH"
-    log "uninstalled: triggers removed and table bridge $TABLE_NAME deleted"
+    if "$NFT_BIN" list table bridge "$TABLE_NAME" >/dev/null 2>&1; then
+      "$NFT_BIN" delete table bridge "$TABLE_NAME" || fatal "triggers removed, but deleting table bridge $TABLE_NAME failed"
+    fi
+    log "uninstalled: triggers removed and table bridge $TABLE_NAME is gone"
     ;;
 esac
