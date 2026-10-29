@@ -22,10 +22,16 @@
 	# trailing-slash forms are covered with the wildcard. websockify accepts a
 	# websocket upgrade on any path, so every upgrade under the prefix is gated.
 	@gated path /browser-sidecar/novnc/vnc.html* /browser-sidecar/novnc/websockify*
+	# Caddy's header matcher compares values case-sensitively, but upgrade
+	# headers are case-insensitive (Caddy's own reverse_proxy checks them that
+	# way), so these use header_regexp with (?i).
 	@wsupgrade {
 		path /browser-sidecar/novnc/*
-		header Connection *Upgrade*
-		header Upgrade websocket
+		header_regexp Connection "(?i)upgrade"
+	}
+	@upgradehdr {
+		path /browser-sidecar/novnc/*
+		header_regexp Upgrade "(?i).+"
 	}
 
 	handle @gated {
@@ -33,6 +39,10 @@
 	}
 
 	handle @wsupgrade {
+		import novnc_gate
+	}
+
+	handle @upgradehdr {
 		import novnc_gate
 	}
 
