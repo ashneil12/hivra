@@ -169,6 +169,16 @@ describe("browser-sidecar Caddyfile", () => {
       );
     });
 
+    // An extended CONNECT (RFC 8441, HTTP/2) carries no Connection or Upgrade
+    // header, so the upgrade matchers cannot see it. CONNECT under the prefix
+    // has no legitimate use here, so it is refused before any gate or proxy.
+    it.each([
+      "/browser-sidecar/novnc/core/rfb.js",
+      "/browser-sidecar/novnc/websockify",
+    ])("refuses CONNECT to %s without proxying it", (path) => {
+      expect(routeAction(caddyfile, { method: "CONNECT", path })).toBe("respond");
+    });
+
     it("keeps forward_auth off the public static block", () => {
       const staticAssetsBlock = caddyfile.match(
         /handle_path \/browser-sidecar\/novnc\/\* \{[\s\S]*?\n\t\}/

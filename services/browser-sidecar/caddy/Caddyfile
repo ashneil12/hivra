@@ -33,6 +33,17 @@
 		path /browser-sidecar/novnc/*
 		header_regexp Upgrade "(?i).+"
 	}
+	# An extended CONNECT (HTTP/2, RFC 8441) carries no Connection or Upgrade
+	# header, so the matchers above cannot see it. Nothing under the prefix
+	# needs CONNECT, so it is refused before any gate or proxy handle.
+	@connect {
+		path /browser-sidecar/novnc/*
+		method CONNECT
+	}
+
+	handle @connect {
+		respond 405
+	}
 
 	handle @gated {
 		import novnc_gate
