@@ -36,6 +36,21 @@ describe("AgentMarkdownImage", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it("names the host of a protocol-relative image, which is where a click sends the query", () => {
+    render(<AgentMarkdownImage src="//leak.example.test/x.png?d=CANARY-SECRET" alt="status" />);
+
+    const placeholder = screen.getByRole("button", { name: /status/ });
+    expect(placeholder).toHaveAttribute("title", "Load image from leak.example.test");
+    expect(placeholder.textContent).not.toContain("unknown host");
+    expect(placeholder.textContent).not.toContain("CANARY-SECRET");
+  });
+
+  it("names this app for a relative image path, since the browser resolves it on the same origin", () => {
+    render(<AgentMarkdownImage src="chart.png" alt="chart" />);
+
+    expect(screen.getByRole("button", { name: /chart/ })).toHaveAttribute("title", "Load image from this app");
+  });
+
   it("renders an inline PNG data image directly, since it needs no request", () => {
     const src = "data:image/png;base64,iVBORw0KGgo=";
     const { container } = render(<AgentMarkdownImage src={src} alt="dot" />);

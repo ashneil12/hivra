@@ -11,10 +11,16 @@ import { useState } from "react";
 
 const INLINE_RASTER_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);/i;
 
+// The base only lets a source with no scheme resolve; a source that names a
+// scheme or a host ("https:", "//host", and the backslash forms browsers read
+// as "//") is remote, and its host is the one a click contacts.
+const IMAGE_SOURCE_BASE = "https://image-source.invalid";
+const NAMES_A_SCHEME_OR_HOST = /^(?:[a-z][a-z\d+.-]*:|[\\/]{2})/i;
+
 function imageSourceLabel(src: string): string {
-  if (src.startsWith("/") && !src.startsWith("//")) return "this app";
+  if (!NAMES_A_SCHEME_OR_HOST.test(src)) return "this app";
   try {
-    return new URL(src).host || "an unknown host";
+    return new URL(src, IMAGE_SOURCE_BASE).host || "an unknown host";
   } catch {
     return "an unknown host";
   }
