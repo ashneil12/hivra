@@ -462,6 +462,9 @@ export async function syncClerkUserToAnnouncementAudience(user: ClerkAnnouncemen
   } as const;
 }
 
+// F106: this path enrols the address exactly as typed, with no Clerk check, into the
+// 'Hivra customers' audience. It has no caller today. Do not wire it to a public form
+// until Ash decides whether reservation contacts may join that audience at all.
 export async function syncReservationToAnnouncementAudience(email: string) {
   const recipient = buildReservationRecipient(email);
   if (!recipient) {
