@@ -107,12 +107,15 @@ export function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-/** The commands the panel shows. The code rides only in a header, never in
- * the URL. `--proto '=https'` and no -L: curl never follows a redirect. */
+/** The commands the panel shows. The code is typed at a prompt and reaches curl
+ * on stdin as a header, so it is in neither the URL, curl's argument list nor
+ * the typed command (shell history). `--proto '=https'` and no -L: curl never
+ * follows a redirect. */
 export function serverEnrollmentCommands(origin: string, code: string) {
   const trusted = validateTrustedAppOrigin(origin);
   checked(code, SERVER_ENROLLMENT_CODE_PATTERN);
-  const fetch = `curl -fsS --proto '=https' -H 'Authorization: Bearer ${code}' ${trusted}/enroll`;
+  const prompt = "printf 'One-time code: ' >&2; IFS= read -rs hse_code; echo >&2";
+  const fetch = `${prompt}; printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- ${trusted}/enroll`;
   return {
     command: `${fetch} | sudo bash`,
     dryRunCommand: `${fetch} | bash -s -- --dry-run`,

@@ -63,11 +63,14 @@ function reported(overrides: Partial<NonNullable<ServerEnrollmentDto["report"]>>
   });
 }
 
+const PROMPT = "printf 'One-time code: ' >&2; IFS= read -rs hse_code; echo >&2";
+const FETCH = `${PROMPT}; printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
 const ISSUED: ServerEnrollmentIssueResult = {
   enrollment: enrollment(),
-  command: `curl -fsS --proto '=https' -H 'Authorization: Bearer ${CODE}' https://hivra.example/enroll | sudo bash`,
-  dryRunCommand: `curl -fsS --proto '=https' -H 'Authorization: Bearer ${CODE}' https://hivra.example/enroll | bash -s -- --dry-run`,
-  downloadCommand: `curl -fsS --proto '=https' -H 'Authorization: Bearer ${CODE}' https://hivra.example/enroll -o hivra-enroll.sh`,
+  code: CODE,
+  command: `${FETCH} | sudo bash`,
+  dryRunCommand: `${FETCH} | bash -s -- --dry-run`,
+  downloadCommand: `${FETCH} -o hivra-enroll.sh`,
   uninstallCommand: UNINSTALL,
   finalLine: `{ hivra_enroll_entry "$@" HIVRA_ARGS_V1 'https://hivra.example' '${CODE}' 'ssh-ed25519 AAAA' 'K7QM-2XRA' HIVRA_END_V1; }`,
   downloadSha256: "d".repeat(64), scriptVersion: "2026.09.24.1", scriptSha256: "e".repeat(64), accountCode: "K7QM-2XRA",
@@ -104,6 +107,9 @@ describe("the command panel", () => {
     renderDialog();
     expect(await screen.findByTestId("server-enrollment-command")).toHaveTextContent(ISSUED.command);
     expect(screen.getByRole("button", { name: "Copy the setup command" })).toBeInTheDocument();
+    // The command asks for the code at a prompt, so the panel shows it beside the command.
+    expect(screen.getByTestId("server-enrollment-code")).toHaveTextContent(CODE);
+    expect(ISSUED.command).not.toContain(CODE);
     expect(screen.getByText(/Single use · expires in 15:00/)).toBeInTheDocument();
     act(() => { jest.advanceTimersByTime(8_000); });
     expect(screen.getByText(/Single use · expires in 14:52/)).toBeInTheDocument();

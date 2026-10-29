@@ -261,6 +261,13 @@ export function ServerEnrollmentDialog({
                   <CopyButton value={ready.issued.command} label="Copy the setup command" />
                 </div>
               ) : null}
+              {open ? (
+                <p className={enrollmentStyles.meta}>
+                  The command asks for your one-time code. Paste it when it does:{" "}
+                  <code data-testid="server-enrollment-code">{ready.issued.code}</code>{" "}
+                  <CopyButton value={ready.issued.code} label="Copy the one-time code" />
+                </p>
+              ) : null}
               <p className={enrollmentStyles.meta}>
                 {open ? <>Single use · expires in {clock(expiresIn)} · </> : null}
                 <button type="button" className={enrollmentStyles.linkButton} onClick={() => setScriptOpen((open) => !open)} aria-expanded={scriptOpen}>
@@ -358,6 +365,7 @@ function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
         </a>{" "}
         · the same file is in Hivra&apos;s public repository at <code>dashboard/bootstrap/server-enroll.sh</code>.
       </p>
+      <p>Each command below asks for the same one-time code, <code>{issued.code}</code>.</p>
       <p><strong>Try it without changing anything</strong> (no sudo needed):</p>
       <div className={enrollmentStyles.commandRow}>
         <code className={enrollmentStyles.command}>{issued.dryRunCommand}</code>

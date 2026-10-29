@@ -4,7 +4,8 @@ jest.mock("server-only", () => ({}));
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -165,9 +166,10 @@ describe("final lines (T7, T8, T20)", () => {
 });
 
 describe("commands the panel shows (T25)", () => {
-  it("puts the code only in the Authorization header, never in the URL, and never follows redirects", () => {
+  it("never puts the code in the URL, in curl's argument list, or in the typed command; reads it from a prompt; never follows redirects", () => {
     const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
-    const fetch = `curl -fsS --proto '=https' -H 'Authorization: Bearer ${VALID.code}' https://hivra.example/enroll`;
+    const prompt = "printf 'One-time code: ' >&2; IFS= read -rs hse_code; echo >&2";
+    const fetch = `${prompt}; printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
     expect(commands).toEqual({
       command: fetch + " | sudo bash",
       dryRunCommand: fetch + " | bash -s -- --dry-run",
@@ -177,8 +179,35 @@ describe("commands the panel shows (T25)", () => {
     for (const command of Object.values(commands)) {
       expect(command).not.toMatch(/ -L\b|--location/);
       expect(command).not.toMatch(/https:\/\/\S*hse1_/);
+      expect(command).not.toContain(VALID.code);
     }
     expect(serverUninstallCommand("https://hivra.example")).toBe(commands.uninstallCommand);
+  });
+
+  it("runs the shown command as typed: the code reaches curl on stdin, never in its argv", () => {
+    const root = mkdtempSync(join(tmpdir(), "enroll-command-"));
+    try {
+      const fakes = join(root, "bin");
+      const seen = join(root, "seen");
+      mkdirSync(fakes);
+      mkdirSync(seen);
+      // curl records its argv and stdin, then prints a no-op script. sudo swallows stdin.
+      writeFileSync(join(fakes, "curl"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}/argv"\ncat > "${seen}/stdin"\necho ':'\n`, { mode: 0o755 });
+      writeFileSync(join(fakes, "sudo"), "#!/bin/sh\nexec cat > /dev/null\n", { mode: 0o755 });
+
+      const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
+      const result = spawnSync("bash", ["-c", commands.command], {
+        input: VALID.code + "\n",
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${fakes}:${process.env.PATH ?? ""}` },
+      });
+
+      expect(result.status).toBe(0);
+      expect(readFileSync(join(seen, "argv"), "utf8")).not.toContain(VALID.code);
+      expect(readFileSync(join(seen, "stdin"), "utf8")).toBe(`Authorization: Bearer ${VALID.code}\n`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("refuses a malformed code", () => {
