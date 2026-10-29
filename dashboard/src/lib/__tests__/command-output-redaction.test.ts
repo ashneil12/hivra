@@ -1,4 +1,4 @@
-import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
+import { redactSensitiveCommandOutput, SECRET_TOKEN_SHAPES } from "@/lib/command-output-redaction";
 
 describe("redactSensitiveCommandOutput", () => {
   it("redacts common token and secret formats before logging", () => {
@@ -161,6 +161,7 @@ describe("redactSensitiveCommandOutput", () => {
       ["GitHub fine-grained", `github_pat_${body(22)}_${body(59)}`],
       ["GitLab", `glpat-${body(20)}`],
       ["AWS access key", `AKIA${"ABCDEFGH23456789"}`],
+      ["AWS temporary (session) key", `ASIA${"ABCDEFGH23456789"}`],
       ["Google API", `AIza${body(35)}`],
       ["Telegram bot", telegram],
       ["Slack", `xoxb-1234567890-${body(12)}`],
@@ -285,6 +286,13 @@ describe("redactSensitiveCommandOutput", () => {
       expect(redactSensitiveCommandOutput('api_key: "plainvalue123"', 1000)).toBe('api_key: "[REDACTED]"');
     });
 
+    // `x-api-key` is the header name agent APIs use. It was masked unquoted (YAML) but not
+    // when quoted, because the JSON and single-quote patterns named `api_key` only.
+    it("masks a quoted hyphenated api-key name in JSON and YAML", () => {
+      expect(redactSensitiveCommandOutput('{"x-api-key": "plainvalue123"}', 1000)).toBe('{"x-api-key": "[REDACTED]"}');
+      expect(redactSensitiveCommandOutput("x-api-key: 'plainvalue123'", 1000)).toBe("x-api-key: '[REDACTED]'");
+    });
+
     it("keeps ordinary keys and mid-line prose unchanged", () => {
       const raw = [
         "monkey: banana",
@@ -318,6 +326,42 @@ describe("redactSensitiveCommandOutput", () => {
       const raw = [`release digest ${hexKey}`, `fingerprint: ${hexKey}`].join("\n");
 
       expect(redactSensitiveCommandOutput(raw, 1000)).toBe(raw);
+    });
+  });
+
+  // The JWT shape used to start a match at every `eyJ` inside a dash-joined run (a `-` is
+  // not a boundary for it), and each start scanned to the end of the run before failing on
+  // the missing `.eyJ`. 200 KB of `eyJ-` took about 10 s. A run must now start one match at
+  // most, so the scan is linear.
+  describe("JWT shape on long dash-joined runs", () => {
+    const jwtShape = SECRET_TOKEN_SHAPES.find(({ kind }) => kind === "jwt")!.pattern;
+    const jwt = `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.${"Ab3Cd5Ef7Gh9Jk2Mn4Pq6Rs8Tu0Vw".repeat(2)}`;
+
+    it("tests a 200 KB run of eyJ- in linear time", () => {
+      const raw = "eyJ-".repeat(50_000);
+
+      const started = Date.now();
+      const matched = jwtShape.test(raw);
+      const elapsedMs = Date.now() - started;
+
+      expect(matched).toBe(false);
+      expect(elapsedMs).toBeLessThan(1000);
+    });
+
+    it("still masks a JWT after a space, an equals sign, a quote or %20", () => {
+      const raw = [
+        `upstream said ${jwt}`,
+        `x=${jwt}`,
+        `"${jwt}"`,
+        `q%20${jwt}`,
+      ].join("\n");
+
+      expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
+        "upstream said [REDACTED]",
+        "x=[REDACTED]",
+        '"[REDACTED]"',
+        "q%20[REDACTED]",
+      ].join("\n"));
     });
   });
 });

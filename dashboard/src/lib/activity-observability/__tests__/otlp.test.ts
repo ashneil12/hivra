@@ -1,4 +1,4 @@
-import { normalizeOtlpJson } from "../otlp";
+import { looksSecret, normalizeOtlpJson } from "../otlp";
 
 const NOW=new Date("2026-09-21T20:00:00.000Z");
 const ns="1790020800000000000";
@@ -163,5 +163,17 @@ describe("OTLP attribute values that carry a token shape",()=>{
     },"00000000-0000-4000-8000-000000000001",NOW)!;
     expect(result.events).toHaveLength(1);
     expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  // An OTLP attribute value is screened by looksSecret before its length check, and a
+  // guest holding its collector token can send a body up to 1 MiB. A long eyJ- run must
+  // be screened in linear time, not stall the event loop.
+  it("screens a long eyJ- attribute value in linear time",()=>{
+    const value="eyJ-".repeat(50_000);
+    const started=Date.now();
+    const secretLike=looksSecret(value);
+    const elapsedMs=Date.now()-started;
+    expect(secretLike).toBe(false);
+    expect(elapsedMs).toBeLessThan(1000);
   });
 });

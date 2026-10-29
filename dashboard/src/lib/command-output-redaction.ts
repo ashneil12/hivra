@@ -1,9 +1,9 @@
 // SCRIPTURE_ANCHOR: secret-watch | Proverbs 4:23 | Verse: Keep your heart with all diligence, for out of it is the wellspring of life.
 
 const JSON_SECRET_PATTERN =
-  /("?(?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token)"?\s*:\s*")([^"]+)(")/gi;
+  /("?(?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|api-key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token)"?\s*:\s*")([^"]+)(")/gi;
 const JSON_SINGLE_QUOTE_SECRET_PATTERN =
-  /("?(?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token)"?\s*:\s*')([^']+)(')/gi;
+  /("?(?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|api_key|api-key|apiKey|auth_key|authKey|session_token|sessionToken|authorization_code|authorizationCode|partner_key|partnerKey|x_partner_key|xPartnerKey|password|secret|token)"?\s*:\s*')([^']+)(')/gi;
 // Secret words that make a `NAME=value` assignment a secret. A name counts when
 // it ENDS in one of them, so `OPENAI_API_KEY=`, `GITHUB_TOKEN=` and
 // `BANKR_USER_KEY=` are caught as well as a bare `token=`. The old pattern began
@@ -62,6 +62,11 @@ export interface SecretTokenShape {
 }
 
 const TOKEN_START = "(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{2}))";
+// A JWT starts only where no token character precedes it, dash and underscore included. With
+// TOKEN_START a `-` counted as a boundary, so every `eyJ` in a dash-joined run started a match
+// that scanned to the end of the run before failing on the missing `.eyJ`: quadratic on
+// `eyJ-eyJ-...`. A JWT glued directly after `-` or `_` is then not matched (redaction only).
+const JWT_START = "(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2}))";
 export const SECRET_TOKEN_SHAPES: ReadonlyArray<SecretTokenShape> = [
   { kind: "private_key_block", pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/ },
   { kind: "openai_key", pattern: /sk-[A-Za-z0-9_-]{32,}/ },
@@ -74,12 +79,14 @@ export const SECRET_TOKEN_SHAPES: ReadonlyArray<SecretTokenShape> = [
   { kind: "xai_key", pattern: new RegExp(`${TOKEN_START}xai-[A-Za-z0-9]{40,}`) },
   { kind: "groq_key", pattern: new RegExp(`${TOKEN_START}gsk_[A-Za-z0-9]{20,}`) },
   { kind: "aws_access_key", pattern: /AKIA[0-9A-Z]{16}/ },
+  // Temporary (session) AWS key IDs. looksSecret in the OTLP normaliser already treats ASIA as secret.
+  { kind: "aws_session_key", pattern: /ASIA[0-9A-Z]{16}/ },
   { kind: "google_api_key", pattern: new RegExp(`${TOKEN_START}AIza[0-9A-Za-z_-]{35}`) },
   // Telegram bot token: `<bot id>:<35-char secret>`. Also matches inside a bot API URL.
   { kind: "telegram_bot_token", pattern: /(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}/ },
   { kind: "slack_token", pattern: new RegExp(`${TOKEN_START}xox[abposr]-[A-Za-z0-9-]{10,}`) },
   { kind: "stripe_key", pattern: new RegExp(`${TOKEN_START}[rs]k_(?:live|test)_[A-Za-z0-9]{10,}`) },
-  { kind: "jwt", pattern: new RegExp(`${TOKEN_START}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*`), blocksPush: false },
+  { kind: "jwt", pattern: new RegExp(`${JWT_START}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*`), blocksPush: false },
   { kind: "managed_venice_key", pattern: new RegExp(`${TOKEN_START}hven_(?:live|test)_[A-Za-z0-9_-]+`, "i") },
   // Bankr keys carry one of the issued prefixes. The push gate blocks on those only: a bare
   // `bk_` shape would stop every config snapshot that installs a documentation placeholder
