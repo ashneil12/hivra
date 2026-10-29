@@ -222,7 +222,8 @@ describe("POST /api/instances/[id]/oauth/providers/[provider]/start", () => {
     expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
   });
   it("drops a non-https verification URL from the legacy agent runtime response", async () => {
-    mockedGetInstanceBackend.mockResolvedValue("legacy");
+    // getInstanceBackend types only gateway/webui, so a legacy value is forced here to reach the agent-runtime branch.
+    mockedGetInstanceBackend.mockResolvedValue("legacy" as unknown as Awaited<ReturnType<typeof getInstanceBackend>>);
     apiClient.post.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -246,7 +247,8 @@ describe("POST /api/instances/[id]/oauth/providers/[provider]/start", () => {
   });
 
   it("keeps an https verification URL from the legacy agent runtime response", async () => {
-    mockedGetInstanceBackend.mockResolvedValue("legacy");
+    // getInstanceBackend types only gateway/webui, so a legacy value is forced here to reach the agent-runtime branch.
+    mockedGetInstanceBackend.mockResolvedValue("legacy" as unknown as Awaited<ReturnType<typeof getInstanceBackend>>);
     apiClient.post.mockResolvedValue({
       ok: true,
       json: async () => ({
