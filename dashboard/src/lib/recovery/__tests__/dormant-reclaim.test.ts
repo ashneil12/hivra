@@ -567,6 +567,25 @@ describe("runDormantReclaimSweep", () => {
       expect(db.live()).toMatchObject({ lifecycle_state: "paused", paused_reason: "inactivity" });
     });
 
+    it("does not record or destroy a row whose VMID the host reports as another instance's guest", async () => {
+      // The host refuses the dump when the VMID holds a guest with another identity. That
+      // is a failure for this row: nothing is recorded, marked or destroyed.
+      setCommitEnv();
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (archiveProxmoxDormantInstance as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "HERMES_VM_IDENTITY_MISMATCH 610\n",
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ archived: 0, reclaimed: 0, failed: 1 });
+      expect(db.archiveInsert).not.toHaveBeenCalled();
+      expect(db.instanceUpdate).not.toHaveBeenCalled();
+      expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    });
+
     it("treats a host refusal to destroy a running VM as skipped and writes no terminal state", async () => {
       setCommitEnv();
       const db = installDatabase({ candidates: [dormantRow], live: dormantRow });

@@ -1830,6 +1830,9 @@ if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "HERMES_DORMANT_ARCHIVE_VM_MISSING $VMID" >&2
   exit 1
 fi
+# The VMID may now hold another control plane's guest on a shared host (the row is
+# stale). Dump only a VM that carries this instance's identity, before vzdump runs.
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.instanceId)}
 # vzdump --mode stop shuts a running guest down for the dump. A guest that is running
 # or paused was started by someone other than this row's sweep, so refuse anything
 # that is not exactly stopped, before any dump file is written.

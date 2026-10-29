@@ -5,6 +5,7 @@ import path from "node:path";
 
 import {
   DORMANT_ARCHIVE_NOT_STOPPED_MARKER,
+  PROXMOX_VM_IDENTITY_MISMATCH_MARKER,
   buildProxmoxDormantArchiveScript,
 } from "@/lib/services/proxmox/script-builders";
 
@@ -90,6 +91,20 @@ describe("dormant archive script (host side)", () => {
 
     expect(result.status).toBe(45);
     expect(result.stderr).toContain(`${DORMANT_ARCHIVE_NOT_STOPPED_MARKER} ${VMID}`);
+    expect(vzdumpCalls()).toEqual([]);
+    expect(fs.readdirSync(archiveDir)).toEqual([]);
+  });
+
+  it("refuses a VMID that now holds another instance's guest, before vzdump runs", () => {
+    // The row is stale: its VMID is a different control plane's guest on a shared host.
+    // The dump must not copy that guest under this instance.
+    const result = runArchive([
+      guest({ status: "stopped", name: "hermes-00000000-0000-4000-8000-000000000999" }),
+    ]);
+
+    expect(result.status).toBe(64);
+    expect(result.stdout).toContain(`${PROXMOX_VM_IDENTITY_MISMATCH_MARKER} ${VMID}`);
+    expect(result.stdout).not.toContain("HERMES_DORMANT_ARCHIVE_PATH=");
     expect(vzdumpCalls()).toEqual([]);
     expect(fs.readdirSync(archiveDir)).toEqual([]);
   });
