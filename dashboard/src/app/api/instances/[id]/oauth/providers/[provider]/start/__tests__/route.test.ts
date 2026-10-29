@@ -221,4 +221,48 @@ describe("POST /api/instances/[id]/oauth/providers/[provider]/start", () => {
     expect(json.data).toBeUndefined();
     expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
   });
+  it("drops a non-https verification URL from the legacy agent runtime response", async () => {
+    mockedGetInstanceBackend.mockResolvedValue("legacy");
+    apiClient.post.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_id: "sess-legacy",
+        user_code: "WXYZ-1234",
+        verification_url: "javascript:alert(1)",
+      }),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/providers/nous/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123", provider: "nous" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.session_id).toBe("sess-legacy");
+    expect(json.data.user_code).toBe("WXYZ-1234");
+    expect(json.data.verification_url).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
+  });
+
+  it("keeps an https verification URL from the legacy agent runtime response", async () => {
+    mockedGetInstanceBackend.mockResolvedValue("legacy");
+    apiClient.post.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_id: "sess-legacy",
+        user_code: "WXYZ-1234",
+        verification_url: "https://portal.nousresearch.com/device",
+      }),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/providers/nous/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123", provider: "nous" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.verification_url).toBe("https://portal.nousresearch.com/device");
+  });
 });

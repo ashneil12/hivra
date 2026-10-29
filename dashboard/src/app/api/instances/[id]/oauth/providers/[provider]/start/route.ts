@@ -226,6 +226,10 @@ export async function POST(
     }
 
     const data = await response.json();
+    // The owner opens verification_url in a browser, so only an https address may leave here.
+    if (data && typeof data === "object" && "verification_url" in data && !readHttpsAuthorizationUrl(data.verification_url)) {
+      delete data.verification_url;
+    }
     return apiSuccess(data);
   } catch (error) {
     return apiError(
