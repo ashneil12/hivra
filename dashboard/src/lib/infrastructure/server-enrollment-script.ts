@@ -110,19 +110,21 @@ export function sha256Hex(text: string): string {
 /** The commands the panel shows. The code is typed at a prompt and reaches curl
  * on stdin as a header, so it is in neither the URL, curl's argument list nor
  * the typed command (shell history). The prompt is plain POSIX (no `read -s`,
- * which dash rejects): echo is switched off with stty around a plain read.
- * `--proto '=https'` and no -L: curl never follows a redirect. The download is
- * one line that makes its own directory, so nothing else in the panel needs a
- * prompt. */
+ * which dash rejects): echo is switched off with stty around a plain read. The
+ * prompt and the send share one subshell whose traps turn echo back on however
+ * it ends, so an interrupt (Ctrl-C) at the prompt never leaves the terminal with
+ * echo off and never sends an empty code. `--proto '=https'` and no -L: curl
+ * never follows a redirect. The download is one line that makes its own
+ * directory, so nothing else in the panel needs a prompt. */
 export function serverEnrollmentCommands(origin: string, code: string) {
   const trusted = validateTrustedAppOrigin(origin);
   checked(code, SERVER_ENROLLMENT_CODE_PATTERN);
-  const prompt = "printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
+  const prompt = "trap 'stty echo 2>/dev/null' EXIT; trap 'exit 130' INT TERM HUP; printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
   const send = `printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- ${trusted}/enroll`;
   return {
-    command: `${prompt}; ${send} | sudo bash`,
-    dryRunCommand: `${prompt}; ${send} | bash -s -- --dry-run`,
-    downloadCommand: `d=$(mktemp -d) && cd "$d" && { ${prompt}; ${send} -o hivra-enroll.sh; }`,
+    command: `(${prompt}; ${send}) | sudo bash`,
+    dryRunCommand: `(${prompt}; ${send}) | bash -s -- --dry-run`,
+    downloadCommand: `d=$(mktemp -d) && cd "$d" && { (${prompt}; ${send} -o hivra-enroll.sh); }`,
     uninstallCommand: serverUninstallCommand(trusted),
   };
 }

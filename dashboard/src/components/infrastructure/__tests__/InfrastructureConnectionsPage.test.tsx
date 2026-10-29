@@ -625,7 +625,7 @@ const ISSUED_ENROLLMENT: ServerEnrollmentDto = {
 };
 
 const ENROLLMENT_CODE = "hse1_abcdefghijklmnopqrstuvwxyz234567";
-const ENROLLMENT_COMMAND = "printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2; printf 'Authorization: Bearer %s\\n' \"$hse_code\" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll | sudo bash";
+const ENROLLMENT_COMMAND = "(trap 'stty echo 2>/dev/null' EXIT; trap 'exit 130' INT TERM HUP; printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2; printf 'Authorization: Bearer %s\\n' \"$hse_code\" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll) | sudo bash";
 
 describe("InfrastructureConnectionsPage first-run entry", () => {
   beforeEach(() => {

@@ -63,14 +63,14 @@ function reported(overrides: Partial<NonNullable<ServerEnrollmentDto["report"]>>
   });
 }
 
-const PROMPT = "printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
+const PROMPT = "trap 'stty echo 2>/dev/null' EXIT; trap 'exit 130' INT TERM HUP; printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
 const SEND = `printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
 const ISSUED: ServerEnrollmentIssueResult = {
   enrollment: enrollment(),
   code: CODE,
-  command: `${PROMPT}; ${SEND} | sudo bash`,
-  dryRunCommand: `${PROMPT}; ${SEND} | bash -s -- --dry-run`,
-  downloadCommand: `d=$(mktemp -d) && cd "$d" && { ${PROMPT}; ${SEND} -o hivra-enroll.sh; }`,
+  command: `(${PROMPT}; ${SEND}) | sudo bash`,
+  dryRunCommand: `(${PROMPT}; ${SEND}) | bash -s -- --dry-run`,
+  downloadCommand: `d=$(mktemp -d) && cd "$d" && { (${PROMPT}; ${SEND} -o hivra-enroll.sh); }`,
   uninstallCommand: UNINSTALL,
   finalLine: `{ hivra_enroll_entry "$@" HIVRA_ARGS_V1 'https://hivra.example' '${CODE}' 'ssh-ed25519 AAAA' 'K7QM-2XRA' HIVRA_END_V1; }`,
   downloadSha256: "d".repeat(64), scriptVersion: "2026.09.24.1", scriptSha256: "e".repeat(64), accountCode: "K7QM-2XRA",

@@ -2,7 +2,7 @@
 
 jest.mock("server-only", () => ({}));
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -168,14 +168,15 @@ describe("final lines (T7, T8, T20)", () => {
 describe("commands the panel shows (T25)", () => {
   it("never puts the code in the URL, in curl's argument list, or in the typed command; reads it from a prompt; never follows redirects", () => {
     const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
-    const prompt = "printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
+    // The prompt and the send share one subshell whose traps restore echo on any exit.
+    const prompt = "trap 'stty echo 2>/dev/null' EXIT; trap 'exit 130' INT TERM HUP; printf 'One-time code: ' >&2; stty -echo 2>/dev/null; read -r hse_code; stty echo 2>/dev/null; echo >&2";
     const send = `printf 'Authorization: Bearer %s\\n' "$hse_code" | curl -fsS --proto '=https' -H @- https://hivra.example/enroll`;
     expect(commands).toEqual({
-      command: `${prompt}; ${send} | sudo bash`,
-      dryRunCommand: `${prompt}; ${send} | bash -s -- --dry-run`,
+      command: `(${prompt}; ${send}) | sudo bash`,
+      dryRunCommand: `(${prompt}; ${send}) | bash -s -- --dry-run`,
       // One line: it makes its own directory and downloads into it, so the
       // recipe that checks the file needs no prompting line of its own.
-      downloadCommand: `d=$(mktemp -d) && cd "$d" && { ${prompt}; ${send} -o hivra-enroll.sh; }`,
+      downloadCommand: `d=$(mktemp -d) && cd "$d" && { (${prompt}; ${send} -o hivra-enroll.sh); }`,
       uninstallCommand: "curl -fsS --proto '=https' https://hivra.example/enroll/uninstall | sudo bash",
     });
     for (const command of Object.values(commands)) {
@@ -212,8 +213,49 @@ describe("commands the panel shows (T25)", () => {
     }
   });
 
+  it("turns echo back on when the one-time-code prompt is interrupted, and sends no code", async () => {
+    const root = mkdtempSync(join(tmpdir(), "enroll-interrupt-"));
+    try {
+      const fakes = join(root, "bin");
+      const log = join(root, "stty.log");
+      const curlRan = join(root, "curl-ran");
+      mkdirSync(fakes);
+      // Records each stty call. Without a terminal the real stty would do nothing, so
+      // the log is the observable record of what the prompt asked for.
+      writeFileSync(join(fakes, "stty"), `#!/bin/sh\necho "$*" >> "${log}"\n`, { mode: 0o755 });
+      writeFileSync(join(fakes, "curl"), `#!/bin/sh\ntouch "${curlRan}"\ncat >/dev/null\n`, { mode: 0o755 });
+      writeFileSync(join(fakes, "sudo"), "#!/bin/sh\nexec cat > /dev/null\n", { mode: 0o755 });
+
+      const commands = serverEnrollmentCommands("https://hivra.example", VALID.code);
+      const child = spawn("bash", ["-c", commands.command], {
+        detached: true,
+        env: { ...process.env, PATH: `${fakes}:${process.env.PATH ?? ""}` },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      const closed = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+      // Wait for the prompt, then interrupt the whole group (what Ctrl-C does at a terminal).
+      // The user interrupts after echo is off, so wait until stty has switched it off.
+      for (let waited = 0; !(stderr.includes("One-time code:") && existsSync(log)); waited += 20) {
+        if (waited > 5000) throw new Error(`prompt never appeared: ${stderr}`);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      process.kill(-child.pid!, "SIGINT");
+      await closed;
+
+      expect(existsSync(curlRan)).toBe(false);
+      expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["-echo", "echo"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("runs the shown command under every shell a user may paste into, including dash (the POSIX shell)", () => {
-    const shells = ["bash", "/bin/sh", "/bin/dash", "zsh"].filter(shell => shell.startsWith("/") ? existsSync(shell) : true);
+    // Absolute paths and bare names are both checked: a runner image may lack zsh or dash.
+    const shells = ["bash", "/bin/sh", "/bin/dash", "zsh"].filter((shell) =>
+      shell.startsWith("/") ? existsSync(shell) : spawnSync("sh", ["-c", `command -v ${shell}`]).status === 0,
+    );
     const root = mkdtempSync(join(tmpdir(), "enroll-shells-"));
     try {
       const fakes = join(root, "bin");
