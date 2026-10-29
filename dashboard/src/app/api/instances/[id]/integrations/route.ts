@@ -62,7 +62,9 @@ function buildIntegrationSuccessPayload(params: {
 }
 
 function sanitizeEnvValue(value: unknown): string {
-  return String(value).replace(/[\r\n\0]/g, '');
+  // The webfree loader reads each .env with Python splitlines(), which also ends a line
+  // at these characters, so a value holding one could add a variable line.
+  return String(value).replace(/[\r\n\0\x0b\x0c\x1c-\x1e\x85\u2028\u2029]/g, '');
 }
 
 function formatEnvValue(value: string): string {

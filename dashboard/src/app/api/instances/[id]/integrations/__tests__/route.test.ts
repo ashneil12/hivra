@@ -579,6 +579,37 @@ describe('/api/instances/[id]/integrations', () => {
       }
     });
 
+    it('strips the other characters Python treats as line ends, so a value cannot add a variable line to a webfree .env', async () => {
+      (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+        response: {
+          ok: true,
+          status: 200,
+        },
+      });
+
+      const req = new NextRequest('http://localhost/api/instances/inst-123/integrations', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform: 'Slack',
+          credentials: {
+            token: "xoxb-1\u2028EVIL=1\u000bX=2\u0085Y=3\u001cZ=4",
+            appToken: "xapp-123",
+          },
+        }),
+      });
+
+      const res = await POST(req, { params: Promise.resolve({ id: 'inst-123' }) });
+      expect(res.status).toBe(200);
+
+      const sidecarCall = (fetchFirstReachableGatewayResponse as jest.Mock).mock.calls[0][0];
+      const payload = JSON.parse(sidecarCall.body);
+
+      expect(payload.envUpdates).toContain("SLACK_BOT_TOKEN='xoxb-1EVIL=1X=2Y=3Z=4'");
+      for (const line of payload.envUpdates) {
+        expect(line).not.toMatch(/[\r\n\0\u000b\u000c\u001c-\u001e\u0085\u2028\u2029]/);
+      }
+    });
+
     it('refuses an apostrophe in a sub-profile integration value before anything reaches the shell-sourced .env', async () => {
       (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
         response: {
