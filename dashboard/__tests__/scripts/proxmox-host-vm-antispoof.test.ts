@@ -271,4 +271,48 @@ describe("proxmox-host-vm-antispoof --apply and --check", () => {
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("OK: every guest");
   });
+
+  it("handles a busy host: 200 NICs apply and check cleanly (no SIGPIPE false negatives)", () => {
+    const { f, env, log } = stubs("exit 0");
+    for (let i = 0; i < 200; i++) {
+      const vmid = 5000 + i;
+      const mac = `bc:24:11:cc:${(i >> 8).toString(16).padStart(2, "0")}:${(i & 0xff).toString(16).padStart(2, "0")}`;
+      writeFileSync(
+        path.join(f.qemu, `${vmid}.conf`),
+        `name: g${i}\nnet0: virtio=${mac},bridge=vmbr1\nipconfig0: ip=10.250.${20 + (i >> 7)}.${(i % 127) + 100}/24,gw=10.250.20.1\n`,
+      );
+      writeFileSync(path.join(env.SYS_CLASS_NET, `tap${vmid}i0`), "");
+    }
+    const applied = spawnSync("bash", [scriptPath, "--apply"], { encoding: "utf8", env });
+    expect(applied.stderr).not.toContain("refusing to load an empty table");
+    expect(applied.status).toBe(0);
+    expect(readFileSync(log, "utf8")).toMatch(/^-c -f /);
+
+    const live = path.join(f.root, "live.nft");
+    writeFileSync(live, render(f).replace("priority -300;", "priority dstnat;").replace(/^\s*#.*$/gm, ""));
+    writeFileSync(path.join(env.PATH.split(":")[0], "nft"), `#!/usr/bin/env bash\ncat "${live}"\n`);
+    const checked = spawnSync("bash", [scriptPath, "--check"], { encoding: "utf8", env });
+    expect(checked.stdout).not.toContain("UNPINNED");
+    expect(checked.stdout).not.toContain("not hooked");
+    expect(checked.status).toBe(0);
+  });
+
+  it("--check ignores STALE neighbour entries that --audit-neighbours still reports", () => {
+    const { f, env } = stubs("exit 0");
+    const live = path.join(f.root, "live.nft");
+    writeFileSync(live, render(f).replace("priority -300;", "priority dstnat;").replace(/^\s*#.*$/gm, ""));
+    const bin = env.PATH.split(":")[0];
+    writeFileSync(path.join(bin, "nft"), `#!/usr/bin/env bash\ncat "${live}"\n`);
+    writeFileSync(path.join(bin, "ip"), "#!/usr/bin/env bash\necho '10.250.20.60 lladdr bc:24:11:aa:bb:01 STALE'\n");
+    chmodSync(path.join(bin, "ip"), 0o755);
+    expect(spawnSync("bash", [scriptPath, "--check"], { encoding: "utf8", env }).status).toBe(0);
+    expect(spawnSync("bash", [scriptPath, "--audit-neighbours"], { encoding: "utf8", env }).status).toBe(1);
+  });
+
+  it("drops fragmented DHCP before the chaddr pin", () => {
+    const out = render(fixture());
+    const frag = 'iifname "tap1148i0" udp dport 67 ip frag-off & 0x3fff != 0x0 drop';
+    expect(out).toContain(frag);
+    expect(out.indexOf(frag)).toBeLessThan(out.indexOf('iifname "tap1148i0" udp dport 67 @th'));
+  });
 });

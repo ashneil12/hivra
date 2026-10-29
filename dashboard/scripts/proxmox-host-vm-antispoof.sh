@@ -222,6 +222,9 @@ for iface, mac, ip, label in nics:
     lines.append(f"\t\t{q} arp saddr ether != {mac} drop")
     # DHCP leases are keyed on chaddr in the payload, not the frame source:
     # pin it too, so a guest cannot DECLINE or REQUEST for another's MAC.
+    # A fragment can end before chaddr, so the payload match below would not
+    # fire; DHCP never needs fragments.
+    lines.append(f"\t\t{q} udp dport 67 ip frag-off & 0x3fff != 0x0 drop")
     lines.append(f"\t\t{q} udp dport 67 @th,288,48 != 0x{mac.replace(':', '')} drop")
     if ip:
         lines.append(f"\t\t{q} arp saddr ip != {{ 0.0.0.0, {ip} }} drop")
@@ -258,10 +261,10 @@ with_lock() {
 # count on stdout's last line. Read-only. MACs with no pin (destroyed guests,
 # the host's own ports) are skipped.
 audit_neighbours() {
-  local rendered="$1" bridge="${ANTISPOOF_BRIDGE:-vmbr1}" count=0 ip mac port want
+  local rendered="$1" states="${2:-all}" bridge="${ANTISPOOF_BRIDGE:-vmbr1}" count=0 ip mac port want
   while read -r ip mac; do
     [ -n "$mac" ] || continue
-    port="$(printf '%s\n' "$rendered" | grep -E "ether saddr != $mac drop" | head -1 | sed -E 's/^[[:space:]]*iifname "([^"]+)".*/\1/' || true)"
+    port="$(grep -E "ether saddr != $mac drop" <<<"$rendered" | sed -n -E '1s/^[[:space:]]*iifname "([^"]+)".*/\1/p' || true)"
     [ -n "$port" ] || continue
     want="$(printf '%s\n' "$rendered" | sed -n "s/^[[:space:]]*iifname \"$port\" ip saddr != \([0-9.]*\) drop$/\1/p" || true)"
     if [ -n "$want" ]; then
@@ -269,11 +272,15 @@ audit_neighbours() {
         log "MISMATCH: $port (mac $mac) is seen at $ip but is pinned to $want" >&2
         count=$((count + 1))
       fi
-    elif printf '%s\n' "$rendered" | grep -E '^[[:space:]]+elements = \{' | tr -d '{},' | tr ' ' '\n' | grep -qxF "$ip"; then
+    elif grep -E '^[[:space:]]+elements = \{' <<<"$rendered" | tr -d '{},' | tr ' ' '\n' | grep -cxF "$ip" >/dev/null; then
       log "MISMATCH: MAC-only $port (mac $mac) uses $ip, which is another guest's pinned address" >&2
       count=$((count + 1))
     fi
-  done < <(ip -4 neigh show dev "$bridge" 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "lladdr") print $1, tolower($(i + 1))}')
+  done < <(ip -4 neigh show dev "$bridge" 2>/dev/null | awk -v states="$states" '
+    # --check looks only at entries in use now; a STALE entry for a guest that
+    # was re-addressed lingers until garbage collection and is not a cut-off.
+    states == "fresh" && $NF !~ /^(REACHABLE|DELAY|PROBE|PERMANENT)$/ { next }
+    { for (i = 1; i < NF; i++) if ($i == "lladdr") print $1, tolower($(i + 1)) }')
   echo "$count"
 }
 
@@ -291,7 +298,7 @@ case "$MODE" in
       log "DRIFT: table bridge $TABLE_NAME is not loaded"
       problems=1
     else
-      printf '%s\n' "$listing" | grep -q 'type filter hook prerouting priority dstnat; policy accept;' \
+      grep -q 'type filter hook prerouting priority dstnat; policy accept;' <<<"$listing" \
         || { log "DRIFT: chain prerouting is not hooked at priority dstnat (-300) with policy accept"; problems=1; }
       expected="$(printf '%s\n' "$rendered" | grep -E '^[[:space:]]+iifname ' | sed 's/^[[:space:]]*//' | sort)"
       live="$(printf '%s\n' "$listing" | grep -E '^[[:space:]]+iifname ' | sed 's/^[[:space:]]*//' | sort)"
@@ -306,12 +313,12 @@ case "$MODE" in
       printf '%s\n' "$rendered" | sed -n 's/^# skipped: /  /p'
       problems=1
     fi
-    unconfigured="$(guest_ports | while read -r port; do printf '%s\n' "$rendered" | grep -q "iifname \"$port\"" || echo "$port"; done)"
+    unconfigured="$(guest_ports | while read -r port; do grep -qF "iifname \"$port\"" <<<"$rendered" || echo "$port"; done)"
     if [ -n "$unconfigured" ]; then
       log "UNPINNED: live guest ports with no matching config entry: $(echo $unconfigured)"
       problems=1
     fi
-    if [ "$(audit_neighbours "$rendered")" != 0 ]; then
+    if [ "$(audit_neighbours "$rendered" fresh)" != 0 ]; then
       log "CUT OFF: the guests above use an address their pin refuses"
       problems=1
     fi
@@ -333,7 +340,9 @@ case "$MODE" in
     # An empty render while guests are running means the configs are not
     # readable (pmxcfs not mounted, pve-cluster restarting). Loading it would
     # silently remove every pin, so keep the current table instead.
-    if ! printf '%s\n' "$rendered" | grep -qE '^[[:space:]]+iifname ' && [ -n "$(guest_ports)" ]; then
+    # Here-strings, not `printf | grep -q`: with pipefail, grep -q exiting at the
+    # first match SIGPIPEs printf on a large render and the test reads as false.
+    if ! grep -qE '^[[:space:]]+iifname ' <<<"$rendered" && [ -n "$(guest_ports)" ]; then
       fatal "no guest NIC found in $QEMU_CONF_DIR or $LXC_CONF_DIR while guest ports exist; refusing to load an empty table"
     fi
     printf '%s\n' "$rendered" | grep -v '^# ' > "$tmp"
