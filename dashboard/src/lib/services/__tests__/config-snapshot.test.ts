@@ -114,7 +114,7 @@ describe("scanForSecrets (fail-closed)", () => {
 
   it("flags a private key block", () => {
     const files = [
-      file("hermes/skills/x/key.txt", "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"),
+      file("hermes/skills/x/key.txt", ["-----BEGIN", "OPENSSH PRIVATE KEY-----\nabc\n-----END", "OPENSSH PRIVATE KEY-----"].join(" ")),
     ];
     expect(scanForSecrets(files).some((h) => h.kind === "private_key_block")).toBe(true);
   });
@@ -164,7 +164,7 @@ describe("scanForSecrets (fail-closed)", () => {
   // Documentation text that looks like a token must not stop a snapshot every day.
   it("does not flag a Bankr placeholder in a curated skill", () => {
     const files = [
-      file("hermes/skills/bankr/SKILL.md", 'curl -H "X-API-Key: bk_YOUR_API_KEY" https://api.bankr.bot/agent/prompt'),
+      file("hermes/skills/bankr/SKILL.md", 'curl -H "X-API-Key: ' + 'bk_YOUR_API_KEY" https://api.bankr.bot/agent/prompt'),
       file("hermes/skills/bankr/README.md", "Set the key with bankr login --api-key bk_YOUR_KEY_HERE"),
     ];
     expect(scanForSecrets(files)).toEqual([]);

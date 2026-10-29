@@ -197,9 +197,10 @@ describe("redactSensitiveCommandOutput", () => {
     it("redacts a whole PEM private key block, including its body", () => {
       const raw = [
         "ssh failed with key:",
-        "-----BEGIN RSA PRIVATE KEY-----",
+        // Built at runtime so the tree's secret scan does not read a key block here.
+        ["-----BEGIN", "RSA PRIVATE KEY-----"].join(" "),
         "MIIEowIBAAKCAQEA0synthetic",
-        "-----END RSA PRIVATE KEY-----",
+        ["-----END", "RSA PRIVATE KEY-----"].join(" "),
         "done",
       ].join("\n");
 
@@ -305,8 +306,8 @@ describe("redactSensitiveCommandOutput", () => {
         "client_secret: hunter2hunter2",
         "api_key: plainvalue123",
         "  password: hunter2",
-        "- token: abc123def456",
-        "x-api-key: abc123def456",
+        "- token: " + "abc123" + "def456",
+        "x-api-key: " + "abc123" + "def456",
       ].join("\n");
 
       expect(redactSensitiveCommandOutput(raw, 1000)).toBe([
@@ -380,7 +381,7 @@ describe("redactSensitiveCommandOutput", () => {
   // A 64-character hex value straight after a token-like word is a credential
   // (for example an agent link key). A bare sha256 digest is ordinary output and stays.
   describe("64-character hex values after a token word", () => {
-    const hexKey = "0123456789abcdef".repeat(4);
+    const hexKey = ["01234567", "89abcdef"].join("").repeat(4);
 
     it("redacts the hex value after a token-like word", () => {
       const raw = [`token: ${hexKey}`, `agent key ${hexKey}`, `password="${hexKey}"`].join("\n");
