@@ -32,6 +32,11 @@ import { FUNNEL_PAID_PLANS, isPaidPlan, utcDayKey, utcWeekStartKey, lastNWeekSta
  * first_usage stamp, activity-digest email, free standing task, gated
  * auto-seed) be proven by watching `used` and `retained` move per cohort.
  *
+ * Instances come from both lanes: hermes_instances and hivra_agents. A Hivra
+ * agent boots at provisioned_at and is used at its own first_usage_at stamp.
+ * hivra_agents has no activity timestamp or standing-task stamp, so a Hivra
+ * agent only counts towards `retained` through the paid-subscription branch.
+ *
  * first_usage_at only began being stamped on 2026-05-30. Cohorts whose deploy
  * week ENDS before that date can never have a `used` value, so they report
  * `usedKnown: false` (rendered as n/a) instead of a misleading 0. Cohorts that
@@ -59,6 +64,32 @@ export interface ActivationInstanceRow {
   last_activity_at: string | null;
   deleted_at: string | null;
   standing_task_seeded_at: string | null;
+}
+
+/** The hivra_agents columns the activation cohorts read. */
+export interface ActivationHivraAgentRow {
+  user_id: string | null;
+  created_at: string;
+  provisioned_at: string | null;
+  first_usage_at: string | null;
+  status: string | null;
+}
+
+/**
+ * Map a Hivra-lane agent onto the cohort instance shape. hivra_agents marks a
+ * removal with status "deleted" instead of a deleted_at column, so a deleted
+ * agent carries its created_at as a non-null deleted marker.
+ */
+export function hivraAgentToActivationInstance(row: ActivationHivraAgentRow): ActivationInstanceRow {
+  return {
+    user_id: row.user_id,
+    created_at: row.created_at,
+    first_active_at: row.provisioned_at,
+    first_usage_at: row.first_usage_at,
+    last_activity_at: null,
+    deleted_at: row.status === "deleted" ? row.created_at : null,
+    standing_task_seeded_at: null,
+  };
 }
 
 export interface ActivationSubscriptionRow {
@@ -267,20 +298,31 @@ async function fetchAllPages<T>(
 
 type AdminClient = NonNullable<typeof supabaseAdmin>;
 
-function fetchWindowInstances(
+async function fetchWindowInstances(
   client: AdminClient,
   windowStartIso: string
 ): Promise<ActivationInstanceRow[]> {
-  return fetchAllPages<ActivationInstanceRow>("activation cohort instances", (from, to) =>
-    client
-      .from("hermes_instances")
-      .select(
-        "user_id, created_at, first_active_at, first_usage_at, last_activity_at, deleted_at, standing_task_seeded_at"
-      )
-      .gte("created_at", windowStartIso)
-      .order("id")
-      .range(from, to) as unknown as PromiseLike<PageResult<ActivationInstanceRow>>
-  );
+  const [hermes, hivra] = await Promise.all([
+    fetchAllPages<ActivationInstanceRow>("activation cohort instances", (from, to) =>
+      client
+        .from("hermes_instances")
+        .select(
+          "user_id, created_at, first_active_at, first_usage_at, last_activity_at, deleted_at, standing_task_seeded_at"
+        )
+        .gte("created_at", windowStartIso)
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<PageResult<ActivationInstanceRow>>
+    ),
+    fetchAllPages<ActivationHivraAgentRow>("activation cohort hivra agents", (from, to) =>
+      client
+        .from("hivra_agents")
+        .select("user_id, created_at, provisioned_at, first_usage_at, status")
+        .gte("created_at", windowStartIso)
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<PageResult<ActivationHivraAgentRow>>
+    ),
+  ]);
+  return [...hermes, ...hivra.map(hivraAgentToActivationInstance)];
 }
 
 async function fetchSubscriptionsForUsers(
