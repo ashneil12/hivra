@@ -636,6 +636,13 @@ describe("runDormantReclaimSweep", () => {
       expect(summary).toMatchObject({ reclaimed: 0, failed: 0 });
       expect(deleteProxmoxInstance).not.toHaveBeenCalled();
       expect(db.live()).toMatchObject({ status: "running", lifecycle_state: "active", paused_reason: null });
+      // The VM is kept, so its dump is removed (file first, then the manifest row) and
+      // nothing is left pointing at it.
+      expect(removeProxmoxDormantArchive).toHaveBeenCalledTimes(1);
+      expect(db.archiveDelete).toHaveBeenCalledTimes(1);
+      expect((removeProxmoxDormantArchive as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        db.archiveDelete.mock.invocationCallOrder[0]
+      );
     });
 
     it("does not destroy a re-entered VM whose owner started since the prior run", async () => {
@@ -650,6 +657,118 @@ describe("runDormantReclaimSweep", () => {
       expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
       expect(deleteProxmoxInstance).not.toHaveBeenCalled();
       expect(db.instanceUpdate).not.toHaveBeenCalled();
+      // The row no longer points at the dump, so the dump goes.
+      expect(removeProxmoxDormantArchive).toHaveBeenCalledWith(
+        infra,
+        expect.objectContaining({ archivePath: "/mnt/hermes-dormant/vzdump-qemu-610.vma.zst" })
+      );
+      expect(db.archiveDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it("reverts the archive record before removing the dump when the VM is running at destroy", async () => {
+      // The row still reads dormant_reclaiming with the dump recorded on it. Removing the file
+      // first would leave a row that a later run resumes into a destroy with no archive.
+      setCommitEnv();
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (deleteProxmoxInstance as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED 610\n",
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
+      // The row is a plain paused row again: the pre-archive reason, no dump on it, the
+      // lifecycle transition unchanged.
+      expect(db.live()).toMatchObject({
+        lifecycle_state: "paused",
+        paused_reason: "inactivity",
+        last_lifecycle_transition_at: dormantRow.last_lifecycle_transition_at,
+        status: "stopped",
+      });
+      expect(db.live().config).toEqual({ infrastructure: infra });
+      expect(removeProxmoxDormantArchive).toHaveBeenCalledWith(
+        infra,
+        expect.objectContaining({ archivePath: "/mnt/hermes-dormant/vzdump-qemu-610.vma.zst" })
+      );
+      expect(db.archiveDelete).toHaveBeenCalledTimes(1);
+      // Revert first, then the file, then the manifest row.
+      const revert = db.instanceUpdate.mock.invocationCallOrder[1];
+      expect(revert).toBeLessThan((removeProxmoxDormantArchive as jest.Mock).mock.invocationCallOrder[0]);
+      expect((removeProxmoxDormantArchive as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        db.archiveDelete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("does not resume a destroy from a removed dump: a later run archives the VM afresh", async () => {
+      setCommitEnv();
+      const first = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (deleteProxmoxInstance as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED 610\n",
+      });
+      await runDormantReclaimSweep({ now: NOW });
+
+      // The next day the same row is selected again, with the revert it was left with.
+      const second = installDatabase({ candidates: [first.live()], live: first.live() });
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ archived: 1, reclaimed: 1, failed: 0 });
+      expect(archiveProxmoxDormantInstance).toHaveBeenCalledTimes(2);
+      expect(second.archiveInsert).toHaveBeenCalledTimes(1);
+      // The destroy follows the new dump, never the removed one.
+      expect((deleteProxmoxInstance as jest.Mock).mock.invocationCallOrder[1]).toBeGreaterThan(
+        (archiveProxmoxDormantInstance as jest.Mock).mock.invocationCallOrder[1]
+      );
+    });
+
+    it("keeps the dump and the dormant_reclaiming record on re-entry while the VM is running", async () => {
+      // Re-entry does not know the pre-archive reason any more, so the row cannot be reverted
+      // to it. It stays reclaimable with its dump, and the next sweep decides again.
+      setCommitEnv();
+      const db = installDatabase({ candidates: [reEntryRow], live: reEntryRow });
+      (deleteProxmoxInstance as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        stdout: "",
+        stderr: "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED 610\n",
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
+      expect(db.instanceUpdate).not.toHaveBeenCalled();
+      expect(removeProxmoxDormantArchive).not.toHaveBeenCalled();
+      expect(db.archiveDelete).not.toHaveBeenCalled();
+      expect(db.live()).toMatchObject({ paused_reason: "dormant_reclaiming" });
+    });
+
+    it("reverts the archive record when a settings save lands between its read and its update", async () => {
+      setCommitEnv();
+      const ownerConfig = {
+        infrastructure: infra,
+        dormantArchive: {
+          archiveId: "archive_610",
+          archivePath: "/mnt/hermes-dormant/vzdump-qemu-610.vma.zst",
+          archivedAt: NOW.toISOString(),
+        },
+        settings: { model: "owner-choice" },
+      };
+      const db = installDatabase({ candidates: [dormantRow], live: dormantRow });
+      (deleteProxmoxInstance as jest.Mock).mockImplementationOnce(async () => {
+        db.ownerSavesConfigAfterNextRead(ownerConfig);
+        return { ok: false, stdout: "", stderr: "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED 610\n" };
+      });
+
+      const summary = await runDormantReclaimSweep({ now: NOW });
+
+      expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
+      // The owner's save is kept; only the sweep's own record is taken off it.
+      expect(db.live()).toMatchObject({ paused_reason: "inactivity", lifecycle_state: "paused" });
+      expect(db.live().config).toEqual({ infrastructure: infra, settings: { model: "owner-choice" } });
+      expect(removeProxmoxDormantArchive).toHaveBeenCalledTimes(1);
+      expect(db.archiveDelete).toHaveBeenCalledTimes(1);
     });
 
     it("skips a paused row whose guest is running at dump time: nothing dumped, recorded or destroyed", async () => {
@@ -706,10 +825,16 @@ describe("runDormantReclaimSweep", () => {
       const summary = await runDormantReclaimSweep({ now: NOW });
 
       expect(summary).toMatchObject({ reclaimed: 0, skipped: 1, failed: 0 });
-      expect(db.instanceUpdate).toHaveBeenCalledTimes(1);
+      // Marker, then the revert back to a plain paused row. No terminal state is written.
+      expect(db.instanceUpdate).toHaveBeenCalledTimes(2);
       expect(db.instanceUpdate.mock.calls[0]?.[0]).toEqual(
         expect.objectContaining({ paused_reason: "dormant_reclaiming" })
       );
+      expect(db.instanceUpdate.mock.calls[1]?.[0]).toEqual(
+        expect.objectContaining({ paused_reason: "inactivity", lifecycle_substate: null })
+      );
+      expect(db.instanceUpdate.mock.calls[1]?.[0].config).not.toHaveProperty("dormantArchive");
+      expect(db.live()).not.toHaveProperty("paused_reason", "dormant_reclaimed");
     });
 
     it("keeps settings the owner saves while the VM is destroyed in the terminal write", async () => {
