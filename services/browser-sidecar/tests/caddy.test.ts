@@ -162,6 +162,9 @@ describe("browser-sidecar Caddyfile", () => {
       expect(gate).toContain("forward_auth localhost:8789");
       expect(gate).toContain("uri /internal/verify-novnc-url");
       expect(gate).toContain("reverse_proxy localhost:6080");
+      // The verifier reads X-Forwarded-Uri, which forward_auth sets. Nothing
+      // sets X-Original-URI, so copying it from the auth response does nothing.
+      expect(caddyfile).not.toContain("X-Original-URI");
 
       const gateHandles = siteHandles(caddyfile).filter((handle) => handle.body.includes("import novnc_gate"));
       expect(gateHandles.map((handle) => handle.target)).toEqual(

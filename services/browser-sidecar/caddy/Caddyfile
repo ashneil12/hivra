@@ -11,7 +11,6 @@
 (novnc_gate) {
 	forward_auth localhost:8789 {
 		uri /internal/verify-novnc-url
-		copy_headers X-Original-URI
 	}
 	reverse_proxy localhost:6080
 }
