@@ -233,6 +233,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/cron/feedback-emails",
+      "schedule": "0 15 * * *"
+    },
+    {
       "path": "/api/cron/reconcile-cloudflare-dns",
       "schedule": "20 * * * *"
     },
