@@ -178,6 +178,7 @@ export class StripeWebhookService {
     transitionServer,
     serverActionLabel,
     instanceActionLabel,
+    onlyWhileStatus,
   }: {
     instances: Array<{
       id: string;
@@ -198,6 +199,12 @@ export class StripeWebhookService {
     transitionServer: (serverId: string) => Promise<unknown>;
     serverActionLabel: string;
     instanceActionLabel: string;
+    /**
+     * Write only while the row still has this status and no deleted_at. The
+     * purge cron claims a row by stamping deleted_at, so a restore that loses
+     * that race leaves the row alone instead of reviving one being destroyed.
+     */
+    onlyWhileStatus?: string;
   }) {
     const admin = supabaseAdmin;
     if (!admin || instances.length === 0) return;
@@ -278,12 +285,12 @@ export class StripeWebhookService {
         }
 
         try {
-          await runLifecycleStatusWriteWithRetry(() =>
-            admin
-              .from("hermes_instances")
-              .update(update)
-              .eq("id", instance.id)
-          );
+          await runLifecycleStatusWriteWithRetry(() => {
+            const write = admin.from("hermes_instances").update(update).eq("id", instance.id);
+            return onlyWhileStatus
+              ? write.eq("status", onlyWhileStatus).is("deleted_at", null)
+              : write;
+          });
         } catch (error) {
           log.error(`failed to ${instanceActionLabel} instance lifecycle row`, error, {
             source: LOG_SOURCE,
@@ -1442,7 +1449,8 @@ export class StripeWebhookService {
       .from("hermes_instances")
       .select("id, name, host_id, hetzner_server_id, status, scheduled_deletion_at")
       .eq("user_id", userId)
-      .eq("status", "scheduled_for_deletion");
+      .eq("status", "scheduled_for_deletion")
+      .is("deleted_at", null);
 
     if (!pendingInstances || pendingInstances.length === 0) return;
 
@@ -1460,6 +1468,7 @@ export class StripeWebhookService {
       transitionServer: (serverId) => powerOnServer(serverId as unknown as number),
       serverActionLabel: "power on",
       instanceActionLabel: "restore",
+      onlyWhileStatus: "scheduled_for_deletion",
     });
   }
 

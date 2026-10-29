@@ -41,7 +41,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
 import {
   createBaseChainReader,
+  paymentDustFloor,
   scanErc20TransfersInWindow,
+  tokenDustFloor,
   type BaseChainReader,
   type JsonRpcFetch,
   type ScannedTransfer,
@@ -501,6 +503,7 @@ async function surfaceWrongTokenTransfers(
       fromMs: params.fromMs,
       toMs: params.toMs,
       minConfirmations: params.minConfirmations,
+      minAmount: tokenDustFloor(token.decimals),
     });
     const inRange = scan.transfers.filter(
       (transfer) =>
@@ -576,6 +579,7 @@ export async function reconcileYearlyTokenQuote(params: {
     fromMs: quotedAtMs,
     toMs: rangeEndMs,
     minConfirmations,
+    minAmount: paymentDustFloor(quote.tokensRequiredRaw),
   });
   // Any other live platform token sent into this range is the wrong token:
   // surfaced for operator recovery, never credited. With $HIVRA dormant

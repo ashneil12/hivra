@@ -33,6 +33,17 @@ function assertBlockNumber(value: number, label: string) {
   }
 }
 
+// A provider refusing a range because its RESULT is too big (a flood of
+// matching logs), as opposed to any other failure. Such a range is split in
+// half and fetched again, down to a single block, so a spray of transfers into
+// a deposit address cannot stall its scan.
+function isOversizedLogResult(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /more than \d+ results|too many results|query returned more than|response size|result window|log response size exceeded|-32005/i.test(
+    error.message
+  );
+}
+
 /**
  * Every log matching `filter` in blocks `fromBlock`..`toBlock` (inclusive),
  * fetched in sequential eth_getLogs requests of at most
@@ -55,6 +66,32 @@ export async function getLogsInBlockChunks<TLog>(params: {
     );
   }
 
+  const fetchRange = async (from: number, to: number): Promise<TLog[]> => {
+    let rangeLogs: TLog[];
+    try {
+      rangeLogs = await params.call<TLog[]>("eth_getLogs", [
+        {
+          address: params.filter.address,
+          fromBlock: rpcQuantity(from),
+          toBlock: rpcQuantity(to),
+          topics: params.filter.topics,
+        },
+      ]);
+    } catch (error) {
+      if (to > from && isOversizedLogResult(error)) {
+        const mid = from + Math.floor((to - from) / 2);
+        return [...(await fetchRange(from, mid)), ...(await fetchRange(mid + 1, to))];
+      }
+      throw error;
+    }
+    // A successful eth_getLogs always returns an array. Anything else is a
+    // broken provider response; treating it as "no logs" could hide a payment.
+    if (!Array.isArray(rangeLogs)) {
+      throw new Error("Invalid eth_getLogs result from Base RPC");
+    }
+    return rangeLogs;
+  };
+
   const logs: TLog[] = [];
   for (
     let chunkStart = params.fromBlock;
@@ -65,20 +102,7 @@ export async function getLogsInBlockChunks<TLog>(params: {
       params.toBlock,
       chunkStart + MAX_BASE_RPC_LOG_RANGE_BLOCKS - 1
     );
-    const chunkLogs = await params.call<TLog[]>("eth_getLogs", [
-      {
-        address: params.filter.address,
-        fromBlock: rpcQuantity(chunkStart),
-        toBlock: rpcQuantity(chunkEnd),
-        topics: params.filter.topics,
-      },
-    ]);
-
-    // A successful eth_getLogs always returns an array. Anything else is a
-    // broken provider response; treating it as "no logs" could hide a payment.
-    if (!Array.isArray(chunkLogs)) {
-      throw new Error("Invalid eth_getLogs result from Base RPC");
-    }
+    const chunkLogs = await fetchRange(chunkStart, chunkEnd);
     logs.push(...chunkLogs);
   }
 
