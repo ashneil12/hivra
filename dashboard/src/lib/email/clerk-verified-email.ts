@@ -11,7 +11,7 @@
 export type ClerkVerifiableEmail = {
   id: string;
   email_address: string;
-  verification?: { status?: string } | null;
+  verification?: { status?: string | null } | null;
 };
 
 export type ClerkUserWithEmails = {
