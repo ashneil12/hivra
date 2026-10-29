@@ -7,8 +7,7 @@ import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { listWindowsIsoImages, WindowsByoIsoError } from "@/lib/infrastructure/windows-byo-iso";
-
-function noStore(response: Response) { response.headers.set("Cache-Control", "no-store"); return response; }
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 export async function GET(request: NextRequest) {
   const { userId } = await auth();

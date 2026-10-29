@@ -1,6 +1,7 @@
 const mockAuth = jest.fn();
 const mockGetWalletSummary = jest.fn();
 const mockListProxyKeys = jest.fn();
+const mockSupabaseFrom = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: (...args: unknown[]) => mockAuth(...args),
@@ -17,14 +18,44 @@ jest.mock("@/lib/venice/proxy-keys", () => ({
 }));
 
 jest.mock("@/lib/supabase", () => ({
-  supabaseAdmin: null,
+  supabaseAdmin: {
+    from: (...args: unknown[]) => mockSupabaseFrom(...args),
+  },
 }));
 
 import { GET } from "../route";
 
+// Chainable read that resolves to `result` when awaited or ended with maybeSingle().
+function readBuilder(result: { data: unknown; error: unknown }) {
+  const builder: Record<string, unknown> = {};
+  builder.select = jest.fn(() => builder);
+  builder.eq = jest.fn(() => builder);
+  builder.maybeSingle = jest.fn(async () => result);
+  builder.then = (
+    resolve: (value: unknown) => unknown,
+    reject?: (reason: unknown) => unknown
+  ) => Promise.resolve(result).then(resolve, reject);
+  return builder;
+}
+
+function mockSubsidyReads(events: {
+  data: unknown;
+  error: unknown;
+}, platformState: { data: unknown; error: unknown }) {
+  mockSupabaseFrom.mockImplementation((table: string) =>
+    table === "managed_venice_financial_events"
+      ? readBuilder(events)
+      : readBuilder(platformState)
+  );
+}
+
 describe("GET /api/billing/managed-venice/summary", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSubsidyReads(
+      { data: [], error: null },
+      { data: null, error: null }
+    );
     mockAuth.mockResolvedValue({ userId: "user_a" });
     mockGetWalletSummary.mockResolvedValue({
       hermesos: {
@@ -74,6 +105,59 @@ describe("GET /api/billing/managed-venice/summary", () => {
     expect(response.status).toBe(200);
     expect(mockListProxyKeys).toHaveBeenCalledTimes(2); // initial attempt + one retry
     expect(body.data.wallets.hermesos.availableMicroUsd).toBe(40_000_000);
+  });
+
+  it("reports the real subsidy totals and kill switch state when both reads succeed", async () => {
+    mockSubsidyReads(
+      {
+        data: [
+          {
+            discount_micro_usd: 1_000,
+            metadata: { rate: "launch_20" },
+            created_at: new Date().toISOString(),
+          },
+        ],
+        error: null,
+      },
+      { data: { weekly_kill_switch_active: false, weekly_subsidy_used_micro_usd: 5_000 }, error: null }
+    );
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.discount.launchSubsidyUsedMicroUsd).toBe(1_000);
+    expect(body.data.killSwitch.active).toBe(false);
+    expect(body.data.killSwitch.weeklySubsidyUsedMicroUsd).toBe(5_000);
+  });
+
+  it("fails closed with 503 when the subsidy usage read errors, instead of showing the full allowance", async () => {
+    mockSubsidyReads(
+      { data: null, error: { message: "permission-denied-secret" } },
+      { data: null, error: null }
+    );
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error).toMatch(/temporarily unavailable/i);
+    expect(body).not.toHaveProperty("data");
+    expect(JSON.stringify(body)).not.toContain("permission-denied-secret");
+  });
+
+  it("fails closed with 503 when the kill switch read errors instead of reporting it off", async () => {
+    mockSubsidyReads(
+      { data: [], error: null },
+      { data: null, error: { message: "platform-state-secret" } }
+    );
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).not.toHaveProperty("data");
+    expect(JSON.stringify(body)).not.toContain("platform-state-secret");
   });
 
   it("does not retry a non-transient error and fails fast", async () => {

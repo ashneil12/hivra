@@ -31,6 +31,7 @@ import {
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
+import { fetchClerkUser } from "@/lib/recovery/lifecycle-email-sweep";
 
 export const dynamic = "force-dynamic";
 // A full batch is up to 500 rows of Clerk fetches + Resend sends; even at
@@ -38,7 +39,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 800;
 
 const LOG_SOURCE = "cron:cold-storage-notifications";
-const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
 // Each send job is Clerk fetch + Resend send + marker write — three remote
 // round trips. Bounded fan-out keeps a large batch inside the function budget;
 // jobs are row-independent (idempotencyKey and notifications_sent are per-row).
@@ -80,17 +80,6 @@ function envInt(name: string, fallback: number): number {
   if (!v) return fallback;
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) ? n : fallback;
-}
-
-async function fetchClerkUser(secretKey: string, userId: string): Promise<ClerkUser | null> {
-  const response = await fetch(`${CLERK_API_BASE_URL}/users/${userId}`, {
-    headers: { Authorization: `Bearer ${secretKey}` },
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Clerk user fetch failed for ${userId}: ${response.status}`);
-  }
-  return (await response.json()) as ClerkUser;
 }
 
 function chooseEmail(user: ClerkUser): string | null {

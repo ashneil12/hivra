@@ -19,6 +19,7 @@ import {
   useComposioConnect,
   useComposioConnectedApps,
 } from "@/lib/composio/use-composio-connect";
+import { readJson } from "@/lib/client/read-json";
 
 const mono: React.CSSProperties = {
   fontFamily: "var(--font-mono), monospace",
@@ -44,10 +45,6 @@ interface FanResult { uid: string; ok: boolean; error?: string }
 const REMOVE_CONFIRM_MS = 4000;
 // A second tap sooner than this after arming is the same double tap, not a confirmation.
 const REMOVE_CONFIRM_DELAY_MS = 600;
-
-async function readJson(r: Response): Promise<Record<string, unknown> | null> {
-  try { return (await r.json()) as Record<string, unknown>; } catch { return null; }
-}
 
 const input: React.CSSProperties = {
   padding: "9px 11px", border: "1px solid var(--etched-border)",

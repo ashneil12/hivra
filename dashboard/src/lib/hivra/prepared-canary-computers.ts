@@ -379,6 +379,11 @@ export async function claimPreparedCanaryComputer(
     return enforcePreparedCanaryBinding(currentOwner, input.profile, slot, deps);
   }
 
+  // Fail closed: a row written on a guessed lane is refused by this deployment's
+  // own lifecycle, usage and console paths while it still holds a live VM.
+  const channel = deploymentChannel(process.env);
+  if (!channel) throw new Error("prepared_profile_unavailable");
+
   const verified = await deps.runHost(verificationScript(input.profile, slot), slot);
   if (!verified.ok || !verified.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_COMPUTER_READY")) {
     throw new Error("prepared_guest_unavailable");
@@ -392,7 +397,7 @@ export async function claimPreparedCanaryComputer(
     desired_state: "running",
     deployment_mode: "hivra-managed",
     computer_substrate: "proxmox-kvm",
-    managed_provisioner_channel: deploymentChannel(process.env) ?? "canary",
+    managed_provisioner_channel: channel,
     proxmox_host: slot.host,
     vmid: slot.vmid,
     ip: slot.ip,

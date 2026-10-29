@@ -10,6 +10,7 @@ import {
   readNumericField,
   sendManagedVeniceMediaRequest,
 } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-image | Genesis 1:27 | Verse: So God created mankind in his own image, in the image of God he created them.
 const VENICE_IMAGE_GENERATE_URL = "https://api.venice.ai/api/v1/image/generate";
@@ -17,12 +18,6 @@ const VENICE_IMAGE_GENERATE_URL = "https://api.venice.ai/api/v1/image/generate";
 // Wallet funds are held from the in-code price catalog BEFORE Venice is called
 // (lib/venice/media-spend-gate.ts); a model with no known price is refused.
 const ENDPOINT_LABEL = "/api/v1/image/generate";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

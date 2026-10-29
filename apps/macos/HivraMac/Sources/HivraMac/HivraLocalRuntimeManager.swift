@@ -54,12 +54,12 @@ final class HivraLocalRuntimeManager: ObservableObject {
     @Published private(set) var output = ""
     @Published private(set) var readyGeneration = 0
     @Published private(set) var credentialsGeneration = 0
+    @Published private(set) var hasSavedCredentials = false
 
     private let defaults: UserDefaults
     private let checkoutKey = "hivra.mac.local-checkout.v1"
     private var operationProcess: Process?
     private var runtimeProcess: Process?
-    private var outputPipe: Pipe?
     private var didSignalReady = false
     private let credentialStore = HivraLocalCredentialStore()
 
@@ -102,10 +102,6 @@ final class HivraLocalRuntimeManager: ObservableObject {
         return credentialStore.load(stateDirectoryURL: stateDirectoryURL)
     }
 
-    var hasSavedCredentials: Bool {
-        savedCredentials != nil
-    }
-
     func chooseCheckout() {
         let panel = NSOpenPanel()
         panel.title = "Choose the Hivra source folder"
@@ -137,6 +133,10 @@ final class HivraLocalRuntimeManager: ObservableObject {
             state = .checkoutNeeded
             return
         }
+        guard operationProcess == nil else {
+            refuseWhileBusy()
+            return
+        }
         state = .checking
         output = ""
         launchOneShot(
@@ -151,6 +151,10 @@ final class HivraLocalRuntimeManager: ObservableObject {
     func initialize(email: String, name: String, password: String) {
         guard let installation else {
             state = .checkoutNeeded
+            return
+        }
+        guard operationProcess == nil else {
+            refuseWhileBusy()
             return
         }
         guard !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -181,6 +185,7 @@ final class HivraLocalRuntimeManager: ObservableObject {
             } else {
                 self.state = .failed("Local setup did not complete.")
             }
+            self.refreshSavedCredentialsFlag()
         }
     }
 
@@ -188,6 +193,7 @@ final class HivraLocalRuntimeManager: ObservableObject {
         if credentialStore.remove(stateDirectoryURL: stateDirectoryURL) {
             credentialsGeneration += 1
         }
+        refreshSavedCredentialsFlag()
     }
 
     func start() {
@@ -211,14 +217,12 @@ final class HivraLocalRuntimeManager: ObservableObject {
         process.standardOutput = pipe
         process.standardError = pipe
         attachOutput(pipe)
-        outputPipe = pipe
         runtimeProcess = process
 
         process.terminationHandler = { [weak self] process in
             let succeeded = process.terminationStatus == 0
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.detachOutput()
                 self.runtimeProcess = nil
                 if self.state != .stopping {
                     self.state = succeeded ? .ready : .failed("Local Hivra stopped unexpectedly.")
@@ -229,7 +233,7 @@ final class HivraLocalRuntimeManager: ObservableObject {
         do {
             try process.run()
         } catch {
-            detachOutput()
+            detachOutput(pipe)
             runtimeProcess = nil
             state = .failed(error.localizedDescription)
         }
@@ -289,6 +293,10 @@ final class HivraLocalRuntimeManager: ObservableObject {
 
     func stop() {
         guard let installation else { return }
+        guard operationProcess == nil else {
+            refuseWhileBusy()
+            return
+        }
         state = .stopping
         launchOneShot(
             installation.command(for: .stop, stateDirectory: stateDirectoryURL),
@@ -304,11 +312,22 @@ final class HivraLocalRuntimeManager: ObservableObject {
     }
 
     private func refreshConfigurationState() {
+        defer { refreshSavedCredentialsFlag() }
         guard installation != nil else {
             state = .checkoutNeeded
             return
         }
         state = hasConfiguration ? .ready : .setupNeeded
+    }
+
+    private func refreshSavedCredentialsFlag() {
+        hasSavedCredentials = savedCredentials != nil
+    }
+
+    // A stop, doctor or setup request that arrives while another one-shot runs is refused here
+    // without touching `state`, so the screen keeps showing the operation that is really running.
+    private func refuseWhileBusy() {
+        output += "\nAnother Hivra operation is still running. Wait for it to finish, then try again.\n"
     }
 
     private func launchOneShot(
@@ -322,14 +341,12 @@ final class HivraLocalRuntimeManager: ObservableObject {
         process.standardOutput = pipe
         process.standardError = pipe
         attachOutput(pipe)
-        outputPipe = pipe
         operationProcess = process
 
         process.terminationHandler = { [weak self] process in
             let succeeded = process.terminationStatus == 0
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.detachOutput()
                 self.operationProcess = nil
                 completion(succeeded)
             }
@@ -338,7 +355,7 @@ final class HivraLocalRuntimeManager: ObservableObject {
         do {
             try process.run()
         } catch {
-            detachOutput()
+            detachOutput(pipe)
             operationProcess = nil
             state = .failed(error.localizedDescription)
         }
@@ -366,16 +383,20 @@ final class HivraLocalRuntimeManager: ObservableObject {
     private func attachOutput(_ pipe: Pipe) {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            guard !data.isEmpty else {
+                // EOF: the process closed its end. Clear the handler, or Foundation keeps calling it.
+                handle.readabilityHandler = nil
+                return
+            }
+            guard let text = String(data: data, encoding: .utf8) else { return }
             Task { @MainActor [weak self] in
                 self?.consumeOutput(text)
             }
         }
     }
 
-    private func detachOutput() {
-        outputPipe?.fileHandleForReading.readabilityHandler = nil
-        outputPipe = nil
+    private func detachOutput(_ pipe: Pipe) {
+        pipe.fileHandleForReading.readabilityHandler = nil
     }
 
     private func consumeOutput(_ text: String) {

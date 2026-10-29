@@ -58,9 +58,9 @@ import {
   singleFlightUsageRead,
   type ComputerUsageCacheRow,
 } from "@/lib/hivra/computer-usage-cache";
+import { UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
 const SOURCE = "hivra/agents/[id]/usage";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROBE_TIMEOUT_MS = 20_000;
 
 const USAGE_SELECT = [
@@ -240,7 +240,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!userId) return fail("Unauthorized", 401);
     if (!supabaseAdmin) return fail("Database not configured", 500);
     const { id } = await params;
-    if (!UUID.test(id)) return fail("Agent not found", 404);
+    if (!UUID_V1_TO_8.test(id)) return fail("Agent not found", 404);
 
     const { data, error } = await supabaseAdmin
       .from("hivra_agents")

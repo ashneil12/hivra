@@ -446,7 +446,7 @@ describe("StripeWebhookService", () => {
           builder.select.mockImplementation(() => {
             const selectBuilder = createMockBuilder();
             selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.single.mockResolvedValue({
+            selectBuilder.maybeSingle.mockResolvedValue({
               data: {
                 id: "inst_123",
                 name: "Atlas",
@@ -528,7 +528,7 @@ describe("StripeWebhookService", () => {
           builder.select.mockImplementation(() => {
             const selectBuilder = createMockBuilder();
             selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.single.mockResolvedValue({
+            selectBuilder.maybeSingle.mockResolvedValue({
               data: {
                 id: "inst_123",
                 name: "Atlas",
@@ -589,6 +589,63 @@ describe("StripeWebhookService", () => {
       ).mockRestore();
     });
 
+    it("throws on an instance lookup error instead of treating it as a missing instance", async () => {
+      // Regression: a DB error used to take the "instance not found" branch,
+      // so the webhook returned success and the paid add-on was never applied.
+      (log.error as jest.Mock).mockClear();
+
+      const updateSpy = jest.fn();
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = createMockBuilder();
+
+        if (table === "hermes_instances") {
+          builder.select.mockImplementation(() => {
+            const selectBuilder = createMockBuilder();
+            selectBuilder.eq.mockImplementation(() => selectBuilder);
+            selectBuilder.maybeSingle.mockResolvedValue({
+              data: null,
+              error: { code: "XX000", message: "lookup-failed" },
+            });
+            return selectBuilder;
+          });
+
+          builder.update.mockImplementation((row: Record<string, unknown>) => {
+            updateSpy(row);
+            return { eq: jest.fn().mockResolvedValue({ error: null }) };
+          });
+        }
+
+        return builder;
+      });
+
+      await expect(
+        StripeWebhookService.handleStorageAddonPurchased({
+          id: "sess_lookup_err",
+          metadata: {
+            instance_id: "inst_123",
+            user_id: "user_123",
+            disk_gb_added: "20",
+          },
+        } as unknown as Stripe.Checkout.Session)
+      ).rejects.toMatchObject({ code: "XX000" });
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalledWith(
+        "failed to load instance for storage addon",
+        expect.anything(),
+        expect.objectContaining({
+          failureType: "storage_addon_instance_lookup_failed",
+          instanceId: "inst_123",
+          errorCode: "XX000",
+        })
+      );
+      expect(log.error).not.toHaveBeenCalledWith(
+        "instance not found for storage addon",
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
     it("marks disk_upgraded=true ONLY after a successful Hetzner resize", async () => {
       // Positive case: resize succeeds → DB flag updates → no throw.
       (log.error as jest.Mock).mockClear();
@@ -606,7 +663,7 @@ describe("StripeWebhookService", () => {
           builder.select.mockImplementation(() => {
             const selectBuilder = createMockBuilder();
             selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.single.mockResolvedValue({
+            selectBuilder.maybeSingle.mockResolvedValue({
               data: {
                 id: "inst_123",
                 name: "Atlas",
@@ -651,6 +708,36 @@ describe("StripeWebhookService", () => {
           typeof StripeWebhookService.triggerHetznerDiskExpansion
         >
       ).mockRestore();
+    });
+  });
+
+  describe("resumeBillingSuspendedInstances", () => {
+    it("still resumes the rows when the power-on snapshot fails, and logs it", async () => {
+      // The snapshot's error used to be dropped silently. It is now logged, but the
+      // resume still runs: yearly and Apple activations call this without a retry,
+      // so throwing would leave a paid user suspended.
+      const updateSpy = jest.fn();
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = createMockBuilder();
+
+        if (table === "hermes_instances") {
+          builder.select.mockImplementation(() => {
+            const snapshot = createMockBuilder();
+            snapshot.then = (resolve) =>
+              resolve({ data: null, error: { code: "XX000", message: "snapshot-failed" } });
+            return snapshot;
+          });
+          builder.update.mockImplementation((row: Record<string, unknown>) => {
+            updateSpy(row);
+            return createMockBuilder();
+          });
+        }
+
+        return builder;
+      });
+
+      await StripeWebhookService.resumeBillingSuspendedInstances("user_resume_err").catch(() => undefined);
+      expect(updateSpy).toHaveBeenCalled();
     });
   });
 

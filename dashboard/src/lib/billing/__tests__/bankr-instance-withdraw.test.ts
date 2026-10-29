@@ -30,6 +30,7 @@ jest.mock("@/lib/billing/token-holdings", () => {
 });
 
 jest.mock("@/lib/billing/bankr-withdraw", () => ({
+  BankrTransferHttpError: jest.requireActual("@/lib/billing/bankr-withdraw").BankrTransferHttpError,
   submitBankrTransfer: (...args: unknown[]) => mockSubmitTransfer(...args),
 }));
 
@@ -348,6 +349,48 @@ describe("withdrawHermesTokensForInstance", () => {
       env: { HERMES_BASE_RPC_URL: "https://base.example.test" },
       fetchImpl,
     });
+  });
+
+  it("keeps the withdrawal claim held when the transfer outcome is unknown", async () => {
+    // A network error after the request left may mean Bankr already sent the
+    // funds; releasing the claim would let a retry send them twice.
+    const db = makeClaimDb();
+    mockSubmitTransfer.mockRejectedValueOnce(new Error("socket hang up"));
+    const result = await withdrawBaseTokenForInstance({
+      instanceId: "inst_123",
+      userId: "user_123",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
+      amountDisplay: "2.5",
+      token: { symbol: "USDC", tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6 },
+      env: { HERMES_BASE_RPC_URL: "https://base.example.test" },
+      db,
+    });
+    expect(result.status).toBe("transfer_failed");
+    expect(result.errorMessage).toMatch(/pending verification/i);
+    const from = (db as unknown as { from: jest.Mock }).from;
+    const updateFns = [...new Set(from.mock.results.map((r) => r.value.update as jest.Mock))];
+    const updates = updateFns.flatMap((u) => u.mock.calls);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("releases the withdrawal claim when Bankr refuses the transfer with a 4xx", async () => {
+    const { BankrTransferHttpError } = jest.requireActual("@/lib/billing/bankr-withdraw");
+    const db = makeClaimDb();
+    mockSubmitTransfer.mockRejectedValueOnce(new BankrTransferHttpError(400, "bad request"));
+    const result = await withdrawBaseTokenForInstance({
+      instanceId: "inst_123",
+      userId: "user_123",
+      recipientAddress: "0x1111111111111111111111111111111111111111",
+      amountDisplay: "2.5",
+      token: { symbol: "USDC", tokenAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6 },
+      env: { HERMES_BASE_RPC_URL: "https://base.example.test" },
+      db,
+    });
+    expect(result.status).toBe("transfer_failed");
+    const from = (db as unknown as { from: jest.Mock }).from;
+    const updateFns = [...new Set(from.mock.results.map((r) => r.value.update as jest.Mock))];
+    const updates = updateFns.flatMap((u) => u.mock.calls);
+    expect(updates).toEqual([[expect.objectContaining({ status: "failed" })]]);
   });
 
   it("withdraws an explicit Base ERC-20 token to the saved destination", async () => {

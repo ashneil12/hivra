@@ -84,6 +84,14 @@ interface WithdrawRequestBody {
 const inFlightByUser = new Map<string, Promise<unknown>>();
 // How long new tier breaches are held after a lock-wallet move is submitted.
 const LOCK_MOVE_BREACH_HOLD_MS = 30 * 60 * 1000;
+// A move waits for its receipt and for the moved balance to show on the verified
+// wallet, inside this request. The waits add up to about 8 s of sleeps plus RPC
+// time, so the response stays inside a serverless request budget. A move still
+// pending after that is not evaluated now (the next holdings refresh reads it,
+// and the breach hold lapses on its own), which is the path a slow move already took.
+const RECEIPT_POLL_ATTEMPTS = 3;
+const RECEIPT_POLL_INTERVAL_MS = 2_000;
+const BALANCE_VISIBLE_ATTEMPTS = 2;
 const LOG_CONTEXT = {
   source: "billing/withdraw",
   route: "/api/billing/bankr/wallet/withdraw",
@@ -302,7 +310,13 @@ export async function POST(req: NextRequest) {
       // is not mined yet, evaluate nothing now: the next holdings refresh
       // reads it (and a breach, if any, has the normal grace).
       try {
-        const receipt = result.txHash ? await waitForTransferReceipt({ txHash: result.txHash }) : "pending";
+        const receipt = result.txHash
+          ? await waitForTransferReceipt({
+              txHash: result.txHash,
+              attempts: RECEIPT_POLL_ATTEMPTS,
+              intervalMs: RECEIPT_POLL_INTERVAL_MS,
+            })
+          : "pending";
         if (receipt === "mined") {
           const [lockWallet, verifiedWallet] = await Promise.all([
             getHermesLockWallet(userId),
@@ -315,7 +329,7 @@ export async function POST(req: NextRequest) {
             const moved = BigInt(result.amountRaw ?? "0");
             let refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
             const movedKey = asset === "HIVRA" ? "hivra" : "hermesos";
-            for (let attempt = 0; attempt < 3 && refreshed.status === "refreshed" && (refreshed.balances[movedKey] ?? 0n) < moved; attempt++) {
+            for (let attempt = 0; attempt < BALANCE_VISIBLE_ATTEMPTS && refreshed.status === "refreshed" && (refreshed.balances[movedKey] ?? 0n) < moved; attempt++) {
               await new Promise((resolve) => setTimeout(resolve, 2_000));
               refreshed = await refreshPrimaryVerifiedTokenHoldings({ userId, wallet: verifiedWallet });
             }

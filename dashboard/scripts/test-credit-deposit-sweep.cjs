@@ -583,6 +583,29 @@ scenario("sweep failures are recorded on the receipt and a failed write is surfa
   assert.equal(h.bankr.transferRequests.length, 1);
 });
 
+scenario("a receipt that keeps failing cannot crowd a fresh pending deposit out of the batch", async (h) => {
+  // The older receipt's wallet has no Bankr credential, so every run fails it
+  // the same way. Before, it was re-selected first on every run and the newer
+  // pending deposit was never reached while the batch was full.
+  const orphan = await h.settledReceipt({
+    userId: "user_orphan",
+    wallet: addressFor("no-credential-wallet"),
+    amount: usdc(10),
+  });
+  const wallet = await h.wallet("user_b");
+  h.chain.fund(wallet, usdc(50));
+  const fresh = await h.settledReceipt({ userId: "user_b", wallet, amount: usdc(50) });
+
+  const batch = { env: { ...ENV }, limit: 1 };
+  await sweepPendingCreditDepositReceipts({ ...batch, now: minutes(0) });
+  assert.equal((await h.receipt(orphan)).sweep_status, "failed");
+  await sweepPendingCreditDepositReceipts({ ...batch, now: minutes(10) });
+
+  assert.equal((await h.receipt(fresh)).sweep_status, "submitted", "the fresh deposit is swept on the second run");
+  assert.equal((await h.receipt(orphan)).sweep_status, "failed", "the failing receipt is still only retried");
+  assert.equal(h.bankr.transferRequests.length, 1);
+});
+
 scenario("only settled checkout/open-credit Base USDC receipts are owed a sweep", async (h) => {
   const wallet = await h.wallet("user_a");
   h.chain.fund(wallet, usdc(1_000));

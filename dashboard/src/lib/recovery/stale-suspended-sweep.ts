@@ -49,13 +49,13 @@ import { sendAgentDeletionFinalReminderEmail } from "@/lib/email/agent-deletion-
 import { sendAgentDeletionWarningEmail } from "@/lib/email/agent-deletion-warning";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { fetchClerkUser } from "@/lib/recovery/lifecycle-email-sweep";
 
 const DEFAULT_FREE_WARN_DAYS = 3;
 const DEFAULT_FREE_GRACE_DAYS = 5;
 const DEFAULT_PAID_CANCELED_WARN_DAYS = 30;
 const DEFAULT_PAID_CANCELED_GRACE_DAYS = 14;
 const DEFAULT_MAX_PER_RUN = 50;
-const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
 const FREE_PLAN_KEY = "free";
 
 type StaleCandidateRow = {
@@ -79,7 +79,7 @@ type ResolvedPlanTier = "free" | "paid_canceled";
 interface ClerkEmailAddress {
   id: string;
   email_address: string;
-  verification?: { status?: string } | null;
+  verification?: { status?: string | null } | null;
 }
 
 interface ClerkUser {
@@ -160,17 +160,6 @@ function chooseEmail(user: ClerkUser): string | null {
   return (
     primary?.email_address || verified?.email_address || addresses[0]?.email_address || null
   );
-}
-
-async function fetchClerkUser(secretKey: string, userId: string): Promise<ClerkUser | null> {
-  const response = await fetch(`${CLERK_API_BASE_URL}/users/${userId}`, {
-    headers: { Authorization: `Bearer ${secretKey}` },
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Clerk user fetch failed for ${userId}: ${response.status}`);
-  }
-  return (await response.json()) as ClerkUser;
 }
 
 function formatDeletionDate(deletionAt: Date): string {

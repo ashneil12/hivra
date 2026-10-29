@@ -61,6 +61,11 @@ export interface HetznerInstanceStatus {
   status: "provisioning" | "running" | "stopped" | "error" | "redeploying";
   ipv4?: string;
   backupsEnabled?: boolean;
+  /**
+   * True when the Hetzner lookup itself failed. `status` is then a placeholder,
+   * not the server's state, so callers must not write it to the database.
+   */
+  lookupFailed?: boolean;
 }
 
 export type InstanceBackend = "gateway" | "webui";
@@ -539,7 +544,7 @@ export async function getHetznerInstanceStatus(
       backupsEnabled: !!server.backup_window,
     };
   } catch {
-    return { status: "error" };
+    return { status: "error", lookupFailed: true };
   }
 }
 

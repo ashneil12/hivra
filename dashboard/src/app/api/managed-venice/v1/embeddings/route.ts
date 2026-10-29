@@ -6,16 +6,11 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-embeddings | Psalm 139:23 | Verse: Search me, O God, and know my heart: try me, and know my thoughts.
 const VENICE_EMBEDDINGS_URL = "https://api.venice.ai/api/v1/embeddings";
 const ENDPOINT_LABEL = "/api/v1/embeddings";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

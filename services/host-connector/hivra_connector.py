@@ -136,7 +136,8 @@ class WebSocket:
         if parsed.scheme == "wss":
             raw = ssl.create_default_context().wrap_socket(raw, server_hostname=parsed.hostname)
         self.sock = raw
-        self.buffer = b""
+        self.buffer = bytearray()
+        self.read_offset = 0
         self.send_lock = threading.Lock()
         self.closed = False
         key = base64.b64encode(os.urandom(16)).decode()
@@ -180,13 +181,17 @@ class WebSocket:
         return head
 
     def _read_exact(self, count):
-        while len(self.buffer) < count:
+        while len(self.buffer) - self.read_offset < count:
             chunk = self.sock.recv(READ_CHUNK)
             if not chunk:
                 raise ConnectorError("connection closed")
+            # Drop the bytes already handed out so the buffer stays bounded, then append.
+            del self.buffer[: self.read_offset]
+            self.read_offset = 0
             self.buffer += chunk
-        data, self.buffer = self.buffer[:count], self.buffer[count:]
-        return data
+        start = self.read_offset
+        self.read_offset += count
+        return bytes(self.buffer[start : self.read_offset])
 
     def send(self, opcode, payload):
         with self.send_lock:
@@ -346,6 +351,8 @@ class Connector:
                 try:
                     body = json.loads(message[1].decode())
                 except ValueError:
+                    continue
+                if not isinstance(body, dict):
                     continue
                 kind = body.get("type")
                 if kind == "open":

@@ -78,20 +78,23 @@ const HERMESOS_TOKEN_DECIMALS = HERMESOS_TOKEN.decimals;
 //   HERMES_TIER_THRESHOLD_OVERRIDE_POWER_STANDARD   (e.g. "750000")
 //   HERMES_LAUNCH_PROMO_END_DATE_OVERRIDE           (ISO 8601 string)
 //
-// Gate: overrides are only honored when VERCEL_ENV !== 'production'.
-// Local dev (no VERCEL_ENV) and Vercel previews honor overrides;
-// the production deployment ignores them.
+// Gate (fails closed): overrides are honored only on Vercel preview or
+// development deployments, or on a local run where VERCEL_ENV is unset and
+// NODE_ENV is not "production". Vercel production, and any other production
+// build (for example a self-hosted `next start`), ignores them.
 
-function isProductionEnv(): boolean {
-  // Vercel sets VERCEL_ENV in every deployment ("production" | "preview" |
-  // "development"). Local dev doesn't have it set at all. Anything other
-  // than the literal "production" string honors overrides.
+function overridesAllowed(): boolean {
   if (typeof process === "undefined") return false;
-  return process.env.VERCEL_ENV === "production";
+  // Vercel sets VERCEL_ENV in every deployment ("production" | "preview" |
+  // "development"). Only the two non-production values unlock overrides.
+  const vercelEnv = process.env.VERCEL_ENV;
+  if (vercelEnv) return vercelEnv === "preview" || vercelEnv === "development";
+  // Not on Vercel: only a local development or test run may override.
+  return process.env.NODE_ENV !== "production";
 }
 
 function readWholeTokensOverride(envName: string): bigint | null {
-  if (isProductionEnv()) return null;
+  if (!overridesAllowed()) return null;
   const raw = process.env[envName];
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -110,7 +113,7 @@ function readWholeTokensOverride(envName: string): bigint | null {
 }
 
 function readDateOverride(envName: string): Date | null {
-  if (isProductionEnv()) return null;
+  if (!overridesAllowed()) return null;
   const raw = process.env[envName];
   if (!raw) return null;
   const parsed = new Date(raw.trim());

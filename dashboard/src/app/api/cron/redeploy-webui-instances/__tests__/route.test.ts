@@ -226,6 +226,43 @@ describe("POST /api/cron/redeploy-webui-instances", () => {
     ]);
   });
 
+  it("runs a targeted batch in concurrent waves (not one at a time) and keeps the requested order", async () => {
+    // Before the fix the POST loop awaited each redeploy in turn, so 10 VMs at
+    // 30-90s each could run past maxDuration. Max in-flight must now exceed 1.
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      id: `inst-${i}`,
+      user_id: "user-1",
+      name: `Box ${i}`,
+      status: "running",
+      backend: "webui",
+      provider: "crof",
+      api_key_encrypted: "encrypted-provider",
+      config: {},
+      infrastructure_provider: "proxmox",
+      proxmox_vmid: 300 + i,
+    }));
+    mockedSupabaseAdmin.from.mockReturnValue(selectQuery(rows));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mockedApplyLiveUpdate.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return launched();
+    });
+
+    const response = await POST(request({ instanceIds: rows.map((row) => row.id) }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(body.data).toMatchObject({ requested: 10, launched: 10, failed: 0, skipped: 0 });
+    expect(body.data.results.map((result: { id: string }) => result.id)).toEqual(
+      rows.map((row) => row.id),
+    );
+  });
+
   it("skips an intentionally-paused instance without attempting an SSH redeploy or raising an error", async () => {
     // Repro of the 2026-06-24 false positive: a runbook POST that includes a
     // paused (idle-swept) box. lifecycle_state='paused' with status drifted back
