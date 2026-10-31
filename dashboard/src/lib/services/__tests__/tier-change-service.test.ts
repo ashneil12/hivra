@@ -627,7 +627,7 @@ describe("applyTierChange", () => {
 
 describe("archived computer tier upgrades", () => {
   it.each(["cold_archived", "pending_deletion", "archiving", "restoring", "deleting", "deleted", "failed"])(
-    "records paid caps without live operations for %s even with stale config VM coordinates",
+    "records paid caps and a deferred container obligation without live operations for %s",
     async (lifecycle_state) => {
       const updates = mockInstanceListCapturingUpdates([{
         id: "archived-computer", status: "stopped", lifecycle_state,
@@ -639,13 +639,14 @@ describe("archived computer tier upgrades", () => {
       const outcome = await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
       expect(outcome).toMatchObject({ instancesUpdated: 1, resizesAttempted: 0, resizesFailed: [] });
       expect(updates[0].payload).toMatchObject({ resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 });
-      expect(updates.some(({ payload }) => payload.tier_change_pending === true)).toBe(false);
+      expect(updates.some(({ payload }) => payload.tier_change_pending === true))
+        .toBe(!["deleting", "deleted"].includes(lifecycle_state));
       expect(updates.some(({ payload }) => "status" in payload || "lifecycle_state" in payload || "archive_uri" in payload)).toBe(false);
       expect(resizeProxmoxVm).not.toHaveBeenCalled();
     },
   );
 
-  it("does not queue or resize a computer archived while the tier write was in progress", async () => {
+  it("defers the container obligation and does not resize a computer archived during the tier write", async () => {
     (readInstanceLiveMutationBlock as jest.Mock).mockResolvedValueOnce("Computer archived");
     const updates = mockInstanceListCapturingUpdates([{
       id: "archived-mid-upgrade", lifecycle_state: "active", status: "running", proxmox_vmid: 201,
@@ -654,7 +655,7 @@ describe("archived computer tier upgrades", () => {
     }]);
     await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
     expect(updates[0].payload.resource_tier).toBe("operator");
-    expect(updates.some(({ payload }) => payload.tier_change_pending === true)).toBe(false);
+    expect(updates.some(({ payload }) => payload.tier_change_pending === true)).toBe(true);
     expect(resizeProxmoxVm).not.toHaveBeenCalled();
   });
 });

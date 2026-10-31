@@ -238,6 +238,44 @@ describe("applyLiveUpdate", () => {
     expect(from).not.toHaveBeenCalled();
   });
 
+  it("refuses a stale active snapshot after restoration before decrypting or contacting the old guest", async () => {
+    const current = { lifecycle_state: "active", status: "running", proxmox_vmid: 202,
+      config: { infrastructure: { provider: "proxmox", vmid: 202, node: "restored-host", privateIpv4: "10.0.0.2" } } };
+    const update = jest.fn();
+    const supabase = { from: jest.fn(() => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: current, error: null }) }) }), update,
+    })) } as unknown as SupabaseClient;
+    (readInstanceLiveMutationBlock as jest.Mock).mockImplementationOnce(
+      jest.requireActual("../instance-live-mutation").readInstanceLiveMutationBlock,
+    );
+    const result = await applyLiveUpdate({
+      id: "moved-computer", user_id: "u1", provider: "openai", api_key_encrypted: "enc-key", proxmox_vmid: 201,
+      config: { infrastructure: { provider: "proxmox", vmid: 201, node: "old-host", privateIpv4: "10.0.0.1" } },
+    }, "10.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+    expect(result).toMatchObject({ applied: false, error: expect.stringMatching(/moved or was restored/) });
+    expect(decryptApiKey).not.toHaveBeenCalled();
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(sshExec).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("does not stamp a restored active computer failed from an earlier guest's failed update", async () => {
+    const current = { lifecycle_state: "active", status: "running", hetzner_server_id: 2, config: {} };
+    const update = jest.fn();
+    const supabase = { from: jest.fn(() => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: current, error: null }) }) }), update,
+    })) } as unknown as SupabaseClient;
+    (readInstanceLiveMutationBlock as jest.Mock).mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockImplementationOnce(
+      jest.requireActual("../instance-live-mutation").readInstanceLiveMutationBlock,
+    );
+    (sshExec as jest.Mock).mockResolvedValueOnce({ ok: false, stderr: "Old guest missing", stdout: "" });
+    const result = await applyLiveUpdate({
+      id: "moved-during-ssh", user_id: "u1", provider: "openai", api_key_encrypted: "enc-key", hetzner_server_id: 1, config: {},
+    }, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+    expect(result).toMatchObject({ applied: false, error: expect.stringMatching(/moved or was restored/) });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("redacts secrets from SSH launch failures before logging them", async () => {
     const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
 

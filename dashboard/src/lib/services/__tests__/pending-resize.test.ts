@@ -66,6 +66,18 @@ describe("redeployPendingResizes", () => {
     },
   );
 
+  it("keeps archived paid caps pending, then applies and clears them after restoration", async () => {
+    const paidCaps = { id: "restored-paid", cpu_limit: 2, ram_limit: 4096,
+      archive_uri: "free/restored-paid/data.tar.zst", archive_sha256: "a".repeat(64) };
+    const archived = await redeployPendingResizes([row({ ...paidCaps, lifecycle_state: "cold_archived", proxmox_vmid: null })], sweep);
+    expect(archived).toMatchObject({ skipped: 1, redeployed: 0 });
+    expect(updateMock).not.toHaveBeenCalled();
+    const restored = await redeployPendingResizes([row({ ...paidCaps, lifecycle_state: "active", proxmox_vmid: 202 })], sweep);
+    expect(restored).toMatchObject({ redeployed: 1, failed: 0 });
+    expect(mockApply).toHaveBeenCalledWith(expect.objectContaining({ id: "restored-paid", cpu_limit: 2, ram_limit: 4096 }), expect.anything(), expect.anything(), expect.anything(), expect.anything());
+    expect(updateMock).toHaveBeenCalledWith({ tier_change_pending: false });
+  });
+
   it("redeploys a webui instance and clears tier_change_pending", async () => {
     const summary = await redeployPendingResizes([row()], sweep);
     expect(summary).toMatchObject({ redeployed: 1, failed: 0, skipped: 0 });
