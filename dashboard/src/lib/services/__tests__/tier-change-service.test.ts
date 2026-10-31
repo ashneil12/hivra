@@ -1,3 +1,4 @@
+import { readInstanceLiveMutationBlock } from "../instance-live-mutation";
 /** Tier-change service regression tests.
  *
  * The service is the single chokepoint for "user moved between tiers" —
@@ -17,6 +18,11 @@ import { applyTierChange } from "../tier-change-service";
 // be the pattern — but applyTierChange imports its deps inside the function
 // body (lazy/dynamic for circular-import avoidance), so jest.mock at the
 // top works.
+
+jest.mock("../instance-live-mutation", () => ({
+  ...jest.requireActual("../instance-live-mutation"),
+  readInstanceLiveMutationBlock: jest.fn(async () => null),
+}));
 
 jest.mock("@/lib/supabase", () => {
   // Hoisted shared mock builder
@@ -615,5 +621,41 @@ describe("applyTierChange", () => {
     expect(resizeCalls).toContainEqual(
       expect.objectContaining({ vmid: 921, cpuLimit: 3, memoryMb: 6144 })
     );
+  });
+});
+
+
+describe("archived computer tier upgrades", () => {
+  it.each(["cold_archived", "pending_deletion", "archiving", "restoring", "deleting", "deleted", "failed"])(
+    "records paid caps and a deferred container obligation without live operations for %s",
+    async (lifecycle_state) => {
+      const updates = mockInstanceListCapturingUpdates([{
+        id: "archived-computer", status: "stopped", lifecycle_state,
+        archive_uri: "free/archived-computer/data.tar.zst", archive_sha256: "a".repeat(64),
+        proxmox_vmid: null,
+        config: { infrastructure: { provider: "proxmox", vmid: 201, node: "old-host" } },
+        hetzner_server_id: null, cpu_limit: 0.5, ram_limit: 512, resource_tier: "free",
+      }]);
+      const outcome = await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
+      expect(outcome).toMatchObject({ instancesUpdated: 1, resizesAttempted: 0, resizesFailed: [] });
+      expect(updates[0].payload).toMatchObject({ resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 });
+      expect(updates.some(({ payload }) => payload.tier_change_pending === true))
+        .toBe(!["deleting", "deleted"].includes(lifecycle_state));
+      expect(updates.some(({ payload }) => "status" in payload || "lifecycle_state" in payload || "archive_uri" in payload)).toBe(false);
+      expect(resizeProxmoxVm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("defers the container obligation and does not resize a computer archived during the tier write", async () => {
+    (readInstanceLiveMutationBlock as jest.Mock).mockResolvedValueOnce("Computer archived");
+    const updates = mockInstanceListCapturingUpdates([{
+      id: "archived-mid-upgrade", lifecycle_state: "active", status: "running", proxmox_vmid: 201,
+      config: { infrastructure: { provider: "proxmox", vmid: 201 } },
+      cpu_limit: 0.5, ram_limit: 512, resource_tier: "free",
+    }]);
+    await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
+    expect(updates[0].payload.resource_tier).toBe("operator");
+    expect(updates.some(({ payload }) => payload.tier_change_pending === true)).toBe(true);
+    expect(resizeProxmoxVm).not.toHaveBeenCalled();
   });
 });

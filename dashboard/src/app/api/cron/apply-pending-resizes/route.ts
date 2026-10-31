@@ -31,6 +31,10 @@ import { systemLiveUpdate } from "@/lib/services/live-update-initiator";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { WEBFREE_BACKENDS } from "@/lib/types/instance";
+import {
+  LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST,
+  LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER,
+} from "@/lib/services/instance-live-mutation";
 
 const SOURCE = "cron/apply-pending-resizes";
 const ROUTE = "/api/cron/apply-pending-resizes";
@@ -65,6 +69,8 @@ async function handle(req: NextRequest) {
     .in("backend", WEBFREE_BACKENDS)
     .eq("tier_change_pending", true)
     .not("status", "in", '("deleted","scheduled_for_deletion")')
+    .not("lifecycle_state", "in", LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST)
+    .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER)
     .order("last_activity_at", { ascending: true, nullsFirst: true })
     .limit(BATCH_LIMIT);
 
@@ -112,7 +118,9 @@ async function handle(req: NextRequest) {
       .select("id", { count: "exact", head: true })
       .in("backend", WEBFREE_BACKENDS)
       .eq("tier_change_pending", true)
-      .not("status", "in", '("deleted","scheduled_for_deletion")');
+      .not("status", "in", '("deleted","scheduled_for_deletion")')
+      .not("lifecycle_state", "in", LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST)
+      .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER);
     totalPending = count ?? null;
   }
   if (summary.failed > 0 || (totalPending !== null && totalPending > BATCH_LIMIT)) {

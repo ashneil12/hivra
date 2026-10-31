@@ -118,6 +118,7 @@ describe("orchestrateColdRestore — env handoff to restoreInstance", () => {
       destinationVmid: 310,
       destinationIp: "10.250.20.20",
       destinationGateway: "10.250.20.1",
+      ramLimitMb: instanceInput.instance.ram_limit,
       templateVmid: 9004,
     });
     // Critical: either no deps argument, or deps without `env`.
