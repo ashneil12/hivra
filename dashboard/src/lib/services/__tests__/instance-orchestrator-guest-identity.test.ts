@@ -1,5 +1,6 @@
 /** @jest-environment node */
 
+
 import fs from "node:fs";
 
 import { SupabaseClient } from "@supabase/supabase-js";
@@ -23,6 +24,11 @@ import {
 } from "@/test-utils/stub-proxmox-guest-host";
 
 import { applyLiveUpdate, type InstanceRowForOrchestration } from "../instance-orchestrator";
+
+jest.mock("../instance-live-mutation", () => ({
+  ...jest.requireActual("../instance-live-mutation"),
+  readInstanceLiveMutationBlock: jest.fn(async () => null),
+}));
 
 jest.mock("@/lib/hetzner/ssh", () => ({ sshExec: jest.fn() }));
 jest.mock("@/lib/crypto", () => ({ decryptApiKey: jest.fn() }));

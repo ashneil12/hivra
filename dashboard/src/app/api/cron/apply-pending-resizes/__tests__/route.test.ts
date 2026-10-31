@@ -25,6 +25,7 @@ function mockQuery(rows: unknown[]) {
     eq: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
     not: jest.fn().mockReturnThis(),
+    or: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     limit: jest.fn().mockResolvedValue({ data: rows, error: null }),
   };
@@ -50,11 +51,14 @@ describe("GET /api/cron/apply-pending-resizes", () => {
   });
 
   it("returns early when nothing is pending", async () => {
-    mockQuery([]);
+    const builder = mockQuery([]);
+    expect(builder.not).not.toHaveBeenCalled();
     const res = await GET(makeReq());
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.data.pending).toBe(0);
+    expect(builder.not).toHaveBeenCalledWith("lifecycle_state", "in", expect.stringContaining("cold_archived"));
+    expect(builder.or).toHaveBeenCalledWith(expect.stringContaining("proxmox_vmid.not.is.null"));
     expect(mockRedeploy).not.toHaveBeenCalled();
   });
 

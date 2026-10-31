@@ -796,11 +796,12 @@ describe("restoreInstance", () => {
     // is caught here, not 4h later by aeon fleet-sweep.
     const restoreCmd = runHostScript.mock.calls[0][0] as string;
     expect(restoreCmd).toContain("/usr/local/sbin/restore-vm-cold.sh");
-    // 9 positional args after the script path: instance, archive, sha, vmid,
-    // ip, gw, template, disk, cpu_limit
+    // 10 positional args after the script path: instance, archive, sha, vmid,
+    // ip, gw, template, disk, cpu_limit, ram_limit_mb
     const parts = restoreInvocationParts(restoreCmd);
-    expect(parts).toHaveLength(10); // script + 9 args
+    expect(parts).toHaveLength(11); // script + CPU and memory targets
     expect(parts[9]).toBe("0.5");
+    expect(parts[10]).toBe("4096");
 
     const activeUpdate = supabase.__queue.find(
       (tx) => (tx.payload as { lifecycle_state?: string })?.lifecycle_state === "active"
@@ -1172,16 +1173,17 @@ describe("restoreInstance", () => {
       // templateVmid is intentionally preserved from the original config so
       // subsequent redeploys keep their template lineage.
       templateVmid: 9004,
+      gatewayHost: "old-instance.agents.hermesos.cloud",
     });
   });
 
   it("backfills gatewayHost + hostEnvPrefix into infrastructure on restore (reclaim strips it → 'No host attached')", async () => {
     // Reclaim runs stripProxmoxInfrastructure, deleting the whole infra block.
-    // The restore must reconstruct gatewayHost from the destination gateway —
+    // The restore must reconstruct gatewayHost from the persisted public URL —
     // otherwise getProxmoxInfrastructure() returns null and the next live-update
     // fails with "No host attached" (regression for ADAIR/COACH).
     let activeUpdatePayload: Record<string, unknown> | undefined;
-    const rowWithStrippedInfra = { ...coldRow, config: {} };
+    const rowWithStrippedInfra = { ...coldRow, gateway_url: "https://restored-sub.hermesos.cloud", config: {} };
     const supabase = makeSupabase([
       { table: "hermes_instances", op: "select", result: { data: rowWithStrippedInfra, error: null } },
       { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
@@ -1192,14 +1194,16 @@ describe("restoreInstance", () => {
         capture: (payload) => { activeUpdatePayload = payload; },
       },
     ]);
-    const { deps } = makeDeps([restoreScriptOk({ vmid: 727, host: "fixturenode7", ip: "10.250.20.77" })]);
+    const { deps, runHostScript } = makeDeps([restoreScriptOk({ vmid: 727, host: "fixturenode7", ip: "10.250.20.77" })]);
     const result = await restoreInstance(
       supabase as never,
       VALID_INSTANCE_ID,
-      { ...restoreOptions, destinationGateway: "https://restored-sub.hermesos.cloud" },
+      { ...restoreOptions, destinationGateway: "10.250.22.1", cpuLimit: 4, ramLimitMb: 8192 },
       deps
     );
     expect(result).toMatchObject({ ok: true });
+    const args = restoreInvocationParts(runHostScript.mock.calls[0][0] as string);
+    expect(args.slice(9)).toEqual(["4", "8192"]);
     const cfg = activeUpdatePayload?.config as { infrastructure?: Record<string, unknown> } | undefined;
     expect(cfg?.infrastructure).toMatchObject({
       node: "fixturenode7",
