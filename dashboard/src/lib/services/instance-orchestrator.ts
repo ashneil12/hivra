@@ -389,7 +389,7 @@ export async function applyLiveUpdate(
   options: LiveUpdateOptions
 ): Promise<LiveUpdateResult> {
   const { initiator } = options;
-  const lifecycleBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id);
+  const lifecycleBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
   if (lifecycleBlock) return { applied: false as const, error: lifecycleBlock, initiator };
   const proxmoxInfrastructure = getProxmoxInfrastructure(instance.config);
   if (!proxmoxInfrastructure && !instance.host_id && !instance.hetzner_server_id) {
@@ -936,7 +936,7 @@ fi
 
   // Script construction/provider reads can take time. Do not launch against a
   // computer archived or claimed for restoration since the caller loaded it.
-  const launchBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id);
+  const launchBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
   if (launchBlock) return { applied: false as const, error: launchBlock, initiator };
   const launchResult = proxmoxLaunchScript
     ? await runProxmoxHostScript(proxmoxLaunchScript, proxmoxScriptEnv, launchTimeoutMs(90_000))
@@ -947,7 +947,7 @@ fi
 
   // A concurrent archive/restore must not be overwritten by either the
   // success or failure patch from an update launched from an older snapshot.
-  const completionBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id);
+  const completionBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
   if (completionBlock) return { applied: false as const, error: completionBlock, initiator };
   if (!launchResult.ok) {
     const launchFailure = launchResult.stderr || launchResult.error || "";

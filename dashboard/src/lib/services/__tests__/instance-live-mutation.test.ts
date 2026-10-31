@@ -20,6 +20,25 @@ describe("live mutation lifecycle authority", () => {
   it("permits recovery of a failed computer that still owns a VM", () => {
     expect(blocksInstanceLiveMutation({ lifecycle_state: "failed", archive_uri: "free/i/data", archive_sha256: "sha", proxmox_vmid: 201 })).toBe(false);
   });
+  it.each([
+    { proxmox_vmid: 202 },
+    { proxmox_node: "new-host" },
+    { ipv4_address: "10.0.0.2" },
+    { config: { infrastructure: { provider: "proxmox", vmid: 202, node: "old-host", hostSlug: "old-host", privateIpv4: "10.0.0.1" } } },
+    { config: { infrastructure: { provider: "proxmox", vmid: 201, node: "new-host", hostSlug: "new-host", privateIpv4: "10.0.0.1" } } },
+    { config: { infrastructure: { provider: "proxmox", vmid: 201, node: "old-host", hostSlug: "old-host", privateIpv4: "10.0.0.2" } } },
+  ])("refuses an active computer whose coordinates changed after its snapshot: %j", async (change) => {
+    const expected = {
+      proxmox_vmid: 201, proxmox_node: "old-host", ipv4_address: "10.0.0.1",
+      config: { infrastructure: { provider: "proxmox", vmid: 201, node: "old-host", hostSlug: "old-host", privateIpv4: "10.0.0.1" } },
+    };
+    const current = { ...expected, lifecycle_state: "active", status: "running", ...change };
+    expect(await readInstanceLiveMutationBlock(db(current), "i1", expected)).toMatch(/moved or was restored/);
+  });
+  it("allows matching live coordinates after a fresh read", async () => {
+    const coordinates = { proxmox_vmid: 201, config: { infrastructure: { provider: "proxmox", vmid: 201, node: "host-a", privateIpv4: "10.0.0.1" } } };
+    expect(await readInstanceLiveMutationBlock(db({ ...coordinates, lifecycle_state: "active" }), "i1", coordinates)).toBeNull();
+  });
   it.each([[null, null], [null, { message: "offline" }]])("fails closed when lifecycle cannot be read", async (data, error) => {
     expect(await readInstanceLiveMutationBlock(db(data, error), "i1")).toMatch(/Could not confirm/);
   });

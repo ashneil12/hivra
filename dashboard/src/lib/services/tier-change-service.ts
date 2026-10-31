@@ -292,24 +292,26 @@ export async function applyTierChange(
   //     needless container restart. NON-FATAL: a failed flag just means the
   //     redeploy waits for the next fleet sync.
   // A cold-storage transition may have happened while the tier writes ran.
-  // Persist entitlement/caps for restore, but never queue a live update for
-  // a missing guest or one currently owned by another lifecycle operation.
+  // Never resize a missing guest or one owned by another lifecycle operation.
   const liveRowIds = new Set<string>();
   for (const row of rows) {
     if (!blocksInstanceLiveMutation(row)
-      && !(await readInstanceLiveMutationBlock(supabaseAdmin, row.id))) {
+      && !(await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row))) {
       liveRowIds.add(row.id);
     }
   }
   const capsChangedRowIds = rows
     .filter((r) => {
-      if (!liveRowIds.has(r.id)) return false;
+      if (r.lifecycle_state === "deleting" || r.lifecycle_state === "deleted") return false;
       const target = targets.get(r.id)!;
       return r.cpu_limit !== target.cpu || r.ram_limit !== target.ramMb;
     })
     .map((r) => r.id);
 
   if (capsChangedRowIds.length > 0) {
+    // Cold archives contain the previous compose/container caps. Keep this
+    // obligation even while archived: the lifecycle-aware worker skips it
+    // until restoration, then recreates the container with the paid caps.
     const { error: flagErr } = await supabaseAdmin
       .from("hermes_instances")
       .update({ tier_change_pending: true })
@@ -333,7 +335,7 @@ export async function applyTierChange(
     const provider = row.config?.infrastructure?.provider;
     const vmid = row.config?.infrastructure?.vmid;
     if (provider === "proxmox" && typeof vmid === "number") {
-      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id)) continue;
+      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row)) continue;
       const target = targets.get(row.id)!;
       outcome.resizesAttempted += 1;
       try {
