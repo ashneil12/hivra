@@ -51,6 +51,21 @@ function row(over: Record<string, unknown> = {}) {
 }
 
 describe("redeployPendingResizes", () => {
+  it.each(["cold_archived", "pending_deletion", "archiving", "restoring", "deleting", "failed"])(
+    "skips %s before IP resolution or update without clearing its pending flag",
+    async (lifecycle_state) => {
+      const summary = await redeployPendingResizes([row({
+        lifecycle_state, status: "running", proxmox_vmid: null,
+        archive_uri: "free/i1/data.tar.zst", archive_sha256: "a".repeat(64),
+        config: { infrastructure: { provider: "proxmox", vmid: 201 } },
+      })], sweep);
+      expect(summary).toMatchObject({ skipped: 1, failed: 0, redeployed: 0 });
+      expect(mockResolveIp).not.toHaveBeenCalled();
+      expect(mockApply).not.toHaveBeenCalled();
+      expect(updateMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("redeploys a webui instance and clears tier_change_pending", async () => {
     const summary = await redeployPendingResizes([row()], sweep);
     expect(summary).toMatchObject({ redeployed: 1, failed: 0, skipped: 0 });
