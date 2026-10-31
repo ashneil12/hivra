@@ -11,6 +11,7 @@ import {
 } from "@/lib/billing/subscription-status";
 import { getStripe } from "@/lib/stripe";
 import { enableServerBackup } from "@/lib/hetzner/client";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     // ── 1. Verify instance ownership ─────────────────────────────────────────
     const { data: instance, error } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, name, status, hetzner_server_id, backups_enabled")
+      .select("id, name, status, hetzner_server_id, gateway_url, backups_enabled")
       .eq("id", instanceId)
       .eq("user_id", clerkUserId)
       .maybeSingle();
@@ -71,7 +72,10 @@ export async function POST(req: NextRequest) {
       return apiError("Backups are already enabled on this instance", 400);
     }
 
-    if (!instance.hetzner_server_id) {
+    // A creation receipt is not a provisioned server: refuse it exactly as a
+    // row with no server id is refused, so no add-on is charged against it (F090).
+    const liveHetznerServerId = provisionedHetznerServerId(instance);
+    if (!liveHetznerServerId) {
       return apiError("Instance has no associated server ID", 400);
     }
 

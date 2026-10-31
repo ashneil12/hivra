@@ -16,6 +16,7 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { getHetznerInstanceStatus } from "@/lib/services/hetzner-instance-service";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { getPublicInstanceConfig } from "@/lib/instance-settings";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
@@ -198,7 +199,10 @@ export async function GET(request: NextRequest) {
             (["provisioning", "redeploying"].includes(inst.status) ||
               (!summary && inst.status === "running"))
         );
-        const needsSync = inst.hetzner_server_id && (
+        // A creation receipt (server id before the metadata lands) is not the
+        // instance's live server, so the Hetzner status sync skips it (F090).
+        const liveHetznerServerId = provisionedHetznerServerId(inst);
+        const needsSync = liveHetznerServerId && (
           ["provisioning", "redeploying"].includes(inst.status) ||
           (!summary && inst.status === "running")
         );
@@ -382,7 +386,7 @@ export async function GET(request: NextRequest) {
             return { ...inst, ...patch };
           }
         } else if (needsSync) {
-          const hs = await getHetznerInstanceStatus(inst.hetzner_server_id as number);
+          const hs = await getHetznerInstanceStatus(liveHetznerServerId as number);
           // A failed Hetzner lookup says nothing about the server. Keep the
           // stored status for this poll instead of writing 'error' over a
           // running agent (the Proxmox branch above does the same).
