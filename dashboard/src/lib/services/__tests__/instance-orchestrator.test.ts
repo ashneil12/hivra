@@ -204,7 +204,7 @@ describe("applyLiveUpdate", () => {
     const result = await applyLiveUpdate({
       id: "archived-computer", user_id: "u1", provider: "openai", api_key_encrypted: "enc-key",
       config: { infrastructure: { provider: "proxmox", vmid: 201 } },
-    }, "10.0.0.1", {}, { from } as unknown as SupabaseClient, { initiator: USER_LIVE_UPDATE });
+    }, "10.250.0.1", {}, { from } as unknown as SupabaseClient, { initiator: USER_LIVE_UPDATE });
     expect(result).toMatchObject({ applied: false, error: "Restore the computer first" });
     expect(decryptApiKey).not.toHaveBeenCalled();
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
@@ -240,7 +240,7 @@ describe("applyLiveUpdate", () => {
 
   it("refuses a stale active snapshot after restoration before decrypting or contacting the old guest", async () => {
     const current = { lifecycle_state: "active", status: "running", proxmox_vmid: 202,
-      config: { infrastructure: { provider: "proxmox", vmid: 202, node: "restored-host", privateIpv4: "10.0.0.2" } } };
+      config: { infrastructure: { provider: "proxmox", vmid: 202, node: "restored-host", privateIpv4: "10.250.0.2" } } };
     const update = jest.fn();
     const supabase = { from: jest.fn(() => ({
       select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: current, error: null }) }) }), update,
@@ -250,8 +250,8 @@ describe("applyLiveUpdate", () => {
     );
     const result = await applyLiveUpdate({
       id: "moved-computer", user_id: "u1", provider: "openai", api_key_encrypted: "enc-key", proxmox_vmid: 201,
-      config: { infrastructure: { provider: "proxmox", vmid: 201, node: "old-host", privateIpv4: "10.0.0.1" } },
-    }, "10.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
+      config: { infrastructure: { provider: "proxmox", vmid: 201, node: "old-host", privateIpv4: "10.250.0.1" } },
+    }, "10.250.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
     expect(result).toMatchObject({ applied: false, error: expect.stringMatching(/moved or was restored/) });
     expect(decryptApiKey).not.toHaveBeenCalled();
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
