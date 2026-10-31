@@ -204,6 +204,7 @@ export async function orchestrateColdRestore(
     templateVmid,
     targetDiskGb: diskGb,
     cpuLimit: cpu,
+    ramLimitMb: ramMb,
   });
 
   // health_pending is NOT a failure: the data restored and the VM is live, the

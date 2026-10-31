@@ -39,6 +39,7 @@
 #                                old callers don't accidentally provision an
 #                                unbounded VM. Sourced from tier-specs.ts via
 #                                the orchestrator.
+#   $10 ram_limit_mb             Persisted VM memory for the restored paid size.
 
 set -euo pipefail
 
@@ -146,6 +147,8 @@ GUEST_GW="${6:-}"
 TEMPLATE_VMID="${7:-}"
 TARGET_DISK_GB="${8:-30}"
 CPU_LIMIT="${9:-0.5}"
+RAM_LIMIT_MB="${10:-4096}"
+CPU_CORES=$(awk -v cpu="$CPU_LIMIT" 'BEGIN { n=int(cpu); if(cpu>n) n++; if(n<2) n=2; print n }')
 
 for var in INSTANCE_ID ARCHIVE_URI EXPECTED_SHA NEW_VMID GUEST_IP GUEST_GW TEMPLATE_VMID; do
   if [ -z "${!var}" ]; then
@@ -223,6 +226,8 @@ qm set "$NEW_VMID" \
   --ipconfig0 "ip=$GUEST_IP/24,gw=$GUEST_GW" \
   --nameserver "185.12.64.1 185.12.64.2 1.1.1.1 8.8.8.8" \
   --cpulimit "$CPU_LIMIT" \
+  --cores "$CPU_CORES" \
+  --memory "$RAM_LIMIT_MB" \
   --agent enabled=1 \
   --onboot 1 >/dev/null
 
