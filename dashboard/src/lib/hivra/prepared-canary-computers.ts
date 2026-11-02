@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { shellQuote } from "@/lib/hivra/proxmox-target";
+import { preparedOmarchyObservationScript, readPreparedOmarchyVersion } from "./prepared-omarchy-version";
 import {
   resolveProxmoxTargetConfiguration,
   runProxmoxHostScript,
@@ -292,15 +293,19 @@ function verificationScript(profile: PreparedCanaryProfile, slot: PreparedCanary
   const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
   return `set -euo pipefail
 VMID=${slot.vmid}
+install -d -m 0755 /run/lock
+exec 8>/run/lock/hivra-prepared-${slot.vmid}.lock
+flock -w 5 8 || exit 30
 CONFIG="$(qm config "$VMID")"
 case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) exit 31 ;; esac
 printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null
 qm set "$VMID" --onboot 1 --startup order=30,up=15,down=60 >/dev/null
 STATUS="$(qm status "$VMID" | awk '{print $2}')"
-if [ "$STATUS" = stopped ]; then qm start "$VMID" >/dev/null; fi
+if [ "$STATUS" = stopped ]; then qm start "$VMID" 8>&- >/dev/null; fi
 for _ in $(seq 1 20); do
   if [ "$(qm status "$VMID" | awk '{print $2}')" = running ] \
     && qm agent "$VMID" ping >/dev/null 2>&1; then
+    ${profile === "omarchy" ? preparedOmarchyObservationScript(slot.vmid, slot.claim) : ":"}
     echo HIVRA_PREPARED_COMPUTER_READY
     exit 0
   fi
@@ -388,6 +393,7 @@ export async function claimPreparedCanaryComputer(
   if (!verified.ok || !verified.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_COMPUTER_READY")) {
     throw new Error("prepared_guest_unavailable");
   }
+  const osReceipt = input.profile === "omarchy" ? readPreparedOmarchyVersion(verified.stdout) : null;
   const inserted = await deps.insert({
     user_id: input.userId,
     type: "linux-desktop",
@@ -406,5 +412,7 @@ export async function claimPreparedCanaryComputer(
     provisioned_at: new Date().toISOString(),
     infrastructure_binding_token_enforced: false,
   });
-  return enforcePreparedCanaryBinding(inserted, input.profile, slot, deps);
+  const bound = await enforcePreparedCanaryBinding(inserted, input.profile, slot, deps);
+  // A launch-time observation, not a DB field or a promise about future updates.
+  return osReceipt ? { ...bound, launch_os_receipt: osReceipt } : bound;
 }

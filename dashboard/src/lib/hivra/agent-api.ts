@@ -38,6 +38,8 @@ export interface HivraAgent {
   type: AgentId;
   /** Operating-system image/profile. Separate from the optional agent runtime. */
   computer_profile?: ComputerTemplateId | "linux-terminal" | null;
+  /** Observation returned for a new prepared Omarchy claim, not a stored current-state field. */
+  launch_os_receipt?: { packageVersion: string; osVersion: string; kernelRelease: string; observedAt: string };
   name: string;
   status: AgentStatus;
   /** Display-only current activity; never grants authority to retry an operation. */
