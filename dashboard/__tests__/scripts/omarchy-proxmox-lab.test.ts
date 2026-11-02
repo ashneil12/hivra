@@ -62,16 +62,16 @@ describe("Omarchy Proxmox lab", () => {
 
   it("pins the official release artifact and minimum KVM shape", () => {
     expect(OMARCHY_PROXMOX_LAB).toMatchObject({
-      release: "v4.0.2",
-      releaseCommit: "346e69e1cec6c4e8924531874af6ba010a1bc99e",
-      isoSha256: "2ef8e624aa1bec7e277e28056b8535a6c9373ba48d7ede3f1a01cb6d2373cfb8",
+      release: "v4.0.6",
+      releaseCommit: "237f1b4071a0bff2296c6d740ba2b9fd695ebfa0",
+      isoSha256: "b542db5fecc37395d9af6654a8146ebed225f275ae4d5a6fcf432e40afe7bb88",
       minimums: { cpu: 4, memoryMb: 8192, diskGb: 40 },
       machine: "q35",
       firmware: "ovmf",
     });
   });
 
-  it("derives the complete v4.0.2 full-disk contract for a disposable KVM", () => {
+  it("derives the complete v4.0.6 full-disk contract for a disposable KVM", () => {
     const configuration = JSON.parse(buildOmarchyFullDiskConfiguration({
       deferProvisioning: true,
       diskDevice: "/dev/sda",

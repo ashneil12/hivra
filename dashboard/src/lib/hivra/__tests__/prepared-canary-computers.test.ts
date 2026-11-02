@@ -10,6 +10,9 @@ import {
   readPreparedSlot,
 } from "../prepared-canary-computers";
 
+const OS_RECEIPT = { packageVersion: "4.0.6-1", osVersion: "4.0.6", kernelRelease: "7.2.11-arch1-1", observedAt: "2026-11-02T17:00:00Z" };
+const OMARCHY_READY = "HIVRA_PREPARED_OMARCHY_VERSION " + JSON.stringify(OS_RECEIPT) + "\nHIVRA_PREPARED_COMPUTER_READY\n";
+
 const CONFIG = JSON.stringify({
   omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
   windows: { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" },
@@ -178,7 +181,7 @@ ${transition}`], { encoding: "utf8" });
       return {
         ok: true,
         stdout: _script.includes("HIVRA_PREPARED_BINDING_READY")
-          ? "HIVRA_PREPARED_BINDING_READY\n" : "HIVRA_PREPARED_COMPUTER_READY\n",
+          ? "HIVRA_PREPARED_BINDING_READY\n" : OMARCHY_READY,
         stderr: "",
       };
     });
@@ -201,6 +204,32 @@ ${transition}`], { encoding: "utf8" });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ user_id: "owner", computer_profile: "omarchy", vmid: 2099, status: "running" }));
     expect(markBindingEnforced).toHaveBeenCalledTimes(1);
     expect(row.id).toBe("44444444-4444-4444-8444-444444444444");
+    expect(row.launch_os_receipt).toEqual(OS_RECEIPT);
+    expect(insert.mock.calls[0][0]).not.toHaveProperty("launch_os_receipt");
+  });
+
+  it("does not insert a new Omarchy owner when guest readiness lacks a version observation", async () => {
+    const insert = jest.fn();
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
+      findOwnerProfile: async () => null,
+      findSlotOwner: async () => null,
+      runHost: async () => ({ ok: true, stdout: "HIVRA_PREPARED_COMPUTER_READY\n", stderr: "" }),
+      insert: insert as never,
+    })).rejects.toThrow("prepared_omarchy_version_unavailable");
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("opens an existing Omarchy owner's slot without forcing upgrades or calling upstream", async () => {
+    const prior = { id: "44444444-4444-4444-8444-444444444444", user_id: "owner", computer_profile: "omarchy" as const,
+      proxmox_host: "node-b", vmid: 2099, infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
+    const runHost = jest.fn();
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
+      findOwnerProfile: async () => prior,
+      findSlotOwner: async () => null,
+      runHost,
+      insert: jest.fn() as never,
+    })).resolves.toBe(prior);
+    expect(runHost).not.toHaveBeenCalled();
   });
 
   it("reuses the owner's already-bound exact slot without issuing another provider mutation", async () => {
@@ -310,7 +339,7 @@ ${transition}`], { encoding: "utf8" });
     const runHost = jest.fn(async (script: string) => ({
       ok: true,
       stdout: script.includes("HIVRA_PREPARED_BINDING_READY")
-        ? "HIVRA_PREPARED_BINDING_READY\n" : "HIVRA_PREPARED_COMPUTER_READY\n",
+        ? "HIVRA_PREPARED_BINDING_READY\n" : OMARCHY_READY,
       stderr: "",
     }));
     await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
