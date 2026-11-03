@@ -396,4 +396,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261020130000", name: "provider_release_admission_2026_10_20_2" },
   { version: "20261020150000", name: "gvisor_sandbox_update" },
   { version: "20261028200000", name: "remove_token_base_tier" },
+  { version: "20261103010000", name: "prepared_omarchy_refresh" },
 ];

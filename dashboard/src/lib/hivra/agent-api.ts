@@ -38,6 +38,10 @@ export interface HivraAgent {
   type: AgentId;
   /** Operating-system image/profile. Separate from the optional agent runtime. */
   computer_profile?: ComputerTemplateId | "linux-terminal" | null;
+  /** Last verified initial-claim update; owner updates may subsequently change it. */
+  omarchy_release_receipt?: { requestedRelease: { release: string; releaseCommit: string; isoSha256: string; isoUrl: string; isoFilename: string };
+    observed: { packageVersion: string; osVersion: string; kernelRelease: string; observedAt: string } } | null;
+  prepared_update_stage?: string;
   name: string;
   status: AgentStatus;
   /** Display-only current activity; never grants authority to retry an operation. */

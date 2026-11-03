@@ -44,6 +44,13 @@ a free account works with a server the person connects.
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | macOS | Not offered | Planned only. |
 
+Pending release: new Omarchy claims will reserve the prepared computer while
+updating to the latest supported official stable v4 release. Desktop stays
+blocked until the exact release, migrations and rebooted kernel are verified;
+existing owner opens do not trigger upgrades. This requires migration
+`20261103010000` and the matching dashboard release. Live rollout is unverified.
+See [the rollout and recovery notes](release/OMARCHY-PREPARED-REFRESH.md).
+
 Public copy never calls Omarchy or Windows plainly available, and never calls
 them a preview: each always carries its condition, "Omarchy (prepared
 computer)" and "Windows on your own server with your licensed image".
