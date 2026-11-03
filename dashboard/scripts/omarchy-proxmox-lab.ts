@@ -157,7 +157,7 @@ export function buildOmarchyFullDiskConfiguration(params: {
         efi_binary: "limine_x64.efi",
         enable_fallback: true,
       },
-      storage: { kernel: "linux" },
+      storage: { kernel: "linux-omarchy" },
     },
     disk_config: {
       config_type: "default_layout",
@@ -197,7 +197,7 @@ export function buildOmarchyFullDiskConfiguration(params: {
       }],
     },
     hostname,
-    kernels: ["linux"],
+    kernels: ["linux-omarchy"],
     network_config: { type: "iso" },
     ntp: true,
     parallel_downloads: 8,
@@ -216,7 +216,7 @@ export function buildOmarchyFullDiskConfiguration(params: {
       mirror_regions: {},
       optional_repositories: [],
     },
-    packages: ["base-devel", "git", "qemu-guest-agent", "omarchy-keyring", "omarchy-settings", "omarchy"],
+    packages: ["base-devel", "git", "qemu-guest-agent", "linux-omarchy-headers", "omarchy-keyring", "omarchy-settings", "omarchy"],
     profile_config: { gfx_driver: null, greeter: null, profile: {} },
     version: "3.0.9",
   };
