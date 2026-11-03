@@ -1,9 +1,11 @@
 import "server-only";
 
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { PreparedDesktopSlotSchema, PREPARED_OMARCHY_REFRESH_STAGE, preparedOmarchyRefreshPending, type OmarchyRefreshRelease } from "./prepared-omarchy-refresh-contract";
+import { advancePreparedOmarchyRefresh, latestPreparedOmarchyRelease } from "./prepared-omarchy-refresh";
 
 import { shellQuote } from "@/lib/hivra/proxmox-target";
-import { preparedOmarchyObservationScript, readPreparedOmarchyVersion } from "./prepared-omarchy-version";
 import {
   resolveProxmoxTargetConfiguration,
   runProxmoxHostScript,
@@ -14,17 +16,7 @@ import type { ComputerTemplateId } from "./computer-catalog";
 import { managedHivraProvisionerChannelForServerEnvironment } from "./managed-provisioner-channel";
 import { resolvePlanAgentSlots } from "./resource-gate";
 
-const Slot = z.object({
-  host: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
-  node: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
-  vmid: z.number().int().min(100).max(999999999),
-  ip: z.string().ip({ version: "v4" }),
-  claim: z.string().uuid(),
-  // The guest's Proxmox name. It is asserted on the host before any lifecycle
-  // work, and it defaults to the retained Canary naming so a configuration
-  // written before this field existed keeps working unchanged.
-  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/).optional(),
-}).strict();
+const Slot = PreparedDesktopSlotSchema;
 const Slots = z.object({ omarchy: Slot.optional(), windows: Slot.optional() }).strict()
   .refine((slots) => slots.omarchy !== undefined || slots.windows !== undefined, {
     message: "A prepared-computer configuration needs at least one profile.",
@@ -233,15 +225,39 @@ type AgentRow = Record<string, unknown> & {
   infrastructure_binding_token_enforced?: unknown;
 };
 
+export type PreparedCanaryAgentRow = AgentRow;
+
 type Dependencies = {
   runHost: (script: string, slot: PreparedCanarySlot) => Promise<HostScriptResult>;
   findOwnerProfile: (userId: string, profile: PreparedCanaryProfile) => Promise<AgentRow | null>;
   findSlotOwner: (slot: PreparedCanarySlot) => Promise<AgentRow | null>;
   insert: (row: Record<string, unknown>) => Promise<AgentRow>;
   markBindingEnforced: (row: AgentRow) => Promise<AgentRow>;
+  latestRelease: () => Promise<OmarchyRefreshRelease>;
+  reserveRefresh: (row: Record<string, unknown>, release: OmarchyRefreshRelease, slot: PreparedCanarySlot) => Promise<AgentRow>;
+  advanceRefresh: (userId: string, row: AgentRow) => Promise<AgentRow>;
 };
 
+async function insertPreparedRow(row: Record<string, unknown>, release?: OmarchyRefreshRelease, slot?: PreparedCanarySlot): Promise<AgentRow> {
+  if (!supabaseAdmin) throw new Error("database_unavailable");
+  const access = await resolvePlanAgentSlots(String(row.user_id));
+  if (!access) throw new Error("plan_access_required");
+  if (access.freeAccount) throw new Error("hosted_compute_requires_plan");
+  const { data, error } = await supabaseAdmin.rpc(release ? "reserve_hivra_prepared_omarchy" : "insert_hivra_managed_agent", {
+    p_row: row, p_agent_limit: access.agentLimit, ...(release ? { p_release: release, p_slot: slot } : {}),
+  });
+  if (error) throw error;
+  const result = data as { status?: unknown; row?: unknown } | null;
+  if (result?.status === "plan_agent_limit") throw new Error("plan_agent_limit");
+  if (result?.status === "prepared_slot_claimed") throw new Error("prepared_slot_claimed");
+  if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") throw new Error("insert_unconfirmed");
+  return result.row as AgentRow;
+}
+
 const defaults: Dependencies = {
+  latestRelease: latestPreparedOmarchyRelease,
+  reserveRefresh: (row, release, slot) => insertPreparedRow(row, release, slot),
+  advanceRefresh: (userId, row) => advancePreparedOmarchyRefresh(userId, row),
   runHost: (script, slot) => runProxmoxHostScript(
     script,
     resolveProxmoxTargetConfiguration(process.env, slot.host).env,
@@ -262,20 +278,7 @@ const defaults: Dependencies = {
     if (error) throw error;
     return data as AgentRow | null;
   },
-  insert: async row => {
-    if (!supabaseAdmin) throw new Error("database_unavailable");
-    // A prepared computer is a Hivra-managed row, so the database writes it
-    // only after counting the owner's plan slots under the slot lock (T35).
-    const slots = await resolvePlanAgentSlots(String(row.user_id));
-    if (!slots) throw new Error("plan_access_required");
-    if (slots.freeAccount) throw new Error("hosted_compute_requires_plan");
-    const { data, error } = await supabaseAdmin.rpc("insert_hivra_managed_agent", { p_row: row, p_agent_limit: slots.agentLimit });
-    if (error) throw error;
-    const result = data as { status?: unknown; row?: unknown } | null;
-    if (result?.status === "plan_agent_limit") throw new Error("plan_agent_limit");
-    if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") throw new Error("insert_unconfirmed");
-    return result.row as AgentRow;
-  },
+  insert: row => insertPreparedRow(row),
   markBindingEnforced: async row => {
     if (!supabaseAdmin) throw new Error("database_unavailable");
     const { data, error } = await supabaseAdmin.from("hivra_agents")
@@ -305,7 +308,6 @@ if [ "$STATUS" = stopped ]; then qm start "$VMID" 8>&- >/dev/null; fi
 for _ in $(seq 1 20); do
   if [ "$(qm status "$VMID" | awk '{print $2}')" = running ] \
     && qm agent "$VMID" ping >/dev/null 2>&1; then
-    ${profile === "omarchy" ? preparedOmarchyObservationScript(slot.vmid, slot.claim) : ":"}
     echo HIVRA_PREPARED_COMPUTER_READY
     exit 0
   fi
@@ -344,11 +346,11 @@ qm config "$VMID" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\n' | grep -Fxq "
 echo HIVRA_PREPARED_BINDING_READY`;
 }
 
-async function enforcePreparedCanaryBinding(
+export async function enforcePreparedCanaryBinding(
   row: AgentRow,
   profile: PreparedCanaryProfile,
   slot: PreparedCanarySlot,
-  deps: Dependencies,
+  deps: Dependencies = defaults,
 ): Promise<AgentRow> {
   if (row.infrastructure_binding_token_enforced === true) return row;
   const bindingHash = typeof row.infrastructure_binding_token_hash === "string"
@@ -374,14 +376,14 @@ export async function claimPreparedCanaryComputer(
   const prior = await deps.findOwnerProfile(input.userId, input.profile);
   if (prior) {
     if (prior.proxmox_host !== slot.host || prior.vmid !== slot.vmid) throw new Error("profile_already_claimed");
-    return enforcePreparedCanaryBinding(prior, input.profile, slot, deps);
+    return preparedOmarchyRefreshPending(prior) ? deps.advanceRefresh(input.userId, prior) : enforcePreparedCanaryBinding(prior, input.profile, slot, deps);
   }
   const currentOwner = await deps.findSlotOwner(slot);
   if (currentOwner) {
     if (currentOwner.user_id !== input.userId || currentOwner.computer_profile !== input.profile) {
       throw new Error("prepared_slot_claimed");
     }
-    return enforcePreparedCanaryBinding(currentOwner, input.profile, slot, deps);
+    return preparedOmarchyRefreshPending(currentOwner) ? deps.advanceRefresh(input.userId, currentOwner) : enforcePreparedCanaryBinding(currentOwner, input.profile, slot, deps);
   }
 
   // Fail closed: a row written on a guessed lane is refused by this deployment's
@@ -389,11 +391,26 @@ export async function claimPreparedCanaryComputer(
   const channel = deploymentChannel(process.env);
   if (!channel) throw new Error("prepared_profile_unavailable");
 
+  if (input.profile === "omarchy") {
+    let release: OmarchyRefreshRelease;
+    try { release = await deps.latestRelease(); } catch { throw new Error("prepared_omarchy_release_unavailable"); }
+    const operationId = randomUUID();
+    const reserved = await deps.reserveRefresh({
+      user_id: input.userId, type: "linux-desktop", computer_profile: "omarchy", name,
+      status: "provisioning", desired_state: "running", deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm",
+      managed_provisioner_channel: channel, proxmox_host: slot.host, vmid: slot.vmid, ip: slot.ip, cpu: 4, ram: 8,
+      operation_id: operationId, allocation_operation_id: operationId, operation_kind: "provision", operation_started_at: new Date().toISOString(),
+      operation_payload: { stage: PREPARED_OMARCHY_REFRESH_STAGE, refreshId: operationId }, infrastructure_binding_token_enforced: false,
+    }, release, slot);
+    // A durable pending row exists even if HTTP disappears before host dispatch.
+    // Its detail GET resumes this same refresh instead of allocating again.
+    try { return await deps.advanceRefresh(input.userId, reserved); } catch { return reserved; }
+  }
+
   const verified = await deps.runHost(verificationScript(input.profile, slot), slot);
   if (!verified.ok || !verified.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_COMPUTER_READY")) {
     throw new Error("prepared_guest_unavailable");
   }
-  const osReceipt = input.profile === "omarchy" ? readPreparedOmarchyVersion(verified.stdout) : null;
   const inserted = await deps.insert({
     user_id: input.userId,
     type: "linux-desktop",
@@ -413,6 +430,5 @@ export async function claimPreparedCanaryComputer(
     infrastructure_binding_token_enforced: false,
   });
   const bound = await enforcePreparedCanaryBinding(inserted, input.profile, slot, deps);
-  // A launch-time observation, not a DB field or a promise about future updates.
-  return osReceipt ? { ...bound, launch_os_receipt: osReceipt } : bound;
+  return bound;
 }

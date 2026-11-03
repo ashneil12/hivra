@@ -90,6 +90,7 @@ import {
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
 
@@ -818,6 +819,9 @@ async function removeConsumedProvisionSecret(
 
 async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryResult> {
   const base = { agentId: row.id, vmid: row.vmid };
+  if (row.operation_payload?.stage === PREPARED_OMARCHY_REFRESH_STAGE) {
+    return { ...base, action: "skipped", reason: "prepared Omarchy refresh owns this reservation" };
+  }
   if (!row.operation_id || !row.operation_started_at) {
     return { ...base, action: "skipped", reason: "durable operation recovery evidence is missing" };
   }
@@ -1703,6 +1707,7 @@ export async function runRecoverStuckHivraProvisioningSweep(
     // intentionally retained leases must not fill the oldest-12 snapshot/
     // lifecycle sweep forever and starve unrelated recoverable computers.
     .or("operation_kind.neq.restore,operation_payload->>folderRecoveryId.is.null")
+    .or("operation_payload->>stage.is.null,operation_payload->>stage.neq.prepared_omarchy_refresh")
     .order("operation_started_at", { ascending: true })
     .limit(MAX_CANDIDATES_PER_RUN);
   if (options.agentId) query = query.eq("id", options.agentId);
