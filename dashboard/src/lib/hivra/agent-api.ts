@@ -1107,6 +1107,9 @@ export type ClaudeAppStatus = {
   profileSaved: boolean;
   installing: boolean;
   lastError: string | null;
+  /** The owner's clipboard switch for the desktop, off unless they turned it on.
+   * null: this computer's software predates the switch (an update brings it). */
+  clipboard: boolean | null;
 };
 const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
 function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
@@ -1124,6 +1127,7 @@ function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
     profileSaved: v.profileSaved === true,
     installing: v.installing === true,
     lastError: typeof v.lastError === "string" && v.lastError ? v.lastError.slice(0, 200) : null,
+    clipboard: typeof v.clipboard === "boolean" ? v.clipboard : null,
   };
 }
 /** `available: false` means this computer does not offer the Claude app at all
@@ -1160,6 +1164,33 @@ export async function claudeAppRemove(boxUrl: string, token?: string | null): Pr
     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
     return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// The desktop clipboard: an owner switch, then one request per Paste in / Copy out.
+// Selkies' own clipboard stays off; nothing moves unless the owner presses a button.
+export async function desktopClipboardSet(boxUrl: string, enabled: boolean, token?: string | null): Promise<{ ok: boolean; clipboard?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ enabled }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; clipboard?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, clipboard: j.clipboard === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function desktopClipboardPaste(boxUrl: string, text: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard/paste`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ text }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function desktopClipboardCopy(boxUrl: string, token?: string | null): Promise<{ ok: boolean; text?: string; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard/copy`, { method: "POST", cache: "no-store", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; text?: unknown; error?: string };
+    if (!r.ok || !j.ok || typeof j.text !== "string") return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, text: j.text, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 

@@ -435,13 +435,23 @@ update them yet.
   app's profile from a root-only snapshot, launches it, keeps it running and
   applies the saved view: `app` is the app full screen, `desktop` is the app in a
   window on the desktop. The gateway reaches the helper through an exact-argument
-  sudoers rule for `status`, `install`, `mode app`, `mode desktop` and `remove`
-  (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
+  sudoers rule for `status`, `install`, `mode app`, `mode desktop`, `remove` and
+  the clipboard verbs below (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
   helper never handles a Claude credential. The container's home is discarded on every
   desktop restart, so the app's own data is backed up (size-capped, root-only, one
   copy) on the same VM and restored before the app starts; that data includes the
-  app's sign-in session, no Hivra service reads it, and `remove` deletes it. Managed
-  Proxmox computers only.
+  app's sign-in session, no Hivra service reads it, and `remove` deletes it. The
+  Code tab's own data (`~/.claude`, `~/.claude.json`) is backed up the same way in a
+  second archive with its own cap, and the app starts in `~/Hivra`, the desktop's
+  one persistent folder, so projects opened from the Code tab survive restarts.
+  Managed Proxmox computers only.
+- **Desktop clipboard switch (optional, off by default).** Selkies' clipboard stays
+  off. The owner can turn on a clipboard switch on the Desktop strip; while it is on,
+  Paste in puts their clipboard's text on the desktop's clipboard and Copy out brings
+  the desktop's back, one request per press. The gateway reaches
+  `hivra-claude-app clipboard on|off`, `clipboard-put` (text on stdin, at most
+  256 KB) and `clipboard-get` through the same exact-argument sudoers rule; both
+  transfers refuse while the switch is off.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops

@@ -744,7 +744,7 @@ if [ "$AGENT_KIND" = "linux-desktop" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 
   install -d -o root -g root -m 0755 /usr/local/share/hivra
   install -o root -g root -m 0644 "$SRC_DIR/claude-desktop-pin.json" /usr/local/share/hivra/claude-desktop-pin.json
   printf '%s\n' \
-    "${AGENT_USER} ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove" \
+    "${AGENT_USER} ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove, /usr/local/bin/hivra-claude-app clipboard on, /usr/local/bin/hivra-claude-app clipboard off, /usr/local/bin/hivra-claude-app clipboard-put, /usr/local/bin/hivra-claude-app clipboard-get" \
     > /etc/sudoers.d/hivra-claude-app
   chmod 0440 /etc/sudoers.d/hivra-claude-app
   if ! visudo -cf /etc/sudoers.d/hivra-claude-app >/dev/null 2>&1; then warn "hivra-claude-app sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-claude-app; fi

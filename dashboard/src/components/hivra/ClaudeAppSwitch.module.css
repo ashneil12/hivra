@@ -137,3 +137,16 @@
   gap: 6px;
   margin-top: 4px;
 }
+
+.clipboardText {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-base, transparent);
+  color: var(--ink-black);
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  resize: vertical;
+}

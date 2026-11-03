@@ -228,7 +228,7 @@ if [ "$KIND_BEFORE" = linux-desktop ]; then
   install -o root -g root -m 0644 "$WORK/hivra-claude-app.service" "$CLAUDE_APP_UNIT.next"
   install -o root -g root -m 0644 "$WORK/claude-desktop-pin.json" "$CLAUDE_APP_PIN.next"
   printf '%s\n' \
-    'bux ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove' \
+    'bux ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove, /usr/local/bin/hivra-claude-app clipboard on, /usr/local/bin/hivra-claude-app clipboard off, /usr/local/bin/hivra-claude-app clipboard-put, /usr/local/bin/hivra-claude-app clipboard-get' \
     > "$CLAUDE_APP_SUDOERS.next"
   chmod 0440 "$CLAUDE_APP_SUDOERS.next"
   if ! visudo -cf "$CLAUDE_APP_SUDOERS.next" >/dev/null 2>&1; then rollback; echo "the Claude app sudoers rule is invalid" >&2; exit 1; fi

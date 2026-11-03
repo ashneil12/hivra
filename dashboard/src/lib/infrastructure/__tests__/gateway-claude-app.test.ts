@@ -18,7 +18,7 @@ const SERVER_PATH = path.join(process.cwd(), "provisioner/hivra-chat/server.js")
 const SERVER_SOURCE = fs.readFileSync(SERVER_PATH, "utf8");
 const HELPER = "/usr/local/bin/hivra-claude-app";
 
-type Call = { file: string; args: string[]; detached?: boolean };
+type Call = { file: string; args: string[]; detached?: boolean; stdin?: string };
 
 describe("gateway Claude app routes", () => {
   let home: string;
@@ -65,14 +65,37 @@ describe("gateway Claude app routes", () => {
       },
     };
     const childProcess = {
-      spawn: (file: string, args: string[], options: { detached?: boolean }) => {
-        calls.push({ file, args, detached: options?.detached });
-        return { on: () => undefined, unref: () => undefined, stdout: { on: () => undefined }, stderr: { on: () => undefined } };
+      spawn: (file: string, args: string[], options: { detached?: boolean; stdio?: unknown }) => {
+        const call: Call = { file, args, detached: options?.detached };
+        calls.push(call);
+        // A piped child (clipboard paste): record what is written to its stdin,
+        // then answer on stdout and close, like the helper would.
+        const listeners: Record<string, Array<(value?: unknown) => void>> = {};
+        const stdoutListeners: Array<(chunk: string) => void> = [];
+        const child = {
+          on: (event: string, listener: (value?: unknown) => void) => { (listeners[event] ||= []).push(listener); return child; },
+          unref: () => undefined,
+          kill: () => undefined,
+          stdout: { on: (_event: string, listener: (chunk: string) => void) => { stdoutListeners.push(listener); } },
+          stderr: { on: () => undefined },
+          stdin: {
+            on: () => undefined,
+            end: (data: Buffer) => {
+              call.stdin = Buffer.from(data).toString("utf8");
+              setImmediate(() => {
+                for (const listener of stdoutListeners) listener(helperOutput + "\n");
+                for (const listener of listeners.close || []) listener(helperFails ? 1 : 0);
+              });
+            },
+          },
+        };
+        return child;
       },
       execFile: (file: string, args: string[], _options: unknown, callback: (error: Error | null, stdout: string) => void) => {
         calls.push({ file, args });
         if (typeof callback !== "function") return;
-        setImmediate(() => helperFails ? callback(new Error("helper failed"), "") : callback(null, helperOutput + "\n"));
+        // Like Node, a helper that exits non-zero still hands back what it printed.
+        setImmediate(() => helperFails ? callback(new Error("helper failed"), helperOutput + "\n") : callback(null, helperOutput + "\n"));
       },
     };
     vm.runInNewContext(SERVER_SOURCE, {
@@ -190,10 +213,76 @@ describe("gateway Claude app routes", () => {
     expect(helperCalls()).toEqual([sudo("remove")]);
   });
 
+  it("turns the clipboard switch on and off with only a boolean", async () => {
+    const port = await boot("linux-desktop");
+    helperOutput = JSON.stringify({ ok: true, clipboard: true });
+    const on = await request(port, "POST", "/api/claude-app/clipboard", { enabled: true, extra: "x" });
+    expect(on.status).toBe(200);
+    expect(on.json).toEqual({ ok: true, clipboard: true });
+    helperOutput = JSON.stringify({ ok: true, clipboard: false });
+    expect((await request(port, "POST", "/api/claude-app/clipboard", { enabled: false })).json).toEqual({ ok: true, clipboard: false });
+    expect(helperCalls()).toEqual([sudo("clipboard", "on"), sudo("clipboard", "off")]);
+    calls.length = 0;
+    for (const enabled of ["true", 1, null, undefined]) {
+      expect((await request(port, "POST", "/api/claude-app/clipboard", { enabled })).status).toBe(400);
+    }
+    expect(helperCalls()).toEqual([]);
+  });
+
+  it("pastes text into the desktop through the helper's stdin, never its arguments", async () => {
+    const port = await boot("linux-desktop");
+    helperOutput = JSON.stringify({ ok: true, bytes: 13 });
+    const text = "rm -rf / ; héllo";
+    const response = await request(port, "POST", "/api/claude-app/clipboard/paste", { text });
+    expect(response.status).toBe(200);
+    expect(helperCalls()).toEqual([{ ...sudo("clipboard-put"), detached: undefined, stdin: text }]);
+    calls.length = 0;
+    expect((await request(port, "POST", "/api/claude-app/clipboard/paste", { text: 5 })).status).toBe(400);
+    expect((await request(port, "POST", "/api/claude-app/clipboard/paste", { text: "a".repeat(256 * 1024 + 1) })).status).toBe(413);
+    expect(helperCalls()).toEqual([]);
+  });
+
+  it("says plainly when the switch is off instead of pasting or copying", async () => {
+    const port = await boot("linux-desktop");
+    helperOutput = JSON.stringify({ ok: false, error: "clipboard_off" });
+    const paste = await request(port, "POST", "/api/claude-app/clipboard/paste", { text: "x" });
+    expect(paste.status).toBe(409);
+    expect(String(paste.json.error)).toContain("clipboard is off");
+    helperFails = true;
+    const copy = await request(port, "POST", "/api/claude-app/clipboard/copy");
+    expect(copy.status).toBe(409);
+  });
+
+  it("copies the desktop clipboard out as text", async () => {
+    const port = await boot("linux-desktop");
+    helperOutput = JSON.stringify({ ok: true, text: "from the desktop" });
+    const response = await request(port, "POST", "/api/claude-app/clipboard/copy", { anything: "ignored" });
+    expect(response.status).toBe(200);
+    expect(response.json).toEqual({ ok: true, text: "from the desktop" });
+    expect(helperCalls()).toEqual([sudo("clipboard-get")]);
+  });
+
+  it("keeps the clipboard routes behind the box token and off other computers", async () => {
+    let port = await boot("linux-desktop");
+    for (const [route, body] of [["/api/claude-app/clipboard", { enabled: true }], ["/api/claude-app/clipboard/paste", { text: "x" }], ["/api/claude-app/clipboard/copy", {}]] as const) {
+      expect((await request(port, "POST", route, body, false)).status).toBe(401);
+    }
+    expect(calls).toEqual([]);
+    for (const close of closers.splice(0)) await close();
+    port = await boot("claude");
+    for (const [route, body] of [["/api/claude-app/clipboard", { enabled: true }], ["/api/claude-app/clipboard/paste", { text: "x" }], ["/api/claude-app/clipboard/copy", {}]] as const) {
+      expect((await request(port, "POST", route, body)).status).toBe(404);
+    }
+    expect(helperCalls()).toEqual([]);
+  });
+
   it("matches the exact sudoers grant the installer writes", () => {
     const grant = fs.readFileSync(path.join(process.cwd(), "provisioner/provision-claude-code-box.sh"), "utf8");
-    const granted = [...grant.matchAll(/hivra-claude-app (status|install|remove|mode (?:app|desktop))/g)].map((match) => match[1]);
-    expect([...new Set(granted)].sort()).toEqual(["install", "mode app", "mode desktop", "remove", "status"]);
+    const granted = [...grant.matchAll(/hivra-claude-app (status|install|remove|mode (?:app|desktop)|clipboard (?:on|off)|clipboard-put|clipboard-get)/g)].map((match) => match[1]);
+    expect([...new Set(granted)].sort()).toEqual(["clipboard off", "clipboard on", "clipboard-get", "clipboard-put", "install", "mode app", "mode desktop", "remove", "status"]);
+    expect(SERVER_SOURCE).toContain('["clipboard", enabled ? "on" : "off"]');
+    expect(SERVER_SOURCE).toContain('"clipboard-put"');
+    expect(SERVER_SOURCE).toContain('"clipboard-get"');
     for (const verb of ["status", "install", "remove"]) expect(SERVER_SOURCE).toContain(`"${verb}"`);
     expect(SERVER_SOURCE).toContain('["mode", mode]');
   });
