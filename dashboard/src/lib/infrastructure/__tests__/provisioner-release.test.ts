@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.10.20.2.json";
+import release from "../../../../provisioner-releases/2026.11.03.1.json";
+import appUpdateRelease from "../../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../../provisioner-releases/2026.10.20.1.json";
 import claudeAppRelease from "../../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../../provisioner-releases/2026.09.24.4.json";
@@ -227,9 +228,10 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
-    "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql"]
+    "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
+    "20261103120000_provider_release_admission_2026_11_03_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -242,8 +244,8 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
 });
 
 it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 admitted and desktop assets unchanged", () => {
-  expect(release.version).toBe("2026.10.20.2");
-  const paths = release.files.map(file => file.path);
+  expect(appUpdateRelease.version).toBe("2026.10.20.2");
+  const paths = appUpdateRelease.files.map(file => file.path);
   for (const file of ["agent-app-versions.json", "hivra-agent-app-update.sh"]) {
     expect(paths).toContain(file);
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
@@ -253,12 +255,12 @@ it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 a
   for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs",
     "deepseek-harness/install-guest.py", "deepseek-harness/install-native.py", "deepseek-harness/update-guest.py",
     "deepseek-harness/package.json", "deepseek-harness/package-lock.json", "agent-cli-versions.json", "hivra-agent-cli-update.sh"]) {
-    const current = release.files.find(entry => entry.path === file)!;
+    const current = appUpdateRelease.files.find(entry => entry.path === file)!;
     const prior = ownedUpdateRelease.files.find(entry => entry.path === file)!;
     expect(current.sha256).toBe(prior.sha256);
   }
   for (const file of ["hivra-chat/server.js", "hivra-update-guest-runtime.sh", "hivra-guest-runtime-update.sh", "provision-claude-code-box.sh"]) {
-    expect(release.files.find(entry => entry.path === file)!.sha256)
+    expect(appUpdateRelease.files.find(entry => entry.path === file)!.sha256)
       .not.toBe(ownedUpdateRelease.files.find(entry => entry.path === file)!.sha256);
   }
   expect(isCompatibleProxmoxProvisionerVersion("2026.10.20.1")).toBe(true);
@@ -266,4 +268,35 @@ it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 a
   expect(provisionerSupportsActivityTelemetry("2026.10.20.1")).toBe(true);
   expect(supportsModelSettingsProvisionerVersion("2026.10.20.1")).toBe(true);
   expect(provisionerSupportsWindowsInstaller("2026.10.20.1")).toBe(true);
+});
+
+it("ships the clipboard switch, the Code tab backup and the agent browser sandbox in 2026.11.03.1, keeping 2026.10.20.2 admitted and desktop assets unchanged", () => {
+  expect(release.version).toBe("2026.11.03.1");
+  expect(release.files.map(file => file.path)).toEqual(appUpdateRelease.files.map(file => file.path));
+  // The isolation proof, the remote-desktop bundle revision and every other runtime are preserved.
+  for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs",
+    "remote-desktop/provider-service-plan.py", "remote-desktop/provider-service-owner.py",
+    "deepseek-harness/install-guest.py", "deepseek-harness/install-native.py", "deepseek-harness/update-guest.py",
+    "agent-cli-versions.json", "agent-app-versions.json", "claude-desktop-pin.json", "hivra-claude-app.service",
+    "hivra-update-guest-runtime.sh", "bux-local-browser.service"]) {
+    const current = release.files.find(entry => entry.path === file)!;
+    const prior = appUpdateRelease.files.find(entry => entry.path === file)!;
+    expect({ file, sha256: current.sha256 }).toEqual({ file, sha256: prior.sha256 });
+  }
+  for (const file of ["hivra-claude-app.py", "hivra-chat/server.js", "hivra-guest-runtime-update.sh", "provision-claude-code-box.sh", "local-browser-keeper.py"]) {
+    expect(release.files.find(entry => entry.path === file)!.sha256)
+      .not.toBe(appUpdateRelease.files.find(entry => entry.path === file)!.sha256);
+  }
+  // The installer and the runtime updater grant the same, exact helper verbs.
+  const grant = (file: string) => {
+    const text = readFileSync(path.join(process.cwd(), "provisioner", file), "utf8");
+    return [...text.matchAll(/NOPASSWD: (\/usr\/local\/bin\/hivra-claude-app [^'"\n]+)/g)].map(match => match[1]);
+  };
+  expect(grant("hivra-guest-runtime-update.sh")).toEqual(grant("provision-claude-code-box.sh"));
+  expect(grant("provision-claude-code-box.sh")[0]).toContain("hivra-claude-app clipboard-put");
+  expect(isCompatibleProxmoxProvisionerVersion("2026.10.20.2")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.10.20.2")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.10.20.2")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.10.20.2")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.10.20.2")).toBe(true);
 });

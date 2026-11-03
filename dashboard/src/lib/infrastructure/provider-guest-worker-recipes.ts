@@ -350,6 +350,11 @@ const recipes = Object.freeze({
     workerSha256: "459b4bebc712be048d5c250ac6ea8a98a355d2c0b3c0dfe3209fe659c5f14c9e",
     workerSize: 45185,
   }),
+  "2026.11.03.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the desktop clipboard switch and Code tab backup to the Claude app helper and turns the agent browser's sandbox back on.
+    workerSha256: "5f30e02197d1daca7530ccd12610cdeea568aa0399a37ce1ff4a7a332ee89919",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

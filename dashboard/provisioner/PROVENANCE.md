@@ -544,6 +544,35 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.03.1` builds on `2026.10.20.2` and makes the optional Claude
+app easier to work in. `hivra-claude-app` gains the owner's clipboard switch for
+the desktop: `clipboard on|off` sets a root-only flag in
+`/var/lib/hivra/desktop-clipboard` (off by default, kept apart from the app's own
+state so removing the app never changes it), and `clipboard-put` /
+`clipboard-get` move UTF-8 text, at most 256 KB, between the gateway and the
+desktop's X clipboard through `xclip` run as the desktop user inside the
+container. They refuse while the switch is off. Selkies' own clipboard stays
+disabled, as do files, audio, microphone, camera, gamepad and upstream
+commands: text moves only when the owner presses Paste in or Copy out on the
+Desktop strip (`/api/claude-app/clipboard`, `/clipboard/paste`,
+`/clipboard/copy`, behind the box token), and the gateway passes pasted text to
+the helper on stdin, never as an argument. The sudoers rule written by the
+installer and by the runtime updater's guest half grows by exactly those four
+verbs. The app's launcher now starts in `~/Hivra`, the desktop's one persistent
+folder, and is rewritten before every launch. Claude Code's own data from the
+app's Code tab (`~/.claude`, `~/.claude.json`) is saved in a second root-only
+archive with its own 512 MB cap and restored only into an empty home, so a
+desktop restart keeps Code tab sessions; `remove` deletes it. The agent's own
+browser (`local-browser-keeper.py`) no longer passes `--no-sandbox`: the pinned
+Google Chrome runs as `bux` with its setuid sandbox, and Chrome's errors reach
+the keeper's log. The runtime updater does not reinstall the keeper, so that
+change reaches computers provisioned from this release. The Claude app itself
+still runs with `--no-sandbox`, because the contained desktop keeps Docker's
+default seccomp profile and no-new-privileges; the remote-desktop assets are
+unchanged, so the remote-desktop bundle revision and every session revision are
+preserved. This source release does not deploy, install, or update any
+existing computer.
+
 Release `2026.10.20.2` builds on `2026.10.20.1` and lets owners update the
 hosted app of an Aeon, OpenClaw or Agent Zero computer the way Claude Code and
 Codex computers already update their CLI. The tested Aeon dashboard commit,

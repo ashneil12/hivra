@@ -42,7 +42,12 @@ CHROME_ARGS = ([] if os.environ.get("HIVRA_BROWSER_VIEW") == "1" else ["--headle
     "--user-data-dir=%s" % PROFILE_DIR,
     "--no-first-run",
     "--no-default-browser-check",
-    "--no-sandbox",
+    # Chromium's own sandbox stays ON: this is the browser the agent drives
+    # through CDP (Playwright and friends) to arbitrary sites. The keeper runs as
+    # the unprivileged bux user without NoNewPrivileges, so the pinned Google
+    # Chrome uses its setuid chrome-sandbox helper or user namespaces. Never add
+    # --no-sandbox back; if Chrome cannot sandbox, it must fail loudly (below).
+    "--log-level=2",
     "--disable-gpu",
     "--disable-dev-shm-usage",
     "--window-size=1280,720",
@@ -115,15 +120,18 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     os.makedirs(PROFILE_DIR, exist_ok=True)
     log("launching %s on 127.0.0.1:%d" % (CHROME, PORT))
+    # Chrome's errors (and a sandbox failure, which is fatal) go to this
+    # service's own log rather than being thrown away.
     proc = subprocess.Popen(
         [CHROME] + CHROME_ARGS,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
+        stderr=None,
     )
     ws = ""
     for _ in range(60):
         if proc.poll() is not None:
-            sys.exit("chrome exited early rc=%s" % proc.returncode)
+            sys.exit("chrome exited early rc=%s (see Chrome's own error above; a "
+                     "'No usable sandbox' error means chrome-sandbox is not setuid root)" % proc.returncode)
         try:
             ws = devtools_ws()
         except Exception:

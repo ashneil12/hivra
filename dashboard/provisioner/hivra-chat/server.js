@@ -988,6 +988,72 @@ function handleClaudeAppRemove(res, body) {
   });
 }
 
+// The owner's clipboard switch for the desktop (off by default). Selkies' own
+// clipboard stays off; text moves only when the owner presses Paste in or Copy
+// out, one request each, through the same helper and its exact sudoers verbs.
+const CLIPBOARD_MAX_BYTES = 256 * 1024;
+const CLIPBOARD_ERRORS = {
+  clipboard_off: [409, "The clipboard is off for this computer. Turn it on first."],
+  desktop_not_running: [409, "The desktop is not running."],
+  too_large: [413, "That is more than 256 KB of text."],
+  not_text: [400, "Only text can be pasted into the desktop."],
+};
+function clipboardFailure(res, result, fallback) {
+  const known = result && result.ok === false && CLIPBOARD_ERRORS[result.error];
+  if (known) return jsonRes(res, known[0], { error: known[1] });
+  return jsonRes(res, 502, { error: fallback });
+}
+function handleClipboardSwitch(res, body) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the desktop clipboard is not available on this computer" });
+  let enabled = null;
+  try { const requested = JSON.parse(body || "{}").enabled; enabled = typeof requested === "boolean" ? requested : null; } catch {}
+  if (enabled === null) return jsonRes(res, 400, { error: "enabled must be true or false" });
+  claudeAppHelper(["clipboard", enabled ? "on" : "off"], 15000, (error, result) => {
+    if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The clipboard could not be switched." });
+    jsonRes(res, 200, { ok: true, clipboard: result.clipboard === true });
+  });
+}
+function handleClipboardPaste(req, res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the desktop clipboard is not available on this computer" });
+  let body = "";
+  let tooLarge = false;
+  req.setEncoding("utf8");
+  req.on("data", (chunk) => { if (tooLarge) return; body += chunk; if (body.length > CLIPBOARD_MAX_BYTES * 8) { tooLarge = true; body = ""; } });
+  req.on("end", () => {
+    if (tooLarge) return jsonRes(res, 413, { error: CLIPBOARD_ERRORS.too_large[1] });
+    let text = null;
+    try { const requested = JSON.parse(body || "{}").text; text = typeof requested === "string" ? requested : null; } catch {}
+    if (text === null) return jsonRes(res, 400, { error: "text is required" });
+    const bytes = Buffer.from(text, "utf8");
+    if (bytes.length > CLIPBOARD_MAX_BYTES) return jsonRes(res, 413, { error: CLIPBOARD_ERRORS.too_large[1] });
+    const child = spawn("sudo", ["-n", CLAUDE_APP_HELPER, "clipboard-put"], { env: AGENT_ENV, stdio: ["pipe", "pipe", "ignore"] });
+    let out = "";
+    let answered = false;
+    const answer = (fn) => { if (!answered) { answered = true; clearTimeout(timer); fn(); } };
+    const timer = setTimeout(() => { child.kill("SIGKILL"); answer(() => jsonRes(res, 504, { error: "The desktop did not take the text in time." })); }, 20000);
+    child.stdout.on("data", (chunk) => { if (out.length < 4096) out += chunk; });
+    child.on("error", () => answer(() => jsonRes(res, 502, { error: "The text could not be pasted into the desktop." })));
+    child.on("close", () => answer(() => {
+      let result = null;
+      try { result = JSON.parse(out.trim().split("\n").pop() || "null"); } catch {}
+      if (!result || result.ok !== true) return clipboardFailure(res, result, "The text could not be pasted into the desktop.");
+      jsonRes(res, 200, { ok: true, bytes: result.bytes });
+    }));
+    child.stdin.on("error", () => {});
+    child.stdin.end(bytes);
+  });
+}
+function handleClipboardCopy(res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the desktop clipboard is not available on this computer" });
+  res.setHeader("Cache-Control", "no-store");
+  execFile("sudo", ["-n", CLAUDE_APP_HELPER, "clipboard-get"], { env: AGENT_ENV, timeout: 20000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    let result = null;
+    try { result = JSON.parse(String(stdout || "").trim().split("\n").pop() || "null"); } catch {}
+    if (!result || result.ok !== true || typeof result.text !== "string") return clipboardFailure(res, result, "The desktop clipboard could not be read.");
+    jsonRes(res, 200, { ok: true, text: result.text });
+  });
+}
+
 function jsonRes(res, status, obj) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(obj));
@@ -3688,6 +3754,9 @@ const server = http.createServer((req, res) => {
   if (u === "/api/claude-app/install" && req.method === "POST") return authed(req) ? handleClaudeAppInstall(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (u === "/api/claude-app/mode" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppMode(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (u === "/api/claude-app/remove" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppRemove(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/clipboard" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClipboardSwitch(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/clipboard/paste" && req.method === "POST") return authed(req) ? handleClipboardPaste(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/clipboard/copy" && req.method === "POST") return authed(req) ? handleClipboardCopy(res) : jsonRes(res, 401, { error: "unauthorized" });
   // Proxied surfaces — token-gated (was: open to anyone with the URL = a free shell).
   // The dedicated remote-desktop broker performs its own one-time PKCE exchange,
   // continuous session introspection and input lifecycle fencing. Preserve the

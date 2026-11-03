@@ -580,6 +580,23 @@ gateway's native editor adapter, which targets v2.2's exact files). Existing
 computers get the updater with their next connection-service update once their
 host holds release 2026.10.20.2.
 
+**Claude app clipboard switch, Code tab backup and agent browser sandbox (built
+2026-11-03 in release 2026.11.03.1; not yet on any existing computer).** On an
+Ubuntu Desktop computer that offers the Claude app, the Desktop strip gains a
+clipboard switch, off by default. Selkies' own clipboard stays off; with the
+switch on, Paste in puts the owner's clipboard text on the desktop's clipboard
+and Copy out brings the desktop's back, one request per press, through
+`hivra-claude-app` (`provisioner/README.md`). The app now starts in `~/Hivra`,
+and Claude Code's data from its Code tab is backed up beside the app's own so
+sessions survive a desktop restart. The agent's own Chrome
+(`local-browser-keeper.py`) runs with Chromium's sandbox on. Not built: a
+seamless clipboard (it needs the desktop container recreated with Selkies'
+clipboard on, which the provider ownership proof does not allow today), and
+Chromium's sandbox for the Claude app inside the contained desktop. Existing
+computers get the helper and gateway changes with their next connection-service
+update once their host holds release 2026.11.03.1; the keeper change reaches
+computers provisioned from it.
+
 Updates says how every kind of computer is kept up to date (2026-10-19). Where
 Hivra's connection service runs, it offers Update connection service. Where it
 doesn't, it says how the owner updates the computer themselves
