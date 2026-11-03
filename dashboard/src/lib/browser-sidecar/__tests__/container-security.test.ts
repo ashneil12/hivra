@@ -6,6 +6,7 @@ import {
   browserSidecarSeccompProfileJson,
 } from "@/lib/browser-sidecar/container-security";
 import {
+  buildHermesTaggedImageCleanupFunctions,
   buildWebUIBootstrapScript,
   buildWebUICompose,
   buildWebUIProvisioningArtifacts,
@@ -74,5 +75,26 @@ describe("browser sidecar container security", () => {
     const script = buildWebUIBootstrapScript(buildWebUIProvisioningArtifacts(p), p, { mode: "update" });
     expect(script).toContain(`rm -f ${BROWSER_SIDECAR_SECCOMP_FILE}\n`);
     expect(script).not.toContain(`cat > ${BROWSER_SIDECAR_SECCOMP_FILE}`);
+  });
+
+  it("pins the default sidecar image by digest, never a floating tag", () => {
+    const previous = process.env.HERMES_BROWSER_SIDECAR_IMAGE;
+    delete process.env.HERMES_BROWSER_SIDECAR_IMAGE;
+    try {
+      const service = sidecarService(buildWebUICompose({ ...params, ...images, browserSidecarEnabled: true }))!;
+      // A floating :stable let a registry push change every box on its next
+      // update and made update rollback keep the new image. The pin is the
+      // only way a box changes sidecar build.
+      expect(service.image).toMatch(/^ghcr\.io\/ashneil12\/hermes-browser-sidecar@sha256:[0-9a-f]{64}$/);
+    } finally {
+      if (previous === undefined) delete process.env.HERMES_BROWSER_SIDECAR_IMAGE;
+      else process.env.HERMES_BROWSER_SIDECAR_IMAGE = previous;
+    }
+  });
+
+  it("prunes superseded sidecar images, which are 1-3 GB each", () => {
+    const prune = buildHermesTaggedImageCleanupFunctions();
+    expect(prune).toContain("'ghcr.io/ashneil12/hermes-browser-sidecar'");
+    expect(prune).toContain("'ghcr.io/ashneil12/hermes-browser-sidecar-canary'");
   });
 });

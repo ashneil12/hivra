@@ -3830,8 +3830,9 @@ esac
           // Safe prod fallback: the webui builder reads HERMES_BROWSER_SIDECAR_IMAGE
           // from process.env; absent there, it must NOT leak the canary package into
           // prod provisioning.
-          expect(decodedDeploy).toContain("ghcr.io/ashneil12/hermes-browser-sidecar:stable");
-          expect(decodedDeploy).not.toContain("hermes-browser-sidecar-canary");
+          expect(decodedDeploy).toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar@sha256:39ef9d7b0439d15b146ea9101106068ea173f656c5ffa85f1b3a060754e55c61");
+          // The old -canary package may appear only in the image prune list.
+          expect(decodedDeploy).not.toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar-canary");
           // The sidecar's live browser view is served same-origin via /vnc/* →
           // the sidecar's noVNC on :6080 (VNC-password gated), replacing the old
           // forward_auth :8789 signed-URL handoff.
