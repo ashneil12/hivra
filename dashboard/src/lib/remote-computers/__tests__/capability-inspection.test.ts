@@ -336,7 +336,7 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
     expect(script).toContain('grep -Fxq "ip=$GUEST_IP/24"');
     expect(script).toContain("run_vmid_bound_guest_exec /bin/bash -c");
     const match = script.trim().split("\n").at(-1)
-      ?.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)'$/);
+      ?.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)' "\$NATIVE_ROUTE_PROVEN"$/);
     expect(match).toBeTruthy();
     const program = Buffer.from(match![1], "base64").toString("utf8");
     expect(JSON.parse(Buffer.from(match![2], "base64").toString("utf8"))).toEqual({
@@ -381,7 +381,7 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
       infrastructureBindingTag: `hivra-bind-${"b".repeat(32)}`,
     });
     const match = script.trim().split("\n").at(-1)
-      ?.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)'$/);
+      ?.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)' "\$NATIVE_ROUTE_PROVEN"$/);
     expect(match).toBeTruthy();
     const program = Buffer.from(match![1], "base64").toString("utf8");
     expect(program).toContain(`guardian_sha!='${OMARCHY_NATIVE_GUARDIAN_SHA256}'`);
@@ -499,7 +499,7 @@ for uid,gid in ((1000,1000),(1001,1001),(1001,1000),(1000,1001),(2000,3000)):
       publicIpv4: "198.51.100.11",
       infrastructureBindingTag: `hivra-bind-${"b".repeat(32)}`,
     });
-    const encoded = script.trim().split("\n").at(-1)!.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)'$/)![1];
+    const encoded = script.trim().split("\n").at(-1)!.match(/hivra '([A-Za-z0-9+/=]+)' '([A-Za-z0-9+/=]+)' "\$NATIVE_ROUTE_PROVEN"$/)![1];
     const program = Buffer.from(encoded, "base64").toString("utf8");
     expect(program).toContain("accept_desktop_build(omarchy_version,sunshine_version)");
     expect(program).not.toContain("package_pin_mismatch");
@@ -841,5 +841,25 @@ print(json.dumps(out))
       });
       expect(deps.recordCapability).not.toHaveBeenCalled();
     }
+  });
+});
+
+
+describe("Omarchy browser-only route evidence", () => {
+  it("emits only browser transport even for a native-supported package pair without native route proof", () => {
+    const parsed = parsePreparedOmarchyNativeCapability(
+      OMARCHY_NATIVE_PREPARED_MARKER + JSON.stringify(omarchyDescriptor({
+        route: { status: "browser-only", publicIpv4: "198.51.100.11" },
+      })), { computerId: AGENT_ID, vmid: 1112, guestIp: "10.250.20.62" });
+    expect(parsed?.descriptor.route).toEqual({ status: "browser-only", publicIpv4: "198.51.100.11" });
+    expect(parsed?.receipt.installedTransports).toEqual(["selkies-websocket"]);
+  });
+
+  it("does not accept native route fields smuggled into browser-only evidence", () => {
+    const parsed = parsePreparedOmarchyNativeCapability(
+      OMARCHY_NATIVE_PREPARED_MARKER + JSON.stringify(omarchyDescriptor({
+        route: { status: "browser-only", publicIpv4: "198.51.100.11", tcpPorts: [47984, 47989, 48010] },
+      })), { computerId: AGENT_ID, vmid: 1112, guestIp: "10.250.20.62" });
+    expect(parsed).toBeNull();
   });
 });
