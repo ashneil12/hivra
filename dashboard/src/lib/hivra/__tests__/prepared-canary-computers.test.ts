@@ -10,9 +10,6 @@ import {
   readPreparedSlot,
 } from "../prepared-canary-computers";
 
-const OS_RECEIPT = { packageVersion: "4.0.6-1", osVersion: "4.0.6", kernelRelease: "7.2.11-arch1-1", observedAt: "2026-11-02T17:00:00Z" };
-const OMARCHY_READY = "HIVRA_PREPARED_OMARCHY_VERSION " + JSON.stringify(OS_RECEIPT) + "\nHIVRA_PREPARED_COMPUTER_READY\n";
-
 const CONFIG = JSON.stringify({
   omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
   windows: { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" },
@@ -172,51 +169,39 @@ ${transition}`], { encoding: "utf8" });
     expect(result.stdout).toBe(`HIVRA_PREPARED_LIFECYCLE omarchy ${action} ${status}\n`);
   });
 
-  it("verifies the prepared provider identity before creating an owner row", async () => {
-    const insert = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444",
-      infrastructure_binding_token_hash: "a".repeat(64) }));
-    const markBindingEnforced = jest.fn(async row => ({ ...row, infrastructure_binding_token_enforced: true }));
-    const runHost = jest.fn(async (_script: string, _slot: unknown) => {
-      void _slot;
-      return {
-        ok: true,
-        stdout: _script.includes("HIVRA_PREPARED_BINDING_READY")
-          ? "HIVRA_PREPARED_BINDING_READY\n" : OMARCHY_READY,
-        stderr: "",
-      };
-    });
+  it("reserves a pending Omarchy owner before dispatching its exact latest release", async () => {
+    const release = { release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) };
+    const reserveRefresh = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444" }));
+    const advanceRefresh = jest.fn(async (_owner, row) => row);
+    const runHost = jest.fn(); const insert = jest.fn();
     const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
-      findOwnerProfile: async () => null,
-      findSlotOwner: async () => null,
-      runHost,
-      insert: insert as never,
-      markBindingEnforced,
+      findOwnerProfile: async () => null, findSlotOwner: async () => null, runHost, insert: insert as never,
+      latestRelease: async () => release, reserveRefresh, advanceRefresh,
     });
-    expect(runHost).toHaveBeenNthCalledWith(1,
-      expect.stringContaining("hivra-omarchy-operation%3A019d13b0-4f19-7f55-9a22-83e72232d8c1"),
-      expect.objectContaining({ host: "node-b", node: "node-b", vmid: 2099 }),
-    );
-    expect(String(runHost.mock.calls[0][0])).toContain('qm set "$VMID" --onboot 1 --startup order=30,up=15,down=60');
-    expect(String(runHost.mock.calls[0][0])).toContain('qm agent "$VMID" ping');
-    expect(String(runHost.mock.calls[0][0]).indexOf('qm agent "$VMID" ping'))
-      .toBeLessThan(String(runHost.mock.calls[0][0]).indexOf("HIVRA_PREPARED_COMPUTER_READY"));
-    expect(String(runHost.mock.calls[1][0])).toContain("hivra-bind-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ user_id: "owner", computer_profile: "omarchy", vmid: 2099, status: "running" }));
-    expect(markBindingEnforced).toHaveBeenCalledTimes(1);
-    expect(row.id).toBe("44444444-4444-4444-8444-444444444444");
-    expect(row.launch_os_receipt).toEqual(OS_RECEIPT);
-    expect(insert.mock.calls[0][0]).not.toHaveProperty("launch_os_receipt");
+    expect(reserveRefresh).toHaveBeenCalledWith(expect.objectContaining({ user_id: "owner", status: "provisioning", desired_state: "running", operation_kind: "provision" }), release, expect.objectContaining({vmid:2099}));
+    expect(row.operation_payload).toEqual({ stage: "prepared_omarchy_refresh", refreshId: row.operation_id });
+    expect(row.allocation_operation_id).toBe(row.operation_id);
+    expect(advanceRefresh).toHaveBeenCalledWith("owner", row);
+    expect(runHost).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled();
   });
 
-  it("does not insert a new Omarchy owner when guest readiness lacks a version observation", async () => {
-    const insert = jest.fn();
+  it("does not reserve or dispatch when the official latest release is unavailable", async () => {
+    const reserveRefresh = jest.fn(); const advanceRefresh = jest.fn();
     await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
-      findOwnerProfile: async () => null,
-      findSlotOwner: async () => null,
-      runHost: async () => ({ ok: true, stdout: "HIVRA_PREPARED_COMPUTER_READY\n", stderr: "" }),
-      insert: insert as never,
-    })).rejects.toThrow("prepared_omarchy_version_unavailable");
-    expect(insert).not.toHaveBeenCalled();
+      findOwnerProfile: async () => null, findSlotOwner: async () => null,
+      latestRelease: async () => { throw new Error("upstream unavailable"); }, reserveRefresh, advanceRefresh,
+    })).rejects.toThrow("prepared_omarchy_release_unavailable");
+    expect(reserveRefresh).not.toHaveBeenCalled(); expect(advanceRefresh).not.toHaveBeenCalled();
+  });
+
+  it("returns the durable pending row when HTTP host dispatch is unconfirmed", async () => {
+    const release = { release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) };
+    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
+      findOwnerProfile: async () => null, findSlotOwner: async () => null, latestRelease: async () => release,
+      reserveRefresh: async row => ({...row,id:"44444444-4444-4444-8444-444444444444"}) as never,
+      advanceRefresh: async () => { throw new Error("HTTP timeout"); },
+    });
+    expect(row.status).toBe("provisioning"); expect(row.operation_id).toEqual(expect.any(String));
   });
 
   it("opens an existing Omarchy owner's slot without forcing upgrades or calling upstream", async () => {
@@ -332,24 +317,15 @@ ${transition}`], { encoding: "utf8" });
     expect(script).not.toContain("name: hivra-omarchy-canary");
   });
 
-  it("writes the claimed row on the deployment's own delivery lane", async () => {
+  it("writes the pending reservation on the deployment's own delivery lane", async () => {
     process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "default";
-    const insert = jest.fn(async (row: Record<string, unknown>) => ({ ...row,
-      id: "44444444-4444-4444-8444-444444444444", infrastructure_binding_token_hash: "a".repeat(64) }));
-    const runHost = jest.fn(async (script: string) => ({
-      ok: true,
-      stdout: script.includes("HIVRA_PREPARED_BINDING_READY")
-        ? "HIVRA_PREPARED_BINDING_READY\n" : OMARCHY_READY,
-      stderr: "",
-    }));
+    const reserveRefresh = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444" }));
     await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
-      findOwnerProfile: async () => null,
-      findSlotOwner: async () => null,
-      runHost,
-      insert: insert as never,
-      markBindingEnforced: async (row) => ({ ...row, infrastructure_binding_token_enforced: true }),
+      findOwnerProfile: async () => null, findSlotOwner: async () => null,
+      latestRelease: async () => ({ release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) }),
+      reserveRefresh, advanceRefresh: async (_owner,row) => row,
     });
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ managed_provisioner_channel: "default" }));
+    expect(reserveRefresh).toHaveBeenCalledWith(expect.objectContaining({ managed_provisioner_channel: "default" }), expect.anything(), expect.anything());
   });
 
   it("refuses to claim when this deployment's lane is unreadable instead of writing a canary row", async () => {
