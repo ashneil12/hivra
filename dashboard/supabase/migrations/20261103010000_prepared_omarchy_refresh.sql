@@ -207,3 +207,67 @@ revoke all on function public.hivra_prepared_omarchy_authority(public.hivra_agen
  from public,anon,authenticated;
 grant execute on function public.reserve_hivra_prepared_omarchy(jsonb,integer,jsonb,jsonb),public.bind_hivra_prepared_omarchy(text,uuid),public.dispatch_hivra_prepared_omarchy(text,uuid),
  public.cancel_hivra_prepared_omarchy(text,uuid),public.complete_hivra_prepared_omarchy(text,uuid,jsonb) to service_role;
+
+-- Preserve all legacy normalization except dedicated prepared-refresh leases.
+create or replace function public.normalize_hivra_agent_operation_compatibility()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT'
+    and new.deployment_mode = 'hivra-managed'
+    and new.status = 'provisioning'
+    and new.operation_id is null
+  then
+    new.operation_id := gen_random_uuid();
+    new.operation_kind := 'provision';
+    new.operation_started_at := now();
+    new.operation_payload := jsonb_build_object('compatibility', 'n_minus_one');
+    new.desired_state := 'running';
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE'
+    and old.deployment_mode = 'hivra-managed'
+    and old.operation_id is null
+    and new.operation_id is null
+    and old.status in ('running', 'stopped', 'error')
+    and new.status = 'provisioning'
+  then
+    new.operation_id := gen_random_uuid();
+    new.operation_kind := 'start';
+    new.operation_started_at := now();
+    new.operation_payload := jsonb_build_object('compatibility', 'n_minus_one');
+    new.desired_state := 'running';
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE'
+    and old.deployment_mode = 'hivra-managed'
+    and old.operation_kind in ('provision', 'start', 'restart', 'resize')
+    -- Dedicated refresh failure retains its operation for inspection/cancel.
+    -- Its evidence guard and completion RPC, not N-1 normalization, own it.
+    and (old.computer_profile is distinct from 'omarchy'
+      or old.operation_payload->>'stage' is distinct from 'prepared_omarchy_refresh')
+    and new.operation_id = old.operation_id
+    and new.operation_kind = old.operation_kind
+    and new.status in ('running', 'stopped', 'error', 'deleted')
+  then
+    if old.desired_state = 'deleted' and new.status <> 'deleted' then
+      raise exception 'legacy provision result was superseded by delete'
+        using errcode = '55000';
+    end if;
+    if new.status = 'deleted' then
+      new.desired_state := 'deleted';
+    end if;
+    new.operation_id := null;
+    new.operation_kind := null;
+    new.operation_started_at := null;
+    new.operation_payload := null;
+  end if;
+
+  return new;
+end;
+$$;
