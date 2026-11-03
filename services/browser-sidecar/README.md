@@ -159,7 +159,7 @@ docker build -t hivra-browser-sidecar:dev . && bash tests/sandbox/run-image-chec
 
 ## Publishing and rollout
 
-CI publishes the tested image to `ghcr.io/ashneil12/hermes-browser-sidecar-canary` (from `canary`) or `ghcr.io/ashneil12/hermes-browser-sidecar` (from `main`) under an immutable `sha-<commit>` tag only. It never moves `:stable`. A box changes sidecar image only when the dashboard's compose names a new image, so a rollout is a reviewed dashboard change that pins the published digest; it reaches running boxes on their next update, which needs the owner's OK per rollout. The compose security settings must be live before (or with) the new image: the new image will not run Chromium without them.
+CI publishes the tested image from `canary` and `main` to `ghcr.io/ashneil12/hermes-browser-sidecar` under an immutable `sha-<commit>` tag only (the old `-canary` package is retired). It never moves `:stable`. A box changes sidecar image only when the dashboard's compose names a new image, so a rollout is a reviewed dashboard change that pins the published digest; it reaches running boxes on their next update, which needs the owner's OK per rollout. The compose security settings must be live before (or with) the new image: the new image will not run Chromium without them.
 
 The automated integration test seeds a localStorage value, shuts down the SessionManager, restarts it, and verifies the value persists. This is the load-bearing requirement at the persistent-context level — if it fails, nothing else about the sidecar is correct.
 

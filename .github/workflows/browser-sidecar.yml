@@ -110,15 +110,14 @@ jobs:
           GHCR_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
-          # Canary and prod publish separate packages; dashboard canary pins the
-          # -canary package and prod pins the prod package.
-          if [[ "$REF_NAME" == "canary" ]]; then
-            package_name="hermes-browser-sidecar-canary"
-          elif [[ "$REF_NAME" == "main" ]]; then
-            package_name="hermes-browser-sidecar"
-          else
+          # Canary and main builds share one package. They differ only by
+          # commit; nothing moves :stable, and a box runs a build only once the
+          # dashboard pins its digest, so a canary build reaches no prod box
+          # until a prod pin names it.
+          if [[ "$REF_NAME" != "canary" && "$REF_NAME" != "main" ]]; then
             echo "refusing to publish from $REF_NAME" >&2; exit 1
           fi
+          package_name="hermes-browser-sidecar"
           target="ghcr.io/ashneil12/${package_name}:sha-${SHA}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
           # sha- tags are write-once: a re-run must not swap the bytes a box
