@@ -1,6 +1,6 @@
 // Claim-bound Omarchy Proxmox lab launcher.
 //
-// This operator fixture follows Omarchy's official v4.0.2 unattended ISO
+// This operator fixture follows Omarchy's official v4 unattended ISO
 // contract. It never invents the installer's JSON schema: the caller supplies
 // files exported by the official installer. Apply requires an explicit routed
 // target and expected hostname, and teardown requires the launch operation ID.
@@ -8,6 +8,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { assertOmarchyInstallerRelease, resolveLatestOmarchyInstaller, VALIDATED_OMARCHY_INSTALLER, type OmarchyInstallerRelease } from "./omarchy-release";
 import * as dotenv from "dotenv";
 
 dotenv.config({ path: path.join(__dirname, "../.env.local"), quiet: true });
@@ -19,11 +20,7 @@ import {
 } from "../src/lib/services/proxmox-instance-service";
 
 export const OMARCHY_PROXMOX_LAB = {
-  release: "v4.0.2",
-  releaseCommit: "346e69e1cec6c4e8924531874af6ba010a1bc99e",
-  isoUrl: "https://iso.omarchy.org/omarchy-4.0.2.iso",
-  isoSha256: "2ef8e624aa1bec7e277e28056b8535a6c9373ba48d7ede3f1a01cb6d2373cfb8",
-  isoFilename: "omarchy-4.0.2.iso",
+  ...VALIDATED_OMARCHY_INSTALLER,
   minimums: { cpu: 4, memoryMb: 8192, diskGb: 40 },
   machine: "q35",
   firmware: "ovmf",
@@ -370,7 +367,9 @@ chmod 0600 "$CIDATA_DIR/${file.name}"`;
 export function buildOmarchyLabLaunchScript(
   params: OmarchyLabParams,
   files: readonly OmarchyCidataFile[],
+  release: OmarchyInstallerRelease = VALIDATED_OMARCHY_INSTALLER,
 ): string {
+  assertOmarchyInstallerRelease(release);
   const graphics = validatedGraphics(params.graphics);
   const cidataFilename = `hivra-omarchy-cidata-${params.vmid}-${params.operationId.slice(0, 8)}.iso`;
   const fileCommands = cidataWriteCommands(files);
@@ -389,9 +388,11 @@ CPU=${shellQuote(params.cpu)}
 MEMORY_MB=${shellQuote(params.memoryMb)}
 DISK_GB=${shellQuote(params.diskGb)}
 GRAPHICS=${shellQuote(graphics)}
-OMARCHY_ISO_URL=${shellQuote(OMARCHY_PROXMOX_LAB.isoUrl)}
-OMARCHY_ISO_SHA256=${shellQuote(OMARCHY_PROXMOX_LAB.isoSha256)}
-OMARCHY_ISO_FILENAME=${shellQuote(OMARCHY_PROXMOX_LAB.isoFilename)}
+OMARCHY_RELEASE=${shellQuote(release.release)}
+OMARCHY_RELEASE_COMMIT=${shellQuote(release.releaseCommit)}
+OMARCHY_ISO_URL=${shellQuote(release.isoUrl)}
+OMARCHY_ISO_SHA256=${shellQuote(release.isoSha256)}
+OMARCHY_ISO_FILENAME=${shellQuote(release.isoFilename)}
 CIDATA_FILENAME=${shellQuote(cidataFilename)}
 CLAIM_IDENTITY="$OPERATION_ID|$EXPECTED_HOSTNAME|$VM_NAME|$VM_STORAGE|$ISO_STORAGE|$CIDATA_FILENAME"
 CLAIM_DIR=/var/lib/hivra/omarchy-claims
@@ -592,10 +593,19 @@ qm create "$VMID" --name "$VM_NAME" \
   --boot 'order=scsi0;ide2'
 qm start "$VMID"
 
+# This is an installer selection receipt, not evidence that the OS install
+# finished. Keep the resolved commit/checksum even after a later release ships.
+install -d -m 0700 /var/lib/hivra/omarchy-receipts
+INSTALLER_RECEIPT="/var/lib/hivra/omarchy-receipts/$VMID-$OPERATION_ID.installer.json"
+printf '{"vmid":%s,"operationId":"%s","release":"%s","releaseCommit":"%s","isoSha256":"%s"}\\n' \
+  "$VMID" "$OPERATION_ID" "$OMARCHY_RELEASE" "$OMARCHY_RELEASE_COMMIT" "$OMARCHY_ISO_SHA256" > "$INSTALLER_RECEIPT.tmp"
+chmod 0600 "$INSTALLER_RECEIPT.tmp"
+mv -f "$INSTALLER_RECEIPT.tmp" "$INSTALLER_RECEIPT"
+
 rm -rf "$STAGE_DIR"
 trap - EXIT
-printf 'HIVRA_OMARCHY_LAB_STARTED {"vmid":%s,"operationId":"%s","hostname":"%s","release":"%s","isoSha256":"%s","cidataRef":"%s"}\n' \
-  "$VMID" "$OPERATION_ID" "$actual_hostname" ${shellQuote(OMARCHY_PROXMOX_LAB.release)} "$OMARCHY_ISO_SHA256" "$ISO_STORAGE:iso/$CIDATA_FILENAME"
+printf 'HIVRA_OMARCHY_LAB_STARTED {"vmid":%s,"operationId":"%s","hostname":"%s","release":"%s","releaseCommit":"%s","isoSha256":"%s","cidataRef":"%s"}\n' \
+  "$VMID" "$OPERATION_ID" "$actual_hostname" ${shellQuote(release.release)} "$OMARCHY_RELEASE_COMMIT" "$OMARCHY_ISO_SHA256" "$ISO_STORAGE:iso/$CIDATA_FILENAME"
 `;
 }
 
@@ -794,6 +804,8 @@ async function main(): Promise<void> {
   const target = resolveProxmoxTargetConfiguration(process.env, args.target);
   const params: OmarchyLabParams = args;
   let script: string;
+  // Resolve once, before generating a script. Teardown needs no upstream access.
+  const release = args.teardown ? null : await resolveLatestOmarchyInstaller();
   let files: OmarchyCidataFile[] = [];
   if (args.teardown) {
     script = buildOmarchyLabTeardownScript(params);
@@ -818,7 +830,7 @@ async function main(): Promise<void> {
       if (!args.sourceDirectory) throw new Error("--source-dir or --defer-provisioning is required for planning and launch.");
       files = readAndValidateOmarchyCidata(args.sourceDirectory);
     }
-    script = buildOmarchyLabLaunchScript(params, files);
+    script = buildOmarchyLabLaunchScript(params, files, release!);
   }
 
   if (!args.apply && !args.teardown) {
@@ -828,8 +840,10 @@ async function main(): Promise<void> {
       expectedHostname: args.expectedHostname,
       vmid: args.vmid,
       operationId: args.operationId,
-      release: OMARCHY_PROXMOX_LAB.release,
-      isoSha256: OMARCHY_PROXMOX_LAB.isoSha256,
+      release: release!.release,
+      releaseCommit: release!.releaseCommit,
+      isoUrl: release!.isoUrl,
+      isoSha256: release!.isoSha256,
       resources: { cpu: args.cpu, memoryMb: args.memoryMb, diskGb: args.diskGb },
       machine: { bios: "ovmf", machine: "q35", display: args.graphics },
       cidata: files.map((file) => ({ name: file.name, sha256: file.sha256, bytes: file.content.length })),

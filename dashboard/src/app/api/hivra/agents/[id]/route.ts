@@ -75,6 +75,8 @@ import {
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { preparedOmarchyRefreshPending } from "@/lib/hivra/prepared-omarchy-refresh-contract";
+import { advancePreparedOmarchyRefresh, cancelPreparedOmarchyRefresh } from "@/lib/hivra/prepared-omarchy-refresh";
 import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import { isAgentLinksEnabled } from "@/lib/agent-links/flag";
@@ -368,6 +370,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // mean no such agent. Any other error is a failed read, not a missing agent.
     if (error && !["PGRST116", "22P02"].includes(error.code)) return apiError("Could not load this computer.", 503);
     if (!agent) return apiError("Agent not found", 404);
+
+    if (preparedOmarchyRefreshPending(agent)) {
+      const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "prepared_omarchy_refresh", userId, limit: 100, windowMs: 5 * 60_000 });
+      if (limited) return limited;
+      let observed = agent;
+      try { observed = await advancePreparedOmarchyRefresh(userId, agent); }
+      catch { log.warn("Prepared Omarchy update remains unconfirmed", { source: "hivra/agents/[id]", agentId: id }); }
+      const response = apiSuccess({ agent: publicAgent(observed) });
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
 
     if (agent.computer_substrate === "provider-vm") {
       let readiness: ProviderAgentReadinessStage | undefined;
@@ -1059,6 +1072,19 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       .eq("user_id", userId)
       .single();
     if (!existingAgent) return apiError("Agent not found", 404);
+
+    if (preparedOmarchyRefreshPending(existingAgent)) {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "prepared_omarchy_cancel", userId, limit: 12, windowMs: 60_000 });
+      if (limited) return limited;
+      try {
+        const observed = await cancelPreparedOmarchyRefresh(userId, existingAgent);
+        const response = apiSuccess({ ok: observed.status === "deleted", agent: publicAgent(observed) }, observed.status === "deleted" ? 200 : 202);
+        response.headers.set("Cache-Control", "no-store"); return response;
+      } catch {
+        return apiError("Cancellation is still being confirmed. This prepared computer remains reserved until its updater has stopped.", 409);
+      }
+    }
 
     if (existingAgent.computer_substrate === "do-managed-session") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
