@@ -125,4 +125,29 @@ if status="$(docker exec "$bad" node /app/dist/cli/sandbox-status.js)"; then
 fi
 echo "ok: browser refused to run unsandboxed and health is red"
 
+echo "== 5. docker compose applies the same settings from the dashboard's compose lines"
+# The dashboard writes the profile beside docker-compose.yml and references it
+# by absolute path (dashboard/src/lib/browser-sidecar/container-security.ts).
+project="$(mktemp -d)"
+cp "$SECCOMP" "$project/browser-sidecar-seccomp.json"
+cat > "$project/docker-compose.yml" <<COMPOSE
+services:
+  browser-sidecar:
+    image: $IMAGE
+    user: browser
+    working_dir: /app
+    entrypoint: ["node", "dist/cli/sandbox-status.js"]
+    init: true
+    security_opt:
+      - seccomp=$project/browser-sidecar-seccomp.json
+      - no-new-privileges:true
+COMPOSE
+docker compose version
+status="$(docker compose -p "$run_id" -f "$project/docker-compose.yml" run --rm browser-sidecar)" \
+  || fail "compose-run sandbox status failed: $status"
+docker compose -p "$run_id" -f "$project/docker-compose.yml" down --remove-orphans >/dev/null 2>&1 || true
+rm -rf "$project"
+echo "$status"
+grep -q '"verdict":"adequate"' <<<"$status" || fail "compose run not adequately sandboxed"
+
 echo "PASS: sidecar image runs Chromium $version with its sandbox on"

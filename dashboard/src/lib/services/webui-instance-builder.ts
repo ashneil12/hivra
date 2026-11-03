@@ -29,6 +29,11 @@ import {
   buildSslipPlaceholderResolutionScript,
 } from "@/lib/services/hetzner-instance-builders";
 import { SIDECAR_SERVER_CODE, WEBUI_HANDOFF_APPENDAGE } from "@/lib/services/sidecar-script";
+import {
+  BROWSER_SIDECAR_SECCOMP_FILE,
+  browserSidecarSeccompProfileJson,
+  browserSidecarSecurityOpts,
+} from "@/lib/browser-sidecar/container-security";
 import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
 import {
   buildWebUISignalDaemonScript,
@@ -867,6 +872,10 @@ function buildBrowserSidecarServiceBlock(p: WebUIDeployParams): string {
       - AGENT_CDP_PROXY_PORT=${AGENT_CDP_PROXY_PORT}` : ""}
     volumes:
       - browser-state:/var/lib/hermes-browser
+    # Chromium's own sandbox stays ON (the image never passes --no-sandbox):
+    # the profile file is written next to this compose by the deploy script.
+    security_opt:
+${browserSidecarSecurityOpts(`/opt/hermes/instances/${p.instanceId}`).map((opt) => `      - ${opt}`).join("\n")}
     expose:
       - "${BROWSER_SIDECAR_INTERNAL_PORT}"
       - "${BROWSER_SIDECAR_NOVNC_PORT}"${agentBrowserCdpEnabled() ? `
@@ -4223,6 +4232,7 @@ ${updateSafetyPrelude}
 ${heredoc("docker-compose.yml", composeYaml)}
 ${heredoc("Caddyfile", artifacts.caddyfile)}
 ${heredoc("sidecar_server.js", artifacts.sidecarServerFile)}
+${p.browserSidecarEnabled ? heredoc(BROWSER_SIDECAR_SECCOMP_FILE, browserSidecarSeccompProfileJson()) : `rm -f ${BROWSER_SIDECAR_SECCOMP_FILE}\n`}
 ${heredoc("signal-daemon.sh", artifacts.signalDaemonFile)}
 ${heredoc(".env", artifacts.envFile)}
 ${heredoc("config.yaml", artifacts.configYaml)}

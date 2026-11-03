@@ -445,10 +445,11 @@ Important coverage limits:
   still need release review. Aeon's separate application build and the pinned
   bux installer downloads remain outside that global-tree scope. Agent Zero's
   digest likewise needs an image-layer and OS-package inventory.
-- The browser-sidecar Dockerfile uses digest-pinned `node:22-bookworm-slim` build
-  images and a digest-pinned `mcr.microsoft.com/playwright:v1.59.1-noble` runtime,
-  plus apt packages. Its npm SBOM is not a container-image SBOM; publishing a
-  built sidecar image still requires image-layer evidence.
+- The browser-sidecar Dockerfile uses a digest-pinned `node:22-trixie-slim` image
+  for all three stages, plus apt packages, including Debian's Chromium from
+  trixie-security (the build refuses anything below 156.0.8078.73). Its npm SBOM
+  is not a container-image SBOM; publishing a built sidecar image still requires
+  image-layer evidence.
 - Hermes and Operator OS use the separate instance/image lane; their image build,
   upstream fork and asset distribution audit is still outstanding. They are not
   covered by the portable five-runtime installer inventory.

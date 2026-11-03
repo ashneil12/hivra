@@ -144,6 +144,7 @@ No silent unauthorized usage. Worst case: one tool call attempt, then BLOCKED fo
 - **IMAP polling window** is hard-clamped to 60 seconds via `IMAP_MAX_POLL_MS` in code. Setting `IMAP_TIMEOUT_MS=...` in env does not extend it — there's no env var that does, on purpose.
 - **noVNC signed URL TTL** is hard-coded to 10 minutes in `NOVNC_TTL_MS`. Re-mint a new URL if you need more time. The verifier also caps `maxTtlMs` server-side, so a client minting a longer-claimed TTL gets clamped.
 - **Tool args** are redacted before logging via `redactArgs()` — `password`, `secret`, `token`, `auth` keys, and the `value` field on `/fill` payloads (which often hold passwords).
+- **Chromium sandbox stays on.** The sidecar opens real, untrusted sites, so the image ships Debian's security-tracked Chromium (not a Playwright-bundled build, which never gets security fixes), refuses to build below `MIN_CHROMIUM_VERSION` in `src/browser/chromium.ts` (156.0.8078.73, the CVE-2026-118306 fix), and never passes `--no-sandbox`. Every process runs as the unprivileged `browser` user (the entrypoint starts as root only to hand the persistent volume over). The container needs `docker/seccomp-chromium.json` (Docker's default profile plus `clone`/`setns`/`unshare` for Chromium's user namespaces) and `no-new-privileges`; the dashboard's compose block sets both. Without them Chromium refuses to start, `/health` turns 503 in CDP mode, and nothing falls back to running unsandboxed. Check a running container with `docker exec <name>-browser-sidecar node /app/dist/cli/sandbox-status.js` (exit 0 = patched and "adequately sandboxed").
 - **Profile data** lives at `${PROFILES_DIR}` (default `/var/lib/hermes-browser/profiles`) inside the container. Mount this on a named volume so it survives restarts. On tier downgrade, the named volume is preserved for 30 days before reclamation (handled by Hermesdeploy reconcile job, not this service).
 
 ## Tests
@@ -151,7 +152,14 @@ No silent unauthorized usage. Worst case: one tool call attempt, then BLOCKED fo
 ```bash
 npm test                  # unit tests; mocked Playwright + IMAP
 npm run test:integration  # real Chromium; gated on RUN_INTEGRATION=1
+docker build -t hivra-browser-sidecar:dev . && bash tests/sandbox/run-image-checks.sh hivra-browser-sidecar:dev
 ```
+
+`tests/sandbox/run-image-checks.sh` is the image regression CI runs (`.github/workflows/browser-sidecar.yml`) on Ubuntu 24.04 with AppArmor's unprivileged-user-namespace restriction on, like the customer VMs: patched Chromium, sandbox "adequate" in both launch paths, all processes non-root, and fail-closed under Docker's default seccomp.
+
+## Publishing and rollout
+
+CI publishes the tested image to `ghcr.io/ashneil12/hermes-browser-sidecar-canary` (from `canary`) or `ghcr.io/ashneil12/hermes-browser-sidecar` (from `main`) under an immutable `sha-<commit>` tag only. It never moves `:stable`. A box changes sidecar image only when the dashboard's compose names a new image, so a rollout is a reviewed dashboard change that pins the published digest; it reaches running boxes on their next update, which needs the owner's OK per rollout. The compose security settings must be live before (or with) the new image: the new image will not run Chromium without them.
 
 The automated integration test seeds a localStorage value, shuts down the SessionManager, restarts it, and verifies the value persists. This is the load-bearing requirement at the persistent-context level — if it fails, nothing else about the sidecar is correct.
 
