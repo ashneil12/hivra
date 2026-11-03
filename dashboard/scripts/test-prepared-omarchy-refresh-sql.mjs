@@ -25,6 +25,10 @@ beforeEach(async()=>{
   const source=readFileSync(path.join(process.cwd(),"supabase/migrations",file),"utf8"),a=source.indexOf(anchor);
   await db.exec(source.slice(a,source.indexOf("\n$$;",a)+4)).catch(error=>{console.error("FUNCTION",file,error.message,error.position,error.where);throw error;});
  }
+ const compatibility=readFileSync(path.join(process.cwd(),"supabase/migrations/20260826130000_hivra_agent_authority_operations.sql"),"utf8");
+ const compatibilityStart=compatibility.indexOf("create or replace function public.normalize_hivra_agent_operation_compatibility()");
+ const compatibilityEnd=compatibility.indexOf("\n-- Validate and serialize a portable binding",compatibilityStart);
+ await db.exec(compatibility.slice(compatibilityStart,compatibilityEnd));
  await db.exec(readFileSync(path.join(process.cwd(),"supabase/migrations/20261103010000_prepared_omarchy_refresh.sql"),"utf8")).catch(error=>{console.error("MIGRATION",error.message,error.position,error.where,error.internalQuery);throw error;});
 });
 afterEach(async()=>{await db.close();});
@@ -68,4 +72,15 @@ test("blocks an older deployment's ready insertion without a durable latest-vers
  const legacy={...row,status:"running",operation_id:null,operation_kind:null,operation_started_at:null,operation_payload:null};
  await expect(scalar("select public.insert_hivra_managed_agent($1::jsonb,4)",[JSON.stringify(legacy)])).rejects.toThrow(/requires a reserved/);
  expect(await scalar("select count(*) from public.hivra_agents")).toBe(0);
+});
+test("preserves legacy compatibility completion for other profiles and ordinary Omarchy operations",async()=>{
+ for(const [i,profile] of [null,"ubuntu-desktop","omarchy"].entries()){
+  const legacyId=`88888888-8888-4888-8888-88888888888${i}`;
+  await db.query("insert into public.hivra_agents(id,user_id,type,computer_profile,deployment_mode,status,desired_state) values($1,'legacy','linux-desktop',$2,'hivra-managed','deleted','running')",[legacyId,profile]);
+  await db.query("update public.hivra_agents set status='stopped' where id=$1",[legacyId]);
+  await db.query("update public.hivra_agents set status='provisioning' where id=$1",[legacyId]);
+  expect(await scalar("select operation_kind from public.hivra_agents where id=$1",[legacyId])).toBe("start");
+  await db.query("update public.hivra_agents set status='error' where id=$1",[legacyId]);
+  expect(await scalar("select operation_id from public.hivra_agents where id=$1",[legacyId])).toBeNull();
+ }
 });

@@ -11,7 +11,8 @@ customer's slot as a disposable acceptance fixture.
    recovery and purge suites, TypeScript, and the PostgreSQL migration harness.
 2. Apply `20261103010000_prepared_omarchy_refresh.sql` to the explicitly approved
    environment. It adds the private operation table, RPCs, guards and public
-   initial-release receipt column. Existing rows are unchanged.
+   initial-release receipt column. Existing rows are unchanged. The legacy status normalizer retains dedicated
+   prepared-refresh failure leases; its behavior for ordinary operations is preserved.
 3. Merge through the public repository Git release path. Verify that the exact
    merge revision holds the Canary alias before testing.
 
