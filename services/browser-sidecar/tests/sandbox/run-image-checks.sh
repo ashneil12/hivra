@@ -43,15 +43,17 @@ fail() {
 }
 
 sandbox_settings=(--init --security-opt "seccomp=$SECCOMP" --security-opt no-new-privileges:true)
+# Throwaway per-run values for the sidecar's required secrets.
+random_hex() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
 sidecar_env=(
-  -e SIGNING_SECRET=ci-signing-secret-0123456789
-  -e SIDECAR_AUTH_TOKEN=ci-auth-token-0123456789
+  -e "SIGNING_SECRET=$(random_hex)"
+  -e "SIDECAR_AUTH_TOKEN=$(random_hex)"
   -e PLAYWRIGHT_HEADLESS=false
   -e DISPLAY=:99
   -e AGENT_CDP_ENABLED=true
   -e AGENT_CDP_PORT=9223
   -e AGENT_CDP_PROXY_PORT=9224
-  -e VNC_PASSWORD=ci-vnc-pass
+  -e "VNC_PASSWORD=$(random_hex | cut -c1-8)"
 )
 
 # Prints the /health body whatever the status code (wget hides a 503's body).
