@@ -1,0 +1,143 @@
+name: Browser sidecar
+
+# Tests the browser sidecar, builds its image, proves on a real Ubuntu 24.04
+# kernel that the image's Chromium runs with its sandbox ON under the same
+# container settings the dashboard gives it, and publishes the tested image
+# under an immutable sha- tag. It never moves :stable: boxes change image only
+# when the dashboard pins a new digest (see services/browser-sidecar/README.md).
+
+on:
+  push:
+    branches: [canary, main]
+    paths:
+      - 'services/browser-sidecar/**'
+      - 'dashboard/src/lib/browser-sidecar/**'
+      - '.github/workflows/browser-sidecar.yml'
+  pull_request:
+    paths:
+      - 'services/browser-sidecar/**'
+      - 'dashboard/src/lib/browser-sidecar/**'
+      - '.github/workflows/browser-sidecar.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-sidecar-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/browser-sidecar
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm test
+      - name: Dashboard ships the same seccomp profile the image is tested with
+        run: cmp docker/seccomp-chromium.json ../../dashboard/src/lib/browser-sidecar/seccomp-chromium.json
+
+  image:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: services/browser-sidecar
+    env:
+      IMAGE: hivra-browser-sidecar:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          docker build \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.source=https://github.com/ashneil12/hivra" \
+            -t "$IMAGE" .
+      - name: Match the customer VMs' user-namespace policy
+        # Customer guests run Ubuntu 24.04 with AppArmor restricting
+        # unprivileged user namespaces. Turn the same restriction on here so the
+        # sandbox check below proves the real case, whatever the runner default.
+        run: |
+          uname -r
+          docker version --format 'docker {{.Server.Version}}'
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone user.max_user_namespaces || true
+          sudo aa-status --enabled && echo "AppArmor enabled"
+      - name: Sandbox regression (sandbox ON, patched Chromium, fails closed)
+        run: bash tests/sandbox/run-image-checks.sh "$IMAGE"
+      - name: Save tested image
+        if: github.event_name == 'push'
+        run: docker save "$IMAGE" | gzip > "$RUNNER_TEMP/browser-sidecar.tar.gz"
+      - name: Upload tested image
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-sidecar-image
+          path: ${{ runner.temp }}/browser-sidecar.tar.gz
+          retention-days: 3
+
+  publish:
+    needs: image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - name: Push immutable sha tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # Canary and prod publish separate packages; dashboard canary pins the
+          # -canary package and prod pins the prod package.
+          if [[ "$REF_NAME" == "canary" ]]; then
+            package_name="hermes-browser-sidecar-canary"
+          elif [[ "$REF_NAME" == "main" ]]; then
+            package_name="hermes-browser-sidecar"
+          else
+            echo "refusing to publish from $REF_NAME" >&2; exit 1
+          fi
+          target="ghcr.io/ashneil12/${package_name}:sha-${SHA}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          # sha- tags are write-once: a re-run must not swap the bytes a box
+          # may already have pinned.
+          if docker manifest inspect "$target" >/dev/null 2>&1; then
+            echo "$target already exists; refusing to overwrite it" >&2; exit 1
+          fi
+          # Publish the exact bytes the image job sandbox-checked.
+          gh run download "$RUN_ID" --name browser-sidecar-image --dir "$RUNNER_TEMP/image"
+          gunzip -c "$RUNNER_TEMP/image/browser-sidecar.tar.gz" | docker load
+          docker tag hivra-browser-sidecar:ci "$target"
+          docker push "$target"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$target")"
+          echo "Published $target"
+          echo "Pin with: $digest"
+          {
+            echo "### Browser sidecar image"
+            echo
+            echo "- tag: \`$target\`"
+            echo "- digest: \`$digest\`"
+            echo "- :stable was not moved."
+          } >> "$GITHUB_STEP_SUMMARY"
