@@ -44,8 +44,9 @@ describe("browser-sidecar image build contract", () => {
     const publish = (parse(text).jobs.publish.steps as Step[]).find((step) => step.name === "Push immutable sha tag")!;
     expect(publish.run).toContain('docker load');
     expect(publish.run).toContain('target="ghcr.io/ashneil12/${package_name}:sha-${SHA}"');
-    expect(publish.run).toContain('package_name="hermes-browser-sidecar-canary"');
+    // One package for canary and main builds; the -canary package is retired.
     expect(publish.run).toContain('package_name="hermes-browser-sidecar"');
+    expect(publish.run).not.toContain("hermes-browser-sidecar-canary");
     expect(publish.run).toContain('refusing to publish from');
     expect(text).not.toMatch(/:stable["'\s]*$/m);
     expect(text).not.toMatch(/docker (tag|push)[^\n]*:stable/);
