@@ -78,7 +78,7 @@ describe("browser-sidecar Chromium is patched and sandboxed", () => {
   it("ships Debian's security-tracked Chromium, not a Playwright-bundled browser", () => {
     expect(dockerfile).not.toContain("mcr.microsoft.com/playwright");
     expect(dockerfile).not.toMatch(/playwright install/);
-    expect(dockerfile).toMatch(/apt-get install[\s\S]*\bchromium\b/);
+    expect(dockerfile).toContain("      chromium fonts-liberation fonts-noto-core");
     expect(dockerfile).toContain("ENV CHROMIUM_PATH=/usr/lib/chromium/chromium");
   });
 

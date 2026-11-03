@@ -87,9 +87,9 @@
       "reason": "Reuses the guardian-lifecycle Sunshine fixture, so it needs the same pinned /usr/bin/sunshine image."
     },
     {
-      "path": "services/browser-sidecar/tests/",
+      "path": "services/browser-sidecar/tests/integration/",
       "category": "not-in-ci",
-      "reason": "Vitest suite with no CI job. Blocked: image-build.test.ts reads .github/workflows/browser-sidecar-publish.yml, which is not in this repository, and tests/integration needs Playwright Chromium."
+      "reason": "Persistence test against a real Playwright-launched Chromium (RUN_INTEGRATION=1). The browser-sidecar workflow runs the unit suite and sandbox-checks real Chromium in the built image, but not this test yet."
     },
     {
       "path": "apps/macos/HivraMac/Tests/",

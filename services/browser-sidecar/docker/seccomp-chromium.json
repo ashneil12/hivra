@@ -1225,11 +1225,24 @@
     {
       "names": [
         "clone",
-        "setns",
         "unshare"
       ],
       "action": "SCMP_ACT_ALLOW",
-      "comment": "Hivra browser sidecar: Chromium's namespace sandbox creates unprivileged user, PID and network namespaces. Everything else is moby/profiles seccomp/default.json at commit 4b8214fc4971e06172938a1f1554ccff6647ee80."
+      "args": [
+        {
+          "index": 0,
+          "value": 235012096,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Hivra browser sidecar: Chromium's namespace sandbox creates user, PID and network namespaces only, so clone/unshare may carry CLONE_NEWUSER/NEWPID/NEWNET and nothing else (mount, cgroup, UTS and IPC namespaces stay blocked; setns stays CAP_SYS_ADMIN-only). Everything else is moby/profiles seccomp/default.json at commit 4b8214fc4971e06172938a1f1554ccff6647ee80.",
+      "excludes": {
+        "arches": [
+          "s390",
+          "s390x"
+        ]
+      }
     }
   ]
 }

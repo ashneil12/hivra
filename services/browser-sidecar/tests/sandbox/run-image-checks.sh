@@ -111,9 +111,14 @@ echo "== 4. Fails closed under Docker's default seccomp (no sandbox settings)"
 bad="$run_id-bad"
 containers+=("$bad")
 docker run -d --name "$bad" --init "${sidecar_env[@]}" "$IMAGE" >/dev/null
-# Past the health grace (60s) the dead browser must make the container unhealthy.
-sleep 75
-body="$(health "$bad" || true)"
+# Within the health grace (60s) a missing browser is tolerated; past it the
+# dead browser must make the container unhealthy. Poll until the 503 shows.
+body=""
+for _ in $(seq 1 60); do
+  body="$(health "$bad" || true)"
+  grep -q '^503 ' <<<"$body" && break
+  sleep 2
+done
 echo "health: $body"
 grep -q '"browser":"down"' <<<"$body" || fail "health did not report the browser down: $body"
 grep -q '"ok":false' <<<"$body" || fail "health still ok with no browser: $body"

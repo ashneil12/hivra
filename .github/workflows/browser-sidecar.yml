@@ -11,10 +11,12 @@ on:
     branches: [canary, main]
     paths:
       - 'services/browser-sidecar/**'
+      - 'dashboard/src/lib/browser-sidecar/**'
       - '.github/workflows/browser-sidecar.yml'
   pull_request:
     paths:
       - 'services/browser-sidecar/**'
+      - 'dashboard/src/lib/browser-sidecar/**'
       - '.github/workflows/browser-sidecar.yml'
 
 permissions:
@@ -41,6 +43,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run lint
       - run: npm test
+      - name: Dashboard ships the same seccomp profile the image is tested with
+        run: cmp docker/seccomp-chromium.json ../../dashboard/src/lib/browser-sidecar/seccomp-chromium.json
 
   image:
     needs: test
@@ -116,10 +120,15 @@ jobs:
             echo "refusing to publish from $REF_NAME" >&2; exit 1
           fi
           target="ghcr.io/ashneil12/${package_name}:sha-${SHA}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          # sha- tags are write-once: a re-run must not swap the bytes a box
+          # may already have pinned.
+          if docker manifest inspect "$target" >/dev/null 2>&1; then
+            echo "$target already exists; refusing to overwrite it" >&2; exit 1
+          fi
           # Publish the exact bytes the image job sandbox-checked.
           gh run download "$RUN_ID" --name browser-sidecar-image --dir "$RUNNER_TEMP/image"
           gunzip -c "$RUNNER_TEMP/image/browser-sidecar.tar.gz" | docker load
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
           docker tag hivra-browser-sidecar:ci "$target"
           docker push "$target"
           digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$target")"

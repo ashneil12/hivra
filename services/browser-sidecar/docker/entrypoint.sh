@@ -109,7 +109,9 @@ export DISPLAY="${DISPLAY_NUM}"
 # dashboard noVNC viewer auth); its SessionManager stays dormant because the
 # agent drives Chrome over CDP, not the /session/start tool surface.
 CDP_PROXY_PID=""
-if [[ "${AGENT_CDP_ENABLED:-false}" == "true" ]]; then
+# Same truthy set as src/server.ts and the sandbox-status CLI (1/true/yes/on).
+cdp_flag="$(printf '%s' "${AGENT_CDP_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [[ "$cdp_flag" =~ ^(1|true|yes|on)$ ]]; then
   echo "[entrypoint] agent CDP bridge enabled — Chrome on :${AGENT_CDP_PORT:-9223}, proxy on :${AGENT_CDP_PROXY_PORT:-9224}"
   node /app/cdp-proxy.mjs &
   CDP_PROXY_PID=$!

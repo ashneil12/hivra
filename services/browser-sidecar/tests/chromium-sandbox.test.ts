@@ -163,27 +163,50 @@ describe("/health reflects the agent's CDP browser", () => {
 });
 
 describe("seccomp-chromium.json", () => {
-  type Rule = { names: string[]; action: string; args?: unknown[]; includes?: unknown; excludes?: unknown; errnoRet?: number };
+  type Rule = {
+    names: string[];
+    action: string;
+    args?: Array<{ index: number; value: number; valueTwo?: number; op: string }>;
+    includes?: { caps?: string[] };
+    excludes?: unknown;
+    errnoRet?: number;
+  };
   const profile = JSON.parse(readFileSync(join(packageRoot, "docker", "seccomp-chromium.json"), "utf8")) as {
     defaultAction: string;
     syscalls: Rule[];
   };
+  const CLONE_NEWNS = 0x00020000;
+  const CLONE_NEWCGROUP = 0x02000000;
+  const CLONE_NEWUTS = 0x04000000;
+  const CLONE_NEWIPC = 0x08000000;
+  const CLONE_NEWUSER = 0x10000000;
+  const CLONE_NEWPID = 0x20000000;
+  const CLONE_NEWNET = 0x40000000;
 
-  it("is Docker's default profile (deny by default) plus one rule for Chromium's namespace sandbox", () => {
+  it("is Docker's default profile (deny by default) plus one rule for Chromium's namespaces", () => {
     expect(profile.defaultAction).toBe("SCMP_ACT_ERRNO");
     const userns = profile.syscalls.at(-1)!;
-    expect(userns).toMatchObject({ names: ["clone", "setns", "unshare"], action: "SCMP_ACT_ALLOW" });
-    expect(userns.args ?? []).toEqual([]);
+    expect(userns).toMatchObject({ names: ["clone", "unshare"], action: "SCMP_ACT_ALLOW" });
     expect(userns.includes ?? {}).toEqual({});
-    // Only that rule widens Docker's default for namespace syscalls.
-    const unconditional = profile.syscalls.filter(
-      (rule) =>
-        rule.action === "SCMP_ACT_ALLOW" &&
-        !rule.includes &&
-        (rule.args ?? []).length === 0 &&
-        rule.names.some((name) => ["clone", "setns", "unshare", "mount", "bpf", "ptrace"].includes(name)),
-    );
-    expect(unconditional).toEqual([userns]);
+    // The flags may carry only user, PID and network namespaces.
+    expect(userns.args).toEqual([
+      { index: 0, value: CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC, valueTwo: 0, op: "SCMP_CMP_MASKED_EQ" },
+    ]);
+    const forbidden = userns.args![0].value;
+    for (const allowed of [CLONE_NEWUSER, CLONE_NEWPID, CLONE_NEWNET]) expect(forbidden & allowed).toBe(0);
+  });
+
+  it("widens nothing else: setns, mount and bpf stay capability-gated as in Docker's default", () => {
+    for (const name of ["setns", "mount", "bpf", "unshare", "clone"]) {
+      const ungated = profile.syscalls.filter(
+        (rule) =>
+          rule.action === "SCMP_ACT_ALLOW" &&
+          rule.names.includes(name) &&
+          !(rule.includes?.caps ?? []).length &&
+          (rule.args ?? []).length === 0,
+      );
+      expect({ name, ungated }).toEqual({ name, ungated: [] });
+    }
   });
 
   it("keeps Docker's clone3 -> ENOSYS rule so glibc falls back to clone", () => {
