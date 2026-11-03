@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
+
 /**
  * Dashboard E2E + visual-regression (VRT) — Tier 1 of the QA pyramid.
  *
@@ -49,6 +51,8 @@ export default defineConfig({
     : [['html', { open: 'never' }], ['list']],
   use: {
     baseURL: BASE_URL,
+    // Local runs: installed Chrome, sandbox on. See scripts/lib/playwright-launch.cjs.
+    ...browserLaunchOptions(),
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
