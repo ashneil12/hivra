@@ -14,6 +14,26 @@
 # Caddy is redundant and stays off.
 set -euo pipefail
 
+# Drop root before anything starts. Chromium opens untrusted sites with its
+# sandbox ON, and that sandbox cannot run as root (src/browser/chromium.ts), so
+# every process below runs as the unprivileged `browser` user. Root is used only
+# for this one-time ownership repair: images before 2026-11 ran as root, so the
+# persistent browser-state volume (profiles, cookies, logins) holds root-owned
+# files the browser user must be able to open.
+BROWSER_USER="${BROWSER_USER:-browser}"
+if [[ "$(id -u)" == "0" ]]; then
+  state_dir=/var/lib/hermes-browser
+  mkdir -p "$state_dir/profiles" "$state_dir/flows" "$state_dir/screenshots"
+  if [[ -n "$(find "$state_dir" ! -user "$BROWSER_USER" -print -quit)" ]]; then
+    echo "[entrypoint] handing $state_dir to $BROWSER_USER"
+    find "$state_dir" ! -user "$BROWSER_USER" -exec chown -h "$BROWSER_USER:$BROWSER_USER" {} +
+  fi
+  install -d -m 1777 /tmp/.X11-unix
+  browser_home="$(getent passwd "$BROWSER_USER" | cut -d: -f6)"
+  exec setpriv --reuid="$BROWSER_USER" --regid="$BROWSER_USER" --init-groups --inh-caps=-all \
+    env HOME="$browser_home" USER="$BROWSER_USER" "$0" "$@"
+fi
+
 DISPLAY_NUM="${DISPLAY:-:99}"
 NOVNC_PORT="${NOVNC_INTERNAL_PORT:-6080}"
 
