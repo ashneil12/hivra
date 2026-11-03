@@ -8,6 +8,8 @@ import path from "node:path";
 import vm from "node:vm";
 import WebSocket, { WebSocketServer } from "ws";
 
+import { launchOptions } from "../../../../scripts/lib/playwright-launch.cjs";
+
 const TOKEN = "b".repeat(64);
 const ORIGIN = "https://agent-zero.hivra.test";
 const RUNTIME_ID = "0123456789abcdef";
@@ -415,7 +417,7 @@ describe("Agent Zero mounted module graph", () => {
   // Opt in for the focused runtime gate; ordinary unit CI does not download a browser.
   (process.env.HIVRA_A0_BROWSER_TEST === "1" ? it : it.skip)("initializes the real browser ModuleMap only once through the actual gateway", async () => {
     const { chromium } = await import("playwright");
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch(launchOptions({ headless: true }));
     moduleGraph = true;
     try {
       const context = await browser.newContext({ extraHTTPHeaders: { Authorization: `Bearer ${TOKEN}` } });
