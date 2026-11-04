@@ -180,11 +180,19 @@ const WEBUI_APPROVAL_GATEWAY_TIMEOUT_SECONDS = 3600;
 // free-tier VMs do not incur the ~1GB RAM footprint.
 const BROWSER_SIDECAR_INTERNAL_PORT = 8789;
 const BROWSER_SIDECAR_NOVNC_PORT = 6080;
-// Prod and canary publish separate browser-sidecar packages. Override via
-// HERMES_BROWSER_SIDECAR_IMAGE when a deployment needs an emergency pin.
-const BROWSER_SIDECAR_PROD_IMAGE = "ghcr.io/ashneil12/hermes-browser-sidecar:stable";
-const BROWSER_SIDECAR_CANARY_IMAGE =
-  "ghcr.io/ashneil12/hermes-browser-sidecar-canary:stable";
+// The sidecar image is pinned by digest, never a floating tag: a box changes
+// sidecar only when this line changes (reviewed, and on prod only via Promote),
+// and an update rollback that restores the old compose restores the old image.
+// CI (.github/workflows/browser-sidecar.yml) publishes every canary/main build
+// as an immutable sha- tag of this one package and prints the digest to pin.
+// This build: commit 9a35d3a0, Debian Chromium 156.0.8078.79 with its sandbox
+// on (CVE-2026-118306 floor 156.0.8078.73), non-root; it needs the compose
+// security settings in buildBrowserSidecarServiceBlock. Override via
+// HERMES_BROWSER_SIDECAR_IMAGE only for an emergency pin.
+const BROWSER_SIDECAR_IMAGE =
+  "ghcr.io/ashneil12/hermes-browser-sidecar@sha256:39ef9d7b0439d15b146ea9101106068ea173f656c5ffa85f1b3a060754e55c61";
+const BROWSER_SIDECAR_PROD_IMAGE = BROWSER_SIDECAR_IMAGE;
+const BROWSER_SIDECAR_CANARY_IMAGE = BROWSER_SIDECAR_IMAGE;
 
 function env(key: string, fallback: string): string {
   const v = process.env[key];
@@ -541,7 +549,7 @@ export function buildHermesTaggedImageCleanupFunctions(): string {
 }
 
 prune_old_unused_hermes_agent_images() {
-  for repo in 'ghcr.io/ashneil12/vanilla-hermes-agent' 'ghcr.io/ashneil12/vanilla-hermes-agent-canary' 'ghcr.io/ashneil12/hermes-webui' 'ghcr.io/ashneil12/operatoros-box' 'ghcr.io/ashneil12/browser-sidecar'; do
+  for repo in 'ghcr.io/ashneil12/vanilla-hermes-agent' 'ghcr.io/ashneil12/vanilla-hermes-agent-canary' 'ghcr.io/ashneil12/hermes-webui' 'ghcr.io/ashneil12/operatoros-box' 'ghcr.io/ashneil12/browser-sidecar' 'ghcr.io/ashneil12/hermes-browser-sidecar' 'ghcr.io/ashneil12/hermes-browser-sidecar-canary'; do
     prune_old_unused_hermes_repo_images "$repo"
   done
 }
