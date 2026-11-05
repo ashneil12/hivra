@@ -46,7 +46,7 @@ export default function YourCloudPage() {
             <div>
               <span className={editorial.eyebrow}>01 / THE SETUP</span>
               <h2 id="pilot-scope">A small setup.<br />A clear handover.</h2>
-              <p>We check your infrastructure and runtime before agreeing the scope, price or start date.</p>
+              <p>We check your infrastructure and agent before agreeing the scope, price or start date.</p>
             </div>
             <ol className={styles.steps}>
               <li><h3>Check the fit</h3><p>Review the infrastructure, access and one workflow together.</p></li>
