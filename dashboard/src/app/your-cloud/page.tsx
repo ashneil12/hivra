@@ -36,7 +36,7 @@ export default function YourCloudPage() {
         <header className={`${editorial.masthead} ${styles.hero}`}>
           <span className={editorial.eyebrow}>CUSTOMER-CLOUD PILOT</span>
           <h1>Your coding agent.<br />Your cloud account.</h1>
-          <p>Already using a coding agent? We are preparing a hands-on pilot to give it a persistent computer on infrastructure you pay for directly.</p>
+          <p>Give the coding agent you already use a persistent computer on infrastructure you pay for directly. Start with a hands-on pilot and a clear handover.</p>
           <p className={styles.scope}>One operator. One supported agent. One development workflow.</p>
           <ActionLinks items={[{ label: "Discuss a pilot", href: enquiryHref, kind: "primary" }]} />
           <p className={styles.note}>Pilot availability is subject to a compatibility review.</p>
