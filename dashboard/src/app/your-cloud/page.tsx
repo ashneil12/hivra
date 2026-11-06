@@ -62,7 +62,7 @@ export default function YourCloudPage() {
             </div>
             <div>
               <h3 className={styles.firstHeading}>A fixed quote after the compatibility check</h3>
-              <p>You pay your infrastructure provider and AI provider directly. Updates, recovery and support can be scoped separately after the pilot.</p>
+              <p>Your infrastructure and AI usage are billed separately. We confirm the supported model-access and billing arrangement before setup. Updates, recovery and support can be scoped separately after the pilot.</p>
               <h3>Choose the arrangement</h3>
               <p>Connecting your infrastructure to hosted Hivra and independently hosting Hivra are separate arrangements. We record the chosen arrangement, who can access it and who maintains it before setup.</p>
               <h3>Agree access before setup</h3>

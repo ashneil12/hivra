@@ -31,7 +31,7 @@ it("presents a compatibility-gated pilot with separate bills and owner-controlle
   render(<YourCloudPage />);
   expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   expect(screen.getByText("Pilot availability is subject to a compatibility review.")).toBeInTheDocument();
-  expect(screen.getByText(/You pay your infrastructure provider and AI provider directly/)).toBeInTheDocument();
+  expect(screen.getByText(/Your infrastructure and AI usage are billed separately/)).toBeInTheDocument();
   expect(screen.getByText(/You do not share your account passwords with us/)).toBeInTheDocument();
   expect(screen.getByText(/Model providers and connected services still receive/)).toBeInTheDocument();
   expect(screen.getByTestId("public-frame")).toHaveAttribute("data-token-surfaces", "false");
