@@ -8,6 +8,7 @@ import {
 } from "@/lib/subscription";
 import { getStripe } from "@/lib/stripe";
 import { log } from "@/lib/logger";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { posthogClient } from "@/lib/posthog";
 import {
   grantStripeTopUpCredits,
@@ -521,7 +522,7 @@ export class StripeWebhookService {
 
     const { data: instance, error: instanceErr } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, name, hetzner_server_id, disk_size_gb, disk_upgraded, status")
+      .select("id, name, hetzner_server_id, gateway_url, disk_size_gb, disk_upgraded, status")
       .eq("id", instanceId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -571,7 +572,9 @@ export class StripeWebhookService {
     // showing "upgraded" but no actual disk, AND the early-return guard
     // at the top of this method would prevent re-attempts on retry.
     // The user paid for storage they don't have.
-    if (!instance.hetzner_server_id) {
+    // A creation receipt is not a provisioned server yet. Taking the no-Hetzner
+    // branch keeps the irreversible disk expansion off a booting server (F090).
+    if (!provisionedHetznerServerId(instance)) {
       log.warn("instance has no hetzner_server_id — recording storage addon without Hetzner resize", {
         source: LOG_SOURCE,
         failureType: "storage_addon_no_hetzner_server",

@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getHetznerInstanceStatus } from "@/lib/services/hetzner-instance-service";
 import { type HermesInstanceRow } from "@/app/api/instances/[id]/route";
 import { isIpv4Literal } from "@/lib/network-address";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 
 interface HermesHostRow {
   id: string;
@@ -37,8 +38,10 @@ export async function resolveInstanceIpv4(instance: HermesInstanceRow): Promise<
       }
     }
   }
-  if (instance.hetzner_server_id) {
-    const hs = await getHetznerInstanceStatus(instance.hetzner_server_id);
+  // A creation receipt (server id with no provisioned gateway) is not the live server (F090).
+  const liveHetznerServerId = provisionedHetznerServerId(instance);
+  if (liveHetznerServerId) {
+    const hs = await getHetznerInstanceStatus(liveHetznerServerId);
     if (hs.ipv4) {
       await supabaseAdmin!.from("hermes_instances").update({ ipv4_address: hs.ipv4 }).eq("id", instance.id);
       return hs.ipv4;

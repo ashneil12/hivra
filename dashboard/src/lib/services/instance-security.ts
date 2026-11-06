@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import { getHetznerInstanceStatus } from "@/lib/services/hetzner-instance-service";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
 import {
   SIDECAR_SERVER_CODE,
@@ -115,6 +116,7 @@ function parseGatewayIpv4(gatewayUrl: string | null | undefined): string {
 async function resolveInstanceIpv4(instance: {
   id: string;
   gateway_url: string | null;
+  status?: string | null;
   host_id?: string | null;
   hetzner_server_id?: number | null;
   ipv4_address?: string | null;
@@ -136,8 +138,10 @@ async function resolveInstanceIpv4(instance: {
     }
   }
 
-  if (instance.hetzner_server_id) {
-    const status = await getHetznerInstanceStatus(instance.hetzner_server_id);
+  // A creation receipt (server id with no provisioned gateway) is not the live server (F090).
+  const liveHetznerServerId = provisionedHetznerServerId(instance);
+  if (liveHetznerServerId) {
+    const status = await getHetznerInstanceStatus(liveHetznerServerId);
     if (status.ipv4) return status.ipv4;
   }
 

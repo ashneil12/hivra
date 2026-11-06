@@ -101,6 +101,7 @@ import { agentWebApi, type AgentWebApiClient } from "@/lib/agent-web-api";
 import { fetchFirstReachableGatewayResponse } from "@/lib/agent-gateway";
 import { extractHermesSessionToken } from "@/lib/hermes-web";
 import { CURATED_SKILLS } from "@/data/curated-skills";
+import { recordHetznerCreationReceipt } from "@/lib/hetzner/creation-receipt";
 
 const LOG_SOURCE = "instance-service";
 const LIVE_CREATE_VALIDATION_PROVIDERS = new Set(["gemini"]);
@@ -3438,6 +3439,15 @@ export class InstanceService {
         hostHetznerServerId,
         hostIp,
         backend,
+        // Creation receipt (F090): the new server's id goes onto this row before
+        // the create action is awaited. A failed write throws, so
+        // provisionHetznerInstance deletes the server it just made.
+        onServerCreated: async ({ serverId }) => {
+          await recordHetznerCreationReceipt(supabaseAdmin!, {
+            instanceId: instance.id,
+            serverId,
+          });
+        },
       });
     }
 
@@ -3683,6 +3693,27 @@ export class InstanceService {
             instanceId: instance.id,
             hetznerServerId: rollbackServerId,
           });
+        }
+
+        // The server the creation receipt named is gone now, so the row must not
+        // keep pointing at it. Clearing the pointer keeps later DELETE and status
+        // paths from acting on a server that no longer exists. Best-effort: a
+        // failed clear is logged, and the row still reads as unprovisioned.
+        if (rollbackOutcome === "deleted") {
+          const { error: receiptClearError } = await supabaseAdmin
+            .from("hermes_instances")
+            .update({ hetzner_server_id: null, updated_at: new Date().toISOString() })
+            .eq("id", instance.id);
+          if (receiptClearError) {
+            log.warn("post-provision rollback could not clear the creation receipt", {
+              source: LOG_SOURCE,
+              failureType: "post_provision_hetzner_receipt_clear_failed",
+              userId,
+              instanceId: instance.id,
+              hetznerServerId: rollbackServerId,
+              clearError: receiptClearError.message,
+            });
+          }
         }
 
         // Double-failure: the metadata UPDATE failed AND the rollback delete

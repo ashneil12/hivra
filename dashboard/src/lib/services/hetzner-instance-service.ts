@@ -154,6 +154,12 @@ export async function provisionHetznerInstance(params: {
   unconfigured?: boolean;
   /** Agent image override (e.g. operatoros-agent:stable for Operator OS). */
   webuiAgentImage?: string;
+  /**
+   * Creation receipt (F090). Awaited right after createServer returns and before
+   * the create action is waited on. A throw here rolls the new server back through
+   * the catch below, so a server the instance row cannot find is never left running.
+   */
+  onServerCreated?: (receipt: { serverId: number; ipv4: string }) => Promise<void>;
 }): Promise<ProvisionResult> {
   if (params.hostId && !params.hostIp) {
     const msg =
@@ -427,6 +433,10 @@ export async function provisionHetznerInstance(params: {
       hetznerServerId: serverId,
       ipv4,
     });
+
+    if (params.onServerCreated) {
+      await params.onServerCreated({ serverId, ipv4 });
+    }
 
     await waitForAction(res.action.id);
     let sshHostFingerprint: string | null = null;
