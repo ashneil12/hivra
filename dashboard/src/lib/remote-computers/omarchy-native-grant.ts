@@ -65,7 +65,8 @@ export function buildOmarchyNativeGuardianGrant(params: {
   // The browser desktop accepts any Omarchy 4 build its owner updates to, but
   // a native grant starts Sunshine with a configuration written for one
   // release, so it still needs an exact validated build.
-  if (!isAcceptedOmarchyNativeBuild(params.descriptor.omarchyPackageVersion, params.descriptor.sunshineVersion)) return null;
+  if (params.descriptor.route.status !== "configured-proven"
+    || !isAcceptedOmarchyNativeBuild(params.descriptor.omarchyPackageVersion, params.descriptor.sunshineVersion)) return null;
   const nowMs = params.nowMs ?? Date.now();
   const observedAtMs = Date.parse(params.descriptor.observedAt);
   const expiresAtMs = Date.parse(params.session.expiresAt);

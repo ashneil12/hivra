@@ -259,14 +259,14 @@
     },
     "omarchy-capability": {
       "script": {
-        "bytes": 24406,
+        "bytes": 24842,
         "limit": "sudo-transport-script",
-        "percent": 2.4
+        "percent": 2.5
       },
       "guestArgument": {
-        "bytes": 20168,
+        "bytes": 20444,
         "limit": "linux-argument",
-        "percent": 15.4
+        "percent": 15.6
       }
     },
     "omarchy-preparation": {
