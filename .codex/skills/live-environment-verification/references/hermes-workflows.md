@@ -13,6 +13,7 @@ Read this for Hermes/Hivra runtime changes. Select the affected workflow; do not
 
 ## Operational lessons
 
+- For an archived computer upgraded before restoration, verify paid limits on both the VM and its containers. Keep the deferred cap change until the restored guest can apply it; archive metadata or stale `config.infrastructure` is not evidence that a live VM exists. Verify the restored public hostname separately from its private network gateway, and syntax-check generated host shell programs before running them.
 - Native browser chat and messaging may execute in different services. Map the live path; do not assume a socket, key, backend, or dependency configured in the gateway also exists in the native dashboard.
 - Preserve the user's native Desktop and custom runtime. If a managed migration cannot safely handle their custom supervisor, report the hold rather than overwriting it or silently clearing the pause.
 - Tenant Docker access must stay within that tenant's verified VM/resource boundary. Never expose a shared host daemon or another customer's volumes to satisfy a Docker test. Verify boundary configuration and use safe negative authorisation tests when that boundary changes.
