@@ -43,3 +43,25 @@ describe("unifyAll software", () => {
     expect(unifyAll([], [codex(undefined)])[0].software).toBeNull();
   });
 });
+
+describe("unifyAll canTryAgain", () => {
+  const errored = (patch: Record<string, unknown>) => ({
+    ...computer("ubuntu-desktop"), status: "error", error: "Desktop never answered",
+    computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    provisioned_at: "2026-09-12T08:30:00Z", vmid: 1113, ...patch,
+  }) as unknown as HivraAgent;
+
+  it("is set only for an errored Hivra Cloud computer that was ready once and still has its machine", () => {
+    expect(unifyAll([], [errored({})])[0].canTryAgain).toBe(true);
+    for (const patch of [
+      { provisioned_at: null },
+      { vmid: null },
+      { computer_substrate: "provider-vm" },
+      { deployment_mode: "self-managed" },
+      { computer_profile: "windows" },
+      { status: "running" },
+    ]) {
+      expect(unifyAll([], [errored(patch)])[0].canTryAgain).toBeUndefined();
+    }
+  });
+});

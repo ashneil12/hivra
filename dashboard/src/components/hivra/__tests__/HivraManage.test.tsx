@@ -270,6 +270,20 @@ describe("HivraManage lifecycle guidance", () => {
     expect(alert).toHaveTextContent("This computer isn’t ready");
     expect(alert).toHaveTextContent("Choose Restart in Manage to try again.");
   });
+  it("offers Try again, which starts the computer, when an errored computer kept its machine", async () => {
+    const onChanged = jest.fn();
+    render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", vmid: 1113, status: "error", provisioned_at: "2026-09-12T08:30:00Z", error: "Desktop never answered" } as HivraAgent}
+      plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mockStartAgent).toHaveBeenCalledWith("test-agent"));
+  });
+  it("disables Try again and says to launch again when the computer was never set up", () => {
+    render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", vmid: 1113, status: "error", provisioned_at: null, error: "Setup failed" } as HivraAgent}
+      plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
+    expect(screen.getAllByText(/launch it again/).length).toBeGreaterThan(0);
+  });
   it("shows no error callout once the computer is running again", () => {
     render(<HivraManage agent={{ ...agent, status: "running", error: "stale" }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
     expect(screen.queryByText("This computer isn’t ready")).not.toBeInTheDocument();

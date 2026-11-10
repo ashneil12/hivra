@@ -149,10 +149,28 @@ describe("manageCapabilitiesFor", () => {
       expect(busy.power.stop).toEqual({ state: "blocked", code: "operation_in_progress", reason: "Wait for the current operation to finish." });
     });
 
-    it("says a computer in error needs checking before Start, not that it is already on", () => {
+    it("offers Start (Try again) on a computer in error that kept its machine, not 'already on'", () => {
       const errored = manageCapabilitiesFor({ ...rows.ubuntu, status: "error" }, { preparedMatch: true }).power;
-      expect(errored.start).toEqual({ state: "blocked", code: "needs_check", reason: "This computer reported an error. Check it before you start it." });
+      expect(errored.start).toEqual({ state: "available" });
       expect(errored.start).not.toMatchObject({ code: "already_on" });
+    });
+
+    it("says a launch that never finished has nothing to start and must be launched again", () => {
+      for (const patch of [{ provisioned_at: null }, { vmid: null }, { provisioned_at: null, vmid: 1113 }]) {
+        const errored = manageCapabilitiesFor({ ...rows.ubuntu, status: "error", ...patch }, { preparedMatch: true }).power;
+        expect(errored.start).toMatchObject({ state: "blocked", code: "never_set_up" });
+        expect((errored.start as { reason: string }).reason).toMatch(/launch it again/);
+      }
+    });
+
+    it("waits while an operation holds an errored computer", () => {
+      const busy = manageCapabilitiesFor({ ...rows.ubuntu, status: "error", operation_id: "op", operation_kind: "start" }, { preparedMatch: true }).power;
+      expect(busy.start).toMatchObject({ state: "blocked", code: "operation_in_progress" });
+    });
+
+    it("keeps other kinds of computer in error on the check-first message", () => {
+      const errored = manageCapabilitiesFor({ ...rows.hetznerUbuntu, status: "error" }, { preparedMatch: true }).power;
+      expect(errored.start).toMatchObject({ state: "blocked", code: "needs_check" });
     });
 
     it("says a Windows computer on My server has no power controls yet, instead of offering and refusing them", () => {

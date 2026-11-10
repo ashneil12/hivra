@@ -18,6 +18,7 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
+  errorKeepsComputer,
   folderRecoveryEligible,
   hasOwnershipBinding,
   isPreparedProfile,
@@ -118,6 +119,10 @@ function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Mana
   const errored = row.status === "error";
   const start = busy ? blocked("operation_in_progress", WAIT)
     : stopped ? available
+      : errored && variant === "ubuntu-proxmox"
+        ? (errorKeepsComputer(row)
+          ? available
+          : blocked("never_set_up", "This computer never finished setting up, so there is nothing to start. Delete it, then launch it again."))
       : errored ? blocked("needs_check", "This computer reported an error. Check it before you start it.")
         : blocked("already_on", "This computer is already on.");
   const stop = busy ? blocked("operation_in_progress", WAIT)
