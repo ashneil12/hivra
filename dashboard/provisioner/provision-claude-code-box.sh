@@ -11,6 +11,9 @@
 #            installer pre-installs codex; the cdp skill is shared via ~/.agents/skills).
 #   linux-desktop — the shared Ubuntu/bux base without an agent CLI or persona;
 #                   authenticated Files and terminals share ~/Hivra.
+#   linux-server  — the same base and workspace as linux-desktop with no desktop:
+#                   Files and the two terminals only (no desktop capability and
+#                   no Claude app helper).
 #
 # What it sets up, end to end:
 #   1. Stock browser-use/bux (Claude Code + Codex CLIs, Node 24, ttyd, the
@@ -64,14 +67,19 @@ CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging 
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
-AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or linux-desktop computer profile
+AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|linux-desktop) ;;
+  claude|codex|aeon|openclaw|agent-zero|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
   *) printf '%s\n' 'unsupported HIVRA_AGENT_KIND' >&2; exit 1 ;;
 esac
+# Both Linux computer kinds share the access base, workspace and terminals;
+# only linux-desktop installs the desktop capability and the Claude app helper.
+is_linux_computer() {
+  [ "${AGENT_KIND:-}" = "linux-desktop" ] || [ "${AGENT_KIND:-}" = "linux-server" ]
+}
 # Explicit substrate, not a best-effort fallback when required hardware fails.
 # The managed/Proxmox default retains its required QEMU guest agent. A provider
 # VM is already the isolation boundary and need not expose that guest channel.
@@ -111,6 +119,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "agent-zero" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
+# The desktop-free Linux server has no browser stack either.
+[ "$AGENT_KIND" = "linux-server" ] && WANT_BROWSER=0
 # OpenClaw CAN drive the box's CDP Chrome (browser.cdpUrl → :${CDP_PORT}); it just
 # honors the launch toggle like the coding agents (default off, opt in for the
 # live "log into your accounts" browser). The block below wires cdpUrl when on.
@@ -315,7 +325,7 @@ fi
 # ===========================================================================
 say "2/7  install stock bux into ${BUX_DIR} (dummy BU key, WITH_ZTK=0)"
 # ===========================================================================
-if [ "$AGENT_KIND" = "linux-desktop" ]; then
+if is_linux_computer; then
   # A plain computer must not depend on an agent distribution. Install only
   # the small host-side access base used by Files and the two terminals; the
   # contained desktop itself is installed later by remote-desktop/install-guest.py.
@@ -485,7 +495,7 @@ id "${AGENT_USER}" >/dev/null 2>&1 || die "agent user ${AGENT_USER} not created 
 fi
 
 prepare_linux_desktop_workspace() {
-  [ "${AGENT_KIND:-}" = "linux-desktop" ] || return 0
+  is_linux_computer || return 0
   local workspace="${AGENT_HOME}/Hivra" owner expected_owner mode
   expected_owner="$(id -u "${AGENT_USER}"):$(id -g "${AGENT_USER}")"
   if [ ! -e "$workspace" ] && [ ! -L "$workspace" ]; then
@@ -777,7 +787,7 @@ else
   sed -i "/^Environment=HIVRA_CHAT_PORT=/a Environment=HIVRA_AGENT_KIND=${AGENT_KIND}" \
     /etc/systemd/system/bux-hivra-chat.service
 fi
-if [ "$AGENT_KIND" = "linux-desktop" ]; then
+if is_linux_computer; then
   sed -i "/^Environment=HIVRA_AGENT_KIND=/a Environment=HIVRA_WORKSPACE_ROOT=${AGENT_HOME}/Hivra" \
     /etc/systemd/system/bux-hivra-chat.service
 fi
@@ -1259,7 +1269,7 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "linux-desktop" ]; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1297,7 +1307,7 @@ rm -rf "${AGENT_HOME}/.codex" 2>/dev/null || true
 sudo -iu "${AGENT_USER}" bash -lc 'npm uninstall -g @openai/codex >/dev/null 2>&1' || true
 npm uninstall -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
 rm -rf /usr/lib/node_modules/@anthropic-ai/claude-code /usr/bin/claude 2>/dev/null || true
-if [ "$AGENT_KIND" = "linux-desktop" ]; then
+if is_linux_computer; then
   # No browser automation or agent skill contract survives on a plain computer.
   rm -rf "${AGENT_HOME}/.claude" "${AGENT_HOME}/.agents" 2>/dev/null || true
   ok "${AGENT_KIND} box — stripped claude/codex CLIs, agent state and persona docs"
@@ -1314,7 +1324,7 @@ install_native_terminals() {
   install -d -o root -g root -m 0755 /etc/systemd/system/bux-ttyd.service.d
   install -o root -g root -m 0644 "$SRC_DIR/bux-ttyd-base-path.conf" /etc/systemd/system/bux-ttyd.service.d/base-path.conf
   install -o root -g root -m 0644 "$SRC_DIR/bux-box-ttyd.service" /etc/systemd/system/bux-box-ttyd.service
-  if [ "${AGENT_KIND:-}" = "linux-desktop" ]; then
+  if [ "${AGENT_KIND:-}" = "linux-desktop" ] || [ "${AGENT_KIND:-}" = "linux-server" ]; then
     sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' \
       /etc/systemd/system/bux-ttyd.service.d/base-path.conf \
       /etc/systemd/system/bux-box-ttyd.service
@@ -1550,6 +1560,9 @@ elif [ "$AGENT_KIND" = "agent-zero" ]; then
 elif [ "$AGENT_KIND" = "linux-desktop" ]; then
   LOGIN_HINT="none — Linux Desktop has no agent account login"
   STATUS_HINT="systemctl status bux-hivra-chat bux-ttyd bux-box-ttyd --no-pager"
+elif [ "$AGENT_KIND" = "linux-server" ]; then
+  LOGIN_HINT="none — a Linux computer has no agent account login"
+  STATUS_HINT="systemctl status bux-hivra-chat bux-ttyd bux-box-ttyd --no-pager"
 elif [ "$AGENT_KIND" = "codex" ]; then
   LOGIN_HINT="sudo -iu ${AGENT_USER} codex login --device-auth"
   STATUS_HINT="sudo -iu ${AGENT_USER} codex login status"
@@ -1571,7 +1584,7 @@ ${c_green}${c_bold}Provisioning complete (${AGENT_KIND}).${c_reset}
       ${STATUS_HINT}
 
   The Hivra gateway at :${HIVRA_CHAT_PORT} exposes only the authenticated
-  surfaces supported by ${AGENT_KIND}.$([ "$AGENT_KIND" = "linux-desktop" ] && echo " Agent chat and agent login are disabled." || echo "")
+  surfaces supported by ${AGENT_KIND}.$(is_linux_computer && echo " Agent chat and agent login are disabled." || echo "")
 
   ${c_dim}Exposure (chat) is intentionally NOT configured here — see README
   for the cloudflared --protocol http2 / named-tunnel / Caddy options.${c_reset}

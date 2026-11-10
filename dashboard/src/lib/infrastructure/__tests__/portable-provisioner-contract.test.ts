@@ -18,6 +18,7 @@ import {
   portableHivraRequiredAssetsForProvisionerDirectory,
   portableProvisionerSupportsCatalogRuntime,
   portableRuntimeCompatibilityForProvisioner,
+  compatibleProxmoxVersionsForRuntime,
   isCompatibleProviderVmProvisionerVersion,
   supportsModelSettingsProvisionerVersion,
   isCompatibleProxmoxProvisionerVersion,
@@ -228,6 +229,7 @@ describe("portable provisioner source contract", () => {
         "agent-zero",
         "deepseek-harness",
         "linux-desktop",
+        "linux-server",
       ],
       supportedHostCapabilities: ["windows-installer"],
     });
@@ -238,7 +240,7 @@ describe("portable provisioner source contract", () => {
     expect(portableRuntimeCompatibilityForProvisioner({
       ready: true,
       version: PORTABLE_HIVRA_PROVISIONER_VERSION,
-    })?.supportedCatalogRuntimeIds).toContain("linux-desktop");
+    })?.supportedCatalogRuntimeIds).toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
     expect(portableRuntimeCompatibilityForProvisioner({
       ready: true,
       version: "2026.09.08.3",
@@ -251,7 +253,7 @@ describe("portable provisioner source contract", () => {
     const hostProvisioner = source("hivra-provision-on-host.sh");
     const runtimeInstaller = source("provision-claude-code-box.sh");
     expect(hostProvisioner).toContain(
-      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|deepseek-harness|linux-desktop)',
+      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|deepseek-harness|linux-desktop|linux-server)',
     );
     for (const agentKind of ["codex", "aeon", "openclaw", "agent-zero"]) {
       expect(runtimeInstaller).toContain(`[ "$AGENT_KIND" = "${agentKind}" ]`);
@@ -930,5 +932,37 @@ describe("per-runtime provisioner minimums", () => {
     for (const runtime of ["claude-code", "codex", "deepseek-harness"]) {
       expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(true);
     }
+  });
+});
+
+describe("linux-server provisioner minimum", () => {
+  it("needs the release that ships the kind, and leaves Linux Desktop placement unchanged", () => {
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-server")).toBe(true);
+    for (const version of ["2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.10.20.2", "2026.09.04.2"]) {
+      expect({ version, linuxServer: portableProvisionerSupportsCatalogRuntime(version, "linux-server") }).toEqual({ version, linuxServer: false });
+      expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version })?.supportedCatalogRuntimeIds).not.toContain("linux-server");
+    }
+    // A host on .3 still takes Linux Desktop; a host on .4 takes both profiles.
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.3", "linux-desktop")).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.3" })?.supportedCatalogRuntimeIds).toContain("linux-desktop");
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
+      .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4"]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
+    // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
+    expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));
+  });
+
+  it("is refused by every provider-VM check", () => {
+    expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-server")).toBe(false);
+    expect(PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).not.toContain("linux-server");
+  });
+
+  it("wraps the accepted AGENT_KIND values with the same shell, Python and gateway allowlists", () => {
+    expect(source("hivra-install-agent.py")).toContain('LINUX_COMPUTER_KINDS = {"linux-desktop", "linux-server"}');
+    expect(source("hivra-runtime-receipt.py")).toContain('"linux-desktop", "linux-server"), required=True');
+    expect(source("hivra-agent-shell")).toContain("aeon|openclaw|agent-zero|linux-desktop|linux-server)");
+    expect(source("hivra-chat/server.js")).toContain('["deepseek-harness", "linux-desktop", "linux-server"].includes(process.env.HIVRA_AGENT_KIND)');
   });
 });

@@ -74,6 +74,49 @@ it("emits Linux Desktop only as a strict v3 computer launch", () => {
     HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
     HIVRA_CONTROL_ORIGIN: "https://canary.example.test" }).status).toBe(1);
 });
+it("emits Linux server only as the same strict v3 computer launch", () => {
+  const env = { AGENT_KIND: "linux-server", HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
+    HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
+    HIVRA_CONTROL_ORIGIN: "https://canary.example.test" };
+  const result = document(env);
+  expect(result.status).toBe(0); expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({ version: 3, agentKind: "linux-server", computerSubstrate: "proxmox-kvm",
+    wantBrowser: null, modelKey: "", modelBaseUrl: "", model: "", tunnelToken: "fixture-tunnel",
+    accessHostname: null, publicOrigin: "https://computer.example.test",
+    computerId: "11111111-1111-4111-8111-111111111111", controlOrigin: "https://canary.example.test" });
+  // The launch document itself refuses missing halves, a browser flag and model settings.
+  const documentRefusals: Array<Record<string, string>> = [{ HIVRA_TUNNEL_URL: "" }, { HIVRA_TUNNEL_TOKEN: "" }, { HIVRA_MODEL_KEY: "synthetic" }, { HIVRA_WANT_BROWSER: "0" },
+    { HIVRA_WANT_BROWSER: "1" }, { HIVRA_COMPUTER_ID: "" }, { HIVRA_CONTROL_ORIGIN: "" }];
+  for (const bad of documentRefusals) {
+    expect({ bad, status: document({ ...env, ...bad }).status }).toEqual({ bad, status: 1 });
+  }
+  // Allocation-time validation applies to the new kind exactly as to Linux Desktop.
+  const hostSource = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+  const start = hostSource.indexOf("validate_linux_desktop_input() {");
+  const end = hostSource.indexOf("\nvalidate_linux_desktop_input\n", start);
+  expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+  const validate = (kind: string, overrides: Record<string, string>) => spawnSync("/bin/bash", ["--noprofile", "--norc", "-s"], {
+    input: `set -euo pipefail\nfail() { exit 1; }\n${hostSource.slice(start, end)}\nvalidate_linux_desktop_input\n`,
+    env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", AGENT_KIND: kind, HIVRA_MODEL_KEY: "", HIVRA_MODEL_BASE_URL: "", HIVRA_HERMES_MODEL: "",
+      HIVRA_WANT_BROWSER: "", HIVRA_TUNNEL_TOKEN: env.HIVRA_TUNNEL_TOKEN, HIVRA_TUNNEL_URL: env.HIVRA_TUNNEL_URL,
+      HIVRA_COMPUTER_ID: env.HIVRA_COMPUTER_ID, HIVRA_CONTROL_ORIGIN: env.HIVRA_CONTROL_ORIGIN, ...overrides }, encoding: "utf8", timeout: 3_000,
+  }).status;
+  for (const kind of ["linux-desktop", "linux-server"]) {
+    expect(validate(kind, {})).toBe(0);
+    const allocationRefusals: Array<Record<string, string>> = [{ HIVRA_TUNNEL_URL: "" }, { HIVRA_TUNNEL_TOKEN: "" }, { HIVRA_MODEL_KEY: "synthetic" }, { HIVRA_MODEL_BASE_URL: "https://m.example.test" },
+      { HIVRA_WANT_BROWSER: "0" }, { HIVRA_COMPUTER_ID: "not-a-uuid" }, { HIVRA_COMPUTER_ID: "" }, { HIVRA_CONTROL_ORIGIN: "http://canary.example.test" },
+      { HIVRA_CONTROL_ORIGIN: "" }, { HIVRA_TUNNEL_URL: "https://computer.example.test/" }, { HIVRA_TUNNEL_URL: "https://Computer.example.test" }];
+    for (const bad of allocationRefusals) {
+      expect({ kind, bad, status: validate(kind, bad) }).toEqual({ kind, bad, status: 1 });
+    }
+  }
+  // Other kinds are not subject to the computer validation.
+  expect(validate("codex", { HIVRA_COMPUTER_ID: "" })).toBe(0);
+  // Unknown kinds are still refused at the host's first gate.
+  const source = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+  expect(source).toContain("deepseek-harness|linux-desktop|linux-server) ;; *)");
+  expect(source).not.toContain("linux-servers");
+});
 const REPORTER_TOKEN = ["hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ", "Zml4dHVyZS1zaWduYXR1cmU"].join("."); // synthetic, built at runtime
 const REPORTER_CREDENTIAL = {
   endpoint: "https://canary.example.test/api/activity/ingest",
@@ -123,7 +166,7 @@ it("rejects a reporter credential for other runtimes or in any malformed shape w
     expect({ kind, credential, status: result.status, stdout: result.stdout, stderr: result.stderr })
       .toEqual({ kind, credential, status: 1, stdout: "", stderr: "invalid guest launch input\n" });
   }
-  for (const kind of ["deepseek-harness", "linux-desktop"]) {
+  for (const kind of ["deepseek-harness", "linux-desktop", "linux-server"]) {
     expect(document({ AGENT_KIND: kind, HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
       HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
       HIVRA_CONTROL_ORIGIN: "https://canary.example.test", HIVRA_ACTIVITY_TELEMETRY: JSON.stringify(REPORTER_CREDENTIAL) }).status).toBe(1);
