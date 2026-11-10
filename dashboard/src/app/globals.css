@@ -1691,3 +1691,56 @@ body::before {
     .hg-glass, .etched-card { background: var(--hg-surface); }
     .hg-glass-strong { background: var(--hg-surface-2); }
 }
+
+/* The homepage is always dark, whatever the device's theme. Its palette sits
+   here rather than in public-site.module.css so the cookie banner, which the
+   root layout mounts outside the page, can wear it too while the homepage is
+   open. The legacy aliases are restated because :root resolved them against
+   the light palette. */
+[data-public-site][data-variant="home"],
+html:has([data-public-site][data-variant="home"]) .hivra-cookie-consent {
+    color-scheme: dark;
+    --hg-bg:hsl(240 0% 9%);
+    --hg-fg:hsl(240 0% 92%);
+    --hg-floor:hsl(240 0% 6%);
+    --hg-text:var(--hg-fg);
+    --hg-text-2:color-mix(in srgb,var(--hg-fg) 68%,transparent);
+    --hg-text-3:color-mix(in srgb,var(--hg-fg) 46%,transparent);
+    --hg-stroke:color-mix(in srgb,var(--hg-fg) 9%,transparent);
+    --hg-stroke-strong:color-mix(in srgb,var(--hg-fg) 16%,transparent);
+    --hg-stroke-subtle:color-mix(in srgb,var(--hg-fg) 6%,transparent);
+    --hg-fill-1:color-mix(in srgb,var(--hg-fg) 4%,transparent);
+    --hg-fill-2:color-mix(in srgb,var(--hg-fg) 7%,transparent);
+    --hg-fill-3:color-mix(in srgb,var(--hg-fg) 11%,transparent);
+    --hg-fill-hover:color-mix(in srgb,var(--hg-fg) 9%,transparent);
+    --hg-surface:color-mix(in srgb,var(--hg-fg) 3%,var(--hg-bg));
+    --hg-surface-2:color-mix(in srgb,var(--hg-fg) 6%,var(--hg-bg));
+    --hg-glass:color-mix(in srgb,var(--hg-bg) 58%,transparent);
+    --hg-glass-strong:color-mix(in srgb,var(--hg-bg) 84%,transparent);
+    --hg-glass-edge:inset 0 1px 0 color-mix(in srgb,white 6%,transparent);
+    --hg-shadow-sm:0 1px 2px rgb(0 0 0 / .3);
+    --hg-shadow-md:0 10px 30px -8px rgb(0 0 0 / .5),0 2px 6px rgb(0 0 0 / .25);
+    --hg-shadow-lg:0 30px 80px -20px rgb(0 0 0 / .7),0 6px 18px rgb(0 0 0 / .35);
+    --hg-haze-1:color-mix(in srgb,hsl(215 45% 55%) 16%,transparent);
+    --hg-haze-2:color-mix(in srgb,hsl(352 55% 55%) 9%,transparent);
+    --hg-haze-3:color-mix(in srgb,hsl(265 30% 60%) 10%,transparent);
+    --hg-accent:var(--hg-fg);
+    --hg-on-accent:var(--hg-bg);
+    --hg-focus:hsl(211 92% 62%);
+    --hg-ok:#34d399;
+    --hg-warn:#fbbf24;
+    --hg-bad:#f87171;
+    --hg-brand:#ff3a3b;
+    --vellum-bg:var(--hg-bg);
+    --ink-black:var(--hg-fg);
+    --text-primary:var(--hg-text);
+    --text-secondary:var(--hg-text-2);
+    --text-muted:var(--hg-text-3);
+    --etched-border: var(--hg-stroke);
+    --bg-surface: var(--hg-surface);
+    --bg-elevated: var(--hg-surface-2);
+    --gold-leaf: var(--hg-accent);
+    --btn-bg: var(--hg-accent);
+    --btn-text: var(--hg-on-accent);
+    color: var(--hg-text);
+}
