@@ -233,7 +233,7 @@ async function main() {
     await db.exec(LINUX_SERVER_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedLinuxServer, "re-applying the 2026.11.10.4 admission changes nothing");
     // 2026.11.10.5 anchors on the 2026.11.10.4 entry; idempotent too.
-    const DEEPSEEK_MODEL_ADMISSION = migration("20261111100000_provider_release_admission_2026_11_10_5.sql");
+    const DEEPSEEK_MODEL_ADMISSION = migration("20261111160000_provider_release_admission_2026_11_10_5.sql");
     await db.exec(DEEPSEEK_MODEL_ADMISSION);
     const admittedDeepSeekModel = await admissionDefinitions();
     admittedDeepSeekModel.forEach((definition, index) => {

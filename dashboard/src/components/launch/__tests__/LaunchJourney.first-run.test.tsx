@@ -94,7 +94,7 @@ beforeEach(() => {
   sharedTemplate = null;
   fetchPlanStrictMock.mockResolvedValue(NO_PLAN);
   summaryMock.mockResolvedValue({ ok: true, summary: { wallets: {
-    card: { balanceMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
+    card: { balanceMicroUsd: 5_000_000, availableMicroUsd: 5_000_000, reservedMicroUsd: 0 },
     hermesos: { tokenDisplay: "0", lockedValueMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
   } } });
   checkoutMock.mockResolvedValue({ ok: true, activated: true });
@@ -198,7 +198,7 @@ describe("a paying customer whose plan is on hold", () => {
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
     expect(screen.queryByText(/not turned on yet/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No charge\. It runs on the Free plan/)).not.toBeInTheDocument();
-    expect(screen.getByText("Uses your Pro plan allowance once the plan is active again.")).toBeInTheDocument();
+    expect(screen.getByText(/^Uses your Pro plan allowance once the plan is active again\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
     expect(checkoutMock).not.toHaveBeenCalled();
