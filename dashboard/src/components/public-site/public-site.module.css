@@ -5,6 +5,7 @@
 .site[data-variant="home"]{color-scheme:dark;background:radial-gradient(ellipse 70% 55% at 80% 0%,var(--hg-haze-1),transparent 70%),radial-gradient(ellipse 55% 45% at 5% 40%,var(--hg-haze-3),transparent 70%),radial-gradient(ellipse 60% 40% at 60% 100%,var(--hg-haze-1),transparent 70%),var(--hg-bg)}
 .site[data-variant="home"] .header{background:var(--hg-glass-strong)}
 .site[data-variant="home"] .themeControl{display:none}
+.site[data-variant="home"] .footerInvitation{display:none}
 .site{--vellum-bg:var(--hg-bg);--bg-primary:var(--hg-bg);--bg-surface:var(--hg-surface);--bg-elevated:var(--hg-surface-2);--ink-black:var(--hg-text);--text-primary:var(--hg-text);--text-secondary:var(--hg-text-2);--text-muted:var(--hg-text-3);--etched-border:var(--hg-stroke);--border-subtle:var(--hg-stroke-subtle);--border:var(--hg-stroke);--font-outfit:var(--public-font);--font-grotesk:var(--public-font);--font-playfair:var(--public-font);--font-mono:var(--public-mono);position:relative;isolation:isolate;min-height:100dvh;line-height:1.7}
 .site :where(h1,h2,h3,h4){font-family:var(--font-display);letter-spacing:-.03em;font-weight:600}
 .site :where(button,input,textarea,select){font-family:inherit}
