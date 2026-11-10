@@ -5,7 +5,9 @@ import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isVenicePromoEnabled } from "@/lib/venice/promo/core";
-import { getUserPromoLines, redeemVeniceCode, type RedeemStatus } from "@/lib/venice/promo/service";
+import { getUserPromoLines, recordVeniceAttribution, redeemVeniceCode, type RedeemStatus } from "@/lib/venice/promo/service";
+import { VENICE_ATTRIBUTION_COOKIE, parseVeniceAttribution } from "@/lib/venice/attribution";
+import { log } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +26,24 @@ const MESSAGES: Record<RedeemStatus, string> = {
 };
 
 /** The user's promo credit lines. Empty and cheap while the promo is off. */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) return apiError("Unauthorized", 401);
   if (!isVenicePromoEnabled()) return apiSuccess({ enabled: false, lines: [], codeEntry: false });
+  // A visitor who arrived from /venice (or a link with ?code=) carries the
+  // attribution cookie: remember it for this account. Idempotent.
+  const attribution = parseVeniceAttribution(request.cookies.get(VENICE_ATTRIBUTION_COOKIE)?.value);
+  if (attribution.ref || attribution.code) {
+    try {
+      await recordVeniceAttribution({ userId, attribution });
+    } catch (error) {
+      log.warn("Venice promo attribution could not be saved", {
+        source: "billing/venice-promo",
+        failureType: "venice_promo_attribution_failed",
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  }
   try {
     const lines = await getUserPromoLines(userId);
     return apiSuccess({

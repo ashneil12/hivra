@@ -780,7 +780,12 @@ export function LaunchJourney(
   const refParam = searchParams?.get("ref") ?? null;
   const codeParam = searchParams?.get("code") ?? null;
   useEffect(() => {
-    captureVeniceAttribution(attributionFromParams(key => key === "ref" ? refParam : key === "code" ? codeParam : null));
+    const attribution = captureVeniceAttribution(attributionFromParams(key => key === "ref" ? refParam : key === "code" ? codeParam : null));
+    // Signed in here: let the server read the cookie and remember the Venice
+    // promo for this account (it grants nothing until a credits launch).
+    if (attribution.ref || attribution.code) {
+      void fetch("/api/billing/venice-promo", { cache: "no-store" }).catch(() => undefined);
+    }
   }, [refParam, codeParam]);
   const startParam = searchParams?.get("start") ?? null;
   const draftParam = searchParams?.get("draft") ?? null;
