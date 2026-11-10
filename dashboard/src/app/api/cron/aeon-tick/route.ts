@@ -23,9 +23,12 @@ const SOURCE = "aeon-tick";
 // route must NOT replicate that gating — it would double-gate and could mask a
 // real outage. One dispatch per cron tick; the scheduler + its 90m dedup handle
 // which skills (if any) are due.
-// Customer installs use upstream Aeon. Set AEON_DISPATCH_REPO to dispatch to a
-// different repo (for example a private fork).
-const DEFAULT_AEON_REPO = "aaronjmars/aeon";
+// This ticks Hivra's own Aeon instance, which runs from a fork: a dispatch can
+// only go to a repo the token may write to, never to upstream aaronjmars/aeon
+// (that would be refused, and would run someone else's workflows if it were
+// not). Customer Aeon installs run on each customer's own fork and token and
+// are not ticked here. Set AEON_DISPATCH_REPO to point at a different fork.
+const DEFAULT_AEON_REPO = "ashneil12/aeon";
 const DISPATCH_TIMEOUT_MS = 8_000;
 
 export const dynamic = "force-dynamic";
