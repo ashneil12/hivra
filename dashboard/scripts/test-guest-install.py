@@ -112,7 +112,7 @@ class LaunchContract(unittest.TestCase):
     def test_native_v2_takes_launch_time_model_settings_all_or_none(self):
         none = launch(version=2, agentKind="deepseek-harness", computerSubstrate="proxmox-kvm",
                       publicOrigin="https://native.example.test", modelKey="", modelBaseUrl="", model="")
-        model = {"modelKey": "hven_synthetic-key.0123456789", "modelBaseUrl": "https://models.example.test/api/managed-venice/v1",
+        model = {"modelKey": "fixture-key-fixture-key", "modelBaseUrl": "https://models.example.test/api/managed-venice/v1",
                  "model": "deepseek-v4-1-flash"}
         value = {**none, **model}
         self.assertEqual(guest.parse_launch(json.dumps(value).encode()), value)
@@ -156,7 +156,7 @@ class LaunchContract(unittest.TestCase):
         # The shared bootstrap has no use for the native model settings; only the
         # owned seed consumes them, over stdin.
         value = launch(version=2, agentKind="deepseek-harness", computerSubstrate="proxmox-kvm",
-                       publicOrigin="https://native.example.test", modelKey="hven_synthetic-key.0123456789",
+                       publicOrigin="https://native.example.test", modelKey="fixture-key-fixture-key",
                        modelBaseUrl="https://models.example.test/v1", model="deepseek-v4-1-flash")
         module = Mock()
         seen = {}
