@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 
 import { DeferredGTM } from "@/components/DeferredGTM";
-import { Outfit, Playfair_Display, Space_Mono, Space_Grotesk } from "next/font/google";
 import { cookies, headers } from "next/headers";
 import Script from "next/script";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -18,38 +17,9 @@ import { OG_IMAGE } from "@/lib/og-meta";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import "./globals.css";
 
-// These faces are not used by the public site shell (it ships its own
-// "Hivra Manrope"/"Hivra Plex Mono"), but next/font preloads every font declared
-// in the root layout on every route, which puts ~130 KB of woff2 on the same
-// constrained link as the render-blocking CSS. `preload: false` keeps the
-// @font-face rules and CSS variables, so routes that do render these faces
-// (dashboard, sign-in, get-started, cookie banner) fetch them on demand.
-const outfit = Outfit({
-  preload: false,
-  subsets: ["latin"],
-  variable: "--font-outfit",
-});
-
-const playfair = Playfair_Display({
-  preload: false,
-  subsets: ["latin"],
-  variable: "--font-playfair",
-});
-
-const spaceMono = Space_Mono({
-  preload: false,
-  weight: ["400", "700"],
-  subsets: ["latin"],
-  variable: "--font-mono",
-});
-
-// Hivra brand display typeface — technical, gridded, used for landing headlines.
-const spaceGrotesk = Space_Grotesk({
-  preload: false,
-  weight: ["400", "500", "700"],
-  subsets: ["latin"],
-  variable: "--font-grotesk",
-});
+// Hivra uses the system faces (SF Pro / Segoe UI / Roboto and the system
+// monospace), as the native apps do. globals.css names them in --font-sans,
+// --font-display and --font-mono, so no web font is downloaded at all.
 
 const GOOGLE_ANALYTICS_ID =
   process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_ID ||
@@ -60,8 +30,8 @@ const CLIENT_RELEASE_FINGERPRINT =
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f0e8" },
-    { media: "(prefers-color-scheme: dark)", color: "#1a1a18" },
+    { media: "(prefers-color-scheme: light)", color: "#f7f7f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#171717" },
   ],
   width: "device-width",
   initialScale: 1,
@@ -168,7 +138,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const selfHosted = isLocalAuthMode();
 
   return (
-    <html lang={localeToHtmlLang(locale)} data-scroll-behavior="smooth" suppressHydrationWarning className={`${outfit.variable} ${playfair.variable} ${spaceMono.variable} ${spaceGrotesk.variable}`}>
+    <html lang={localeToHtmlLang(locale)} data-scroll-behavior="smooth" suppressHydrationWarning>
       <head>
         {/* First in <head>: marks a desktop app's web view before anything paints. */}
         <script id="hivra-desktop-shell" dangerouslySetInnerHTML={{ __html: DESKTOP_SHELL_BOOTSTRAP }} />

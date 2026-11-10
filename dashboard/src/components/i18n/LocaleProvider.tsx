@@ -182,13 +182,12 @@ export function LanguageSwitcher({
           width: "100%",
           minHeight: 44,
           border: 0,
-          borderRadius: 0,
-          background: isSelected ? "rgba(255,255,255,0.08)" : "transparent",
+          borderRadius: "var(--hg-radius-sm)",
+          background: isSelected ? "var(--hg-fill-2)" : "transparent",
           color: "inherit",
           padding: "0 10px",
-          fontSize: 12,
-          fontWeight: 800,
-          textTransform: "uppercase",
+          fontSize: 13,
+          fontWeight: 500,
           letterSpacing: 0,
           textAlign: "left",
           cursor: "pointer",
@@ -217,7 +216,9 @@ export function LanguageSwitcher({
             alignItems: "center",
             justifyContent: "center",
             padding: 20,
-            background: "rgba(0,0,0,0.42)",
+            background: "color-mix(in srgb, var(--hg-bg) 40%, transparent)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
           }}
           onMouseDown={() => setIsOpen(false)}
         >
@@ -226,12 +227,13 @@ export function LanguageSwitcher({
               width: "min(320px, calc(100vw - 40px))",
               maxHeight: "calc(100dvh - 40px)",
               overflowY: "auto",
-              border: "1px solid rgba(255,255,255,0.16)",
-              borderRadius: 0,
-              background: "rgba(20, 20, 19, 0.94)",
-              boxShadow: "0 24px 70px rgba(0,0,0,0.48)",
-              backdropFilter: "blur(18px)",
-              color: "rgba(255,255,255,0.92)",
+              border: "1px solid var(--hg-stroke-strong)",
+              borderRadius: "var(--hg-radius-xl)",
+              background: "var(--hg-glass-strong)",
+              boxShadow: "var(--hg-glass-edge), var(--hg-shadow-lg)",
+              backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+              WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+              color: "var(--hg-text)",
               padding: 8,
               paddingBottom: "max(8px, env(safe-area-inset-bottom, 0px))",
             }}
@@ -249,11 +251,11 @@ export function LanguageSwitcher({
               <span
                 className="mono"
                 style={{
-                  fontSize: 10,
-                  fontWeight: 800,
+                  fontSize: 11,
+                  fontWeight: 600,
                   textTransform: "uppercase",
-                  letterSpacing: 0,
-                  color: "rgba(255,255,255,0.58)",
+                  letterSpacing: "0.05em",
+                  color: "var(--hg-text-3)",
                 }}
               >
                 {copy.languageSelectorLabel}
@@ -265,9 +267,9 @@ export function LanguageSwitcher({
                 style={{
                   width: 44,
                   height: 44,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 0,
-                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid var(--hg-stroke)",
+                  borderRadius: "var(--hg-radius-sm)",
+                  background: "var(--hg-fill-1)",
                   color: "inherit",
                   display: "inline-flex",
                   alignItems: "center",
@@ -335,14 +337,13 @@ export function LanguageSwitcher({
           height: 32,
           minWidth: compact ? 32 : 138,
           width: compact ? 32 : "100%",
-          border: "1px solid var(--etched-border)",
-          background: compact ? "transparent" : "var(--bg-surface)",
+          border: "1px solid var(--hg-stroke)",
+          borderRadius: "var(--hg-radius-sm)",
+          background: compact ? "transparent" : "var(--hg-fill-1)",
           color: "var(--text-secondary)",
           padding: compact ? 0 : "0 10px",
-          fontSize: 10,
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: 0,
+          fontSize: 12,
+          fontWeight: 500,
           cursor: "pointer",
         }}
       >
@@ -375,12 +376,13 @@ export function LanguageSwitcher({
             zIndex: 120,
             minWidth: 176,
             padding: 6,
-            border: "1px solid rgba(255,255,255,0.16)",
-            borderRadius: 0,
-            background: "rgba(20, 20, 19, 0.94)",
-            boxShadow: "0 18px 55px rgba(0,0,0,0.42)",
-            backdropFilter: "blur(18px)",
-            color: "rgba(255,255,255,0.9)",
+            border: "1px solid var(--hg-stroke-strong)",
+            borderRadius: "var(--hg-radius-lg)",
+            background: "var(--hg-glass-strong)",
+            boxShadow: "var(--hg-glass-edge), var(--hg-shadow-lg)",
+            backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+            WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+            color: "var(--hg-text)",
           }}
         >
           {localeOptions}

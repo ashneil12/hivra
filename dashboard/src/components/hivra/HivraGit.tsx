@@ -6,20 +6,21 @@
 // execFile (no shell) server-side. Command Center vocabulary.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { GitBranch, GitCommitHorizontal, Loader2, AlertTriangle, RefreshCw, FileDiff, Plus } from "lucide-react";
 
 import { gitStatus, gitDiff, gitCommit, gitCheckout, type GitStatus, type GitEntry } from "@/lib/hivra/agent-api";
 
 import styles from "./HivraGit.module.css";
 
-const mono: React.CSSProperties = { fontFamily: "var(--font-mono), monospace", fontSize: 11, letterSpacing: "0.02em" };
+const mono: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.02em" };
 
 // Two-letter porcelain code → human chip.
 function statusLabel(e: GitEntry): { label: string; color: string } {
   const code = (e.x + e.y).trim();
-  if (code.includes("?")) return { label: "new", color: "#22c55e" };
-  if (code.includes("D")) return { label: "deleted", color: "#e06c5a" };
-  if (code.includes("A")) return { label: "added", color: "#22c55e" };
+  if (code.includes("?")) return { label: "new", color: "var(--hg-ok)" };
+  if (code.includes("D")) return { label: "deleted", color: "var(--hg-bad)" };
+  if (code.includes("A")) return { label: "added", color: "var(--hg-ok)" };
   if (code.includes("R")) return { label: "renamed", color: "var(--gold-leaf)" };
   return { label: "modified", color: "var(--gold-leaf)" };
 }
@@ -129,12 +130,12 @@ export function HivraGit({ boxUrl, token, dir = "." }: { boxUrl: string; token?:
   }, [boxUrl, dir, st?.root, busy, token, refresh]);
 
   if (loading) {
-    return <div style={{ padding: 40, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>;
+    return <div style={{ padding: 40, textAlign: "center" }}><ThinkingOrb size={32} state="searching" label="Loading" /></div>;
   }
   if (!st?.repo) {
     return (
       <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>
-        <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>No git repository.</div>
+        <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>No git repository.</div>
         <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
           The box home isn&apos;t a git repo yet. Ask the agent to clone or init one, then refresh.
         </div>
@@ -219,7 +220,7 @@ export function HivraGit({ boxUrl, token, dir = "." }: { boxUrl: string; token?:
       ) : null}
 
       {err ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 18px", color: "#e06c5a", fontSize: 12, borderBottom: "1px solid var(--etched-border)" }}><AlertTriangle size={13} /> {err}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 18px", color: "var(--hg-bad)", fontSize: 12, borderBottom: "1px solid var(--etched-border)" }}><AlertTriangle size={13} /> {err}</div>
       ) : null}
 
       <div className={styles.split} data-open={diffFor ? "true" : "false"}>
@@ -257,7 +258,7 @@ export function HivraGit({ boxUrl, token, dir = "." }: { boxUrl: string; token?:
                 aria-label="Commit message"
                 enterKeyHint="done"
                 className={`mono ${styles.commitInput}`}
-                style={{ ...mono, fontSize: 12, background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", border: "1px solid var(--etched-border)", padding: "8px 10px", outline: "none" }}
+                style={{ ...mono, fontSize: 12, background: "var(--hg-fill-1)", color: "var(--ink-black)", border: "1px solid var(--etched-border)", padding: "8px 10px", outline: "none" }}
               />
               <button
                 type="button"
@@ -284,13 +285,13 @@ export function HivraGit({ boxUrl, token, dir = "." }: { boxUrl: string; token?:
               <span className="mono" style={{ ...mono, fontSize: 12, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-black)" }}>{diffFor}{diff?.untracked ? " (new file)" : ""}</span>
               <button type="button" onClick={closeDiff} aria-label="Close diff" className={`mono ${styles.closeButton}`} style={mono}>Close</button>
             </div>
-            <div style={{ flex: 1, overflow: "auto", padding: "12px 16px", background: "rgba(0,0,0,0.18)" }}>
+            <div style={{ flex: 1, overflow: "auto", padding: "12px 16px", background: "var(--hg-fill-2)" }}>
               {!diff ? (
-                <Loader2 size={15} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} />
+                <ThinkingOrb size={20} state="working" label="Loading diff" />
               ) : (
                 <pre className="mono" style={{ ...mono, fontSize: 11.5, lineHeight: 1.5, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                   {diff.text.split("\n").map((l, i) => (
-                    <div key={i} style={{ color: l.startsWith("+") ? "#22c55e" : l.startsWith("-") ? "#e06c5a" : l.startsWith("@@") ? "var(--gold-leaf)" : "var(--text-secondary)" }}>{l || " "}</div>
+                    <div key={i} style={{ color: l.startsWith("+") ? "var(--hg-ok)" : l.startsWith("-") ? "var(--hg-bad)" : l.startsWith("@@") ? "var(--gold-leaf)" : "var(--text-secondary)" }}>{l || " "}</div>
                   ))}
                 </pre>
               )}

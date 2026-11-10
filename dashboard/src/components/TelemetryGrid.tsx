@@ -120,16 +120,16 @@ export function TelemetryGrid({ instanceId, provider, model, compact }: { instan
   return (
     <div style={{ marginBottom: compact ? 0 : '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div className={compact ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6"}>
-        <MetricCard label={dashboardCopy.telemetry.containerState} value={displayStatus} icon={Activity} color="#22c55e" subText={`${dashboardCopy.telemetry.uptimePrefix}${dashboardCopy.labelSeparator}${displayUptime}`} />
-        <MetricCard label={dashboardCopy.telemetry.cpuUtilization} value={data.cpu} icon={Cpu} color="#3b82f6" subText={dashboardCopy.telemetry.hostComputeNode} />
-        <MetricCard label={dashboardCopy.telemetry.memoryAllocation} value={data.memory.split(' / ')[0]} icon={HardDrive} color="#a855f7" subText={`${dashboardCopy.telemetry.limitPrefix}${dashboardCopy.labelSeparator}${data.memory.split(' / ')[1] || dashboardCopy.telemetry.unrestricted}`} />
-        <MetricCard label={dashboardCopy.telemetry.networkIo} value={data.network.split(' / ')[0]} icon={Box} color="#eab308" subText={`${dashboardCopy.telemetry.totalTxPrefix}${dashboardCopy.labelSeparator}${data.network.split(' / ')[1] || '0B'}`} />
+        <MetricCard label={dashboardCopy.telemetry.containerState} value={displayStatus} icon={Activity} color="var(--hg-ok)" subText={`${dashboardCopy.telemetry.uptimePrefix}${dashboardCopy.labelSeparator}${displayUptime}`} />
+        <MetricCard label={dashboardCopy.telemetry.cpuUtilization} value={data.cpu} icon={Cpu} color="var(--hg-text-2)" subText={dashboardCopy.telemetry.hostComputeNode} />
+        <MetricCard label={dashboardCopy.telemetry.memoryAllocation} value={data.memory.split(' / ')[0]} icon={HardDrive} color="var(--hg-text-2)" subText={`${dashboardCopy.telemetry.limitPrefix}${dashboardCopy.labelSeparator}${data.memory.split(' / ')[1] || dashboardCopy.telemetry.unrestricted}`} />
+        <MetricCard label={dashboardCopy.telemetry.networkIo} value={data.network.split(' / ')[0]} icon={Box} color="var(--hg-text-2)" subText={`${dashboardCopy.telemetry.totalTxPrefix}${dashboardCopy.labelSeparator}${data.network.split(' / ')[1] || '0B'}`} />
       </div>
       {/* Active Model + Provider cards are hidden in compact mode (Command Center). */}
       {!compact && (provider || model) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <MetricCard label={dashboardCopy.telemetry.activeModel} value={displayModel} icon={Sparkles} color="#f472b6" subText={provider ? `${dashboardCopy.telemetry.providerPrefix}${dashboardCopy.labelSeparator}${displayProvider}` : dashboardCopy.instance.configuredInAgentSettings} />
-          <MetricCard label={dashboardCopy.telemetry.provider} value={displayProvider} icon={Zap} color="#fb923c" subText={dashboardCopy.telemetry.llmInferenceEngine} />
+          <MetricCard label={dashboardCopy.telemetry.activeModel} value={displayModel} icon={Sparkles} color="var(--hg-text-2)" subText={provider ? `${dashboardCopy.telemetry.providerPrefix}${dashboardCopy.labelSeparator}${displayProvider}` : dashboardCopy.instance.configuredInAgentSettings} />
+          <MetricCard label={dashboardCopy.telemetry.provider} value={displayProvider} icon={Zap} color="var(--hg-text-2)" subText={dashboardCopy.telemetry.llmInferenceEngine} />
         </div>
       )}
     </div>

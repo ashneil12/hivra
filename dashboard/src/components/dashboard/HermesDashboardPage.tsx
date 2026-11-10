@@ -1,5 +1,6 @@
 'use client';
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -220,15 +221,15 @@ function StatusDot({ status }: { status: string }) {
   const normalizedStatus = status.toLowerCase() as keyof typeof statusCopy;
   const label = statusCopy[normalizedStatus] ?? status;
   const colors: Record<string, string> = {
-    running: "#22c55e",
+    running: "var(--hg-ok)",
     provisioning: "var(--yellow)",
     redeploying: "var(--yellow)",
-    stopped: "#9ca3af",
-    error: "#ef4444",
-    failed: "#ef4444",
+    stopped: "var(--hg-text-3)",
+    error: "var(--hg-bad)",
+    failed: "var(--hg-bad)",
   };
   const glow: Record<string, string> = {
-    running: "0 0 10px #22c55e",
+    running: "0 0 10px var(--hg-ok)",
     provisioning: "0 0 8px var(--yellow)",
     redeploying: "0 0 8px var(--yellow)",
   };
@@ -236,11 +237,11 @@ function StatusDot({ status }: { status: string }) {
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <span style={{
         width: 8, height: 8, borderRadius: "50%",
-        background: colors[normalizedStatus] || "#9ca3af",
+        background: colors[normalizedStatus] || "var(--hg-text-3)",
         boxShadow: glow[normalizedStatus] || "none",
         display: "inline-block",
       }} />
-      <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.7 }}>{label}</span>
+      <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.7 }}>{label}</span>
     </div>
   );
 }
@@ -276,9 +277,9 @@ function StartRestoreButton({
       disabled={loading}
       className="hermes-touch-btn"
       style={{
-        border: "1px solid rgba(29, 78, 216, 0.26)",
-        background: loading ? "rgba(29, 78, 216, 0.08)" : "#1d4ed8",
-        color: loading ? "#1d4ed8" : "#ffffff",
+        border: "1px solid color-mix(in srgb, var(--hg-text) 26%, transparent)",
+        background: loading ? "color-mix(in srgb, var(--hg-text) 8%, transparent)" : "var(--hg-text)",
+        color: loading ? "var(--hg-text)" : "var(--hg-on-accent)",
         padding: compact ? "8px 10px" : "9px 12px",
         cursor: loading ? "not-allowed" : "pointer",
         fontFamily: "var(--font-mono), monospace",
@@ -375,7 +376,7 @@ function InstanceCard({
       style={{
         background: "var(--bg-surface)",
         border: `1px solid ${hovered ? "var(--ink-black)" : "var(--etched-border)"}`,
-        boxShadow: hovered ? "0 8px 30px -8px rgba(0,0,0,0.12)" : "0 4px 20px -5px rgba(0,0,0,0.05)",
+        boxShadow: hovered ? "var(--hg-shadow-md)" : "0 4px 20px -5px var(--hg-fill-1)",
         transform: hovered ? "translateY(-3px)" : "translateY(0)",
         transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
         padding: "clamp(1.25rem, 4vw, 2rem)",
@@ -429,7 +430,7 @@ function InstanceCard({
               <Settings size={14} aria-hidden="true" />
               <span className="hermes-card-action-label">{dashboardCopy.actions.advancedConsole}</span>
             </button>
-            <span className="mono" style={{ fontSize: 10.5, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            <span className="mono" style={{ fontSize: 10.5, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
               {instance.provider}
             </span>
           </div>
@@ -487,7 +488,7 @@ function InstanceCard({
               <h4 className="serif" style={{ fontSize: "1.25rem", fontWeight: 500, marginBottom: 4, lineHeight: 1.3, textDecorationLine: hovered ? "underline" : "none", textUnderlineOffset: 4, textDecorationThickness: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</h4>
             )}
             {nameError ? (
-              <p className="mono" style={{ fontSize: 10, color: "#b91c1c", marginBottom: 4, whiteSpace: "normal" }}>{nameError}</p>
+              <p className="mono" style={{ fontSize: 10, color: "var(--hg-bad)", marginBottom: 4, whiteSpace: "normal" }}>{nameError}</p>
             ) : null}
             <p className="mono" style={{ fontSize: 10, opacity: 0.4 }}>{dashboardCopy.instance.idPrefix}{dashboardCopy.labelSeparator}{instance.id.split('-')[0]}</p>
             {instance.public_ipv4 ? (
@@ -504,12 +505,12 @@ function InstanceCard({
               display: "grid",
               gap: 6,
               padding: "10px 12px",
-              border: "1px solid rgba(180, 83, 9, 0.28)",
-              background: "rgba(245, 158, 11, 0.08)",
-              color: "#92400e",
+              border: "1px solid color-mix(in srgb, var(--hg-warn) 28%, transparent)",
+              background: "color-mix(in srgb, var(--hg-warn) 8%, transparent)",
+              color: "var(--hg-warn)",
             }}
           >
-            <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 700 }}>
+            <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
               {dashboardCopy.alerts.updateTitle}
             </span>
             <span style={{ fontSize: 11, lineHeight: 1.6, textTransform: "none", letterSpacing: "normal" }}>
@@ -526,16 +527,16 @@ function InstanceCard({
               display: "grid",
               gap: 10,
               padding: "10px 12px",
-              border: "1px solid rgba(29, 78, 216, 0.24)",
-              background: "rgba(59, 130, 246, 0.08)",
-              color: "#1d4ed8",
+              border: "1px solid color-mix(in srgb, var(--hg-text) 24%, transparent)",
+              background: "color-mix(in srgb, var(--hg-text) 8%, transparent)",
+              color: "var(--hg-text)",
               marginTop: instance.updateAlert ? 10 : 0,
             }}
           >
-            <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800 }}>
+            <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 800 }}>
               Cold storage
             </span>
-            <span style={{ fontSize: 11, lineHeight: 1.6, color: "rgba(17, 24, 39, 0.74)" }}>
+            <span style={{ fontSize: 11, lineHeight: 1.6, color: "var(--hg-text-2)" }}>
               {showColdRestoring
                 ? "Restore is already running. Chat history and settings will come back when the agent is online."
                 : "Your data is safe. Start restore to bring this agent back online."}
@@ -548,7 +549,7 @@ function InstanceCard({
               />
             ) : null}
             {restoreError ? (
-              <span style={{ fontSize: 11, lineHeight: 1.5, color: "#b91c1c" }}>
+              <span style={{ fontSize: 11, lineHeight: 1.5, color: "var(--hg-bad)" }}>
                 {restoreError}
               </span>
             ) : null}
@@ -589,15 +590,15 @@ function FailureSummaryBanner({ instances }: { instances: Instance[] }) {
         gap: 12,
         padding: "18px 20px",
         marginBottom: "2rem",
-        border: "1px solid rgba(185, 28, 28, 0.24)",
-        background: "rgba(254, 242, 242, 0.72)",
+        border: "1px solid color-mix(in srgb, var(--hg-bad) 24%, transparent)",
+        background: "color-mix(in srgb, var(--hg-bad) 6%, transparent)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <AlertTriangle size={16} style={{ color: "#b91c1c" }} />
+        <AlertTriangle size={16} style={{ color: "var(--hg-bad)" }} />
         <span
           className="mono"
-          style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: "#b91c1c", fontWeight: 700 }}
+          style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--hg-bad)", fontWeight: 700 }}
         >
           {dashboardCopy.alerts.activeFailureTitle}
         </span>
@@ -615,8 +616,8 @@ function FailureSummaryBanner({ instances }: { instances: Instance[] }) {
               type="button"
               onClick={() => router.push(`/dashboard/instances/${instance.id}/console`)}
               style={{
-                border: "1px solid rgba(185, 28, 28, 0.22)",
-                background: "rgba(255,255,255,0.72)",
+                border: "1px solid color-mix(in srgb, var(--hg-bad) 22%, transparent)",
+                background: "var(--hg-glass)",
                 color: "var(--ink-black)",
                 padding: "10px 12px",
                 cursor: "pointer",
@@ -625,7 +626,7 @@ function FailureSummaryBanner({ instances }: { instances: Instance[] }) {
                 textAlign: "left",
               }}
             >
-              <span className="mono" style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#b91c1c" }}>
+              <span className="mono" style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--hg-bad)" }}>
                 {instance.name} · {alert.ownerLabel} · {alert.phaseLabel}
               </span>
               <span style={{ fontSize: 13, fontWeight: 700 }}>{alert.title}</span>
@@ -658,7 +659,7 @@ function ProfileCard({ profile, instance, isPrimary }: { profile: AgentProfile; 
       style={{
         background: "var(--bg-surface)",
         border: `1px solid ${hovered ? "var(--ink-black)" : "var(--etched-border)"}`,
-        boxShadow: hovered ? "0 8px 30px -8px rgba(0,0,0,0.12)" : "0 4px 20px -5px rgba(0,0,0,0.05)",
+        boxShadow: hovered ? "var(--hg-shadow-md)" : "0 4px 20px -5px var(--hg-fill-1)",
         transform: hovered ? "translateY(-3px)" : "translateY(0)",
         transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
         padding: "clamp(1.25rem, 4vw, 2rem)",
@@ -672,7 +673,7 @@ function ProfileCard({ profile, instance, isPrimary }: { profile: AgentProfile; 
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem" }}>
           <StatusDot status="running" />
-          <span className="mono" style={{ fontSize: 10.5, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+          <span className="mono" style={{ fontSize: 10.5, padding: "4px 8px", background: "transparent", border: "1px solid var(--etched-border)", color: "var(--ink-black)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
             {dashboardCopy.instance.profileNode}
           </span>
         </div>
@@ -809,34 +810,34 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
 
   return (
     <SafePortal>
-      <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }}>
-        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", padding: "clamp(1.25rem, 5vw, 2.5rem)", width: 560, maxWidth: "90vw", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 40px rgba(0,0,0,0.15)" }}>
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "color-mix(in srgb, var(--hg-bg) 40%, transparent)", backdropFilter: "blur(6px)" }}>
+        <div style={{ background: "var(--hg-glass-strong)", backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", borderRadius: 20, border: "1px solid var(--hg-stroke)", padding: "clamp(1.25rem, 5vw, 2.5rem)", width: 560, maxWidth: "90vw", maxHeight: "90vh", overflowY: "auto", boxShadow: "var(--hg-shadow-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem", gap: "1rem" }}>
           <div style={{ minWidth: 0 }}>
-            <h4 className="serif" style={{ fontSize: "clamp(1.2rem, 5vw, 1.5rem)", fontWeight: 400, marginBottom: "0.25rem", wordBreak: "break-word" }}>{dashboardCopy.allocation.nodeAllocationPrefix}{dashboardCopy.labelSeparator}{host.name}</h4>
+            <h4 className="serif" style={{ fontSize: "clamp(1.2rem, 5vw, 1.5rem)", fontWeight: 600, letterSpacing: "-0.03em", marginBottom: "0.25rem", wordBreak: "break-word" }}>{dashboardCopy.allocation.nodeAllocationPrefix}{dashboardCopy.labelSeparator}{host.name}</h4>
             <p className="mono" style={{ fontSize: 10, opacity: 0.5 }}>{dashboardCopy.instance.idPrefix}{dashboardCopy.labelSeparator}{host.id.split('-')[0]}</p>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", opacity: 0.5, padding: "0" }}><X size={20} /></button>
         </div>
 
-        <div style={{ marginBottom: "2rem", padding: "1.5rem", background: "rgba(0,0,0,0.02)", border: "1px solid var(--etched-border)" }}>
-           <h5 className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", marginBottom: "1rem" }}>{dashboardCopy.allocation.projectedNodeUsage}</h5>
+        <div style={{ marginBottom: "2rem", padding: "1.5rem", background: "var(--hg-fill-1)", border: "1px solid var(--etched-border)" }}>
+           <h5 className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "1rem" }}>{dashboardCopy.allocation.projectedNodeUsage}</h5>
            <div style={{ marginBottom: "1rem" }}>
-             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
+             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
                <span className="mono" style={{ opacity: 0.6 }}>{dashboardCopy.allocation.cpuAllocated}</span>
-               <span className="mono" style={{ fontWeight: 700, color: sumCpu > host.total_cpu ? "#ef4444" : "var(--ink-black)" }}>{sumCpu} / {host.total_cpu} {sumCpu === 1 ? dashboardCopy.instance.coreSingular : dashboardCopy.instance.corePlural}</span>
+               <span className="mono" style={{ fontWeight: 700, color: sumCpu > host.total_cpu ? "var(--hg-bad)" : "var(--ink-black)" }}>{sumCpu} / {host.total_cpu} {sumCpu === 1 ? dashboardCopy.instance.coreSingular : dashboardCopy.instance.corePlural}</span>
              </div>
              <div style={{ width: "100%", height: 4, background: "var(--etched-border)" }}>
-               <div style={{ width: `${cpuPct}%`, height: "100%", background: sumCpu > host.total_cpu ? "#ef4444" : "var(--ink-black)", transition: "width 0.3s ease" }} />
+               <div style={{ width: `${cpuPct}%`, height: "100%", background: sumCpu > host.total_cpu ? "var(--hg-bad)" : "var(--ink-black)", transition: "width 0.3s ease" }} />
              </div>
            </div>
            <div>
-             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
+             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
                <span className="mono" style={{ opacity: 0.6 }}>{dashboardCopy.allocation.memoryAllocated}</span>
-               <span className="mono" style={{ fontWeight: 700, color: sumRamGb * 1024 > host.total_ram ? "#ef4444" : "var(--ink-black)" }}>{sumRamGb} / {Math.floor(host.total_ram/1024)} GB</span>
+               <span className="mono" style={{ fontWeight: 700, color: sumRamGb * 1024 > host.total_ram ? "var(--hg-bad)" : "var(--ink-black)" }}>{sumRamGb} / {Math.floor(host.total_ram/1024)} GB</span>
              </div>
              <div style={{ width: "100%", height: 4, background: "var(--etched-border)" }}>
-               <div style={{ width: `${ramPct}%`, height: "100%", background: sumRamGb * 1024 > host.total_ram ? "#ef4444" : "var(--ink-black)", transition: "width 0.3s ease" }} />
+               <div style={{ width: `${ramPct}%`, height: "100%", background: sumRamGb * 1024 > host.total_ram ? "var(--hg-bad)" : "var(--ink-black)", transition: "width 0.3s ease" }} />
              </div>
            </div>
         </div>
@@ -852,7 +853,7 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
             return (
               <div key={inst.id} style={{ borderLeft: "2px solid var(--ink-black)", paddingLeft: "1.5rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e" }} />
+                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--hg-ok)" }} />
                    <h5 className="serif" style={{ fontSize: "1.1rem", fontWeight: 500 }}>{inst.name}</h5>
                    <span className="mono" style={{ fontSize: 10.5, opacity: 0.4 }}>{inst.id.split('-')[0]}</span>
                 </div>
@@ -860,14 +861,14 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
                 <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
                   <div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <label className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", fontWeight: 700, opacity: 0.7 }}>{dashboardCopy.allocation.cpuAllocation}</label>
+                      <label className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700, opacity: 0.7 }}>{dashboardCopy.allocation.cpuAllocation}</label>
                       <span className="mono" style={{ fontSize: 10 }}>{alloc.cpu} {alloc.cpu === 1 ? dashboardCopy.instance.coreSingular : dashboardCopy.instance.corePlural}</span>
                     </div>
                     <input type="range" min="1" max={Math.min(host.total_cpu, maxCpuPerAgent)} step="1" value={alloc.cpu} onChange={e => updateAlloc(inst.id, "cpu", Number(e.target.value))} style={{ width: "100%", cursor: "pointer", accentColor: "var(--ink-black)" }} />
                   </div>
                   <div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <label className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", fontWeight: 700, opacity: 0.7 }}>{dashboardCopy.allocation.memoryAllocation}</label>
+                      <label className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700, opacity: 0.7 }}>{dashboardCopy.allocation.memoryAllocation}</label>
                       <span className="mono" style={{ fontSize: 10 }}>{alloc.ramGb} GB</span>
                     </div>
                     <input type="range" min="1" max={Math.min(Math.floor(host.total_ram/1024), maxRamGbPerAgent)} step="1" value={alloc.ramGb} onChange={e => updateAlloc(inst.id, "ramGb", Number(e.target.value))} style={{ width: "100%", cursor: "pointer", accentColor: "var(--ink-black)" }} />
@@ -892,25 +893,25 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "1rem", marginTop: "1rem" }}>
-          <button onClick={onClose} disabled={loading || deleting} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-mono), monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700, opacity: 0.6 }}>{dashboardCopy.actions.cancel}</button>
-          <button onClick={handleSave} disabled={loading || deleting || hostInstances.length === 0} style={{ background: "var(--ink-black)", color: "var(--bg-surface)", border: "none", padding: "10px 20px", cursor: loading || hostInstances.length === 0 ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, opacity: hostInstances.length === 0 ? 0.5 : 1 }}>
+          <button onClick={onClose} disabled={loading || deleting} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700, opacity: 0.6 }}>{dashboardCopy.actions.cancel}</button>
+          <button onClick={handleSave} disabled={loading || deleting || hostInstances.length === 0} style={{ background: "var(--ink-black)", color: "var(--bg-surface)", border: "none", padding: "10px 20px", cursor: loading || hostInstances.length === 0 ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, opacity: hostInstances.length === 0 ? 0.5 : 1 }}>
             {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : null}
             {loading ? dashboardCopy.actions.applying : dashboardCopy.actions.applyChanges}
           </button>
         </div>
 
         {/* ── Danger Zone ── */}
-        <div style={{ borderTop: "1px dashed rgba(239,68,68,0.3)", paddingTop: "1.5rem", marginTop: "2.5rem" }}>
-          <h5 className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", color: "#ef4444", marginBottom: "1rem" }}>{dashboardCopy.allocation.dangerZone}</h5>
+        <div style={{ borderTop: "1px dashed color-mix(in srgb, var(--hg-bad) 30%, transparent)", paddingTop: "1.5rem", marginTop: "2.5rem" }}>
+          <h5 className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--hg-bad)", marginBottom: "1rem" }}>{dashboardCopy.allocation.dangerZone}</h5>
           {!confirmOpen ? (
             <button
               onClick={() => { setConfirmOpen(true); setInputText(""); setDeleteError(null); }}
               disabled={deleting}
               style={{
                 width: "100%",
-                border: "1px solid rgba(239,68,68,0.5)",
+                border: "1px solid color-mix(in srgb, var(--hg-bad) 50%, transparent)",
                 background: "transparent",
-                color: "#ef4444",
+                color: "var(--hg-bad)",
                 padding: "8px 12px",
                 cursor: deleting ? "not-allowed" : "pointer",
                 fontFamily: "var(--font-mono), monospace",
@@ -931,7 +932,7 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontSize: 11, color: "var(--ink-black)", lineHeight: 1.5, opacity: 0.7 }}>
-                {dashboardCopy.allocation.deletePromptPrefix} <strong style={{ color: "#ef4444" }}>{dashboardCopy.allocation.deleteConfirmationPhrase}</strong> {dashboardCopy.allocation.deletePromptSuffix}
+                {dashboardCopy.allocation.deletePromptPrefix} <strong style={{ color: "var(--hg-bad)" }}>{dashboardCopy.allocation.deleteConfirmationPhrase}</strong> {dashboardCopy.allocation.deletePromptSuffix}
               </div>
               <input
                 type="text"
@@ -950,7 +951,7 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
                 }}
               />
               {deleteError && (
-                <div style={{ fontSize: 11, color: "#ef4444", display: "flex", alignItems: "flex-start", gap: 6 }}>
+                <div style={{ fontSize: 11, color: "var(--hg-bad)", display: "flex", alignItems: "flex-start", gap: 6 }}>
                   <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
                   {deleteError}
                 </div>
@@ -961,8 +962,8 @@ function NodeAllocationModal({ host, hostInstances, usageData, onClose, onSucces
                   disabled={!canConfirm || deleting}
                   style={{
                     flex: 1,
-                    border: "1px solid #ef4444",
-                    background: "#ef4444",
+                    border: "1px solid var(--hg-bad)",
+                    background: "var(--hg-bad)",
                     color: "#fff",
                     padding: "8px 12px",
                     fontSize: 11,
@@ -1073,7 +1074,7 @@ function HostCard({
       </p>
 
       <div style={{ marginBottom: "1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
           <span className="mono" style={{ opacity: 0.6 }}>{dashboardCopy.allocation.cpuAllocated}</span>
           <span className="mono" style={{ fontWeight: 700 }}>{host.used_cpu} / {host.total_cpu} {host.used_cpu === 1 ? dashboardCopy.instance.coreSingular : dashboardCopy.instance.corePlural}</span>
         </div>
@@ -1083,7 +1084,7 @@ function HostCard({
       </div>
 
       <div style={{ marginBottom: "1.5rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
           <span className="mono" style={{ opacity: 0.6 }}>{dashboardCopy.allocation.memoryAllocated}</span>
           <span className="mono" style={{ fontWeight: 700 }}>{host.used_ram} / {host.total_ram} MB</span>
         </div>
@@ -1125,7 +1126,7 @@ function PrimaryAgentPanel({
     <section
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         display: "grid",
         gap: 16,
@@ -1134,10 +1135,10 @@ function PrimaryAgentPanel({
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
-          <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.64 }}>
+          <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.64 }}>
             Primary Agent
           </div>
-          <h3 className="serif" style={{ fontSize: "clamp(1.6rem, 4vw, 2.15rem)", margin: "6px 0 8px", fontWeight: 400, lineHeight: 1.1 }}>
+          <h3 className="serif" style={{ fontSize: "clamp(1.6rem, 4vw, 2.15rem)", margin: "6px 0 8px", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
             {instance.name}
           </h3>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -1152,11 +1153,11 @@ function PrimaryAgentPanel({
                 marginTop: 12,
                 display: "grid",
                 gap: 6,
-                color: "#1d4ed8",
+                color: "var(--hg-text)",
                 maxWidth: 560,
               }}
             >
-              <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800 }}>
+              <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 800 }}>
                 Cold storage
               </span>
               <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.55 }}>
@@ -1165,7 +1166,7 @@ function PrimaryAgentPanel({
                   : "Your data is safe. Start restore to bring this agent back online."}
               </span>
               {restoreError ? (
-                <span style={{ color: "#b91c1c", fontSize: 12, lineHeight: 1.45 }}>
+                <span style={{ color: "var(--hg-bad)", fontSize: 12, lineHeight: 1.45 }}>
                   {restoreError}
                 </span>
               ) : null}
@@ -1251,7 +1252,7 @@ function FleetOverview({
     <section
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         display: "grid",
         gap: 16,
@@ -1259,10 +1260,10 @@ function FleetOverview({
       }}
     >
       <div>
-        <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.64 }}>
+        <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.64 }}>
           Fleet Signal
         </div>
-        <h3 className="serif" style={{ fontSize: "clamp(1.6rem, 4vw, 2.15rem)", margin: "6px 0 8px", fontWeight: 400, lineHeight: 1.1 }}>
+        <h3 className="serif" style={{ fontSize: "clamp(1.6rem, 4vw, 2.15rem)", margin: "6px 0 8px", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>
           {runningCount} running · {attentionCount} need attention
         </h3>
       </div>
@@ -1330,7 +1331,7 @@ function PilotMetric({
     <div
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "16px",
         display: "grid",
         gap: 10,
@@ -1338,12 +1339,12 @@ function PilotMetric({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.62 }}>
+        <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.62 }}>
           {label}
         </span>
         <span style={{ color: "var(--gold-leaf)", display: "inline-flex" }}>{icon}</span>
       </div>
-      <strong className="serif" style={{ fontSize: "clamp(1.55rem, 4vw, 2.1rem)", fontWeight: 400, lineHeight: 1 }}>
+      <strong className="serif" style={{ fontSize: "clamp(1.55rem, 4vw, 2.1rem)", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1 }}>
         {value}
       </strong>
       <span style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.5 }}>{detail}</span>
@@ -1419,7 +1420,7 @@ function AgentSignalRow({
       </div>
 
       <div style={{ minWidth: 0, display: "grid", gap: 7 }}>
-        <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.58 }}>
+        <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.58 }}>
           Current Status
         </div>
         <strong style={{ fontSize: 15, lineHeight: 1.35 }}>
@@ -1431,7 +1432,7 @@ function AgentSignalRow({
             : digest?.detail || latestSessionLine(digest)}
         </span>
         {restoreError ? (
-          <span style={{ color: "#b91c1c", fontSize: 12, lineHeight: 1.45 }}>
+          <span style={{ color: "var(--hg-bad)", fontSize: 12, lineHeight: 1.45 }}>
             {restoreError}
           </span>
         ) : null}
@@ -1598,7 +1599,7 @@ function AgentPresenceGreeting() {
         </p>
         <span
           className="mono"
-          style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.16em", opacity: 0.55 }}
+          style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.55 }}
         >
           Your agents are standing by
         </span>
@@ -1699,12 +1700,12 @@ function CommandCenterV2Surface({
           <AgentPresenceGreeting />
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--gold-leaf)", display: "inline-block" }} />
-            <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.28em", opacity: 0.68 }}>
+            <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, opacity: 0.68 }}>
               Command Center Pilot
             </span>
           </div>
-          <h2 className="serif" style={{ fontSize: "clamp(2.6rem, 8vw, 4.4rem)", fontWeight: 300, lineHeight: 1.02, margin: 0 }}>
-            Command <em>Center</em>.
+          <h2 className="serif" style={{ fontSize: "clamp(1.9rem, 5vw, 2.6rem)", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.02, margin: 0 }}>
+            Command <em style={{ fontStyle: "normal" }}>Center</em>.
           </h2>
           <p style={{ margin: "14px 0 0", maxWidth: 680, color: "var(--text-secondary)", fontSize: 15, lineHeight: 1.7 }}>
             Real-time agent signal and fleet controls in one operating surface.
@@ -1743,17 +1744,17 @@ function CommandCenterV2Surface({
         <section
           style={{
             border: "1px solid var(--etched-border)",
-            background: "rgba(255,255,255,0.035)",
+            background: "var(--hg-fill-1)",
             padding: "clamp(1rem, 3vw, 1.5rem)",
             minWidth: 0,
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap", marginBottom: 8 }}>
             <div>
-              <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.58 }}>
+              <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.58 }}>
                 Agent Activity
               </div>
-              <h3 className="serif" style={{ margin: "6px 0 0", fontSize: "clamp(1.55rem, 4vw, 2.1rem)", fontWeight: 400 }}>
+              <h3 className="serif" style={{ margin: "6px 0 0", fontSize: "clamp(1.55rem, 4vw, 2.1rem)", fontWeight: 600, letterSpacing: "-0.03em" }}>
                 Active agents
               </h3>
             </div>
@@ -1761,10 +1762,10 @@ function CommandCenterV2Surface({
 
           {loading ? (
             <div style={{ minHeight: 180, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Loader2 size={20} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} />
+              <ThinkingOrb state="searching" size={32} />
             </div>
           ) : error ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 0", color: "#b91c1c" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 0", color: "var(--hg-bad)" }}>
               <AlertTriangle size={17} /> {error}
             </div>
           ) : instances.length === 0 ? (
@@ -1844,8 +1845,8 @@ function CommandCenterV2Surface({
       </main>
 
       {hosts.length > 0 ? (
-        <section style={{ marginTop: 18, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.03)", padding: "clamp(1rem, 3vw, 1.4rem)" }}>
-          <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.58, marginBottom: 12 }}>
+        <section style={{ marginTop: 18, border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)", padding: "clamp(1rem, 3vw, 1.4rem)" }}>
+          <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.58, marginBottom: 12 }}>
             Capacity
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
@@ -2338,7 +2339,7 @@ export function HermesDashboardPage() {
   if (!mounted) {
     return (
       <div style={{ minHeight: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Loader2 size={20} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} />
+        <ThinkingOrb state="searching" size={32} />
       </div>
     );
   }
@@ -2388,9 +2389,9 @@ export function HermesDashboardPage() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--ink-black)", display: "inline-block", flexShrink: 0 }} />
-            <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.3em", opacity: 0.6, lineHeight: 1.5 }}>{dashboardCopy.phase}</span>
+            <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, opacity: 0.6, lineHeight: 1.5 }}>{dashboardCopy.phase}</span>
           </div>
-          <h2 className="serif" style={{ fontSize: "clamp(2.5rem, 8vw, 3.5rem)", fontWeight: 300, lineHeight: 1.1 }}>{dashboardCopy.titlePrefix}{dashboardCopy.titleSeparator}<em>{dashboardCopy.titleEmphasis}</em>{dashboardCopy.titleSuffix}</h2>
+          <h2 className="serif" style={{ fontSize: "clamp(1.9rem, 5vw, 2.4rem)", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>{dashboardCopy.titlePrefix}{dashboardCopy.titleSeparator}<em style={{ fontStyle: "normal" }}>{dashboardCopy.titleEmphasis}</em>{dashboardCopy.titleSuffix}</h2>
         </div>
       </motion.header>
 
@@ -2409,15 +2410,15 @@ export function HermesDashboardPage() {
             gap: 12,
             padding: "18px 20px",
             marginBottom: "2rem",
-            border: "1px solid rgba(180, 83, 9, 0.28)",
-            background: "rgba(245, 158, 11, 0.08)",
+            border: "1px solid color-mix(in srgb, var(--hg-warn) 28%, transparent)",
+            background: "color-mix(in srgb, var(--hg-warn) 8%, transparent)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <AlertTriangle size={16} style={{ color: "#92400e" }} />
+            <AlertTriangle size={16} style={{ color: "var(--hg-warn)" }} />
             <span
               className="mono"
-              style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: "#92400e", fontWeight: 700 }}
+              style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--hg-warn)", fontWeight: 700 }}
             >
               {dashboardCopy.alerts.updateTitle}
             </span>
@@ -2432,9 +2433,9 @@ export function HermesDashboardPage() {
                 type="button"
                 onClick={() => router.push(`/dashboard/instances/${instance.id}`)}
                 style={{
-                  border: "1px solid rgba(180, 83, 9, 0.28)",
-                  background: "rgba(255,255,255,0.6)",
-                  color: "#92400e",
+                  border: "1px solid color-mix(in srgb, var(--hg-warn) 28%, transparent)",
+                  background: "var(--hg-glass)",
+                  color: "var(--hg-warn)",
                   padding: "8px 12px",
                   cursor: "pointer",
                   fontFamily: "var(--font-mono)",
@@ -2455,7 +2456,7 @@ export function HermesDashboardPage() {
         <section style={{ display: "grid", gap: 16, marginBottom: "2rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
             <div>
-              <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.18em", opacity: 0.58 }}>
+              <div className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.58 }}>
                 Operations Cockpit
               </div>
             </div>
@@ -2494,7 +2495,7 @@ export function HermesDashboardPage() {
 
       {/* Agents Grid */}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: "2rem" }}>
-        <h3 className="mono" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.6, margin: 0, alignSelf: "center" }}>
+        <h3 className="mono" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.6, margin: 0, alignSelf: "center" }}>
           {mounted && instances.length === 1 ? dashboardCopy.sections.activeAgents : dashboardCopy.sections.activeCoreInstances}
         </h3>
         
@@ -2503,7 +2504,7 @@ export function HermesDashboardPage() {
             <button
               onClick={() => router.push(`/dashboard/instances/${instances[0].id}/console`)}
               className="hermes-touch-btn"
-              style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid var(--etched-border)", padding: "6px 12px", cursor: "pointer", fontFamily: "var(--font-mono)", fontWeight: 700, textTransform: "uppercase", color: "var(--ink-black)", ...TOUCH_ACTION_TEXT }}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "1px solid var(--etched-border)", padding: "6px 12px", cursor: "pointer", fontFamily: "var(--font-sans)", fontWeight: 700, textTransform: "uppercase", color: "var(--ink-black)", ...TOUCH_ACTION_TEXT }}
             >
               <Settings size={12} /> {dashboardCopy.actions.coreConsole}
             </button>
@@ -2557,11 +2558,11 @@ export function HermesDashboardPage() {
         <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), 1fr))", gap: "2rem", marginBottom: "4rem" }}>
           {loading ? (
           <div style={{ gridColumn: "1 / -1", height: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Loader2 size={20} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
+            <ThinkingOrb state="searching" size={32} />
           </div>
         ) : error ? (
-          <div style={{ gridColumn: "1 / -1", padding: "1.5rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid #ef4444", background: "transparent" }}>
-            <AlertTriangle size={16} style={{ color: "#ef4444", flexShrink: 0 }} />
+          <div style={{ gridColumn: "1 / -1", padding: "1.5rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid var(--hg-bad)", background: "transparent" }}>
+            <AlertTriangle size={16} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
             <span style={{ fontSize: 13, color: "var(--ink-black)", fontWeight: 500 }}>{error}</span>
           </div>
         ) : instances.length === 0 ? null : instances.length === 1 ? (
@@ -2587,7 +2588,7 @@ export function HermesDashboardPage() {
       {/* Hosts Grid - shown only in normal mode */}
       {hosts.length > 0 && mounted && instances.length <= 1 && (
         <>
-          <motion.h3 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mono" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.6, marginBottom: "2rem" }}>{dashboardCopy.sections.infrastructureNodes}</motion.h3>
+          <motion.h3 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mono" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.6, marginBottom: "2rem" }}>{dashboardCopy.sections.infrastructureNodes}</motion.h3>
           <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1, delayChildren: 0.2 } } }} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: "2rem" }}>
             {hosts.map(host => {
               const cpuPct = (host.used_cpu / host.total_cpu) * 100;

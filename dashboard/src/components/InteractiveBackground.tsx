@@ -120,7 +120,18 @@ class Particle {
   }
 }
 
-const DEFAULT_ACCENT_RGB = '255, 44, 45'; // vellum/gold
+// Monochrome: the dots and links are the page ink at very low alpha (the
+// canvas itself is drawn at 0.22 opacity). `accentRgb` is accepted for API
+// compatibility but no longer tints the network.
+const DEFAULT_ACCENT_RGB = '128, 128, 128';
+const CANVAS_OPACITY = 0.22;
+function inkRgb(): string {
+  try {
+    return document.documentElement.classList.contains('dark') ? '236, 236, 236' : '36, 36, 36';
+  } catch {
+    return DEFAULT_ACCENT_RGB;
+  }
+}
 // Link lines fade from LINK_MAX_ALPHA (touching) to 0 (110 px apart). They are
 // drawn in this many opacity steps; 16 steps keep every line within ~0.006 alpha
 // of its exact opacity.
@@ -130,8 +141,9 @@ const LINK_MAX_ALPHA = 0.2;
 function InteractiveBackground({
   densityMultiplier = 1,
   maxParticles,
-  accentRgb = DEFAULT_ACCENT_RGB,
+  accentRgb: _accentRgb = DEFAULT_ACCENT_RGB,
 }: InteractiveBackgroundProps) {
+  void _accentRgb;
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -143,6 +155,7 @@ function InteractiveBackground({
     const ctx = getCanvasRenderingContext(canvas);
     if (!ctx) return;
 
+    let accentRgb = inkRgb();
     let particlesArray: Particle[] = [];
     let animationFrameId = 0;
     let isAnimating = false;
@@ -277,6 +290,7 @@ function InteractiveBackground({
         return;
       }
 
+      accentRgb = inkRgb();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < particlesArray.length; i++) {
         particlesArray[i].draw(ctx, accentRgb);
@@ -314,13 +328,13 @@ function InteractiveBackground({
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [densityMultiplier, maxParticles, accentRgb]);
+  }, [densityMultiplier, maxParticles]);
 
   return (
     <motion.canvas
       ref={canvasRef}
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      animate={{ opacity: CANVAS_OPACITY }}
       transition={{ duration: 1.5, ease: "easeInOut" }}
       style={{
         position: 'fixed',

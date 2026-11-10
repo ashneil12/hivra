@@ -10,6 +10,7 @@
 // tool blocks until its required fields are filled.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { Loader2, Check, Plus, X, Wrench, Trash2 } from "lucide-react";
 
 import { listBoxMcp } from "@/lib/hivra/agent-api";
@@ -32,7 +33,7 @@ const PICKER_CSS = `
 `;
 
 const mono: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 10,
   textTransform: "uppercase",
   letterSpacing: "0.16em",
@@ -202,10 +203,10 @@ export function ToolInstallPicker({
     padding: "10px 12px",
     minHeight: 44,
     border: "1px solid var(--etched-border)",
-    background: "rgba(255,255,255,0.04)",
+    background: "var(--hg-fill-1)",
     color: "var(--ink-black)",
     fontSize: 12,
-    fontFamily: "var(--font-mono), monospace",
+    fontFamily: "var(--font-mono)",
     outline: "none",
     minWidth: 0,
     width: "100%",
@@ -223,15 +224,19 @@ export function ToolInstallPicker({
             maxHeight: MODAL_MAX_HEIGHT,
             display: "flex",
             flexDirection: "column",
-            background: "var(--bg-surface, #fff)",
-            border: "1px solid var(--etched-border)",
-            boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
+            background: "var(--hg-glass-strong)",
+            backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+            WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+            border: "1px solid var(--hg-stroke)",
+            borderRadius: 20,
+            overflow: "hidden",
+            boxShadow: 'var(--hg-shadow-lg)',
           }}
         >
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "20px 22px 14px", borderBottom: "1px solid var(--etched-border)" }}>
             <div>
               <div className="mono" style={{ ...mono, marginBottom: 6 }}>Add tools</div>
-              <h3 className="serif" style={{ fontSize: "clamp(1.2rem, 3vw, 1.6rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
+              <h3 className="serif" style={{ fontSize: "clamp(1.2rem, 3vw, 1.6rem)", fontWeight: 600, margin: 0, color: "var(--ink-black)" }}>
                 Tool catalog
               </h3>
               <p className="tool-picker-intro" style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "6px 0 0", lineHeight: 1.5, maxWidth: 480 }}>
@@ -250,9 +255,9 @@ export function ToolInstallPicker({
 
           <div style={{ overflowY: "auto", overscrollBehavior: "contain", padding: "16px 22px", flex: 1, minHeight: 0 }}>
             {catalog === null ? (
-              <div style={{ padding: 48, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>
+              <div style={{ padding: 48, textAlign: "center" }}><ThinkingOrb size={32} state="searching" label="Loading" /></div>
             ) : loadError ? (
-              <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "#e06c5a", fontSize: 13.5 }}>
+              <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "var(--hg-bad)", fontSize: 13.5 }}>
                 {loadError}
                 <div style={{ marginTop: 12 }}>
                   <button type="button" onClick={() => void load()} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", minHeight: 40, cursor: "pointer", fontSize: 12.5 }}>Retry</button>
@@ -272,7 +277,7 @@ export function ToolInstallPicker({
                       key={t.id}
                       style={{
                         border: `1px solid ${t.installed ? "var(--gold-leaf)" : "var(--etched-border)"}`,
-                        background: t.installed ? "rgba(197,160,89,0.06)" : "rgba(255,255,255,0.03)",
+                        background: t.installed ? "var(--hg-fill-2)" : "var(--hg-fill-1)",
                         padding: "12px 14px",
                         display: "grid",
                         gap: 10,
@@ -285,7 +290,7 @@ export function ToolInstallPicker({
                         </span>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <strong className="serif" style={{ fontSize: 15.5, fontWeight: 400, color: "var(--ink-black)" }}>{t.name}</strong>
+                            <strong className="serif" style={{ fontSize: 15.5, fontWeight: 600, color: "var(--ink-black)" }}>{t.name}</strong>
                             <span className="mono" style={{ ...mono, fontSize: 9, opacity: 0.85, color: t.installed ? "var(--text-muted)" : "var(--gold-leaf)" }}>
                               {t.installed ? "Installed" : "Available"}
                             </span>
@@ -323,13 +328,13 @@ export function ToolInstallPicker({
                       ) : null}
 
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingLeft: 28 }}>
-                        <span style={{ fontSize: 11.5, color: "#e06c5a", minHeight: 14 }}>{rowError[t.id] || ""}</span>
+                        <span style={{ fontSize: 11.5, color: "var(--hg-bad)", minHeight: 14 }}>{rowError[t.id] || ""}</span>
                         {t.installed ? (
                           <button
                             type="button"
                             disabled={busy}
                             onClick={() => void remove(t)}
-                            style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "6px 14px", minHeight: 40, cursor: busy ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                            style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--hg-bad)", padding: "6px 14px", minHeight: 40, cursor: busy ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
                           >
                             {busy ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
                             Remove
@@ -400,7 +405,7 @@ function PickerDialog({ onClose, closeOnEscape, children }: { onClose: () => voi
         right: 0,
         height: "var(--workspace-viewport-height, 100dvh)",
         zIndex: OVERLAY_Z,
-        background: "rgba(0,0,0,0.55)",
+        background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

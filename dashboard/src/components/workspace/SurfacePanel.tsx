@@ -57,7 +57,7 @@ export function SurfacePanel({
       data-agent-uid={agentUid}
       data-surface={surface}
       data-testid="surface-panel"
-      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--bg-surface)]"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent"
     >
       <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">
         {children}

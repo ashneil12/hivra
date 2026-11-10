@@ -76,7 +76,7 @@ export function AgentSoftwareChip({ agent, onOpen, className }: {
     >
       <span style={{
         display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 9px", whiteSpace: "nowrap",
-        border: `1px solid ${badge === "update_failed" ? "#c0392b" : "var(--gold-leaf, var(--etched-border))"}`,
+        border: `1px solid ${badge === "update_failed" ? "var(--hg-bad)" : "var(--gold-leaf, var(--etched-border))"}`,
         fontSize: 11, fontWeight: 700, letterSpacing: "0.02em",
       }}>
         <Icon size={12} aria-hidden="true" style={badge === "updating" ? { animation: "spin 1s linear infinite" } : undefined} />

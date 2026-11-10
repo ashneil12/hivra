@@ -65,7 +65,7 @@
 
 .guide {
   padding: clamp(24px, 3vw, 36px);
-  background: var(--public-surface);
+  background: var(--hg-glass);
   border: 1px solid var(--etched-border);
   border-top: 3px solid var(--gold-leaf);
 }
@@ -97,7 +97,7 @@
   padding: 8px 0;
   border-bottom: 1px solid var(--etched-border);
   color: var(--ink-black);
-  font: 13px/1.5 var(--public-mono, monospace);
+  font: 13px/1.5 var(--font-sans);
   text-decoration: none;
   transition: color 0.2s, padding 0.3s;
 }
@@ -146,7 +146,7 @@
   gap: 12px;
   margin-bottom: 18px;
   color: var(--gold-leaf);
-  font: 500 12px/1.6 var(--public-mono, monospace);
+  font: 500 12px/1.6 var(--font-sans);
   letter-spacing: 0.06em;
 }
 
@@ -202,7 +202,7 @@
 .live {
   margin-bottom: clamp(88px, 11vw, 160px);
   padding: clamp(28px, 4vw, 56px);
-  background: var(--public-surface);
+  background: var(--hg-glass);
   border: 1px solid var(--etched-border);
   border-top: 3px solid var(--gold-leaf);
 }
@@ -372,7 +372,7 @@
   gap: clamp(20px, 6vw, 96px);
   margin-bottom: clamp(88px, 11vw, 160px);
   padding: clamp(24px, 3.4vw, 40px);
-  background: var(--public-surface);
+  background: var(--hg-glass);
   border: 1px solid var(--etched-border);
   border-left: 3px solid var(--gold-leaf);
 }
@@ -453,7 +453,7 @@
   content: counter(step, decimal-leading-zero);
   padding-top: 4px;
   color: var(--gold-leaf);
-  font: 500 13px/1.6 var(--public-mono, monospace);
+  font: 500 13px/1.6 var(--font-sans);
 }
 
 .steps li > span {
@@ -620,3 +620,7 @@
     margin-top: 28px;
   }
 }
+
+/* Hivra Glass */
+.guide, .live, .note { border-radius: var(--hg-radius-lg); border-top-width: 1px; border-left-width: 1px; -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm); }
+.marker { border-radius: 999px; }

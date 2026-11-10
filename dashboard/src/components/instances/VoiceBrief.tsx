@@ -84,7 +84,7 @@ export function VoiceBrief({ text }: { text: string }) {
         alignItems: 'center',
         gap: 10,
         border: '1px solid var(--etched-border)',
-        background: 'rgba(212, 175, 55, 0.06)',
+        background: 'var(--hg-fill-2)',
         padding: '8px 10px',
       }}
     >

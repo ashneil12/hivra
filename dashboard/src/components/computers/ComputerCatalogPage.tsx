@@ -9,7 +9,6 @@ import {
   Bot,
   ChevronDown,
   Cloud,
-  Loader2,
   Monitor,
   Plus,
   RefreshCw,
@@ -42,6 +41,7 @@ import { fetchOwnerAttachedAgents } from "@/lib/agent-computers/attach-client";
 
 import styles from "./ComputerCatalogPage.module.css";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 const PROFILE_ANCHORS = ["#linux-sandbox", "#omarchy", "#windows"];
 // Height of the opened catalog that must already show before it is scrolled to.
 const CATALOG_PEEK = 120;
@@ -312,7 +312,7 @@ export function ComputerCatalogPage(
           ) : null}
           {loading && total === 0 ? (
             <div className={styles.empty}>
-              <Loader2 size={20} className={styles.spin} />
+              <ThinkingOrb state="searching" size={20} />
               <span>Loading computers…</span>
             </div>
           ) : null}

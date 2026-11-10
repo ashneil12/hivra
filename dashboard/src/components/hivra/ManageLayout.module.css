@@ -76,7 +76,7 @@
 }
 
 .notice[data-kind="alert"] {
-  border-color: var(--hivra-red-line);
+  border-color: var(--hg-stroke-strong);
   color: var(--ink-black);
 }
 

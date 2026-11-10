@@ -141,7 +141,7 @@ export function ReferralCard() {
           onClick={copy}
           style={{
             padding: "0.75rem 1.25rem",
-            background: copied ? "var(--green, #16a34a)" : "var(--ink-black)",
+            background: copied ? "var(--hg-ok)" : "var(--ink-black)",
             color: "var(--bg-surface)",
             border: "1px solid var(--ink-black)",
             cursor: "pointer",

@@ -326,10 +326,10 @@ function AgentSwitcherPanel({
         tabIndex={-1}
         onKeyDown={handleKeyDown}
         style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)", outline: "none" }}
-        className="flex max-w-[calc(100vw-16px)] flex-col overflow-hidden border border-[var(--etched-border)] bg-[var(--bg-surface)] shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
+        className="flex max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass-strong)] backdrop-blur-xl backdrop-saturate-[1.3] shadow-[var(--hg-shadow-lg)]"
       >
         {/* A label, so a tap anywhere on the row focuses the field. */}
-        <label className="flex shrink-0 cursor-text items-center gap-2 border-b border-[var(--etched-border)] px-2.5 py-2 pointer-coarse:py-0">
+        <label className="flex shrink-0 cursor-text items-center gap-2 border-b border-[var(--hg-stroke-subtle)] px-2.5 py-2 pointer-coarse:py-0">
           <Search
             aria-hidden="true"
             size={14}
@@ -412,14 +412,14 @@ function AgentSwitcherPanel({
                       onFocus={() => setActiveIndex(index)}
                       onClick={(event) => onSelect(agent, event.detail === 0)}
                       className={[
-                        "flex min-h-[44px] w-full min-w-0 items-center gap-2 border-l-2 px-2.5 py-2 text-left outline-none",
+                        "flex min-h-[44px] w-full min-w-0 items-center gap-2 rounded-[7px] border-l-2 px-2.5 py-2 text-left outline-none",
                         "motion-reduce:transition-none",
                         selected
-                          ? "border-l-[var(--hivra-red)] bg-[var(--bg-elevated)]"
+                          ? "border-l-transparent bg-[var(--hg-fill-2)]"
                           : active
-                            ? "border-l-transparent bg-[var(--bg-elevated)]"
+                            ? "border-l-transparent bg-[var(--hg-fill-hover)]"
                             : "border-l-transparent",
-                        "focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2",
+                        "focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2",
                       ].join(" ")}
                     >
                       <span
@@ -445,7 +445,7 @@ function AgentSwitcherPanel({
                         <Check
                           aria-hidden="true"
                           size={14}
-                          className="shrink-0 text-[var(--hivra-red)]"
+                          className="shrink-0 text-[var(--hg-text)]"
                         />
                       ) : null}
                       {shortcut ? (
@@ -468,7 +468,7 @@ function AgentSwitcherPanel({
         <div className="flex shrink-0 items-center gap-1 border-t border-[var(--etched-border)]">
           <a
             href="/dashboard/launch"
-            className="mono flex min-h-[40px] min-w-0 flex-1 items-center gap-2 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+            className="mono flex min-h-[40px] min-w-0 flex-1 items-center gap-2 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2"
           >
             <Plus aria-hidden="true" size={14} />
             Launch an agent or computer
@@ -479,7 +479,7 @@ function AgentSwitcherPanel({
           {onOpenTestGuide && <button
             type="button"
             onClick={onOpenTestGuide}
-            className="mono flex min-h-[40px] shrink-0 items-center gap-1.5 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+            className="mono flex min-h-[40px] shrink-0 items-center gap-1.5 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2"
           >
             <BookOpenCheck aria-hidden="true" size={13} />
             Test guide
@@ -499,7 +499,7 @@ function SourceFailure({ onRetry }: { onRetry: () => void }) {
       <button
         type="button"
         onClick={onRetry}
-        className="mono mt-1 inline-flex min-h-[32px] items-center gap-1.5 text-[11.5px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+        className="mono mt-1 inline-flex min-h-[32px] items-center gap-1.5 text-[11.5px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2"
       >
         <RotateCcw aria-hidden="true" size={13} />
         Retry

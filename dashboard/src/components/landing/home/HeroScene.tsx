@@ -5,6 +5,7 @@ import { m, useMotionValue, useScroll, useSpring, useTransform } from "framer-mo
 import { Cpu, KeyRound, Power, RotateCcw } from "lucide-react";
 import { EASE_OUT, useMotionPref, usePageVisible, useRange, useTypedLines, useVisible } from "./motion";
 import styles from "./home.module.css";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { planSizeParts } from "@/lib/blog/plan-facts";
 
 const ENTRY_SIZE_CHIP = planSizeParts("entry");
@@ -74,6 +75,9 @@ export default function HeroScene() {
         <span className={styles.sceneGlow} />
         <span className={styles.sceneFloor} />
         <span className={styles.sceneBars} />
+        <div className={styles.sceneOrb}>
+          <ThinkingOrb state="working" size={230} theme="dark" />
+        </div>
       </div>
       <m.div className={styles.sceneRig} style={{ rotateX, rotateY, y: scrollLift }} aria-hidden="true">
         <m.div className={styles.win} {...enter(0.15, { y: 60, z: -220, rotateX: 22, scale: 0.9, filter: "blur(10px)" })}>

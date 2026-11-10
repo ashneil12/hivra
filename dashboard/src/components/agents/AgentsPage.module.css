@@ -15,8 +15,7 @@
   margin-bottom: 28px;
 }
 .header h1 {
-  font:
-    400 clamp(30px, 4.8cqi, 38px)/1.1 var(--font-grotesk),
+  font: 400 clamp(30px, 4.8cqi, 38px)/1.1 var(--font-grotesk),
     sans-serif;
   letter-spacing: -0.04em;
   margin: 8px 0 9px;
@@ -31,14 +30,12 @@
   align-items: center;
   gap: 7px;
   color: var(--text-secondary);
-  font:
-    400 10px var(--font-mono),
-    monospace;
+  font: 600 11px var(--font-sans);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
 }
 .kicker svg {
-  color: var(--hivra-red);
+  color: var(--hg-fg);
 }
 .primaryButton {
   min-height: 44px;
@@ -51,20 +48,23 @@
   border: 1px solid var(--ink-black);
   color: var(--bg-surface);
   text-decoration: none;
-  font:
-    700 10px var(--font-mono),
-    monospace;
-  text-transform: uppercase;
+  font: 600 11px var(--font-sans);
+  text-transform: none;
   white-space: nowrap;
+  border-radius: var(--hg-radius-sm);
 }
 .primaryButton svg {
-  color: #ff3a3b;
+  color: var(--hg-fg);
 }
 .inventory {
   container: agent-inventory / inline-size;
   min-width: 0;
   border: 1px solid var(--etched-border);
   background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  border-radius: var(--hg-radius-lg);
 }
 .inventoryHeading {
   display: flex;
@@ -74,11 +74,8 @@
   padding: 16px 18px 8px;
 }
 .inventoryHeading h2 {
-  font:
-    400 23px ui-serif,
-    Georgia,
-    Cambria,
-    serif;
+  font: 600 23px var(--font-display);
+  letter-spacing: -0.02em;
   margin: 0;
 }
 .inventoryHeading h2 > span {
@@ -98,11 +95,10 @@
   border: 1px solid transparent;
   background: none;
   color: var(--text-secondary);
-  font:
-    400 10px var(--font-mono),
-    monospace;
+  font: 600 11px var(--font-sans);
   cursor: pointer;
-  text-transform: uppercase;
+  text-transform: none;
+  border-radius: var(--hg-radius-sm);
 }
 .textButton:hover {
   border-color: var(--etched-border);
@@ -130,6 +126,7 @@
   border: 1px solid var(--etched-border);
   background: color-mix(in srgb, var(--bg-primary) 90%, transparent);
   color: var(--text-secondary);
+  border-radius: var(--hg-radius-sm);
 }
 .search input {
   min-width: 0;
@@ -143,7 +140,7 @@
   outline: none;
 }
 .search:focus-within {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-fg);
   outline-offset: 2px;
 }
 .search input::placeholder {
@@ -158,6 +155,7 @@
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   border: 1px solid var(--etched-border);
+  border-radius: var(--hg-radius-sm);
 }
 .filters::-webkit-scrollbar {
   display: none;
@@ -212,6 +210,7 @@
   justify-content: center;
   border: 1px solid var(--etched-border);
   color: var(--text-secondary);
+  border-radius: var(--hg-radius-sm);
 }
 .agentIdentity {
   display: grid;
@@ -219,8 +218,7 @@
   min-width: 0;
 }
 .agentIdentity strong {
-  font:
-    500 14px var(--font-grotesk),
+  font: 500 14px var(--font-grotesk),
     sans-serif;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -246,9 +244,10 @@
     10.5px var(--font-mono),
     monospace;
   white-space: nowrap;
+  border-radius: var(--hg-radius-sm);
 }
 .agentSoftware[data-badge="update_failed"] {
-  border-color: #c0392b;
+  border-color: var(--hg-bad);
 }
 .agentResources {
   color: var(--text-secondary);
@@ -268,21 +267,21 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #888;
+  background: var(--hg-text-3);
   flex: 0 0 auto;
 }
 .agentStatus[data-state="running"] > span {
-  background: #22c55e;
+  background: var(--hg-ok);
 }
 .agentStatus[data-state="error"] > span {
-  background: #ef4444;
+  background: var(--hg-bad);
 }
 .agentStatus[data-state="updating"] > span,
 .agentStatus[data-state="provisioning"] > span {
-  background: #d4af37;
+  background: var(--hg-warn);
 }
 .rowArrow {
-  color: var(--hivra-red);
+  color: var(--hg-fg);
 }
 .rowActions {
   align-self: stretch;
@@ -316,7 +315,8 @@
   background: var(--bg-surface);
   border: 1px solid var(--etched-border);
   padding: 5px;
-  box-shadow: 0 12px 25px #0003;
+  box-shadow: var(--hg-shadow-md);
+  border-radius: var(--hg-radius-sm);
 }
 .rowActions:not([open]) > div {
   display: none;
@@ -348,10 +348,8 @@
 }
 .empty h3 {
   color: var(--ink-black);
-  font:
-    400 22px ui-serif,
-    Georgia,
-    serif;
+  font: 600 22px var(--font-display);
+  letter-spacing: -0.02em;
   margin: 0;
 }
 .empty p {
@@ -374,6 +372,7 @@
   margin: 0 18px 16px;
   border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
   background: color-mix(in srgb, var(--red) 5%, transparent);
+  border-radius: var(--hg-radius-sm);
 }
 .loadError > svg {
   flex-shrink: 0;
@@ -396,6 +395,7 @@
   margin-top: 24px;
   border: 1px solid var(--etched-border);
   background: color-mix(in srgb, var(--bg-surface) 75%, transparent);
+  border-radius: var(--hg-radius-sm);
 }
 .catalog > summary {
   padding: 18px;
@@ -406,10 +406,8 @@
   cursor: pointer;
 }
 .catalog summary strong {
-  font:
-    400 18px ui-serif,
-    Georgia,
-    serif;
+  font: 600 18px var(--font-display);
+  letter-spacing: -0.02em;
   display: block;
 }
 .catalog summary small {
@@ -419,10 +417,10 @@
   margin-top: 5px;
 }
 .catalog summary svg {
-  color: var(--hivra-red);
+  color: var(--hg-fg);
 }
 .disclosureIcon {
-  transition: transform 0.15s ease;
+  transition: transform var(--hg-fast) var(--hg-ease);
 }
 .catalog[open] .disclosureIcon {
   transform: rotate(180deg);
@@ -450,7 +448,7 @@
   text-decoration: none;
 }
 .runtimeList a:hover strong {
-  color: var(--hivra-red);
+  color: var(--hg-fg);
 }
 .runtimeList strong {
   font-weight: 500;
@@ -471,14 +469,13 @@
   color: var(--ink-black);
 }
 .runtimeList small svg {
-  color: var(--hivra-red);
+  color: var(--hg-fg);
 }
 .previewRuntime {
   padding: 22px 0;
 }
 .previewRuntime h2 {
-  font:
-    400 22px var(--font-grotesk),
+  font: 400 22px var(--font-grotesk),
     sans-serif;
   margin: 8px 0;
 }
@@ -501,14 +498,14 @@
   text-decoration: none;
 }
 .previewRuntime a svg {
-  color: var(--hivra-red);
+  color: var(--hg-fg);
 }
 .page button:focus-visible,
 .page a:focus-visible,
 .page summary:focus-visible,
 .inventory button:focus-visible,
 .inventory summary:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-fg);
   outline-offset: 3px;
 }
 /* The segmented row scrolls, so an outer ring would be clipped. */

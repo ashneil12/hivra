@@ -125,11 +125,11 @@ export default function LibraryPage() {
     <DashboardPageShell maxWidth={1000}>
       <style>{LIBRARY_CSS}</style>
       <header style={{ marginBottom: "3rem" }}>
-        <button onClick={() => router.push("/dashboard")} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 2px", background: "none", border: "none", cursor: "pointer", marginBottom: "1.25rem", fontFamily: "var(--font-mono), monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5 }}>
+        <button onClick={() => router.push("/dashboard")} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 44, padding: "0 2px", background: "none", border: "none", cursor: "pointer", marginBottom: "1.25rem", fontFamily: "var(--font-sans)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5 }}>
           <ArrowLeft size={12} /> {libraryCopy.returnToCommandCenter}
         </button>
-        <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 300, lineHeight: 1.1, marginBottom: "1rem" }}>
-          {libraryCopy.titlePrefix}{libraryCopy.titleSeparator}<em style={{ fontStyle: "italic" }}>{libraryCopy.titleEmphasis}</em>{libraryCopy.titleSuffix}
+        <h2 className="serif" style={{ fontSize: "2.2rem", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1, marginBottom: "1rem" }}>
+          {libraryCopy.titlePrefix}{libraryCopy.titleSeparator}<em style={{ fontStyle: "normal" }}>{libraryCopy.titleEmphasis}</em>{libraryCopy.titleSuffix}
         </h2>
         <p style={{ opacity: 0.8, fontSize: 14, maxWidth: "600px", lineHeight: 1.6 }}>{libraryCopy.intro}</p>
         <p style={{ opacity: 0.5, fontSize: 12, marginTop: "0.5rem" }}>
@@ -138,7 +138,7 @@ export default function LibraryPage() {
         <button
           onClick={() => router.push("/dashboard/templates")}
           className="library-touch-target"
-          style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: "1.25rem", padding: "8px 14px", background: "transparent", color: "var(--ink-black)", border: "1px solid var(--ink-black)", cursor: "pointer", fontFamily: "var(--font-mono), monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: "1.25rem", padding: "8px 14px", background: "transparent", color: "var(--ink-black)", border: "1px solid var(--ink-black)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 600 }}
         >
           <Save size={13} /> Save &amp; share your agents as templates
         </button>
@@ -203,7 +203,7 @@ export default function LibraryPage() {
         {featuredTemplates.length > 0 && (
           <div>
             <h3 className="mono" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600, marginBottom: "1.5rem", color: "var(--ink-black)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <span style={{ color: "var(--accent-color, #ff4500)" }}>★</span> {libraryCopy.featured}
+              <span style={{ color: "var(--hg-text-2)" }}>★</span> {libraryCopy.featured}
             </h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.5rem" }}>
               {featuredTemplates.map((t: AgentTemplate) => (
@@ -214,7 +214,7 @@ export default function LibraryPage() {
                   display: "flex", 
                   flexDirection: "column",
                   transition: "all 0.2s ease",
-                  boxShadow: "4px 4px 0px rgba(0,0,0,0.1)"
+                  boxShadow: "var(--hg-shadow-md)"
                 }}
                 onMouseEnter={e => { if (canHover()) e.currentTarget.style.transform = "translate(-2px, -2px)"; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = "translate(0px, 0px)"; }}
@@ -246,7 +246,7 @@ export default function LibraryPage() {
                         cursor: "pointer",
                         transition: "all 0.2s",
                       }}
-                      onMouseEnter={e => { if (canHover()) e.currentTarget.style.background = "#f5f5f5"; }}
+                      onMouseEnter={e => { if (canHover()) e.currentTarget.style.background = "var(--hg-fill-hover)"; }}
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                       title={libraryCopy.viewPrompt}
                     >
@@ -327,7 +327,7 @@ export default function LibraryPage() {
                         cursor: "pointer",
                         transition: "all 0.2s",
                       }}
-                      onMouseEnter={e => { if (canHover()) e.currentTarget.style.background = "#f5f5f5"; }}
+                      onMouseEnter={e => { if (canHover()) e.currentTarget.style.background = "var(--hg-fill-hover)"; }}
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                       title={libraryCopy.viewPrompt}
                     >
@@ -483,7 +483,7 @@ function LibraryPreviewDialog({
           height: "min(80dvh, 100%)",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "10px 10px 0px rgba(0,0,0,0.1)"
+          boxShadow: "var(--hg-shadow-lg)"
         }}
       >
         <header style={{

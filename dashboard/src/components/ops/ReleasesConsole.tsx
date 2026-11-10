@@ -56,9 +56,10 @@ const MIN_HALT_REASON = 3;
 
 const card: CSSProperties = {
   border: '1px solid var(--etched-border)',
-  background: 'var(--bg-surface)',
+  borderRadius: 10,
+  background: 'var(--hg-glass)',
   padding: '1.25rem 1.2rem',
-  boxShadow: '0 6px 18px rgba(0,0,0,0.04)',
+  boxShadow: 'var(--hg-shadow-sm)',
 };
 
 const sectionLabel: CSSProperties = {
@@ -73,7 +74,8 @@ const control: CSSProperties = {
   minHeight: 44,
   padding: '0 12px',
   border: '1px solid var(--etched-border)',
-  background: 'var(--bg-surface)',
+  borderRadius: 10,
+  background: 'var(--hg-glass)',
   color: 'var(--ink-black)',
   fontSize: 14,
   width: '100%',
@@ -89,7 +91,7 @@ const buttonStyle = (disabled: boolean): CSSProperties => ({
   cursor: disabled ? 'not-allowed' : 'pointer',
 });
 
-const errorStyle: CSSProperties = { margin: 0, fontSize: 12, color: '#b91c1c', overflowWrap: 'anywhere' };
+const errorStyle: CSSProperties = { margin: 0, fontSize: 12, color: 'var(--hg-bad)', overflowWrap: 'anywhere' };
 
 function stageLabel(stage: ReleaseStage): string {
   return LADDER.find((rung) => rung.stage === stage)?.label ?? stage;
@@ -164,8 +166,9 @@ function StageLadder({ stage, halted }: { stage: ReleaseStage; halted: boolean }
               textAlign: 'center',
               padding: '8px 2px',
               border: '1px solid var(--etched-border)',
+              borderRadius: 7,
               fontWeight: isCurrent ? 700 : 400,
-              background: isCurrent ? (halted ? '#b91c1c' : 'var(--ink-black)') : 'transparent',
+              background: isCurrent ? (halted ? 'var(--hg-bad)' : 'var(--ink-black)') : 'transparent',
               color: isCurrent ? 'var(--vellum-bg)' : passed ? 'var(--ink-black)' : 'var(--text-muted)',
               overflowWrap: 'anywhere',
             }}
@@ -244,7 +247,7 @@ function ReleaseCard({
       {release.halted && (
         <div
           role="status"
-          style={{ border: '1px solid rgba(185,28,28,0.45)', background: 'rgba(185,28,28,0.08)', padding: '0.6rem 0.8rem', fontSize: 13, color: '#991b1b', overflowWrap: 'anywhere' }}
+          style={{ border: '1px solid color-mix(in srgb, var(--hg-bad) 45%, transparent)', background: 'color-mix(in srgb, var(--hg-bad) 8%, transparent)', padding: '0.6rem 0.8rem', fontSize: 13, color: 'var(--hg-bad)', overflowWrap: 'anywhere' }}
         >
           <strong className="mono" style={{ fontSize: 11, letterSpacing: '0.1em' }}>HALTED</strong>
           {release.halted_by === 'auto' && <span> (automatic)</span>}
@@ -598,7 +601,7 @@ export function ReleasesConsole() {
                       </strong>
                       <span
                         className="mono"
-                        style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', border: '1px solid rgba(185,28,28,0.45)', background: 'rgba(185,28,28,0.08)', color: '#991b1b', padding: '2px 8px' }}
+                        style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', border: '1px solid color-mix(in srgb, var(--hg-bad) 45%, transparent)', background: 'color-mix(in srgb, var(--hg-bad) 8%, transparent)', color: 'var(--hg-bad)', padding: '2px 8px' }}
                       >
                         {row.updateHealth.replace(/_/g, ' ')}
                       </span>

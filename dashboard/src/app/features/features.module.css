@@ -110,7 +110,7 @@
 .steps.steps li::before {
   content: counter(step, decimal-leading-zero);
   color: var(--gold-leaf);
-  font: 13px/2 var(--public-mono, monospace);
+  font: 13px/2 var(--font-sans);
   letter-spacing: 0.04em;
 }
 
@@ -124,7 +124,7 @@
   max-width: 60ch;
   margin: 32px 0;
   padding: 4px 0 4px 26px;
-  border-left: 2px solid var(--gold-leaf);
+  border-left: 2px solid var(--hg-stroke-strong);
   color: var(--ink-black);
   font-size: 19px;
   line-height: 1.7;
@@ -324,7 +324,7 @@
 .itemNumber {
   display: block;
   color: var(--gold-leaf);
-  font: 12px/1.6 var(--public-mono, monospace);
+  font: 12px/1.6 var(--font-sans);
   letter-spacing: 0.06em;
   word-spacing: normal;
 }
@@ -336,8 +336,8 @@
 .panel {
   margin-top: 96px;
   padding: 48px clamp(24px, 4vw, 56px);
-  background: var(--public-surface);
-  border-left: 2px solid var(--gold-leaf);
+  background: var(--hg-glass);
+  border-left: 2px solid var(--hg-stroke-strong);
 }
 
 .panel [data-action-links] {
@@ -472,3 +472,6 @@
     margin-bottom: 28px;
   }
 }
+
+/* Hivra Glass */
+.panel { border-radius: var(--hg-radius-lg); background: var(--hg-glass); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm); }

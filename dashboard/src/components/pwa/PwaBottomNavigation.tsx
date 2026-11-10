@@ -27,7 +27,7 @@ interface PwaBottomNavigationProps {
   onOpenSwitcher?: () => void;
 }
 
-const TAB_CLASS = 'hermes-pwa-bottom-nav__tab mono grid min-h-[56px] min-w-0 content-center items-center justify-items-center gap-0.5 px-0 py-[2px] text-[11px] no-underline';
+const TAB_CLASS = 'hermes-pwa-bottom-nav__tab grid min-h-[56px] min-w-0 content-center items-center justify-items-center gap-0.5 px-0 py-[2px] text-[11px] no-underline';
 
 const NAV_STYLES = `
   @media (min-width: 768px) {
@@ -53,25 +53,27 @@ const NAV_STYLES = `
   }
 
   .hermes-pwa-bottom-nav__tab {
-    color: var(--text-muted);
+    color: var(--hg-text-3);
     background: transparent;
     border: 0;
-    border-top: 2px solid transparent;
+    border-top: 0;
+    font-family: var(--font-sans);
+    transition: color var(--hg-fast) var(--hg-ease);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
   .hermes-pwa-bottom-nav__tab[data-active='true'] {
-    color: var(--ink-black);
-    background: var(--hivra-red-soft);
-    border-top-color: var(--hivra-red);
+    color: var(--hg-text);
+    background: transparent;
   }
+  .hermes-pwa-bottom-nav__tab[data-active='true'] .hermes-pwa-bottom-nav__icon { background: var(--hg-fill-2); border-radius: var(--hg-radius-md); }
   .hermes-pwa-bottom-nav :is(a, button):active {
-    background: var(--hivra-red-soft);
+    background: var(--hg-fill-2);
     transition: none;
   }
   .hermes-pwa-bottom-nav :is(a, button):focus-visible {
-    outline: 2px solid var(--hivra-red);
+    outline: 2px solid var(--hg-focus);
     outline-offset: -2px;
   }
   .hermes-pwa-bottom-nav__icon {
@@ -82,8 +84,9 @@ const NAV_STYLES = `
     height: 32px;
   }
   .hermes-pwa-bottom-nav__icon--launch {
-    color: #fff;
-    background: var(--hivra-red);
+    color: var(--hg-on-accent);
+    background: var(--hg-accent);
+    border-radius: var(--hg-radius-md);
   }
   .hermes-pwa-bottom-nav__badge {
     position: absolute;
@@ -95,7 +98,8 @@ const NAV_STYLES = `
     height: 16px;
     padding: 0 3px;
     color: #fff;
-    background: var(--hivra-red);
+    background: var(--hg-bad);
+    border-radius: 999px;
     font-size: 11px;
     font-weight: 700;
     line-height: 1;
@@ -152,8 +156,10 @@ export function PwaBottomNavigation({
         gridTemplateColumns: `repeat(${navItems.length + 1}, minmax(0, 1fr))`,
         gap: 0,
         padding: '3px max(4px, env(safe-area-inset-left, 0px)) calc(4px + env(safe-area-inset-bottom, 0px)) max(4px, env(safe-area-inset-right, 0px))',
-        borderTop: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        borderTop: '1px solid var(--hg-stroke)',
+        background: 'var(--hg-glass)',
+        WebkitBackdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)',
+        backdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)',
       }}
     >
       <style>{NAV_STYLES}</style>

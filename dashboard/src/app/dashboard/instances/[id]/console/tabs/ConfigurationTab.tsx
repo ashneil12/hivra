@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import posthog from 'posthog-js';
 import { AlertTriangle, Cpu, ExternalLink, Layers, Loader2, Monitor, Terminal } from 'lucide-react';
 import type { TailscaleConfig } from '@/lib/private-access/tailscale';
@@ -440,7 +441,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
 
 
   if (settingsLoad.instanceId !== instanceId || settingsLoad.status === 'loading') {
-    return <div role="status" aria-label="Loading settings" style={{ display: 'flex', padding: '3rem', justifyContent: 'center' }}><Loader2 className="animate-spin" size={24} style={{ opacity: 0.4 }} /></div>;
+    return <div role="status" aria-label="Loading settings" style={{ display: 'flex', padding: '3rem', justifyContent: 'center' }}><ThinkingOrb size={32} state="working" /></div>;
   }
 
   if (settingsLoad.status === 'error') {
@@ -504,10 +505,10 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
           </button>
 
           {webuiNotice && (
-            <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{webuiNotice}</div>
+            <div style={{ fontSize: 12, color: 'var(--hg-text-2)' }}>{webuiNotice}</div>
           )}
           {webuiError && (
-            <div style={{ fontSize: 12, color: 'var(--danger, #b91c1c)' }}>{webuiError}</div>
+            <div style={{ fontSize: 12, color: 'var(--danger, var(--hg-bad))' }}>{webuiError}</div>
           )}
         </div>
       </div>
@@ -567,7 +568,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
                 {cloudAccessLoading && <Loader2 className="animate-spin" size={14} />}
               </label>
 
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary, #6b7280)', lineHeight: 1.5 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--hg-text-2)', lineHeight: 1.5 }}>
                 <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                 <span>
                   You are responsible for custom system and Docker changes. They can break the
@@ -577,7 +578,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
               </div>
             </>
           ) : (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary, #6b7280)', lineHeight: 1.5 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--hg-text-2)', lineHeight: 1.5 }}>
               <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
               <span>
                 This option is only available on isolated customer VMs. It is intentionally
@@ -588,10 +589,10 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
           )}
 
           {cloudAccessMessage && (
-            <div role="status" style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{cloudAccessMessage}</div>
+            <div role="status" style={{ fontSize: 12, color: 'var(--hg-text-2)' }}>{cloudAccessMessage}</div>
           )}
           {cloudAccessError && (
-            <div style={{ fontSize: 12, color: 'var(--danger, #b91c1c)' }}>{cloudAccessError}</div>
+            <div style={{ fontSize: 12, color: 'var(--danger, var(--hg-bad))' }}>{cloudAccessError}</div>
           )}
         </div>
       </div>
@@ -641,7 +642,7 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
           </label>
 
           {terminalBackend === 'docker' && !cloudAccessEnabled && (
-            <div role="alert" style={{ fontSize: 12, color: 'var(--danger, #b91c1c)' }}>
+            <div role="alert" style={{ fontSize: 12, color: 'var(--danger, var(--hg-bad))' }}>
               Docker execution needs Advanced Cloud Access on — that is what exposes this VM&apos;s
               Docker daemon to the agent. Enable it above before saving Docker execution.
             </div>
@@ -687,10 +688,10 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
           </div>
 
           {terminalMessage && (
-            <div role="status" style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{terminalMessage}</div>
+            <div role="status" style={{ fontSize: 12, color: 'var(--hg-text-2)' }}>{terminalMessage}</div>
           )}
           {terminalError && (
-            <div style={{ fontSize: 12, color: 'var(--danger, #b91c1c)' }}>{terminalError}</div>
+            <div style={{ fontSize: 12, color: 'var(--danger, var(--hg-bad))' }}>{terminalError}</div>
           )}
         </div>
       </div>
@@ -809,10 +810,10 @@ export default function ConfigurationTab({ instanceId }: { instanceId: string })
           </div>
 
           {contextMessage && (
-            <div role="status" style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{contextMessage}</div>
+            <div role="status" style={{ fontSize: 12, color: 'var(--hg-text-2)' }}>{contextMessage}</div>
           )}
           {contextError && (
-            <div style={{ fontSize: 12, color: 'var(--danger, #b91c1c)' }}>{contextError}</div>
+            <div style={{ fontSize: 12, color: 'var(--danger, var(--hg-bad))' }}>{contextError}</div>
           )}
         </div>
       </div>

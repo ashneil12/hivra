@@ -8,6 +8,7 @@
 // out to many agents.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { Loader2, Check, Plus, Search, Wrench, Trash2, X, Zap, Layers, ExternalLink } from "lucide-react";
 import touch from "@/components/tools/touch.module.css";
 import { SafePortal } from "@/components/ui/SafePortal";
@@ -22,7 +23,7 @@ import {
 import { readJson } from "@/lib/client/read-json";
 
 const mono: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 10,
   textTransform: "uppercase",
   letterSpacing: "0.16em",
@@ -48,7 +49,7 @@ const REMOVE_CONFIRM_DELAY_MS = 600;
 
 const input: React.CSSProperties = {
   padding: "9px 11px", border: "1px solid var(--etched-border)",
-  background: "rgba(255,255,255,0.04)", color: "var(--ink-black)",
+  background: "var(--hg-fill-1)", color: "var(--ink-black)",
   fontSize: 13, outline: "none", width: "100%", boxSizing: "border-box",
 };
 
@@ -128,7 +129,7 @@ export function ToolsBrowser() {
       <div
         style={{
           border: "1px solid var(--etched-border)",
-          background: "rgba(255,255,255,0.02)",
+          background: "var(--hg-fill-1)",
           padding: "14px 16px",
           display: "grid",
           gap: 10,
@@ -139,7 +140,7 @@ export function ToolsBrowser() {
             <Zap size={16} style={{ color: "var(--gold-leaf)", opacity: 0.8 }} />
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <strong className="serif" style={{ fontSize: 15.5, fontWeight: 400, color: "var(--ink-black)" }}>
+                <strong className="serif" style={{ fontSize: 15.5, fontWeight: 600, color: "var(--ink-black)" }}>
                   Composio Tool Router
                 </strong>
                 <span className="mono" style={{ ...mono, fontSize: 8.5, color: "var(--gold-leaf)", border: "1px solid var(--etched-border)", padding: "2px 6px" }}>
@@ -158,7 +159,7 @@ export function ToolsBrowser() {
               className={touch.touchTarget}
               style={{
                 border: "1px solid var(--gold-leaf)",
-                background: "rgba(197,160,89,0.10)",
+                background: "var(--hg-fill-2)",
                 color: "var(--ink-black)",
                 padding: "6px 12px",
                 fontSize: 12,
@@ -180,7 +181,7 @@ export function ToolsBrowser() {
           <div className="mono" style={{ ...mono, fontSize: 9, color: "var(--text-secondary)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <span>Connected Apps ({connectedApps.apps.size}):</span>
             {Array.from(connectedApps.apps).map((slug) => (
-              <span key={slug} style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", padding: "1px 6px", color: "var(--ink-black)" }}>
+              <span key={slug} style={{ border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)", padding: "1px 6px", color: "var(--ink-black)" }}>
                 {slug}
               </span>
             ))}
@@ -257,7 +258,7 @@ export function ToolsBrowser() {
               style={{
                 ...mono, opacity: 1,
                 border: `1px solid ${cat === c ? "var(--gold-leaf)" : "var(--etched-border)"}`,
-                background: cat === c ? "rgba(197,160,89,0.10)" : "transparent",
+                background: cat === c ? "var(--hg-fill-2)" : "transparent",
                 color: cat === c ? "var(--ink-black)" : "var(--text-secondary)",
                 padding: "6px 11px", cursor: "pointer",
               }}
@@ -275,10 +276,10 @@ export function ToolsBrowser() {
       {/* Catalog */}
       {tools === null ? (
         <div style={{ padding: 48, textAlign: "center" }}>
-          <Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} />
+          <ThinkingOrb size={32} state="searching" label="Loading" />
         </div>
       ) : loadError ? (
-        <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "#e06c5a", fontSize: 13.5 }}>
+        <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "var(--hg-bad)", fontSize: 13.5 }}>
           {loadError}
           <div style={{ marginTop: 12 }}>
             <button type="button" onClick={() => void load()} className={touch.touchTarget} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", cursor: "pointer", fontSize: 12.5 }}>Retry</button>
@@ -297,14 +298,14 @@ export function ToolsBrowser() {
                 key={t.id}
                 style={{
                   border: `1px solid ${activeTargets.length > 0 ? "var(--gold-leaf)" : "var(--etched-border)"}`,
-                  background: activeTargets.length > 0 ? "rgba(197,160,89,0.04)" : "rgba(255,255,255,0.03)",
+                  background: activeTargets.length > 0 ? "var(--hg-fill-2)" : "var(--hg-fill-1)",
                   padding: "14px 15px", display: "grid", gap: 10, minWidth: 0, position: "relative",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
                   <Wrench size={13} style={{ marginTop: 3, flexShrink: 0, color: "var(--gold-leaf)", opacity: 0.7 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong className="serif" style={{ fontSize: 15.5, fontWeight: 400, color: "var(--ink-black)" }}>{t.name}</strong>
+                    <strong className="serif" style={{ fontSize: 15.5, fontWeight: 600, color: "var(--ink-black)" }}>{t.name}</strong>
                     <div className="mono" style={{ ...mono, fontSize: 9, marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <span>{t.category}</span>
                       {t.env.some((f) => f.required) ? <span>key required</span> : <span>no key</span>}
@@ -327,7 +328,7 @@ export function ToolsBrowser() {
                     onClick={() => setOpenTool(t)}
                     className={touch.touchTarget}
                     style={{
-                      border: "1px solid var(--gold-leaf)", background: activeTargets.length > 0 ? "rgba(197,160,89,0.10)" : "transparent",
+                      border: "1px solid var(--gold-leaf)", background: activeTargets.length > 0 ? "var(--hg-fill-2)" : "transparent",
                       color: "var(--ink-black)", padding: "7px 14px", cursor: "pointer",
                       fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6, justifySelf: "start",
                     }}
@@ -481,17 +482,17 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
       role="dialog" aria-modal="true" aria-label={`Manage ${tool.name}`}
       onClick={onClose}
       className={touch.sheetOverlay}
-      style={{ position: "fixed", top: 0, left: 0, right: 0, height: "var(--workspace-viewport-height, 100dvh)", zIndex: 1000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      style={{ position: "fixed", top: 0, left: 0, right: 0, height: "var(--workspace-viewport-height, 100dvh)", zIndex: 1000, background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         className={touch.sheetPanel}
-        style={{ width: "min(640px, 100%)", maxHeight: "min(calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)), 780px)", display: "flex", flexDirection: "column", background: "var(--bg-surface, #fff)", border: "1px solid var(--etched-border)", boxShadow: "0 24px 80px rgba(0,0,0,0.35)" }}
+        style={{ width: "min(640px, 100%)", maxHeight: "min(calc(var(--workspace-viewport-height, 100dvh) - 40px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)), 780px)", display: "flex", flexDirection: "column", background: "var(--hg-glass-strong)", backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", border: "1px solid var(--hg-stroke)", borderRadius: 20, overflow: "hidden", boxShadow: "var(--hg-shadow-lg)" }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "18px 20px 12px", borderBottom: "1px solid var(--etched-border)" }}>
           <div>
             <div className="mono" style={{ ...mono, marginBottom: 5 }}>Manage tool</div>
-            <h3 className="serif" style={{ fontSize: "clamp(1.1rem, 3vw, 1.45rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>{tool.name}</h3>
+            <h3 className="serif" style={{ fontSize: "clamp(1.1rem, 3vw, 1.45rem)", fontWeight: 600, margin: 0, color: "var(--ink-black)" }}>{tool.name}</h3>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className={touch.dismissButton} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "5px 7px", cursor: "pointer", height: 28 }}>
             <X size={14} />
@@ -545,7 +546,7 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
                     style={{
                       textAlign: "left",
                       border: `1px solid ${on ? "var(--gold-leaf)" : "var(--etched-border)"}`,
-                      background: on ? "rgba(197,160,89,0.08)" : "rgba(255,255,255,0.03)",
+                      background: on ? "var(--hg-fill-2)" : "var(--hg-fill-1)",
                       padding: "9px 11px", display: "flex", alignItems: "center", gap: 10,
                       cursor: tg.installable ? "pointer" : "default",
                       opacity: tg.installable ? 1 : 0.5, minWidth: 0,
@@ -558,7 +559,7 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
                         {tg.lane === "hermes" ? "hermes" : tg.type}
                       </span>
                       {note ? (
-                        <span style={{ display: "block", marginTop: 3, fontSize: 11.5, lineHeight: 1.45, color: res && !res.ok ? "#e06c5a" : "var(--text-muted)" }}>
+                        <span style={{ display: "block", marginTop: 3, fontSize: 11.5, lineHeight: 1.45, color: res && !res.ok ? "var(--hg-bad)" : "var(--text-muted)" }}>
                           {note}
                         </span>
                       ) : null}
@@ -568,7 +569,7 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
                         ✓ Installed
                       </span>
                     ) : null}
-                    <span className="mono" style={{ ...mono, fontSize: 9, color: res ? (res.ok ? "var(--gold-leaf)" : "#e06c5a") : undefined }}>
+                    <span className="mono" style={{ ...mono, fontSize: 9, color: res ? (res.ok ? "var(--gold-leaf)" : "var(--hg-bad)") : undefined }}>
                       {res ? (res.ok ? "done" : "failed") : tg.installable || tg.blockedMessage ? tg.status : tg.blockedReason || tg.status}
                     </span>
                   </button>
@@ -579,7 +580,7 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
         </div>
 
         <div className={touch.sheetFooter} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 20px", borderTop: "1px solid var(--etched-border)", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 11.5, color: err ? "#e06c5a" : "var(--text-muted)" }}>
+          <span style={{ fontSize: 11.5, color: err ? "var(--hg-bad)" : "var(--text-muted)" }}>
             {err || `${picked.size} selected`}
           </span>
           {/* The two actions wrap as a pair; at 480px and below the pair dissolves so Remove (ownRow) gets its own row. */}
@@ -593,9 +594,9 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
                 aria-disabled={removeStep === "arming" || undefined}
                 className={touch.touchTarget}
                 style={{
-                  border: `1px solid ${removeArmed ? "#e06c5a" : "var(--etched-border)"}`,
-                  background: removeArmed ? "color-mix(in srgb, #e06c5a 14%, transparent)" : "transparent",
-                  color: "#e06c5a", fontWeight: removeArmed ? 600 : undefined,
+                  border: `1px solid ${removeArmed ? "var(--hg-bad)" : "var(--etched-border)"}`,
+                  background: removeArmed ? "color-mix(in srgb, var(--hg-bad) 14%, transparent)" : "transparent",
+                  color: "var(--hg-bad)", fontWeight: removeArmed ? 600 : undefined,
                   opacity: removeStep === "arming" ? 0.6 : undefined,
                   padding: "8px 14px", cursor: busy || picked.size === 0 || removeStep === "arming" ? "default" : "pointer", fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6,
                 }}

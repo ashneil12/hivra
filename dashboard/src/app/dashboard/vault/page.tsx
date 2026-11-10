@@ -545,23 +545,23 @@ export default function VaultPage() {
           <Lock size={12} style={{ color: "var(--ink-black)" }} />
           <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.3em", opacity: 0.6 }}>Infrastructure Security</span>
         </div>
-        <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 300, lineHeight: 1.1 }}>API <em>keys</em>.</h2>
+        <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 600, lineHeight: 1.1 }}>API <em>keys</em>.</h2>
         <p style={{ marginTop: 16, opacity: 0.6, lineHeight: 1.6, fontSize: 14, maxWidth: 500 }}>
           Keep your API keys in one place, then choose which agents use them.
         </p>
       </motion.header>
 
       {error && (
-        <div style={{ marginBottom: "2rem", padding: "1rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid #fca5a5", background: "#fef2f2" }}>
-          <AlertTriangle size={16} style={{ color: "#ef4444", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#dc2626", fontWeight: 500 }}>{error}</span>
+        <div style={{ marginBottom: "2rem", padding: "1rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)" }}>
+          <AlertTriangle size={16} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: "var(--hg-bad)", fontWeight: 500 }}>{error}</span>
         </div>
       )}
 
       {success && (
-        <div style={{ marginBottom: "2rem", padding: "1rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid #10b981", background: "#f0fdf4" }}>
-          <Save size={16} style={{ color: "#059669", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#059669", fontWeight: 500 }}>{success}</span>
+        <div style={{ marginBottom: "2rem", padding: "1rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid var(--hg-ok)", background: "color-mix(in srgb, var(--hg-ok) 8%, transparent)" }}>
+          <Save size={16} style={{ color: "var(--hg-ok)", flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: "var(--hg-ok)", fontWeight: 500 }}>{success}</span>
         </div>
       )}
 
@@ -606,7 +606,7 @@ export default function VaultPage() {
                 className="max-md:min-h-[44px] pointer-coarse:min-h-[44px]"
                 style={{
                   background: 'var(--ink-black)', color: "var(--bg-surface)", border: 'none', padding: '10px 16px', cursor: 'pointer',
-                  fontFamily: 'var(--font-mono), monospace', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em',
+                  fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em',
                   display: 'flex', alignItems: 'center', gap: 8
                 }}
               >
@@ -660,7 +660,7 @@ export default function VaultPage() {
                     </p>
 
                     {agents.length === 0 ? (
-                      <div style={{ padding: '16px 20px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div style={{ padding: '16px 20px', background: 'color-mix(in srgb, var(--hg-bad) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--hg-bad) 20%, transparent)', display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <div style={{ color: 'var(--red)', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
                           <AlertTriangle size={16} /> The agent that runs sign-in is offline
                         </div>
@@ -759,7 +759,7 @@ export default function VaultPage() {
                                     <CheckCircle2 size={18} /> <span style={{ fontSize: 12, fontWeight: 600 }}>Codex session saved and applied on the selected agent.</span>
                                   </div>
                                ) : (
-                                  <div style={{ padding: '12px', color: 'var(--red)', fontSize: 12, border: '1px solid rgba(239,68,68,0.2)' }}>
+                                  <div style={{ padding: '12px', color: 'var(--red)', fontSize: 12, border: '1px solid color-mix(in srgb, var(--hg-bad) 20%, transparent)' }}>
                                     <div style={{ fontWeight: 600, marginBottom: 4 }}>Error</div>
                                     {codexError}
                                     <button type="button" onClick={() => setCodexStep('idle')} style={{ display: 'block', marginTop: 8, minHeight: 44, padding: '10px 14px', background: 'transparent', border: '1px solid var(--red)', cursor: 'pointer', fontSize: 11 }}>Retry</button>
@@ -858,7 +858,7 @@ export default function VaultPage() {
 
             <div className="w-full">
               {keys.length === 0 ? (
-                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono), monospace' }}>No keys saved yet.</div>
+                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono)' }}>No keys saved yet.</div>
               ) : (
                 (() => {
                   const filteredKeys = keys.filter(k => 
@@ -869,7 +869,7 @@ export default function VaultPage() {
 
                   if (filteredKeys.length === 0) {
                     return (
-                      <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono), monospace' }}>No keys match your search.</div>
+                      <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono)' }}>No keys match your search.</div>
                     );
                   }
 
@@ -879,7 +879,7 @@ export default function VaultPage() {
                       <div className="hidden md:block" style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", width: "100%" }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
                           <thead>
-                            <tr style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono), monospace', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.6 }}>
+                            <tr style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.6 }}>
                               <th style={{ padding: '14px 20px', fontWeight: 600 }}>Name</th>
                               <th style={{ padding: '14px 20px', fontWeight: 600 }}>Provider</th>
                               <th style={{ padding: '14px 20px', fontWeight: 600 }}>Preview</th>
@@ -889,11 +889,11 @@ export default function VaultPage() {
                           <tbody>
                             {filteredKeys.map(k => (
                               <tr key={k.id} style={{ borderBottom: '1px solid var(--etched-border)' }}>
-                                <td style={{ padding: '14px 20px', fontWeight: 500, fontFamily: 'var(--font-mono), monospace' }}>{k.name}</td>
-                                <td style={{ padding: '14px 20px' }}><span style={{ border: '1px solid var(--etched-border)', background: 'var(--bg-elevated)', padding: '4px 8px', borderRadius: 0, fontSize: 11, fontFamily: 'var(--font-mono), monospace' }}>{getProviderLabel(k.provider)}</span></td>
-                                <td style={{ padding: '14px 20px', fontFamily: 'var(--font-mono), monospace', opacity: 0.6, letterSpacing: '0.1em' }}><Key size={12} style={{ display: 'inline', marginRight: 6, opacity: 0.5 }}/> {k.key_preview}</td>
+                                <td style={{ padding: '14px 20px', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{k.name}</td>
+                                <td style={{ padding: '14px 20px' }}><span style={{ border: '1px solid var(--etched-border)', background: 'var(--bg-elevated)', padding: '4px 8px', borderRadius: 0, fontSize: 11, fontFamily: 'var(--font-mono)' }}>{getProviderLabel(k.provider)}</span></td>
+                                <td style={{ padding: '14px 20px', fontFamily: 'var(--font-mono)', opacity: 0.6, letterSpacing: '0.1em' }}><Key size={12} style={{ display: 'inline', marginRight: 6, opacity: 0.5 }}/> {k.key_preview}</td>
                                 <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                                  <button onClick={() => handleDeleteKey(k.id, k.name)} disabled={deletingKey === k.id} aria-label={`Delete ${k.name}`} style={{ background: 'transparent', color: '#dc2626', border: 'none', cursor: deletingKey === k.id ? 'wait' : 'pointer' }}>
+                                  <button onClick={() => handleDeleteKey(k.id, k.name)} disabled={deletingKey === k.id} aria-label={`Delete ${k.name}`} style={{ background: 'transparent', color: 'var(--hg-bad)', border: 'none', cursor: deletingKey === k.id ? 'wait' : 'pointer' }}>
                                     {deletingKey === k.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                                   </button>
                                 </td>
@@ -909,18 +909,18 @@ export default function VaultPage() {
                           <div key={k.id} style={{ border: '1px solid var(--etched-border)', background: 'var(--bg-surface)', padding: '1.25rem' }}>
                             <div className="flex justify-between items-start gap-3 mb-4">
                               <span className="font-mono font-bold" style={{ fontSize: 14, minWidth: 0, overflowWrap: 'anywhere', paddingTop: 12 }}>{k.name}</span>
-                              <button onClick={() => handleDeleteKey(k.id, k.name)} disabled={deletingKey === k.id} aria-label={`Delete ${k.name}`} style={{ background: 'transparent', color: '#dc2626', border: 'none', cursor: deletingKey === k.id ? 'wait' : 'pointer', width: 44, height: 44, flexShrink: 0, padding: 0, margin: '0 -10px 0 0', display: 'grid', placeItems: 'center' }}>
+                              <button onClick={() => handleDeleteKey(k.id, k.name)} disabled={deletingKey === k.id} aria-label={`Delete ${k.name}`} style={{ background: 'transparent', color: 'var(--hg-bad)', border: 'none', cursor: deletingKey === k.id ? 'wait' : 'pointer', width: 44, height: 44, flexShrink: 0, padding: 0, margin: '0 -10px 0 0', display: 'grid', placeItems: 'center' }}>
                                 {deletingKey === k.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                               </button>
                             </div>
                             <div className="flex flex-col gap-3">
                               <div className="flex justify-between items-center border-b pb-2" style={{ borderColor: 'var(--etched-border)' }}>
                                 <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', opacity: 0.6 }}>Provider</span>
-                                <span style={{ border: '1px solid var(--etched-border)', background: 'var(--bg-elevated)', padding: '4px 8px', fontSize: 11, fontFamily: 'var(--font-mono), monospace' }}>{getProviderLabel(k.provider)}</span>
+                                <span style={{ border: '1px solid var(--etched-border)', background: 'var(--bg-elevated)', padding: '4px 8px', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{getProviderLabel(k.provider)}</span>
                               </div>
                               <div className="flex justify-between items-center pt-1">
                                 <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', opacity: 0.6 }}>Preview</span>
-                                <span style={{ fontFamily: 'var(--font-mono), monospace', opacity: 0.6, letterSpacing: '0.1em', fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><Key size={12} style={{ opacity: 0.5 }}/>{k.key_preview}</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', opacity: 0.6, letterSpacing: '0.1em', fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><Key size={12} style={{ opacity: 0.5 }}/>{k.key_preview}</span>
                               </div>
                             </div>
                           </div>
@@ -943,14 +943,14 @@ export default function VaultPage() {
             
             <div className="w-full">
               {agents.length === 0 ? (
-                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono), monospace' }}>No running agents yet.</div>
+                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono)' }}>No running agents yet.</div>
               ) : (
                 <>
                   {/* Desktop View: the table needs ~780px, so tablets keep the cards. */}
                   <div className="hidden lg:block" style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", width: "100%" }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 13 }}>
                       <thead>
-                        <tr style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono), monospace', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.6 }}>
+                        <tr style={{ background: 'var(--bg-elevated)', borderBottom: '1px solid var(--etched-border)', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.6 }}>
                           <th style={{ padding: '14px 20px', fontWeight: 600 }}>Agent</th>
                           <th style={{ padding: '14px 20px', fontWeight: 600 }}>Provider Key</th>
                           <th style={{ padding: '14px 20px', fontWeight: 600 }}>Memory Key (Honcho)</th>
@@ -962,8 +962,8 @@ export default function VaultPage() {
                         {agents.map(agent => {
                           const hasChanges = changedAgents.has(agent.id);
                           return (
-                          <tr key={agent.id} style={{ borderBottom: '1px solid var(--etched-border)', background: hasChanges ? 'rgba(255, 44, 45,0.04)' : 'transparent', transition: 'background 0.2s' }}>
-                            <td style={{ padding: '14px 20px', fontWeight: 500, fontFamily: 'var(--font-mono), monospace' }}>{agent.name}</td>
+                          <tr key={agent.id} style={{ borderBottom: '1px solid var(--etched-border)', background: hasChanges ? 'var(--hg-fill-2)' : 'transparent', transition: 'background 0.2s' }}>
+                            <td style={{ padding: '14px 20px', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{agent.name}</td>
                             <td style={{ padding: '14px 20px', minWidth: 160 }}>
                               <select 
                                 value={agentAssignments[agent.id]?.vaultKeyId || ""}

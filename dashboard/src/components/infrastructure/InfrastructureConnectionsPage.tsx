@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -1445,7 +1446,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
 function LoadingConnections() {
   return (
     <div className={styles.loadingPanel} role="status" aria-live="polite">
-      <Loader2 size={20} className={styles.spin} aria-hidden="true" />
+      <ThinkingOrb state="searching" size={20} />
       <div>
         <strong>Loading your infrastructure…</strong>
         <span>Reading your connected hosts.</span>
@@ -1759,7 +1760,7 @@ function ConnectionCheckDialog({
               <span className={styles.checkingVisual} aria-hidden="true">
                 <ServerCog size={28} />
                 <span />
-                <Loader2 size={18} className={styles.spin} />
+                <ThinkingOrb state="connecting" size={20} />
               </span>
               <span className={styles.eyebrow}>Read-only inspection</span>
               <h2>Inspecting this host...</h2>
@@ -1792,7 +1793,7 @@ function ConnectionCheckDialog({
               <span className={styles.checkingVisual} aria-hidden="true">
                 <ShieldCheck size={28} />
                 <span />
-                <Loader2 size={18} className={styles.spin} />
+                <ThinkingOrb state="connecting" size={20} />
               </span>
               <span className={styles.eyebrow}>Strict readiness check</span>
               <h2>Verifying exact launch requirements...</h2>
