@@ -75,17 +75,17 @@ describe("/api/managed-venice/v1/models", () => {
     expect(deepseekFlash?.object).toBe("model");
     expect(deepseekFlash?.owned_by).toBe("venice.ai");
     expect(deepseekFlash?.context_length).toBe(1_000_000);
-    expect(deepseekFlash?.model_spec.pricing.input.usd).toBeCloseTo(0.17, 5);
-    expect(deepseekFlash?.model_spec.pricing.output.usd).toBeCloseTo(0.35, 5);
+    expect(deepseekFlash?.model_spec.pricing.input.usd).toBeCloseTo(0.138, 5);
+    expect(deepseekFlash?.model_spec.pricing.output.usd).toBeCloseTo(0.275, 5);
     // cache_input is 6x cheaper than input — the catalog must surface it so
     // cache-heavy models like deepseek-v4-flash aren't billed at the full input
     // rate. Regression guard for the 2026-05-17 drift incident.
     expect(deepseekFlash?.model_spec.pricing).toMatchObject({
       cache_read: { usd: expect.any(Number) },
     });
-    // Privacy class comes from Venice's /v1/models — deepseek-v4-flash is
-    // anonymized upstream (forwarded to DeepSeek's API), not private.
-    expect(deepseekFlash?.model_spec.privacy).toBe("anonymized");
+    // Privacy class comes from Venice's /v1/models — Venice labels
+    // deepseek-v4-flash private (2026-11-10 snapshot).
+    expect(deepseekFlash?.model_spec.privacy).toBe("private");
 
     const e2eeModel = body.data.find((m) => m.id.startsWith("e2ee-"));
     expect(["e2ee_private", "private"]).toContain(e2eeModel?.model_spec.privacy);
