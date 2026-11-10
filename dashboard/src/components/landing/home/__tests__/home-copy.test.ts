@@ -192,9 +192,8 @@ describe("homepage copy", () => {
     const keepUsing = HOMEPAGE_FAQ.find(({ q }) => q === "Can I keep using Claude Code or Codex?");
     expect(keepUsing?.a).toContain("subject to the provider's terms");
     expect(keepUsing?.a).toContain("The plan does not include AI usage.");
-    // Claude Code has no Hivra-credits path (agent-catalog.ts: no alternative providers), so credits are named for Codex only.
-    expect(keepUsing?.a).toContain("Claude Code uses your own Claude or Anthropic account. For Codex, bring your own account or key, or pay with Hivra credits.");
-    expect(keepUsing?.a).not.toMatch(/Claude Code[^.]*Hivra credits/);
+    // Claude Code takes its own account or Hivra credits (lib/launch/model-access.ts).
+    expect(keepUsing?.a).toContain("Claude Code uses your own Claude or Anthropic account, or Hivra credits. For Codex, bring your own account or key, or pay with Hivra credits.");
   });
 
   it("answers the seven questions in the pack's order", () => {

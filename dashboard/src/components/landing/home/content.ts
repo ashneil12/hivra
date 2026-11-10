@@ -371,7 +371,7 @@ export function homepageFaq(showTokenSentence: boolean): { q: string; a: string 
     },
     {
       q: "Can I keep using Claude Code or Codex?",
-      a: "Yes. These are supported agent options. Where supported, you sign in with your own account, subject to the provider's terms. The plan does not include AI usage. Claude Code uses your own Claude or Anthropic account. For Codex, bring your own account or key, or pay with Hivra credits.",
+      a: "Yes. These are supported agent options. Where supported, you sign in with your own account, subject to the provider's terms. The plan does not include AI usage. Claude Code uses your own Claude or Anthropic account, or Hivra credits. For Codex, bring your own account or key, or pay with Hivra credits.",
     },
     {
       q: "What happens when I close my laptop?",
