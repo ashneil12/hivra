@@ -5,7 +5,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HivraFiles } from "../HivraFiles";
 import type { WorkspaceFilesAccess } from "@/lib/hivra/workspace-browser-bridge";
 
-jest.mock("@/lib/hivra/agent-api", () => ({ listBoxFiles: jest.fn(), readBoxFile: jest.fn(), writeBoxFile: jest.fn() }));
+jest.mock("@/lib/hivra/agent-api", () => ({
+  listBoxFiles: jest.fn(), readBoxFile: jest.fn(), writeBoxFile: jest.fn(),
+  gitStatus: jest.fn(), gitDiff: jest.fn(), gitCommit: jest.fn(), gitCheckout: jest.fn(),
+}));
+import { gitStatus, listBoxFiles } from "@/lib/hivra/agent-api";
 
 function access(): WorkspaceFilesAccess & { list: jest.Mock; read: jest.Mock; write: jest.Mock } {
   return {
@@ -176,5 +180,59 @@ describe("HivraFiles", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to files" }));
     expect(screen.queryByText("Discard changes?")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+});
+
+describe("Changes view (the old Git tab, inside Files)", () => {
+  beforeEach(() => {
+    (listBoxFiles as jest.Mock).mockReset().mockResolvedValue({ path: ".", entries: [{ name: "app", type: "dir", size: 0, mtime: 1 }], error: null });
+    (gitStatus as jest.Mock).mockReset().mockResolvedValue({ repo: true, root: ".", branch: "main", branches: ["main"], lastCommit: "abc first", entries: [{ x: " ", y: "M", path: "src/app.ts" }] });
+  });
+
+  it("offers no switch unless the host asks for Changes", async () => {
+    render(<HivraFiles boxUrl="https://box.test" token="t" />);
+    await screen.findByRole("button", { name: /app/ });
+    expect(screen.queryByRole("button", { name: "Changes" })).not.toBeInTheDocument();
+    expect(gitStatus).not.toHaveBeenCalled();
+  });
+
+  it("never offers it on a shared-folder adapter, which has no git behind it", async () => {
+    render(<HivraFiles boxUrl="https://box.test" access={access()} showChanges />);
+    await screen.findByRole("button", { name: /README.md/ });
+    expect(screen.queryByRole("button", { name: "Changes" })).not.toBeInTheDocument();
+  });
+
+  it("switches to Changes with a plain line on what it shows, and back without reloading the folder", async () => {
+    render(<HivraFiles boxUrl="https://box.test" token="t" showChanges />);
+    await screen.findByRole("button", { name: /app/ });
+    expect(screen.getByRole("button", { name: "Files" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Code changes in this computer’s projects")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Changes" }));
+    expect(screen.getByText("Code changes in this computer’s projects")).toBeVisible();
+    expect(await screen.findByText("src/app.ts")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Changes" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByRole("button", { name: /app/ })).toBeVisible();
+    expect(screen.queryByText("src/app.ts")).not.toBeInTheDocument();
+    expect(listBoxFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a host that controls the view, and reports the owner's choice", async () => {
+    const onViewChange = jest.fn();
+    const { rerender } = render(<HivraFiles boxUrl="https://box.test" token="t" showChanges view="changes" onViewChange={onViewChange} />);
+    expect(await screen.findByText("src/app.ts")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    expect(onViewChange).toHaveBeenCalledWith("files");
+    rerender(<HivraFiles boxUrl="https://box.test" token="t" showChanges view="files" onViewChange={onViewChange} />);
+    expect(screen.queryByText("src/app.ts")).not.toBeInTheDocument();
+  });
+
+  it("explains an empty Changes view in plain words", async () => {
+    (gitStatus as jest.Mock).mockResolvedValue({ repo: false, root: null, branch: null, branches: [], lastCommit: null, entries: [] });
+    render(<HivraFiles boxUrl="https://box.test" token="t" showChanges view="changes" />);
+    expect(await screen.findByText("No code changes to show yet.")).toBeVisible();
+    expect(document.body).not.toHaveTextContent(/git repo|box home/i);
   });
 });

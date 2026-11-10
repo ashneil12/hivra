@@ -2,6 +2,8 @@ import {
   agentComputerPair,
   agentComputerPairLabel,
   agentLaunchWatchRow,
+  agentOffersDesktopEntry,
+  agentPageSurfacesFor,
   agentSurfaceGroupOf,
   agentSurfaceGroups,
   agentSurfaceLabel,
@@ -50,12 +52,32 @@ describe("agentSurfacesFor", () => {
   });
 });
 
+describe("agent page tabs", () => {
+  it("drops Git from the tabs (its changes open inside Files) and gives every agent a Desktop entry", () => {
+    const tabs = agentPageSurfacesFor({ type: "codex", ...RUNNING });
+    expect(tabs).not.toContain("git");
+    expect(tabs).toEqual(["chat", "desktop", "terminal", "browser", "box", "files", "skills", "telegram", "manage"]);
+    // The shared decision still lists Git, so the Computer Contract and Review do not drift.
+    expect(agentSurfacesFor({ type: "codex", ...RUNNING })).toContain("git");
+    expect(agentPageSurfacesFor({ type: "aeon", ...RUNNING })).toEqual(["aeon", "desktop", "box", "files", "manage"]);
+  });
+
+  it("keeps a computer's tabs as they were and gives a DigitalOcean session no Desktop entry", () => {
+    const ubuntu = { type: "linux-desktop", computer_profile: "ubuntu-desktop", ...RUNNING };
+    expect(agentPageSurfacesFor(ubuntu)).toEqual(agentSurfacesFor(ubuntu));
+    expect(agentOffersDesktopEntry(ubuntu)).toBe(false);
+    expect(agentOffersDesktopEntry({ type: "codex", computer_substrate: "do-managed-session" })).toBe(false);
+    expect(agentOffersDesktopEntry({ type: "codex", computer_substrate: "proxmox-kvm" })).toBe(true);
+    expect(agentPageSurfacesFor({ type: "codex", computer_substrate: "do-managed-session", ...RUNNING })).toEqual(["chat", "files"]);
+  });
+});
+
 describe("agent page groups", () => {
-  it("groups a chat agent as Agent (Chat, its session) · Computer (Terminal, Files, Browser, Git) · Manage", () => {
+  it("groups a chat agent as Agent (Chat, its session) · Computer (Desktop, Browser, Files, Terminal) · Manage, with no Git tab", () => {
     const def = getAgent("codex");
-    expect(agentSurfaceGroups(agentSurfacesFor({ type: "codex" }), def)).toEqual([
+    expect(agentSurfaceGroups(agentPageSurfacesFor({ type: "codex" }), def)).toEqual([
       { id: "work", label: "Agent", surfaces: ["chat", "terminal"] },
-      { id: "computer", label: "Computer", surfaces: ["box", "files", "browser", "git"] },
+      { id: "computer", label: "Computer", surfaces: ["desktop", "browser", "files", "box"] },
       { id: "manage", label: "Manage", surfaces: ["manage", "skills", "telegram"] },
     ]);
   });
@@ -73,9 +95,9 @@ describe("agent page groups", () => {
 
   it("leads a dashboard runtime with its dashboard and drops empty groups", () => {
     const def = getAgent("aeon");
-    expect(agentSurfaceGroups(agentSurfacesFor({ type: "aeon" }), def)).toEqual([
+    expect(agentSurfaceGroups(agentPageSurfacesFor({ type: "aeon" }), def)).toEqual([
       { id: "work", label: "Dashboard", surfaces: ["aeon"] },
-      { id: "computer", label: "Computer", surfaces: ["box", "files"] },
+      { id: "computer", label: "Computer", surfaces: ["desktop", "files", "box"] },
       { id: "manage", label: "Manage", surfaces: ["manage"] },
     ]);
     expect(agentSurfaceGroups(["manage"], def)).toEqual([{ id: "manage", label: "Manage", surfaces: ["manage"] }]);
@@ -86,6 +108,7 @@ describe("agent page groups", () => {
     expect(agentSurfaceLabel("terminal", getAgent("codex"))).toBe("Codex session");
     expect(agentSurfaceLabel("terminal", getAgent("claude-code"))).toBe("Claude Code session");
     expect(agentSurfaceGroupOf("git")).toBe("computer");
+    expect(agentSurfaceGroupOf("desktop")).toBe("computer");
     expect(agentSurfaceGroupOf("telegram")).toBe("manage");
   });
 });

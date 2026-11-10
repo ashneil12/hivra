@@ -1,7 +1,7 @@
 "use client";
 
-// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Terminal,
-// Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
+// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Desktop,
+// Browser, Files, Terminal) · Manage. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -17,7 +17,9 @@ import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalL
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import {
   AGENT_SURFACE_IDS,
-  agentComputerPairLabel,
+  agentComputerPair,
+  agentComputerPairDetail,
+  agentPageSurfacesFor,
   agentSurfaceGroups,
   agentSurfaceLabel,
   agentSurfacesFor,
@@ -36,6 +38,8 @@ import { useNativeWorkspace } from "@/components/layout/NativeWorkspaceBridge";
 import { HivraChat } from "@/components/hivra/HivraChat";
 import { HivraLogin } from "@/components/hivra/HivraLogin";
 import { HivraGitHubConnect } from "@/components/hivra/HivraGitHubConnect";
+import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
+import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
 import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
@@ -145,7 +149,7 @@ const TasksPanel = dynamic(
   () => import("@/components/scheduled-tasks/TasksPanel").then((mod) => mod.TasksPanel, surfaceCodeUnavailable),
   { ssr: false, loading: () => <LoadingState compact label="Loading tasks…" /> },
 );
-// Manage and the Files, Git, Skills and Telegram tabs are not the default tab:
+// Manage and the Files, Skills and Telegram tabs are not the default tab:
 // their code loads when the owner opens one (each sits in a SurfaceCodeBoundary).
 const HivraManage = dynamic(
   () => import("@/components/hivra/HivraManage").then((mod) => mod.HivraManage, surfaceCodeUnavailable),
@@ -154,10 +158,6 @@ const HivraManage = dynamic(
 const HivraFiles = dynamic(
   () => import("@/components/hivra/HivraFiles").then((mod) => mod.HivraFiles, surfaceCodeUnavailable),
   { loading: () => <LoadingState compact label="Loading files…" /> },
-);
-const HivraGit = dynamic(
-  () => import("@/components/hivra/HivraGit").then((mod) => mod.HivraGit, surfaceCodeUnavailable),
-  { loading: () => <LoadingState compact label="Loading git…" /> },
 );
 const HivraSkills = dynamic(
   () => import("@/components/hivra/HivraSkills").then((mod) => mod.HivraSkills, surfaceCodeUnavailable),
@@ -216,7 +216,6 @@ const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
   manage: <Settings2 size={14} />,
 };
 const WORK_PANE_ID = "agent-work-pane";
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
  * The sidebar, ⌘K and Home reuse a list of agents read moments ago. After a
@@ -252,7 +251,10 @@ function openingTab(id: string, requested: string | null | undefined, welcome: b
  */
 function shownTab(agent: HivraAgent, tab: Tab): Tab {
   const def = catalogAgent(agent.type);
-  const surfaces = agentSurfacesFor(agent);
+  const surfaces = agentPageSurfacesFor(agent);
+  // Git is not a tab: its changes are a view inside Files, so an old ?tab=git
+  // link lands on Files (which opens Changes for it).
+  if (tab === "git" && surfaces.includes("files")) return "files";
   if (def?.surface === "computer") {
     // gVisor sandboxes are terminal-only: they have no desktop to land on, so
     // they open on Manage. Every other computer defers to the shared landing
@@ -512,7 +514,15 @@ function terminalSessionUrl(url: string, slot: number): string {
   }
 }
 
-function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
+/**
+ * How the owner names one of this terminal's sessions: "Terminal 1" for the
+ * shell, "Claude Code 1" for the agent's own command line.
+ */
+function sessionLabel(sessionName: string, n: number): string {
+  return `${sessionName} ${n}`;
+}
+
+function RetainedTerminal({ active, surfaceId, label, sessionName, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; sessionName: string; onManage: () => void }) {
   const [opened, setOpened] = useState(active);
   const [sessions, setSessions] = useState<number[]>([1]);
   const [current, setCurrent] = useState(1);
@@ -573,25 +583,34 @@ function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: bo
     setSessions(next);
     if (n === current) setCurrent(next[Math.max(0, index - 1)]);
   };
+  const atLimit = sessions.length >= MAX_TERMINAL_SESSIONS;
+  const newLabel = sessionName === "Terminal" ? "New terminal" : `New ${sessionName} session`;
+  const newTitle = atLimit ? `Up to ${MAX_TERMINAL_SESSIONS} at once` : `${newLabel} — opens another one alongside`;
   return (
     <div hidden={!active} inert={!active} className={styles.terminalStack}>
-      <div role="tablist" aria-label={`${label} sessions`} className={styles.sessionStrip}>
-        {sessions.map((n) => (
-          <div key={n} className={styles.sessionTab} data-active={n === current ? "true" : undefined}>
-            <button type="button" role="tab" aria-selected={n === current} aria-controls={`${surfaceId || "terminal"}-session-${n}`} onClick={() => setCurrent(n)} className="mono">
-              Session {n}
-            </button>
-            {sessions.length > 1 ? (
-              <button type="button" aria-label={`Close session ${n}`} title="Close — ends this session's process" onClick={() => closeSession(n)} className={styles.sessionClose}>
+      {/* One session needs no strip. With more, each is a tab named by its
+          number and the new-terminal control stays in the strip. */}
+      {sessions.length > 1 ? (
+        <div role="tablist" aria-label={`${label} sessions`} className={styles.sessionStrip}>
+          {sessions.map((n) => (
+            <div key={n} className={styles.sessionTab} data-active={n === current ? "true" : undefined}>
+              <button type="button" role="tab" aria-selected={n === current} aria-controls={`${surfaceId || "terminal"}-session-${n}`} onClick={() => setCurrent(n)}>
+                {sessionLabel(sessionName, n)}
+              </button>
+              <button type="button" aria-label={`Close ${sessionLabel(sessionName, n)}`} title="Close — ends this one's process" onClick={() => closeSession(n)} className={styles.sessionClose}>
                 <X size={12} aria-hidden="true" />
               </button>
-            ) : null}
-          </div>
-        ))}
-        <button type="button" aria-label="New terminal session" title={sessions.length >= MAX_TERMINAL_SESSIONS ? `Up to ${MAX_TERMINAL_SESSIONS} sessions` : "New session"} disabled={sessions.length >= MAX_TERMINAL_SESSIONS} onClick={addSession} className={styles.sessionAdd}>
-          <Plus size={13} aria-hidden="true" />
+            </div>
+          ))}
+          <button type="button" aria-label={newLabel} title={newTitle} disabled={atLimit} onClick={addSession} className={styles.sessionAdd}>
+            <Plus size={13} aria-hidden="true" /><span>New</span>
+          </button>
+        </div>
+      ) : (
+        <button type="button" aria-label={newLabel} title={newTitle} onClick={addSession} className={styles.sessionNew}>
+          <Plus size={14} aria-hidden="true" />
         </button>
-      </div>
+      )}
       {sessions.map((n) => (
         <div key={n} id={`${surfaceId || "terminal"}-session-${n}`} role="tabpanel" hidden={n !== current} className={styles.sessionPanel}>
           <TerminalView {...surface} url={terminalSessionUrl(surface.url, n)} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} onAccessReady={onAccessReady} />
@@ -1049,7 +1068,7 @@ export default function AgentPage() {
   }, [id, reloadKey]);
 
   const go = useCallback(
-    (path: string) => router.push(`${path}${ENV_FLAG ? "" : "?hivra=1"}`),
+    (path: string) => router.push(`${path}${ENV_FLAG ? "" : `${path.includes("?") ? "&" : "?"}hivra=1`}`),
     [router],
   );
 
@@ -1178,23 +1197,32 @@ export default function AgentPage() {
   // surfaces handle transient gateway outages themselves so navigation does
   // not appear and disappear with live probes.
   const computerTabs: Tab[] = isComputer ? withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent) : [];
-  const tabs = withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent).map((id) => ({
+  // Native clients get the plain list: no Desktop for an agent, as before.
+  const tabs = withAttachedAgentChat(agentPageSurfacesFor(agent), attachedAgent)
+    .filter((id) => !(nativeWorkspace && !isComputer && id === "desktop"))
+    .map((id) => ({
     id,
     // A computer's own shell is just "Terminal"; an agent's CLI is its session.
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
   // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
-  // Computer (Terminal, Files, Browser, Git) · Manage. Computers keep their
-  // short flat list. Agent and Manage always open their first view (Chat or
-  // the dashboard, Settings); Computer reopens the view last used in it.
+  // Computer (Desktop, Browser, Files, Terminal) · Manage. Computers keep
+  // their short flat list. Agent and Manage always open their first view (Chat
+  // or the dashboard, Settings); Computer reopens the view last used in it,
+  // Files the first time (the Desktop entry there is a choice, not a place to land).
   const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
     id: group.id,
     label: group.label,
     icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
     surfaces: group.surfaces,
     home: group.id === "computer" ? undefined : group.surfaces[0],
+    start: group.id === "computer" && group.surfaces.includes("files") ? "files" as const : undefined,
   }));
+  // One muted line under the Computer group saying what it is: this agent's own
+  // computer, where it runs and how big it is.
+  const computerDetail = agentComputerPairDetail(agentComputerPair(agent));
+  const computerNote = `${agent.name || "This agent"}’s own computer${computerDetail ? ` · ${computerDetail}` : ""}`;
   // The switcher's caption names the kind ("Agent · Running"). A chat agent's
   // bar already opens with an Agent button, so there it keeps only the status.
   const switcherKind = isComputer ? "computer" : "agent";
@@ -1222,7 +1250,8 @@ export default function AgentPage() {
       && !computerTabs.includes(requestedTab as Tab)
         ? requestedTab as Tab
         : null
-    : requestedKnownTab && !tabs.some((t) => t.id === requestedKnownTab) ? requestedKnownTab : null;
+    // ?tab=git is no tab but still a good link: it opens Files › Changes.
+    : requestedKnownTab && !tabs.some((t) => t.id === (requestedKnownTab === "git" ? "files" : requestedKnownTab)) ? requestedKnownTab : null;
   const provisioning = agent.status === "provisioning";
   const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
     && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
@@ -1280,7 +1309,7 @@ export default function AgentPage() {
         groups={surfaceGroups}
         panelId={WORK_PANE_ID}
         // The linked pair, where the owner is looking at the computer.
-        groupNotes={isComputer ? undefined : { computer: `${capitalize(agentComputerPairLabel(agent))}` }}
+        groupNotes={isComputer ? undefined : { computer: computerNote }}
         active={effectiveTab}
         onSelect={selectTab}
         exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
@@ -1363,6 +1392,7 @@ export default function AgentPage() {
                 url={`${agent.chat_url.replace(/\/$/, "")}/terminal/`}
                 token={tok}
                 label={`${def?.name || "Agent"} session`}
+                sessionName={def?.name || "Agent"}
                 onManage={() => selectTab("manage")}
               />
             ) : null}
@@ -1378,6 +1408,7 @@ export default function AgentPage() {
               url={`${agent.chat_url.replace(/\/$/, "")}/box-terminal/`}
               token={tok}
               label="Terminal"
+              sessionName="Terminal"
               onManage={() => selectTab("manage")}
             />}
           </>
@@ -1487,12 +1518,24 @@ export default function AgentPage() {
             <HivraLogin boxUrl={agent.chat_url} onDone={() => setReloadKey(k => k + 1)} agentKind={cliKind} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} />
           )
         ) : effectiveTab === "desktop" ? (
-          agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
-        ) : effectiveTab === "git" ? (
-          agent.chat_url ? <SurfaceCodeBoundary><HivraGit boxUrl={agent.chat_url} token={agent.api_token} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+          !isComputer ? (
+            // An agent has no screen of its own: connect a desktop or launch one.
+            <AgentDesktopEntry
+              agentId={agent.id}
+              agentName={agent.name}
+              onLaunch={() => go(buildLaunchHref({ profile: "ubuntu-desktop", start: true }))}
+              onOpenComputer={(computerId) => go(`/dashboard/agent/${encodeURIComponent(computerId)}?tab=desktop`)}
+              onManage={() => selectTab("manage")}
+            />
+          ) : agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
         ) : effectiveTab === "files" ? (
           providerWorkspace && agent.status === "running" && agent.chat_url ? null
-            : agent.chat_url && !providerWorkspace ? <SurfaceCodeBoundary><HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+            : agent.chat_url && !providerWorkspace ? <SurfaceCodeBoundary>
+              {/* Git's changes are a view here; ?tab=git opens it directly. */}
+              <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer}
+                showChanges view={tab === "git" ? "changes" : "files"}
+                onViewChange={(next) => selectTab(next === "changes" ? "git" : "files")} />
+            </SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "skills" ? (
           agent.chat_url ? <SurfaceCodeBoundary><HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "telegram" ? (

@@ -1,6 +1,6 @@
 "use client";
 
-// HivraGit — git explorer for the box (Git tab): repo status, per-file diffs,
+// HivraGit — git explorer for the box (Files › Changes): repo status, per-file diffs,
 // stage-and-commit of selected files, and branch switching. Talks to the box's
 // token-gated /api/git/* endpoints; all operations run as the box user via
 // execFile (no shell) server-side. Command Center vocabulary.
@@ -135,9 +135,9 @@ export function HivraGit({ boxUrl, token, dir = "." }: { boxUrl: string; token?:
   if (!st?.repo) {
     return (
       <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>
-        <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>No git repository.</div>
+        <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>No code changes to show yet.</div>
         <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
-          The box home isn&apos;t a git repo yet. Ask the agent to clone or init one, then refresh.
+          Changes appear here once your agent works in a project folder on this computer. Ask it to start or download a project, then refresh.
         </div>
         <button type="button" onClick={() => void refresh()} className="mono" style={{ ...mono, marginTop: 16, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-secondary)", padding: "7px 12px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
           <RefreshCw size={12} /> Refresh
