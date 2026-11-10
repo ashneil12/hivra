@@ -210,7 +210,7 @@ a.resourceRow:focus-visible { outline: 1px solid var(--hg-fg); outline-offset: -
 .providers > span + span { border-left: 1px solid var(--etched-border); }
 .providers svg { grid-row: 1 / 3; color: var(--hg-fg); }
 .providers strong { font-size: 0.72rem; }
-.providers small { color: var(--text-muted); font: 0.55rem var(--font-mono), monospace; letter-spacing: 0.05em; text-transform: uppercase; }
+.providers small { color: var(--text-muted); font: 600 0.55rem var(--font-sans); letter-spacing: .05em; text-transform: uppercase; }
 
 .infrastructure > a {
   display: inline-flex;

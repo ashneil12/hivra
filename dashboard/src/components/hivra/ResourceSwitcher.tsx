@@ -10,6 +10,7 @@ import styles from "./WorkspaceIdentity.module.css";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { listRecents, recentHref } from "@/lib/workspace/recents";
 import { fleetEntryHref } from "@/lib/hivra/fleet-sections";
+import { StatusText } from "@/components/ui/StatusText";
 
 /**
  * The fleet switcher, on the canonical resource route.
@@ -157,7 +158,7 @@ function ResourceSwitcherTrigger({
               (name, then a status dot and word) without a second markup. */}
           <span className={styles.copy}><strong>{name}</strong>{showKind || status ? <small>
             {showKind ? <span data-switcher-part="kind">{resourceKindLabel(kind)}</span> : null}
-            {status ? <>{showKind ? <span data-switcher-part="separator" aria-hidden="true"> · </span> : null}<span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}>{status}</span></> : null}
+            {status ? <>{showKind ? <span data-switcher-part="separator" aria-hidden="true"> · </span> : null}<span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}><StatusText value={status} /></span></> : null}
           </small> : null}</span>
         </> : <span>Switch</span>}
         <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-[var(--text-muted)]" />

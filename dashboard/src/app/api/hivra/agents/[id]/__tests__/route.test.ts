@@ -35,6 +35,8 @@ const mockRevokeRemoteDesktopCapability = jest.fn();
 const mockPrepareHivraTailscaleForDelete = jest.fn();
 const mockMutateGvisorComputer = jest.fn();
 const mockReconcileWalletEnv = jest.fn();
+const mockReadUsageCache = jest.fn();
+jest.mock("@/lib/hivra/computer-usage-cache", () => ({ readComputerUsageCache: (...args: unknown[]) => mockReadUsageCache(...args) }));
 let mockPrivateAccessRow: Record<string, unknown> | null;
 jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
   reconcileBankrEnvAfterHivraBoot: (...args: unknown[]) => mockReconcileWalletEnv(...args),
@@ -641,6 +643,56 @@ describe("DELETE /api/hivra/agents/[id]", () => {
       expect.objectContaining({ PROXMOX_NODE: "fixturenode10" }),
     );
     expect(updates).toContainEqual({ status: "deleted" });
+  });
+
+  describe("Remove from Hivra (a computer its host no longer has)", () => {
+    const forget = () => DELETE(new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1?recordOnly=1", {
+      method: "DELETE", headers: { host: "hivra.cloud", origin: "https://hivra.cloud", "sec-fetch-site": "same-origin" },
+    }), { params: Promise.resolve({ id: "agent-1" }) });
+    beforeEach(() => {
+      mockAgentRow = { ...mockAgentRow, status: "error", error: "This computer no longer exists on its host.", computer_substrate: "proxmox-kvm" };
+      mockReadUsageCache.mockReset().mockResolvedValue({
+        sample: { v: 1, result: "missing", recordedStatus: "running" }, observedAt: new Date().toISOString(), lastErrorCode: null,
+      });
+    });
+
+    it("deletes the record through the same lease and access cleanup, without destroying any VM", async () => {
+      const response = await forget();
+      expect(response.status).toBe(200);
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("request_hivra_agent_delete", expect.anything());
+      expect(mockVerifiedTunnelCleanup).toHaveBeenCalledWith({ tunnelId: "tun_123", hostname: "box.example.com" });
+      expect(updates).toContainEqual({ status: "deleted" });
+      expect(mockLogHivraAgentEvent).toHaveBeenCalledWith(expect.objectContaining({
+        event: "deleted", agentId: "agent-1", detail: { recordOnly: true, reason: "computer_missing_on_host" },
+      }));
+    });
+
+    it.each([
+      ["a computer still recorded as running", () => { mockAgentRow = { ...mockAgentRow, status: "running", error: null }; }],
+      ["an error that isn't the host's missing answer", () => { mockAgentRow = { ...mockAgentRow, error: "cpu limit apply failed" }; }],
+      ["a computer with an operation in flight", () => { mockAgentRow = { ...mockAgentRow, operation_id: "op", operation_kind: "start" }; }],
+      ["a host that now reports a sample", () => { mockReadUsageCache.mockResolvedValue({ sample: { v: 1, result: "sample", recordedStatus: "running", sample: {} }, observedAt: null, lastErrorCode: null }); }],
+      ["no stored host read", () => { mockReadUsageCache.mockResolvedValue(null); }],
+      ["a cache that can't be read", () => { mockReadUsageCache.mockRejectedValue(new Error("down")); }],
+      ["a computer that isn't on a Proxmox host", () => { mockAgentRow = { ...mockAgentRow, computer_substrate: "provider-vm" }; }],
+    ])("refuses for %s, and touches nothing", async (_name, arrange) => {
+      arrange();
+      const response = await forget();
+      expect(response.status).toBe(409);
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockProviderDelete).not.toHaveBeenCalled();
+      expect(updates).toEqual([]);
+    });
+
+    it("needs a same-origin request", async () => {
+      const response = await DELETE(new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1?recordOnly=1", {
+        method: "DELETE", headers: { host: "hivra.cloud", origin: "https://attacker.example" },
+      }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(response.status).toBe(403);
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+    });
   });
 
   it("destroys a bound VM with its owner-scoped target and portable paths", async () => {

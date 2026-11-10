@@ -184,6 +184,8 @@ private struct HivraWorkspaceView: View {
             VStack(spacing: 3) {
                 Divider().padding(.bottom, 8)
                 Button { openSettings() } label: { sidebarLabel("App settings", symbol: "gearshape") }.buttonStyle(.plain)
+                // Servers sits with the account controls, as it does under Manage on the web.
+                Button { session.select(.infrastructure) } label: { sidebarLabel(HivraWorkspaceDestination.infrastructure.label, symbol: "server.rack") }.buttonStyle(.plain)
                 Button { session.select(.settings) } label: { sidebarLabel("Account", symbol: "person.crop.circle") }.buttonStyle(.plain)
                 if session.profile.isBuiltInLocal {
                     Button { showingLocalControls = true } label: {

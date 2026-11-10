@@ -3688,6 +3688,16 @@ describe("GET /api/hivra/agents", () => {
     expect(body.data.agents[0]).toEqual(expect.objectContaining({ status: "error", error: "VM allocation failed" }));
   });
 
+  it("keeps a computer its host reported gone listed whatever its age, so it can be removed", async () => {
+    const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    mockExistingAgents = [
+      { id: "gone", type: "linux-desktop", name: "GONE", status: "error", error: "This computer no longer exists on its host.", created_at: old, cpu: 2, ram: 4 },
+      { id: "old-failed", type: "linux-desktop", name: "OLD_FAILED", status: "error", error: "Setup failed", created_at: old, cpu: 2, ram: 4 },
+    ];
+    const body = await (await GET(makeGetRequest() as never)).json();
+    expect(body.data.agents.map((agent: { id: string }) => agent.id)).toEqual(["gone"]);
+  });
+
   it("tags Claude Code / Codex agents from one read of their stored software observations, never their computers", async () => {
     const { AGENT_CLI_VERSIONS } = jest.requireActual("@/lib/infrastructure/portable-provisioner-contract") as typeof import("@/lib/infrastructure/portable-provisioner-contract");
     mockExistingAgents = [

@@ -76,12 +76,63 @@ describe('DashboardSidebar', () => {
   it('starts expanded for a new preference and keeps work above secondary destinations', () => {
     render(<DashboardSidebar {...props} />);
     expect(screen.getByTitle('Collapse Sidebar')).toHaveAttribute('aria-expanded', 'true');
-    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Capacity', 'Activity']);
+    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Activity']);
     expect(screen.getByRole('link', { name: 'Applications' })).toHaveAttribute('href', '/dashboard/settings/applications');
     expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('href', '/dashboard/settings/help');
     expect(screen.queryByText('Install Hivra')).not.toBeInTheDocument();
     expect(screen.queryByText('Upgrade to Pro')).not.toBeInTheDocument();
     expect(screen.queryByText('Discord')).not.toBeInTheDocument();
+  });
+
+  it('lists Servers in the Manage group after Billing, with its route unchanged', () => {
+    render(<DashboardSidebar {...props} />);
+    const manage = within(screen.getByRole('navigation', { name: 'Manage' })).getAllByRole('link');
+    expect(manage.map((link) => link.textContent)).toEqual(['Settings', 'Billing', 'Servers']);
+    expect(screen.getByRole('link', { name: 'Servers' })).toHaveAttribute('href', '/dashboard/infrastructure');
+  });
+
+  describe('Continue shortcut', () => {
+    const primaryLinks = () => within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link');
+
+    it('sits under Home and reopens the most recent resource on its last tab', () => {
+      recordVisit('x-same', 'chat', { now: 1 });
+      render(<DashboardSidebar {...props} />);
+      const link = screen.getByRole('link', { name: 'Continue Writer' });
+      expect(primaryLinks()[1]).toBe(link);
+      expect(link).toHaveTextContent('Writer');
+      expect(link).toHaveTextContent('Continue');
+      expect(link).toHaveAttribute('href', '/dashboard/agent/same?tab=chat');
+    });
+
+    it('uses the computer icon target for a computer', () => {
+      recordVisit('x-desktop', 'desktop', { now: 1 });
+      render(<DashboardSidebar {...props} />);
+      expect(screen.getByRole('link', { name: 'Continue My desktop' })).toHaveAttribute('href', '/dashboard/agent/desktop?tab=desktop');
+    });
+
+    it('is hidden when there are no recents', () => {
+      render(<DashboardSidebar {...props} />);
+      expect(screen.queryByRole('link', { name: /^Continue/ })).not.toBeInTheDocument();
+    });
+
+    it('is hidden while you are already on that resource, and returns after you leave', () => {
+      recordVisit('x-same', 'chat', { now: 1 });
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/same');
+      const view = render(<DashboardSidebar {...props} />);
+      expect(screen.queryByRole('link', { name: /^Continue/ })).not.toBeInTheDocument();
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      // A changed prop stands in for the route hook re-rendering the memoized sidebar.
+      view.rerender(<DashboardSidebar {...props} userName="Same user" />);
+      expect(screen.getByRole('link', { name: 'Continue Writer' })).toBeInTheDocument();
+    });
+
+    it('labels the collapsed rail', () => {
+      window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
+      recordVisit('x-same', 'chat', { now: 1 });
+      const { container } = render(<DashboardSidebar {...props} />);
+      expect([...container.querySelectorAll('.railLabel')].map((label) => label.textContent)).toContain('Continue');
+      expect(screen.getByRole('link', { name: 'Continue Writer' })).toHaveAttribute('title', 'Continue Writer');
+    });
   });
 
   it('keeps one landing item as the shell rollout turns on', () => {
@@ -94,7 +145,7 @@ describe('DashboardSidebar', () => {
     try {
       render(<DashboardSidebar {...props} />);
       const primary = within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link');
-      expect(primary.map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Capacity', 'Activity']);
+      expect(primary.map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Activity']);
       expect(screen.queryByRole('link', { name: 'Chat' })).not.toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     } finally {
@@ -179,8 +230,8 @@ describe('DashboardSidebar', () => {
     window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
     const { container } = render(<DashboardSidebar {...props} />);
     const labels = [...container.querySelectorAll('.railLabel')].map((label) => label.textContent);
-    expect(labels).toEqual(['Search', 'Launch', 'Home', 'Computers', 'Agents', 'Capacity', 'Activity', 'Settings', 'Billing', 'Apps', 'Help']);
-    expect(screen.getByRole('link', { name: 'Capacity' })).toHaveAttribute('title', 'Capacity');
+    expect(labels).toEqual(['Search', 'Launch', 'Home', 'Computers', 'Agents', 'Activity', 'Settings', 'Billing', 'Servers', 'Apps', 'Help']);
+    expect(screen.getByRole('link', { name: 'Servers' })).toHaveAttribute('title', 'Servers');
     fireEvent.click(screen.getByTitle('Expand Sidebar'));
     expect(container.querySelector('.railLabel')).not.toBeInTheDocument();
   });
@@ -188,10 +239,10 @@ describe('DashboardSidebar', () => {
   it('shows attention only for current, actionable resource signals', () => {
     (useDashboardResources as jest.Mock).mockReturnValue({ resources: [{ ...resources[0], attention: 'approval' }, resources[2]], loading: false, errors: { hermes: null, hivra: null }, refresh });
     const view = render(<DashboardSidebar {...props} />);
-    expect(screen.getByRole('link', { name: '1 agents or computers need attention' })).toHaveAttribute('href', '/dashboard?runtimes=1&attention=1');
+    expect(screen.getByRole('link', { name: '1 agents or computers need you' })).toHaveAttribute('href', '/dashboard?runtimes=1&attention=1');
     (useDashboardResources as jest.Mock).mockReturnValue({ resources: [{ ...resources[0], attention: 'approval' }], loading: false, errors: { hermes: 'Unavailable', hivra: null }, refresh });
     view.rerender(<DashboardSidebar {...props} userName="Updated user" />);
-    expect(screen.queryByRole('link', { name: /need attention/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /need you/ })).not.toBeInTheDocument();
   });
 
   it('preserves both desktop choices through remount', () => {

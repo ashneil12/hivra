@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "@/components/ui/NavigationLink";
+import { StatusText } from "@/components/ui/StatusText";
 import { createPortal } from "react-dom";
 import { Bot, Monitor, Search, X } from "lucide-react";
 import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
@@ -147,7 +148,7 @@ export function DashboardResourceSwitcher({ resources, currentUid = null, loadin
               <Icon size={17} aria-hidden /><span className={styles.resourceCopy}><strong>{item.name}</strong>
                 <small>{detail}</small></span>
               {current && <span className={styles.resultCurrent}>You&apos;re here</span>}
-              <span className={styles.resultStatus}>{errors[item.source] ? "Last known: " : ""}{resourceStatusLabel(item.status)}</span>
+              <span className={styles.resultStatus}>{errors[item.source] ? "Last known: " : ""}<StatusText value={resourceStatusLabel(item.status)} /></span>
               {shortcut && <kbd className={styles.resultKey} aria-hidden>{shortcut}</kbd>}
             </button>;
           })}

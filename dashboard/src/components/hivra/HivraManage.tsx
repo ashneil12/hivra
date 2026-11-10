@@ -36,6 +36,10 @@ import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
 import {
+  ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
+} from "./manage/ManageReachability";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
+import {
   manageButtonDark as btnDark, manageButtonGhost as btnGhost, manageCard as card, manageError as errorStyle,
   manageLabel as label, manageMuted, manageValue as valStyle,
 } from "./manage/manage-styles";
@@ -244,7 +248,7 @@ const CHAT_READINESS_LINE: Record<ChatReadiness, string> = {
   provider_configured: "Model connection set up in Model & tools",
   sign_in_required: "Not signed in yet: open Chat to sign in",
   upgrade_required: "Needs a connection service update (see Updates)",
-  unavailable: "Couldn't check sign-in right now",
+  unavailable: UNREACHABLE_CARD_LINE,
 };
 
 function SectionError({ message }: { message: string }) {
@@ -327,7 +331,11 @@ export function HivraManage(props: HivraManageProps) {
   if (props.agent.computer_substrate === "gvisor") {
     return <GvisorComputerManage key={props.agent.id} agent={props.agent} onChanged={props.onChanged} onDestroyed={props.onDestroyed} />;
   }
-  return <HivraManageContent key={props.agent.id} {...props} />;
+  return (
+    <ManageReachabilityProvider key={props.agent.id}>
+      <HivraManageContent {...props} />
+    </ManageReachabilityProvider>
+  );
 }
 
 function HivraManageContent({
@@ -869,8 +877,25 @@ function HivraManageContent({
   // Feedback from a section that isn't open: a banner that opens it.
   const errorSection = err?.slot ? SLOT_SECTION[err.slot] : null;
   const progressSection = acting ? LIFECYCLE_PROGRESS[acting]?.section ?? null : null;
+  // The host says this computer is gone: Manage offers to remove its record,
+  // and no power control applies. Otherwise any card that can't reach the
+  // computer (and the sign-in check) raises the one banner below.
+  const missingOnHost = isComputerMissingOnHostRow(agent);
+  const restartFromBanner = !missingOnHost && power.restart && capAvailable(power.restart);
   const notices = (
     <>
+      <ReportUnreachable source="sign-in" when={!isComputerOnly && isChatCli && chatReadiness === "unavailable"} />
+      <ManageReachabilityNotice
+        missing={missingOnHost}
+        onRestart={restartFromBanner ? () => void requestRunEnding("restart") : null}
+        restarting={acting === "restart" || repliesCheck === "restart"}
+        restartDisabled={busy}
+        onRemove={missingOnHost ? () => void run("remove-record", async () => {
+          await deleteAgent(agent.id, { recordOnly: true });
+          onDestroyed();
+        }) : null}
+        removing={acting === "remove-record"}
+      />
       {err && !err.slot ? <div role="alert" style={errorStyle}>{err.message}</div> : null}
       {err && errorSection && errorSection !== selected && sections.includes(errorSection)
         ? <ManageNotice kind="alert" message={err.message} section={errorSection} onOpen={openAndFocus} /> : null}
@@ -954,7 +979,7 @@ function HivraManageContent({
         <div style={{ display: "grid", gap: 20 }}>
           {/* Error lands here, not on a surface: say why and what to do next
               where the owner actually is, not only under Advanced. */}
-          {agent.status === "error" && agent.error ? (
+          {agent.status === "error" && agent.error && !missingOnHost ? (
             <div role="alert" style={{ ...card, borderColor: "var(--red)" }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>{agent.provisioned_at ? "This computer isn’t ready" : "Setup didn’t finish"}</div>
               <div style={{ ...manageMuted, overflowWrap: "anywhere" }}>{agent.error}</div>
@@ -1018,7 +1043,7 @@ function HivraManageContent({
 
           <ManageUsageCard agentId={agent.id} cap={manage?.usage} recordedStatus={agent.status} />
 
-          <div style={{ display: "grid", gap: 10 }}>
+          {missingOnHost ? null : <div style={{ display: "grid", gap: 10 }}>
             <div className="mono" style={label}>Power</div>
             <div style={card}>
               {powerUnavailable ? (
@@ -1056,7 +1081,7 @@ function HivraManageContent({
                 style={{ margin: 0, padding: "12px 14px", border: "1px solid var(--etched-border)", fontSize: 12, lineHeight: 1.6 }}
               >{providerPowerMessage(agent.power_stage)}</p> : null}
             </div>
-          </div>
+          </div>}
 
           {/* The agent and its computer as one pair (ATT-11), and what the agent
               knows about it. A computer's agents live in its Agents section. */}
@@ -1407,7 +1432,9 @@ function HivraManageContent({
             ) : resizeKind === "fixed" ? (
               <ManageFixedSize
                 size={`${fmtNum(agent.cpu)} CPU / ${fmtNum(agent.ram)} GB`}
-                reason={capReason(manage?.resize.cap) ?? `This prepared ${computerTemplate?.name ?? ""} computer can't be resized yet.`}
+                reason={capReason(manage?.resize.cap)
+                  ?? `This computer has a fixed size (${fmtNum(agent.cpu)} CPU, ${fmtNum(agent.ram)} GB). For a different size, launch a new one.`}
+                plain={!manage || (manage.resize.cap.state === "unavailable" && ["prepared_fixed", "windows_fixed"].includes(manage.resize.cap.code))}
               />
             ) : (
               <div style={card}>

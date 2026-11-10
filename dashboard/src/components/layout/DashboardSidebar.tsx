@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useMediaQuery } from '@/lib/client/media-query';
 import { UserButton } from '@clerk/nextjs';
-import { AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { AlertCircle, Bot, ChevronLeft, ChevronRight, Monitor, Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -22,7 +22,8 @@ import {
   type DashboardNavigationItem,
 } from '@/lib/dashboard-navigation';
 import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
-import { recentHref } from '@/lib/workspace/recents';
+import { listRecents, recentHref, visitHref } from '@/lib/workspace/recents';
+import { StatusText } from '@/components/ui/StatusText';
 import { DashboardResourceSwitcher } from './DashboardResourceSwitcher';
 import { resourceMatchesPath, type DashboardResource } from './dashboard-resources';
 import { useDashboardResources } from './useDashboardResources';
@@ -81,6 +82,17 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const currentResource = resources.find((item) => resourceMatchesPath(item, pathname));
   const effectivelyExpanded = compactRail ? compactExpanded : isExpanded;
   const currentResourceKind = currentResource?.kind ?? null;
+  // The most recent agent or computer, for the Continue shortcut. Recents live
+  // in this browser's storage, so it is read after mount (never during the
+  // server render) and again whenever the route changes.
+  const [lastUsedUid, setLastUsedUid] = useState<string | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLastUsedUid(listRecents()[0]?.uid ?? null);
+  }, [pathname]);
+  const continueResource = lastUsedUid && lastUsedUid !== currentResource?.uid
+    ? resources.find((item) => item.uid === lastUsedUid) ?? null
+    : null;
 
   useEffect(() => {
     onActiveResourceKindChange?.(currentResourceKind);
@@ -158,7 +170,19 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     DASHBOARD_PRIMARY_NAVIGATION,
     workspaceShellEnabled,
   );
-  const renderNavigationItem = (item: DashboardNavigationItem) => {
+  const renderContinue = (item: DashboardResource) => {
+    const Icon = item.kind === 'agent' ? Bot : Monitor;
+    const label = `Continue ${item.name}`;
+    const tab = listRecents().find((visit) => visit.uid === item.uid)?.tab ?? null;
+    return <Link key="continue" href={visitHref(item.uid, tab, item.href)} className={`${styles.navItem} ${styles.continueItem}`}
+      aria-label={label} title={!effectivelyExpanded ? label : undefined} onClick={closeNavigation}>
+      <Icon size={17} aria-hidden />
+      {effectivelyExpanded
+        ? <span className={styles.continueCopy}><strong>{item.name}</strong><small>Continue</small></span>
+        : <span className={styles.railLabel} aria-hidden>Continue</span>}
+    </Link>;
+  };
+  const renderNavigationItem = (item: DashboardNavigationItem): React.ReactNode => {
     const active = isDashboardNavigationItemActive(
       item,
       pathname,
@@ -210,9 +234,10 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         <Link href={DASHBOARD_LAUNCH_NAVIGATION.href} className={styles.launch} aria-label={launchLabel} onClick={closeNavigation}>
           <LaunchIcon size={17} aria-hidden />{effectivelyExpanded ? <span>{launchLabel}</span> : railLabel(DASHBOARD_LAUNCH_NAVIGATION, launchLabel)}
         </Link>
-        <nav aria-label="Primary" data-navigation-group="primary" className={styles.navigation}>{primaryNavigation.map(renderNavigationItem)}</nav>
-        {attentionCount > 0 && <Link href="/dashboard?runtimes=1&attention=1" className={`${styles.navItem} ${styles.attention}`} onClick={closeNavigation} aria-label={`${attentionCount} agents or computers need attention`}>
-          <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <span>Needs attention</span>}<span className={styles.attentionCount}>{attentionCount}</span>
+        <nav aria-label="Primary" data-navigation-group="primary" className={styles.navigation}>{primaryNavigation.flatMap((item) =>
+          item.id === 'home' && continueResource ? [renderNavigationItem(item), renderContinue(continueResource)] : [renderNavigationItem(item)])}</nav>
+        {attentionCount > 0 && <Link href="/dashboard?runtimes=1&attention=1" className={`${styles.navItem} ${styles.attention}`} onClick={closeNavigation} aria-label={`${attentionCount} agents or computers need you`}>
+          <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <StatusText value="Need you" />}<span className={styles.attentionCount}>{attentionCount}</span>
         </Link>}
         <div className={styles.footer}>
           <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, isWorkspaceShellNavigationEnabled()).map(renderNavigationItem)}</nav>

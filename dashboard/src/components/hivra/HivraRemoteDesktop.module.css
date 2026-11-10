@@ -26,15 +26,16 @@
 /* The status is one short word. The full sentence is the title tooltip, so a
    long message cannot push the controls off the row or wrap it to two lines. */
 .stripLabel {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: .05em;
   text-transform: uppercase;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  font-weight: 600;
 }
 
 /* The explanation, clamped to one line. Present and readable, but it cannot
@@ -61,11 +62,12 @@
 }
 
 .stripFieldLabel {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: .05em;
   text-transform: uppercase;
   color: var(--text-muted);
+  font-weight: 600;
 }
 
 /* A native select rather than four segmented buttons: the same choice, a
@@ -96,12 +98,14 @@
 }
 
 .stripAction {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  text-decoration: none;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: .05em;
   text-transform: uppercase;
   padding: 2px 8px;
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .stripIcon {
@@ -256,12 +260,13 @@
 }
 
 .stripEvidence span {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 8.5px;
-  letter-spacing: 0.1em;
+  letter-spacing: .05em;
   text-transform: uppercase;
   color: var(--text-muted);
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .stripEvidence strong {

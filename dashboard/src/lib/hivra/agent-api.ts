@@ -333,6 +333,8 @@ export async function getAgent(id: string): Promise<HivraAgent | null> {
 
 export async function deleteAgent(id: string, options: {
   signal?: AbortSignal; onProgress?: (message: string) => void;
+  /** Remove only Hivra's record of a computer its host reports gone. */
+  recordOnly?: boolean;
 } = {}): Promise<void> {
   const stages: Record<string, string> = {
     installer_stopping: "Stopping the original installer before removal…",
@@ -349,7 +351,7 @@ export async function deleteAgent(id: string, options: {
     const timeout = setTimeout(abort, Math.min(110_000, deadline - Date.now()));
     let r: Response, j: Record<string, unknown> | null;
     try {
-      r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}`, { method: "DELETE", signal: controller.signal, redirect: "error" });
+      r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}${options.recordOnly ? "?recordOnly=1" : ""}`, { method: "DELETE", signal: controller.signal, redirect: "error" });
       j = await readJson(r);
     } catch {
       // An uncertain delivery stops the loop. No inferred failure, completed
@@ -700,7 +702,7 @@ export async function confirmProviderResize(input: {
 
 /** Why a usage read failed, with the HTTP status and any Retry-After. */
 export class ComputerUsageError extends Error {
-  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null) {
+  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null, readonly code: string | null = null) {
     super(message);
     this.name = "ComputerUsageError";
   }
@@ -720,6 +722,7 @@ export async function getComputerUsage(id: string, options: { cached?: boolean; 
       r.status === 429 ? "Usage was refreshed a lot just now." : (j?.error as string) || "Hivra couldn't read this computer's usage.",
       r.status,
       Number.isFinite(retry) && retry > 0 ? retry : null,
+      typeof j?.code === "string" ? j.code : null,
     );
   }
   const parsed = ComputerUsageViewSchema.safeParse(j.data);

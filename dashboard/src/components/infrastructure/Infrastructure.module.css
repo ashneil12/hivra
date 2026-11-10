@@ -5361,3 +5361,137 @@
   margin: 0;
   color: var(--text-secondary);
 }
+
+/* Servers: one calm row per server, one line for Hivra Cloud. */
+.cloudLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--hg-stroke, var(--infra-line));
+  border-radius: var(--hg-radius-md, 10px);
+  background: var(--hg-fill-1, transparent);
+  color: var(--hg-text-2, var(--text-secondary));
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+}
+.cloudLine strong { color: var(--hg-text, var(--ink-black)); font-weight: 600; }
+.cloudLineUse { color: var(--hg-text-3, var(--text-muted)); }
+.cloudLineLink {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--hg-text, var(--ink-black));
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.serverList { display: grid; gap: 10px; }
+.serverRow {
+  border: 1px solid var(--hg-stroke, var(--infra-line));
+  border-radius: var(--hg-radius-md, 10px);
+  background: var(--hg-fill-1, transparent);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+.serverRowMain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 8px 8px 16px;
+}
+.serverRowName { display: grid; gap: 1px; min-width: 0; flex: 1 1 180px; }
+.serverRowName strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; color: var(--hg-text, var(--ink-black)); }
+.serverRowName small { color: var(--hg-text-3, var(--text-muted)); font-size: 12px; }
+.serverRowStatus { font-size: 13px; font-weight: 500; color: var(--hg-text-2, var(--text-secondary)); }
+.serverRowStatus[data-tone="ok"] { color: var(--green, #2f8f5b); }
+.serverRowStatus[data-tone="error"] { color: var(--red, #c0392b); }
+.serverRowActions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.serverAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--hg-accent, var(--ink-black));
+  border-radius: var(--hg-radius-sm, 7px);
+  background: var(--hg-accent, var(--ink-black));
+  color: var(--hg-on-accent, var(--vellum-bg));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.serverRowToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--hg-text-3, var(--text-muted));
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.serverRowToggle svg { transition: transform 160ms ease; }
+.serverRowToggle svg[data-open="true"] { transform: rotate(180deg); }
+.serverRowDetails { padding: 0 12px 12px; }
+.serverRowDetailsClosed { display: none; }
+.serverMore { position: relative; }
+.serverMoreTrigger {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--hg-radius-sm, 7px);
+  background: transparent;
+  color: var(--hg-text-2, var(--text-secondary));
+  cursor: pointer;
+}
+.serverMoreTrigger:hover { background: var(--hg-fill-hover, var(--hover-bg)); }
+.serverMoreMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 190px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--hg-stroke-strong, var(--infra-line));
+  border-radius: var(--hg-radius-md, 10px);
+  background: var(--hg-surface-2, var(--bg-elevated));
+  box-shadow: var(--hg-shadow-md, 0 8px 24px rgb(0 0 0 / 0.12));
+}
+.serverMoreMenu button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--hg-radius-sm, 7px);
+  background: transparent;
+  color: var(--hg-text, var(--ink-black));
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.serverMoreMenu button:hover { background: var(--hg-fill-hover, var(--hover-bg)); }
+.serverMoreMenu button[data-danger="true"] { color: var(--red, #c0392b); }
+@media (prefers-reduced-motion: reduce) { .serverRowToggle svg { transition: none; } }

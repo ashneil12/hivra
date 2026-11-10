@@ -13,6 +13,7 @@ import {
 } from "@/lib/hivra/computer-usage-contract";
 import { capReason, type ManageCap } from "@/lib/hivra/manage-sections";
 import { useManageSectionVisible } from "../ManageLayout";
+import { UNREACHABLE_CARD_LINE, UnreachableCardLine, useReportUnreachable } from "./ManageReachability";
 import { manageButtonGhost, manageCard, manageDisabled, manageLabel, manageMuted, manageSpin, manageValue } from "./manage-styles";
 
 // Manage › Overview: the computer's live usage and uptime, read from its host
@@ -36,6 +37,8 @@ type UsageState = {
   /** When `view` arrived, to keep its age current. */
   receivedAt: number;
   error: string | null;
+  /** The usage route's code for this failure, when it sent one. */
+  errorCode: string | null;
   loading: boolean;
 };
 
@@ -83,7 +86,7 @@ export function ManageUsageCard({ agentId, cap, recordedStatus }: {
   const usable = cap?.state === "available";
   // Read the first time the section is shown, never while it is hidden.
   const [opened, setOpened] = useState(false);
-  const [state, setState] = useState<UsageState>({ view: null, receivedAt: 0, error: null, loading: false });
+  const [state, setState] = useState<UsageState>({ view: null, receivedAt: 0, error: null, errorCode: null, loading: false });
   const [now, setNow] = useState(() => Date.now());
   // Said to screen readers once per finished read. The "Updated … ago" label
   // below changes with the clock, so it isn't a live region itself.
@@ -98,20 +101,21 @@ export function ManageUsageCard({ agentId, cap, recordedStatus }: {
     const controller = new AbortController();
     const id = request.current.id + 1;
     request.current = { id, controller };
-    setState((current) => ({ ...current, loading: true, error: null }));
+    setState((current) => ({ ...current, loading: true, error: null, errorCode: null }));
     try {
       const view = await getComputerUsage(agentId, { cached: mode === "cached", signal: controller.signal });
       if (request.current.id !== id) return null;
       const receivedAt = Date.now();
       setNow(receivedAt);
-      setState({ view, receivedAt, error: null, loading: false });
+      setState({ view, receivedAt, error: null, errorCode: null, loading: false });
       return view;
     } catch (error) {
       if (request.current.id !== id || controller.signal.aborted) return null;
       const message = error instanceof ComputerUsageError && error.status === 429
         ? `${error.message} Try again in ${error.retryAfterSeconds ?? 60} seconds.`
         : error instanceof Error && error.message ? error.message : "Hivra couldn't read this computer's usage.";
-      setState((current) => ({ ...current, error: message, loading: false }));
+      const errorCode = error instanceof ComputerUsageError ? error.code : null;
+      setState((current) => ({ ...current, error: message, errorCode, loading: false }));
       return null;
     }
   }, [agentId]);
@@ -184,6 +188,12 @@ export function ManageUsageCard({ agentId, cap, recordedStatus }: {
     if (retryTimer.current) clearTimeout(retryTimer.current);
   }, []);
 
+  // The host didn't answer: Manage's one banner says so, and this card says
+  // only that it is unavailable instead of its own error.
+  const unreachableNow = usable && !state.loading
+    && (Boolean(state.view?.notes.includes("host_unreachable")) || state.errorCode === "host_unreachable");
+  useReportUnreachable("usage", unreachableNow);
+
   if (!cap) return null;
 
   const heading = <div className="mono" style={manageLabel}>Usage</div>;
@@ -213,12 +223,13 @@ export function ManageUsageCard({ agentId, cap, recordedStatus }: {
     if (notes.includes("resources_unavailable")) lines.push({ key: "resources", text: "CPU, memory and power state aren't available right now." });
     if (notes.includes("guest_agent_unavailable")) lines.push({ key: "guest", text: "Disk use isn't available: the computer's guest agent didn't answer." });
     if (notes.includes("host_unreachable")) {
-      // With nothing read before, this is all there is to say (until the
-      // next read, which the placeholder below reports).
-      if (age !== null) {
-        lines.push({ key: "host", text: `Last read ${formatUsageAge(age)}. Hivra couldn't reach this computer's host just now.` });
-      } else if (!loading) {
-        lines.push({ key: "host", text: "Hivra couldn't reach this computer's host just now.", alert: true });
+      // Manage's banner says the computer can't be reached; this card only
+      // says it is unavailable (and keeps the age of what it last read).
+      if (!loading) {
+        lines.push({
+          key: "host",
+          text: age !== null ? `${UNREACHABLE_CARD_LINE}. Last read ${formatUsageAge(age)}.` : UNREACHABLE_CARD_LINE,
+        });
       }
     }
     if (notes.includes("status_changed") && !loading) {
@@ -271,7 +282,8 @@ export function ManageUsageCard({ agentId, cap, recordedStatus }: {
         {lines.map((line) => (
           <div key={line.key} role={line.alert ? "alert" : undefined} style={{ ...manageMuted, fontSize: 11.5 }}>{line.text}</div>
         ))}
-        {error ? <div role="alert" style={{ ...manageMuted, color: "var(--hg-bad)" }}>{error}</div> : null}
+        {error && state.errorCode === "host_unreachable" ? <UnreachableCardLine testId="manage-usage-unreachable" />
+          : error ? <div role="alert" style={{ ...manageMuted, color: "var(--hg-bad)" }}>{error}</div> : null}
       </div>
     </div>
   );

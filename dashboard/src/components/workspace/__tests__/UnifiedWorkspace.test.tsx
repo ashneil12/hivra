@@ -1032,9 +1032,9 @@ describe("agent switcher menu positioning", () => {
     const menu = await screen.findByRole("dialog", { name: "Switch agent or computer" });
     // Not left at the default 0 — it was measured against the anchor.
     expect(menu.style.left).toBe("220px");
-    expect(menu.style.top).toBe("48px");
+    expect(menu.style.top).toBe("50px");
     // At least the menu's own minimum, and never the trigger's narrower width.
-    expect(menu.style.width).toBe("320px");
+    expect(menu.style.width).toBe("360px");
   });
 });
 

@@ -36,7 +36,7 @@ import {
   unifyAll,
   type UnifiedAgent,
 } from "@/lib/hivra/unified-agent";
-import { ATTACH_NOT_AVAILABLE, attachPairLine } from "@/lib/agent-computers/attach-plan";
+import { attachPairLine } from "@/lib/agent-computers/attach-plan";
 import { fetchOwnerAttachedAgents } from "@/lib/agent-computers/attach-client";
 
 import styles from "./ComputerCatalogPage.module.css";
@@ -70,10 +70,22 @@ function computerTypeLabel(computer: HivraAgent): string {
   );
 }
 
-function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, attachReason = null }: {
+/** One plain line on why a computer can't take an agent: the server's own
+ * reason where it gave one, otherwise what kind of computer can. */
+function ineligibleReason(computer: HivraAgent, serverReasons: Record<string, string>): string {
+  if (Object.hasOwn(serverReasons, computer.id)) return serverReasons[computer.id];
+  const ubuntuDesktop = computer.type === "linux-desktop" && (computer.computer_profile ?? "ubuntu-desktop") === "ubuntu-desktop";
+  return ubuntuDesktop
+    ? "This computer can't take an agent yet."
+    : `${computerTypeLabel(computer)} computers can't take an agent yet. Ubuntu Desktop computers can.`;
+}
+
+function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, attachReason = null, gateReason = false }: {
   computer: HivraAgent; addingAgent?: boolean; canTakeAgent?: boolean;
-  /** Why a computer the first pair supports can't take Codex now, in the gate's words. */
+  /** Why this computer can't take an agent now, in one plain line. */
   attachReason?: string | null;
+  /** The server gave that reason itself: the computer could take one, and its Manage page says why not yet. */
+  gateReason?: boolean;
 }) {
   const isDesktop = getCatalogAgent(computer.type)?.resourceKind === "computer";
   const desktopQuery = computer.computer_profile === "windows"
@@ -84,7 +96,7 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, atta
   // server says which computers can take one now; one that could but can't yet
   // (stopped, busy, already has Codex, the plan's limit) opens Manage with why.
   const href = `/dashboard/agent/${encodeURIComponent(computer.id)}${canTakeAgent ? "?tab=manage&addAgent=1"
-    : addingAgent && attachReason ? "?tab=manage" : isDesktop ? desktopQuery : ""}`;
+    : addingAgent && gateReason ? "?tab=manage" : isDesktop ? desktopQuery : ""}`;
   const state = computerState(computer);
   return (
     <Link className={styles.computerRow} href={href}>
@@ -95,7 +107,7 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, atta
       <span className={styles.computerIdentity}>
         <strong>{computer.name}</strong>
         {/* Choosing a computer for an agent: the honest pair line, or why not. */}
-        <small>{addingAgent ? canTakeAgent ? attachPairLine(computer.name) : attachReason ?? ATTACH_NOT_AVAILABLE : computerTypeLabel(computer)}</small>
+        <small>{addingAgent ? canTakeAgent ? attachPairLine(computer.name) : attachReason : computerTypeLabel(computer)}</small>
       </span>
       <span className={styles.computerMeta}>
         {computer.cpu} vCPU · {computer.ram} GB
@@ -135,18 +147,20 @@ export function ComputerCatalogPage(
   const addAgentRequested = searchParams?.get("addAgent") === "1";
   // ?addAgent=1 changes this list only where attach is offered (Canary), and
   // only for computers the server says can take the agent.
-  const [attachChoice, setAttachChoice] = useState<{ offered: boolean; eligible: Set<string>; reasons: Record<string, string> }>(
-    { offered: false, eligible: new Set(), reasons: {} });
+  const [attachChoice, setAttachChoice] = useState<{ loaded: boolean; offered: boolean; eligible: Set<string>; reasons: Record<string, string> }>(
+    { loaded: false, offered: false, eligible: new Set(), reasons: {} });
   useEffect(() => {
     if (!addAgentRequested) return;
     let alive = true;
     void fetchOwnerAttachedAgents().then((result) => {
-      if (alive) setAttachChoice({ offered: Boolean(result?.enabled), eligible: new Set(result?.eligibleComputerIds ?? []),
+      if (alive) setAttachChoice({ loaded: true, offered: Boolean(result?.enabled), eligible: new Set(result?.eligibleComputerIds ?? []),
         reasons: result?.computerReasons ?? {} });
     });
     return () => { alive = false; };
   }, [addAgentRequested]);
-  const addingAgent = addAgentRequested && attachChoice.offered;
+  // Until the answer is in, the page already reads as picking a computer for
+  // an agent, so the header doesn't change under the reader.
+  const addingAgent = addAgentRequested && (!attachChoice.loaded || attachChoice.offered);
 
   useEffect(() => {
     if (searchParams?.get("launch") === "1") router.replace(launchHref);
@@ -177,17 +191,20 @@ export function ComputerCatalogPage(
   }, [load]);
 
   const total = hivraComputers.length;
-  const visibleComputers = useMemo(
-    () =>
-      hivraComputers.filter(
-        (computer) =>
-          matchesInventoryFilter(computerState(computer), filter) &&
-          `${computer.name} ${computerTypeLabel(computer)}`
-            .toLowerCase()
-            .includes(query.trim().toLowerCase()),
-      ),
-    [hivraComputers, filter, query],
-  );
+  const visibleComputers = useMemo(() => {
+    const matching = hivraComputers.filter(
+      (computer) =>
+        matchesInventoryFilter(computerState(computer), filter) &&
+        `${computer.name} ${computerTypeLabel(computer)}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase()),
+    );
+    // Picking a computer for an agent: the ones that can take it come first.
+    return addingAgent
+      ? [...matching].sort((a, b) => Number(attachChoice.eligible.has(b.id)) - Number(attachChoice.eligible.has(a.id)))
+      : matching;
+  }, [hivraComputers, filter, query, addingAgent, attachChoice.eligible]);
+  const noneCanTakeAgent = addingAgent && attachChoice.loaded && !loading && !loadError && attachChoice.eligible.size === 0;
 
   useEffect(() => {
     const revealProfile = () => {
@@ -206,9 +223,9 @@ export function ComputerCatalogPage(
           <span className={styles.kicker}>
             <Monitor size={14} aria-hidden /> Your workspace
           </span>
-          <h1>Computers</h1>
+          <h1>{addingAgent ? "Pick a computer for your agent" : "Computers"}</h1>
           <p>{addingAgent
-            ? "Choose the computer to add an agent to. It works there as its own user, in your Hivra folder."
+            ? "The agent works there as its own user, in your Hivra folder. Your other agents stay as they are."
             : "Open your computer and return to its desktop or tools."}</p>
         </div>
         <Link className={styles.primaryButton} href={launchHref}>
@@ -239,7 +256,16 @@ export function ComputerCatalogPage(
             Refresh
           </button>
         </div>
-        <div className={styles.toolbar}>
+        {noneCanTakeAgent ? (
+          <div className={styles.empty} role="status">
+            <Monitor size={20} aria-hidden />
+            <strong>None of your computers can take an agent yet. Ubuntu Desktop computers can.</strong>
+            <Link className={styles.primaryButton} href={profileLaunchHref("ubuntu-desktop")}>
+              Launch an Ubuntu Desktop <ArrowRight size={14} />
+            </Link>
+          </div>
+        ) : null}
+        {addingAgent ? null : <div className={styles.toolbar}>
           <label className={styles.search}>
             <Search size={15} aria-hidden />
             <input
@@ -266,7 +292,7 @@ export function ComputerCatalogPage(
               </button>
             ))}
           </div>
-        </div>
+        </div>}
         {loadError ? (
           <div className={styles.loadError} role="alert">
             <AlertTriangle size={15} aria-hidden />
@@ -286,9 +312,10 @@ export function ComputerCatalogPage(
           {visibleComputers.map((computer) => (
             <ComputerRow key={computer.id} computer={computer} addingAgent={addingAgent}
               canTakeAgent={addingAgent && attachChoice.eligible.has(computer.id)}
-              attachReason={Object.hasOwn(attachChoice.reasons, computer.id) ? attachChoice.reasons[computer.id] : null} />
+              attachReason={addingAgent ? ineligibleReason(computer, attachChoice.reasons) : null}
+              gateReason={addingAgent && Object.hasOwn(attachChoice.reasons, computer.id)} />
           ))}
-          {!loading && !loadError && total === 0 ? (
+          {!loading && !loadError && total === 0 && !noneCanTakeAgent ? (
             <div className={styles.empty}>
               <Monitor size={20} />
               <strong>No computers yet</strong>
@@ -397,10 +424,10 @@ export function ComputerCatalogPage(
               <span>From 1 GB RAM</span>
               <span>Terminal only</span>
             </div>
-            <p>Runs on your own server once it is ready for Linux Sandbox. Add one in Capacity first.</p>
+            <p>Runs on a server you&apos;ve connected. Add one first if you haven&apos;t.</p>
             <details className={styles.technical}>
               <summary>Technical details</summary>
-              <p>Runs in a gVisor application-kernel sandbox on a server you connect.</p>
+              <p>Runs in an isolated sandbox on a server you connect.</p>
             </details>
             <Link
               className={styles.primaryButton}
@@ -416,7 +443,7 @@ export function ComputerCatalogPage(
               className={`${styles.osCard} ${styles.previewCard}`}
             >
               <div className={styles.osIcon}>O.</div>
-              <span className={styles.previewBadge}>Prepared computer</span>
+              <span className={styles.previewBadge}>Ready to launch</span>
               <h3>Omarchy</h3>
               <p>{OMARCHY_TEMPLATE.summary}</p>
               <div className={styles.osFacts}>
@@ -429,7 +456,7 @@ export function ComputerCatalogPage(
                 <div className={styles.omarchyTruth}>
                   <ShieldCheck size={15} aria-hidden />
                   <span>
-                    <strong>Prepared computer.</strong> Opens the pinned{" "}
+                    <strong>Ready-made computer.</strong> Opens the pinned{" "}
                     {OMARCHY_TEMPLATE.upstream.release} desktop through an
                     interactive browser setup console. Runs on Proxmox KVM.
                   </span>

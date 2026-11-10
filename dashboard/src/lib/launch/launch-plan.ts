@@ -230,7 +230,7 @@ export function ownServerHolds(subject: LaunchFitSubject, targets: readonly Depl
  * so instead of reading as an answer, and the badge never promises more than
  * the launch gates allow. */
 export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence): LaunchFit | null {
-  if (subject.hivraCloud === "prepared") return { label: "Prepared computer", tone: "neutral" };
+  if (subject.hivraCloud === "prepared") return { label: "Ready to launch", tone: "neutral" };
   if (evidence.selfHosted && !subject.ownServer) return { label: "Runs on Hivra Cloud only", tone: "needs" };
   if (evidence.selfHosted) {
     if (evidence.targetsLoading) return null;
@@ -529,7 +529,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
   if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";
-  if (profileId === "omarchy") return "The prepared Omarchy desktop, with a setup console in your browser.";
+  if (profileId === "omarchy") return "A ready-made Omarchy desktop you open in your browser, with a setup console.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
 }
 
@@ -549,7 +549,7 @@ export function costSummary({
   planOnHold?: string | null;
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
-  if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already prepared.";
+  if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already set up.";
   if (substrate === "hivra-cloud" && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
   }
@@ -573,7 +573,7 @@ export function launchChangesSummary({
 }): string {
   const profile = PROFILE_DETAILS[profileId];
   const host = targetName ?? "your server";
-  if (profileId === "omarchy") return "Claims the prepared Omarchy computer. Nothing is bought.";
+  if (profileId === "omarchy") return "Gives you a ready-made Omarchy computer. Nothing is bought.";
   if (profileId === "windows") {
     return `Creates one Windows setup computer on ${host}, attaches the ISO you chose and starts the installer. Nothing is bought or uploaded, and Hivra Cloud isn't used.`;
   }

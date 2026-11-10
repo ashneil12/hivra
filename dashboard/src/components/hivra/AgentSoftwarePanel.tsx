@@ -16,6 +16,7 @@ import { agentSoftwareDisplayName, agentSoftwareVersionName } from "@/lib/hivra/
 import { setAgentSoftwareAutoUpdate, type AgentSoftwareAutoUpdate } from "@/lib/hivra/agent-software-api";
 import { useAgentSoftware } from "./useAgentSoftware";
 import { agentSoftwareCovered } from "./AgentSoftwareChip";
+import { UNREACHABLE_CARD_LINE, useReportUnreachable } from "./manage/ManageReachability";
 import {
   manageButtonDark, manageButtonGhost, manageCard, manageDisabled, manageError, manageLabel, manageMuted, manageSpin, manageValue,
 } from "./manage/manage-styles";
@@ -81,7 +82,7 @@ function stateCopy(view: AgentSoftwareView, name: string, tested: string | null,
   switch (view.kind) {
     case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
     case "checking": return { text: `Checking which ${name} version is installed…`, action: null };
-    case "unreachable": return { text: `Couldn't reach this agent to check its ${name} version.`, action: null };
+    case "unreachable": return { text: UNREACHABLE_CARD_LINE, action: null };
     case "older_connection_service":
       return {
         text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below: it also moves ${name} to ${tv}, the version Hivra has tested.`,
@@ -149,7 +150,7 @@ function appStateCopy(view: AgentSoftwareView, app: AgentAppName, name: string, 
   switch (view.kind) {
     case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
     case "checking": return { text: `Checking which ${name} version is installed…`, action: null };
-    case "unreachable": return { text: `Couldn't reach this agent to check its ${name} version.`, action: null };
+    case "unreachable": return { text: UNREACHABLE_CARD_LINE, action: null };
     case "older_connection_service":
     case "not_reported":
       return {
@@ -285,6 +286,10 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
   const software = useAgentSoftware(agent.id, enabled);
   const [actionError, setActionError] = useState<string | null>(null);
   const state = software.state;
+  // Manage's one banner says the computer can't be reached; this card only
+  // says it is unavailable instead of its own error.
+  const unreachableNow = enabled && agent.status === "running" && state?.supported === true && state.view.kind === "unreachable";
+  useReportUnreachable("software", unreachableNow);
   if (!enabled) return null;
   if (!state) {
     // The first read failed: say so where the card would be, with a way to try again.

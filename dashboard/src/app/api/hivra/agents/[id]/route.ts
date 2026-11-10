@@ -75,6 +75,9 @@ import {
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
+import { readStoredUsage } from "@/lib/hivra/computer-usage";
+import { readComputerUsageCache } from "@/lib/hivra/computer-usage-cache";
 import { preparedOmarchyRefreshPending } from "@/lib/hivra/prepared-omarchy-refresh-contract";
 import { advancePreparedOmarchyRefresh, cancelPreparedOmarchyRefresh } from "@/lib/hivra/prepared-omarchy-refresh";
 import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
@@ -1085,6 +1088,55 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       } catch {
         return apiError("Cancellation is still being confirmed. This prepared computer remains reserved until its updater has stopped.", 409);
       }
+    }
+
+    // "Remove from Hivra": the record of a computer its host already reported
+    // gone (and the host's latest read still says so). It runs the same
+    // delete lease and access cleanup as Delete but never sends the host a
+    // destroy for a VM that no longer exists.
+    if (new URL(req.url).searchParams.get("recordOnly") === "1") {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra_forget_record", userId, limit: 20, windowMs: 60_000 });
+      if (limited) return limited;
+      const proxmox = existingAgent.computer_substrate == null || existingAgent.computer_substrate === "proxmox-kvm";
+      let hostSaysMissing = false;
+      if (proxmox && isComputerMissingOnHostRow(existingAgent)
+        && existingAgent.operation_id == null && existingAgent.operation_kind == null) {
+        try {
+          hostSaysMissing = readStoredUsage((await readComputerUsageCache(String(existingAgent.id), userId))?.sample)?.result === "missing";
+        } catch {
+          hostSaysMissing = false;
+        }
+      }
+      if (!hostSaysMissing) {
+        return apiError("Hivra can only remove the record of a computer its host confirms is gone. Refresh this computer and try again.", 409);
+      }
+      const forgetOperationId = randomUUID();
+      const disposition = await requestHivraAgentDelete({ userId, agentId: String(existingAgent.id), operationId: forgetOperationId });
+      if (disposition === "not_found") return apiError("Agent not found", 404);
+      if (disposition === "deleted") return apiSuccess({ ok: true });
+      if (disposition === "pending") return apiError("Another operation on this computer is still finishing. Try again shortly.", 409);
+      const forgetLease = { userId, agentId: String(existingAgent.id), operationId: forgetOperationId };
+      try {
+        const completed = await completeHivraAgentDelete(forgetLease);
+        if (!completed) {
+          await releaseHivraAgentOperation({ ...forgetLease, error: "Removing the record could not be finalized.", markError: true }).catch(() => false);
+          return apiError("The record couldn't be removed safely. Refresh and try again.", 409);
+        }
+      } catch (forgetError) {
+        await releaseHivraAgentOperation({
+          ...forgetLease,
+          error: forgetError instanceof HivraAgentDeleteCleanupError ? forgetError.message : "Removing the record failed before it finished.",
+          markError: true,
+        }).catch(() => false);
+        if (forgetError instanceof HivraAgentDeleteCleanupError) return apiError(forgetError.message, 502);
+        throw forgetError;
+      }
+      await logHivraAgentEvent({
+        userId, event: "deleted", agentId: String(existingAgent.id), agentType: typeof existingAgent.type === "string" ? existingAgent.type : null,
+        detail: { recordOnly: true, reason: "computer_missing_on_host" },
+      });
+      return apiSuccess({ ok: true });
     }
 
     if (existingAgent.computer_substrate === "do-managed-session") {

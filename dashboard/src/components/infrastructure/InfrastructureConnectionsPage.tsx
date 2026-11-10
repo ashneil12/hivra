@@ -16,7 +16,7 @@ import {
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
 import {
@@ -74,7 +74,7 @@ import {
   type HivraCloudCapacityDto,
 } from "@/lib/infrastructure/hivra-cloud-client";
 import { canPrepareFromPreflight } from "@/lib/infrastructure/preparation-eligibility";
-import { targetSupportsLaunchResource } from "@/lib/infrastructure/launch-on-server";
+import { hasReadyEvidence, targetSupportsLaunchResource } from "@/lib/infrastructure/launch-on-server";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import {
   buildLaunchSetupHref,
@@ -85,7 +85,7 @@ import { isLocalAuthMode } from "@/lib/self-host/config";
 
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { InfrastructureEntryChooser } from "./InfrastructureEntryChooser";
-import { HivraCloudCapacityCard } from "./HivraCloudCapacityCard";
+import { HivraCloudLine, ServerRow, type ServerRowMenuItem } from "./ServerRow";
 import { HivraCloudPurchaseDialog } from "./HivraCloudPurchaseDialog";
 import { InfrastructureConnectionCard } from "./InfrastructureConnectionCard";
 import { InfrastructureConnectionWizard } from "./InfrastructureConnectionWizard";
@@ -106,7 +106,7 @@ import { ServerEnrollmentDialog } from "./ServerEnrollmentDialog";
 import { ServerEnrollmentCard, useNow } from "./ServerEnrollmentCard";
 import { CopyButton } from "./CopyButton";
 import enrollmentStyles from "./ServerEnrollment.module.css";
-import { LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch } from "./LaunchOnServer";
+import { LaunchOnServerLink, LaunchOnServerProvider, useLaunchReadyTargetIds, usePendingLaunch, useTargetLaunchAction } from "./LaunchOnServer";
 import styles from "./Infrastructure.module.css";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
 
@@ -913,21 +913,20 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
         {embedded ? null : <nav className={styles.breadcrumb} aria-label="Breadcrumb">
           <Link href="/dashboard">Home</Link>
           <ArrowRight size={12} aria-hidden="true" />
-          <span aria-current="page">Capacity</span>
+          <span aria-current="page">Servers</span>
         </nav>}
 
         <header className={styles.pageHeader}>
           <div className={styles.pageHeading}>
-            <span className={styles.eyebrow}>Capacity</span>
             {embedded ? <>
               <h1 id="launch-capacity-sheet-heading">Add capacity for your launch</h1>
               <p>Connect a server or a cloud account, or finish setting one up. When it&apos;s ready, choose Launch on this server and Hivra takes you back to your launch.</p>
             </> : <>
-              <h1>Where your agents run.</h1>
+              <h1>Your servers</h1>
               <p>
                 {selfHosted
                   ? "Connect a cloud project or bring a computer you control."
-                  : "Hivra Cloud, your cloud accounts, and your own servers: the places your agents and computers run."}
+                  : "Hivra Cloud runs your agents for you. Add a server or cloud account only if you want agents on your own machines."}
               </p>
             </>}
           </div>
@@ -943,7 +942,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
               {entryChooserOpen
                 ? <X size={16} aria-hidden="true" />
                 : <Plus size={16} aria-hidden="true" />}
-              {entryChooserOpen ? "Close options" : "Add capacity"}
+              {entryChooserOpen ? "Close options" : embedded ? "Add capacity" : "Add a server"}
             </button>
           ) : null}
         </header>
@@ -1061,26 +1060,14 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
         ) : null}
 
         {hasHivraCloudCapacity && hivraCloud ? (
-          <section className={styles.connectionSection} aria-labelledby="hivra-cloud-heading">
-            <div className={styles.sectionHeader}>
-              <div>
-                <span className={styles.eyebrow}>Managed by Hivra</span>
-                <h2 id="hivra-cloud-heading">Hivra Cloud capacity</h2>
-              </div>
-            </div>
-            <HivraCloudCapacityCard
-              capacity={hivraCloud}
-              onUpgrade={openHivraCloudDialog}
-            />
-          </section>
+          <HivraCloudLine capacity={hivraCloud} onUpgrade={openHivraCloudDialog} />
         ) : null}
 
         {loading || loadError || connections.length > 0 ? (
           <section className={styles.connectionSection} aria-labelledby="connections-heading">
             <div className={styles.sectionHeader}>
               <div>
-                <span className={styles.eyebrow}>Connections and nodes</span>
-                <h2 id="connections-heading">Available infrastructure</h2>
+                <h2 id="connections-heading">Connected servers</h2>
               </div>
               {!loading && connections.length > 0 ? (
                 <button
@@ -1104,7 +1091,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                 void loadConnections();
               }} />
             ) : (
-              <div className={styles.connectionGrid}>
+              <div className={styles.serverList}>
                 {connections.map((connection) => {
                   if (connection.provider === "hetzner-cloud") {
                     const state = hetznerInventory[connection.id] ?? {
@@ -1112,7 +1099,25 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                       loading: true,
                       error: null,
                     };
+                    const hetznerIssue = connection.status === "error" || Boolean(state.error);
                     return (
+                      <ServerRow
+                        key={connection.id}
+                        name={connection.name}
+                        provider="Hetzner Cloud"
+                        status={hetznerIssue ? "Needs attention" : "Connected"}
+                        tone={hetznerIssue ? "error" : "ok"}
+                        defaultOpen={hetznerIssue}
+                        action={<button type="button" className={styles.serverAction} onClick={() => setCapacityConnection(connection)}>Create a server</button>}
+                        menu={[
+                          { label: "Refresh", onSelect: () => {
+                            void loadHetznerInventory(connection.id, { refresh: true });
+                            void loadHetznerSetups(connection.id);
+                            void loadHetznerSlot();
+                          } },
+                          { label: "Disconnect", danger: true, onSelect: () => setDeletingConnection(connection) },
+                        ]}
+                      >
                       <HetznerCloudConnectionCard
                         key={connection.id}
                         connection={connection}
@@ -1138,11 +1143,29 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                         }}
                         onDelete={() => setDeletingConnection(connection)}
                       />
+                      </ServerRow>
                     );
                   }
                   if (connection.provider === "digitalocean") {
                     const target = digitalOceanTargets.find((candidate) => candidate.connectionId === connection.id) ?? null;
+                    const doReady = connection.status === "ready" && target?.status === "ready";
                     return (
+                      <ServerRow
+                        key={connection.id}
+                        name={connection.name}
+                        provider="DigitalOcean"
+                        status={doReady ? "Ready" : "Needs attention"}
+                        tone={doReady ? "ok" : "error"}
+                        defaultOpen={!doReady}
+                        action={doReady && target
+                          ? <Link className={styles.serverAction} href={digitalOceanLaunchHref(target.id)}>Launch here</Link>
+                          : null}
+                        menu={[
+                          { label: "Refresh", onSelect: () => void refreshDigitalOcean(connection.id) },
+                          { label: "Replace token", onSelect: () => setReplacingDigitalOcean(connection) },
+                          { label: "Disconnect", danger: true, onSelect: () => setDeletingConnection(connection) },
+                        ]}
+                      >
                       <DigitalOceanConnectionCard
                         key={connection.id}
                         connection={connection}
@@ -1159,9 +1182,19 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                             : candidate
                         )))}
                       />
+                      </ServerRow>
                     );
                   }
                   return (
+                    <SshServerRow
+                      key={connection.id}
+                      connection={connection}
+                      savedTarget={targetsByConnection.get(connection.id)}
+                      checking={checkingIds.has(connection.id)}
+                      onCheck={() => void runDiscovery(connection)}
+                      onEdit={() => openEditWizard(connection)}
+                      onDelete={() => setDeletingConnection(connection)}
+                    >
                     <InfrastructureConnectionCard
                       key={connection.id}
                       connection={connection}
@@ -1175,6 +1208,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
                       onEdit={() => openEditWizard(connection)}
                       onDelete={() => setDeletingConnection(connection)}
                     />
+                    </SshServerRow>
                   );
                 })}
               </div>
@@ -1440,6 +1474,55 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
       </div>
     </div>
     </LaunchOnServerProvider>
+  );
+}
+
+/** A server of your own (reached over SSH or its setup command), as one row. */
+function SshServerRow({
+  connection,
+  savedTarget,
+  checking,
+  onCheck,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  connection: SshInfrastructureConnectionDto;
+  savedTarget?: DeploymentTargetDto;
+  checking: boolean;
+  onCheck: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  children: ReactNode;
+}) {
+  const readyTarget = connection.status === "ready" && savedTarget
+    && savedTarget.connectionId === connection.id && hasReadyEvidence(savedTarget)
+    ? savedTarget
+    : null;
+  const launch = useTargetLaunchAction(readyTarget);
+  let status = "Needs setup";
+  let tone: "ok" | "busy" | "error" | "off" = "busy";
+  if (checking || connection.status === "checking") status = "Checking";
+  else if (connection.status === "error") { status = "Needs attention"; tone = "error"; }
+  else if (connection.status === "disabled") { status = "Off"; tone = "off"; }
+  else if (launch) { status = "Ready"; tone = "ok"; }
+  const menu: ServerRowMenuItem[] = [
+    { label: "Check again", onSelect: onCheck },
+    { label: "Edit connection", onSelect: onEdit },
+    { label: "Disconnect", danger: true, onSelect: onDelete },
+  ];
+  return (
+    <ServerRow
+      name={connection.name}
+      provider="Your server"
+      status={status}
+      tone={tone}
+      defaultOpen={tone === "error"}
+      action={launch ? <LaunchOnServerLink action={launch} className={styles.serverAction} /> : null}
+      menu={menu}
+    >
+      {children}
+    </ServerRow>
   );
 }
 

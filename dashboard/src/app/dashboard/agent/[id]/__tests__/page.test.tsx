@@ -19,6 +19,7 @@ const mockListAgents = jest.fn();
 const mockBoxLoginStatus = jest.fn();
 const mockChatReadiness = jest.fn();
 const mockBrowserStatus = jest.fn();
+const mockBrowserToggle = jest.fn();
 const mockFetchPlan = jest.fn();
 const mockTelegramStatus = jest.fn();
 const mockClientWarn = jest.fn();
@@ -41,11 +42,14 @@ jest.mock("@/lib/hivra/chat-readiness", () => ({
   inspectChatReadiness: (...args: unknown[]) => mockChatReadiness(...args),
 }));
 
+// Home's day-one checklist reads plans and agents on its own; not under test here.
+jest.mock("@/components/dashboard/OnboardingChecklist", () => ({ OnboardingChecklist: () => null }));
 jest.mock("@/lib/hivra/agent-api", () => ({
   getAgent: (...args: unknown[]) => mockGetAgent(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
   boxLoginStatus: (...args: unknown[]) => mockBoxLoginStatus(...args),
   browserStatus: (...args: unknown[]) => mockBrowserStatus(...args),
+  browserToggle: (...args: unknown[]) => mockBrowserToggle(...args),
   fetchPlanStrict: (...args: unknown[]) => mockFetchPlan(...args),
   telegramStatus: (...args: unknown[]) => mockTelegramStatus(...args),
 }));
@@ -93,8 +97,13 @@ jest.mock("@/components/hivra/HivraLogin", () => ({
 }));
 
 jest.mock("@/components/hivra/HivraFiles", () => ({
-  HivraFiles: ({ workspaceRoot }: { workspaceRoot?: boolean }) => (
-    <div data-workspace-root={String(Boolean(workspaceRoot))}>Files panel</div>
+  HivraFiles: ({ workspaceRoot, showChanges, view, onViewChange }: {
+    workspaceRoot?: boolean; showChanges?: boolean; view?: "files" | "changes"; onViewChange?: (view: "files" | "changes") => void;
+  }) => (
+    <div data-workspace-root={String(Boolean(workspaceRoot))} data-show-changes={String(Boolean(showChanges))} data-view={view ?? ""}>
+      Files panel
+      <button type="button" onClick={() => onViewChange?.(view === "changes" ? "files" : "changes")}>Switch Files view</button>
+    </div>
   ),
 }));
 jest.mock("@/components/hivra/HivraProviderWorkspace", () => ({
@@ -180,7 +189,7 @@ const CONNECTED_UBUNTU = {
 // tab in its group's row; computers keep one flat bar with a Tools menu.
 // Reach a surface the way an owner does: its tab, then its group, then Tools.
 const GROUP_OF_LABEL: Record<string, string> = {
-  Terminal: "Computer", Files: "Computer", Browser: "Computer", Git: "Computer",
+  Desktop: "Computer", Terminal: "Computer", Files: "Computer", Browser: "Computer",
   "Claude Code session": "Agent", "Codex session": "Agent",
   Skills: "Manage", Telegram: "Manage",
 };
@@ -580,6 +589,18 @@ describe("AgentPage", () => {
     expect(await screen.findByText("Chat panel")).toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
   });
+  it("shows a real second attempt when the connection check fails again", async () => {
+    mockChatReadiness.mockResolvedValue("unavailable");
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check connection" }));
+    // The panel stays, its button busy, instead of flashing to a loader.
+    expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
+    expect(screen.getByText("Couldn’t check the model connection")).toBeInTheDocument();
+    expect(await screen.findByText(/Checked again at/)).toHaveTextContent("Still no answer.");
+    expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(await screen.findByText("Manage panel")).toBeInTheDocument();
+  });
   it("shows a recoverable live connection check error rather than a false login prompt", async () => {
     mockChatReadiness.mockResolvedValueOnce("unavailable").mockResolvedValue("provider_configured");
     render(<AgentPage />);
@@ -690,28 +711,97 @@ describe("AgentPage", () => {
     expect(desktop).toBeVisible();
   });
 
-  it("lands a stale Desktop link on a CLI agent on Chat and corrects the URL", async () => {
+  // An agent has no screen of its own, so ?tab=desktop opens the choice to give
+  // it one rather than a desktop session.
+  function linksFetch(view: unknown, status = 200) {
+    const base = (global.fetch as jest.Mock).getMockImplementation()!;
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => String(url).startsWith("/api/hivra/agent-links")
+      ? Promise.resolve({ ok: status === 200, status, json: async () => (status === 200 ? { success: true, data: view } : { error: "Not found" }) })
+      : base(url, init));
+  }
+  const AGENT_LINKS_VIEW = {
+    subject: { id: "agent_123", kind: "agent", available: true },
+    links: [],
+    candidates: [
+      { id: "desk_1", name: "Studio", kind: "Ubuntu desktop", status: "running", linked: false, available: true },
+      { id: "box_1", name: "Sandbox", kind: "Linux sandbox", status: "running", linked: false, available: true },
+    ],
+  };
+
+  it("opens the give-a-desktop choice for a CLI agent's Desktop link, without a desktop session", async () => {
     window.history.replaceState(null, "", "/dashboard/agent/agent_123?hivra=1&tab=desktop#workspace");
     mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    linksFetch(AGENT_LINKS_VIEW);
     render(<AgentPage />);
-    expect(await screen.findByText("Chat panel")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Give CLAUDE_CODE_AGENT a desktop" })).toBeVisible();
     expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
-    expect(screen.queryByText("Not ready")).not.toBeInTheDocument();
-    await waitFor(() => expect(new URLSearchParams(window.location.search).get("tab")).toBe("chat"));
-    expect(new URLSearchParams(window.location.search).get("hivra")).toBe("1");
-    expect(window.location.hash).toBe("#workspace");
+    expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("desktop");
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/remote-desktop"), expect.anything());
+    // Only desktops are offered, not the Linux sandbox.
+    expect(await screen.findByRole("button", { name: "Connect Studio" })).toBeInTheDocument();
+    expect(screen.queryByText(/Sandbox/)).not.toBeInTheDocument();
   });
 
-  it("lands a stale Desktop link on a dashboard agent on its dashboard", async () => {
+  it("lands a Desktop link on a dashboard agent on the same choice", async () => {
     window.history.replaceState(null, "", "/dashboard/agent/agent_123?tab=desktop");
     mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
     render(<AgentPage />);
-    expect(await screen.findByTitle("OpenClaw · dashboard")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Give OPENCLAW_AGENT a desktop" })).toBeInTheDocument();
     expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
-    await waitFor(() => expect(new URLSearchParams(window.location.search).get("tab")).toBe("aeon"));
+  });
+
+  it("shows a Desktop entry in the Computer group of every agent, and Launch opens an Ubuntu Desktop", async () => {
+    linksFetch(AGENT_LINKS_VIEW, 404);
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Computer" }));
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Computer views" })).getByRole("tab", { name: "Desktop" }));
+    expect(await screen.findByRole("heading", { name: "Give CLAUDE_CODE_AGENT a desktop" })).toBeVisible();
+    // Linking isn't offered here: say so, and offer the launch.
+    expect(await screen.findByText(/Connecting a desktop to an agent isn’t available here yet/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Launch a new Ubuntu Desktop" }));
+    expect(pushMock).toHaveBeenCalledWith("/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop&hivra=1");
+  });
+
+  it("connects an existing desktop to the agent from its Desktop entry", async () => {
+    window.history.replaceState(null, "", "/dashboard/agent/agent_123?tab=desktop");
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    linksFetch(AGENT_LINKS_VIEW);
+    const base = (global.fetch as jest.Mock).getMockImplementation()!;
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => String(url) === "/api/hivra/agent-links" && init?.method === "POST"
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) })
+      : base(url, init));
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Studio" }));
+    await screen.findByText(/Connected to Studio/);
+    const post = (global.fetch as jest.Mock).mock.calls.find(([url, init]) => url === "/api/hivra/agent-links" && init?.method === "POST");
+    expect(JSON.parse(post![1].body)).toEqual({ agentId: "agent_123", computerId: "desk_1", from: "agent" });
+  });
+
+  it("never gives a computer the agent Desktop entry", async () => {
+    mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+    render(<AgentPage />);
+    expect(await screen.findByTestId("remote-desktop")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Give .* a desktop/ })).not.toBeInTheDocument();
+  });
+
+  it("puts Git inside Files as Changes: the old Git link opens Files with Changes", async () => {
+    window.history.replaceState(null, "", "/dashboard/agent/agent_123?tab=git");
+    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    render(<AgentPage />);
+    const files = await screen.findByText("Files panel");
+    expect(files).toHaveAttribute("data-show-changes", "true");
+    expect(files).toHaveAttribute("data-view", "changes");
+    // Git is no tab, and the link keeps pointing at Changes rather than being rewritten.
+    expect(screen.queryByRole("tab", { name: "Git" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files", selected: true })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("git");
+    // The Files view switch moves between the two.
+    fireEvent.click(screen.getByRole("button", { name: "Switch Files view" }));
+    await waitFor(() => expect(screen.getByText("Files panel")).toHaveAttribute("data-view", "files"));
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("files");
   });
 
   it.each(["running", "stopped"])("hides Terminal and Files for a %s Windows computer", async status => {
@@ -893,17 +983,19 @@ describe("AgentPage", () => {
       .toEqual(["Chat", "Codex session"]);
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Terminal", "Files", "Browser", "Git"]);
-    expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
+      .toEqual(["Desktop", "Browser", "Files", "Terminal"]);
+    // The Computer button opens Files, not the Desktop choice; Git is not a tab.
+    expect(screen.getByText("Files panel")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Git" })).not.toBeInTheDocument();
+    expect(screen.getByText("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     // The group is Manage, so its own pane's tab is Settings: no "Manage › Manage".
     expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Settings", "Skills", "Telegram"]);
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
-    // Retired: "Box Terminal", "<Agent> Terminal", the Desktop tab on an agent, and the Tools overflow.
+    // Retired: "Box Terminal", "<Agent> Terminal" and the Tools overflow.
     expect(document.body).not.toHaveTextContent(/Box Terminal|Codex Terminal/);
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Desktop" })).not.toBeInTheDocument();
   });
 
   it("says Agent once in a chat agent's bar: the group button, not the switcher's caption as well", async () => {
@@ -945,7 +1037,7 @@ describe("AgentPage", () => {
     expect(within(nav).getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
-      .toEqual(["Terminal", "Files", "Browser"]);
+      .toEqual(["Desktop", "Browser", "Files", "Terminal"]);
     expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
   });
 
@@ -1104,7 +1196,7 @@ describe("AgentPage", () => {
       await screen.findByTitle("Claude Code session");
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
 
-      fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+      fireEvent.click(screen.getByRole("button", { name: /^New (terminal|Claude Code session)$/ }));
       await screen.findByTitle("Claude Code session · 2");
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
       fireEvent.click(getSurfaceButton("Terminal"));
@@ -1230,27 +1322,30 @@ describe("AgentPage", () => {
     const first = await screen.findByTitle("Claude Code session");
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    fireEvent.click(screen.getByRole("button", { name: /^New (terminal|Claude Code session)$/ }));
     const second = await screen.findByTitle("Claude Code session · 2");
     await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
     expect(second.getAttribute("name")).not.toBe(first.getAttribute("name"));
     expect(second).toBeVisible();
     expect(first).toBeInTheDocument();
     expect(first).not.toBeVisible();
-    expect(screen.getByRole("tab", { name: "Session 2" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Claude Code 2" })).toHaveAttribute("aria-selected", "true");
 
     // Switching back is a view change, not a new shell.
-    fireEvent.click(screen.getByRole("tab", { name: "Session 1" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Claude Code 1" }));
     expect(screen.getByTitle("Claude Code session")).toBe(first);
     expect(first).toBeVisible();
     expect(second).not.toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
 
     // Closing a session drops its frame (ending that process) and keeps the rest.
-    fireEvent.click(screen.getByRole("button", { name: "Close session 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Claude Code 2" }));
     expect(second).not.toBeInTheDocument();
     expect(first).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Close session 1" })).not.toBeInTheDocument();
+    // One session left: no strip, but a new one is still one tap away.
+    expect(screen.queryByRole("tablist", { name: "Claude Code session sessions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Close / })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New Claude Code session" })).toBeInTheDocument();
   });
 
   it("reopens a tab for every terminal session still running on the computer", async () => {
@@ -1262,11 +1357,11 @@ describe("AgentPage", () => {
     await findSurfaceButton(/claude code session/i);
     fireEvent.click(getSurfaceButton("Terminal"));
     await screen.findByTitle("Terminal");
-    expect(await screen.findByRole("tab", { name: "Session 3" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Terminal 3" })).toBeInTheDocument();
     const sessionsCall = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).includes("/api/terminal/sessions"));
     expect(sessionsCall![0]).toBe("https://box.example.com/api/terminal/sessions?surface=box");
     expect(sessionsCall![1]).toMatchObject({ credentials: "omit", headers: { Authorization: "Bearer box-token" } });
-    fireEvent.click(screen.getByRole("tab", { name: "Session 3" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal 3" }));
     const third = await screen.findByTitle("Terminal · 3");
     expect(third.parentElement?.querySelector('input[name="destination"]')).toHaveValue("/box-terminal/?arg=3");
   });
@@ -1275,9 +1370,9 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
     await screen.findByTitle("Claude Code session");
-    fireEvent.click(screen.getByRole("button", { name: "New terminal session" }));
+    fireEvent.click(screen.getByRole("button", { name: /^New (terminal|Claude Code session)$/ }));
     await screen.findByTitle("Claude Code session · 2");
-    fireEvent.click(screen.getByRole("button", { name: "Close session 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Claude Code 2" }));
     const closeCall = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith("/api/terminal/sessions/close"));
     expect(closeCall![1]).toMatchObject({ method: "POST", credentials: "omit", headers: { Authorization: "Bearer box-token" } });
     expect(JSON.parse(String(closeCall![1].body))).toEqual({ surface: "agent", slot: 2 });
@@ -1288,11 +1383,33 @@ describe("AgentPage", () => {
     await findSurfaceButton(/claude code session/i);
     fireEvent.click(getSurfaceButton("Terminal"));
     await screen.findByTitle("Terminal");
-    const add = screen.getByRole("button", { name: "New terminal session" });
-    for (let i = 0; i < 10; i += 1) fireEvent.click(add);
+    for (let i = 0; i < 10; i += 1) {
+      const add = screen.getByRole("button", { name: "New terminal" });
+      if (!(add as HTMLButtonElement).disabled) fireEvent.click(add);
+    }
     // Session tabs only; the Computer views row is its own tablist.
     expect(within(screen.getByRole("tablist", { name: "Terminal sessions" })).getAllByRole("tab")).toHaveLength(8);
-    expect(add).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New terminal" })).toBeDisabled();
+  });
+
+  it("shows no session strip for one terminal, keeps New terminal reachable, and numbers sessions by name", async () => {
+    render(<AgentPage />);
+    await findSurfaceButton(/claude code session/i);
+    fireEvent.click(getSurfaceButton("Terminal"));
+    await screen.findByTitle("Terminal");
+    // One session: no strip, but the control is there with a tooltip.
+    expect(screen.queryByRole("tablist", { name: "Terminal sessions" })).not.toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "New terminal" });
+    expect(add).toHaveAttribute("title", expect.stringContaining("New terminal"));
+    fireEvent.click(add);
+    const tabs = within(screen.getByRole("tablist", { name: "Terminal sessions" })).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Terminal 1", "Terminal 2"]);
+    expect(screen.getByRole("button", { name: "New terminal" })).toHaveTextContent("New");
+    // The agent's own session is named for the agent.
+    fireEvent.click(getSurfaceButton(/claude code session/i));
+    await screen.findByTitle("Claude Code session");
+    expect(screen.getByRole("button", { name: "New Claude Code session" })).toBeVisible();
+    expect(document.body).not.toHaveTextContent(/Session \d/);
   });
 
   it("keeps the chat mounted while working in other surfaces", async () => {
@@ -1948,8 +2065,31 @@ describe("AgentPage", () => {
     const browserTab = await findSurfaceButton(/^browser$/i);
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
     fireEvent.click(browserTab);
-    expect(screen.getByText("Turn it on in Manage to open the live browser.")).toBeInTheDocument();
+    if (mode === "self-managed") {
+      expect(screen.getByRole("button", { name: "Turn on browser" })).toBeInTheDocument();
+    } else {
+      // A managed plan not read yet waits for it, as Manage does.
+      expect(screen.getByText("Turn it on in Manage to open the live browser.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Turn on browser" })).not.toBeInTheDocument();
+    }
     expect(screen.queryByRole("button", { name: /upgrade to pro/i })).not.toBeInTheDocument();
+  });
+
+  it("turns the browser on from the Browser tab itself, without a trip to Manage", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "codex", name: "TEST", status: "running", cpu: 2, ram: 4,
+      deployment_mode: "self-managed", chat_url: "https://box.example.com", api_token: "box-token",
+    });
+    mockBrowserToggle.mockResolvedValueOnce({ ok: false, error: "HTTP 502" }).mockResolvedValueOnce({ ok: true, enabled: true, error: null });
+    render(<AgentPage />);
+    const browserTab = await findSurfaceButton(/^browser$/i);
+    await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
+    fireEvent.click(browserTab);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on browser" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t turn the browser on");
+    fireEvent.click(screen.getByRole("button", { name: "Turn on browser" }));
+    await waitFor(() => expect(screen.queryByText("Browser automation is off")).not.toBeInTheDocument());
+    expect(mockBrowserToggle).toHaveBeenLastCalledWith("https://box.example.com", true, "box-token");
   });
 
   it("tells free-plan users the live browser needs a paid plan when the exposed Browser tab is off", async () => {
