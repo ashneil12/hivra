@@ -15,6 +15,9 @@ import {
 import { attentionLabel } from "@/lib/hivra/resource-attention";
 import styles from "./HomeWorkspace.module.css";
 import { HomeContinue } from "./HomeContinue";
+import { FirstRunCard } from "./FirstRunCard";
+import { OnboardingChecklist } from "@/components/dashboard/OnboardingChecklist";
+import { StatusText } from "@/components/ui/StatusText";
 import { inRecentOrder } from "@/lib/workspace/recent-order";
 import { listRecents, visitHref, type RecentVisit } from "@/lib/workspace/recents";
 import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
@@ -113,48 +116,43 @@ export function FleetControlPane({ requested = false, attentionRequested = false
 
   return (
     <div className={styles.home}>
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <p className={styles.eyebrow}>Your workspace</p>
-          <h1 className={styles.title}>{attentionOnly ? "Needs your attention" : "Where will you work?"}</h1>
-          <p className="mt-1 text-[13px] leading-[1.5] text-[var(--text-muted)]">
-            {attentionOnly ? "Open an item to respond or check what went wrong." : empty ? "Choose an agent to work with, or a computer of your own." : "Open an agent to start working, or go straight to your desktop."}
-          </p>
-        </div>
-        {!empty && <label className="flex min-h-[44px] min-w-[200px] flex-1 items-center gap-2 border border-[var(--etched-border)] px-2 focus-within:border-[var(--hivra-red-line)] sm:max-w-[280px]">
-          <Search
-            aria-hidden="true"
-            size={13}
-            className="shrink-0 text-[var(--text-muted)]"
-          />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            aria-label="Search agents and computers"
-            placeholder="Find an agent or computer"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            enterKeyHint="search"
-            className="mono w-full bg-transparent py-1 text-[12px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
-          />
-        </label>}
-      </header>
+      {empty && !attentionOnly ? <FirstRunCard /> : (
+        <>
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className={styles.eyebrow}>Your workspace</p>
+            <h1 className={styles.title}>{attentionOnly ? "Needs your attention" : "Where will you work?"}</h1>
+            <p className="mt-1 text-[13px] leading-[1.5] text-[var(--text-muted)]">
+              {attentionOnly ? "Open an item to respond or check what went wrong." : "Open an agent to start working, or go straight to your desktop."}
+            </p>
+          </div>
+          {<label className="flex min-h-[44px] min-w-[200px] flex-1 items-center gap-2 border border-[var(--etched-border)] px-2 focus-within:border-[var(--hivra-red-line)] sm:max-w-[280px]">
+            <Search
+              aria-hidden="true"
+              size={13}
+              className="shrink-0 text-[var(--text-muted)]"
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label="Search agents and computers"
+              placeholder="Find an agent or computer"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="search"
+              className="mono w-full bg-transparent py-1 text-[12px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
+            />
+          </label>}
+        </header>
 
-      {empty && !attentionOnly ? (
-        <section className={styles.start} aria-label="Create your first workspace">
-          <Link href="/dashboard/launch?kind=agent&start=1" className={styles.startChoice}>
-            <Bot size={24} aria-hidden /><h2>Start with an agent</h2><p>Choose the agent you want to work with.</p><span>Launch agent <span aria-hidden>→</span></span>
-          </Link>
-          <Link href="/dashboard/launch?kind=computer&start=1" className={styles.startChoice}>
-            <Monitor size={24} aria-hidden /><h2>Start with a computer</h2><p>Open a desktop of your own.</p><span>Launch computer <span aria-hidden>→</span></span>
-          </Link>
-          <p className={styles.startAlt}>
-            Already have a cloud account or a server? <Link href="/dashboard/infrastructure">Bring your own cloud or server <span aria-hidden>→</span></Link>
-          </p>
-        </section>
-      ) : null}
+        </>
+      )}
+
+      {/* Day-one guide: after a first launch, for two weeks. It decides for
+          itself whether to show. */}
+      {!loading && !empty && !attentionOnly && !searching ? <OnboardingChecklist instances={[]} includeHivra /> : null}
 
       {/* Where you were, first: one click back into the resource and surface
           you left, and the others you used recently. Hidden while searching
@@ -273,7 +271,7 @@ function FleetEntry({
           ) : null}
         </span>
         <span className="mono block truncate text-[11px] leading-[1.35] text-[var(--text-muted)]">
-          {agent.typeLabel} · {stale ? `Last known: ${unifiedStateLabel(agent.state)}` : agent.attention ? attentionLabel(agent.attention) : unifiedStateLabel(agent.state)}
+          {agent.typeLabel} · <StatusText value={stale ? `Last known: ${unifiedStateLabel(agent.state)}` : agent.attention ? attentionLabel(agent.attention) : unifiedStateLabel(agent.state)} />
         </span>
         {/* The linked pair: an agent and the computer it runs on (ATT-11). */}
         {agent.computerPair ? (
