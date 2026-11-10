@@ -148,9 +148,13 @@ def parse_launch(raw, *, provider_desktop=False):
                 raise ValueError()
             if hostname is not None and value["publicOrigin"] != "https://" + hostname:
                 raise ValueError()
-            # Never silently discard launch-time secrets/settings. Native
-            # Models UI owns these until typed key custody is implemented.
-            if any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
+            # Never silently discard launch-time secrets/settings. The DeepSeek
+            # native runtime takes its model from the install-time seed, all
+            # three typed values or none; a Linux computer has no model at all.
+            if version == 2:
+                if not valid_native_model(value["modelKey"], value["modelBaseUrl"], value["model"]):
+                    raise ValueError()
+            elif any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
                 raise ValueError()
         if version == 3:
             if value["computerSubstrate"] != ("provider-vm" if provider_desktop else "proxmox-kvm") or value["wantBrowser"] is not None:
@@ -185,6 +189,39 @@ def valid_activity_telemetry(value):
     except ValueError:
         return False
     return True
+
+
+NATIVE_MODEL_KEY = re.compile(r"[\x21-\x7e]{8,8192}")
+NATIVE_MODEL_NAME = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+NATIVE_MODEL_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)*/?")
+
+
+def valid_native_model(key, base_url, model):
+    """The DeepSeek native runtime's launch-time model settings, all or none.
+
+    Returns a bool and never an input value: the caller turns False into the
+    generic refusal, so a malformed key or URL is never echoed. The base URL is
+    one canonical HTTPS endpoint (no userinfo, port, query or fragment) whose
+    host passes the same label rules as a public origin, optionally followed by
+    plain path segments. The same endpoint reaches a YAML file and an outbound
+    request, so every character that carries meaning there is refused here.
+    """
+    if not (isinstance(key, str) and isinstance(base_url, str) and isinstance(model, str)):
+        return False
+    if not (key or base_url or model):
+        return True
+    if not (key and base_url and model):
+        return False
+    if not NATIVE_MODEL_KEY.fullmatch(key) or not NATIVE_MODEL_NAME.fullmatch(model):
+        return False
+    if len(base_url.encode("utf-8")) > 2048 or not base_url.startswith("https://"):
+        return False
+    authority, slash, tail = base_url[8:].partition("/")
+    path = slash + tail
+    if not canonical_origin("https://" + authority) or not NATIVE_MODEL_PATH.fullmatch(path):
+        return False
+    # Plain-looking dot segments still address the parent or the same directory.
+    return all(segment not in (".", "..") for segment in path.split("/"))
 
 
 def canonical_origin(value):
@@ -421,6 +458,10 @@ def install_agent(launch, source, *, provider_desktop=None):
         native = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(native)
         environment["HIVRA_NATIVE_PREPARE_ONLY"] = "1"
+        # The shared base installer has no use for the native model settings;
+        # only the owned seed in install-guest.py consumes them, over stdin.
+        for name in ("HIVRA_MODEL_KEY", "HIVRA_MODEL_BASE_URL", "HIVRA_HERMES_MODEL"):
+            environment[name] = ""
         native.install(launch, source, bootstrap)
         # The base-only pass deliberately did not record a runtime receipt.
         try:

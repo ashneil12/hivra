@@ -55,8 +55,22 @@ it("emits the native v2 Proxmox document only with its fixed named HTTPS origin"
     wantBrowser: null, modelKey: "", modelBaseUrl: "", model: "", tunnelToken: "fixture-tunnel",
     accessHostname: null, publicOrigin: "https://native.example.test" });
   expect(document({ AGENT_KIND: "deepseek-harness", HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel" }).status).toBe(1);
-  expect(document({ AGENT_KIND: "deepseek-harness", HIVRA_MODEL_KEY: "synthetic", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
-    HIVRA_TUNNEL_URL: "https://native.example.test" }).status).toBe(1);
+});
+it("lets the native v2 document carry its launch-time model only as a complete set", () => {
+  const native = { AGENT_KIND: "deepseek-harness", HIVRA_TUNNEL_TOKEN: "fixture-tunnel", HIVRA_TUNNEL_URL: "https://native.example.test" };
+  const model = { HIVRA_MODEL_KEY: "synthetic-key-value", HIVRA_MODEL_BASE_URL: "https://models.example.test/v1", HIVRA_HERMES_MODEL: "deepseek-v4-1-flash" };
+  const result = document({ ...native, ...model });
+  expect(result.status).toBe(0); expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toMatchObject({ version: 2, agentKind: "deepseek-harness", modelKey: "synthetic-key-value",
+    modelBaseUrl: "https://models.example.test/v1", model: "deepseek-v4-1-flash", publicOrigin: "https://native.example.test" });
+  for (const missing of Object.keys(model)) {
+    const partial = document({ ...native, ...model, [missing]: "" });
+    expect({ missing, status: partial.status, stderr: partial.stderr }).toEqual({ missing, status: 1, stderr: "invalid guest launch input\n" });
+  }
+  for (const present of Object.keys(model)) {
+    const alone = document({ ...native, HIVRA_MODEL_KEY: "", HIVRA_MODEL_BASE_URL: "", HIVRA_HERMES_MODEL: "", [present]: model[present as keyof typeof model] });
+    expect({ present, status: alone.status }).toEqual({ present, status: 1 });
+  }
 });
 it("emits Linux Desktop only as a strict v3 computer launch", () => {
   const result = document({ AGENT_KIND: "linux-desktop", HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",

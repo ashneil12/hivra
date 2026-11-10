@@ -505,7 +505,9 @@ try:
         raise ValueError()
     native = values[0] == "deepseek-harness"
     desktop = values[0] in ("linux-desktop", "linux-server")
-    if native and (values[2] or values[3] or values[4] or not values[5] or not values[6]):
+    # DeepSeek Harness takes its model at install time: key, base URL and model
+    # together, or none of them. The guest parser owns the typed checks.
+    if native and (bool(values[2]) != bool(values[3]) or bool(values[3]) != bool(values[4]) or not values[5] or not values[6]):
         raise ValueError()
     if desktop and (values[1] or values[2] or values[3] or values[4] or not values[5] or not values[6] or not values[7] or not values[8]):
         raise ValueError()

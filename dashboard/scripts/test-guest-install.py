@@ -109,6 +109,78 @@ class LaunchContract(unittest.TestCase):
             with self.subTest(candidate=candidate), self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
                 guest.parse_launch(json.dumps(candidate).encode())
 
+    def test_native_v2_takes_launch_time_model_settings_all_or_none(self):
+        none = launch(version=2, agentKind="deepseek-harness", computerSubstrate="proxmox-kvm",
+                      publicOrigin="https://native.example.test", modelKey="", modelBaseUrl="", model="")
+        model = {"modelKey": "hven_synthetic-key.0123456789", "modelBaseUrl": "https://models.example.test/api/managed-venice/v1",
+                 "model": "deepseek-v4-1-flash"}
+        value = {**none, **model}
+        self.assertEqual(guest.parse_launch(json.dumps(value).encode()), value)
+        for base in ("https://models.example.test", "https://models.example.test/", "https://a.b.models.example.test/v1/"):
+            accepted = {**value, "modelBaseUrl": base}
+            self.assertEqual(guest.parse_launch(json.dumps(accepted).encode()), accepted)
+        for name in ("a/b:c.d-e_f", "x" * 128):
+            accepted = {**value, "model": name}
+            self.assertEqual(guest.parse_launch(json.dumps(accepted).encode()), accepted)
+        invalid = []
+        # Partial sets, in every combination.
+        for present in ((), ("modelKey",), ("modelBaseUrl",), ("model",), ("modelKey", "modelBaseUrl"),
+                        ("modelKey", "model"), ("modelBaseUrl", "model")):
+            if present and len(present) < 3:
+                invalid.append({**none, **{key: model[key] for key in present}})
+        invalid += [{**value, "modelKey": bad} for bad in ("short", "k" * 7, "k" * 8193, "with space-in-key", "tab\tkey-value", "non-ascii-k\u00e9y")]
+        invalid += [{**value, "modelBaseUrl": bad} for bad in (
+            "http://models.example.test/v1", "models.example.test/v1", "HTTPS://models.example.test/v1",
+            "https://Models.example.test/v1", "https://user@models.example.test/v1", "https://user:pw@models.example.test/v1",
+            "https://models.example.test:8443/v1", "https://models.example.test:443", "https://models.example.test/v1?x=1",
+            "https://models.example.test/v1#frag", "https://models.example.test?x=1", "https://models.example.test#f",
+            "https://models.example.test//v1", "https://models.example.test/v1//x", "https://models.example.test/../v1",
+            "https://models.example.test/v1/./x", "https://models.example.test/a b", "https://models.example.test/%2e%2e/v1",
+            "https://models.example.test/v1;x", "https://models.example.test/v1\\x", "https://models..example.test/v1",
+            "https://-models.example.test/v1", "https://xn--models.example.test/v1", "https://127.0.0.1/v1",
+            "https://localhost/v1", "https://models.example.test/v1\n", "https://models.example.test/" + "a" * 2048)]
+        invalid += [{**value, "model": bad} for bad in ("", "has space", "semi;colon", "q\"uote", "x" * 129, "model\n", "caf\u00e9")]
+        for candidate in invalid:
+            with self.subTest(candidate={key: candidate[key] for key in ("modelBaseUrl", "model")} if len(candidate["modelKey"]) < 100 else "key"), \
+                 self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$") as caught:
+                guest.parse_launch(json.dumps(candidate).encode())
+            self.assertNotIn(candidate["modelKey"] or "-", str(caught.exception))
+        # Only the DeepSeek native document takes these; every other shape still refuses a key it cannot use.
+        for kind in ("linux-desktop", "linux-server"):
+            computer = launch(version=3, agentKind=kind, wantBrowser=None, **model, publicOrigin="https://native.example.test",
+                              computerId="11111111-1111-4111-8111-111111111111", controlOrigin="https://hivra.example.test")
+            with self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
+                guest.parse_launch(json.dumps(computer).encode())
+
+    def test_native_v2_environment_for_the_shared_base_never_carries_the_model(self):
+        # The shared bootstrap has no use for the native model settings; only the
+        # owned seed consumes them, over stdin.
+        value = launch(version=2, agentKind="deepseek-harness", computerSubstrate="proxmox-kvm",
+                       publicOrigin="https://native.example.test", modelKey="hven_synthetic-key.0123456789",
+                       modelBaseUrl="https://models.example.test/v1", model="deepseek-v4-1-flash")
+        module = Mock()
+        seen = {}
+
+        def install(launch_value, source, bootstrap):
+            self.assertEqual(launch_value["modelKey"], value["modelKey"])
+            with patch.object(guest.subprocess, "run") as command:
+                bootstrap()
+            seen.update(command.call_args.kwargs["env"])
+        module.install.side_effect = install
+        module.owner.stop_owned = Mock()
+        info = Mock(st_mode=0o100644, st_uid=0, st_nlink=1)
+        with patch.object(guest, "check_directory"), patch.object(guest, "check_named_tunnel"), \
+             patch.object(guest, "check_effective_tunnel"), patch.object(guest, "configure_named_tunnel"), \
+             patch.object(guest.stat, "S_ISREG", return_value=True), patch.object(guest.Path, "lstat", return_value=info), \
+             patch.object(guest.Path, "resolve", lambda self: self), \
+             patch.object(guest.importlib.util, "module_from_spec", return_value=module), \
+             patch.object(guest.importlib.util, "spec_from_file_location", return_value=Mock()), \
+             patch.object(guest.subprocess, "run"), patch.object(guest.Path, "read_text", return_value="2026.11.10.5\n"):
+            guest.install_agent(value, Path("/owned-bundle"))
+        self.assertEqual({name: seen[name] for name in ("HIVRA_MODEL_KEY", "HIVRA_MODEL_BASE_URL", "HIVRA_HERMES_MODEL")},
+                         {"HIVRA_MODEL_KEY": "", "HIVRA_MODEL_BASE_URL": "", "HIVRA_HERMES_MODEL": ""})
+        self.assertEqual(seen["HIVRA_NATIVE_PREPARE_ONLY"], "1")
+
     def test_native_v2_accepts_proxmox_only_with_named_https_authority(self):
         value = launch(version=2, agentKind="deepseek-harness", computerSubstrate="proxmox-kvm",
                        publicOrigin="https://native.example.test", modelKey="", modelBaseUrl="", model="")

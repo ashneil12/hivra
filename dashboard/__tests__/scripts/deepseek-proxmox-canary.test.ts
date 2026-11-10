@@ -2,14 +2,19 @@ import {
   DEEPSEEK_CANARY_ORIGIN,
   DEEPSEEK_CANARY_VERSION,
   assertDeepSeekCanaryAuthorized,
+  buildDeepSeekAskScript,
   buildDeepSeekBundleCheckScript,
   buildDeepSeekInventoryScript,
   buildDeepSeekLaunchScript,
   buildDeepSeekReadAccessScript,
   buildDeepSeekRestartScript,
   buildDeepSeekTeardownScript,
+  deepSeekAskGuestCommand,
+  evaluateDeepSeekAsk,
   loadDeepSeekCanaryBundleManifest,
   parseDeepSeekCanaryArgs,
+  parseDeepSeekCanaryModel,
+  readDeepSeekCanaryModelFile,
   type DeepSeekCanaryLedger,
 } from "../../scripts/deepseek-proxmox-canary";
 import {
@@ -20,7 +25,7 @@ import { loadPortableProvisionerBundle } from "../../src/lib/infrastructure/conn
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "../../src/lib/infrastructure/portable-provisioner-contract";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -724,6 +729,103 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     expect(teardown).toContain("HIVRA_DEEPSEEK_CLEAN");
   });
 
+  it("takes an optional private model file for --launch only", () => {
+    const base = ["--target", "fixturenode11", "--expected-hostname", "fixturenode11", "--ledger", "/tmp/fixture-ledger.json"];
+    const launch = [...base, "--launch", "--vmid", "1190", "--octet", "90"];
+    expect(parseDeepSeekCanaryArgs(launch).modelFile).toBeNull();
+    expect(parseDeepSeekCanaryArgs([...launch, "--model-file", "/tmp/fixture-model.json"]).modelFile).toBe("/tmp/fixture-model.json");
+    expect(() => parseDeepSeekCanaryArgs([...launch, "--model-file"])).toThrow("--model-file");
+    for (const mode of ["--inspect", "--ask", "--restart", "--teardown", "--read-access"]) {
+      expect(() => parseDeepSeekCanaryArgs([...base, mode, "--model-file", "/tmp/fixture-model.json"])).toThrow("only valid with --launch");
+    }
+    expect(parseDeepSeekCanaryArgs([...base, "--ask"])).toMatchObject({ mode: "ask", vmid: null });
+  });
+
+  it("validates the model file like the guest does and never echoes it", () => {
+    const valid = { modelKey: "fixture-model-key-1234", modelBaseUrl: "https://models.example.test/api/v1", model: "deepseek-v4-1-flash" };
+    expect(parseDeepSeekCanaryModel(JSON.stringify(valid))).toEqual(valid);
+    const bad: Array<[string, unknown]> = [
+      ["short", { ...valid, modelKey: "short" }], ["space", { ...valid, modelKey: "has space in it" }],
+      ["http", { ...valid, modelBaseUrl: "http://models.example.test/v1" }], ["port", { ...valid, modelBaseUrl: "https://models.example.test:8443/v1" }],
+      ["userinfo", { ...valid, modelBaseUrl: "https://u:p@models.example.test/v1" }], ["query", { ...valid, modelBaseUrl: "https://models.example.test/v1?x=1" }],
+      ["fragment", { ...valid, modelBaseUrl: "https://models.example.test/v1#x" }], ["dotdot", { ...valid, modelBaseUrl: "https://models.example.test/../v1" }],
+      ["upper", { ...valid, modelBaseUrl: "https://Models.example.test/v1" }], ["ip", { ...valid, modelBaseUrl: "https://127.0.0.1/v1" }],
+      ["model", { ...valid, model: "has space" }], ["extra", { ...valid, extra: "x" }], ["missing", { modelKey: valid.modelKey, model: valid.model }],
+      ["array", [valid]], ["number", { ...valid, model: 5 }],
+    ];
+    for (const [label, value] of bad) {
+      let message = "";
+      try { parseDeepSeekCanaryModel(JSON.stringify(value)); } catch (error) { message = (error as Error).message; }
+      expect({ label, refused: message !== "" }).toEqual({ label, refused: true });
+      expect(message).not.toContain(valid.modelKey);
+    }
+    expect(() => parseDeepSeekCanaryModel("{not json")).toThrow("not valid JSON");
+  });
+
+  it("requires the model file to be private, regular and owned by the caller", () => {
+    const directory = mkdtempSync(join(tmpdir(), "deepseek-model-file-"));
+    try {
+      const file = join(directory, "model.json");
+      const valid = { modelKey: "fixture-model-key-1234", modelBaseUrl: "https://models.example.test/v1", model: "deepseek-v4-1-flash" };
+      writeFileSync(file, JSON.stringify(valid), { mode: 0o600 });
+      expect(readDeepSeekCanaryModelFile(file)).toEqual(valid);
+      for (const mode of [0o640, 0o604, 0o644, 0o660]) {
+        chmodSync(file, mode);
+        expect(() => readDeepSeekCanaryModelFile(file)).toThrow("private (mode 0600)");
+      }
+      chmodSync(file, 0o600);
+      const link = join(directory, "link.json");
+      symlinkSync(file, link);
+      expect(() => readDeepSeekCanaryModelFile(link)).toThrow("private (mode 0600)");
+      expect(() => readDeepSeekCanaryModelFile(directory)).toThrow("private (mode 0600)");
+      expect(() => readDeepSeekCanaryModelFile(join(directory, "absent.json"))).toThrow("does not exist");
+      try { readDeepSeekCanaryModelFile(link); } catch (error) { expect((error as Error).message).not.toContain(valid.modelKey); }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("hands the launch-time model to the host script as the same base64 secret inputs, and nothing else", () => {
+    const params = {
+      expectedHostname: "fixturenode11", vmid: 1182, ip: "10.252.20.82", octet: 82, subnetPrefix: "10.252.20", gateway: "10.252.20.1",
+      operationId: ledger.operationId, bindingTag: ledger.bindingTag, cpu: 2, memoryMb: 4096,
+      tunnelToken: "fixture-token", tunnelUrl: "https://deepseek.example.com", bundleManifest: checkoutManifest,
+    };
+    const b64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
+    const without = buildDeepSeekLaunchScript(params);
+    expect(without).toContain("HIVRA_MODEL_KEY_B64=\nHIVRA_MODEL_BASE_URL_B64=\nHIVRA_HERMES_MODEL_B64=\n");
+    const model = { modelKey: "fixture-model-key-1234", modelBaseUrl: "https://models.example.test/api/v1", model: "deepseek-v4-1-flash" };
+    const withModel = buildDeepSeekLaunchScript({ ...params, model });
+    expect(withModel).toContain(`HIVRA_MODEL_KEY_B64=${b64(model.modelKey)}\nHIVRA_MODEL_BASE_URL_B64=${b64(model.modelBaseUrl)}\nHIVRA_HERMES_MODEL_B64=${b64(model.model)}\n`);
+    // Only those three lines differ, and the key is never in the clear.
+    expect(withModel).not.toContain(model.modelKey);
+    expect(withModel.split("\n").filter((line, index) => line !== without.split("\n")[index])).toHaveLength(3);
+  });
+
+  it("asks one headless prompt as the runtime account with the runtime's own home and no keys", () => {
+    const command = deepSeekAskGuestCommand();
+    expect(command).toContain("sudo -n -u bux /usr/bin/env -i");
+    expect(command).toContain("HOME=/home/bux/.hivra/deepseek DSH_HOME=/home/bux/.hivra/deepseek/.dsh");
+    expect(command).toContain("--expose-internals /opt/hivra/deepseek-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless");
+    expect(command).toContain("Reply with exactly the word pong");
+    expect(command).not.toMatch(/KEY|TOKEN|SECRET/);
+    const script = buildDeepSeekAskScript(ledger);
+    expect(script).toContain(ledger.operationId);
+    expect(script).toContain("vm_owned");
+    expect(script).toContain("2>/dev/null");
+    expect(script).not.toContain("flock");
+  });
+
+  it("passes the ask only for a clean exit whose reply contains pong", () => {
+    const receipt = (exitCode: number, text: string) => ({ exitCode, elapsedMs: 4200, replyB64: Buffer.from(text).toString("base64") });
+    expect(evaluateDeepSeekAsk(receipt(0, "pong\n"))).toEqual({ passed: true, exitCode: 0, elapsedMs: 4200, reply: "pong" });
+    expect(evaluateDeepSeekAsk(receipt(0, "Pong.")).passed).toBe(true);
+    expect(evaluateDeepSeekAsk(receipt(0, "I cannot do that")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(1, "pong")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(124, "")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(0, "\u001b[31mpong\u001b[0m")).reply).not.toContain("\u001b");
+    expect(() => evaluateDeepSeekAsk({ exitCode: 0, elapsedMs: 1, replyB64: "not base64!" })).toThrow("invalid ask receipt");
+    expect(() => evaluateDeepSeekAsk({})).toThrow("invalid ask receipt");
+  });
+
   it("emits Bash accepted by the shell parser for every host operation", () => {
     const launch = buildDeepSeekLaunchScript({
       expectedHostname: "fixturenode11", vmid: 1182, ip: "10.252.20.82", octet: 82, subnetPrefix: "10.252.20", gateway: "10.252.20.1",
@@ -736,6 +838,7 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
       buildDeepSeekBundleCheckScript({ expectedHostname: "fixturenode11", bundleManifest: checkoutManifest }),
       buildDeepSeekReadAccessScript(ledger),
       buildDeepSeekRestartScript(ledger),
+      buildDeepSeekAskScript(ledger),
       buildDeepSeekTeardownScript(ledger),
     ];
     for (const script of scripts) {
