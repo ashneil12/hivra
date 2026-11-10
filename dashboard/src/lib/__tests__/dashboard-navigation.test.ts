@@ -124,7 +124,7 @@ describe("dashboard navigation", () => {
       },
     };
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => labelForNavigationItem(item, localized)))
-      .toEqual(["动态", "设置", "账单", "容量", "应用", "帮助"]);
+      .toEqual(["动态", "设置", "账单", "服务器", "应用", "帮助"]);
     expect(mobileNavigationCopy(localized)).toMatchObject({ more: "更多", signOut: "退出登录", manage: "管理", account: "Account" });
   });
 
