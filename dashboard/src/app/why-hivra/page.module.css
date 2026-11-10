@@ -33,10 +33,10 @@
   border: 1px solid var(--hivra-red-line);
   background: var(--hg-fill-2);
   color: var(--hg-text);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: .05em;
   line-height: 1;
   text-transform: uppercase;
 }
@@ -151,20 +151,21 @@
 
 .nodeLabel {
   color: var(--text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: .05em;
   text-transform: uppercase;
 }
 
 .nodeDetail {
   margin-top: 0.25rem;
   color: var(--text-muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 0.62rem;
-  letter-spacing: 0.18em;
+  letter-spacing: .05em;
   text-transform: uppercase;
+  font-weight: 600;
 }
 
 .node_core {
@@ -319,10 +320,10 @@
 .supportCard h3 {
   margin-bottom: 0.75rem;
   color: var(--text-primary);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: .05em;
   text-transform: uppercase;
 }
 

@@ -165,13 +165,16 @@ function LocalOperatorSignIn(props: Record<string, unknown>) {
       onSubmit={submit}
       style={{
         width: "100%",
-        border: "1px solid var(--etched-border)",
-        background: "var(--bg-surface)",
-        boxShadow: "0 24px 80px rgba(0,0,0,0.08)",
+        border: "1px solid var(--hg-stroke)",
+        borderRadius: "var(--hg-radius-xl)",
+        background: "var(--hg-glass-strong)",
+        backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+        WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+        boxShadow: "var(--hg-shadow-lg)",
         padding: "2rem",
       }}
     >
-      <p className="mono" style={{ fontSize: 10, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--red)", marginBottom: 12 }}>
+      <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--hg-text-3)", marginBottom: 12 }}>
         Independent Hivra
       </p>
       <h1 className="serif" style={{ fontSize: "2.35rem", lineHeight: 1, marginBottom: 10 }}>
@@ -191,7 +194,7 @@ function LocalOperatorSignIn(props: Record<string, unknown>) {
         required
         value={email}
         onChange={(event) => setEmail(event.target.value)}
-        style={{ width: "100%", border: "1px solid var(--etched-border)", background: "transparent", padding: "12px 14px", marginBottom: 18 }}
+        style={{ width: "100%", border: "1px solid var(--hg-stroke-strong)", borderRadius: "var(--hg-radius-md)", background: "var(--hg-fill-1)", padding: "12px 14px", marginBottom: 18 }}
       />
       <label className="mono" htmlFor="hivra-local-password" style={{ display: "block", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 7 }}>
         Password
@@ -204,14 +207,13 @@ function LocalOperatorSignIn(props: Record<string, unknown>) {
         required
         value={password}
         onChange={(event) => setPassword(event.target.value)}
-        style={{ width: "100%", border: "1px solid var(--etched-border)", background: "transparent", padding: "12px 14px", marginBottom: 18 }}
+        style={{ width: "100%", border: "1px solid var(--hg-stroke-strong)", borderRadius: "var(--hg-radius-md)", background: "var(--hg-fill-1)", padding: "12px 14px", marginBottom: 18 }}
       />
       {error ? <p role="alert" style={{ color: "var(--red)", fontSize: 12, marginBottom: 14 }}>{error}</p> : null}
       <button
         type="submit"
         disabled={submitting}
-        className="mono"
-        style={{ width: "100%", border: 0, background: "var(--red)", color: "#fff", padding: "14px 18px", letterSpacing: "0.14em", textTransform: "uppercase", cursor: submitting ? "wait" : "pointer", opacity: submitting ? 0.7 : 1 }}
+        style={{ width: "100%", border: 0, borderRadius: "var(--hg-radius-md)", background: "var(--hg-accent)", color: "var(--hg-on-accent)", padding: "13px 18px", fontSize: 14, fontWeight: 600, cursor: submitting ? "wait" : "pointer", opacity: submitting ? 0.7 : 1 }}
       >
         {submitting ? "Signing in…" : "Open command center"}
       </button>

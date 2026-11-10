@@ -52,7 +52,7 @@
 .accountName small { font-size: 10px; color: var(--text-muted); }
 .collapsed .account { flex-direction: column; padding-top: 8px; }
 .userPlaceholder { width: 28px; height: 28px; border-radius: 50%; background: var(--hg-fill-2); }
-.sidebar :is(a, button, [tabindex]):focus-visible, .switcher :is(button, input):focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+.sidebar :is(a, button, [tabindex]):focus-visible, .switcher button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 .iconButton { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; color: var(--text-muted); }
 .switcher { width: min(660px, calc(100vw - 32px)); --switcher-margin: clamp(12px, 8dvh, 64px); max-height: min(640px, calc(var(--workspace-viewport-height, 100dvh) - var(--switcher-margin) - var(--switcher-margin) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); margin: calc(var(--switcher-margin) + env(safe-area-inset-top, 0px)) auto auto; padding: 0; color: var(--ink-black); background: var(--hg-glass-strong); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); border: 1px solid var(--hg-stroke); border-radius: var(--hg-radius-xl); box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg); overflow: hidden; font-family: var(--font-sans); }
 .switcher[open] { display: flex; flex-direction: column; }
@@ -60,6 +60,8 @@
 .switcherSearch { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--hg-stroke); }
 .switcherSearch input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--ink-black); font-family: inherit; font-size: 16px; padding: 5px 0; }
 .switcherSearch input::placeholder { color: var(--text-muted); }
+/* Spotlight-style: the field is the whole bar, so it carries no ring of its own. */
+.switcherSearch input:focus, .switcherSearch input:focus-visible { outline: none; }
 .switcherResults { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 8px 0; overscroll-behavior: contain; }
 .switcherResults .groupHeading { margin-top: 5px; }
 .switcherResult { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; color: var(--hg-text); text-align: left; margin-bottom: 2px; border-radius: var(--hg-radius-md); transition: background var(--hg-fast) var(--hg-ease); }

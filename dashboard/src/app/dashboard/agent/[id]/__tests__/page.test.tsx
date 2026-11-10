@@ -19,6 +19,7 @@ const mockListAgents = jest.fn();
 const mockBoxLoginStatus = jest.fn();
 const mockChatReadiness = jest.fn();
 const mockBrowserStatus = jest.fn();
+const mockBrowserToggle = jest.fn();
 const mockFetchPlan = jest.fn();
 const mockTelegramStatus = jest.fn();
 const mockClientWarn = jest.fn();
@@ -46,6 +47,7 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   listAgents: (...args: unknown[]) => mockListAgents(...args),
   boxLoginStatus: (...args: unknown[]) => mockBoxLoginStatus(...args),
   browserStatus: (...args: unknown[]) => mockBrowserStatus(...args),
+  browserToggle: (...args: unknown[]) => mockBrowserToggle(...args),
   fetchPlanStrict: (...args: unknown[]) => mockFetchPlan(...args),
   telegramStatus: (...args: unknown[]) => mockTelegramStatus(...args),
 }));
@@ -579,6 +581,18 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     expect(await screen.findByText("Chat panel")).toBeInTheDocument();
     expect(screen.queryByText("Login panel")).not.toBeInTheDocument();
+  });
+  it("shows a real second attempt when the connection check fails again", async () => {
+    mockChatReadiness.mockResolvedValue("unavailable");
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Check connection" }));
+    // The panel stays, its button busy, instead of flashing to a loader.
+    expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
+    expect(screen.getByText("Couldn’t check the model connection")).toBeInTheDocument();
+    expect(await screen.findByText(/Checked again at/)).toHaveTextContent("Still no answer.");
+    expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Open Manage" }));
+    expect(await screen.findByText("Manage panel")).toBeInTheDocument();
   });
   it("shows a recoverable live connection check error rather than a false login prompt", async () => {
     mockChatReadiness.mockResolvedValueOnce("unavailable").mockResolvedValue("provider_configured");
@@ -1948,8 +1962,31 @@ describe("AgentPage", () => {
     const browserTab = await findSurfaceButton(/^browser$/i);
     await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
     fireEvent.click(browserTab);
-    expect(screen.getByText("Turn it on in Manage to open the live browser.")).toBeInTheDocument();
+    if (mode === "self-managed") {
+      expect(screen.getByRole("button", { name: "Turn on browser" })).toBeInTheDocument();
+    } else {
+      // A managed plan not read yet waits for it, as Manage does.
+      expect(screen.getByText("Turn it on in Manage to open the live browser.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Turn on browser" })).not.toBeInTheDocument();
+    }
     expect(screen.queryByRole("button", { name: /upgrade to pro/i })).not.toBeInTheDocument();
+  });
+
+  it("turns the browser on from the Browser tab itself, without a trip to Manage", async () => {
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "codex", name: "TEST", status: "running", cpu: 2, ram: 4,
+      deployment_mode: "self-managed", chat_url: "https://box.example.com", api_token: "box-token",
+    });
+    mockBrowserToggle.mockResolvedValueOnce({ ok: false, error: "HTTP 502" }).mockResolvedValueOnce({ ok: true, enabled: true, error: null });
+    render(<AgentPage />);
+    const browserTab = await findSurfaceButton(/^browser$/i);
+    await waitFor(() => expect(mockBrowserStatus).toHaveBeenCalled());
+    fireEvent.click(browserTab);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on browser" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t turn the browser on");
+    fireEvent.click(screen.getByRole("button", { name: "Turn on browser" }));
+    await waitFor(() => expect(screen.queryByText("Browser automation is off")).not.toBeInTheDocument());
+    expect(mockBrowserToggle).toHaveBeenLastCalledWith("https://box.example.com", true, "box-token");
   });
 
   it("tells free-plan users the live browser needs a paid plan when the exposed Browser tab is off", async () => {

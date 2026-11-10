@@ -44,9 +44,19 @@
 /* Touch tablets keep the wide strip but need finger-sized close and add. */
 @media (pointer: coarse) { .sessionClose, .sessionAdd { min-width: 44px; min-height: 44px; } }
 .statusPanel { flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: clamp(20px, 5cqi, 48px) clamp(16px, 4cqi, 32px); text-align: center; color: var(--text-muted); overflow-wrap: anywhere; }
-.statusPanel > h3 { color: var(--ink-black); font-size: 22px; font-weight: 600; letter-spacing: -0.03em; }
+.statusPanel > h3 { margin-bottom: 6px; color: var(--hg-text); font-size: 22px; font-weight: 600; letter-spacing: -0.03em; }
 .statusPanel > p { max-width: 480px; margin-inline: auto; }
 .statusPanel button { min-height: 44px; font-size: 13px; }
+.statusActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 18px; }
+.statusPrimary, .statusSecondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 16px; border-radius: var(--hg-radius-md); font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease, transform 80ms ease; }
+.statusPrimary { border: 1px solid transparent; background: var(--hg-accent); color: var(--hg-on-accent); }
+.statusPrimary:hover:not(:disabled) { opacity: .88; }
+.statusSecondary { border: 1px solid var(--hg-stroke-strong); background: var(--hg-fill-1); color: var(--hg-text); }
+.statusSecondary:hover:not(:disabled) { background: var(--hg-fill-2); }
+.statusPrimary:active:not(:disabled), .statusSecondary:active:not(:disabled) { transform: scale(.98); }
+.statusPrimary:disabled, .statusSecondary:disabled { opacity: .55; cursor: progress; }
+.statusNote { margin-top: 12px; font-size: 12px; color: var(--text-muted); }
+@media (prefers-reduced-motion: reduce) { .statusPrimary, .statusSecondary { transition: none; } .statusPrimary:active:not(:disabled), .statusSecondary:active:not(:disabled) { transform: none; } }
 .backButton:focus-visible, .newTabButton:focus-visible, .statusPanel button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 /* First-launch "While you wait" fields. */
 .personalizationField { border: 1px solid var(--hg-stroke); border-radius: var(--hg-radius-md); background: transparent; color: var(--ink-black); padding: 9px 10px; font-size: 13px; }

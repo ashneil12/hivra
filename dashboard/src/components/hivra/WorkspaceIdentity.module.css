@@ -1,5 +1,6 @@
-.switcher { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; max-width: 100%; padding: 5px 8px; border: 1px solid transparent; background: transparent; color: var(--ink-black); cursor: pointer; text-align: left; }
-.switcher:hover, .switcher[aria-expanded="true"] { background: var(--bg-elevated); border-color: var(--etched-border); }
+.switcher { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; min-width: 0; max-width: 100%; padding: 5px 10px 5px 8px; border: 1px solid transparent; border-radius: var(--hg-radius-md, 10px); background: transparent; color: var(--hg-text); cursor: pointer; text-align: left; transition: background-color 120ms ease, border-color 120ms ease; }
+.switcher:hover { background: var(--hg-fill-1); border-color: var(--hg-stroke-subtle); }
+.switcher[aria-expanded="true"] { background: var(--hg-fill-2); border-color: var(--hg-stroke); }
 .switcher:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 .switcher > svg { flex-shrink: 0; color: var(--text-secondary); }
 .copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }

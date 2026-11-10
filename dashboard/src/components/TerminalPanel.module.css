@@ -216,11 +216,11 @@
   border-radius: var(--hg-radius-sm);
   background: var(--terminal-button-bg);
   color: var(--terminal-header-text);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: .05em;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -276,11 +276,11 @@
     min-width: 110px;
     margin-left: 8px;
     padding: 0 10px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .restartLabel {

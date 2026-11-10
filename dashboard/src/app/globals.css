@@ -1188,11 +1188,12 @@ select,
 }
 
 .vitals-label {
-    font-family: var(--font-mono), 'Space Mono', monospace;
-    font-size: 10px;
+    font-family: var(--font-sans);
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: .05em;
     opacity: 0.5;
+    font-weight: 600;
 }
 
 .vitals-value {
@@ -1371,10 +1372,10 @@ select,
 
 /* ── Network node primitives ─────────────────────────────────────────────── */
 .hivra-net .net-eyebrow {
-    font-family: var(--font-mono), "Space Mono", monospace;
-    font-size: 10px;
+    font-family: var(--font-sans);
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.22em;
+    letter-spacing: .05em;
     font-weight: 700;
     color: var(--hivra-red);
 }
@@ -1384,10 +1385,10 @@ select,
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-family: var(--font-mono), "Space Mono", monospace;
-    font-size: 9px;
+    font-family: var(--font-sans);
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.18em;
+    letter-spacing: .05em;
     font-weight: 700;
 }
 .hivra-net .node-status .dot {
@@ -1608,10 +1609,17 @@ body::before {
     font-family: var(--font-sans) !important;
 }
 
-/* One focus ring everywhere, the system blue. */
-:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+/* One focus ring everywhere, the system blue. It is unlayered, so it would
+   beat Tailwind's layered `outline-none`; controls that draw their own focus
+   state with utilities opt out by carrying that class. Text fields get the
+   softer, hugging ring macOS uses rather than a detached outline. */
+:where(a, button, input, select, textarea, summary, [tabindex]):where(:not([class*="outline-none"])):focus-visible {
     outline: 2px solid var(--hg-focus);
     outline-offset: 2px;
+}
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"], [type="reset"], [type="file"]), textarea):where(:not([class*="outline-none"])):focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--hg-focus) 45%, transparent);
+    outline-offset: 0;
 }
 
 /* Glass surfaces. `hg-glass` for panels and cards, `hg-glass-strong` for

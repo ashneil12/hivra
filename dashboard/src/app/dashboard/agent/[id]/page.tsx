@@ -24,7 +24,7 @@ import {
   type AgentSurfaceGroupId,
   type AgentSurfaceId,
 } from "@/lib/agent-computers/agent-surfaces";
-import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
+import { getAgent, browserStatus, browserToggle, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
@@ -618,45 +618,104 @@ function BrowserView({ url, token, onManage, surfaceId, active = true }: { url: 
 
 function BrowserDisabledView({
   isFreePlan,
+  planUnknown,
   onManage,
   onUpgrade,
+  onTurnOn,
 }: {
   isFreePlan: boolean;
+  /** A Hivra Cloud plan not read yet: turning on waits for it, as in Manage. */
+  planUnknown: boolean;
   onManage: () => void;
   onUpgrade: () => void;
+  /** Turns the browser on right here. Absent when the computer can't be asked. */
+  onTurnOn?: () => Promise<string | null>;
 }) {
+  const [turningOn, setTurningOn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canTurnOn = Boolean(onTurnOn) && !isFreePlan && !planUnknown;
+  const turnOn = async () => {
+    if (!onTurnOn || turningOn) return;
+    setTurningOn(true);
+    setError(null);
+    const failure = await onTurnOn();
+    setTurningOn(false);
+    if (failure) setError(failure);
+  };
   const body = isFreePlan
     ? "The live browser needs a paid plan."
-    : "Turn it on in Manage to open the live browser.";
-  const button = isFreePlan ? (
-    <button
-      type="button"
-      onClick={onUpgrade}
-      className="mono"
-      style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
-    >
-      <Settings2 size={14} /> See plans
-    </button>
-  ) : (
-    <button
-      type="button"
-      onClick={onManage}
-      className="mono"
-      style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
-    >
-      <Settings2 size={14} /> Open Manage
-    </button>
-  );
+    : canTurnOn
+      ? "Turn it on to let your agent use a real browser you can watch here."
+      : "Turn it on in Manage to open the live browser.";
 
   return (
-    <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>
-        Browser automation is off
+    <div className={styles.statusPanel} role="status">
+      <h3>Browser automation is off</h3>
+      <p style={{ fontSize: 13, lineHeight: 1.6 }}>{body}</p>
+      <div className={styles.statusActions}>
+        {isFreePlan ? (
+          <button type="button" className={styles.statusPrimary} onClick={onUpgrade}>See plans</button>
+        ) : canTurnOn ? (
+          <button type="button" className={styles.statusPrimary} onClick={() => { void turnOn(); }} disabled={turningOn} aria-busy={turningOn || undefined}>
+            {turningOn ? "Turning on…" : "Turn on browser"}
+          </button>
+        ) : null}
+        <button type="button" className={isFreePlan || canTurnOn ? styles.statusSecondary : styles.statusPrimary} onClick={onManage}>
+          <Settings2 size={14} aria-hidden="true" /> Open Manage
+        </button>
       </div>
-      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto 16px", lineHeight: 1.6 }}>
-        {body}
+      {error ? <p role="alert" className={styles.statusNote}>{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * The chat surface's answer when the computer has not confirmed its model
+ * connection. Checking again holds a visible "Checking…" state for at least a
+ * beat, so a fast failure still reads as a real second attempt, and says when
+ * it last tried. When Hivra can't get any answer from the computer at all, it
+ * says so plainly rather than offering a retry as the only way out.
+ */
+function ConnectionCheckPanel({
+  readiness,
+  unreachable,
+  checking,
+  checkedAt,
+  onCheck,
+  onManage,
+}: {
+  readiness: "upgrade_required" | "unavailable";
+  unreachable: boolean;
+  checking: boolean;
+  checkedAt: number | null;
+  onCheck: () => void;
+  onManage: () => void;
+}) {
+  const title = readiness === "upgrade_required"
+    ? "This computer needs a Chat update"
+    : unreachable ? "Can’t reach this computer" : "Couldn’t check the model connection";
+  const body = readiness === "upgrade_required"
+    ? "Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update connection service (the computer keeps running); you can still use native sign-in in the Codex terminal."
+    : unreachable
+      ? "Hivra isn’t getting answers from this computer right now. It may be restarting, or it may have been removed. Your saved settings haven’t changed. Manage shows its power state and lets you restart it."
+      : "The computer hasn’t confirmed its connection yet. Check Inference in Manage, or check again. Your saved settings haven’t changed.";
+  return (
+    <div className={styles.statusPanel} role="status">
+      <h3>{title}</h3>
+      <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>{body}</p>
+      <div className={styles.statusActions}>
+        <button type="button" className={styles.statusPrimary} onClick={onCheck} disabled={checking} aria-busy={checking || undefined}>
+          {checking ? "Checking…" : "Check connection"}
+        </button>
+        <button type="button" className={styles.statusSecondary} onClick={onManage}>
+          <Settings2 size={14} aria-hidden="true" /> Open Manage
+        </button>
       </div>
-      {button}
+      {checkedAt && !checking ? (
+        <p className={styles.statusNote}>
+          Checked again at <time dateTime={new Date(checkedAt).toISOString()}>{new Date(checkedAt).toLocaleTimeString()}</time>. Still no answer.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -819,6 +878,25 @@ export default function AgentPage() {
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
   const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
   const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
+  // A second look at a failed connection check. While it runs, the failure
+  // panel stays put with its button showing "Checking…" (for at least a beat,
+  // so a fast failure still reads as a real attempt) instead of flashing to a
+  // loader and back. A success moves on at once.
+  const [recheck, setRecheck] = useState<{ agentId: string; startedAt: number; from: "upgrade_required" | "unavailable" } | null>(null);
+  const [recheckedAt, setRecheckedAt] = useState<{ agentId: string; at: number } | null>(null);
+  const rechecking = recheck?.agentId === id;
+  useEffect(() => {
+    if (!recheck || chatReadiness === null) return;
+    const settled = chatReadiness !== "unavailable" && chatReadiness !== "upgrade_required";
+    const timer = window.setTimeout(() => {
+      setRecheck(null);
+      setRecheckedAt(settled ? null : { agentId: recheck.agentId, at: Date.now() });
+    }, settled ? 0 : Math.max(0, recheck.startedAt + 700 - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [recheck, chatReadiness]);
+  const shownReadiness = rechecking && (chatReadiness === null || chatReadiness === "unavailable" || chatReadiness === "upgrade_required")
+    ? recheck.from
+    : chatReadiness;
   const [planResult, setPlanResult] = useState<{ value: PlanInfo | null; agentId: string; version: number } | null>(null);
   const plan = planResult?.agentId === id && planResult.version === reloadKey ? planResult.value : null;
   // Free-plan browser lock → the shared upgrade paywall (instead of a dead-end button).
@@ -1391,18 +1469,18 @@ export default function AgentPage() {
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
             <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />
-          ) : chatReadiness === "upgrade_required" ? (
-            <div className={styles.statusPanel} role="status">
-              <h3>This computer needs a Chat update</h3>
-              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update connection service (the computer keeps running); you can still use native sign-in in the Codex terminal.</p>
-              <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
-            </div>
-          ) : chatReadiness === "unavailable" ? (
-            <div className={styles.statusPanel} role="status">
-              <h3>Couldn’t check the model connection</h3>
-              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>The computer hasn’t confirmed its connection yet. Check Inference in Manage, or check again. Your saved settings haven’t changed.</p>
-              <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
-            </div>
+          ) : shownReadiness === "upgrade_required" || shownReadiness === "unavailable" ? (
+            <ConnectionCheckPanel
+              readiness={shownReadiness}
+              unreachable={statusObservation?.agentId === id && statusObservation.unavailable}
+              checking={rechecking}
+              checkedAt={recheckedAt?.agentId === id ? recheckedAt.at : null}
+              onCheck={() => {
+                setRecheck({ agentId: id, startedAt: Date.now(), from: shownReadiness });
+                setReloadKey(k => k + 1);
+              }}
+              onManage={() => selectTab("manage")}
+            />
           ) : loggedIn === null ? (
             <LoadingState compact label="Checking access…" />
           ) : loggedIn ? null : (
@@ -1439,8 +1517,18 @@ export default function AgentPage() {
           browserOn === false ? (
             <BrowserDisabledView
               isFreePlan={isFreePlan}
+              planUnknown={agent.deployment_mode !== "self-managed" && !plan}
               onManage={() => selectTab("manage")}
               onUpgrade={() => setPaywallOpen(true)}
+              onTurnOn={agent.chat_url ? async () => {
+                const result = await browserToggle(agent.chat_url!, true, agent.api_token);
+                if (!result.ok) {
+                  if (/requires a paid plan/i.test(result.error || "")) setPaywallOpen(true);
+                  return "Couldn’t turn the browser on. Try again, or turn it on in Manage.";
+                }
+                setBrowserOn(true);
+                return null;
+              } : undefined}
             />
           ) : agent.chat_url ? (
             <BrowserView url={`${agent.chat_url.replace(/\/$/, "")}/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true`} token={tok} surfaceId="browser" active={effectiveTab === "browser"} onManage={() => selectTab("manage")} />

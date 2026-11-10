@@ -690,8 +690,9 @@
   color: var(--text-secondary);
 }
 .search:focus-within {
-  outline: 2px solid var(--hg-fg);
-  outline-offset: 2px;
+  border-color: var(--hg-stroke-strong);
+  background: var(--hg-fill-1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hg-focus) 22%, transparent);
 }
 .filters {
   display: flex;
