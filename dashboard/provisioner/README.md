@@ -457,6 +457,11 @@ update them yet.
   `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
   model tier set to the chosen model) with mode 0600; without a key the computer
   keeps native `claude auth login` sign-in.
+- **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
+  model as a complete set. On a fresh install the guest writes the runtime's
+  `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
+  account, before the service first starts; a restart or replay leaves them alone. With
+  none of the three, the computer starts without a model, as before.
 - **Linux server computer.** The `linux-server` kind is the Ubuntu computer without a
   desktop: the same access base, `~/Hivra` workspace, Files and two terminals as Linux
   Desktop, with no desktop capability and no Claude app helper. It takes the same

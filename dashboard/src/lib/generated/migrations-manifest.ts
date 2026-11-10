@@ -403,4 +403,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261110200000", name: "provider_release_admission_2026_11_10_3" },
   { version: "20261110220000", name: "provider_release_admission_2026_11_10_4" },
   { version: "20261111090000", name: "hivra_ubuntu_server_profile" },
+  { version: "20261111100000", name: "provider_release_admission_2026_11_10_5" },
 ];

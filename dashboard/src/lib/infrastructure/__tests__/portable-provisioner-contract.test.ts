@@ -940,8 +940,8 @@ describe("per-runtime provisioner minimums", () => {
 describe("deepseek-harness provisioner minimum", () => {
   it("is admitted only from the release its live acceptance ran on", () => {
     expect(portableProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVISIONER_VERSION, "deepseek-harness")).toBe(true);
-    expect(PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS["deepseek-harness"]).toBe("2026.11.10.4");
-    for (const version of ["2026.11.10.3", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.09.04.2", "2026.08.26.10"]) {
+    expect(PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS["deepseek-harness"]).toBe("2026.11.10.5");
+    for (const version of ["2026.11.10.4", "2026.11.10.3", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.09.04.2", "2026.08.26.10"]) {
       expect({ version, deepseek: portableProvisionerSupportsCatalogRuntime(version, "deepseek-harness") }).toEqual({ version, deepseek: false });
       expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version })?.supportedCatalogRuntimeIds).not.toContain("deepseek-harness");
     }
@@ -981,7 +981,7 @@ describe("linux-server provisioner minimum", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
       .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
-    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4"]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5"]);
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
     // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));

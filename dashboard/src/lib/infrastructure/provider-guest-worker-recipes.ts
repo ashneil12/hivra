@@ -375,6 +375,11 @@ const recipes = Object.freeze({
     workerSha256: "bf584e9d5eb7eea01ba5542d83722f245d527de4d6a1a21177af4eea33256c69",
     workerSize: 45185,
   }),
+  "2026.11.10.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release gives DeepSeek Harness its launch-time model in the guest and host scripts. The worker only advances its release labels.
+    workerSha256: "8fe3d90ebcae733730bf094f7c062ba99557b6c7b3c1ea8d5604dfac1c55a35d",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;
