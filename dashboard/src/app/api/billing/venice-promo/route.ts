@@ -5,7 +5,7 @@ import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isVenicePromoEnabled } from "@/lib/venice/promo/core";
-import { getUserPromoLines, recordVeniceAttribution, redeemVeniceCode, type RedeemStatus } from "@/lib/venice/promo/service";
+import { getUserPromoLines, recordVeniceAttribution, redeemVeniceCode, tryGrantLaunchCredit, type RedeemStatus } from "@/lib/venice/promo/service";
 import { VENICE_ATTRIBUTION_COOKIE, parseVeniceAttribution } from "@/lib/venice/attribution";
 import { log } from "@/lib/logger";
 
@@ -43,6 +43,12 @@ export async function GET(request: NextRequest) {
         errorName: error instanceof Error ? error.name : typeof error,
       });
     }
+  }
+  // Launch asks with ?prepareLaunch=1 before it reads the balance, so a
+  // redeemed launch credit is in the wallet in time for the credits choice.
+  // tryGrantLaunchCredit checks eligibility itself and never throws.
+  if (request.nextUrl.searchParams.get("prepareLaunch") === "1") {
+    await tryGrantLaunchCredit({ userId });
   }
   try {
     const lines = await getUserPromoLines(userId);

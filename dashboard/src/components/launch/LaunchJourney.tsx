@@ -174,6 +174,14 @@ import { parseAgentParam, parseVeniceInference, withVeniceInference } from "@/li
 const firstPaidPrice = "$" + (PLANS.operator.price / 100).toFixed(2);
 import { ModelAccessControl } from "./ModelAccessControl";
 
+async function prepareVenicePromoForLaunch(): Promise<void> {
+  try {
+    await fetch("/api/billing/venice-promo?prepareLaunch=1", { cache: "no-store" });
+  } catch {
+    // The promo is optional: Launch reads the balance either way.
+  }
+}
+
 function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"], poolExempt = false): boolean {
   if (!plan?.usage) return false;
   // A Free account holds no Hivra Cloud computer: hosted compute is bought.
@@ -780,12 +788,7 @@ export function LaunchJourney(
   const refParam = searchParams?.get("ref") ?? null;
   const codeParam = searchParams?.get("code") ?? null;
   useEffect(() => {
-    const attribution = captureVeniceAttribution(attributionFromParams(key => key === "ref" ? refParam : key === "code" ? codeParam : null));
-    // Signed in here: let the server read the cookie and remember the Venice
-    // promo for this account (it grants nothing until a credits launch).
-    if (attribution.ref || attribution.code) {
-      void fetch("/api/billing/venice-promo", { cache: "no-store" }).catch(() => undefined);
-    }
+    captureVeniceAttribution(attributionFromParams(key => key === "ref" ? refParam : key === "code" ? codeParam : null));
   }, [refParam, codeParam]);
   const startParam = searchParams?.get("start") ?? null;
   const draftParam = searchParams?.get("draft") ?? null;
@@ -1116,7 +1119,10 @@ export function LaunchJourney(
     }
     let active = true;
     setCreditsBalance({ state: "loading" });
-    void requestManagedVeniceSummary().then(result => {
+    // The Venice promo endpoint records a /venice attribution cookie for this
+    // account and grants a redeemed launch credit before the balance is read.
+    // It answers at once when the promo is off; a failure never blocks Launch.
+    void prepareVenicePromoForLaunch().then(() => requestManagedVeniceSummary()).then(result => {
       if (!active) return;
       setCreditsBalance(result.ok
         ? { state: "known", cardMicroUsd: result.summary.wallets.card.availableMicroUsd, hermesosMicroUsd: result.summary.wallets.hermesos.availableMicroUsd }

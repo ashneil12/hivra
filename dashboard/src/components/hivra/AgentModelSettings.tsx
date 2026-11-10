@@ -207,7 +207,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
           </select>
         </label>}
         <label className={styles.field}><span>Model <span className={styles.help}>(optional)</span></span>
-          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: kimi-k2-6" spellCheck={false}
+          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: deepseek-v4-pro" spellCheck={false}
             autoCapitalize="none" autoCorrect="off" enterKeyHint="done" />
         </label>
         <p className={styles.help}>{mode === "byok"

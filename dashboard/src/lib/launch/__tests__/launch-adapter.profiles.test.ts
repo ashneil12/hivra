@@ -240,7 +240,7 @@ describe("Codex with a model key or Hivra credits", () => {
   });
 
   it("sends a pasted key exactly as the welcome form when the owner doesn't save it", async () => {
-    const legacy = legacyWelcomeBody({ mode: "byok", model: "kimi-k2-6" }, "  synthetic-venice-key  ");
+    const legacy = legacyWelcomeBody({ mode: "byok", model: "deepseek-v4-pro" }, "  synthetic-venice-key  ");
     jest.mocked(createAgent).mockResolvedValue(created("codex"));
     const draft = draftFor("codex", shared, { mode: "api-key", source: "custom", keySource: "paste", saveKey: false });
 
@@ -263,7 +263,7 @@ describe("Codex with a model key or Hivra credits", () => {
     expect(bodyOf(fetchCalls[0])).toEqual({ name: "Venice AI", provider: "venice", key: "synthetic-venice-key" });
     expect(onKeySaved).toHaveBeenCalledWith(VAULT_KEY_ID, expect.objectContaining({ id: VAULT_KEY_ID, provider: "venice", key_preview: "synthe...-key" }));
     const input = jest.mocked(createAgent).mock.calls[0][0];
-    expect(input.llm).toEqual({ provider: "venice", mode: "byok", model: "kimi-k2-6", vaultKeyId: VAULT_KEY_ID });
+    expect(input.llm).toEqual({ provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VAULT_KEY_ID });
     expect(JSON.stringify(input)).not.toContain("synthetic-venice-key");
   });
 
@@ -275,7 +275,7 @@ describe("Codex with a model key or Hivra credits", () => {
     jest.mocked(createAgent).mockResolvedValue(created("codex"));
     await submitLaunchDraft({ ...unconfirmed, modelAccess: { ...unconfirmed.modelAccess, sendSavedKey: true } }, MANAGED);
     expect(jest.mocked(createAgent).mock.calls[0][0].llm).toEqual({
-      provider: "venice", mode: "byok", model: "kimi-k2-6", vaultKeyId: VAULT_KEY_ID,
+      provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VAULT_KEY_ID,
     });
   });
 
@@ -290,7 +290,7 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
   const legacyBase = {
     agentName: "Hermes 1",
     selectedProviderId: "venice",
-    model: "kimi-k2-6",
+    model: "deepseek-v4-flash",
     customBaseUrl: "",
     managedVeniceWalletType: "card" as const,
     apiKey: "",

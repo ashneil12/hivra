@@ -3,9 +3,7 @@ import { z } from "zod";
 /** A provider/model selection, not infrastructure credentials or a recipient.
  * Shared by launch admission and durable settings delivery so a request cannot
  * pass a weaker launch check and fail only after a computer has been allocated. */
-/** A private Venice model (Venice keeps no record of the chats) that is strong
- * at agent work and inexpensive: Kimi K2.6, 256k context. */
-export const VENICE_DEFAULT_MODEL = "kimi-k2-6";
+export const VENICE_DEFAULT_MODEL = "deepseek-v4-pro";
 const Model = z.string().trim().regex(/^[A-Za-z0-9._:\/\[\]-]{1,64}$|^$/).optional()
   .transform(value => value || VENICE_DEFAULT_MODEL);
 

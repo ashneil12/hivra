@@ -133,7 +133,7 @@ it.each([{}, [], undefined, { ...byok, apiKey: "tiny" }, { ...byok, apiKey: "a b
 it("normalizes model defaults and whitespace without changing the selected wallet", async () => {
   const f = fixture();
   await f.coordinator.start(owner, f.a.id, f.op, { ...managed, model: "  " });
-  expect(f.store.admit.mock.calls[0][4].config).toMatchObject({ model: "kimi-k2-6", walletType: "card" });
+  expect(f.store.admit.mock.calls[0][4].config).toMatchObject({ model: "deepseek-v4-pro", walletType: "card" });
 });
 
 it.each([{ type: "hermes" }, { status: "provisioning" }, { desired_state: "deleted" }, { operation_id: randomUUID() },

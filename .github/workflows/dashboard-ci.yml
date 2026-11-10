@@ -107,6 +107,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Venice promo SQL and service tests (PGlite)
+        run: npm run test:venice-promo
+
   jest:
     name: Jest (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest

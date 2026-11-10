@@ -40,7 +40,7 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
-import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
@@ -1474,7 +1474,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         // the dashboard's translating route instead of the OpenAI proxy.
         const anthropicWire = def.llm?.wire === "anthropic";
         llmBaseUrl = anthropicWire ? getManagedVeniceAnthropicBaseUrl() : getManagedVeniceProxyBaseUrl();
-        llmModel = resolvedLlmInput.model ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : VENICE_DEFAULT_MODEL);
+        llmModel = resolvedLlmInput.model ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : "deepseek-v4-pro");
       } else {
         llmConfig = {
           provider: "venice",

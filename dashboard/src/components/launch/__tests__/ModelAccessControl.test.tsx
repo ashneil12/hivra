@@ -129,7 +129,7 @@ describe("ModelAccessControl", () => {
     render(<Harness profileId="codex" />);
     fireEvent.click(choice(/^Hivra credits/));
     const model = screen.getByRole("combobox", { name: "Model" });
-    expect(model).toHaveValue("kimi-k2-6");
+    expect(model).toHaveValue("deepseek-v4-pro");
     const advanced = screen.getByText("Advanced").closest("details")!;
     expect(advanced).not.toHaveAttribute("open");
     fireEvent.change(within(advanced).getByLabelText("Model ID"), { target: { value: "my-model-1" } });
