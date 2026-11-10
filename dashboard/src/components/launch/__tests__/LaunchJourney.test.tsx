@@ -88,8 +88,9 @@ describe("LaunchJourney", () => {
     mockMatchMedia(query);
     renderAtCapacity();
 
-    await screen.findByRole("heading", { name: "Ubuntu Desktop — here's the plan" });
+    await screen.findByRole("heading", { name: "Review and launch Ubuntu Desktop 1" });
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     const customize = screen.getByRole("button", { name: "Customize" });
     expect(customize).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(customize);
@@ -100,7 +101,7 @@ describe("LaunchJourney", () => {
 
   it("marks its Launch label as web chrome, since a desktop app's toolbar already names Launch", async () => {
     renderAtCapacity();
-    await screen.findByRole("heading", { name: "Ubuntu Desktop — here's the plan" });
+    await screen.findByRole("heading", { name: "Review and launch Ubuntu Desktop 1" });
     const label = within(screen.getByTestId("launch-journey").querySelector("header")!).getByText("Launch");
     expect(label).toHaveAttribute("data-web-chrome");
   });
@@ -108,30 +109,21 @@ describe("LaunchJourney", () => {
   it("describes reserved memory without VM jargon", async () => {
     renderAtCapacity();
 
-    await screen.findByRole("heading", { name: "Ubuntu Desktop — here's the plan" });
+    await screen.findByRole("heading", { name: "Review and launch Ubuntu Desktop 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     expect(screen.getByText(/Reserved memory is always kept for this computer/)).toBeInTheDocument();
     expect(screen.queryByText(/balloon floor/)).not.toBeInTheDocument();
   });
 
-  it("gives each forward step a history entry so system back steps back through the journey", async () => {
+  it("gives the forward step a history entry so system back steps back through the journey", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
-    expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
-    expect(historyStage()).toBe("plan");
-    expect(window.history.state).toEqual(expect.objectContaining({ hivraLaunchStage: "plan", hivraLaunchPushed: true }));
-
-    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
     expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
     expect(historyStage()).toBe("review");
-
-    await act(async () => {
-      window.history.back();
-    });
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument());
-    expect(historyStage()).toBe("plan");
+    expect(window.history.state).toEqual(expect.objectContaining({ hivraLaunchStage: "review", hivraLaunchPushed: true }));
+    await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
 
     await act(async () => {
       window.history.back();
@@ -140,16 +132,23 @@ describe("LaunchJourney", () => {
     expect(historyStage()).toBe("choose");
   });
 
-  it("keeps a second quick Back instead of bouncing to the step the first Back's history pop lands on", async () => {
+  it("has two steps, Choose and Review", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    const steps = screen.getByRole("list", { name: "Launch steps" });
+    expect(within(steps).getAllByRole("listitem").map(item => item.textContent)).toEqual(["1Choose", "2Review"]);
+    fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+    expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
+    expect(within(steps).getByText("Review").closest("li")).toHaveAttribute("aria-current", "step");
+  });
+
+  it("keeps a quick Back, then forward, on the step the history pop lands on", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
     expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
 
-    // Two Backs before the first one's history traversal has landed.
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 20)); });
     expect(screen.getByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
@@ -160,8 +159,58 @@ describe("LaunchJourney", () => {
     await act(async () => {
       window.history.forward();
     });
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument());
-    expect(historyStage()).toBe("plan");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument());
+    expect(historyStage()).toBe("review");
+  });
+
+  it("opens a draft saved at the old Plan step on Review", async () => {
+    const draftId = "44444444-4444-4444-8444-444444444444";
+    window.localStorage.setItem("hivra.launch-draft.v1:user_123", JSON.stringify({
+      schemaVersion: 1, launchRequestId: draftId, stage: "plan", resourceKind: "agent", profileId: "codex",
+      name: "Codex 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
+      capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
+    }));
+    render(<LaunchJourney />);
+    expect(await screen.findByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
+    expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "review");
+  });
+
+  it("shows Hivra's recommended settings first and opens the full controls behind one Change button", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
+    await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
+
+    expect(screen.getByRole("heading", { name: "Recommended settings" })).toBeInTheDocument();
+    const settings = screen.getByLabelText("Recommended settings", { selector: "dl" });
+    expect(within(settings).getByText("Where it runs")).toBeInTheDocument();
+    expect(within(settings).getByText("Hivra Cloud")).toBeInTheDocument();
+    expect(within(settings).getByText("Size")).toBeInTheDocument();
+    expect(within(settings).getByText("Model access")).toBeInTheDocument();
+    expect(within(settings).getByText("Memory")).toBeInTheDocument();
+    // Advanced is collapsed: no size presets, no model pickers.
+    expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Model access" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Change" })).toHaveLength(1);
+
+    const change = screen.getByRole("button", { name: "Change" });
+    expect(change).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(change);
+    expect(screen.getByRole("heading", { name: "Advanced" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Size" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide advanced" }));
+    expect(screen.getByRole("heading", { name: "Recommended settings" })).toBeInTheDocument();
+  });
+
+  it("fills the name in and lets it be edited inline in Review", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+    const name = await screen.findByRole("textbox", { name: "Agent name" });
+    expect(name).toHaveValue("Codex 1");
+    fireEvent.change(name, { target: { value: "Reviewer" } });
+    expect(screen.getByRole("heading", { name: "Review and launch Reviewer" })).toBeInTheDocument();
   });
 
   it("fits a restored Ubuntu size to a plan that loaded before the signed-in owner did", async () => {
@@ -184,17 +233,17 @@ describe("LaunchJourney", () => {
     authLoaded = true;
     view.rerender(<LaunchJourney />);
     expect(await screen.findByText("Pro is active. Continue your Ubuntu Desktop launch.")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Small · 2 CPU / 4 GB")).toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     useAuth.mockRestore();
   });
 
   it.each([
-    ["Claude Code", "Claude Code — here's the plan"],
-    ["Hermes", "Hermes — here's the plan"],
-    ["OpenClaw", "OpenClaw — here's the plan"],
-    ["Agent Zero", "Agent Zero — here's the plan"],
-    ["Aeon", "Aeon — here's the plan"],
+    ["Claude Code", "Review and launch Claude Code 1"],
+    ["Hermes", "Review and launch Hermes 1"],
+    ["OpenClaw", "Review and launch OpenClaw 1"],
+    ["Agent Zero", "Review and launch Agent Zero 1"],
+    ["Aeon", "Review and launch Aeon 1"],
   ])("launches %s in this journey instead of sending it to the welcome page", async (tile, heading) => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
@@ -203,6 +252,7 @@ describe("LaunchJourney", () => {
     expect(screen.queryByRole("link", { name: /Browse every agent/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${tile}`) }));
     expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
   });
 

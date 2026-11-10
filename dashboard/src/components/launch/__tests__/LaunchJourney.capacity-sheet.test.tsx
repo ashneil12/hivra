@@ -115,14 +115,15 @@ it("adds capacity in a sheet over the launch and comes back to the same launch w
   fireEvent.change(name, { target: { value: "My Codex" } });
 
   // Codex with its browser is more than Free holds: the blocker offers own capacity.
-  fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Browser for Codex/ }));
   const blocker = await screen.findByRole("alert");
   fireEvent.click(within(blocker).getByRole("button", { name: "Set up your own capacity" }));
 
   const sheet = await screen.findByRole("dialog", { name: "Add capacity for your launch" });
   expect(sheetPropsMock).toHaveBeenLastCalledWith(expect.objectContaining({ embedded: expect.objectContaining({ launchResourceId: "codex" }) }));
   expect(routerPushMock).not.toHaveBeenCalled();
-  expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Review and launch My Codex" })).toBeInTheDocument();
 
   serverReady = true;
   fireEvent.click(within(sheet).getByRole("button", { name: "Launch on the new server" }));
@@ -138,12 +139,32 @@ it("closes the sheet with Back to your launch and keeps the launch as it was", a
   render(<LaunchJourney />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /Browser for Codex/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Browser for Codex/ }));
   fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Set up your own capacity" }));
   await screen.findByRole("dialog", { name: "Add capacity for your launch" });
 
   fireEvent.click(screen.getByRole("button", { name: "Back to your launch" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
+});
+
+it("tells a Free account about the paid plan on Choose, and Use my own computer opens the sheet over the launch", async () => {
+  render(<LaunchJourney />);
+  await screen.findByRole("heading", { name: "What do you want to launch?" });
+
+  const notice = await screen.findByTestId("launch-free-notice");
+  expect(notice).toHaveTextContent("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.");
+  expect(within(notice).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
+
+  fireEvent.click(within(notice).getByRole("button", { name: "Use my own computer" }));
+  const sheet = await screen.findByRole("dialog", { name: "Add capacity for your launch" });
+  expect(sheetPropsMock).toHaveBeenLastCalledWith(expect.objectContaining({ embedded: expect.objectContaining({ launchResourceId: null }) }));
+  serverReady = true;
+  fireEvent.click(within(sheet).getByRole("button", { name: "Launch on the new server" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  // Still on Choose: nothing started.
+  expect(screen.getByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
+  expect(routerPushMock).not.toHaveBeenCalled();
 });

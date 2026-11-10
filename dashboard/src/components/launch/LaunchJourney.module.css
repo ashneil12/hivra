@@ -952,16 +952,16 @@
   .header { min-height: 48px; }
   .stage { padding-top: 1rem; }
 
-  .page[data-stage="plan"] .stageIntro h1,
+  .page[data-stage="review"] .stageIntro h1,
   .page[data-stage="choose"] .stageIntro h1 {
     margin-top: 0.35rem;
     font-size: clamp(1.8rem, 1.45rem + 2cqi, 2.45rem);
   }
 
-  .page[data-stage="plan"] .stageIntro p { margin-top: 0.35rem; line-height: 1.35; }
-  .page[data-stage="plan"] .planCard { margin-top: 0.85rem; }
-  .page[data-stage="plan"] .planRow { min-height: 48px; padding: 0.55rem 0.75rem; }
-  .page[data-stage="plan"] .footer { margin-top: 0.65rem; padding-top: 0.55rem; }
+  .page[data-stage="review"] .stageIntro p { margin-top: 0.35rem; line-height: 1.35; }
+  .page[data-stage="review"] .planCard { margin-top: 0.85rem; }
+  .page[data-stage="review"] .planRow { min-height: 48px; padding: 0.55rem 0.75rem; }
+  .page[data-stage="review"] .footer { margin-top: 0.65rem; padding-top: 0.55rem; }
   .page[data-stage="choose"] .chooseSection { margin-top: 1.1rem; }
 }
 
@@ -985,3 +985,60 @@
 .attachEntry { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; margin-top: 10px; font-size: 13px; color: var(--text-secondary); text-decoration: underline; text-underline-offset: 3px; }
 .attachEntry:hover { color: var(--ink-black); }
 .attachEntry:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 3px; }
+
+/* A server-only tile with no server ready: its note sits under the tile. */
+.tileWithNote { min-width: 0; display: grid; grid-template-rows: 1fr auto; gap: 0.35rem; }
+.tileWithNote .tile { width: 100%; }
+.tileNote { margin: 0; padding: 0 0.25rem; color: var(--text-secondary); font-size: 0.82rem; line-height: 1.45; }
+.tileNote a { color: inherit; text-decoration: underline; text-underline-offset: 3px; min-height: 24px; }
+.tileNote a:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+
+/* Review: recommended settings, Advanced, and the Free notice. */
+.settings { margin-top: 1.4rem; }
+.settings .review { margin-top: 0; }
+.settings .planCard { margin-top: 0; }
+.settings + .review { margin-top: 0.7rem; }
+
+.settingsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.settingsHeader h2 {
+  margin: 0;
+  color: var(--hg-text-3);
+  font: 600 11px var(--font-sans);
+  letter-spacing: 0.05em;
+}
+
+.technical .plainList dd {
+  font: 0.85rem/1.45 var(--font-sans);
+  color: var(--text-secondary);
+}
+
+.noticeBody { display: grid; gap: 0.45rem; min-width: 0; }
+.noticeActions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.noticeActions a,
+.noticeActions button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.9rem;
+  border: 1px solid var(--hg-stroke);
+  background: var(--hg-fill-1);
+  color: inherit;
+  font: 600 0.82rem var(--font-sans);
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: var(--hg-radius-sm);
+}
+
+.noticeActions a:hover,
+.noticeActions button:hover { background: var(--hg-fill-hover); }
+
+.noticeActions a:focus-visible,
+.noticeActions button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }

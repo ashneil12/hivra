@@ -257,7 +257,7 @@ const ALL_AGENTS: AgentDef[] = [
     id: "linux-terminal",
     name: "Linux Sandbox",
     vendor: "Hivra",
-    tagline: "A lightweight Python and terminal workspace isolated by gVisor on a Linux host you connected.",
+    tagline: "A light Linux computer for scripts and terminals. Runs on a server you've connected.",
     minPlan: "free",
     weight: 1,
     browser: false,

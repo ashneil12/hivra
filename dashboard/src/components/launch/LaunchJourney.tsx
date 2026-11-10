@@ -129,6 +129,7 @@ import {
   launchSubstrate,
   matchingSizePreset,
   ownCapacityLabel,
+  ownServerHolds,
   parseLaunchArrival,
   planHoldAction,
   planHoldMessage,
@@ -165,6 +166,9 @@ import {
 import { PLANS } from "@/lib/subscription/plans";
 
 import styles from "./LaunchJourney.module.css";
+
+/** The cheapest paid plan's monthly price, as the Free notice names it. */
+const firstPaidPrice = "$" + (PLANS.operator.price / 100).toFixed(2);
 import { ModelAccessControl } from "./ModelAccessControl";
 
 function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"], poolExempt = false): boolean {
@@ -403,18 +407,23 @@ function managedCapacityShortfall(
 }
 
 function stepBack(stage: LaunchStage): LaunchStage {
-  if (stage === "plan") return "choose";
-  if (stage === "review") return "plan";
-  return stage;
+  return stage === "plan" || stage === "review" ? "choose" : stage;
 }
 
-type HistoryStage = Exclude<LaunchStage, "launch">;
-const HISTORY_STAGES: readonly HistoryStage[] = ["choose", "plan", "review"];
-/** Stage names links and history entries used before Choose was merged. */
+/** The journey has two steps, Choose and Review. A "plan" stage saved by an
+ * earlier version is the same screen as Review now. */
+function withCurrentStage(draft: LaunchDraft): LaunchDraft {
+  return draft.stage === "plan" ? { ...draft, stage: "review" } : draft;
+}
+
+type HistoryStage = "choose" | "review";
+const HISTORY_STAGES: readonly HistoryStage[] = ["choose", "review"];
+/** Stage names links and history entries used before Choose and Plan were merged. */
 const LEGACY_HISTORY_STAGES: Readonly<Record<string, HistoryStage>> = {
   type: "choose",
   profile: "choose",
-  capacity: "plan",
+  plan: "review",
+  capacity: "review",
 };
 const HISTORY_STAGE_KEY = "hivraLaunchStage";
 const HISTORY_PUSHED_KEY = "hivraLaunchPushed";
@@ -458,11 +467,11 @@ function writeStageHistory(stage: LaunchStage, mode: "push" | "replace") {
 // A stage restored from history must still have the choices it depends on.
 function reachableStage(stage: HistoryStage, draft: LaunchDraft): HistoryStage {
   if (stage === "choose" || !draft.profileId) return "choose";
-  if (stage === "review" && launchNameProblem(draft.profileId, draft.name)) return "plan";
   return stage;
 }
 
-const STAGE_ORDER: Readonly<Record<HistoryStage, number>> = { choose: 0, plan: 1, review: 2 };
+// "plan" is the old name of the Review screen, so it sits where Review does.
+const STAGE_ORDER: Readonly<Record<Exclude<LaunchStage, "launch">, number>> = { choose: 0, plan: 1, review: 1 };
 
 /** Brings the current history entry in line with the step on screen after
  * one of the journey's own Back pops lands. The owner may have pressed Back
@@ -487,16 +496,19 @@ function keptResult(draft: LaunchDraft): LaunchDraft["result"] {
   return draft.result?.status === "error" ? draft.result : null;
 }
 
-const JOURNEY_STEPS = ["Choose", "Plan", "Review"] as const;
+const JOURNEY_STEPS = ["Choose", "Review"] as const;
 
 function visibleStep(stage: LaunchStage): number {
-  if (stage === "choose") return 0;
-  return stage === "plan" ? 1 : 2;
+  return stage === "choose" ? 0 : 1;
 }
 
 // ── Choose ──────────────────────────────────────────────────────────────────
 
 type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
+
+/** Tiles that run only on a server the owner connected. With none ready, the
+ * tile says so in one line and offers to add one. */
+const SERVER_ONLY_TILES: ReadonlySet<LaunchProfileId> = new Set(["linux-terminal"]);
 
 const AGENT_TILES: readonly ChooseTile[] = ([
   { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account, or run it on Hivra credits.", icon: Code2 },
@@ -509,8 +521,8 @@ const AGENT_TILES: readonly ChooseTile[] = ([
 
 const COMPUTER_TILES: readonly ChooseTile[] = [
   { id: "ubuntu-desktop", name: "Ubuntu Desktop", description: "A desktop, terminal and files you open in your browser.", icon: Monitor },
-  { id: "linux-terminal", name: "Linux Sandbox", description: "A lightweight terminal workspace on a Linux server you connected.", icon: TerminalSquare },
-  { id: "omarchy", name: "Omarchy", description: "A prepared Omarchy desktop with a setup console.", icon: null },
+  { id: "linux-terminal", name: "Linux Sandbox", description: "A light Linux computer for scripts and terminals. Runs on a server you've connected.", icon: TerminalSquare },
+  { id: "omarchy", name: "Omarchy", description: "A ready-made Omarchy desktop you open in your browser.", icon: null },
   { id: "windows", name: "Windows (your ISO)", description: "Install Windows from your own ISO on a server you connected.", icon: AppWindow },
 ];
 
@@ -692,6 +704,8 @@ export function LaunchJourney(
   const [existingNames, setExistingNames] = useState<string[] | null>(null);
   const [whereExpanded, setWhereExpanded] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
+  // "Change" on Review opens the full settings (Advanced) inline.
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [windowsImages, setWindowsImages] = useState<Array<{ volume: string; name: string; sizeBytes: number; modifiedAtSeconds: number; fileIdentitySha256: string; source: "unknown" | "windows-11" | "windows-server-evaluation" }>>([]);
   const [windowsIsoStorages, setWindowsIsoStorages] = useState<Array<{ id: string; label: string }>>([]);
   const [windowsImagesLoading, setWindowsImagesLoading] = useState(false);
@@ -969,7 +983,7 @@ export function LaunchJourney(
       if (!linkedTemplate?.name) autoNameRef.current = { launchRequestId: next.launchRequestId, name };
       return {
         ...next,
-        stage: "plan",
+        stage: "review",
         resourceKind: details.resourceKind,
         profileId: requestedProfile,
         name,
@@ -998,6 +1012,7 @@ export function LaunchJourney(
     } else {
       initial = stored ?? createLaunchDraft();
     }
+    initial = withCurrentStage(initial);
     setResumeChoice(null);
     writeLaunchDraft(initial, ownerId);
     setDraft(initial);
@@ -1029,7 +1044,7 @@ export function LaunchJourney(
     const auto = autoNameRef.current;
     if (!existingNames || !auto || !draft?.profileId) return;
     if (draft.launchRequestId !== auto.launchRequestId || draft.name !== auto.name) return;
-    if (draft.stage !== "choose" && draft.stage !== "plan") return;
+    if (draft.stage === "launch") return;
     const name = defaultLaunchName(draft.profileId, existingNames);
     autoNameRef.current = null;
     if (name === draft.name) return;
@@ -1253,7 +1268,8 @@ export function LaunchJourney(
     const savedProfile = PROFILE_DETAILS[saved.profileId!];
     const freshProfile = resumeChoice.fresh.profileId ? PROFILE_DETAILS[resumeChoice.fresh.profileId] : null;
     const notes = unfinishedLaunchNotes(saved);
-    const keep = (next: LaunchDraft) => {
+    const keep = (kept: LaunchDraft) => {
+      const next = withCurrentStage(kept);
       setResumeChoice(null);
       writeLaunchDraft(next, storageOwner);
       setRestoredDestinationFor(null);
@@ -1410,7 +1426,7 @@ export function LaunchJourney(
           : digitalOceanBalanceProblem(digitalOceanBalance.balance);
   }
   else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
-  else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
+  else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox needs a server you've connected, and none is ready for it yet.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "Omarchy runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) {
     const agentName = currentProfile?.name ?? "this agent";
@@ -1489,7 +1505,7 @@ export function LaunchJourney(
   // The upgrade funnel's paywall moments, recorded once per launch when the
   // blocker is first on screen. A Free account out of agent slots is also
   // the free-limit moment the welcome flow reported.
-  const paywallMoments = paywall && draft.stage === "plan" && !destination.loading ? (
+  const paywallMoments = paywall && draft.stage === "review" && !destination.loading ? (
     <>
       <FunnelMoment
         momentKey={`paywall:${draft.launchRequestId}:${paywall}`}
@@ -1568,10 +1584,10 @@ export function LaunchJourney(
     if (!ownBackPendingRef.current) writeStageHistory(stage, "push");
   };
   const chooseProfile = (profileId: LaunchProfileId) => {
-    pushStage("plan");
+    pushStage("review");
     // The same choice again keeps its draft: name, size, place and request.
     if (draft.profileId === profileId) {
-      updateDraft({ stage: "plan" });
+      updateDraft({ stage: "review" });
       return;
     }
     const details = PROFILE_DETAILS[profileId];
@@ -1584,6 +1600,7 @@ export function LaunchJourney(
     autoNameRef.current = existingNames ? null : { launchRequestId: fresh.launchRequestId, name };
     setWhereExpanded(false);
     setCustomizeOpen(false);
+    setAdvancedExpanded(false);
     // A DigitalOcean team stays chosen across agents it runs, and the team a
     // DigitalOcean card handed over is chosen for the first one.
     const keptTeam = digitalOceanTeamFor(profileId, draft.capacity.mode === "digitalocean"
@@ -1593,7 +1610,7 @@ export function LaunchJourney(
       capacity: keptTeam ? { mode: "digitalocean", targetId: keptTeam.id }
         : details.lane === "hermes-instance" ? { mode: "hivra-managed", targetId: null } : freshDraftCapacity(destination.choice),
       digitalOcean: keptTeam ? draft.digitalOcean : fresh.digitalOcean,
-      stage: "plan",
+      stage: "review",
       resourceKind: details.resourceKind,
       profileId,
       name,
@@ -1712,10 +1729,6 @@ export function LaunchJourney(
       setWindowsDownloadStarting(false);
     }
   };
-  const advanceTo = (stage: HistoryStage, change: Partial<LaunchDraft> = {}) => {
-    pushStage(stage);
-    updateDraft({ ...change, stage });
-  };
   const goBack = () => {
     const previous = stepBack(draft.stage);
     updateDraft({ stage: previous, launchState: "idle", result: keptResult(draft), error: null });
@@ -1735,6 +1748,7 @@ export function LaunchJourney(
     clearLaunchDraft(storageOwner);
     writeLaunchDraft(next, storageOwner);
     setRestoredDestinationFor(null);
+    setAdvancedExpanded(false);
     destination.setMode("hivra-managed");
     setDraft(next);
     writeStageHistory(next.stage, "replace");
@@ -1856,6 +1870,13 @@ export function LaunchJourney(
     ) return;
     const submitting = {
       ...draft,
+      // The capacity the draft records is the destination the owner is
+      // launching to. (A DigitalOcean team is its own choice; the host
+      // destination only speaks for Hivra Cloud and the owner's servers.)
+      capacity: resumingUncertain || digitalOceanLane ? draft.capacity
+        : destination.mode === "hivra-managed"
+          ? { mode: "hivra-managed" as const, targetId: null }
+          : { mode: "self-managed" as const, targetId: destination.selectedTarget?.id ?? null },
       stage: "launch" as const,
       launchState: "submitting" as const,
       submittedDeployment: submissionDeployment,
@@ -2008,9 +2029,13 @@ export function LaunchJourney(
     selfHosted,
   };
   const renderTile = (tile: ChooseTile) => {
-    const fit = launchFit(launchProfileFitSubject(tile.id), fitEvidence);
+    const subject = launchProfileFitSubject(tile.id);
+    const fit = launchFit(subject, fitEvidence);
     const Icon = tile.icon;
-    return (
+    const needsServer = SERVER_ONLY_TILES.has(tile.id)
+      && !fitEvidence.targetsLoading && !fitEvidence.targetsError
+      && !ownServerHolds(subject, fitEvidence.targets);
+    const button = (
       <button
         key={tile.id}
         type="button"
@@ -2023,8 +2048,17 @@ export function LaunchJourney(
           <strong>{tile.name}</strong>
           <small>{tile.description}</small>
         </span>
-        <FitBadge fit={fit} />
+        {needsServer ? null : <FitBadge fit={fit} />}
       </button>
+    );
+    if (!needsServer) return button;
+    return (
+      <div key={tile.id} className={styles.tileWithNote}>
+        {button}
+        <p className={styles.tileNote}>
+          Needs a server you&apos;ve connected. <Link href="/dashboard/infrastructure">Add a server</Link>
+        </p>
+      </div>
     );
   };
   // A self-hosted installation has no Hivra Cloud, so an agent that runs only
@@ -2097,6 +2131,21 @@ export function LaunchJourney(
   const launchLabel = draft.profileId === "windows" ? "Start Windows setup"
     : digitalOceanLane ? "Launch and start billing"
     : `Launch ${currentProfile?.name ?? ""}`.trim();
+
+  // Review shows Hivra's recommended settings as a short summary. "Change"
+  // opens the full controls (Advanced). Some launches have a choice only the
+  // owner can make (the Windows ISO, a DigitalOcean team, a server to run on),
+  // so those open it and keep it open.
+  const advancedForced = draft.profileId === "windows" || digitalOceanLane || whereForcedOpen;
+  const advancedOpen = advancedForced || advancedExpanded;
+  const digitalOceanSize = digitalOceanLane && digitalOceanTarget ? digitalOceanSizeFor(digitalOceanTarget, draft.digitalOcean) : null;
+  const summarySize = digitalOceanLane
+    ? digitalOceanSize ? `${digitalOceanSizeLabel(digitalOceanSize)} DigitalOcean sandbox` : "No size available"
+    : wholeProviderComputer
+    ? "The whole server"
+    : currentProfile?.sizing === "fixed"
+      ? `${draft.resources.cpu} CPU / ${draft.resources.ram} GB · fixed size`
+      : `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB`;
 
   const windowsCapacity = draft.profileId === "windows" ? (
     <section className={styles.windowsCapacity} aria-labelledby="windows-capacity-heading">
@@ -2261,9 +2310,15 @@ export function LaunchJourney(
               </span>
             </div>
           ) : planChecked && plan?.usage && !isPaidPlan(plan) && !selfHosted ? (
-            <div className={styles.notice} role="status">
+            <div className={styles.notice} role="status" data-testid="launch-free-notice">
               <Cloud size={16} aria-hidden />
-              <span>Hivra is free to use with your own computer. Connect a computer or server to launch on it, or choose a plan to run on Hivra Cloud.</span>
+              <span className={styles.noticeBody}>
+                <span>Hivra Cloud is part of a paid plan, from {firstPaidPrice} a month. On Free you can run agents on a computer you connect.</span>
+                <span className={styles.noticeActions}>
+                  <Link href="/dashboard/billing">See plans</Link>
+                  <button type="button" onClick={() => setCapacitySheetOpen(true)}>Use my own computer</button>
+                </span>
+              </span>
             </div>
           ) : null}
           {planChecked && !plan?.usage && !selfHosted ? (
@@ -2282,16 +2337,16 @@ export function LaunchJourney(
         </section>
       ) : null}
 
-      {draft.stage === "plan" && currentProfile ? (
-        <section className={styles.stage} aria-labelledby="launch-plan-heading">
+      {draft.stage === "review" && currentProfile && draft.profileId ? (
+        <section className={styles.stage} aria-labelledby="launch-review-heading">
           <div className={styles.stageIntro}>
-            <span className={styles.eyebrow}>{draft.resourceKind === "computer" ? "Your computer" : "Your agent"}</span>
-            <h1 id="launch-plan-heading">{currentProfile.name} — here&apos;s the plan</h1>
+            <span className={styles.eyebrow}>Review</span>
+            <h1 id="launch-review-heading">Review and launch {draft.name.trim() || currentProfile.name}</h1>
             <p>{draft.profileId === "windows"
               ? "Choose the server and the ISO. Hivra Cloud isn't available for Windows."
               : selfManagedOnly
-                ? `${currentProfile.name} runs on a Linux server you connected. Change anything, then review before anything starts.`
-                : "Hivra picked where it runs and how big it is. Change anything, then review before anything starts."}</p>
+                ? `${currentProfile.name} runs on a Linux server you connected. Check the settings, then launch. Nothing starts until you do.`
+                : "Hivra picked sensible settings. Check them, change anything you like, then launch. Nothing starts until you do."}</p>
           </div>
           {upgradeNotice}
           {draft.template ? (
@@ -2300,7 +2355,7 @@ export function LaunchJourney(
               <span>{`Starting from the template “${draft.template.name ?? currentProfile.name}”. Its focus, personality and skills come with it.`}</span>
             </div>
           ) : null}
-          <div className={styles.planCard} role="group" aria-label="Launch plan">
+          <div className={styles.planCard} role="group" aria-label="Name">
             <label className={`${styles.planRow} ${styles.nameField}`}>
               <span className={styles.planLabel}>{draft.resourceKind === "computer" ? "Computer name" : "Agent name"}</span>
               <span className={styles.planValue}>
@@ -2324,302 +2379,283 @@ export function LaunchJourney(
                 <small id="launch-name-hint" data-problem={nameProblem ? true : undefined}>{nameProblem ?? "This is how it will appear in Hivra."}</small>
               </span>
             </label>
-
-            {draft.profileId !== "windows" ? (
-              <div className={styles.planRow}>
-                <span className={styles.planLabel}>Where it runs</span>
-                <span className={styles.planValue}>
-                  <span className={styles.planSummary}>
-                    <strong>{whereTitle}</strong>
-                    {whereDetail ? <small>{whereDetail}</small> : null}
-                  </span>
-                  {!whereForcedOpen ? (
-                    <button
-                      type="button"
-                      className={styles.inlineAction}
-                      aria-expanded={whereOpen}
-                      aria-controls="launch-where-it-runs"
-                      onClick={() => setWhereExpanded(open => !open)}
-                    >
-                      {whereOpen ? "Done" : "Change"}
-                    </button>
-                  ) : null}
-                </span>
-              </div>
-            ) : null}
-            {draft.profileId === "windows" ? windowsCapacity : whereOpen ? (
-              <div id="launch-where-it-runs" className={styles.planPanel}>
-                <DeploymentDestinationControl
-                  state={{ ...destination, setMode: chooseDestinationMode, setSelectedTargetId: chooseTarget }}
-                  managedAvailable={!selfManagedOnly}
-                  ownServerSupported={currentProfile.lane !== "hermes-instance"}
-                  runtimeName={currentProfile.name}
-                  resourceLabel={draft.resourceKind ?? "agent"}
-                  capacitySetupHref={capacitySetupHref}
-                  onSetUpCapacity={() => setCapacitySheetOpen(true)}
-                  otherSelected={digitalOceanLane}
-                  otherOptions={digitalOceanChoices.map(team => (
-                    <DestinationOption
-                      key={team.id}
-                      selected={digitalOceanLane && digitalOceanTarget?.id === team.id}
-                      onClick={() => chooseDigitalOcean(team.id)}
-                      icon={<Droplet size={16} aria-hidden="true" />}
-                      title={`DigitalOcean · ${team.displayName}`}
-                      detail="A sandbox on your own DigitalOcean team. DigitalOcean bills it per second."
-                    />
-                  ))}
-                />
-              </div>
-            ) : null}
-
-            {digitalOceanLane ? (digitalOceanTarget && digitalOceanHarness ? (
-              <DigitalOceanLaunchPlan
-                target={digitalOceanTarget}
-                harness={digitalOceanHarness}
-                agentName={draft.name}
-                choice={draft.digitalOcean}
-                onChange={updateDigitalOcean}
-                pastedKey={currentPastedKey}
-                onPastedKeyChange={setCurrentPastedKey}
-                savedKeys={savedKeys}
-                problem={modelProblem}
-                balance={digitalOceanBalance}
-              />
-            ) : null) : (<>
-            <div className={styles.planRow}>
-              <span className={styles.planLabel}>Size</span>
-              <span className={styles.planValue}>
-                {wholeProviderComputer ? (
-                  <span className={styles.planSummary}>
-                    <strong>The whole server</strong>
-                    <small>Launch uses this server&apos;s CPU and memory as they are. It doesn&apos;t resize the server or reserve a smaller slice.</small>
-                  </span>
-                ) : presetOptions.length === 0 ? (
-                  <span className={styles.planSummary}><strong>{sizeSummary}</strong></span>
-                ) : (
-                  <span className={styles.sizeChooser}>
-                    <span className={styles.presets} role="group" aria-label="Size">
-                      {presetOptions.map(preset => {
-                        const fits = preset.fits;
-                        const selected = currentPreset?.id === preset.id;
-                        return (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            aria-pressed={selected}
-                            // The chosen size is never shown pressed but
-                            // disabled; the blocker below says what to change.
-                            disabled={!fits && !selected}
-                            onClick={() => choosePreset(preset)}
-                          >
-                            <strong>{preset.label}</strong>
-                            <small>{formatLaunchSize(preset.resources.cpu, preset.resources.ram)}</small>
-                            {!fits ? <small>{destination.mode === "hivra-managed" ? "Over your plan" : "Too big for this server"}</small> : null}
-                          </button>
-                        );
-                      })}
-                    </span>
-                    <strong className={styles.sizeSummary}>{sizeSummary}</strong>
-                    {cappedNote ? <small>{cappedNote}</small> : null}
-                    <small>{gvisorComputer
-                      ? "The sandbox always keeps its full CPU and memory, and never uses more."
-                      : pinnedSize
-                        ? `${currentProfile.name} always keeps this CPU and memory, and never uses more.`
-                        : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>
-                    <button
-                      type="button"
-                      className={styles.inlineAction}
-                      aria-expanded={customizeOpen}
-                      aria-controls="launch-customize-size"
-                      onClick={() => setCustomizeOpen(open => !open)}
-                    >
-                      {customizeOpen ? "Hide custom size" : "Customize"}
-                    </button>
-                  </span>
-                )}
-              </span>
+          </div>
+          <section className={styles.settings} aria-labelledby="launch-settings-heading">
+            <div className={styles.settingsHeader}>
+              <h2 id="launch-settings-heading">{advancedForced ? "Your launch" : advancedOpen ? "Advanced" : "Recommended settings"}</h2>
+              {!advancedForced ? (
+                <button
+                  type="button"
+                  className={styles.inlineAction}
+                  aria-expanded={advancedOpen}
+                  aria-controls="launch-advanced-settings"
+                  onClick={() => setAdvancedExpanded(open => !open)}
+                >
+                  {advancedOpen ? "Hide advanced" : "Change"}
+                </button>
+              ) : null}
             </div>
-            {customizeOpen && !wholeProviderComputer && presetOptions.length > 0 ? (
-              <div id="launch-customize-size" className={`${styles.planPanel} ${styles.advanced}`}>
-                <p className={styles.customizeNote}>{destination.mode === "hivra-managed"
-                  ? "Reserved CPU and memory count against your plan's pool. Cores are shared, so speed isn't guaranteed."
-                  : "Reserved CPU and memory count against this server's capacity. Cores are shared, so speed isn't guaranteed."}</p>
-                <div className={styles.advancedBody}>
-                  <fieldset aria-label="Reserved CPU">
-                    <legend>Reserved CPU</legend>
-                    <div>{currentProfile.cpuOptions.filter(cpu => cpu >= (resourceFloor?.cpu ?? 0)).map(cpu => (
-                      <button key={cpu} type="button" disabled={cpu > reservedCpuLimit} aria-pressed={draft.resources.cpu === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, cpu, maximumCpu: pinnedSize ? cpu : Math.max(cpu, draft.resources.maximumCpu ?? draft.resources.cpu), source: "custom" } })}>{cpu} CPU</button>
-                    ))}</div>
-                  </fieldset>
-                  {!pinnedSize ? <fieldset aria-label="Maximum CPU">
-                    <legend>Maximum CPU</legend>
-                    <div>{currentProfile.cpuOptions.filter(cpu => cpu >= draft.resources.cpu).map(cpu => (
-                      <button key={cpu} type="button" disabled={cpu > maximumCpuLimit} aria-pressed={(draft.resources.maximumCpu ?? draft.resources.cpu) === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, maximumCpu: cpu, source: "custom" } })}>{cpu} CPU</button>
-                    ))}</div>
-                  </fieldset> : null}
-                  <fieldset aria-label="Reserved memory">
-                    <legend>Reserved memory</legend>
-                    <div>{currentProfile.ramOptions.filter(ram => ram >= (resourceFloor?.ram ?? 0)).map(ram => (
-                      <button key={ram} type="button" disabled={ram > reservedRamLimit} aria-pressed={draft.resources.ram === ram} onClick={() => updateDraft({ resources: { ...draft.resources, ram, maximumRam: pinnedSize ? ram : Math.max(ram, draft.resources.maximumRam ?? draft.resources.ram), source: "custom" } })}>{ram} GB</button>
-                    ))}</div>
-                  </fieldset>
-                  {!pinnedSize ? <fieldset aria-label="Maximum memory">
-                    <legend>Maximum memory</legend>
-                    <div>{currentProfile.ramOptions.filter(ram => ram >= draft.resources.ram).map(ram => (
-                      <button key={ram} type="button" disabled={ram > maximumRamLimit} aria-pressed={(draft.resources.maximumRam ?? draft.resources.ram) === ram} onClick={() => updateDraft({ resources: { ...draft.resources, maximumRam: ram, source: "custom" } })}>{ram} GB</button>
-                    ))}</div>
-                  </fieldset> : null}
+            {advancedOpen ? (
+              <div id="launch-advanced-settings" className={styles.planCard} role="group" aria-label="Launch plan">
+              {draft.profileId !== "windows" ? (
+                <div className={styles.planRow}>
+                  <span className={styles.planLabel}>Where it runs</span>
+                  <span className={styles.planValue}>
+                    <span className={styles.planSummary}>
+                      <strong>{whereTitle}</strong>
+                      {whereDetail ? <small>{whereDetail}</small> : null}
+                    </span>
+                    {!whereForcedOpen ? (
+                      <button
+                        type="button"
+                        className={styles.inlineAction}
+                        aria-expanded={whereOpen}
+                        aria-controls="launch-where-it-runs"
+                        onClick={() => setWhereExpanded(open => !open)}
+                      >
+                        {whereOpen ? "Done" : "Change"}
+                      </button>
+                    ) : null}
+                  </span>
                 </div>
-              </div>
-            ) : null}
-
-            {hasBrowser && draft.profileId ? (
-              <label className={`${styles.planRow} ${styles.browserToggle}`}>
-                <span className={styles.planLabel}>Browser</span>
-                <span className={styles.planValue}>
-                  <span className={styles.browserChoice}>
-                    <input type="checkbox" checked={draft.browser} onChange={event => chooseBrowser(event.target.checked)} />
-                    <span>
-                      <strong>Browser for {currentProfile.name}</strong>
-                      <small>
-                        {browserCopy(draft.profileId)} Needs at least {formatLaunchSize(browserFloorFor(draft.profileId).cpu, browserFloorFor(draft.profileId).ram)} with
-                        the browser, or {formatLaunchSize(baseFloorFor(draft.profileId).cpu, baseFloorFor(draft.profileId).ram)} without it.
-                        {destination.mode === "hivra-managed" && plan && !isPaidPlan(plan) ? " On Hivra Cloud, the browser needs a paid plan." : null}
-                      </small>
-                    </span>
-                  </span>
-                </span>
-              </label>
-            ) : null}
-
-            {modelAccessShown && draft.profileId ? (
-              <div className={styles.planRow}>
-                <span className={styles.planLabel} aria-hidden>Model access</span>
-                <span className={styles.planValue}>
-                  <ModelAccessControl
-                    profileId={draft.profileId}
-                    agentName={draft.name}
-                    access={draft.modelAccess}
-                    options={modelOptions}
-                    onChange={updateModelAccess}
-                    pastedKey={currentPastedKey}
-                    onPastedKeyChange={setCurrentPastedKey}
-                    savedKeys={savedKeys}
-                    providers={keyProviders}
-                    balance={creditsBalance}
-                    onAddCredit={() => setDepositOpen(true)}
-                    problem={modelProblem}
+              ) : null}
+              {draft.profileId === "windows" ? windowsCapacity : whereOpen ? (
+                <div id="launch-where-it-runs" className={styles.planPanel}>
+                  <DeploymentDestinationControl
+                    state={{ ...destination, setMode: chooseDestinationMode, setSelectedTargetId: chooseTarget }}
+                    managedAvailable={!selfManagedOnly}
+                    ownServerSupported={currentProfile.lane !== "hermes-instance"}
+                    runtimeName={currentProfile.name}
+                    resourceLabel={draft.resourceKind ?? "agent"}
+                    capacitySetupHref={capacitySetupHref}
+                    onSetUpCapacity={() => setCapacitySheetOpen(true)}
+                    otherSelected={digitalOceanLane}
+                    otherOptions={digitalOceanChoices.map(team => (
+                      <DestinationOption
+                        key={team.id}
+                        selected={digitalOceanLane && digitalOceanTarget?.id === team.id}
+                        onClick={() => chooseDigitalOcean(team.id)}
+                        icon={<Droplet size={16} aria-hidden="true" />}
+                        title={`DigitalOcean · ${team.displayName}`}
+                        detail="A sandbox on your own DigitalOcean team. DigitalOcean bills it per second."
+                      />
+                    ))}
                   />
+                </div>
+              ) : null}
+
+              {digitalOceanLane ? (digitalOceanTarget && digitalOceanHarness ? (
+                <DigitalOceanLaunchPlan
+                  target={digitalOceanTarget}
+                  harness={digitalOceanHarness}
+                  agentName={draft.name}
+                  choice={draft.digitalOcean}
+                  onChange={updateDigitalOcean}
+                  pastedKey={currentPastedKey}
+                  onPastedKeyChange={setCurrentPastedKey}
+                  savedKeys={savedKeys}
+                  problem={modelProblem}
+                  balance={digitalOceanBalance}
+                />
+              ) : null) : (<>
+              <div className={styles.planRow}>
+                <span className={styles.planLabel}>Size</span>
+                <span className={styles.planValue}>
+                  {wholeProviderComputer ? (
+                    <span className={styles.planSummary}>
+                      <strong>The whole server</strong>
+                      <small>Launch uses this server&apos;s CPU and memory as they are. It doesn&apos;t resize the server or reserve a smaller slice.</small>
+                    </span>
+                  ) : presetOptions.length === 0 ? (
+                    <span className={styles.planSummary}><strong>{sizeSummary}</strong></span>
+                  ) : (
+                    <span className={styles.sizeChooser}>
+                      <span className={styles.presets} role="group" aria-label="Size">
+                        {presetOptions.map(preset => {
+                          const fits = preset.fits;
+                          const selected = currentPreset?.id === preset.id;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              aria-pressed={selected}
+                              // The chosen size is never shown pressed but
+                              // disabled; the blocker below says what to change.
+                              disabled={!fits && !selected}
+                              onClick={() => choosePreset(preset)}
+                            >
+                              <strong>{preset.label}</strong>
+                              <small>{formatLaunchSize(preset.resources.cpu, preset.resources.ram)}</small>
+                              {!fits ? <small>{destination.mode === "hivra-managed" ? "Over your plan" : "Too big for this server"}</small> : null}
+                            </button>
+                          );
+                        })}
+                      </span>
+                      <strong className={styles.sizeSummary}>{sizeSummary}</strong>
+                      {cappedNote ? <small>{cappedNote}</small> : null}
+                      <small>{gvisorComputer
+                        ? "The sandbox always keeps its full CPU and memory, and never uses more."
+                        : pinnedSize
+                          ? `${currentProfile.name} always keeps this CPU and memory, and never uses more.`
+                          : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>
+                      <button
+                        type="button"
+                        className={styles.inlineAction}
+                        aria-expanded={customizeOpen}
+                        aria-controls="launch-customize-size"
+                        onClick={() => setCustomizeOpen(open => !open)}
+                      >
+                        {customizeOpen ? "Hide custom size" : "Customize"}
+                      </button>
+                    </span>
+                  )}
                 </span>
               </div>
-            ) : null}
-            {hermesMemoryKey ? (
-              <label className={`${styles.planRow} ${styles.browserToggle}`}>
-                <span className={styles.planLabel}>Memory</span>
-                <span className={styles.planValue}>
-                  <span className={styles.browserChoice}>
-                    <input
-                      type="checkbox"
-                      checked={draft.sendMemoryKey}
-                      onChange={event => updateDraft({ sendMemoryKey: event.target.checked })}
-                    />
-                    <span>
-                      <strong>Send my saved Honcho key {savedKeyHint(hermesMemoryKey)} to {draft.name.trim() || "Hermes"}&apos;s computer</strong>
-                      <small>It gives Hermes long-term memory in your Honcho account, for this launch only. Leave it off to launch without it.</small>
+              {customizeOpen && !wholeProviderComputer && presetOptions.length > 0 ? (
+                <div id="launch-customize-size" className={`${styles.planPanel} ${styles.advanced}`}>
+                  <p className={styles.customizeNote}>{destination.mode === "hivra-managed"
+                    ? "Reserved CPU and memory count against your plan's pool. Cores are shared, so speed isn't guaranteed."
+                    : "Reserved CPU and memory count against this server's capacity. Cores are shared, so speed isn't guaranteed."}</p>
+                  <div className={styles.advancedBody}>
+                    <fieldset aria-label="Reserved CPU">
+                      <legend>Reserved CPU</legend>
+                      <div>{currentProfile.cpuOptions.filter(cpu => cpu >= (resourceFloor?.cpu ?? 0)).map(cpu => (
+                        <button key={cpu} type="button" disabled={cpu > reservedCpuLimit} aria-pressed={draft.resources.cpu === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, cpu, maximumCpu: pinnedSize ? cpu : Math.max(cpu, draft.resources.maximumCpu ?? draft.resources.cpu), source: "custom" } })}>{cpu} CPU</button>
+                      ))}</div>
+                    </fieldset>
+                    {!pinnedSize ? <fieldset aria-label="Maximum CPU">
+                      <legend>Maximum CPU</legend>
+                      <div>{currentProfile.cpuOptions.filter(cpu => cpu >= draft.resources.cpu).map(cpu => (
+                        <button key={cpu} type="button" disabled={cpu > maximumCpuLimit} aria-pressed={(draft.resources.maximumCpu ?? draft.resources.cpu) === cpu} onClick={() => updateDraft({ resources: { ...draft.resources, maximumCpu: cpu, source: "custom" } })}>{cpu} CPU</button>
+                      ))}</div>
+                    </fieldset> : null}
+                    <fieldset aria-label="Reserved memory">
+                      <legend>Reserved memory</legend>
+                      <div>{currentProfile.ramOptions.filter(ram => ram >= (resourceFloor?.ram ?? 0)).map(ram => (
+                        <button key={ram} type="button" disabled={ram > reservedRamLimit} aria-pressed={draft.resources.ram === ram} onClick={() => updateDraft({ resources: { ...draft.resources, ram, maximumRam: pinnedSize ? ram : Math.max(ram, draft.resources.maximumRam ?? draft.resources.ram), source: "custom" } })}>{ram} GB</button>
+                      ))}</div>
+                    </fieldset>
+                    {!pinnedSize ? <fieldset aria-label="Maximum memory">
+                      <legend>Maximum memory</legend>
+                      <div>{currentProfile.ramOptions.filter(ram => ram >= draft.resources.ram).map(ram => (
+                        <button key={ram} type="button" disabled={ram > maximumRamLimit} aria-pressed={(draft.resources.maximumRam ?? draft.resources.ram) === ram} onClick={() => updateDraft({ resources: { ...draft.resources, maximumRam: ram, source: "custom" } })}>{ram} GB</button>
+                      ))}</div>
+                    </fieldset> : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {hasBrowser && draft.profileId ? (
+                <label className={`${styles.planRow} ${styles.browserToggle}`}>
+                  <span className={styles.planLabel}>Browser</span>
+                  <span className={styles.planValue}>
+                    <span className={styles.browserChoice}>
+                      <input type="checkbox" checked={draft.browser} onChange={event => chooseBrowser(event.target.checked)} />
+                      <span>
+                        <strong>Browser for {currentProfile.name}</strong>
+                        <small>
+                          {browserCopy(draft.profileId)} Needs at least {formatLaunchSize(browserFloorFor(draft.profileId).cpu, browserFloorFor(draft.profileId).ram)} with
+                          the browser, or {formatLaunchSize(baseFloorFor(draft.profileId).cpu, baseFloorFor(draft.profileId).ram)} without it.
+                          {destination.mode === "hivra-managed" && plan && !isPaidPlan(plan) ? " On Hivra Cloud, the browser needs a paid plan." : null}
+                        </small>
+                      </span>
                     </span>
                   </span>
-                </span>
-              </label>
-            ) : null}
-            <div className={styles.planRow}>
-              <span className={styles.planLabel}>Cost</span>
-              <span className={styles.planValue}><span className={styles.planSummary}><strong>{cost}</strong></span></span>
-            </div>
-            <div className={styles.planRow}>
-              <span className={styles.planLabel}>What it can use</span>
-              <span className={styles.planValue}><span className={styles.planSummary}><strong>{whatItCanUse}</strong></span></span>
-            </div>
-            </>)}
-          </div>
-          {capacityBlocker ? (
-            <div className={styles.blocker} role={destination.loading || !planChecked ? "status" : "alert"}>
-              <AlertTriangle size={16} aria-hidden />
-              <span><strong>{capacityBlocker}</strong>{blockerActions}</span>
-              {paywallMoments}
-            </div>
-          ) : null}
-          {footer(primary("Review launch", () => advanceTo("review", {
-            // A DigitalOcean team is its own choice; the host destination only
-            // speaks for Hivra Cloud and the owner's servers.
-            capacity: digitalOceanLane ? draft.capacity
-              : destination.mode === "hivra-managed"
-                ? { mode: "hivra-managed", targetId: null }
-                : { mode: "self-managed", targetId: destination.selectedTarget?.id ?? null },
-          }), Boolean(capacityBlocker || nameProblem || modelProblem)))}
-        </section>
-      ) : null}
+                </label>
+              ) : null}
 
-      {draft.stage === "review" && currentProfile && draft.profileId ? (
-        <section className={styles.stage} aria-labelledby="launch-review-heading">
-          <div className={styles.stageIntro}>
-            <span className={styles.eyebrow}>Review</span>
-            <h1 id="launch-review-heading">Review and launch {draft.name.trim()}</h1>
-            <p>Check where it runs, what it can use and exactly what changes. Nothing starts until you launch.</p>
-          </div>
-          {upgradeNotice}
-          <dl className={styles.review} aria-label="Launch review">
-            <div><dt>Runs on</dt><dd>
-              {digitalOceanLane
-                ? <>DigitalOcean · {digitalOceanTarget?.displayName ?? "team unavailable"}<small>A sandbox on your own DigitalOcean team</small></>
-                : destination.mode === "hivra-managed" && !selfHosted
-                ? <>Hivra Cloud<small>Private virtual machine</small></>
-                : <>{destination.selectedTarget?.displayName ?? "Unavailable server"}{destination.selectedTarget
-                  ? <small>{selfHosted ? selfHostedTargetLabel : ownCapacityLabel(substrate)}</small> : null}</>}
-            </dd></div>
-            <div><dt>Size</dt><dd>{digitalOceanLane
-              ? (() => { const size = digitalOceanTarget ? digitalOceanSizeFor(digitalOceanTarget, draft.digitalOcean) : null;
-                return size ? `${digitalOceanSizeLabel(size)} DigitalOcean sandbox` : "No size available"; })()
-              : wholeProviderComputer
-              ? "The whole server · its CPU and memory stay as they are"
-              : gvisorComputer
-                ? `${currentSizeLabel} · ${draft.resources.cpu} CPU / ${draft.resources.ram} GB reserved and enforced maximum`
-                : sizeSummary}</dd></div>
-            <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{digitalOceanLane
-              ? "Its own DigitalOcean sandbox and /workspace. Chat and files through Hivra. No browser, desktop or terminal."
-              : whatItCanUse}</dd></div>
-            {draft.resourceKind === "agent" && draft.profileId ? <div><dt>You can see its work in</dt><dd>{
-              // The same decision that draws the agent page's tabs and the note
-              // Hivra gives the agent about its computer (ATT-15).
-              agentLaunchWatchRow(digitalOceanLane
-                ? { type: draft.profileId, computer_substrate: "do-managed-session", deployment_mode: "self-managed" }
-                : { type: draft.profileId, computer_substrate: substrate === "provider-vm" ? "provider-vm" : "proxmox-kvm",
-                  deployment_mode: destination.mode }, { browser: digitalOceanLane ? false : browserOn })}</dd></div> : null}
-            {modelSummary ? <div><dt>Model</dt><dd>{modelSummary}</dd></div> : null}
-            {hermesMemoryKey && draft.sendMemoryKey && !digitalOceanLane
-              ? <div><dt>Memory</dt><dd>Honcho, with your saved key {savedKeyHint(hermesMemoryKey)}, sent to {draft.name.trim()}&apos;s computer</dd></div>
-              : null}
-            {draft.template ? <div><dt>Template</dt><dd>{draft.template.name ?? "Saved template"}<small>{digitalOceanLane
-              ? "Not applied on DigitalOcean: its sandbox starts from DigitalOcean's own setup."
-              : "Its focus, personality and skills are applied when it launches."}</small></dd></div> : null}
+              {modelAccessShown && draft.profileId ? (
+                <div className={styles.planRow}>
+                  <span className={styles.planLabel} aria-hidden>Model access</span>
+                  <span className={styles.planValue}>
+                    <ModelAccessControl
+                      profileId={draft.profileId}
+                      agentName={draft.name}
+                      access={draft.modelAccess}
+                      options={modelOptions}
+                      onChange={updateModelAccess}
+                      pastedKey={currentPastedKey}
+                      onPastedKeyChange={setCurrentPastedKey}
+                      savedKeys={savedKeys}
+                      providers={keyProviders}
+                      balance={creditsBalance}
+                      onAddCredit={() => setDepositOpen(true)}
+                      problem={modelProblem}
+                    />
+                  </span>
+                </div>
+              ) : null}
+              {hermesMemoryKey ? (
+                <label className={`${styles.planRow} ${styles.browserToggle}`}>
+                  <span className={styles.planLabel}>Memory</span>
+                  <span className={styles.planValue}>
+                    <span className={styles.browserChoice}>
+                      <input
+                        type="checkbox"
+                        checked={draft.sendMemoryKey}
+                        onChange={event => updateDraft({ sendMemoryKey: event.target.checked })}
+                      />
+                      <span>
+                        <strong>Send my saved Honcho key {savedKeyHint(hermesMemoryKey)} to {draft.name.trim() || "Hermes"}&apos;s computer</strong>
+                        <small>It gives Hermes long-term memory in your Honcho account, for this launch only. Leave it off to launch without it.</small>
+                      </span>
+                    </span>
+                  </span>
+                </label>
+              ) : null}
+              </>)}
+              </div>
+            ) : null}
+            {!advancedOpen || advancedForced ? (
+              <dl className={styles.review} aria-label="Recommended settings">
+                <div><dt>Where it runs</dt><dd>{whereTitle}{whereDetail ? <small>{whereDetail}</small> : null}</dd></div>
+                <div><dt>Size</dt><dd>{summarySize}</dd></div>
+                {modelAccessShown && modelSummary ? <div><dt>Model access</dt><dd>{modelSummary}</dd></div> : null}
+                {hasBrowser ? <div><dt>Browser</dt><dd>{browserOn ? "On" : "Off"}</dd></div> : null}
+                {draft.profileId === "windows" ? <>
+                  <div><dt>Installation media</dt><dd>{draft.windowsIsoVolume ?? "No ISO selected"}<small>{draft.windowsIsoSource === "windows-server-evaluation" ? "Windows Server Evaluation — evaluation only. " : ""}Already stored on your Proxmox host; Hivra does not upload or redistribute it.</small></dd></div>
+                  <div><dt>Rights</dt><dd>{draft.windowsRightsAttested ? "Attestation will be stamped to your account at launch." : "Not confirmed"}</dd></div>
+                </> : null}
+                {hermes ? <div><dt>Memory</dt><dd>{hermesMemoryKey && draft.sendMemoryKey
+                  ? `Honcho, with your saved key ${savedKeyHint(hermesMemoryKey)}, sent to ${draft.name.trim()}'s computer`
+                  : "Kept on its own computer"}</dd></div> : null}
+              </dl>
+            ) : null}
+          </section>
+          <dl className={styles.review} aria-label="Cost and changes">
             <div><dt>Cost</dt><dd>{digitalOceanLane
               ? <>DigitalOcean bills this sandbox per second while it runs, to your team.{digitalOceanBalance.balance && digitalOceanBalance.balance.state !== "unreadable"
                 ? <small>Prepaid balance {formatDigitalOceanBalance(digitalOceanBalance.balance.balance)}</small> : null}</>
               : cost}</dd></div>
-            {digitalOceanLane && draft.digitalOcean.firstTask.trim()
-              ? <div><dt>First task</dt><dd>{draft.digitalOcean.firstTask.trim()}<small>Sent right after Hivra&apos;s setup note.</small></dd></div>
-              : null}
-            <div><dt>Changes</dt><dd>{digitalOceanLane
+            <div><dt>When you launch</dt><dd>{digitalOceanLane
               ? `Creates one DigitalOcean sandbox on ${digitalOceanTarget?.displayName ?? "your team"} and starts it. DigitalOcean bills from now. Hivra sends it a short setup note as the first chat message. Nothing is bought from Hivra.`
               : launchChangesSummary({
               profileId: draft.profileId,
               substrate,
               targetName: destination.selectedTarget?.displayName ?? null,
             })}</dd></div>
-            {draft.profileId === "windows" ? <>
-              <div><dt>Installation media</dt><dd>{draft.windowsIsoVolume ?? "No ISO selected"}<small>{draft.windowsIsoSource === "windows-server-evaluation" ? "Windows Server Evaluation — evaluation only. " : ""}Already stored on your Proxmox host; Hivra does not upload or redistribute it.</small></dd></div>
-              <div><dt>Rights</dt><dd>{draft.windowsRightsAttested ? "Attestation will be stamped to your account at launch." : "Not confirmed"}</dd></div>
-            </> : null}
           </dl>
+          <details className={styles.technical}>
+            <summary>More details</summary>
+            <dl className={styles.plainList} aria-label="Launch review">
+              <div><dt>{draft.resourceKind === "agent" ? "Your agent can use" : "You can use"}</dt><dd>{digitalOceanLane
+                ? "Its own DigitalOcean sandbox and /workspace. Chat and files through Hivra. No browser, desktop or terminal."
+                : whatItCanUse}</dd></div>
+              {draft.resourceKind === "agent" && draft.profileId ? <div><dt>You can see its work in</dt><dd>{
+                // The same decision that draws the agent page's tabs and the note
+                // Hivra gives the agent about its computer (ATT-15).
+                agentLaunchWatchRow(digitalOceanLane
+                  ? { type: draft.profileId, computer_substrate: "do-managed-session", deployment_mode: "self-managed" }
+                  : { type: draft.profileId, computer_substrate: substrate === "provider-vm" ? "provider-vm" : "proxmox-kvm",
+                    deployment_mode: destination.mode }, { browser: digitalOceanLane ? false : browserOn })}</dd></div> : null}
+              {draft.template ? <div><dt>Template</dt><dd>{draft.template.name ?? "Saved template"}<small>{digitalOceanLane
+                ? "Not applied on DigitalOcean: its sandbox starts from DigitalOcean's own setup."
+                : "Its focus, personality and skills are applied when it launches."}</small></dd></div> : null}
+              {digitalOceanLane && draft.digitalOcean.firstTask.trim()
+                ? <div><dt>First task</dt><dd>{draft.digitalOcean.firstTask.trim()}<small>Sent right after Hivra&apos;s setup note.</small></dd></div>
+                : null}
+            </dl>
+          </details>
           <details className={styles.technical}>
             <summary>Technical details</summary>
             <dl aria-label="Technical details">
@@ -2635,9 +2671,15 @@ export function LaunchJourney(
               <div><dt>Launch request</dt><dd>{draft.launchRequestId}</dd></div>
             </dl>
           </details>
-          {capacityBlocker ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{capacityBlocker}</strong>{blockerActions}</span></div> : null}
-          {modelProblem && !capacityBlocker ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><span><strong>{modelProblem}</strong>
-            <span className={styles.blockerActions}><button type="button" onClick={goBack}>Change model access</button></span>
+          {capacityBlocker ? (
+            <div className={styles.blocker} role={destination.loading || !planChecked ? "status" : "alert"}>
+              <AlertTriangle size={16} aria-hidden />
+              <span><strong>{capacityBlocker}</strong>{blockerActions}</span>
+              {paywallMoments}
+            </div>
+          ) : null}
+          {modelProblem && !capacityBlocker && !advancedOpen ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><span><strong>{modelProblem}</strong>
+            <span className={styles.blockerActions}><button type="button" onClick={() => setAdvancedExpanded(true)}>Change model access</button></span>
           </span></div> : null}
           {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{draft.error}</strong>
             {draft.errorAction ? <span className={styles.blockerActions}>

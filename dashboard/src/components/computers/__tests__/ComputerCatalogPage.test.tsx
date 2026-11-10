@@ -73,7 +73,9 @@ describe("ComputerCatalogPage", () => {
       "href",
       "/dashboard/launch?kind=computer&start=1&profile=linux-terminal",
     );
-    expect(screen.getByText(/Add one in Capacity first/i, { selector: "article#linux-sandbox p" })).toBeInTheDocument();
+    expect(screen.getByText(/Runs on a server you've connected/i, { selector: "article#linux-sandbox p" })).toBeInTheDocument();
+    // No gVisor or other jargon on the card.
+    expect(document.querySelector("article#linux-sandbox")).not.toHaveTextContent(/gVisor/i);
   });
 
   it("brings an opened OS catalog below the fold to the top under its heading", async () => {
@@ -147,15 +149,15 @@ describe("ComputerCatalogPage", () => {
     const omarchyCard = screen
       .getByRole("heading", { name: "Omarchy" })
       .closest("article") as HTMLElement;
-    expect(within(omarchyCard).getByText("Prepared computer")).toBeInTheDocument();
+    expect(within(omarchyCard).getByText("Ready to launch")).toBeInTheDocument();
     expect(
       within(omarchyCard).getByText("Full Linux desktop in your browser"),
     ).toBeInTheDocument();
     // Substrate details stay available, but behind a collapsed disclosure.
-    expect(screen.getAllByText(/^Prepared computer\.$/i)).toHaveLength(1);
-    expect(screen.getByText(/^Prepared computer\.$/i)).not.toBeVisible();
+    expect(screen.getAllByText(/^Ready-made computer\.$/i)).toHaveLength(1);
+    expect(screen.getByText(/^Ready-made computer\.$/i)).not.toBeVisible();
     fireEvent.click(within(omarchyCard).getByText("Technical details"));
-    expect(screen.getByText(/^Prepared computer\.$/i)).toBeVisible();
+    expect(screen.getByText(/^Ready-made computer\.$/i)).toBeVisible();
     expect(omarchyCard).not.toHaveTextContent(/Canary ready/);
     expect(
       screen.getByRole("link", { name: /Launch Omarchy/i }),
@@ -474,10 +476,43 @@ describe("ComputerCatalogPage", () => {
     await waitFor(() => expect(row).toHaveAttribute("href", `/dashboard/agent/${desk.id}?tab=manage&addAgent=1`));
     expect(within(row).getByText("Adds a new Codex to MY_UBUNTU_DESKTOP. Your other agents stay as they are.")).toBeInTheDocument();
     const other = screen.getByRole("link", { name: /WIN_BOX/ });
-    expect(within(other).getByText("Not available to add to an existing computer yet")).toBeInTheDocument();
+    expect(within(other).getByText("Windows computers can't take an agent yet. Ubuntu Desktop computers can.")).toBeInTheDocument();
     expect(other.getAttribute("href")).not.toContain("addAgent");
-    expect(within(screen.getByRole("link", { name: /UNBOUND_DESK/ })).getByText("Not available to add to an existing computer yet"))
+    expect(within(screen.getByRole("link", { name: /UNBOUND_DESK/ })).getByText("This computer can't take an agent yet."))
       .toBeInTheDocument();
+    // A clear header, and the computers that can take an agent come first.
+    expect(screen.getByRole("heading", { level: 1, name: "Pick a computer for your agent" })).toBeInTheDocument();
+    const names = screen.getAllByRole("link", { name: /MY_UBUNTU_DESKTOP|WIN_BOX|UNBOUND_DESK/ }).map(link => link.textContent);
+    expect(names[0]).toContain("MY_UBUNTU_DESKTOP");
+    expect(screen.queryByText(/None of your computers can take an agent yet/)).not.toBeInTheDocument();
+  });
+
+  it("says plainly when none of the computers can take an agent, and offers to launch an Ubuntu Desktop", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    const windows = { id: "22222222-2222-4222-8222-222222222222", type: "linux-desktop", computer_profile: "windows",
+      computer_substrate: "proxmox-kvm", name: "WIN_BOX", status: "running", cpu: 4, ram: 8 };
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [] } }
+        : { success: true, data: { agents: [windows] } } }) as Response);
+    renderCatalog();
+    expect(await screen.findByText("None of your computers can take an agent yet. Ubuntu Desktop computers can.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Launch an Ubuntu Desktop/ }))
+      .toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop");
+    // Why the one computer it has can't, in one line.
+    expect(within(screen.getByRole("link", { name: /WIN_BOX/ })).getByText("Windows computers can't take an agent yet. Ubuntu Desktop computers can.")).toBeInTheDocument();
+  });
+
+  it("says the same, and not 'No computers yet', when the owner has no computers at all", async () => {
+    mockSearchParamsGet.mockImplementation((key: string) => (key === "addAgent" ? "1" : null));
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => ({ ok: true, status: 200,
+      json: async () => String(input).includes("/api/hivra/attached-agents")
+        ? { success: true, data: { enabled: true, agents: [], eligibleComputerIds: [] } }
+        : { success: true, data: { agents: [] } } }) as Response);
+    renderCatalog();
+    expect(await screen.findByText("None of your computers can take an agent yet. Ubuntu Desktop computers can.")).toBeInTheDocument();
+    expect(screen.queryByText("No computers yet")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Launch an Ubuntu Desktop/ })).toBeInTheDocument();
   });
 
   it("gives a supported computer that can't take Codex now the gate's reason, not the pair line", async () => {
