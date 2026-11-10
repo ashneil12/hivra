@@ -47,6 +47,7 @@
     "vendor:bankr-skills": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/vendor-bankr-skills.ts",
     "rotate:encryption-keys": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/rotate-encryption-keys.ts",
     "test:encryption-rewrap-cas": "node scripts/test-encryption-rewrap-cas.cjs",
+    "test:venice-promo": "node scripts/test-venice-promo-campaigns.cjs && NODE_OPTIONS=--experimental-vm-modules jest --testMatch '**/promo/__tests__/*.pglite.ts'",
     "test:buzz-connections": "node scripts/test-buzz-connections.cjs",
     "apple:certs": "node scripts/fetch-apple-root-certificates.mjs",
     "test:remote-desktop-sessions": "node scripts/test-remote-desktop-sessions.cjs",

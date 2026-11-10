@@ -1,0 +1,72 @@
+import { NextRequest } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { z } from "zod";
+
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import { isVenicePromoEnabled } from "@/lib/venice/promo/core";
+import { getUserPromoLines, redeemVeniceCode, type RedeemStatus } from "@/lib/venice/promo/service";
+
+export const dynamic = "force-dynamic";
+
+const BodySchema = z.object({
+  code: z.string().trim().min(1).max(32),
+  // Optional ?ref value from the attribution cookie, passed by the caller.
+  ref: z.string().trim().max(64).optional(),
+});
+
+const MESSAGES: Record<RedeemStatus, string> = {
+  saved: "Code accepted. Your credit arrives when you launch an agent with Hivra credits.",
+  already_saved: "Code already accepted. Your credit arrives when you launch an agent with Hivra credits.",
+  already_granted: "You already have this credit.",
+  invalid_code: "That code did not work.",
+  disabled: "That code did not work.",
+};
+
+/** The user's promo credit lines. Empty and cheap while the promo is off. */
+export async function GET() {
+  const { userId } = await auth();
+  if (!userId) return apiError("Unauthorized", 401);
+  if (!isVenicePromoEnabled()) return apiSuccess({ enabled: false, lines: [], codeEntry: false });
+  try {
+    const lines = await getUserPromoLines(userId);
+    return apiSuccess({
+      enabled: true,
+      codeEntry: true,
+      lines: lines.map((l) => ({ grantId: l.grantId, label: l.label, expiresAt: l.expiresAt })),
+    });
+  } catch {
+    return apiSuccess({ enabled: false, lines: [], codeEntry: false });
+  }
+}
+
+/** Redeem a promo code. Saves it; the credit is granted at launch. */
+export async function POST(request: NextRequest) {
+  const { userId } = await auth();
+  if (!userId) return apiError("Unauthorized", 401);
+
+  const rateLimitError = enforceAuthenticatedRouteRateLimit(request, {
+    routeKey: "venice_promo_redeem",
+    userId,
+    ...RATE_LIMIT_PRESETS.settingsWrite,
+  });
+  if (rateLimitError) return rateLimitError;
+
+  const parsed = BodySchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return apiError(MESSAGES.invalid_code, 400);
+
+  try {
+    const { status } = await redeemVeniceCode({ userId, code: parsed.data.code, ref: parsed.data.ref ?? null });
+    const ok = status === "saved" || status === "already_saved" || status === "already_granted";
+    if (!ok) return apiError(MESSAGES[status], 400);
+    return apiSuccess({ status, message: MESSAGES[status] });
+  } catch (error) {
+    return apiError(
+      "Could not apply that code. Try again.",
+      500,
+      { failureType: "venice_promo_redeem_failed", errorName: error instanceof Error ? error.name : typeof error },
+      undefined,
+      { source: "billing/venice-promo", route: "/api/billing/venice-promo", method: "POST", userId, cause: error }
+    );
+  }
+}
