@@ -2437,7 +2437,7 @@ describe("POST /api/hivra/agents", () => {
     expect(provisionScript).toContain("HIVRA_MODEL_BASE_URL_B64=");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/v1'");
     expect(provisionScript).toContain("HIVRA_HERMES_MODEL_B64=");
-    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-pro'");
+    expect(provisionScript).toContain("write_secret_b64 'kimi-k2-6'");
     const openClawExec = provisionScript.split("\n").find((line) => line.trimStart().startsWith("exec env ")) ?? "";
     expect(openClawExec).not.toContain("hven_live_TESTKEY123");
     expect(mockAgentInsert).toHaveBeenCalledWith(
@@ -2513,7 +2513,7 @@ describe("POST /api/hivra/agents", () => {
     expect(provisionScript).toContain("HIVRA_MODEL_BASE_URL_B64=");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/v1'");
     expect(provisionScript).toContain("HIVRA_HERMES_MODEL_B64=");
-    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-pro'");
+    expect(provisionScript).toContain("write_secret_b64 'kimi-k2-6'");
     const agentZeroExec = provisionScript.split("\n").find((line) => line.trimStart().startsWith("exec env ")) ?? "";
     expect(agentZeroExec).not.toContain("hven_live_AZKEY123");
     expect(mockAgentInsert).toHaveBeenCalledWith(
@@ -2575,7 +2575,7 @@ describe("POST /api/hivra/agents", () => {
     expect(provisionScript).toContain("write_secret_b64 'hven_live_TESTKEY123'");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/anthropic'");
     expect(provisionScript).toContain("write_secret_b64 'claude-sonnet-4-6'");
-    expect(provisionScript).not.toContain("deepseek-v4-pro");
+    expect(provisionScript).not.toContain("kimi-k2-6");
     expect(mockAgentInsert).toHaveBeenCalledWith(
       expect.objectContaining({ type: "claude-code", managed_venice: true }),
     );
