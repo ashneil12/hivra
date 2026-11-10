@@ -14,7 +14,9 @@
 // available).
 //
 // Failure modes:
-//   * VENICE_API_KEY missing → fall back to static (and warn).
+//   * No upstream key → the public models list is fetched anonymously.
+//   * Key rejected (401/403/429) → retried once anonymously.
+//   * A failed refresh keeps the last good live map and retries in 30s.
 //   * Venice API errors / network down → fall back to static, retry next TTL.
 //   * Live entry malformed → drop that entry, keep the rest, keep static for it.
 //
@@ -35,11 +37,14 @@ interface PricingCacheEntry {
   source: PricingSource;
   fetchedAt: number;
   liveModelCount: number;
+  ttlMs: number;
 }
 
 const VENICE_LIVE_MODELS_URL = "https://api.venice.ai/api/v1/models?type=text";
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 5_000;
+const FETCH_TIMEOUT_MS = 8_000;
+// After a failed refresh, retry soon instead of pinning the fallback for a full TTL.
+const FAILURE_RETRY_MS = 30 * 1000;
 
 let cache: PricingCacheEntry | null = null;
 let inFlight: Promise<PricingCacheEntry> | null = null;
@@ -132,6 +137,19 @@ function liftLiveModel(
   };
 }
 
+// Venice's /models list is publicly readable, so the fetch must not depend on
+// the upstream key pool: a missing or rejected key used to put the whole proxy
+// on the static catalog. We still send a key when one is configured (it avoids
+// the anonymous rate limit), and fall back to an anonymous call if Venice
+// refuses that key.
+async function requestLiveModels(key: string | null, signal: AbortSignal): Promise<Response> {
+  return fetch(VENICE_LIVE_MODELS_URL, {
+    headers: key ? { Authorization: `Bearer ${key}` } : {},
+    cache: "no-store",
+    signal,
+  });
+}
+
 async function fetchLiveVenicePricing(): Promise<{
   map: Map<string, VeniceChatModelPrice>;
   liveModelCount: number;
@@ -139,28 +157,23 @@ async function fetchLiveVenicePricing(): Promise<{
   const resolvedKey = resolveManagedVeniceUpstreamKey({
     endpoint: "/api/v1/models?type=text",
   });
-  if (!resolvedKey) {
-    throw new Error("Venice upstream key is not configured");
-  }
 
+  // One timeout covers headers and body, for both attempts.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let response: Response;
+  let json: { data?: unknown };
   try {
-    response = await fetch(VENICE_LIVE_MODELS_URL, {
-      headers: { Authorization: `Bearer ${resolvedKey.key}` },
-      cache: "no-store",
-      signal: controller.signal,
-    });
+    let response = await requestLiveModels(resolvedKey?.key ?? null, controller.signal);
+    if (resolvedKey && (response.status === 401 || response.status === 403 || response.status === 429)) {
+      response = await requestLiveModels(null, controller.signal);
+    }
+    if (!response.ok) {
+      throw new Error(`Venice /v1/models returned HTTP ${response.status}`);
+    }
+    json = (await response.json()) as { data?: unknown };
   } finally {
     clearTimeout(timer);
   }
-
-  if (!response.ok) {
-    throw new Error(`Venice /v1/models returned HTTP ${response.status}`);
-  }
-
-  const json = (await response.json()) as { data?: unknown };
   const items = Array.isArray(json.data) ? json.data : [];
 
   const baseline = staticMap();
@@ -197,7 +210,7 @@ export async function getVenicePricingMap(
 ): Promise<VenicePricingMapResult> {
   const now = Date.now();
 
-  if (!opts.forceRefresh && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
+  if (!opts.forceRefresh && cache && now - cache.fetchedAt < cache.ttlMs) {
     return {
       map: cache.map,
       source: cache.source,
@@ -224,23 +237,29 @@ export async function getVenicePricingMap(
         source: liveModelCount > 0 ? "merged" : "fallback",
         fetchedAt: now,
         liveModelCount,
+        ttlMs: liveModelCount > 0 ? CACHE_TTL_MS : FAILURE_RETRY_MS,
       };
       cache = entry;
       return entry;
     } catch (error) {
-      log.warn("Live Venice pricing fetch failed; settlements will use the static catalog", {
+      log.warn("Live Venice pricing fetch failed; settlements will use the last live prices, or the static catalog if none", {
         source: "venice-live-pricing",
         route: VENICE_LIVE_MODELS_URL,
         failureType: "venice_live_pricing_fetch_failed",
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      const entry: PricingCacheEntry = {
-        map: staticMap(),
-        source: "fallback",
-        fetchedAt: now,
-        liveModelCount: 0,
-      };
+      // Keep the last good live prices over the static catalog when a refresh
+      // fails; only fall back to the catalog when we never had live data.
+      const entry: PricingCacheEntry = cache && cache.liveModelCount > 0
+        ? { ...cache, fetchedAt: now, ttlMs: FAILURE_RETRY_MS }
+        : {
+            map: staticMap(),
+            source: "fallback",
+            fetchedAt: now,
+            liveModelCount: 0,
+            ttlMs: FAILURE_RETRY_MS,
+          };
       cache = entry;
       return entry;
     } finally {
