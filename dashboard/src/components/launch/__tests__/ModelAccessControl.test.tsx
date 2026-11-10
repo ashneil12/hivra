@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom";
 import { useEffect, useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
 import { DEFAULT_MODEL_ACCESS, type LaunchModelAccess, type LaunchProfileId } from "@/lib/launch/contracts";
 import {
@@ -141,7 +141,7 @@ describe("ModelAccessControl", () => {
     const onAddCredit = jest.fn();
     render(<Harness profileId="hermes" balance={EMPTY} onAddCredit={onAddCredit} />);
     expect(choice(/^Hivra credits/)).toBeDisabled();
-    expect(choice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
+    expect(choice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting.");
     fireEvent.click(within(choices()).getByRole("button", { name: "Add credit" }));
     expect(onAddCredit).toHaveBeenCalledTimes(1);
   });
@@ -156,5 +156,61 @@ describe("ModelAccessControl", () => {
     fireEvent.change(screen.getByLabelText("Model ID"), { target: { value: "llama3.2" } });
     expect(latest.access).toMatchObject({ baseUrl: "https://llm.example.test/v1", model: "llama3.2" });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("says credits are powered by Venice, and badges only private models", () => {
+    render(<Harness profileId="codex" />);
+    expect(choice(/^Hivra credits/)).toHaveTextContent("Powered by Venice");
+    fireEvent.click(choice(/^Hivra credits/));
+    const model = screen.getByRole("combobox", { name: "Model" });
+    expect(within(model).getByRole("option", { name: /^Kimi K2\.6.* · Private$/ })).toBeInTheDocument();
+    expect(within(model).getByRole("option", { name: "Claude Opus 4.8 (via Venice)" })).toBeInTheDocument();
+  });
+
+  it("starts at $0 on credits with one clear next step", () => {
+    const onAddCredit = jest.fn();
+    render(<Harness profileId="hermes" balance={EMPTY} initial={{ mode: "credits" }} onAddCredit={onAddCredit} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Add credit to start chatting, or choose another option.");
+    fireEvent.click(within(choices()).getByRole("button", { name: "Add credit" }));
+    expect(onAddCredit).toHaveBeenCalledTimes(1);
+    fireEvent.click(choice(/^Set up inside Hermes/));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  describe("checking a pasted Venice key", () => {
+    const realFetch = global.fetch;
+    afterEach(() => { global.fetch = realFetch; jest.useRealTimers(); });
+
+    async function pasteKey(result: unknown) {
+      jest.useFakeTimers();
+      const fetchMock = jest.fn().mockResolvedValue({ json: async () => result });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<Harness profileId="codex" initial={{ mode: "api-key", source: "custom" }} />);
+      fireEvent.change(screen.getByLabelText("Venice AI API key"), { target: { value: "venice-key-12345678" } });
+      expect(fetchMock).not.toHaveBeenCalled();
+      await act(async () => { await jest.advanceTimersByTimeAsync(700); });
+      return fetchMock;
+    }
+
+    it("says the key works and lists what it can use, with private models badged", async () => {
+      const fetchMock = await pasteKey({ ok: true, models: [
+        { id: "kimi-k2-6", name: "Kimi K2.6", privacy: "private" },
+        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", privacy: "anonymized" },
+      ] });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Key works.")).toBeInTheDocument();
+      const model = screen.getByRole("combobox", { name: "Model" });
+      expect(within(model).getAllByRole("option").map(option => option.textContent)).toEqual(["Kimi K2.6 · Private", "Claude Sonnet 4.6"]);
+    });
+
+    it("says plainly when Venice doesn't accept the key", async () => {
+      await pasteKey({ ok: false, reason: "invalid_key" });
+      expect(screen.getByText("Venice doesn't accept this key. Check it and try again.")).toBeInTheDocument();
+    });
+
+    it("says when Venice couldn't be reached", async () => {
+      await pasteKey({ ok: false, reason: "unreachable" });
+      expect(screen.getByText(/Couldn't reach Venice to check this key/)).toBeInTheDocument();
+    });
   });
 });

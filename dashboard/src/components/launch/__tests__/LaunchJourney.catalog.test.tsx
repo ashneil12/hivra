@@ -155,16 +155,18 @@ describe("every catalog agent launches in the Launch journey", () => {
       .toHaveAttribute("href", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1&connect=telegram`);
   });
 
-  it("starts Hermes set up inside itself at $0, with credits disabled and a way to add some", async () => {
+  it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {
     summaryMock.mockResolvedValue(balance(0));
     await chooseAgent("Hermes");
-    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
-    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting.");
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Powered by Venice");
+    expect(screen.getByText("Add credit to start chatting, or choose another option.")).toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name: "Add credit" }));
     expect(screen.getByRole("dialog", { name: "Add Hivra credit" })).toBeInTheDocument();
 
+    fireEvent.click(modelChoice(/^Set up inside Hermes after it opens/));
     const review = await reviewLaunch();
     expect(review.getByText("Choose a model provider inside Hermes after it opens.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
@@ -190,9 +192,8 @@ describe("every catalog agent launches in the Launch journey", () => {
     tokenGeoStatus = "blocked";
     summaryMock.mockResolvedValue(balance(0, 7));
     await chooseAgent("Hermes");
-    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
-    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
-    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting."));
+    expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("combobox", { name: "Pay from" })).not.toBeInTheDocument();
   });
 

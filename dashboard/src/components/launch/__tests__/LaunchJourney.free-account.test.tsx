@@ -76,7 +76,7 @@ beforeEach(() => {
   targets = [];
   fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
   summaryMock.mockResolvedValue({ ok: true, summary: { wallets: {
-    card: { balanceMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
+    card: { balanceMicroUsd: 5_000_000, availableMicroUsd: 5_000_000, reservedMicroUsd: 0 },
     hermesos: { tokenDisplay: "0", lockedValueMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
   } } });
   global.fetch = jest.fn(async (input: RequestInfo | URL) => {

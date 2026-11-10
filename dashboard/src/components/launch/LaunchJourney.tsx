@@ -167,10 +167,20 @@ import {
 import { PLANS } from "@/lib/subscription/plans";
 
 import styles from "./LaunchJourney.module.css";
+import { attributionFromParams, captureVeniceAttribution } from "@/lib/venice/attribution";
+import { parseAgentParam, parseVeniceInference, withVeniceInference } from "@/lib/venice/launch-link";
 
 /** The cheapest paid plan's monthly price, as the Free notice names it. */
 const firstPaidPrice = "$" + (PLANS.operator.price / 100).toFixed(2);
 import { ModelAccessControl } from "./ModelAccessControl";
+
+async function prepareVenicePromoForLaunch(): Promise<void> {
+  try {
+    await fetch("/api/billing/venice-promo?prepareLaunch=1", { cache: "no-store" });
+  } catch {
+    // The promo is optional: Launch reads the balance either way.
+  }
+}
 
 function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"], poolExempt = false): boolean {
   if (!plan?.usage) return false;
@@ -772,7 +782,14 @@ export function LaunchJourney(
   const targetValues = searchParams?.getAll("targetId") ?? [];
   const targetValuesKey = targetValues.join("\u0000");
   const requestedKindParam = searchParams?.get("kind") ?? null;
-  const requestedProfileParam = searchParams?.get("profile") ?? null;
+  // `agent=` is the short deep-link spelling of `profile=` (Venice links).
+  const requestedProfileParam = searchParams?.get("profile") ?? parseAgentParam(searchParams?.get("agent"));
+  const inferenceParam = parseVeniceInference(searchParams?.get("inference"));
+  const refParam = searchParams?.get("ref") ?? null;
+  const codeParam = searchParams?.get("code") ?? null;
+  useEffect(() => {
+    captureVeniceAttribution(attributionFromParams(key => key === "ref" ? refParam : key === "code" ? codeParam : null));
+  }, [refParam, codeParam]);
   const startParam = searchParams?.get("start") ?? null;
   const draftParam = searchParams?.get("draft") ?? null;
   const upgradedParam = searchParams?.get("upgraded") ?? null;
@@ -983,7 +1000,7 @@ export function LaunchJourney(
       const details = PROFILE_DETAILS[requestedProfile];
       const name = linkedTemplate?.name ?? defaultLaunchName(requestedProfile, []);
       if (!linkedTemplate?.name) autoNameRef.current = { launchRequestId: next.launchRequestId, name };
-      return {
+      return withVeniceInference({
         ...next,
         stage: "review",
         resourceKind: details.resourceKind,
@@ -991,7 +1008,7 @@ export function LaunchJourney(
         name,
         resources: { ...details.recommended },
         template: linkedTemplate ? { id: linkedTemplate.id, name: linkedTemplate.name } : null,
-      };
+      }, inferenceParam);
     };
     let initial: LaunchDraft;
     if (stored && (stored.launchState === "uncertain" || stored.launchState === "submitting")) {
@@ -1022,7 +1039,7 @@ export function LaunchJourney(
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
 
   useEffect(() => {
     let active = true;
@@ -1102,7 +1119,10 @@ export function LaunchJourney(
     }
     let active = true;
     setCreditsBalance({ state: "loading" });
-    void requestManagedVeniceSummary().then(result => {
+    // The Venice promo endpoint records a /venice attribution cookie for this
+    // account and grants a redeemed launch credit before the balance is read.
+    // It answers at once when the promo is off; a failure never blocks Launch.
+    void prepareVenicePromoForLaunch().then(() => requestManagedVeniceSummary()).then(result => {
       if (!active) return;
       setCreditsBalance(result.ok
         ? { state: "known", cardMicroUsd: result.summary.wallets.card.availableMicroUsd, hermesosMicroUsd: result.summary.wallets.hermesos.availableMicroUsd }
@@ -1130,13 +1150,25 @@ export function LaunchJourney(
     return () => { active = false; };
   }, []);
 
-  // Until the owner chooses, Hermes runs on Hivra credits when they have
-  // some, and every other agent signs in inside itself after it opens.
+  // Until the owner chooses, every agent that can use Hivra credits (Venice)
+  // starts on them, even at $0, where the choice offers to add credit. An
+  // agent signs in inside itself only where credits aren't offered.
+  const defaultSelfManaged = destination.mode === "self-managed";
+  const defaultProviderComputer = defaultSelfManaged && isWholeProviderComputer(destination.selectedTarget);
+  const defaultTarget = destination.selectedTarget;
+  const modelDefaultContext = (profileId: LaunchProfileId | null) => ({
+    selfHosted,
+    providerComputer: defaultProviderComputer,
+    selfManaged: defaultSelfManaged,
+    modelSettingsSupported: !defaultSelfManaged
+      || targetSupportsLaunchModelSettings(defaultTarget, profileId ? PROFILE_DETAILS[profileId].runtimeId : undefined),
+  });
   useLayoutEffect(() => {
-    const context = { balance: creditsBalance, selfHosted };
+    const context = modelDefaultContext(draft?.profileId ?? null);
     if (!draft || withModelAccessDefault(draft, context) === draft) return;
-    setDraft(current => current ? withModelAccessDefault(current, context) : current);
-  }, [creditsBalance, draft, selfHosted]);
+    setDraft(current => current ? withModelAccessDefault(current, modelDefaultContext(current.profileId)) : current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- modelDefaultContext only reads the values listed here.
+  }, [draft, selfHosted, defaultSelfManaged, defaultProviderComputer, defaultTarget]);
 
   // Until the owner chooses, a browser follows the plan on Hivra Cloud
   // and the selected host's measured capacity on their own infrastructure.
@@ -1530,16 +1562,11 @@ export function LaunchJourney(
     modelSettingsSupported,
     balance: creditsBalance,
   }) : [];
-  // Hermes' default waits for the balance: it starts on credits only when
-  // there are some.
-  const modelDefaultPending = Boolean(draft.profileId && modelAccessShown
-    && draft.modelAccess.source === "recommended"
-    && recommendedModelAccessMode(draft.profileId, creditsBalance, selfHosted) === null);
   const modelProblem = digitalOceanLane
     ? digitalOceanHarness ? digitalOceanModelProblem(digitalOceanHarness, draft.digitalOcean, currentPastedKey, savedKeys) : null
     : !draft.profileId || !modelAccessShown
     ? null
-    : modelDefaultPending || (draft.modelAccess.mode === "credits" && creditsBalance.state === "loading")
+    : draft.modelAccess.mode === "credits" && creditsBalance.state === "loading"
       ? "Checking your Hivra credits…"
       : modelAccessProblem(draft.profileId, draft.modelAccess, {
         name: draft.name,
@@ -1623,7 +1650,7 @@ export function LaunchJourney(
         : recommendedHere(profileId, mode, destination.selectedTarget, plan),
       modelAccess: {
         ...freshModelAccess(),
-        mode: recommendedModelAccessMode(profileId, creditsBalance, selfHosted) ?? "native",
+        mode: recommendedModelAccessMode(profileId, modelDefaultContext(profileId)),
       },
       windowsIsoVolume: null,
       windowsIsoEvidence: null,

@@ -127,7 +127,7 @@ describe("GET /api/cron/venice-pricing-drift-check", () => {
   it("detects per-model rate drift and fires a live-drift ops alert", async () => {
     global.fetch = jest.fn().mockResolvedValue(
       buildLiveResponse({
-        "deepseek-v4-flash": { input: 0.99, output: 0.35, cache_input: 0.028 },
+        "deepseek-v4-flash": { input: 0.99, output: 0.275, cache_input: 0.028 },
       }),
     );
 
@@ -141,7 +141,7 @@ describe("GET /api/cron/venice-pricing-drift-check", () => {
     expect(body.data.driftedModels[0]).toMatchObject({
       model: "deepseek-v4-flash",
       field: "input",
-      catalogUsdPerMillion: 0.17,
+      catalogUsdPerMillion: 0.138,
       liveUsdPerMillion: 0.99,
     });
 

@@ -481,12 +481,12 @@ describe("LaunchPage", () => {
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Customize" })).toHaveAttribute("aria-expanded", "false");
     expect(within(card).getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
-    // Codex signs in inside itself by default; a key or Hivra credits are the
-    // other two choices, in the same control every agent uses.
+    // Codex starts on Hivra credits (Venice) by default; signing in or a key
+    // are the other two choices, in the same control every agent uses.
     const modelAccess = within(card).getByRole("group", { name: "Model access" });
-    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(modelAccess).getByRole("button", { name: /^Use my API key/ })).toHaveAttribute("aria-pressed", "false");
-    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/balloon|opportunistic|shared scheduling/i)).not.toBeInTheDocument();
 
     fireEvent.click(within(card).getByRole("button", { name: "Change" }));
@@ -505,8 +505,8 @@ describe("LaunchPage", () => {
     // page's tabs and the note Hivra gives the agent (ATT-15).
     expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
       "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
-    expect(within(review).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
-    expect(within(review).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
+    expect(within(review).getByText(/^Hivra credits.* · DeepSeek V4 Pro \(via Venice\)$/)).toBeInTheDocument();
+    expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(review).getByText("Creates one computer and installs Codex. Nothing is bought.")).toBeInTheDocument();
     expect(within(screen.getByLabelText("Recommended settings", { selector: "dl" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("Launch review")).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();
@@ -531,11 +531,11 @@ describe("LaunchPage", () => {
     }));
     expect(await screen.findByRole("heading", { name: "Codex is being created." })).toBeInTheDocument();
     expect(routerPushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=terminal",
+      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(screen.getByRole("link", { name: "Open Codex" })).toHaveAttribute(
       "href",
-      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=terminal",
+      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(screen.getAllByTestId("launch-primary-action")).toHaveLength(1);
   });
@@ -637,7 +637,7 @@ describe("LaunchPage", () => {
     expect(await screen.findByRole("heading", { name: "Codex is being created." })).toBeInTheDocument();
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledTimes(1));
     expect(routerPushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/77777777-7777-4777-8777-777777777777?welcome=1&tab=terminal",
+      "/dashboard/agent/77777777-7777-4777-8777-777777777777?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(createAgentMock).toHaveBeenCalledTimes(1);
   });
