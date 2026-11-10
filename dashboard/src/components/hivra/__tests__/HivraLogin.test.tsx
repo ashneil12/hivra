@@ -164,3 +164,24 @@ it("signing in again to Codex does not treat the old sign-in as finished, and wa
   expect(onDone).toHaveBeenCalledTimes(1);
   jest.useRealTimers();
 });
+
+it("does not report a Codex sign-in as done while the computer still holds the old one", async () => {
+  jest.useFakeTimers();
+  try {
+    start.mockResolvedValue({ url: "https://auth.openai.test/device", code: "ABCD-1234", deviceAuth: true });
+    const status = jest.mocked(boxLoginStatus);
+    status.mockResolvedValue({ loggedIn: true, fresh: false });
+    const onDone = jest.fn();
+    render(<HivraLogin boxUrl="https://box.test" onDone={onDone} agentKind="codex" />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Sign in with ChatGPT/ })); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+    expect(status).toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    status.mockResolvedValue({ loggedIn: true, fresh: true });
+    await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+    jest.mocked(boxLoginStatus).mockResolvedValue({ loggedIn: false });
+  }
+});

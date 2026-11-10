@@ -167,7 +167,9 @@ export function HivraLogin({
       if (!document.hidden) {
         const st = await boxLoginStatus(boxUrl, token).catch(() => null);
         if (controller.signal.aborted) return;
-        if (st?.loggedIn) {
+        // fresh === false: still signed in on the previous account, the new
+        // sign-in has not landed yet.
+        if (st?.loggedIn && st.fresh !== false) {
           setStep("done");
           onDoneRef.current();
           return;
