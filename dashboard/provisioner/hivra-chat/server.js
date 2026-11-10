@@ -2632,7 +2632,7 @@ function handleLoginCompleteCodex(res) {
     const out = String(so || "") + String(se || "");
     // Still signed in on the previous credential is not a finished sign-in.
     const ok = /logged in/i.test(out) && !/not logged in/i.test(out) && codexSignInFresh() !== false;
-    jsonRes(res, ok ? 200 : 202, { ok });
+    jsonRes(res, ok ? 200 : 202, ok ? { ok } : { ok, error: "The new sign-in hasn't finished yet. Finish it on the sign-in page, then try again." });
   });
 }
 
