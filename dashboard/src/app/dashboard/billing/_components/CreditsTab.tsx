@@ -4,6 +4,7 @@ import type { Variants } from "framer-motion";
 import { CreditsPanel, CryptoTopUpPanel } from "@/components/billing/BillingPanels";
 import { ManagedVeniceByokSwitchPanel } from "@/components/billing/ManagedVeniceByokSwitchPanel";
 import { ManagedVeniceKeysPanel } from "@/components/billing/ManagedVeniceKeysPanel";
+import { VenicePromoBox } from "@/components/billing/VenicePromoBox";
 import { ManagedVeniceWalletPanel } from "@/components/billing/ManagedVeniceWalletPanel";
 import type { BillingController } from "../useBillingController";
 import styles from "../Billing.module.css";
@@ -45,6 +46,7 @@ export function CreditsTab({ c, variants }: { c: BillingController; variants: Va
                 tokenUnit={c.tokenPayments.displayUnit}
                 onDeposit={(walletType) => c.openManagedVeniceDeposit(walletType)}
               />
+              <VenicePromoBox />
               <ManagedVeniceKeysPanel keys={summary.keys} />
               <ManagedVeniceByokSwitchPanel />
             </>

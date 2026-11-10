@@ -32,6 +32,7 @@ import {
   type ManagedChatSurchargeEvidence,
   type ManagedChatSurchargePlan,
 } from "@/lib/venice/chat-surcharges";
+import { tryGrantLaunchCredit } from "@/lib/venice/promo/service";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
@@ -322,6 +323,12 @@ export async function authorizeManagedVeniceChat(params: {
   }
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
+
+  // A card-wallet user who redeemed the Venice code before their key was minted
+  // gets the launch credit on their first request (flag-gated, best-effort).
+  if (walletType === "card") {
+    await tryGrantLaunchCredit({ userId: verifiedKey.userId });
+  }
 
   let budgeted: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>;
   try {
