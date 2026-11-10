@@ -168,6 +168,15 @@ describe("manageCapabilitiesFor", () => {
       expect(busy.start).toMatchObject({ state: "blocked", code: "operation_in_progress" });
     });
 
+    it("offers Try again to an agent in error that kept its computer, and launch again when it never set up", () => {
+      for (const name of ["claude", "aeon"] as const) {
+        const kept = manageCapabilitiesFor({ ...rows[name], status: "error" }, { preparedMatch: true }).power;
+        expect(kept.start).toEqual({ state: "available" });
+        const never = manageCapabilitiesFor({ ...rows[name], status: "error", provisioned_at: null }, { preparedMatch: true }).power;
+        expect(never.start).toMatchObject({ state: "blocked", code: "never_set_up" });
+      }
+    });
+
     it("keeps other kinds of computer in error on the check-first message", () => {
       const errored = manageCapabilitiesFor({ ...rows.hetznerUbuntu, status: "error" }, { preparedMatch: true }).power;
       expect(errored.start).toMatchObject({ state: "blocked", code: "needs_check" });

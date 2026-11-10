@@ -119,7 +119,7 @@ function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Mana
   const errored = row.status === "error";
   const start = busy ? blocked("operation_in_progress", WAIT)
     : stopped ? available
-      : errored && variant === "ubuntu-proxmox"
+      : errored && (variant === "ubuntu-proxmox" || variant === "chat-agent" || variant === "dashboard-agent")
         ? (errorKeepsComputer(row)
           ? available
           : blocked("never_set_up", "This computer never finished setting up, so there is nothing to start. Delete it, then launch it again."))
