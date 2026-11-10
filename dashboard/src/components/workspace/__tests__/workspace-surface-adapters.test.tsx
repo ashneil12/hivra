@@ -242,6 +242,27 @@ describe("workspace surface adapters", () => {
     expect(desktop.container.querySelector('[data-testid="surface-frame"]')).not.toBeNull();
   });
 
+  it("gives a Linux computer (ubuntu-server) files and a terminal and never a desktop", () => {
+    const adapter = resolveWorkspaceSurfaceAdapter({
+      ...hivraSource,
+      uid: "x-server-one",
+      agent: {
+        ...hivraSource.agent,
+        id: "server-one",
+        type: "linux-desktop",
+        computer_profile: "ubuntu-server",
+      },
+    });
+
+    expect(adapter?.computer.capabilities.surfaces).toEqual(["files", "terminal"]);
+    expect(adapter?.descriptors.map(({ surface }) => surface)).toEqual(["files", "terminal"]);
+    // Even when asked for the desktop directly, nothing mounts one.
+    const asked = render(adapter!.renderSurface("desktop", jest.fn())!);
+    expect(asked.container.querySelector('[data-testid="real-remote-desktop"]')).toBeNull();
+    expect(asked.container.querySelector('[data-testid="real-omarchy-desktop"]')).toBeNull();
+    expect(asked.container.querySelector('[data-testid="real-windows-desktop"]')).toBeNull();
+  });
+
   it("opens a profile-less computer on the general Linux desktop", () => {
     // A null computer_profile is Ubuntu — the only image before profiles existed.
     const adapter = resolveWorkspaceSurfaceAdapter({

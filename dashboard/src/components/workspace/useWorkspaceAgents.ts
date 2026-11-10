@@ -76,7 +76,7 @@ const HIVRA_SUBSTRATES = new Set(["proxmox-kvm", "provider-vm", "gvisor", "do-ma
 const HIVRA_DEPLOYMENT_MODES = new Set(["hivra-managed", "self-managed"]);
 // A computer's operating system: Home names and opens it by this, and an
 // unknown value is dropped rather than shown.
-const HIVRA_COMPUTER_PROFILES = new Set(["ubuntu-desktop", "omarchy", "windows", "linux-terminal"]);
+const HIVRA_COMPUTER_PROFILES = new Set(["ubuntu-desktop", "ubuntu-server", "omarchy", "windows", "linux-terminal"]);
 
 /** A known enum value, or undefined for anything else (never a guess). */
 function knownValue<T extends string>(value: unknown, known: Set<string>): T | undefined {

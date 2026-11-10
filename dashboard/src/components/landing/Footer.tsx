@@ -28,7 +28,6 @@ const COLUMNS = [
     { label: "Status", href: "/status" },
   ] },
   { title: "Explore", links: [
-    { label: "Open source", href: "/#open-source" },
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
     { label: "Litepaper", href: LITEPAPER_HREF, tokenSurface: true },

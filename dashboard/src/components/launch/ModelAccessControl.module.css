@@ -63,8 +63,8 @@
   background: none;
   padding: 0 0.1rem;
   color: inherit;
-  font: 600 0.7rem var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
   text-decoration: underline;
   text-underline-offset: 0.25em;
   text-transform: none;
@@ -88,9 +88,9 @@
 .field > label:not(.checkbox),
 .advanced label {
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .field input:not([type="checkbox"]),
@@ -131,8 +131,8 @@
   background: transparent;
   color: inherit;
   padding: 0.45rem 0.7rem;
-  font: 700 0.7rem var(--font-mono), monospace;
-  letter-spacing: 0.04em;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
   cursor: pointer;
   border-radius: var(--hg-radius-sm);
 }
@@ -176,8 +176,8 @@
   display: flex;
   align-items: center;
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
 }

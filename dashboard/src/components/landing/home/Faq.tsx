@@ -12,12 +12,11 @@ export default function Faq({ items = HOMEPAGE_FAQ }: { items?: readonly { q: st
   return (
     <section id="faq" className={styles.faq} aria-labelledby="faq-heading">
       <header className={styles.faqHead}>
-        <span className={styles.eyebrow} aria-hidden="true" />
         <h2 id="faq-heading" className={styles.sectionTitle}>{FAQ_TITLE}</h2>
       </header>
       <div className={styles.faqList}>
-        {items.map(({ q, a }, index) => (
-          <details key={q} className={styles.faqItem} open={index === 0}>
+        {items.map(({ q, a }) => (
+          <details key={q} className={styles.faqItem}>
             <summary>
               <h3>{q}</h3>
               <Plus size={20} aria-hidden="true" />

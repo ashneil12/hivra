@@ -12,6 +12,7 @@ import { Folder, FileText, CornerLeftUp, Loader2, AlertTriangle, X, RefreshCw, P
 
 import styles from "./HivraFiles.module.css";
 
+import { HivraGit } from "@/components/hivra/HivraGit";
 import { listBoxFiles, readBoxFile, writeBoxFile, type BoxFileEntry } from "@/lib/hivra/agent-api";
 import type { WorkspaceFilesAccess } from "@/lib/hivra/workspace-browser-bridge";
 
@@ -31,7 +32,44 @@ function focusLost(): boolean {
   return !active || active === document.body;
 }
 
-export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: string; token?: string | null; access?: WorkspaceFilesAccess; workspaceRoot?: boolean }) {
+type FilesBrowserProps = { boxUrl: string; token?: string | null; access?: WorkspaceFilesAccess; workspaceRoot?: boolean };
+
+export type FilesView = "files" | "changes";
+
+/**
+ * The computer's files, and, when `showChanges` is on, a Changes view beside
+ * them: the code changes (git) in this computer's projects. The switch lives
+ * here so an owner who has never heard of git still finds it by looking at
+ * their files. `view` and `onViewChange` let a page open it directly (the old
+ * Git link); without them the switch keeps its own state. Hosts that pass an
+ * `access` adapter (provider desktops) never get the switch: their shared
+ * folder has no git behind it.
+ */
+export function HivraFiles({ showChanges, view, onViewChange, ...browser }: FilesBrowserProps & {
+  showChanges?: boolean;
+  view?: FilesView;
+  onViewChange?: (view: FilesView) => void;
+}) {
+  const [ownView, setOwnView] = useState<FilesView>("files");
+  const offered = Boolean(showChanges) && !browser.access;
+  if (!offered) return <FilesBrowser {...browser} />;
+  const current = view ?? ownView;
+  const choose = (next: FilesView) => { setOwnView(next); onViewChange?.(next); };
+  return (
+    <div className={styles.shell}>
+      <div className={styles.viewSwitch} role="group" aria-label="Files view">
+        <button type="button" aria-pressed={current === "files"} onClick={() => choose("files")} className={styles.viewButton}>Files</button>
+        <button type="button" aria-pressed={current === "changes"} onClick={() => choose("changes")} className={styles.viewButton}>Changes</button>
+        {current === "changes" ? <span className={styles.viewNote}>Code changes in this computer’s projects</span> : null}
+      </div>
+      {/* The browser stays mounted so its folder and open file survive a look at Changes. */}
+      <div className={styles.viewPane} hidden={current !== "files"}><FilesBrowser {...browser} /></div>
+      {current === "changes" ? <div className={styles.viewPane}><HivraGit boxUrl={browser.boxUrl} token={browser.token} /></div> : null}
+    </div>
+  );
+}
+
+function FilesBrowser({ boxUrl, token, access, workspaceRoot }: FilesBrowserProps) {
   const [path, setPath] = useState(".");
   const [entries, setEntries] = useState<BoxFileEntry[]>([]);
   const [error, setError] = useState<string | null>(null);

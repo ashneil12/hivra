@@ -237,7 +237,7 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
         {attentionCount > 0 && (
           <Link href={`${DASHBOARD_RUNTIME_LIST_HREF}&attention=1`} onClick={onClose}
             className="hivra-more-sheet__row hivra-more-sheet__row--attention"
-            aria-label={`${attentionCount} agents or computers need attention`}>
+            aria-label={`${attentionCount} agents or computers need you`}>
             <AlertCircle size={18} aria-hidden /><span className="hivra-more-sheet__label">{text.needsAttention}</span>
             <span className="hivra-more-sheet__badge" aria-hidden>{attentionCount}</span>
           </Link>

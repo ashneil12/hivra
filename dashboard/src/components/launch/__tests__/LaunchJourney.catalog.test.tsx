@@ -103,15 +103,19 @@ async function chooseAgent(name: string) {
   render(<LaunchJourney />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
-  expect(screen.getByRole("heading", { name: `${name} — here's the plan` })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
+  // Hivra's recommended settings are summarised; Change opens the full controls.
+  fireEvent.click(screen.getByRole("button", { name: "Change" }));
 }
 
 const modelChoice = (name: RegExp) => within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name });
 
+/** Closes Advanced so the recommended settings summary shows what will launch. */
 async function reviewLaunch() {
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-  fireEvent.click(screen.getByTestId("launch-primary-action"));
-  return within(screen.getByLabelText("Launch review"));
+  const hide = screen.queryByRole("button", { name: "Hide advanced" });
+  if (hide) fireEvent.click(hide);
+  return within(screen.getByTestId("launch-journey"));
 }
 
 describe("every catalog agent launches in the Launch journey", () => {
@@ -213,7 +217,7 @@ describe("every catalog agent launches in the Launch journey", () => {
 
     let review = await reviewLaunch();
     expect(review.queryByText(/Honcho/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Send my saved Honcho key/ }));
     review = await reviewLaunch();
     expect(review.getByText("Honcho, with your saved key ••9d1c, sent to Hermes 1's computer")).toBeInTheDocument();

@@ -136,7 +136,7 @@ if [ "$KIND_BEFORE" = linux-desktop ]; then
   done
 fi
 # Linux computers keep their terminals in the shared Hivra workspace.
-if [ "$KIND_BEFORE" = linux-desktop ]; then
+if [ "$KIND_BEFORE" = linux-desktop ] || [ "$KIND_BEFORE" = linux-server ]; then
   sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' "$WORK/bux-ttyd-base-path.conf" "$WORK/bux-box-ttyd.service"
 fi
 if [ -f "$AGENT_TTYD_CONF" ] && [ ! -L "$AGENT_TTYD_CONF" ]; then install -o root -g root -m 0600 "$AGENT_TTYD_CONF" "$BACKUP/bux-ttyd-base-path.conf"

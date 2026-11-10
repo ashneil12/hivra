@@ -140,7 +140,7 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("linux-terminal"), free)).toEqual({ label: "Needs your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("windows"), free)).toEqual({ label: "Needs your own server", tone: "needs" });
-    expect(launchFit(launchProfileFitSubject("omarchy"), free)).toEqual({ label: "Prepared computer", tone: "neutral" });
+    expect(launchFit(launchProfileFitSubject("omarchy"), free)).toEqual({ label: "Ready to launch", tone: "neutral" });
   });
 
   it("includes the browser on a paid plan that holds it", () => {
@@ -231,6 +231,19 @@ describe("size presets", () => {
       if (profileId === "codex" && !browser) expect(small).toEqual({ cpu: 0.5, ram: 1, maximumCpu: 0.5, maximumRam: 1 });
       else expect(small).toEqual({ cpu: recommended.cpu, ram: recommended.ram, maximumCpu: recommended.maximumCpu, maximumRam: recommended.maximumRam });
     }
+  });
+
+  it("offers the Linux computer 0.5 / 1, 1 / 2 and 2 / 4, and recommends the Medium one", () => {
+    const options = sizePresets("ubuntu-server");
+    expect(options.map(option => [option.label, option.resources.cpu, option.resources.ram])).toEqual([
+      ["Small", 0.5, 1], ["Medium", 1, 2], ["Large", 2, 4],
+    ]);
+    for (const option of options) {
+      expect(validateResourceEnvelope("ubuntu-server", option.resources, { maximumCpu: 8, maximumRam: 16 })).toEqual({ ok: true, envelope: option.resources });
+      expect(PROFILE_DETAILS["ubuntu-server"].cpuOptions).toContain(option.resources.cpu);
+      expect(PROFILE_DETAILS["ubuntu-server"].ramOptions).toContain(option.resources.ram);
+    }
+    expect(sizeLabel({ ...PROFILE_DETAILS["ubuntu-server"].recommended }, options)).toBe("Medium");
   });
 
   it("has no presets for fixed-size computers", () => {
@@ -360,6 +373,22 @@ describe("plan rows", () => {
       .toBe("Creates one computer with Ubuntu Desktop. Nothing is bought.");
     expect(launchChangesSummary({ profileId: "codex", substrate: "provider-vm", targetName: "hetzner-1" }))
       .toBe("Installs Codex on hetzner-1 and uses the whole server. It doesn't buy or create another server.");
+  });
+
+  it("describes the Linux computer as a terminal and files with no desktop, on the same plan as Ubuntu Desktop", () => {
+    expect(PROFILE_DETAILS["ubuntu-server"]).toMatchObject({
+      name: "Linux computer", resourceKind: "computer", runtimeId: "linux-desktop", placementRuntimeId: "linux-server",
+      managedCapacity: "plan", sizing: "burst", browser: "none",
+    });
+    expect(capabilitySummary("ubuntu-server", { browser: false })).toBe("A terminal and files on this computer. No desktop.");
+    expect(launchChangesSummary({ profileId: "ubuntu-server", substrate: "hivra-cloud", targetName: null }))
+      .toBe("Creates one Linux computer with a terminal and files. It has no desktop. Nothing is bought.");
+    const subject = launchProfileFitSubject("ubuntu-server");
+    expect(subject).toMatchObject({
+      placementRuntimeId: "linux-server", floor: { cpu: 0.5, ram: 1 }, hivraCloud: "plan", ownServer: true, poolExempt: false,
+      minPlan: launchProfileFitSubject("ubuntu-desktop").minPlan,
+    });
+    expect(launchProfileFitSubject("ubuntu-desktop")).toMatchObject({ placementRuntimeId: "linux-desktop", floor: { cpu: 2, ram: 4 } });
   });
 
   it("describes a Windows setup without claiming an Ubuntu install or a purchase", () => {

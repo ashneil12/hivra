@@ -33,7 +33,7 @@ import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { getOrCreatePoolId } from "@/lib/pools/pool-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
-import { validateResourceEnvelope } from "@/lib/launch/resource-envelope";
+import { recommendedResourceEnvelope, validateResourceEnvelope } from "@/lib/launch/resource-envelope";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
@@ -42,6 +42,7 @@ import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
 import { agentSoftwareSummaryFor, type AgentSoftwareAgentRow } from "@/lib/hivra/agent-software-service";
 import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
@@ -295,7 +296,7 @@ function phase1Script(params: {
   // false toggle as "0"; that is correct for agent guests, but the desktop
   // provisioner treats any non-empty value as an attempted agent-browser
   // configuration. Keep the variable empty for this distinct runtime.
-  const wantBrowserEnvValue = params.agentKind === "linux-desktop"
+  const wantBrowserEnvValue = params.agentKind === "linux-desktop" || params.agentKind === "linux-server"
     ? ""
     : params.wantBrowser ? "1" : "0";
   // Exactly the four keys the host and guest validators accept. Empty when
@@ -971,22 +972,34 @@ async function launchAgent(request: NextRequest) {
     // it for agents that actually ship a browser stack — Codex's CLI has none.
     const wantBrowser = body.browser === true && Boolean(def?.browser);
     const poolExempt = Boolean(def?.poolExempt);
-    const floor = resizeFloor(type, wantBrowser);
+    const floor = resizeFloor(type, wantBrowser, computerProfile);
+    // A Linux computer without a desktop is stored as the linux-desktop type
+    // with its own profile. Its provisioner kind and placement evidence differ.
+    const headless = type === "linux-desktop" && computerProfile === "ubuntu-server";
+    // What an owner reads in a refusal: the profile's own name for a computer.
+    const launchLabel = computerTemplate?.name ?? def?.name ?? "Agent";
     // Pool-exempt dashboard hosts (Aeon) reserve a fixed, tiny footprint — there's
     // no resource picker, so the request is pinned to the agent's floor.
+    // A Linux computer without a desktop starts at its recommended size when
+    // the request names none; it may be sized from its own, lower floor.
+    const defaultComputerSize = headless
+      ? recommendedResourceEnvelope("ubuntu-server")
+      : computerTemplate
+        ? { cpu: computerTemplate.requirements.cpu, ram: computerTemplate.requirements.ramGb }
+        : null;
     const cpu = computerTemplate
-      ? clampCpu(body.cpu, computerTemplate.requirements.cpu, computerTemplate.requirements.cpu, 8)
+      ? clampCpu(body.cpu, defaultComputerSize!.cpu, computerTemplate.requirements.cpu, 8)
       : poolExempt ? floor.cpu : clampCpu(body.cpu, 0.5, 0.5, 8);
     const ram = computerTemplate
-      ? clampInt(body.ram, computerTemplate.requirements.ramGb, computerTemplate.requirements.ramGb, 16)
+      ? clampInt(body.ram, defaultComputerSize!.ram, computerTemplate.requirements.ramGb, 16)
       : poolExempt ? floor.ram : clampInt(body.ram, 1, 1, 16);
     const hasExplicitEnvelope = body.maximumCpu !== undefined || body.maximumRam !== undefined;
     const supportsUnifiedEnvelope = type === "codex"
-      || (type === "linux-desktop" && computerProfile === "ubuntu-desktop");
+      || (type === "linux-desktop" && (computerProfile === "ubuntu-desktop" || headless));
     if (hasExplicitEnvelope && !supportsUnifiedEnvelope) {
-      return apiError("Resource guarantees and maxima are supported only for Codex and Ubuntu Desktop launches.", 400);
+      return apiError("Resource guarantees and maxima are supported only for Codex, Ubuntu Desktop and Linux computer launches.", 400);
     }
-    const profileId = type === "linux-desktop" ? "ubuntu-desktop" : "codex";
+    const profileId = headless ? "ubuntu-server" : type === "linux-desktop" ? "ubuntu-desktop" : "codex";
     // Codex's floor depends on the browser sidecar actually being provisioned:
     // browser-off Codex keeps the same base floor as the legacy pinned launch.
     const envelopeResult = hasExplicitEnvelope
@@ -1028,13 +1041,15 @@ async function launchAgent(request: NextRequest) {
     }
     // The runtime the box provisions: the chat CLI for claude-code/codex, or the
     // dashboard host kind for aeon/openclaw (no cliKind). Passed to the host script.
-    const agentKind = def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
+    const agentKind = headless ? "linux-server" : def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
       : type === "agent-zero" ? "agent-zero" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
-    const compatibilityRuntimeId = type;
+    // A Linux computer without a desktop is a new provisioner kind and placement
+    // key, so a host bundle that predates it cannot run it by accident.
+    const compatibilityRuntimeId = headless ? "linux-server" : type;
     const desktopControlOrigin = type === "linux-desktop" ? activityControlOrigin() : null;
     if (type === "linux-desktop" && (!desktopControlOrigin || !isTunnelConfigured())) {
       return apiError(
-        "Ubuntu Desktop requires this Hivra installation's canonical HTTPS access and named-tunnel configuration.",
+        `${launchLabel} requires this Hivra installation's canonical HTTPS access and named-tunnel configuration.`,
         503,
       );
     }
@@ -1141,6 +1156,7 @@ async function launchAgent(request: NextRequest) {
         return apiError("Could not verify the selected infrastructure target.", 503);
       }
       if (!isProxmoxDeploymentTarget(target)) {
+        // A provider computer runs only the desktop profile, never ubuntu-server.
         if (def.resourceKind === "computer" && (type !== "linux-desktop" || computerProfile !== "ubuntu-desktop")) {
           return apiError(
             "This computer profile does not have a provider launch adapter yet.",
@@ -1215,7 +1231,7 @@ async function launchAgent(request: NextRequest) {
       // custom client cannot create an undersized, permanently unhealthy box.
       if (cpu < floor.cpu || ram < floor.ram) {
         return apiError(
-          `${def.name} requires at least ${floor.cpu} CPU and ${floor.ram} GB RAM${wantBrowser ? " with browser automation" : ""}.`,
+          `${launchLabel} requires at least ${floor.cpu} CPU and ${floor.ram} GB RAM${wantBrowser ? " with browser automation" : ""}.`,
           400,
         );
       }
@@ -1233,10 +1249,10 @@ async function launchAgent(request: NextRequest) {
         if (!targetSupportsCatalogRuntime(context.target, compatibilityRuntimeId)) {
           if (isCompatibleProxmoxProvisionerVersion(context.runtime.provisionerVersion)
             && !provisionerVersionMeetsRuntimeMinimum(context.runtime.provisionerVersion, compatibilityRuntimeId)) {
-            return apiError(`This server needs an update before it can run ${def.name}. Prepare it again, then launch.`, 409);
+            return apiError(`This server needs an update before it can run ${launchLabel}. Prepare it again, then launch.`, 409);
           }
           return apiError(
-            `Run preflight again: this infrastructure target does not have compatibility evidence for ${def.name}.`,
+            `Run preflight again: this infrastructure target does not have compatibility evidence for ${launchLabel}.`,
             409,
           );
         }
@@ -1284,7 +1300,7 @@ async function launchAgent(request: NextRequest) {
         throw error;
       }
     } else {
-      const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: def.name });
+      const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel });
       if (!resourceGate.ok) return apiError(resourceGate.message, resourceGate.status);
 
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
@@ -1307,7 +1323,7 @@ async function launchAgent(request: NextRequest) {
           ...candidate,
           channel: managedProvisionerChannel,
           runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
-          runtimeLabel: def.name,
+          runtimeLabel: launchLabel,
           // Claude Code takes model settings only on Hivra credits; its native
           // sign-in launch does not need them.
           ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
@@ -2304,6 +2320,9 @@ const FAILED_LAUNCH_LIST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isRecentFailedLaunch(row: Record<string, unknown>, now: number): boolean {
   if (row.status !== "error") return false;
+  // A computer its host reported gone stays listed, whatever its age, so its
+  // owner can open Manage and remove the record.
+  if (isComputerMissingOnHostRow(row)) return true;
   // hivra_agents has no updated_at column today; honour one if it appears.
   const stamp = [row.updated_at, row.created_at].find((v): v is string => typeof v === "string");
   const at = stamp ? Date.parse(stamp) : NaN;

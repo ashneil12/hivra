@@ -53,6 +53,18 @@ jest.mock("@/lib/hivra/launch-operation-store", () => ({
     fail: (...args: unknown[]) => mockOperationFail(...args),
   }),
 }));
+// Wraps the real readiness check so a launch's placement runtime can be asserted.
+const mockCheckManagedReadiness = jest.fn();
+jest.mock("@/lib/hivra/managed-provisioner-readiness", () => {
+  const actual = jest.requireActual("@/lib/hivra/managed-provisioner-readiness");
+  return {
+    ...actual,
+    checkManagedHivraHostReadiness: (...args: unknown[]) => {
+      mockCheckManagedReadiness(...args);
+      return actual.checkManagedHivraHostReadiness(...args);
+    },
+  };
+});
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   ...jest.requireActual("@/lib/authenticated-rate-limit"),
   enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockLaunchRateLimit(...args),
@@ -1523,7 +1535,7 @@ describe("POST /api/hivra/agents", () => {
     }) as never);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(expect.objectContaining({
-      error: expect.stringMatching(/only for Codex and Ubuntu Desktop/i),
+      error: expect.stringMatching(/only for Codex, Ubuntu Desktop and Linux computer/i),
     }));
     expect(mockAgentInsert).not.toHaveBeenCalled();
   });
@@ -2248,6 +2260,125 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("HIVRA_COMPUTER_ID='agent-1'");
     expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("HIVRA_CONTROL_ORIGIN='https://canary.hermesos.cloud'");
     expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("HIVRA_WANT_BROWSER=''");
+  });
+
+  describe("Linux computer without a desktop (ubuntu-server)", () => {
+    const paidPlan = () => {
+      mockSubscriptionRow = {
+        plan: "fleet", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+      };
+      process.env.NEXT_PUBLIC_APP_URL = "https://canary.hermesos.cloud";
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({
+        token: "synthetic-tunnel", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test",
+      });
+    };
+
+    it("provisions the linux-server kind with an empty browser setting, as a linux-desktop row with its own profile", async () => {
+      paidPlan();
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_RESOURCE_MAXIMUM_FITS 16 65536\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "LIGHT COMPUTER", cpu: 1, ram: 2,
+        maximumCpu: 2, maximumRam: 4, browser: false,
+      }) as never);
+
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+        type: "linux-desktop", computer_profile: "ubuntu-server", cpu: 1, ram: 2,
+      }));
+      expect(mockOperationPrepare).toHaveBeenCalledWith("user-free", LAUNCH_REQUEST_ID, expect.anything(), expect.objectContaining({
+        resourceKind: "computer", runtimeId: "linux-desktop", computerProfile: "ubuntu-server",
+        desktopControlOrigin: "https://canary.hermesos.cloud", browser: false,
+      }));
+      const script = mockRunProxmoxHostScript.mock.calls[1][0] as string;
+      expect(script).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "linux-server"');
+      expect(script).not.toContain('"linux-desktop"');
+      expect(script).toContain("HIVRA_WANT_BROWSER=''");
+      expect(script).toContain("HIVRA_COMPUTER_ID='agent-1'");
+      expect(script).toContain("HIVRA_CONTROL_ORIGIN='https://canary.hermesos.cloud'");
+    });
+
+    it("starts at its recommended size when the request names none", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "DEFAULT SIZE", browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 1, ram: 2 }));
+    });
+
+    it("may be launched at its own floor, below the desktop floor", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "SMALL", cpu: 0.5, ram: 1, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 0.5, ram: 1 }));
+    });
+
+    it("lifts a size below its floor to the floor", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "TINY", cpu: 0.1, ram: 0, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 0.5, ram: 1 }));
+    });
+
+    it("never routes the profile to a provider (My cloud) launch", async () => {
+      paidPlan();
+      mockGetInfrastructureTarget.mockResolvedValue(providerVmTarget());
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "PROVIDER LIGHT", cpu: 1, ram: 2, browser: false,
+        deployment: SELF_MANAGED_DEPLOYMENT,
+      }) as never);
+      expect(response.status).toBe(409);
+      expect(mockLaunchProviderAgent).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["ubuntu-desktop", "linux-desktop", "Ubuntu Desktop"],
+      ["ubuntu-server", "linux-server", "Linux computer"],
+    ])("asks managed placement for %s hosts that can run %s", async (profile, runtimeId, label) => {
+      paidPlan();
+      mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: false, stdout: "", stderr: "version mismatch" });
+      mockSelectAvailableProxmoxProvisionTarget.mockImplementationOnce(async (options: ManagedPlacementOptions) => {
+        const readiness = await options.readinessCheck!({ targetId: "fixturenode7", env: { NODE_ENV: "test", PROXMOX_NODE: "fixturenode7" } });
+        return readiness.ok ? { ok: true, targetId: "fixturenode7" } : { ok: false, status: readiness.status, message: readiness.message };
+      });
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: profile, name: "PLACEMENT", cpu: 2, ram: 4, browser: false,
+      }) as never);
+      expect(response.status).toBe(503);
+      expect(mockCheckManagedReadiness).toHaveBeenCalledWith(expect.objectContaining({ runtimeId, runtimeLabel: label }));
+    });
+
+    it("keeps Ubuntu Desktop on the linux-desktop kind (regression)", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-desktop", name: "DESKTOP", cpu: 2, ram: 4, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(script).toContain('"linux-desktop"');
+      expect(script).not.toContain("linux-server");
+      expect(script).toContain("HIVRA_WANT_BROWSER=''");
+    });
+
+    it("still holds Ubuntu Desktop to its own 2 CPU / 4 GB floor", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-desktop", name: "DESKTOP", cpu: 1, ram: 2, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 2, ram: 4 }));
+    });
   });
 
   it("rejects a staged computer profile before allocating capacity", async () => {
@@ -3686,6 +3817,16 @@ describe("GET /api/hivra/agents", () => {
       "agent-running",
     ]);
     expect(body.data.agents[0]).toEqual(expect.objectContaining({ status: "error", error: "VM allocation failed" }));
+  });
+
+  it("keeps a computer its host reported gone listed whatever its age, so it can be removed", async () => {
+    const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    mockExistingAgents = [
+      { id: "gone", type: "linux-desktop", name: "GONE", status: "error", error: "This computer no longer exists on its host.", created_at: old, cpu: 2, ram: 4 },
+      { id: "old-failed", type: "linux-desktop", name: "OLD_FAILED", status: "error", error: "Setup failed", created_at: old, cpu: 2, ram: 4 },
+    ];
+    const body = await (await GET(makeGetRequest() as never)).json();
+    expect(body.data.agents.map((agent: { id: string }) => agent.id)).toEqual(["gone"]);
   });
 
   it("tags Claude Code / Codex agents from one read of their stored software observations, never their computers", async () => {

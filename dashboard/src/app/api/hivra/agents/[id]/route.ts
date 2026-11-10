@@ -15,6 +15,7 @@ import { advanceProviderAgentDelete, ProviderAgentDeleteError } from "@/lib/hivr
 import { advanceProviderAgentReadiness } from "@/lib/hivra/provider-agent-readiness";
 import { advanceProviderNativeReadiness } from "@/lib/hivra/provider-native-readiness";
 import { advanceProviderDesktopReadiness } from "@/lib/hivra/provider-desktop-readiness";
+import { verifyLinuxServerPublicRuntime } from "@/lib/hivra/linux-server-readiness";
 import type { ProviderAgentReadinessStage } from "@/lib/hivra/provider-readiness-contract";
 import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
 import { observeProviderRuntimeUpdate, recordProviderSoftwareUpdate, type ProviderRuntimeUpdateStage } from "@/lib/hivra/provider-runtime-update";
@@ -75,6 +76,9 @@ import {
 import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
+import { readStoredUsage } from "@/lib/hivra/computer-usage";
+import { readComputerUsageCache } from "@/lib/hivra/computer-usage-cache";
 import { preparedOmarchyRefreshPending } from "@/lib/hivra/prepared-omarchy-refresh-contract";
 import { advancePreparedOmarchyRefresh, cancelPreparedOmarchyRefresh } from "@/lib/hivra/prepared-omarchy-refresh";
 import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
@@ -560,6 +564,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         return apiSuccess({ agent: publicAgent(current) });
       }
       const vmid = Number(current.vmid);
+      // A Linux computer with no desktop is stored as a linux-desktop row with
+      // its own profile. Only that exact profile skips the desktop receipt; a
+      // missing or unknown profile keeps the desktop requirement.
+      const headlessComputer = current.type === "linux-desktop" && current.computer_profile === "ubuntu-server";
       let context: HivraAgentExecutionContext;
       try {
         context = await getExecutionContext();
@@ -716,7 +724,7 @@ fi` : ""}`;
               // Ubuntu computer after every reboot.
               expectedAgentKind:
                 convergenceOperationKind === "provision" && current.type === "linux-desktop"
-                  ? "linux-desktop"
+                  ? headlessComputer ? "linux-server" : "linux-desktop"
                   : null,
               namedHostname:
                 typeof current.cf_hostname === "string" ? current.cf_hostname : null,
@@ -750,7 +758,47 @@ fi` : ""}`;
                 .maybeSingle();
               return apiSuccess({ agent: publicAgent(failed || current) });
             }
-            if (current.type === "linux-desktop") {
+            if (headlessComputer) {
+              // No desktop, so no desktop capability receipt: the host reported
+              // ready (and, on provision, the linux-server kind), and the
+              // gateway must answer as a linux-server computer.
+              const readiness = await verifyLinuxServerPublicRuntime(validatedResult.value.chatUrl);
+              if (!readiness.ok) {
+                if (readiness.retryable) {
+                  log.warn("linux computer gateway is not answering as a linux-server yet", {
+                    source: "hivra/agents/[id]",
+                    failureType: "hivra_linux_server_meta_unavailable",
+                    userId,
+                    agentId: current.id,
+                    vmid,
+                    operationKind: convergenceOperationKind,
+                  });
+                  return apiSuccess({ agent: publicAgent(current) });
+                }
+                await releaseHivraAgentOperation({
+                  userId,
+                  agentId: String(current.id),
+                  operationId: provisionOperationId,
+                  error: readiness.ownerMessage,
+                  markError: true,
+                });
+                log.warn("linux computer gateway answered as the wrong kind of computer", {
+                  source: "hivra/agents/[id]",
+                  failureType: "hivra_linux_server_wrong_kind",
+                  userId,
+                  agentId: current.id,
+                  vmid,
+                  operationKind: convergenceOperationKind,
+                });
+                const { data: failed } = await supabaseAdmin
+                  .from("hivra_agents")
+                  .select("*")
+                  .eq("id", current.id)
+                  .eq("user_id", userId)
+                  .maybeSingle();
+                return apiSuccess({ agent: publicAgent(failed || current) });
+              }
+            } else if (current.type === "linux-desktop") {
               const capabilityResult = await runProxmoxHostScript(
                 buildRemoteDesktopCapabilityInspectionScript({
                   vmid,
@@ -877,7 +925,7 @@ fi` : ""}`;
                   typeof current.deployment_mode === "string" ? current.deployment_mode : null,
                 operationId: provisionOperationId,
                 vmid: Number.isInteger(Number(current.vmid)) ? Number(current.vmid) : null,
-                evidence: current.type === "linux-desktop"
+                evidence: current.type === "linux-desktop" && !headlessComputer
                   ? "remote_desktop_capability_receipt"
                   : "host_ready_result",
               });
@@ -1085,6 +1133,55 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       } catch {
         return apiError("Cancellation is still being confirmed. This prepared computer remains reserved until its updater has stopped.", 409);
       }
+    }
+
+    // "Remove from Hivra": the record of a computer its host already reported
+    // gone (and the host's latest read still says so). It runs the same
+    // delete lease and access cleanup as Delete but never sends the host a
+    // destroy for a VM that no longer exists.
+    if (new URL(req.url).searchParams.get("recordOnly") === "1") {
+      if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
+      const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra_forget_record", userId, limit: 20, windowMs: 60_000 });
+      if (limited) return limited;
+      const proxmox = existingAgent.computer_substrate == null || existingAgent.computer_substrate === "proxmox-kvm";
+      let hostSaysMissing = false;
+      if (proxmox && isComputerMissingOnHostRow(existingAgent)
+        && existingAgent.operation_id == null && existingAgent.operation_kind == null) {
+        try {
+          hostSaysMissing = readStoredUsage((await readComputerUsageCache(String(existingAgent.id), userId))?.sample)?.result === "missing";
+        } catch {
+          hostSaysMissing = false;
+        }
+      }
+      if (!hostSaysMissing) {
+        return apiError("Hivra can only remove the record of a computer its host confirms is gone. Refresh this computer and try again.", 409);
+      }
+      const forgetOperationId = randomUUID();
+      const disposition = await requestHivraAgentDelete({ userId, agentId: String(existingAgent.id), operationId: forgetOperationId });
+      if (disposition === "not_found") return apiError("Agent not found", 404);
+      if (disposition === "deleted") return apiSuccess({ ok: true });
+      if (disposition === "pending") return apiError("Another operation on this computer is still finishing. Try again shortly.", 409);
+      const forgetLease = { userId, agentId: String(existingAgent.id), operationId: forgetOperationId };
+      try {
+        const completed = await completeHivraAgentDelete(forgetLease);
+        if (!completed) {
+          await releaseHivraAgentOperation({ ...forgetLease, error: "Removing the record could not be finalized.", markError: true }).catch(() => false);
+          return apiError("The record couldn't be removed safely. Refresh and try again.", 409);
+        }
+      } catch (forgetError) {
+        await releaseHivraAgentOperation({
+          ...forgetLease,
+          error: forgetError instanceof HivraAgentDeleteCleanupError ? forgetError.message : "Removing the record failed before it finished.",
+          markError: true,
+        }).catch(() => false);
+        if (forgetError instanceof HivraAgentDeleteCleanupError) return apiError(forgetError.message, 502);
+        throw forgetError;
+      }
+      await logHivraAgentEvent({
+        userId, event: "deleted", agentId: String(existingAgent.id), agentType: typeof existingAgent.type === "string" ? existingAgent.type : null,
+        detail: { recordOnly: true, reason: "computer_missing_on_host" },
+      });
+      return apiSuccess({ ok: true });
     }
 
     if (existingAgent.computer_substrate === "do-managed-session") {

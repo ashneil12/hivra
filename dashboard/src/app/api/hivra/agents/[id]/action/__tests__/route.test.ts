@@ -626,6 +626,18 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     }));
   });
 
+  it.each([
+    ["ubuntu-server", { cpu: 0.5, ram: 1 }],
+    ["ubuntu-desktop", { cpu: 2, ram: 4 }],
+  ])("resizes a %s computer against its own profile floor", async (profile, floor) => {
+    mockAgent = { ...mockAgent, type: "linux-desktop", computer_profile: profile };
+    const response = await POST(makeRequest({ action: "resize", cpu: 0.5, ram: 1 }) as never, { params: Promise.resolve({ id: "agent-1" }) });
+    expect(response.status).toBe(200);
+    expect(mockValidateAgentResources).toHaveBeenCalledWith(expect.objectContaining({
+      type: "linux-desktop", mode: "resize", floor, cpu: floor.cpu, ram: floor.ram,
+    }));
+  });
+
   it("resizes free Claude to 0.5 CPU by using one core plus a half-core scheduler cap", async () => {
     const response = await POST(
       makeRequest({ action: "resize", cpu: 0.5, ram: 1 }) as never,

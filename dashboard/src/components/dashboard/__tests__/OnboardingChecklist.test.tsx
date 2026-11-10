@@ -95,11 +95,11 @@ describe("OnboardingChecklist", () => {
       expect(telegramStatus).toHaveBeenCalledWith("https://box.example.com", "box-token"),
     );
 
-    expect(screen.getByText("Deploy your agent")).toBeInTheDocument();
+    expect(screen.getByText("Launch your agent")).toBeInTheDocument();
     expect(screen.getByText("Send your first message")).toBeInTheDocument();
-    expect(screen.getByText("Connect a channel (Telegram)")).toBeInTheDocument();
-    expect(screen.getByText("Enable web browsing")).toBeInTheDocument();
-    expect(screen.getByText("Add a scheduled task")).toBeInTheDocument();
+    expect(screen.getByText("Chat from Telegram")).toBeInTheDocument();
+    expect(screen.getByText("Let your agent browse the web")).toBeInTheDocument();
+    expect(screen.getByText("Run a task on a schedule")).toBeInTheDocument();
 
     // Deploy is the only completed step → 1 of 5.
     expect(screen.getByText("1 of 5 done")).toBeInTheDocument();
@@ -190,7 +190,7 @@ describe("OnboardingChecklist", () => {
     render(<OnboardingChecklist instances={[]} />);
 
     expect(await screen.findByText("1 of 4 done")).toBeInTheDocument();
-    expect(screen.queryByText("Add a scheduled task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Run a task on a schedule")).not.toBeInTheDocument();
     expect(screen.queryByTestId("onboarding-item-cron")).not.toBeInTheDocument();
   });
 

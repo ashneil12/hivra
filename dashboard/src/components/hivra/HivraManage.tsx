@@ -36,6 +36,10 @@ import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
 import {
+  ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
+} from "./manage/ManageReachability";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
+import {
   manageButtonDark as btnDark, manageButtonGhost as btnGhost, manageCard as card, manageError as errorStyle,
   manageLabel as label, manageMuted, manageValue as valStyle,
 } from "./manage/manage-styles";
@@ -97,6 +101,13 @@ const MODEL_OPTS: Record<string, { value: string; label: string }[]> = {
     { value: "gpt-5.1-codex", label: "Codex" },
     { value: "gpt-5-codex", label: "Codex (5)" },
   ],
+};
+
+/** What a Linux computer without a desktop says where the others mention the desktop. */
+const HEADLESS_LIFECYCLE_DETAIL: Record<string, string> = {
+  start: "Hivra is powering it on and waiting for its connection. This normally takes under a minute.",
+  restart: "Its terminal and files will disconnect briefly while Hivra confirms the reboot.",
+  force_restart: "Hivra is switching it off at once, then starting it again. Its terminal and files disconnect until it is back.",
 };
 
 const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; section: ManageSectionId }> = {
@@ -244,7 +255,7 @@ const CHAT_READINESS_LINE: Record<ChatReadiness, string> = {
   provider_configured: "Model connection set up in Model & tools",
   sign_in_required: "Not signed in yet: open Chat to sign in",
   upgrade_required: "Needs a connection service update (see Updates)",
-  unavailable: "Couldn't check sign-in right now",
+  unavailable: UNREACHABLE_CARD_LINE,
 };
 
 function SectionError({ message }: { message: string }) {
@@ -327,7 +338,11 @@ export function HivraManage(props: HivraManageProps) {
   if (props.agent.computer_substrate === "gvisor") {
     return <GvisorComputerManage key={props.agent.id} agent={props.agent} onChanged={props.onChanged} onDestroyed={props.onDestroyed} />;
   }
-  return <HivraManageContent key={props.agent.id} {...props} />;
+  return (
+    <ManageReachabilityProvider key={props.agent.id}>
+      <HivraManageContent {...props} />
+    </ManageReachabilityProvider>
+  );
 }
 
 function HivraManageContent({
@@ -431,7 +446,7 @@ function HivraManageContent({
   }, [refreshMcp]);
 
   // resize — floor depends on whether browser automation is on (+1 CPU / +2 GB)
-  const floor = useMemo(() => resizeFloor(agent.type, bOn), [agent.type, bOn]);
+  const floor = useMemo(() => resizeFloor(agent.type, bOn, agent.computer_profile), [agent.type, agent.computer_profile, bOn]);
   const [rcpu, setRcpu] = useState(Math.max(agent.cpu, floor.cpu));
   const [rram, setRram] = useState(Math.max(agent.ram, floor.ram));
   const [maximumCpu, setMaximumCpu] = useState(Math.max(agent.cpu_max ?? agent.cpu, agent.cpu, floor.cpu));
@@ -693,6 +708,7 @@ function HivraManageContent({
   const computerTemplate = agent.computer_profile && agent.computer_profile !== "linux-terminal" ? getComputerTemplate(agent.computer_profile) : undefined;
   const preparedComputer = computerTemplate?.launchMode === "prepared-canary";
   const isComputerOnly = manage ? manage.kind === "computer" : agent.type === "linux-desktop" || Boolean(agent.computer_profile);
+  const headlessComputer = agent.type === "linux-desktop" && agent.computer_profile === "ubuntu-server";
 
   // What the server says this computer supports. An older server that sends
   // no map gets the controls this page offered before sections existed.
@@ -850,7 +866,7 @@ function HivraManageContent({
       <div>
         <div style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{LIFECYCLE_PROGRESS[acting].title}</div>
         <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          {LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
+          {(headlessComputer ? HEADLESS_LIFECYCLE_DETAIL[acting] : undefined) ?? LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
         </div>
       </div>
     </div>
@@ -869,8 +885,25 @@ function HivraManageContent({
   // Feedback from a section that isn't open: a banner that opens it.
   const errorSection = err?.slot ? SLOT_SECTION[err.slot] : null;
   const progressSection = acting ? LIFECYCLE_PROGRESS[acting]?.section ?? null : null;
+  // The host says this computer is gone: Manage offers to remove its record,
+  // and no power control applies. Otherwise any card that can't reach the
+  // computer (and the sign-in check) raises the one banner below.
+  const missingOnHost = isComputerMissingOnHostRow(agent);
+  const restartFromBanner = !missingOnHost && power.restart && capAvailable(power.restart);
   const notices = (
     <>
+      <ReportUnreachable source="sign-in" when={!isComputerOnly && isChatCli && chatReadiness === "unavailable"} />
+      <ManageReachabilityNotice
+        missing={missingOnHost}
+        onRestart={restartFromBanner ? () => void requestRunEnding("restart") : null}
+        restarting={acting === "restart" || repliesCheck === "restart"}
+        restartDisabled={busy}
+        onRemove={missingOnHost ? () => void run("remove-record", async () => {
+          await deleteAgent(agent.id, { recordOnly: true });
+          onDestroyed();
+        }) : null}
+        removing={acting === "remove-record"}
+      />
       {err && !err.slot ? <div role="alert" style={errorStyle}>{err.message}</div> : null}
       {err && errorSection && errorSection !== selected && sections.includes(errorSection)
         ? <ManageNotice kind="alert" message={err.message} section={errorSection} onOpen={openAndFocus} /> : null}
@@ -954,7 +987,7 @@ function HivraManageContent({
         <div style={{ display: "grid", gap: 20 }}>
           {/* Error lands here, not on a surface: say why and what to do next
               where the owner actually is, not only under Advanced. */}
-          {agent.status === "error" && agent.error ? (
+          {agent.status === "error" && agent.error && !missingOnHost ? (
             <div role="alert" style={{ ...card, borderColor: "var(--red)" }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>{agent.provisioned_at ? "This computer isn’t ready" : "Setup didn’t finish"}</div>
               <div style={{ ...manageMuted, overflowWrap: "anywhere" }}>{agent.error}</div>
@@ -1018,7 +1051,7 @@ function HivraManageContent({
 
           <ManageUsageCard agentId={agent.id} cap={manage?.usage} recordedStatus={agent.status} />
 
-          <div style={{ display: "grid", gap: 10 }}>
+          {missingOnHost ? null : <div style={{ display: "grid", gap: 10 }}>
             <div className="mono" style={label}>Power</div>
             <div style={card}>
               {powerUnavailable ? (
@@ -1056,7 +1089,7 @@ function HivraManageContent({
                 style={{ margin: 0, padding: "12px 14px", border: "1px solid var(--etched-border)", fontSize: 12, lineHeight: 1.6 }}
               >{providerPowerMessage(agent.power_stage)}</p> : null}
             </div>
-          </div>
+          </div>}
 
           {/* The agent and its computer as one pair (ATT-11), and what the agent
               knows about it. A computer's agents live in its Agents section. */}
@@ -1407,7 +1440,9 @@ function HivraManageContent({
             ) : resizeKind === "fixed" ? (
               <ManageFixedSize
                 size={`${fmtNum(agent.cpu)} CPU / ${fmtNum(agent.ram)} GB`}
-                reason={capReason(manage?.resize.cap) ?? `This prepared ${computerTemplate?.name ?? ""} computer can't be resized yet.`}
+                reason={capReason(manage?.resize.cap)
+                  ?? `This computer has a fixed size (${fmtNum(agent.cpu)} CPU, ${fmtNum(agent.ram)} GB). For a different size, launch a new one.`}
+                plain={!manage || (manage.resize.cap.state === "unavailable" && ["prepared_fixed", "windows_fixed"].includes(manage.resize.cap.code))}
               />
             ) : (
               <div style={card}>
@@ -1661,6 +1696,8 @@ function HivraManageContent({
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                         {agent.type === "deepseek-harness"
                           ? "Update connection service brings Hivra’s DeepSeek service up to date without restarting the computer. It restarts DeepSeek, which ends a task DeepSeek is working on; your files, chats and model settings stay as they are. If the new version doesn’t start cleanly, the previous one comes back. Terminals open on this page reconnect when it finishes."
+                          : headlessComputer
+                          ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so files and local logins stay as they are. Terminals open on this page reconnect when it finishes."
                           : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}

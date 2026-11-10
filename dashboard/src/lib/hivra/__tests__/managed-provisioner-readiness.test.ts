@@ -195,6 +195,16 @@ describe("managed readiness per runtime", () => {
     expect(versions).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
   });
 
+  it("lets only hosts on the release that ships linux-server take it, and keeps Linux Desktop on older hosts", () => {
+    for (const purpose of ["provision", "runtime-update"] as const) {
+      expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "linux-server"))).toEqual([PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    }
+    const desktop = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "linux-desktop"));
+    expect(desktop).toContain("2026.11.10.3");
+    expect(desktop).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
+    expect(desktop).toEqual(versionsIn(managedHivraHostReadinessScript("default", "provision", false, null)));
+  });
+
   it("keeps older compatible hosts for other agents", () => {
     for (const runtime of ["claude-code", "codex", null]) {
       expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, runtime))).toContain("2026.10.20.1");

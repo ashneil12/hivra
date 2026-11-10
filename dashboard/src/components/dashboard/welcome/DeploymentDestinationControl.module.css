@@ -19,12 +19,12 @@
 
 .label {
   display: block;
-  font-family: var(--font-mono), monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0;
   line-height: 1.4;
-  text-transform: uppercase;
+  text-transform: none;
   color: var(--ink-black);
 }
 
@@ -147,11 +147,11 @@
   min-width: 0;
   display: grid;
   gap: 6px;
-  font-family: var(--font-mono), monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--destination-muted);
 }
 
@@ -189,10 +189,11 @@
 
 .fact span {
   color: var(--destination-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 600;
 }
 
 .fact strong {
@@ -233,7 +234,7 @@
   align-items: center;
   min-height: 44px;
   color: inherit;
-  font-weight: 800;
+  font-weight: 600;
   text-underline-offset: 3px;
 }
 
@@ -257,7 +258,7 @@
 
 @container launch-destination (max-width: 400px) {
   .facts { grid-template-columns: 1fr; }
-  .fact span { font-size: 11px; }
+  .fact span { font-size: 0.8rem; }
   .fact { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
   .fact strong { text-align: right; margin-top: 0; }
   .targetPanel { padding: 0.75rem; }
