@@ -13,6 +13,7 @@ import { PROVIDERS, type Provider } from "@/lib/models";
 import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
+import { isPrivateVenicePrivacy, isPrivateVeniceModel, type VenicePrivacy } from "@/lib/venice/model-privacy";
 
 import {
   DEFAULT_MODEL_ACCESS,
@@ -224,20 +225,30 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
         mode,
         title: "Hivra credits",
         detail,
-        unavailable: codexKeyGap ?? providerGap ?? (empty ? "You have $0 in Hivra credits." : null),
+        unavailable: codexKeyGap ?? providerGap ?? (empty ? "Add credit to start chatting." : null),
         offerAddCredit: !codexKeyGap && !providerGap && empty,
       };
     });
 }
 
-/** Hivra's default: the runtime's own sign-in, except Hermes, which runs on
- * Hivra credits when the owner has some. Null while that depends on a
- * balance still loading. */
-export function recommendedModelAccessMode(profileId: LaunchProfileId, balance: CreditsBalance, selfHosted: boolean): LaunchModelAccessMode | null {
-  if (profileId !== "hermes" || selfHosted) return "native";
-  if (balance.state === "loading") return null;
-  const total = totalMicroUsd(balance);
-  return total !== null && total > 0 ? "credits" : "native";
+/** Where the launch goes, as far as it decides whether credits can be used. */
+export type ModelAccessDefaultContext = {
+  selfHosted: boolean;
+  providerComputer?: boolean;
+  selfManaged?: boolean;
+  modelSettingsSupported?: boolean;
+};
+
+/** Hivra's default: Hivra credits (Venice models) for every agent that can
+ * use them, even at $0, where the choice itself offers a way to add credit.
+ * The agent's own sign-in is the default only where credits aren't offered:
+ * a self-hosted installation, a computer in the owner's own cloud, a server
+ * that can't take a model key yet, or an agent without a credits option. */
+export function recommendedModelAccessMode(profileId: LaunchProfileId, context: ModelAccessDefaultContext): LaunchModelAccessMode {
+  if (context.selfHosted || !modelAccessModes(profileId).includes("credits")) return "native";
+  if (context.providerComputer && profileId !== "codex") return "native";
+  if (profileId === "codex" && context.selfManaged && context.modelSettingsSupported === false) return "native";
+  return "credits";
 }
 
 /** The draft with Hivra's model access default applied. A pure function: it
@@ -245,12 +256,12 @@ export function recommendedModelAccessMode(profileId: LaunchProfileId, balance: 
  * owner made or a launch already sent. */
 export function withModelAccessDefault(
   draft: LaunchDraft,
-  context: { balance: CreditsBalance; selfHosted: boolean },
+  context: ModelAccessDefaultContext,
 ): LaunchDraft {
   if (!draft.profileId || !hasModelAccess(draft.profileId)) return draft;
   if (draft.modelAccess.source !== "recommended" || draft.submittedDeployment || draft.stage === "launch") return draft;
-  const mode = recommendedModelAccessMode(draft.profileId, context.balance, context.selfHosted);
-  if (mode === null || mode === draft.modelAccess.mode) return draft;
+  const mode = recommendedModelAccessMode(draft.profileId, context);
+  if (mode === draft.modelAccess.mode) return draft;
   return { ...draft, modelAccess: { ...draft.modelAccess, mode } };
 }
 
@@ -274,9 +285,27 @@ export function apiKeyProviders(profileId: LaunchProfileId, savedKeys: readonly 
 }
 
 /** The models the dropdown lists for this choice. */
-export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAccess): { value: string; label: string }[] {
+export type ModelChoice = {
+  value: string;
+  label: string;
+  /** A Venice model that keeps no record of the chats: shown with a Private badge. */
+  private?: boolean;
+};
+
+/** A model list for the Venice provider, each with its Private flag. */
+export function veniceModelChoices(models: readonly { value: string; label: string }[]): ModelChoice[] {
+  return models.map(model => ({ ...model, private: isPrivateVeniceModel(model.value) }));
+}
+
+/** The choices from a Venice key check: the owner's own key lists what it can
+ * use, and only private and end-to-end private models are flagged. */
+export function choicesFromVeniceKeyCheck(models: readonly { id: string; name: string; privacy: VenicePrivacy }[]): ModelChoice[] {
+  return models.map(model => ({ value: model.id, label: model.name, private: isPrivateVenicePrivacy(model.privacy) }));
+}
+
+export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAccess): ModelChoice[] {
   const provider = access.mode === "credits" ? providerById(VENICE) : providerById(access.provider);
-  const models = provider?.models ?? [];
+  const models = provider?.id === VENICE ? veniceModelChoices(provider.models) : provider?.models ?? [];
   // Claude Code on credits speaks Anthropic's protocol, so only Venice's
   // Claude models can answer it. Sonnet first: fast and the cheaper default.
   if (profileId === "claude-code") {
@@ -372,7 +401,9 @@ export function modelAccessProblem(
 ): string | null {
   const option = options.find(candidate => candidate.mode === access.mode);
   if (!option) return "Choose how this agent reaches a model.";
-  if (option.unavailable) return option.unavailable;
+  if (option.unavailable) {
+    return option.offerAddCredit ? "Add credit to start chatting, or choose another option." : option.unavailable;
+  }
   if (access.mode === "native") return null;
   if (access.mode === "credits") {
     return choosesModel(profileId, "credits") && !modelIsValid(profileId, effectiveModel(profileId, access))

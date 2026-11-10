@@ -103,15 +103,19 @@ async function chooseAgent(name: string) {
   render(<LaunchJourney />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
-  expect(screen.getByRole("heading", { name: `${name} — here's the plan` })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
+  // Hivra's recommended settings are summarised; Change opens the full controls.
+  fireEvent.click(screen.getByRole("button", { name: "Change" }));
 }
 
 const modelChoice = (name: RegExp) => within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name });
 
+/** Closes Advanced so the recommended settings summary shows what will launch. */
 async function reviewLaunch() {
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-  fireEvent.click(screen.getByTestId("launch-primary-action"));
-  return within(screen.getByLabelText("Launch review"));
+  const hide = screen.queryByRole("button", { name: "Hide advanced" });
+  if (hide) fireEvent.click(hide);
+  return within(screen.getByTestId("launch-journey"));
 }
 
 describe("every catalog agent launches in the Launch journey", () => {
@@ -151,16 +155,18 @@ describe("every catalog agent launches in the Launch journey", () => {
       .toHaveAttribute("href", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1&connect=telegram`);
   });
 
-  it("starts Hermes set up inside itself at $0, with credits disabled and a way to add some", async () => {
+  it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {
     summaryMock.mockResolvedValue(balance(0));
     await chooseAgent("Hermes");
-    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
-    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting.");
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Powered by Venice");
+    expect(screen.getByText("Add credit to start chatting, or choose another option.")).toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name: "Add credit" }));
     expect(screen.getByRole("dialog", { name: "Add Hivra credit" })).toBeInTheDocument();
 
+    fireEvent.click(modelChoice(/^Set up inside Hermes after it opens/));
     const review = await reviewLaunch();
     expect(review.getByText("Choose a model provider inside Hermes after it opens.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
@@ -186,9 +192,8 @@ describe("every catalog agent launches in the Launch journey", () => {
     tokenGeoStatus = "blocked";
     summaryMock.mockResolvedValue(balance(0, 7));
     await chooseAgent("Hermes");
-    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
-    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
-    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting."));
+    expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("combobox", { name: "Pay from" })).not.toBeInTheDocument();
   });
 
@@ -212,7 +217,7 @@ describe("every catalog agent launches in the Launch journey", () => {
 
     let review = await reviewLaunch();
     expect(review.queryByText(/Honcho/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Send my saved Honcho key/ }));
     review = await reviewLaunch();
     expect(review.getByText("Honcho, with your saved key ••9d1c, sent to Hermes 1's computer")).toBeInTheDocument();

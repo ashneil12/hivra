@@ -72,8 +72,8 @@ describe("AgentSwitcherMenu on touch", () => {
     expect(dialog.style.getPropertyValue("--agent-menu-max-height")).toBe("420px");
     viewport.height = 380;
     act(() => listeners.resize());
-    // 380 visible - 84 anchor bottom - 4 offset - 8 margin.
-    expect(dialog.style.getPropertyValue("--agent-menu-max-height")).toBe("284px");
+    // 380 visible - 84 anchor bottom - 6 offset - 8 margin.
+    expect(dialog.style.getPropertyValue("--agent-menu-max-height")).toBe("282px");
   });
 
   it("closes when an iframe takes focus away from the page, without asking for focus back", async () => {

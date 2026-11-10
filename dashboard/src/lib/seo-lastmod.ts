@@ -83,6 +83,8 @@ export const PAGE_LAST_MODIFIED = {
   // Rewritten in the copy overhaul, 2026-10-20 (before: 2026-03-01, the date of
   // the old text; 2026-09-24 only added its own title and canonical).
   terms: "2026-10-20",
+  // New page, 2026-11-10: the Venice landing page.
+  venice: "2026-11-10",
 } as const;
 
 export type PageLastModifiedKey = keyof typeof PAGE_LAST_MODIFIED;

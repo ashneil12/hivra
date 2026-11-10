@@ -1109,7 +1109,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
           (agent.chat_url as string | null) ?? null,
           (agent.api_token as string | null) ?? null,
         ));
-      const floor = resizeFloor(String(agent.type), browserOn);
+      const floor = resizeFloor(String(agent.type), browserOn, agent.computer_profile as string | null | undefined);
       const cpu = clampCpu(body.cpu, agent.cpu, floor.cpu, MAX_CPU);
       const ram = clampInt(body.ram, agent.ram, floor.ram, MAX_RAM);
       const maximumCpu = body.maximumCpu === undefined

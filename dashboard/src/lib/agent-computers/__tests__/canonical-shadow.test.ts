@@ -114,6 +114,36 @@ describe("canonical agent-computer V2 shadow", () => {
     expect(CanonicalResourceShadowSchema.parse(shadow)).toEqual(shadow);
   });
 
+  it("projects a Linux computer (ubuntu-server) with files and terminal and no desktop", () => {
+    const row = {
+      id: SOURCE_ID,
+      user_id: "user_123",
+      name: "Linux computer",
+      type: "linux-desktop",
+      computer_profile: "ubuntu-server",
+      computer_substrate: "proxmox-kvm",
+      status: "running",
+      desired_state: "running",
+    };
+    const shadow = projectCanonicalHivraShadow(row, computerIds, 30n);
+
+    expect(shadow.computer).toMatchObject({
+      resourceKind: "computer",
+      osProfile: "ubuntu-server",
+      capabilities: {
+        surfaces: ["files", "terminal"],
+        actions: ["stop", "reboot", "delete", "resize", "snapshot", "restore"],
+      },
+    });
+    expect(CanonicalResourceShadowSchema.parse(shadow)).toEqual(shadow);
+    // A profile this release does not know is never given a desktop either.
+    const unknown = projectCanonicalHivraShadow({ ...row, computer_profile: "plan9" }, computerIds, 31n);
+    expect(unknown.computer.capabilities.surfaces).toEqual(["files", "terminal"]);
+    // An existing Ubuntu desktop is unchanged.
+    const desktop = projectCanonicalHivraShadow({ ...row, computer_profile: "ubuntu-desktop" }, computerIds, 32n);
+    expect(desktop.computer.capabilities.surfaces).toEqual(["files", "terminal", "desktop"]);
+  });
+
   it("keeps provider-VM lifecycle capabilities fail-closed", () => {
     const shadow = projectCanonicalHivraShadow(
       {

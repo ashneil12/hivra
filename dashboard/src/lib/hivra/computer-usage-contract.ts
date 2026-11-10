@@ -5,6 +5,17 @@
 
 import { z } from "zod";
 
+/**
+ * What a computer's record says once its host positively reports the machine
+ * gone. The row is then an error; Manage recognises it by this exact text and
+ * offers "Remove from Hivra" instead of the power controls.
+ */
+export const COMPUTER_MISSING_ON_HOST_ERROR = "This computer no longer exists on its host.";
+
+export function isComputerMissingOnHostRow(row: { status?: unknown; error?: unknown }): boolean {
+  return row.status === "error" && row.error === COMPUTER_MISSING_ON_HOST_ERROR;
+}
+
 export const COMPUTER_USAGE_SOURCES = ["proxmox", "hetzner", "gvisor", "digitalocean"] as const;
 export type ComputerUsageSource = (typeof COMPUTER_USAGE_SOURCES)[number];
 

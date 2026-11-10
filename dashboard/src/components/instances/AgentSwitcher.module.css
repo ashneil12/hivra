@@ -24,7 +24,7 @@
   border-radius: var(--hg-radius-sm);
 }
 .tool:hover { border-color: var(--text-muted); }
-.tool:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.tool:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 @media (pointer: coarse) { .tool { min-height: 44px; } }
 
 /* Web switcher: a floating handle that expands to the pill, tools and list. */

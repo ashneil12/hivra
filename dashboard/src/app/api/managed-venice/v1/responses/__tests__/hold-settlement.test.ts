@@ -18,8 +18,8 @@ import {
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const KEY_ID = "22222222-2222-4222-8222-222222222222";
 const BALANCE = 5_000_000;
-// claude-opus-4-8 output: $30 per million tokens.
-const OUTPUT_MICRO_USD_PER_TOKEN = 30;
+// claude-opus-4-8 output: $25 per million tokens.
+const OUTPUT_MICRO_USD_PER_TOKEN = 25;
 
 let mockMemory: ManagedVeniceMemoryDb;
 const mockFetch = jest.fn();

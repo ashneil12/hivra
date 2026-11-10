@@ -96,7 +96,7 @@ rules. Focus mode hides the sidebar and resource tab strip.
 | Option Command O | Open selected resource in a separate window |
 | Shift Command N | New workspace window |
 | Command K | Find and switch resource |
-| Command 1 / 2 / 3 / 4 / 5 | Home / Computers / Agents / Capacity / Activity |
+| Command 1 / 2 / 3 / 4 | Home / Computers / Agents / Activity |
 | Command N | Launch |
 | Shift Command W | Close the selected resource tab |
 | Shift Command F | Toggle focus mode |

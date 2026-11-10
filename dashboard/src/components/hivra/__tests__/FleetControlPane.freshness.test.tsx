@@ -11,6 +11,7 @@ import { FleetControlPane } from "../FleetControlPane";
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn(), push: jest.fn(), prefetch: jest.fn() }),
 }));
+jest.mock("@/components/dashboard/OnboardingChecklist", () => ({ OnboardingChecklist: () => null }));
 jest.mock("@/lib/workspace/app-open", () => ({
   isAppOpenAtHome: () => false,
   markHomeOpened: () => undefined,
@@ -69,7 +70,7 @@ it("does not offer an agent deleted since its list was read, even moments later"
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
   expect(screen.queryByText("CODEX_AGENT")).not.toBeInTheDocument();
 
-  await waitFor(() => expect(screen.getByText("Choose an agent to work with, or a computer of your own.")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument());
   expect(listReads()).toBe(2);
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
   expect(screen.queryByText("CODEX_AGENT")).not.toBeInTheDocument();
@@ -84,7 +85,7 @@ it("does not offer a stale list's agent while the new read is in flight", async 
   render(<FleetControlPane requested />);
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
   await waitFor(() => expect(listReads()).toBe(2));
-  await waitFor(() => expect(screen.getByText("Choose an agent to work with, or a computer of your own.")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument());
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
 });
 

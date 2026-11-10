@@ -61,7 +61,7 @@
 .form label > span, .bindForm label > span, .runtimeForm label > span { color: var(--buzz-muted); font: 600 11px/1.4 var(--font-sans); letter-spacing: .05em; text-transform: uppercase; }
 .form input, .bindForm input, .bindForm select, .runtimeForm input, .runtimeForm select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 11px 12px; border: 1px solid var(--buzz-line); border-radius: var(--hg-radius-sm); background: var(--bg-surface); color: var(--ink-black); font: 12px/1.4 var(--font-mono); }
 .form small { color: var(--buzz-muted); font-size: 10px; line-height: 1.55; }
-.primary, .iconButton, .bindingActions button { min-height: 42px; border: 1px solid var(--buzz-line); border-radius: var(--hg-radius-sm); cursor: pointer; font: 750 10px/1.2 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+.primary, .iconButton, .bindingActions button { min-height: 42px; border: 1px solid var(--buzz-line); border-radius: var(--hg-radius-sm); cursor: pointer; font: 750 11px/1.2 var(--font-sans); letter-spacing: 0; text-transform: none; white-space: nowrap; }
 .primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 15px; background: var(--ink-black); border-color: var(--ink-black); color: var(--bg-surface); }
 .primary:hover:not(:disabled) { transform: translateY(-1px); }
 .primary:active:not(:disabled) { transform: translateY(1px); }
@@ -127,7 +127,7 @@
 .secretNote { display: block; margin-top: 12px; color: var(--buzz-muted); font-size: 9px; line-height: 1.55; }
 .runtimeBar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px clamp(20px, 3vw, 30px); border-top: 1px solid var(--buzz-line); background: color-mix(in srgb, var(--bg-elevated) 62%, transparent); color: var(--text-secondary); font-size: 10px; line-height: 1.5; }
 .runtimeBar > div { display: flex; gap: 6px; }
-.runtimeBar button { min-height: 32px; padding: 7px 10px; border: 1px solid var(--buzz-line); border-radius: var(--hg-radius-sm); background: transparent; color: var(--ink-black); cursor: pointer; font: 750 9px/1.2 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+.runtimeBar button { min-height: 32px; padding: 7px 10px; border: 1px solid var(--buzz-line); border-radius: var(--hg-radius-sm); background: transparent; color: var(--ink-black); cursor: pointer; font: 750 11px/1.2 var(--font-sans); letter-spacing: 0; text-transform: none; }
 .runtimeBar button:disabled { cursor: not-allowed; opacity: .5; }
 .runtimeBar .dangerButton { border-color: color-mix(in srgb, var(--hg-bad) 55%, var(--buzz-line)); color: var(--hg-bad); }
 .revoked { opacity: .48; }

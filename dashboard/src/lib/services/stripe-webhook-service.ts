@@ -14,6 +14,7 @@ import {
   grantSubscriptionCycleCredits,
   isTopUpPackageCredits,
 } from "@/lib/billing/credits";
+import { tryGrantTopupBonus } from "@/lib/venice/promo/service";
 import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-wallets";
 import { tryReactivateManagedVeniceKeysAfterTopUp } from "@/lib/billing/managed-venice-auto-recover";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
@@ -466,6 +467,11 @@ export class StripeWebhookService {
         paymentIntentId,
       },
     });
+
+    // Existing subscriber's first card top-up in a promo campaign earns a
+    // bonus. Flag-gated, idempotent, and it never throws, so a replay of this
+    // webhook re-runs it harmlessly.
+    await tryGrantTopupBonus({ userId, sessionId: session.id, amountMicroUsd: creditMicroUsd });
 
     // Now that the wallet is funded, auto-reactivate any proxy key that was
     // paused for an uncovered overage (flag-gated, off by default; no-op when

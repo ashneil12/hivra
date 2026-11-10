@@ -138,6 +138,13 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       priority: 0.3,
     },
     {
+      // The Venice landing page: launch a Venice agent with no server setup.
+      url: `${SITE_URL}/venice`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.venice),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/privacy`,
       lastModified: cutoverPage(PAGE_LAST_MODIFIED.privacy),
       changeFrequency: "monthly",

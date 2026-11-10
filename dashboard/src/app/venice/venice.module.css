@@ -1,0 +1,28 @@
+.hero h1 { max-width: 900px; }
+.promo { display: inline-block; margin: 0 0 28px; padding: 10px 16px; border: 1px solid var(--gold-leaf); color: var(--ink-black); font: 13px/1.6 var(--font-sans); }
+.section { margin-top: 64px; }
+.sectionTitle { margin: 0 0 24px; }
+.section h2, .sectionTitle { margin: 0 0 24px; font-size: clamp(24px, 2.6vw, 34px); line-height: 1.15; font-weight: 500; letter-spacing: -.04em; }
+.tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--etched-border); }
+.tiles li + li { border-left: 1px solid var(--etched-border); }
+.tile { display: flex; flex-direction: column; gap: 14px; height: 100%; padding: 32px 28px; color: inherit; text-decoration: none; transition: background .2s; }
+.tile:hover, .tile:focus-visible { background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
+.tileIcon { color: var(--gold-leaf); }
+.tileName { color: var(--ink-black); font-size: 24px; font-weight: 550; letter-spacing: -.035em; }
+.tileLine { color: var(--text-secondary); font-size: 15px; line-height: 1.6; }
+.tileGo { display: inline-flex; align-items: center; gap: 8px; margin-top: auto; color: var(--ink-black); font-size: 14px; }
+.options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--etched-border); }
+.option { padding: 28px; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
+.option + .option { border-left: 1px solid var(--etched-border); }
+.option h3 { margin: 0 0 8px; color: var(--ink-black); font-size: 20px; font-weight: 550; letter-spacing: -.03em; }
+.option p { margin: 0; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; counter-reset: step; }
+.steps li { counter-increment: step; color: var(--text-secondary); font-size: 15px; line-height: 1.6; }
+.steps li::before { content: "0" counter(step); display: block; margin-bottom: 8px; color: var(--gold-leaf); font: 11px/1.7 var(--font-sans); letter-spacing: .08em; }
+.steps strong { display: block; color: var(--ink-black); font-size: 20px; font-weight: 550; letter-spacing: -.03em; }
+.price, .privacy { margin: 56px 0 0; max-width: 62ch; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
+.privacy { margin-top: 16px; font-size: 13px; color: var(--text-muted); }
+@media (max-width: 760px) {
+  .tiles, .options, .steps { grid-template-columns: minmax(0, 1fr); }
+  .tiles li + li, .option + .option { border-left: 0; border-top: 1px solid var(--etched-border); }
+}

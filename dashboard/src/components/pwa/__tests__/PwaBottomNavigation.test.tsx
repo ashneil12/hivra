@@ -150,7 +150,7 @@ describe("PwaBottomNavigation", () => {
     fireEvent.click(more);
     expect(more).toHaveAttribute("aria-expanded", "true");
     const sheet = screen.getByRole("dialog", { name: "More" });
-    expect(within(sheet).getByRole("link", { name: "2 agents or computers need attention" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
+    expect(within(sheet).getByRole("link", { name: "2 agents or computers need you" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
 
     (usePathname as jest.Mock).mockReturnValue("/dashboard/settings");
     view.rerender(<PwaBottomNavigation attentionCount={2} userName="Ash" userEmail="ash@example.com" onOpenSwitcher={onOpenSwitcher} />);

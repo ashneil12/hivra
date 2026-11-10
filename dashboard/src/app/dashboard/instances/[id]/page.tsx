@@ -2153,7 +2153,7 @@ export default function InstanceDetailPage() {
               aria-label="Close file explorer"
               whileTap={reduceMotion ? undefined : { scale: 0.94 }}
               transition={dockSpring}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--hg-text)'; e.currentTarget.style.background = 'var(--hg-fill-2)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'none'; }}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -18,6 +18,7 @@ import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { inspectRemoteDesktopCapability } from "@/lib/remote-computers/capability-inspection";
 import { parseWindowsRdpInspectionFailure } from "@/lib/remote-computers/windows-rdp-capability";
+import { windowsDesktopReasonFor } from "@/lib/remote-computers/windows-desktop-reason";
 import {
   buildWindowsGatewayToken,
   guacamoleClientIdentifier,
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     || agent.computer_substrate !== "proxmox-kvm" || agent.status !== "running"
     || agent.desired_state !== "running"
     || agent.ip !== config.guestPrivateIpv4 || agent.infrastructure_binding_token_enforced !== true) {
-    return response({ success: false, error: "This Windows computer is not ready." }, 409);
+    return response({ success: false, error: "This Windows computer is not ready.", reason: "not_prepared" }, 409);
   }
   if (agent.operation_id != null || agent.operation_kind != null) {
     // Resume only this owner's retained preparation through the existing
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return resumable
       ? response({ success: false, code: "windows_prepare_resume_required",
         error: "The retained Windows preparation needs to be checked before opening." }, 409)
-      : response({ success: false, error: "This Windows computer is not ready." }, 409);
+      : response({ success: false, error: "This Windows computer is not ready.", reason: "not_prepared" }, 409);
   }
 
   const inspected = await inspectRemoteDesktopCapability(id, {
@@ -127,15 +128,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const repairableInspectionFailure = !inspected.ok && typeof inspected.error === "string"
     && /\(guest_(?:console_autologon_enabled|rdp_disabled|rdp_nla_disabled|rdp_port_mismatch|rdp_service_unready|rdp_listener_unready|rdp_firewall_rule_mismatch|rdp_firewall_port_mismatch|rdp_firewall_service_mismatch|rdp_firewall_program_mismatch|rdp_firewall_source_missing)\)\.$/.test(inspected.error);
   if ((!inspected.ok && !repairableInspectionFailure) || (inspected.ok && !inspected.windowsDescriptor)) {
+    const failureReason = inspected.ok ? "windows_descriptor_missing" : inspectionFailureReason(inspected.error);
     log.warn("Windows desktop inspection unconfirmed", {
       source: "hivra/agents/[id]/windows-desktop",
       instanceId: id,
       status: 503,
       failureType: "inspection_unconfirmed",
       phase: "capability_inspection",
-      reason: inspected.ok ? "windows_descriptor_missing" : inspectionFailureReason(inspected.error),
+      reason: failureReason,
     });
-    return response({ success: false, error: "Windows RDP inspection could not be confirmed. Try opening it again." }, 503);
+    // The coarse code is all the page gets: it never carries the diagnostic.
+    return response({
+      success: false,
+      error: "Windows RDP inspection could not be confirmed. Try opening it again.",
+      reason: windowsDesktopReasonFor(failureReason),
+    }, 503);
   }
   // A renewed Windows RDP certificate no longer matches the pin, so this asks
   // for owner preparation, which reads and stores the current certificate.
@@ -159,12 +166,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    return response({ success: false, error: "The Windows gateway did not respond." }, 503);
+    return response({ success: false, error: "The Windows gateway did not respond.", reason: "host_unreachable" }, 503);
   }
   const gatewayBody = await gatewayResponse.json().catch(() => null) as { authToken?: unknown } | null;
   if (!gatewayResponse.ok || typeof gatewayBody?.authToken !== "string"
     || !/^[A-F0-9]{64}$/.test(gatewayBody.authToken)) {
-    return response({ success: false, error: "The Windows gateway rejected the handoff." }, 503);
+    return response({ success: false, error: "The Windows gateway rejected the handoff.", reason: "host_unreachable" }, 503);
   }
   const client = guacamoleClientIdentifier(config.connectionName);
   const launchUrl = `${config.gatewayOrigin}/guacamole/#/client/${client}?token=${gatewayBody.authToken}`;

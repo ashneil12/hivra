@@ -204,14 +204,34 @@ afterAll(() => {
   }
 });
 
-/** Choose goes straight to the plan: there is no Continue step. */
+/** Choose goes straight to Review. Its Change button opens the full
+ * controls (Advanced), which most of these tests drive, so they start open. */
 function chooseTile(name: TileName) {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
+  openAdvanced();
+}
+
+/** Review shows Hivra's recommended settings; Change opens the controls. */
+function openAdvanced() {
+  const change = document.querySelector<HTMLButtonElement>('button[aria-controls="launch-advanced-settings"][aria-expanded="false"]');
+  if (change) fireEvent.click(change);
+}
+
+/** Hides the controls so Review's summary of what will launch is showing. */
+function closeAdvanced() {
+  const hide = document.querySelector<HTMLButtonElement>('button[aria-controls="launch-advanced-settings"][aria-expanded="true"]');
+  if (hide) fireEvent.click(hide);
+}
+
+/** Everything Review says about the launch. */
+function reviewScope() {
+  return screen.getByTestId("launch-journey");
 }
 
 /** Where it runs is summarized until the owner asks to change it. */
 function openWhereItRuns() {
-  const change = screen.queryByRole("button", { name: "Change" });
+  openAdvanced();
+  const change = document.querySelector<HTMLButtonElement>('button[aria-controls="launch-where-it-runs"][aria-expanded="false"]');
   if (change) fireEvent.click(change);
 }
 
@@ -241,14 +261,17 @@ function launchButton() {
   return screen.getByRole("button", { name: /^(Launch |Start Windows setup)/ });
 }
 
-function expectCurrentStep(label: "Choose" | "Plan" | "Review") {
+function expectCurrentStep(label: "Choose" | "Review") {
   const steps = screen.getByRole("list", { name: "Launch steps" });
-  expect(within(steps).getAllByRole("listitem")).toHaveLength(3);
+  expect(within(steps).getAllByRole("listitem")).toHaveLength(2);
   expect(within(steps).getByText(label).closest("li")).toHaveAttribute("aria-current", "step");
 }
 
 const CODEX_BROWSER_SIZE = "Small · 1.5 CPU / 3 GB reserved · up to 2 CPU / 4 GB";
 const CODEX_BASE_SIZE = "Small · 0.5 CPU / 1 GB reserved · up to 0.5 CPU / 1 GB";
+// Review's short summary of the same sizes.
+const CODEX_BROWSER_SUMMARY = "Small · 1.5 CPU / 3 GB";
+const CODEX_BASE_SUMMARY = "Small · 0.5 CPU / 1 GB";
 const CODEX_CAN_USE_WITH_BROWSER = "Terminal, files and administrator access on its own computer. Browser: on.";
 const CODEX_CAN_USE_WITHOUT_BROWSER = "Terminal, files and administrator access on its own computer. Browser: off.";
 
@@ -335,12 +358,12 @@ describe("LaunchPage", () => {
     expect(screen.getByText(/1 CPU \/ 1 GB enforced limit/i)).toBeInTheDocument();
     customField("Reserved CPU");
     expect(screen.queryByLabelText("Maximum CPU")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     expect(screen.getByText("gVisor application-kernel sandbox on your Linux host")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Launch review")).getByText(
+    expect(within(reviewScope()).getByText(
       `Creates one Linux Sandbox on ${GVISOR_TARGET.displayName} with fixed CPU and memory limits. It doesn't create a desktop, public ports or host folders. Nothing is bought.`,
     )).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "linux-terminal", computerProfile: "linux-terminal", cpu: 1, ram: 1, maximumCpu: 1, maximumRam: 1,
       deployment: expect.objectContaining({ mode: "self-managed", targetId: GVISOR_TARGET.id }),
@@ -358,8 +381,8 @@ describe("LaunchPage", () => {
     chooseTile("Linux Sandbox");
     await waitFor(() => expect(whereButton(/My infrastructure/i)).toBeEnabled());
     fireEvent.click(whereButton(/My infrastructure/i));
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
+    fireEvent.click(launchButton());
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
     expect(gvisorChecks).toBe(1);
@@ -369,8 +392,8 @@ describe("LaunchPage", () => {
     render(<LaunchPage />);
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toHaveFocus();
     chooseTile("Ubuntu Desktop");
-    expect(screen.getByRole("heading", { name: "Ubuntu Desktop — here's the plan" })).toHaveFocus();
-    expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "plan");
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toHaveFocus();
+    expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "review");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     const name = screen.getByRole("textbox", { name: "Computer name" });
     name.focus();
@@ -397,9 +420,12 @@ describe("LaunchPage", () => {
     // Fit badges come from the plan and target evidence the page loaded.
     await waitFor(() => expect(within(agents).getByRole("button", { name: /^Codex/ })).toHaveTextContent("Needs Pro or your own server"));
     expect(within(computers).getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server");
-    expect(within(computers).getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Needs your own server");
+    // No server is connected, so Linux Sandbox says so in one line and offers to add one.
+    expect(within(computers).getByRole("button", { name: /^Linux Sandbox/ })).not.toHaveTextContent("Needs your own server");
+    expect(within(computers).getByText("Needs a server you've connected.", { exact: false })).toBeInTheDocument();
+    expect(within(computers).getByRole("link", { name: "Add a server" })).toHaveAttribute("href", "/dashboard/infrastructure");
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
-    expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Prepared computer");
+    expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Ready to launch");
 
     // Every catalog agent launches here; none hands off to another page.
     expect(within(agents).queryAllByRole("link")).toHaveLength(0);
@@ -411,8 +437,8 @@ describe("LaunchPage", () => {
     expect(screen.queryByText(/Sets up on its own page/i)).not.toBeInTheDocument();
 
     chooseTile("Codex");
-    expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
-    expectCurrentStep("Plan");
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    expectCurrentStep("Review");
   });
 
   it("marks a computer as ready on the owner's server when the plan cannot hold it", async () => {
@@ -422,7 +448,7 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Ready on your server"));
     // A server without gVisor evidence is still not one Linux Sandbox can use.
-    expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Needs your own server");
+    expect(screen.getByRole("link", { name: "Add a server" })).toBeInTheDocument();
   });
 
   it("puts computers first for a Start with a computer link", async () => {
@@ -439,11 +465,11 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
 
-    expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
-    expectCurrentStep("Plan");
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    expectCurrentStep("Review");
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     const card = screen.getByRole("group", { name: "Launch plan" });
-    expect(within(card).getByRole("textbox", { name: "Agent name" })).toHaveValue("Codex 1");
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Codex 1");
     expect(within(card).getByText("Hivra Cloud")).toBeInTheDocument();
     expect(within(card).getByText("Operator plan")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Change" })).toHaveAttribute("aria-expanded", "false");
@@ -455,36 +481,35 @@ describe("LaunchPage", () => {
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Customize" })).toHaveAttribute("aria-expanded", "false");
     expect(within(card).getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
-    // Codex signs in inside itself by default; a key or Hivra credits are the
-    // other two choices, in the same control every agent uses.
+    // Codex starts on Hivra credits (Venice) by default; signing in or a key
+    // are the other two choices, in the same control every agent uses.
     const modelAccess = within(card).getByRole("group", { name: "Model access" });
-    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(modelAccess).getByRole("button", { name: /^Use my API key/ })).toHaveAttribute("aria-pressed", "false");
-    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "false");
-    expect(within(card).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
-    expect(within(card).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
+    expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/balloon|opportunistic|shared scheduling/i)).not.toBeInTheDocument();
 
     fireEvent.click(within(card).getByRole("button", { name: "Change" }));
     expect(whereButton(/Hivra Cloud/i)).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
 
     expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
     expectCurrentStep("Review");
-    const review = screen.getByLabelText("Launch review");
+    const review = reviewScope();
     expect(within(review).getByText("Hivra Cloud")).toBeInTheDocument();
-    expect(within(review).getByText("Private virtual machine")).toBeInTheDocument();
-    expect(within(review).getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
+    expect(within(review).getByText("Operator plan")).toBeInTheDocument();
+    expect(within(review).getByText(CODEX_BROWSER_SUMMARY)).toBeInTheDocument();
     expect(within(review).getByText("Your agent can use")).toBeInTheDocument();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     // Where the owner watches it work, from the same decision as the agent
     // page's tabs and the note Hivra gives the agent (ATT-15).
     expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
       "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
-    expect(within(review).getByText("Sign in to ChatGPT inside Codex after it opens.")).toBeInTheDocument();
-    expect(within(review).getByText("No extra charge. Uses your Operator plan allowance.")).toBeInTheDocument();
+    expect(within(review).getByText(/^Hivra credits.* · DeepSeek V4 Pro \(via Venice\)$/)).toBeInTheDocument();
+    expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(review).getByText("Creates one computer and installs Codex. Nothing is bought.")).toBeInTheDocument();
-    expect(within(review).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Recommended settings", { selector: "dl" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Launch review")).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();
     const technical = screen.getByText("Technical details").closest("details") as HTMLElement;
     expect(technical).not.toHaveAttribute("open");
     expect(within(technical).getByText("Private virtual machine on Hivra Cloud (Proxmox KVM)")).toBeInTheDocument();
@@ -506,11 +531,11 @@ describe("LaunchPage", () => {
     }));
     expect(await screen.findByRole("heading", { name: "Codex is being created." })).toBeInTheDocument();
     expect(routerPushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=terminal",
+      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(screen.getByRole("link", { name: "Open Codex" })).toHaveAttribute(
       "href",
-      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=terminal",
+      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(screen.getAllByTestId("launch-primary-action")).toHaveLength(1);
   });
@@ -537,8 +562,8 @@ describe("LaunchPage", () => {
     fireEvent.click(within(sizes).getByRole("button", { name: /^Medium/ }));
     expect(within(sizes).getByRole("button", { name: /^Medium/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Medium · 4 CPU / 8 GB reserved · up to 8 CPU / 16 GB")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    expect(within(screen.getByLabelText("Launch review")).getByText("Medium · 4 CPU / 8 GB reserved · up to 8 CPU / 16 GB")).toBeInTheDocument();
+    closeAdvanced();
+    expect(within(reviewScope()).getByText("Medium · 4 CPU / 8 GB")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Ubuntu Desktop" }));
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "linux-desktop", cpu: 4, ram: 8, maximumCpu: 8, maximumRam: 16,
@@ -599,7 +624,7 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     fireEvent.click(launchButton());
 
     expect(await screen.findByRole("heading", { name: "Confirming your launch…" })).toBeInTheDocument();
@@ -612,7 +637,7 @@ describe("LaunchPage", () => {
     expect(await screen.findByRole("heading", { name: "Codex is being created." })).toBeInTheDocument();
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledTimes(1));
     expect(routerPushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/77777777-7777-4777-8777-777777777777?welcome=1&tab=terminal",
+      "/dashboard/agent/77777777-7777-4777-8777-777777777777?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(createAgentMock).toHaveBeenCalledTimes(1);
   });
@@ -625,7 +650,7 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(30_001);
     fireEvent.click(launchButton());
     receiptClock.mockRestore();
@@ -680,10 +705,10 @@ describe("LaunchPage", () => {
     fireEvent.click(within(customField("Reserved memory")).getByRole("button", { name: "8 GB" }));
     expect(screen.getByText(/Reserved CPU and memory count against your plan's pool/)).toBeInTheDocument();
     expect(screen.getByText("Custom · 4 CPU / 8 GB reserved · up to 4 CPU / 8 GB")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     expect(screen.getByRole("heading", { name: "Review and launch DESIGN_STATION" })).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Launch review")).getByText("You can use")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Launch review")).getByText("Creates one computer with Ubuntu Desktop. Nothing is bought.")).toBeInTheDocument();
+    expect(within(reviewScope()).getByText("You can use")).toBeInTheDocument();
+    expect(within(reviewScope()).getByText("Creates one computer with Ubuntu Desktop. Nothing is bought.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Ubuntu Desktop" }));
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -709,13 +734,14 @@ describe("LaunchPage", () => {
 
     expect(screen.getByText("Choose the server and the ISO. Hivra Cloud isn't available for Windows.")).toBeVisible();
     expect(await screen.findByText("Hivra Cloud isn't available for Windows. Choose a server you connected.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review launch" })).toBeDisabled();
+    expect(launchButton()).toBeDisabled();
     expect(whereButton(/Hivra Cloud/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /^My server/ })).toBeDisabled();
     expect(screen.queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
     // Capacity opens in a sheet over the launch (slice 10), not on another page.
     expect(screen.getByRole("button", { name: "Add capacity" })).toBeInTheDocument();
-    expect(screen.queryByText(/private|test|evaluation|licen[cs]e|legal/i)).not.toBeInTheDocument();
+    // Collapsed technical details aside, nothing here mentions private, test or licence wording.
+    expect(screen.queryAllByText(/private|test|evaluation|licen[cs]e|legal/i).filter(element => !element.closest("details"))).toHaveLength(0);
   });
 
   it("keeps a compatible Proxmox target blocked until a host-side ISO is observed", async () => {
@@ -734,7 +760,7 @@ describe("LaunchPage", () => {
     expect(screen.getByRole("link", { name: "Windows Server Evaluation", hidden: true })).toHaveAttribute("href", "https://www.microsoft.com/evalcenter/download-windows-server-2025");
     expect(screen.getByText(/One host copy can be reused for multiple VMs/)).toBeVisible();
     expect(screen.getByText(/does not provide the media, licence, product key, activation, or a compliance determination/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review launch" })).toBeDisabled();
+    expect(launchButton()).toBeDisabled();
   });
 
   it("does not offer an earlier Linux-desktop-only host for Windows setup", async () => {
@@ -818,11 +844,10 @@ describe("LaunchPage", () => {
     expect(screen.getByRole("checkbox")).not.toBeChecked();
     fireEvent.change(iso, { target: { value: windowsIsoImages[0].volume } });
     fireEvent.click(screen.getByRole("checkbox"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Review launch" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Review launch" }));
-    const review = screen.getByLabelText("Launch review");
+    await waitFor(() => expect(launchButton()).toBeEnabled());
+    const review = reviewScope();
     expect(within(review).getByText(windowsIsoImages[0].volume)).toBeVisible();
-    expect(within(review).getByText(/Windows Server Evaluation — evaluation only/)).toBeVisible();
+    expect(within(review).getByText(/^Windows Server Evaluation — evaluation only\. /)).toBeVisible();
     expect(within(review).getByText(/Attestation will be stamped/)).toBeVisible();
     expect(within(review).getByText(
       `Creates one Windows setup computer on ${PROXMOX_TARGET.displayName}, attaches the ISO you chose and starts the installer. Nothing is bought or uploaded, and Hivra Cloud isn't used.`,
@@ -857,7 +882,7 @@ describe("LaunchPage", () => {
     const ownInfrastructure = await findWhereButton(/My infrastructure/i);
     await waitFor(() => expect(ownInfrastructure).toBeEnabled());
     fireEvent.click(ownInfrastructure);
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
 
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     expect(screen.getByText("Studio Proxmox / pve-01")).toBeInTheDocument();
@@ -884,9 +909,9 @@ describe("LaunchPage", () => {
     expect(screen.getByText("The whole server")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Reserved CPU" })).not.toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    expect(within(screen.getByLabelText("Launch review")).getByText(
-      "The whole server · its CPU and memory stay as they are",
+    closeAdvanced();
+    expect(within(reviewScope()).getByText(
+      "The whole server",
     )).toBeInTheDocument();
     fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -906,7 +931,7 @@ describe("LaunchPage", () => {
     if(available===5)expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
     else {
       expect(screen.getByTestId("launch-primary-action")).toBeEnabled();
-      fireEvent.click(screen.getByTestId("launch-primary-action"));
+      closeAdvanced();
       expect(screen.getByRole("heading",{name:/^Review and launch/})).toBeInTheDocument();
     }
     expect(createAgentMock).not.toHaveBeenCalled();
@@ -940,7 +965,7 @@ describe("LaunchPage", () => {
     const ownInfrastructure = await findWhereButton(/My infrastructure/i);
     await waitFor(() => expect(ownInfrastructure).toBeEnabled());
     fireEvent.click(ownInfrastructure);
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     first.unmount();
 
@@ -948,7 +973,8 @@ describe("LaunchPage", () => {
     render(<LaunchPage />);
 
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
-    expect(await screen.findByText("Unavailable server")).toBeInTheDocument();
+    openAdvanced();
+    expect((await screen.findAllByText("No server selected")).length).toBeGreaterThan(0);
     expect(screen.getByText("No compatible capacity is ready for this profile.")).toBeInTheDocument();
     expect(launchButton()).toBeDisabled();
   });
@@ -986,11 +1012,11 @@ describe("LaunchPage", () => {
     expect(screen.getByText(CODEX_BASE_SIZE)).toBeInTheDocument();
     expect(within(customField("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
 
-    const review = screen.getByLabelText("Launch review");
+    const review = reviewScope();
     expect(within(review).getByText(CODEX_CAN_USE_WITHOUT_BROWSER)).toBeInTheDocument();
-    expect(within(review).getByText(CODEX_BASE_SIZE)).toBeInTheDocument();
+    expect(within(review).getByText(CODEX_BASE_SUMMARY)).toBeInTheDocument();
     fireEvent.click(launchButton());
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
@@ -1068,8 +1094,8 @@ describe("LaunchPage", () => {
     expect(screen.getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
     fireEvent.click(browser);
     expect(screen.getByText(keptSize)).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    expect(within(screen.getByLabelText("Launch review")).getByText(CODEX_CAN_USE_WITHOUT_BROWSER)).toBeInTheDocument();
+    closeAdvanced();
+    expect(within(reviewScope()).getByText(CODEX_CAN_USE_WITHOUT_BROWSER)).toBeInTheDocument();
     fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "codex", cpu: 1.5, ram: 3, maximumCpu: 2, maximumRam: 4, browser: false,
@@ -1092,7 +1118,7 @@ describe("LaunchPage", () => {
     fireEvent.click(browser);
     // The browser needs 1.5 CPU; the 8 GB already chosen stays.
     expect(screen.getByText("Custom · 1.5 CPU / 8 GB reserved · up to 2 CPU / 8 GB")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "codex", cpu: 1.5, ram: 8, maximumCpu: 2, maximumRam: 8, browser: true,
@@ -1124,8 +1150,8 @@ describe("LaunchPage", () => {
 
     fireEvent.click(own);
     expect(browser).toBeChecked();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const review = screen.getByLabelText("Launch review");
+    closeAdvanced();
+    const review = reviewScope();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     expect(within(review).getByText(PROXMOX_TARGET.displayName)).toBeInTheDocument();
     fireEvent.click(launchButton());
@@ -1146,7 +1172,7 @@ describe("LaunchPage", () => {
       chooseTile("Codex");
       await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
       expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
-      fireEvent.click(screen.getByTestId("launch-primary-action"));
+      closeAdvanced();
       fireEvent.click(launchButton());
       await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
         type: "codex", cpu: 1.5, ram: 3, browser: true,
@@ -1203,8 +1229,8 @@ describe("LaunchPage", () => {
     expect(browser).not.toBeChecked();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText(CODEX_BASE_SIZE)).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const review = screen.getByLabelText("Launch review");
+    closeAdvanced();
+    const review = reviewScope();
     expect(within(review).getByText(CODEX_CAN_USE_WITHOUT_BROWSER)).toBeInTheDocument();
     expect(within(review).getByText(SMALL_PROXMOX_TARGET.displayName)).toBeInTheDocument();
     fireEvent.click(launchButton());
@@ -1269,7 +1295,8 @@ describe("LaunchPage", () => {
 
     const releaseTargets = holdTargetLookup();
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
     await act(async () => { await Promise.resolve(); });
     // The paid plan is known but the saved host is not restored yet.
@@ -1289,7 +1316,8 @@ describe("LaunchPage", () => {
     let resolvePlan: (plan: typeof PAID_PLAN) => void = () => undefined;
     fetchPlanStrictMock.mockReturnValue(new Promise(resolve => { resolvePlan = resolve; }));
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     await waitFor(() => expect(whereButton(/My infrastructure/i)).toHaveAttribute("aria-pressed", "true"));
 
     await act(async () => { resolvePlan(PAID_PLAN); });
@@ -1312,7 +1340,8 @@ describe("LaunchPage", () => {
     const writes = jest.spyOn(Storage.prototype, "setItem");
     try {
       render(<LaunchPage />);
-      expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+      openAdvanced();
       await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
       await act(async () => { await Promise.resolve(); });
       await act(async () => { releaseTargets(); });
@@ -1339,8 +1368,8 @@ describe("LaunchPage", () => {
 
     fireEvent.click(whereButton(/My infrastructure/i));
     expectSmallHostCustomKept();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const review = screen.getByLabelText("Launch review");
+    closeAdvanced();
+    const review = reviewScope();
     expect(within(review).getByText(CODEX_CAN_USE_WITHOUT_BROWSER)).toBeInTheDocument();
     expect(within(review).getByText(SMALL_PROXMOX_TARGET.displayName)).toBeInTheDocument();
     fireEvent.click(launchButton());
@@ -1365,7 +1394,8 @@ describe("LaunchPage", () => {
     first.unmount();
 
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     fireEvent.click(await screen.findByRole("button", { name: "Turn off the browser" }));
     expectSmallHostCustomKept();
     expect(storedDraft()).toMatchObject({ browserSource: "custom", browserRaisedFrom: null });
@@ -1453,7 +1483,8 @@ describe("LaunchPage", () => {
     first.unmount();
 
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     await act(async () => { await Promise.resolve(); });
@@ -1495,8 +1526,8 @@ describe("LaunchPage", () => {
     expect(storedDraft()).toEqual(shown);
     expectRaisedWithBrowser();
 
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const review = screen.getByLabelText("Launch review");
+    closeAdvanced();
+    const review = reviewScope();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -1516,8 +1547,8 @@ describe("LaunchPage", () => {
     expectSmallHostCustomKept();
     raiseHeldOffSize();
 
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const firstReview = screen.getByLabelText("Launch review");
+    closeAdvanced();
+    const firstReview = reviewScope();
     expect(within(firstReview).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     fireEvent.click(launchButton());
     expect(await screen.findByRole("heading", {
@@ -1531,11 +1562,12 @@ describe("LaunchPage", () => {
     // Review mints a new launch request, which re-runs the default. It must
     // show and send what the owner already saw, not a newly flipped choice.
     fireEvent.click(screen.getByRole("button", { name: "Review launch" }));
+    closeAdvanced();
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     await act(async () => { await Promise.resolve(); });
-    const retryReview = screen.getByLabelText("Launch review");
+    const retryReview = reviewScope();
     expect(within(retryReview).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
-    expect(within(retryReview).getByText("Custom · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
+    expect(within(retryReview).getByText("Custom · 2 CPU / 4 GB")).toBeInTheDocument();
     expect(storedDraft()).toMatchObject({ browser: true, browserSource: "recommended", resources: RAISED_RESOURCES });
     expect(storedDraft().launchRequestId).not.toBe(failedRequestId);
     fireEvent.click(launchButton());
@@ -1549,13 +1581,14 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     first.unmount();
 
     fetchPlanStrictMock.mockRejectedValueOnce(new Error("Plan service unavailable"));
     render(<LaunchPage />);
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     const message = await screen.findByText("Managed capacity could not be verified.");
     const blocker = message.closest("[role='alert']") as HTMLElement;
     expect(blocker).not.toBeNull();
@@ -1566,7 +1599,7 @@ describe("LaunchPage", () => {
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(launchButton()).toBeEnabled());
     expect(screen.queryByText("Managed capacity could not be verified.")).not.toBeInTheDocument();
-    const review = screen.getByLabelText("Launch review");
+    const review = reviewScope();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -1602,7 +1635,7 @@ describe("LaunchPage", () => {
     expect(cloud).toHaveTextContent("Not available for Linux Sandbox.");
     expect(whereButton(/My infrastructure/i)).toHaveAttribute("aria-pressed", "true");
     const blocker = await screen.findByRole("alert");
-    expect(blocker).toHaveTextContent("Linux Sandbox requires a compatible gVisor host you connected.");
+    expect(blocker).toHaveTextContent("Linux Sandbox needs a server you've connected, and none is ready for it yet.");
     expect(within(blocker).getByRole("button", { name: "Set up capacity" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Review plans|Upgrade to/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
@@ -1617,8 +1650,8 @@ describe("LaunchPage", () => {
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     expect(whereButton(/My infrastructure/i)).toHaveAttribute("aria-pressed", "true");
     expect(whereButton(/Hivra Cloud/i)).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    expect(within(screen.getByLabelText("Launch review")).getByText(GVISOR_TARGET.displayName)).toBeInTheDocument();
+    closeAdvanced();
+    expect(within(reviewScope()).getByText(GVISOR_TARGET.displayName)).toBeInTheDocument();
   });
 
   it("describes computers honestly without implying an agent can be attached later", async () => {
@@ -1661,7 +1694,7 @@ describe("LaunchPage", () => {
       await screen.findByRole("heading", { name: "What do you want to launch?" });
       chooseTile("Codex");
       await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-      fireEvent.click(screen.getByTestId("launch-primary-action"));
+      closeAdvanced();
       const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(195_001);
       fireEvent.click(launchButton());
       receiptClock.mockRestore();
@@ -1691,7 +1724,7 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     fireEvent.click(launchButton());
 
     expect(await screen.findByRole("heading", {
@@ -1716,11 +1749,12 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     const requestId = storedDraftJson().launchRequestId;
     fireEvent.click(launchButton());
 
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Refresh the selected capacity and review this launch.",
     );
@@ -1746,7 +1780,7 @@ describe("LaunchPage", () => {
     const ownInfrastructure = await findWhereButton(/My infrastructure/i);
     await waitFor(() => expect(ownInfrastructure).toBeEnabled());
     fireEvent.click(ownInfrastructure);
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(30_001);
     fireEvent.click(launchButton());
     receiptClock.mockRestore();
@@ -1780,7 +1814,7 @@ describe("LaunchPage", () => {
     const first = render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
-    expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     const saved = storedDraftJson();
     first.unmount();
     return saved;
@@ -1813,7 +1847,7 @@ describe("LaunchPage", () => {
     render(<LaunchPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Continue Codex launch" }));
-    expect(screen.getByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Codex 1");
     expect(storedDraftJson().launchRequestId).toBe(saved.launchRequestId);
   });
@@ -1824,15 +1858,16 @@ describe("LaunchPage", () => {
     render(<LaunchPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Start a new Ubuntu Desktop launch" }));
-    expect(screen.getByRole("heading", { name: "Ubuntu Desktop — here's the plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Computer name" })).toHaveValue("Ubuntu Desktop 1");
-    expect(storedDraftJson()).toMatchObject({ profileId: "ubuntu-desktop", stage: "plan" });
+    expect(storedDraftJson()).toMatchObject({ profileId: "ubuntu-desktop", stage: "review" });
   });
 
   it("opens the plan straight from a profile link when there is nothing to resume", async () => {
     linkParams({ start: "1", profile: "codex" });
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     expect(screen.queryByText(/Continue your/)).not.toBeInTheDocument();
   });
 
@@ -1865,8 +1900,9 @@ describe("LaunchPage", () => {
     first.unmount();
 
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
+    closeAdvanced();
     fireEvent.click(launchButton());
     await waitFor(() => expect(createAgentMock).toHaveBeenCalled());
     expect(createAgentMock.mock.calls[0][0].launchRequestId).toBe(stored.launchRequestId);
@@ -1918,7 +1954,7 @@ describe("LaunchPage", () => {
     expect(storedDraft().capacity).toEqual({ mode: "self-managed", targetId: PROXMOX_TARGET.id });
     await stepBack();
     chooseTile("Ubuntu Desktop");
-    expect(screen.getByRole("heading", { name: "Ubuntu Desktop — here's the plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     expect(storedDraft().capacity).toEqual({ mode: "self-managed", targetId: PROXMOX_TARGET.id });
     await stepBack();
     expect(screen.getByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
@@ -1957,7 +1993,8 @@ describe("LaunchPage", () => {
     first.unmount();
 
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     await act(async () => { await Promise.resolve(); });
@@ -1968,8 +2005,8 @@ describe("LaunchPage", () => {
     expect(screen.getByText(RAISED_TEXT)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const review = screen.getByLabelText("Launch review");
+    closeAdvanced();
+    const review = reviewScope();
     expect(within(review).getByText(PROXMOX_TARGET.displayName)).toBeInTheDocument();
     expect(within(review).getByText(CODEX_CAN_USE_WITH_BROWSER)).toBeInTheDocument();
     fireEvent.click(launchButton());
@@ -2011,7 +2048,8 @@ describe("LaunchPage", () => {
     first.unmount();
 
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Ubuntu Desktop — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     expect(whereButton(/Hivra Cloud/i)).toHaveAttribute("aria-pressed", "true");
     expect(storedDraft().capacity).toEqual({ mode: "hivra-managed", targetId: null });
@@ -2026,8 +2064,8 @@ describe("LaunchPage", () => {
     openWhereItRuns();
     const destination = screen.getByRole("region", { name: "Where it runs" });
     expect(name.compareDocumentPosition(destination) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const plan = screen.getByRole("region", { name: "Ubuntu Desktop — here's the plan" });
-    expect(within(plan).getByRole("button", { name: "Review launch" })).toBeInTheDocument();
+    const plan = screen.getByRole("region", { name: /^Review and launch/ });
+    expect(within(plan).getByRole("button", { name: /^Launch / })).toBeInTheDocument();
   });
 
   it("returns from an upgrade to the same launch and says the new plan is active", async () => {
@@ -2049,14 +2087,15 @@ describe("LaunchPage", () => {
     fetchPlanStrictMock.mockResolvedValue(pro);
     linkParams({ draft: saved.launchRequestId, upgraded: "1" });
     render(<LaunchPage />);
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
+    openAdvanced();
     expect(await screen.findByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     expect(screen.getByRole("checkbox", { name: /Browser for Codex/ })).toBeChecked();
     expect(screen.getByText(CODEX_BROWSER_SIZE)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(storedDraftJson().launchRequestId).toBe(saved.launchRequestId);
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     fireEvent.click(screen.getByRole("button", { name: "Launch Codex" }));
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "codex", browser: true, cpu: 1.5, ram: 3, launchRequestId: saved.launchRequestId,
@@ -2109,6 +2148,7 @@ describe("LaunchPage", () => {
     linkParams({ draft: saved.launchRequestId, upgraded: "operator" });
     render(<LaunchPage />);
     expect(await screen.findByText("Pro is active. Continue your Ubuntu Desktop launch.")).toBeInTheDocument();
+    openAdvanced();
     await waitFor(() => expect(screen.getByText("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument());
     expect(screen.getByText("Your Pro plan lets each computer use up to 2 CPU / 4 GB, so Small's maximum stops there.")).toBeInTheDocument();
     const small = within(screen.getByRole("group", { name: "Size" })).getByRole("button", { name: /^Small/ });
@@ -2116,7 +2156,6 @@ describe("LaunchPage", () => {
     expect(small).toBeEnabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^Upgrade to/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review launch" }));
     fireEvent.click(screen.getByRole("button", { name: "Launch Ubuntu Desktop" }));
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "linux-desktop", cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4, launchRequestId: saved.launchRequestId,
@@ -2133,13 +2172,14 @@ describe("LaunchPage", () => {
     expect(blocker).toHaveTextContent("Ubuntu Desktop is set to use up to 4 CPU / 8 GB. Your Pro plan allows up to 2 CPU / 4 GB for each computer.");
     // The owner's size is never lowered for them, so its upgrade holds it exactly.
     expect(within(blocker).getByRole("link", { name: "Upgrade to Power" })).toBeInTheDocument();
+    openAdvanced();
     const sizes = screen.getByRole("group", { name: "Size" });
     expect(within(sizes).getByRole("button", { name: /^Small/ })).toBeEnabled();
     expect(within(sizes).getByRole("button", { name: /^Medium/ })).toHaveTextContent("Over your plan");
     fireEvent.click(within(blocker).getByRole("button", { name: "Use Small (2 CPU / 4 GB)" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review launch" })).toBeEnabled();
+    expect(launchButton()).toBeEnabled();
   });
 
   it("names the plan a paid upgrade moved to while it hasn't shown up yet", async () => {
@@ -2162,12 +2202,12 @@ describe("LaunchPage", () => {
     linkParams({ draft: saved.launchRequestId, upgraded: "operator" });
     const returned = render(<LaunchPage />);
     expect(await screen.findByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
-    await waitFor(() => expect(new URLSearchParams(window.location.search).get("stage")).toBe("plan"));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("stage")).toBe("review"));
     expect(new URLSearchParams(window.location.search).has("upgraded")).toBe(false);
     expect(new URLSearchParams(window.location.search).has("draft")).toBe(false);
     // The notice stays for this visit, on every step.
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     expect(screen.getByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
     returned.unmount();
 
@@ -2212,13 +2252,14 @@ describe("LaunchPage", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
+    closeAdvanced();
     fireEvent.click(launchButton());
     expect(await screen.findByText("Part of this launch was created and can be removed.")).toBeInTheDocument();
     // Back and forward again still shows the way to delete it.
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
     expect(screen.getByText("Part of this launch was created and can be removed.")).toBeInTheDocument();
     first.unmount();
 
@@ -2260,13 +2301,13 @@ describe("LaunchPage", () => {
     fireEvent.click(screen.getByRole("checkbox"));
     const name = screen.getByRole("textbox", { name: "Computer name" });
     expect(name).toHaveValue("Windows-1");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Review launch" })).toBeEnabled());
+    await waitFor(() => expect(launchButton()).toBeEnabled());
 
     fireEvent.change(name, { target: { value: "My Windows" } });
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText(/Windows names use letters, numbers, dots, dashes and underscores/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Review launch" })).toBeDisabled();
+    expect(launchButton()).toBeDisabled();
     fireEvent.change(name, { target: { value: "My-Windows" } });
-    expect(screen.getByRole("button", { name: "Review launch" })).toBeEnabled();
+    expect(launchButton()).toBeEnabled();
   });
 });

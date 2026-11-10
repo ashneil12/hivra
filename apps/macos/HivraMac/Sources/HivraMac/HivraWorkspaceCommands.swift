@@ -49,7 +49,7 @@ struct HivraWorkspaceCommands: Commands {
             Button("Switch Agent or Computer…") { actions?.switchResource() }
                 .keyboardShortcut("k", modifiers: .command)
             Divider()
-            // Command 1-5 follow the dashboard's primary navigation order.
+            // Command 1-4 follow the dashboard's primary navigation order.
             ForEach(Array(HivraWorkspaceDestination.primaryNavigation.enumerated()), id: \.element) { index, destination in
                 Button(destination.label) { actions?.select(destination) }
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)

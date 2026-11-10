@@ -57,6 +57,38 @@ class LaunchContract(unittest.TestCase):
             with self.subTest(candidate=candidate), self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
                 guest.parse_launch(json.dumps(candidate).encode())
 
+    def test_linux_server_takes_the_same_strict_v3_document_on_proxmox_only(self):
+        value = launch(version=3, agentKind="linux-server", wantBrowser=None, modelKey="", modelBaseUrl="", model="",
+                       publicOrigin="https://computer.example.test", computerId="11111111-1111-4111-8111-111111111111",
+                       controlOrigin="https://canary.example.test")
+        self.assertEqual(guest.parse_launch(json.dumps(value).encode()), value)
+        invalid = [
+            {**value, "version": 1},
+            {**value, "version": 4},
+            {**value, "agentKind": "linux-servers"},
+            {**value, "agentKind": "linux"},
+            {key: item for key, item in value.items() if key != "computerId"},
+            {key: item for key, item in value.items() if key != "controlOrigin"},
+            {key: item for key, item in value.items() if key != "publicOrigin"},
+            {**value, "wantBrowser": False},
+            {**value, "modelKey": "synthetic"},
+            {**value, "computerSubstrate": "provider-vm"},
+            {**value, "computerSubstrate": "provider-vm", "tunnelToken": None, "accessHostname": "203-0-113-10.sslip.io",
+             "publicOrigin": "https://203-0-113-10.sslip.io"},
+            {**value, "tunnelToken": None},
+            {**value, "computerId": "not-a-uuid"},
+            {**value, "controlOrigin": "http://canary.example.test"},
+            {**value, "publicOrigin": "https://computer.example.test/"},
+            {**value, "activityTelemetry": telemetry()},
+        ]
+        for candidate in invalid:
+            with self.subTest(candidate=candidate), self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
+                guest.parse_launch(json.dumps(candidate).encode())
+        # The provider-VM desktop composition never admits the server kind.
+        provider = {**value, "computerSubstrate": "provider-vm"}
+        with self.assertRaisesRegex(guest.InstallError, "^invalid guest launch document$"):
+            guest.parse_launch(json.dumps(provider).encode(), provider_desktop=True)
+
     def test_native_v2_requires_fixed_origin_and_explicit_supported_custody(self):
         value = launch(version=2, agentKind="deepseek-harness", computerSubstrate="provider-vm",
                        publicOrigin="https://native.example.test", modelKey="", modelBaseUrl="", model="")
@@ -146,7 +178,7 @@ class LaunchContract(unittest.TestCase):
             with self.subTest(kind=kind):
                 value = traced_launch(agentKind=kind)
                 self.assertEqual(guest.parse_launch(json.dumps(value).encode()), value)
-        invalid = [traced_launch(agentKind=kind) for kind in ("aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop")]
+        invalid = [traced_launch(agentKind=kind) for kind in ("aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop", "linux-server")]
         invalid += [traced_launch(computerSubstrate="provider-vm"),
                     launch(version=4),
                     launch(activityTelemetry=telemetry()),

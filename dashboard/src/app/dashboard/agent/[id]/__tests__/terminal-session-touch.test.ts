@@ -10,6 +10,10 @@ describe("terminal session strip touch targets", () => {
     expect(css).toMatch(/@media \(pointer: coarse\) \{ \.sessionClose, \.sessionAdd \{ min-width: 44px; min-height: 44px; \} \}/);
   });
 
+  it("gives the lone-session New terminal control 44px on coarse pointers", () => {
+    expect(css).toMatch(/@media \(pointer: coarse\) \{ \.sessionNew \{ width: 44px; height: 44px; \} \}/);
+  });
+
   it("gives add and close 44px in the narrow workspace layout", () => {
     const narrow = css.slice(css.indexOf("@container resource-workspace (max-width: 600px)"));
     expect(narrow).toContain(".sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 44px; }");

@@ -1,4 +1,4 @@
-import { resizeFloor } from "@/lib/hivra/agent-catalog";
+import { resizeFloor, UBUNTU_SERVER_FLOOR } from "@/lib/hivra/agent-catalog";
 import type { LaunchProfileId } from "./contracts";
 
 export type ResourceEnvelope = {
@@ -73,6 +73,11 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
   "ubuntu-desktop": {
     floor: { cpu: 2, ram: 4 },
     recommended: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
+  },
+  // A small Linux computer without a desktop: it may burst past its reservation.
+  "ubuntu-server": {
+    floor: { ...UBUNTU_SERVER_FLOOR },
+    recommended: { cpu: 1, ram: 2, maximumCpu: 2, maximumRam: 4 },
   },
   "linux-terminal": {
     floor: { cpu: 0.5, ram: 1 },
