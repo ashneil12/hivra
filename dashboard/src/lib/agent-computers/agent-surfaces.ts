@@ -7,6 +7,7 @@
 // user sees and what the agent is told cannot drift apart.
 
 import { getAgent as catalogAgent, type AgentDef } from "@/lib/hivra/agent-catalog";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 
 /** Every surface an agent or computer page can show, in display order. */
 export const AGENT_SURFACE_IDS = [
@@ -31,6 +32,7 @@ export interface AgentSurfaceSubject {
 // belongs to computers only: the desktop service refuses agent resources.
 const DASHBOARD_SURFACES: readonly AgentSurfaceId[] = ["aeon", "box", "files", "manage"];
 const COMPUTER_BASE_SURFACES: readonly AgentSurfaceId[] = ["desktop", "manage"];
+const COMPUTER_HEADLESS_SURFACES: readonly AgentSurfaceId[] = ["manage"];
 const COMPUTER_WORKSPACE_SURFACES: readonly AgentSurfaceId[] = ["box", "files"];
 
 function ordered(ids: Iterable<AgentSurfaceId>): AgentSurfaceId[] {
@@ -59,7 +61,10 @@ export function agentSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[]
     const hasWorkspace = subject.status === "running"
       && subject.computer_profile !== "windows"
       && Boolean(subject.chat_url?.trim());
-    return ordered(hasWorkspace ? [...COMPUTER_BASE_SURFACES, ...COMPUTER_WORKSPACE_SURFACES] : COMPUTER_BASE_SURFACES);
+    // A computer with no desktop (a Linux computer), or a profile Hivra does
+    // not know, never lists Desktop.
+    const base = computerHasDesktop(subject.computer_profile) ? COMPUTER_BASE_SURFACES : COMPUTER_HEADLESS_SURFACES;
+    return ordered(hasWorkspace ? [...base, ...COMPUTER_WORKSPACE_SURFACES] : base);
   }
   if (def?.surface === "dashboard") {
     return ordered([...DASHBOARD_SURFACES, ...(def.browser ? ["browser" as const] : [])]);

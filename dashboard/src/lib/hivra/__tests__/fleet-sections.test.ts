@@ -126,6 +126,23 @@ describe("fleet entry destination", () => {
     expect(fleetEntryOpenLabel(codexAgent)).toBe("Open agent");
   });
 
+  it("opens a Linux computer on its files and never promises it a desktop", () => {
+    const server = agent("x-server", "MY_LINUX_COMPUTER", {
+      resourceKind: "computer",
+      typeLabel: "Linux computer",
+      agentType: "linux-desktop",
+      computerProfile: "ubuntu-server",
+    });
+    expect(fleetEntryHref(server)).toBe("/dashboard/agent/server?tab=files");
+    expect(fleetEntryOpenLabel(server)).toBe("Open computer");
+    // A profile Hivra does not know fails closed the same way.
+    expect(fleetEntryHref({ ...server, computerProfile: "plan9" as never })).toBe("/dashboard/agent/server?tab=files");
+    // Ubuntu Desktop, Omarchy and a computer with no stored profile keep the desktop.
+    expect(fleetEntryHref(ubuntu)).toBe("/dashboard/agent/ubuntu?tab=desktop");
+    expect(fleetEntryHref({ ...ubuntu, computerProfile: null })).toBe("/dashboard/agent/ubuntu?tab=desktop");
+    expect(fleetEntryOpenLabel({ ...ubuntu, computerProfile: "omarchy" })).toBe("Open desktop");
+  });
+
   it("sends a Hermes instance to the instance route, not the agent route", () => {
     // Different family, different shell. The agent route would render the wrong
     // thing for a Hermes box.

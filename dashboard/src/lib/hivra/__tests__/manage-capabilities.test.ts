@@ -34,6 +34,7 @@ const rows: Record<string, ManageCapabilitiesRow & Record<string, unknown>> = {
   ubuntu: { ...base, type: "linux-desktop", computer_profile: "ubuntu-desktop" },
   ubuntuUnbound: { ...base, type: "linux-desktop", computer_profile: "ubuntu-desktop", infrastructure_binding_token_enforced: false },
   ubuntuMyServer: { ...base, type: "linux-desktop", computer_profile: "ubuntu-desktop", deployment_mode: "self-managed", ip: "192.0.2.44" },
+  ubuntuServer: { ...base, type: "linux-desktop", computer_profile: "ubuntu-server" },
   preparedWindows: { ...base, type: "linux-desktop", computer_profile: "windows", cpu: 4, ram: 8, managed_provisioner_channel: "canary" },
   preparedOmarchy: { ...base, type: "linux-desktop", computer_profile: "omarchy", cpu: 4, ram: 8, managed_provisioner_channel: "canary" },
   windowsMyServer: { ...base, type: "linux-desktop", computer_profile: "windows", deployment_mode: "self-managed" },
@@ -280,6 +281,27 @@ describe("manageCapabilitiesFor", () => {
       ["gvisor", "gvisor-limits"], ["windowsMyServer", "fixed"], ["digitalocean", "fixed"],
     ] as const)("%s resizes as %s", (name, kind) => {
       expect(map(name).resize.kind).toBe(kind);
+    });
+  });
+
+  describe("a Linux computer (ubuntu-server)", () => {
+    it("has the computer's sections but no folder recovery and no private network", () => {
+      const result = map("ubuntuServer");
+      expect(result.variant).toBe("ubuntu-proxmox");
+      expect(result.folderRecovery).toBeNull();
+      expect(result.privateNetwork).toMatchObject({ state: "unavailable", code: "not_eligible" });
+      expect(result.sections).not.toContain("network");
+      expect(result.sections).toEqual(expect.arrayContaining(["overview", "resources", "updates", "advanced"]));
+    });
+
+    it("offers the usual power actions and connection service update", () => {
+      const result = map("ubuntuServer");
+      expect(result.power).toMatchObject({ stop: { state: "available" }, restart: { state: "available" } });
+      expect(result.connectionServiceUpdate).toEqual({ state: "available" });
+      expect(result.selfUpdate).toBeNull();
+      // Ubuntu Desktop is unchanged.
+      expect(map("ubuntu").folderRecovery).toEqual({ state: "available" });
+      expect(map("ubuntu").privateNetwork).toEqual({ state: "available" });
     });
   });
 

@@ -40,6 +40,16 @@ describe("agentSurfacesFor", () => {
     expect(agentSurfacesFor({ type: "linux-terminal", computer_substrate: "gvisor", ...RUNNING })).toEqual(["manage"]);
   });
 
+  it("never lists Desktop for a Linux computer (ubuntu-server) or an unknown profile", () => {
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "ubuntu-server", ...RUNNING })).toEqual(["box", "files", "manage"]);
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "ubuntu-server", status: "running" })).toEqual(["manage"]);
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "ubuntu-server", status: "stopped" })).toEqual(["manage"]);
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "plan9", ...RUNNING })).not.toContain("desktop");
+    // Existing profiles and the original image (no profile) keep Desktop.
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: null, ...RUNNING })).toContain("desktop");
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "omarchy", ...RUNNING })).toContain("desktop");
+  });
+
   it("offers no Tasks tab: scheduled tasks are Hermes-only and Hivra computers have no scheduler", () => {
     for (const type of ["claude-code", "codex", "hermes", "aeon", "openclaw", "agent-zero", "linux-desktop"]) {
       expect(agentSurfacesFor({ type, ...RUNNING })).not.toContain("tasks");

@@ -25,6 +25,7 @@ import {
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 import {
   OMARCHY_TEMPLATE,
   UBUNTU_DESKTOP_TEMPLATE,
@@ -88,7 +89,11 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, atta
   gateReason?: boolean;
 }) {
   const isDesktop = getCatalogAgent(computer.type)?.resourceKind === "computer";
-  const desktopQuery = computer.computer_profile === "windows"
+  // A computer with no desktop opens on its files, not on a desktop it lacks.
+  const hasDesktop = computerHasDesktop(computer.computer_profile);
+  const desktopQuery = !hasDesktop
+    ? "?tab=files"
+    : computer.computer_profile === "windows"
     ? "?tab=desktop&open=fast"
     : "?tab=desktop";
   // Choosing a computer for an agent (Launch's "Put an agent on a computer I

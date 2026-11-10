@@ -43,7 +43,7 @@ import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
 import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
-import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
+import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
   SurfaceActionProvider,
@@ -247,7 +247,8 @@ function openingTab(id: string, requested: string | null | undefined, welcome: b
  * The surface actually shown for `tab`. A tab the resource does not have (a
  * stale link, a surface removed since) falls back to its landing view: a
  * computer's desktop (Manage for a terminal-only sandbox or one with no
- * desktop yet), a dashboard agent's dashboard, and everyone else's Chat.
+ * desktop yet; Files for a Linux computer, which has no desktop), a dashboard
+ * agent's dashboard, and everyone else's Chat.
  */
 function shownTab(agent: HivraAgent, tab: Tab): Tab {
   const def = catalogAgent(agent.type);
@@ -270,7 +271,10 @@ function shownTab(agent: HivraAgent, tab: Tab): Tab {
       surfaceKind: def.surface,
       resourceKind: def.resourceKind,
     });
-    return landing.landing === "desktop" ? "desktop" : "manage";
+    if (landing.landing === "desktop") return "desktop";
+    // A computer with no desktop (a Linux computer) opens on its files.
+    if (landing.landing === "workspace") return surfaces.includes("files") ? "files" : "manage";
+    return "manage";
   }
   if (surfaces.includes(tab)) return tab;
   // Dashboard agents have no "chat" tab, so the default falls back to the
@@ -1127,6 +1131,8 @@ export default function AgentPage() {
     if (!agent || agent.status !== "running" || agent.id !== id) return;
     if (catalogAgent(agent.type)?.surface !== "computer") return;
     if (agent.computer_substrate === "gvisor") return;
+    // No desktop, so no desktop capability to read.
+    if (!computerHasDesktop(agent.computer_profile)) return;
     if (capabilityPrefetchRef.current === agent.id) return;
     capabilityPrefetchRef.current = agent.id;
     void refreshDesktopCapability(agent.id).catch(() => {});
@@ -1246,7 +1252,10 @@ export default function AgentPage() {
   const effectiveTab: Tab = attachedChatShown ? "chat" : shownTab(agent, tab);
   const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
   const unavailableTab = isComputer
-    ? COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
+    // A stale ?tab=desktop on a computer with no desktop is replaced by the tab
+    // it opens on instead of lingering in the address.
+    ? (COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
+        || (requestedTab === "desktop" && !computerHasDesktop(agent.computer_profile)))
       && !computerTabs.includes(requestedTab as Tab)
         ? requestedTab as Tab
         : null
@@ -1358,7 +1367,7 @@ export default function AgentPage() {
             <HivraConsoleDesktop computerId={agent.id} name={agent.name}
               profile={agent.computer_profile} active={effectiveTab === "desktop"}
               autoOpenFast={landing.desktopAutoOpen || searchParams?.get("open") === "fast"} />
-          ) : (
+          ) : landing.desktopTransport === "remote" ? (
             <HivraRemoteDesktop
               computerId={agent.id}
               name={agent.name}
@@ -1373,7 +1382,7 @@ export default function AgentPage() {
               // does not offer it.
               toolbarSlot={agent.chat_url && agent.api_token ? <ClaudeAppSwitch boxUrl={agent.chat_url} token={agent.api_token} active={effectiveTab === "desktop"} /> : null}
             />
-          )
+          ) : null
         ) : null}
         </SurfaceCodeBoundary>
         </DesktopTabOpen.Provider>

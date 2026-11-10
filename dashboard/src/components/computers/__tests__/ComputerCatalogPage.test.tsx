@@ -297,6 +297,26 @@ describe("ComputerCatalogPage", () => {
       "/dashboard/agents",
     );
   });
+  it("opens a Linux computer on its files, not on a desktop it does not have", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        data: {
+          agents: [
+            { id: "lin", type: "linux-desktop", computer_profile: "ubuntu-server", name: "Build box", status: "running", cpu: 1, ram: 2 },
+            { id: "ubu", type: "linux-desktop", computer_profile: "ubuntu-desktop", name: "Workstation", status: "running", cpu: 2, ram: 4 },
+          ],
+        },
+      }),
+    });
+    renderCatalog();
+    await screen.findByText("Build box");
+    expect(screen.getByRole("link", { name: /Build box/ })).toHaveAttribute("href", "/dashboard/agent/lin?tab=files");
+    expect(screen.getByRole("link", { name: /Workstation/ })).toHaveAttribute("href", "/dashboard/agent/ubu?tab=desktop");
+  });
+
   it("searches operating systems, filters status, and keeps each native desktop route", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
