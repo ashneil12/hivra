@@ -7,6 +7,7 @@ jest.mock("@/lib/venice/proxy-keys", () => ({
 }));
 
 import { GET } from "../route";
+import { _resetVenicePricingCacheForTests } from "@/lib/venice/live-pricing";
 
 function makeReq(key?: string, type?: string) {
   const headers: Record<string, string> = {};
@@ -23,6 +24,11 @@ describe("/api/managed-venice/v1/models", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Live pricing is fetched anonymously now; keep the test off the network
+    // so it prices from the static catalog.
+    global.fetch = jest.fn().mockRejectedValue(new Error("offline")) as unknown as typeof fetch;
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    _resetVenicePricingCacheForTests();
     mockVerifyKey.mockResolvedValue({ id: "key_1", userId: "user_1", status: "active" });
   });
 
@@ -114,6 +120,8 @@ describe("/api/managed-venice/v1/models", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
     const response = await GET(makeReq("hven_live_good"));
     expect(response.status).toBe(200);
-    expect(fetchMock).not.toHaveBeenCalled(); // text catalog comes from the pricing map, not a proxy
+    // The text catalog comes from the pricing map, not a proxied call; the only
+    // fetch allowed is the pricing map's own text-model list.
+    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith("/api/v1/models?type=text"))).toBe(true);
   });
 });
