@@ -126,7 +126,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               {attentionOnly ? "Open an item to respond or check what went wrong." : "Open an agent to start working, or go straight to your desktop."}
             </p>
           </div>
-          {<label className="flex min-h-[44px] min-w-[200px] flex-1 items-center gap-2 border border-[var(--etched-border)] px-2 focus-within:border-[var(--hivra-red-line)] sm:max-w-[280px]">
+          <label className="flex min-h-[44px] min-w-[200px] flex-1 items-center gap-2 rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] px-3 transition-colors focus-within:border-[var(--hg-stroke-strong)] focus-within:bg-[var(--hg-fill-1)] sm:max-w-[280px]">
             <Search
               aria-hidden="true"
               size={13}
@@ -142,9 +142,9 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               autoCorrect="off"
               spellCheck={false}
               enterKeyHint="search"
-              className="mono w-full bg-transparent py-1 text-[12px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)]"
+              className="w-full bg-transparent py-1 text-[13px] text-[var(--hg-text)] outline-none placeholder:text-[var(--text-muted)]"
             />
-          </label>}
+          </label>
         </header>
 
         </>
