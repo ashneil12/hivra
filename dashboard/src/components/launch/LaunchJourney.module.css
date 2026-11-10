@@ -21,9 +21,9 @@
 
 .brand {
   color: inherit;
-  font: 600 0.7rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
   white-space: nowrap;
 }
 
@@ -35,9 +35,9 @@
   padding: 0;
   list-style: none;
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .progress li {
@@ -73,9 +73,9 @@
 
 .eyebrow {
   color: var(--hg-text-3);
-  font: 600 0.7rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .stageIntro h1,
@@ -117,9 +117,9 @@
 
 .chooseHeading h2 {
   margin: 0;
-  font: 600 0.72rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .chooseHeading p {
@@ -188,7 +188,7 @@
 .tileText { min-width: 0; display: grid; gap: 0.3rem; }
 .tileText strong { font-size: 0.92rem; }
 .tileText small { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.45; }
-.tileText .tileHint { font: 600 0.69rem var(--font-sans); letter-spacing: 0.05em; text-transform: uppercase; }
+.tileText .tileHint { font: 600 0.8rem var(--font-sans); letter-spacing: 0; text-transform: none; }
 
 .tile:hover { border-color: var(--hg-stroke-strong); background: var(--hg-fill-hover); }
 
@@ -217,10 +217,10 @@
   border: 1px solid var(--etched-border);
   padding: 0.24rem 0.4rem;
   color: var(--text-secondary);
-  font: 600 0.69rem/1.4 var(--font-sans);
+  font: 600 0.8rem/1.4 var(--font-sans);
   font-style: normal;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   overflow-wrap: anywhere;
   border-radius: var(--hg-radius-sm);
 }
@@ -265,8 +265,8 @@
   background: transparent;
   color: inherit;
   padding: 0.72rem 1rem;
-  font: 600 0.72rem/1.5 var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem/1.5 var(--font-sans);
+  letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
   overflow-wrap: anywhere;
@@ -316,9 +316,9 @@
 
 .planLabel {
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .planValue {
@@ -342,8 +342,8 @@
   background: none;
   padding: 0 0.1rem;
   color: inherit;
-  font: 600 0.7rem var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
   text-decoration: underline;
   text-underline-offset: 0.25em;
   text-transform: none;
@@ -358,7 +358,7 @@
   background: transparent;
   color: inherit;
   padding: 0.55rem 0.65rem;
-  font: 1rem var(--font-mono), monospace;
+  font: 1rem var(--font-sans);
   border-radius: var(--hg-radius-sm);
 }
 
@@ -400,7 +400,7 @@
   border-radius: var(--hg-radius-sm);
 }
 
-.presets button strong { font: 600 0.72rem var(--font-sans); letter-spacing: 0.05em; text-transform: none; }
+.presets button strong { font: 600 0.8rem var(--font-sans); letter-spacing: 0; text-transform: none; }
 .presets button small { color: var(--text-secondary); font-size: 0.76rem; line-height: 1.35; }
 .presets button[aria-pressed="true"] { border-color: var(--hg-stroke-strong); background: var(--hg-fill-2); }
 .presets button[aria-pressed="true"] strong { color: var(--launch-accent); }
@@ -451,9 +451,9 @@
 .windowsCapacityLabel,
 .windowsTarget {
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .windowsCapacityOptions {
@@ -524,7 +524,7 @@
   min-height: 44px;
   cursor: pointer;
   color: var(--ink-black);
-  font: 700 0.78rem var(--font-mono), monospace;
+  font: 600 0.85rem var(--font-sans);
 }
 
 .windowsMediaHeading {
@@ -534,7 +534,7 @@
   gap: 0.7rem;
   margin-bottom: 0.55rem;
   color: var(--ink-black);
-  font: 700 0.78rem var(--font-mono), monospace;
+  font: 600 0.85rem var(--font-sans);
 }
 
 .windowsMediaHeading button,
@@ -557,9 +557,9 @@
   display: grid;
   gap: 0.4rem;
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .windowsDownloadUrl input {
@@ -592,9 +592,9 @@
 .advanced fieldset { min-width: 0; }
 .advanced legend {
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .advanced fieldset { margin: 0; padding: 0; border: 0; }
@@ -606,7 +606,7 @@
   background: transparent;
   color: inherit;
   padding: 0.45rem 0.55rem;
-  font: 700 0.68rem var(--font-mono), monospace;
+  font: 600 0.8rem var(--font-sans);
   cursor: pointer;
   border-radius: var(--hg-radius-sm);
 }
@@ -694,9 +694,9 @@
 
 .review dt {
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .review dd {
@@ -726,14 +726,14 @@
   min-height: 44px;
   padding: 0.8rem 1rem;
   cursor: pointer;
-  font: 600 0.7rem/1.5 var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem/1.5 var(--font-sans);
+  letter-spacing: 0;
   text-transform: none;
 }
 
 .technical dl { margin: 0; padding: 0 1rem 0.8rem; display: grid; gap: 0.45rem; }
 .technical dl div { display: grid; grid-template-columns: minmax(100px, 0.35fr) minmax(0, 1fr); gap: 1rem; }
-.technical dt { font: 600 0.69rem var(--font-sans); letter-spacing: 0.05em; text-transform: uppercase; }
+.technical dt { font: 600 0.8rem var(--font-sans); letter-spacing: 0; text-transform: none; }
 .technical dd { min-width: 0; margin: 0; font: 0.78rem/1.45 var(--font-mono), monospace; overflow-wrap: anywhere; }
 
 .footer {
@@ -757,8 +757,8 @@
   justify-content: center;
   gap: 0.5rem;
   text-decoration: none;
-  font: 600 0.72rem/1.5 var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem/1.5 var(--font-sans);
+  letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
   text-align: center;
@@ -812,9 +812,9 @@
   align-items: center;
   gap: 0.45rem;
   color: var(--text-secondary);
-  font: 600 0.7rem/1.5 var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem/1.5 var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .resendKey {
@@ -851,8 +851,8 @@
   background: transparent;
   padding: 0;
   color: var(--text-secondary);
-  font: 600 0.7rem/1.5 var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem/1.5 var(--font-sans);
+  letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
   text-align: left;
@@ -883,9 +883,9 @@
   justify-content: center;
   gap: 0.65rem;
   color: var(--text-secondary);
-  font: 600 0.69rem var(--font-sans);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .loading svg,
@@ -1010,8 +1010,8 @@
 .settingsHeader h2 {
   margin: 0;
   color: var(--hg-text-3);
-  font: 600 11px var(--font-sans);
-  letter-spacing: 0.05em;
+  font: 600 0.8rem var(--font-sans);
+  letter-spacing: 0;
 }
 
 .technical .plainList dd {
