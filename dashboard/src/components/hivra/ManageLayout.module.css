@@ -102,9 +102,10 @@
 
 .sectionTitle {
   margin: 4px 0 14px;
-  font-family: var(--font-serif), serif;
-  font-size: 22px;
-  font-weight: 400;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   line-height: 1.2;
   color: var(--ink-black);
 }

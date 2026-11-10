@@ -14,6 +14,7 @@ import {
   Power, RefreshCw, Trash2, Check, Copy, ExternalLink, Loader2,
   AlertTriangle, Cpu, MemoryStick, Globe, Server, ShieldCheck, KeyRound, Wrench, LogIn,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { CookieImportModal } from "@/components/instances/CookieImportModal";
 import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
@@ -829,7 +830,7 @@ function HivraManageContent({
     const them = running === 1 ? "it" : "them";
     const id = `hm-replies-${action}`;
     return (
-      <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-detail`} style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.025)" }}>
+      <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-detail`} style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)" }}>
         <div id={`${id}-title`} style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{repliesInProgress(running)}</div>
         <div id={`${id}-detail`} style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
           {RUN_ENDING[action].effect} {them} now. To keep {them}, cancel and wait until the chat finishes.
@@ -844,8 +845,8 @@ function HivraManageContent({
     );
   };
   const progressFor = (section: ManageSectionId) => acting && LIFECYCLE_PROGRESS[acting]?.section === section ? (
-    <div role="status" aria-live="polite" style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.025)" }}>
-      <Loader2 size={15} aria-hidden="true" style={{ animation: "spin 1s linear infinite", flexShrink: 0, marginTop: 2 }} />
+    <div role="status" aria-live="polite" style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)" }}>
+      <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={20} /></span>
       <div>
         <div style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{LIFECYCLE_PROGRESS[acting].title}</div>
         <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
@@ -1110,11 +1111,11 @@ function HivraManageContent({
                       // Transparent 56x44 hit area around the unchanged 48x27 track.
                       style={{ minWidth: 56, minHeight: 44, border: 0, background: "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: busy ? "default" : "pointer", flexShrink: 0, padding: 0 }}
                     >
-                      <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: bOn ? "var(--gold-leaf)" : "rgba(255,255,255,0.05)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
+                      <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: bOn ? "var(--gold-leaf)" : "var(--hg-fill-2)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
                         {acting === "browser" ? (
-                          <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: "var(--ink-black)", position: "absolute", top: 6, left: bOn ? 24 : 6 }} />
+                          <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: bOn ? "var(--hg-on-accent)" : "var(--ink-black)", position: "absolute", top: 6, left: bOn ? 24 : 6 }} />
                         ) : (
-                          <span style={{ position: "absolute", top: 3, left: bOn ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: bOn ? "var(--ink-black)" : "var(--text-muted)", transition: "left .15s ease" }} />
+                          <span style={{ position: "absolute", top: 3, left: bOn ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: bOn ? "var(--hg-on-accent)" : "var(--text-muted)", transition: "left var(--hg-medium) var(--hg-ease)" }} />
                         )}
                       </span>
                     </button> : null}
@@ -1136,7 +1137,7 @@ function HivraManageContent({
                     <button
                       type="button"
                       onClick={() => setCookieOpen(true)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 7, flexShrink: 0, padding: "9px 14px", minHeight: 40, border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--vellum-bg, #f5f0e8)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", cursor: "pointer" }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 7, flexShrink: 0, padding: "9px 14px", minHeight: 40, border: "1px solid var(--hg-accent)", background: "var(--hg-accent)", color: "var(--hg-on-accent)", borderRadius: "var(--hg-radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
                     >
                       <KeyRound size={14} /> Import cookies
                     </button>
@@ -1195,7 +1196,7 @@ function HivraManageContent({
                       placeholder={def?.cliKind === "codex" ? "Custom model id (e.g. gpt-5.1-codex)" : "Custom model id (e.g. claude-opus-4-8[1m])"}
                       aria-label="Custom model id"
                       autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="done"
-                      style={{ flex: 1, padding: "8px 10px", minHeight: 40, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
+                      style={{ flex: 1, padding: "8px 10px", minHeight: 40, border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
                     />
                     <button
                       type="button"
@@ -1311,19 +1312,19 @@ function HivraManageContent({
                     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
                       {(mcp || []).map((s) => {
                         const confirmingRemove = mcpRemoveConfirm === s.name;
-                        const removeBtn: React.CSSProperties = { border: "1px solid var(--etched-border)", background: "transparent", minWidth: 40, minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px", flexShrink: 0, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" };
+                        const removeBtn: React.CSSProperties = { border: "1px solid var(--hg-stroke)", background: "transparent", borderRadius: "var(--hg-radius-sm)", minWidth: 40, minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px", flexShrink: 0, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 600 };
                         return (
                           <div key={s.name} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4, border: "1px solid var(--etched-border)", padding: "4px 4px 4px 10px" }}>
                             <span style={{ flex: "1 1 160px", minWidth: 0, display: "flex", alignItems: "center", gap: 10, minHeight: 40 }}>
                               <span className="mono" title={s.name} style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-black)", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
-                              <span className="mono" style={{ fontSize: 11, color: confirmingRemove ? "#e06c5a" : "var(--text-muted)", flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{confirmingRemove ? "Remove?" : [s.command, ...s.args].join(" ")}</span>
+                              <span className="mono" style={{ fontSize: 11, color: confirmingRemove ? "var(--hg-bad)" : "var(--text-muted)", flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{confirmingRemove ? "Remove?" : [s.command, ...s.args].join(" ")}</span>
                             </span>
                             {/* Two-step remove. The trash button becomes Cancel in place, so it keeps
                                 focus and a double tap lands on Cancel; when the pair wraps to its own
                                 line, the second tap lands on the prompt instead. */}
                             <span style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
                               {confirmingRemove ? (
-                                <button type="button" disabled={busy} onClick={() => void dropMcp(s.name)} aria-label={`Confirm remove ${s.name}`} style={{ ...removeBtn, color: "#e06c5a", borderColor: "rgba(192,57,43,0.5)" }}>
+                                <button type="button" disabled={busy} onClick={() => void dropMcp(s.name)} aria-label={`Confirm remove ${s.name}`} style={{ ...removeBtn, color: "var(--hg-bad)", borderColor: "color-mix(in srgb, var(--hg-bad) 45%, transparent)" }}>
                                   {acting === "mcp-" + s.name ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />} Remove
                                 </button>
                               ) : null}
@@ -1332,7 +1333,7 @@ function HivraManageContent({
                                 disabled={busy}
                                 onClick={() => setMcpRemoveConfirm(confirmingRemove ? null : s.name)}
                                 aria-label={confirmingRemove ? `Cancel removing ${s.name}` : `Remove ${s.name}`}
-                                style={confirmingRemove ? { ...removeBtn, color: "var(--ink-black)" } : { ...removeBtn, padding: 0, color: "#e06c5a" }}
+                                style={confirmingRemove ? { ...removeBtn, color: "var(--ink-black)" } : { ...removeBtn, padding: 0, color: "var(--hg-bad)" }}
                               >
                                 {confirmingRemove ? "Cancel" : <Trash2 size={13} />}
                               </button>
@@ -1352,7 +1353,7 @@ function HivraManageContent({
                       placeholder="name"
                       aria-label="MCP server name"
                       autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="next"
-                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
+                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
                     />
                     <input
                       ref={mcpCmdRef}
@@ -1362,7 +1363,7 @@ function HivraManageContent({
                       placeholder="command, e.g. npx -y @modelcontextprotocol/server-github"
                       aria-label="MCP server command"
                       autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="done"
-                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
+                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
                     />
                     <button
                       type="button"
@@ -1426,7 +1427,7 @@ function HivraManageContent({
                     {cpuOptions.map((n) => {
                       const disabled = !resizeAllowed || n < floor.cpu || n > capCpu;
                       return (
-                        <button key={`c${n}`} type="button" disabled={disabled} aria-pressed={rcpu === n} onClick={() => { setRcpu(n); setMaximumCpu(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rcpu === n ? "var(--gold-leaf)" : "transparent", color: rcpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>
+                        <button key={`c${n}`} type="button" disabled={disabled} aria-pressed={rcpu === n} onClick={() => { setRcpu(n); setMaximumCpu(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rcpu === n ? "var(--gold-leaf)" : "transparent", color: rcpu === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>
                       );
                     })}
                     </div>
@@ -1436,7 +1437,7 @@ function HivraManageContent({
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       {cpuOptions.filter(n => n >= rcpu).map((n) => {
                         const disabled = !resizeAllowed || n > maximumCapCpu;
-                        return <button key={`mc${n}`} type="button" disabled={disabled} aria-pressed={maximumCpu === n} onClick={() => setMaximumCpu(n)} style={{ border: "1px solid var(--etched-border)", background: maximumCpu === n ? "var(--gold-leaf)" : "transparent", color: maximumCpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>;
+                        return <button key={`mc${n}`} type="button" disabled={disabled} aria-pressed={maximumCpu === n} onClick={() => setMaximumCpu(n)} style={{ border: "1px solid var(--etched-border)", background: maximumCpu === n ? "var(--gold-leaf)" : "transparent", color: maximumCpu === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>;
                       })}
                     </div>
                   </fieldset>
@@ -1446,7 +1447,7 @@ function HivraManageContent({
                     {ramOptions.map((n) => {
                       const disabled = !resizeAllowed || n < floor.ram || n > capRam;
                       return (
-                        <button key={`r${n}`} type="button" disabled={disabled} aria-pressed={rram === n} onClick={() => { setRram(n); setMaximumRam(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rram === n ? "var(--gold-leaf)" : "transparent", color: rram === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>
+                        <button key={`r${n}`} type="button" disabled={disabled} aria-pressed={rram === n} onClick={() => { setRram(n); setMaximumRam(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rram === n ? "var(--gold-leaf)" : "transparent", color: rram === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>
                       );
                     })}
                     </div>
@@ -1456,7 +1457,7 @@ function HivraManageContent({
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       {ramOptions.filter(n => n >= rram).map((n) => {
                         const disabled = !resizeAllowed || n > maximumCapRam;
-                        return <button key={`mr${n}`} type="button" disabled={disabled} aria-pressed={maximumRam === n} onClick={() => setMaximumRam(n)} style={{ border: "1px solid var(--etched-border)", background: maximumRam === n ? "var(--gold-leaf)" : "transparent", color: maximumRam === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>;
+                        return <button key={`mr${n}`} type="button" disabled={disabled} aria-pressed={maximumRam === n} onClick={() => setMaximumRam(n)} style={{ border: "1px solid var(--etched-border)", background: maximumRam === n ? "var(--gold-leaf)" : "transparent", color: maximumRam === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>;
                       })}
                     </div>
                   </fieldset>
@@ -1522,7 +1523,7 @@ function HivraManageContent({
                   {snapshotsLoading && snapshots.length === 0 ? (
                     <div role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading restore points…</div>
                   ) : snapshotsError ? (
-                    <div role="alert" style={{ fontSize: 12, color: "#e06c5a", lineHeight: 1.5 }}>
+                    <div role="alert" style={{ fontSize: 12, color: "var(--hg-bad)", lineHeight: 1.5 }}>
                       {snapshotsError} <button type="button" onClick={() => void refreshSnapshots()} style={{ ...btnGhost, marginLeft: 8 }}>Retry</button>
                     </div>
                   ) : snapshots.length === 0 ? (
@@ -1548,11 +1549,11 @@ function HivraManageContent({
                               <RefreshCw size={13} /> Restore
                             </button>
                           </div>
-                          {snapshot.error ? <div role="alert" style={{ color: "#e06c5a", fontSize: 11.5 }}>{snapshot.error}</div> : null}
+                          {snapshot.error ? <div role="alert" style={{ color: "var(--hg-bad)", fontSize: 11.5 }}>{snapshot.error}</div> : null}
                           {restoreConfirmId === snapshot.id ? (
                             <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 10, display: "grid", gap: 9 }}>
                               <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)" }}>
-                                <AlertTriangle size={15} style={{ color: "#e06c5a", flexShrink: 0, marginTop: 2 }} />
+                                <AlertTriangle size={15} style={{ color: "var(--hg-bad)", flexShrink: 0, marginTop: 2 }} />
                                 Restoring rolls the disk back to this point and permanently removes changes made afterward. The computer will be left stopped; start it after you review the result.
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1736,7 +1737,7 @@ function HivraManageContent({
                   </>
                 ) : <div style={manageMuted}>{capReason(forcePower.stop)}</div>}
                 {forceConfirm ? (
-                  <div role="alertdialog" aria-labelledby="hm-force-title" aria-describedby="hm-force-detail" style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid rgba(192,57,43,0.5)", background: "rgba(192,57,43,0.06)" }}>
+                  <div role="alertdialog" aria-labelledby="hm-force-title" aria-describedby="hm-force-detail" style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 6%, transparent)", borderRadius: "var(--hg-radius-md)" }}>
                     <div id="hm-force-title" style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{FORCE_POWER[forceConfirm.action].title(agent.name)}</div>
                     <div id="hm-force-detail" style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                       {FORCE_POWER[forceConfirm.action].detail}
@@ -1745,7 +1746,7 @@ function HivraManageContent({
                     {/* Cancel first, as in the danger zone; it takes focus when this opens. */}
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button ref={forceCancel} type="button" onClick={cancelForce} style={{ ...btnGhost, cursor: "pointer" }}>Cancel</button>
-                      <button type="button" disabled={busy} onClick={confirmForce} style={{ ...btnDark, background: "#c0392b", borderColor: "#c0392b", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                      <button type="button" disabled={busy} onClick={confirmForce} style={{ ...btnDark, background: "var(--hg-bad)", borderColor: "var(--hg-bad)", color: "#fff", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
                         {FORCE_POWER[forceConfirm.action].button}
                       </button>
                     </div>
@@ -1774,7 +1775,7 @@ function HivraManageContent({
           {disclaimer ? (
             <div style={{ display: "grid", gap: 10 }}>
               <div className="mono" style={label}>About</div>
-              <div style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.02)", padding: 16, display: "flex", gap: 11, alignItems: "flex-start", boxSizing: "border-box" }}>
+              <div style={{ border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", padding: 16, display: "flex", gap: 11, alignItems: "flex-start", boxSizing: "border-box" }}>
                 <ShieldCheck size={16} style={{ color: "var(--text-muted)", flexShrink: 0, marginTop: 2 }} />
                 <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6, minWidth: 0 }}>{disclaimer}</div>
               </div>

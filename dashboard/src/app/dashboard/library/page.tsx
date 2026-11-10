@@ -208,15 +208,18 @@ export default function LibraryPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.5rem" }}>
               {featuredTemplates.map((t: AgentTemplate) => (
                 <div key={t.id} style={{ 
-                  background: "var(--bg-surface)", 
-                  border: "2px solid var(--ink-black)", 
+                  background: "var(--hg-glass)", 
+                  backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+                  WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+                  border: "1px solid var(--hg-stroke-strong)", 
+                  borderRadius: "var(--hg-radius-lg)",
                   padding: "1.5rem", 
                   display: "flex", 
                   flexDirection: "column",
-                  transition: "all 0.2s ease",
-                  boxShadow: "var(--hg-shadow-md)"
+                  transition: "transform var(--hg-medium) var(--hg-ease), border-color var(--hg-fast) var(--hg-ease)",
+                  boxShadow: "var(--hg-glass-edge), var(--hg-shadow-md)"
                 }}
-                onMouseEnter={e => { if (canHover()) e.currentTarget.style.transform = "translate(-2px, -2px)"; }}
+                onMouseEnter={e => { if (canHover()) e.currentTarget.style.transform = "translateY(-2px)"; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = "translate(0px, 0px)"; }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
@@ -476,8 +479,12 @@ function LibraryPreviewDialog({
         aria-labelledby="library-preview-title"
         tabIndex={-1}
         style={{
-          background: "var(--bg-surface)",
-          border: "1px solid var(--ink-black)",
+          background: "var(--hg-glass-strong)",
+          backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+          WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+          border: "1px solid var(--hg-stroke)",
+          borderRadius: "var(--hg-radius-xl)",
+          overflow: "hidden",
           width: "100%",
           maxWidth: "800px",
           height: "min(80dvh, 100%)",

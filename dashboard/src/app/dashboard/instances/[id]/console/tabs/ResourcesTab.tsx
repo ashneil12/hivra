@@ -295,7 +295,7 @@ const manageLinkStyle = { display: 'inline-flex', alignItems: 'center', gap: 5, 
 const fieldsetStyle = { border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 } as const;
 const legendStyle = { fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 };
 const choiceRowStyle = { display: 'flex', gap: 8, flexWrap: 'wrap' as const };
-const choiceButtonStyle = (selected: boolean) => ({ border: '1px solid var(--etched-border)', background: selected ? 'var(--gold-leaf)' : 'transparent', color: 'var(--ink-black)', padding: '7px 11px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' });
+const choiceButtonStyle = (selected: boolean) => ({ border: '1px solid var(--etched-border)', background: selected ? 'var(--gold-leaf)' : 'transparent', color: selected ? 'var(--hg-on-accent)' : 'var(--ink-black)', padding: '7px 11px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' });
 const primaryButtonStyle = { display: 'inline-flex', alignItems: 'center', gap: 8, width: 'fit-content', border: '1px solid var(--ink-black)', background: 'var(--ink-black)', color: 'var(--bg-surface)', padding: '10px 14px', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', cursor: 'pointer' };
 const secondaryButtonStyle = { display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--etched-border)', background: 'transparent', color: 'var(--ink-black)', padding: '9px 13px', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', cursor: 'pointer' };
 const primaryLinkStyle = { ...primaryButtonStyle, textDecoration: 'none' };

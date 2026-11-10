@@ -347,7 +347,7 @@ export function ToolInstallPicker({
                             style={{
                               border: "1px solid var(--gold-leaf)",
                               background: busy || blocked ? "transparent" : "var(--gold-leaf)",
-                              color: busy || blocked ? "var(--text-muted)" : "var(--ink-black)",
+                              color: busy || blocked ? "var(--text-muted)" : "var(--hg-on-accent)",
                               padding: "6px 16px",
                               minHeight: 40,
                               flexShrink: 0,

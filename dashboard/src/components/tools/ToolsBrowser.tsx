@@ -613,7 +613,7 @@ function InstallDialogPanel({ tool, targets, onClose, onDone }: InstallDialogPro
               style={{
                 border: "1px solid var(--gold-leaf)",
                 background: busy || picked.size === 0 || missingRequired ? "transparent" : "var(--gold-leaf)",
-                color: busy || picked.size === 0 || missingRequired ? "var(--text-muted)" : "var(--ink-black)",
+                color: busy || picked.size === 0 || missingRequired ? "var(--text-muted)" : "var(--hg-on-accent)",
                 padding: "8px 18px", cursor: busy || picked.size === 0 || missingRequired ? "default" : "pointer",
                 fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 6,
               }}

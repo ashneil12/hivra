@@ -33,6 +33,7 @@
     --font-outfit: var(--font-sans);
     --font-grotesk: var(--font-display);
     --font-playfair: var(--font-display);
+    --font-serif: var(--font-display);
 
     /* Ink ramps: text and lines are the ink at an opacity. */
     --hg-text: var(--hg-fg);
@@ -245,6 +246,7 @@ select,
 /* Typography. `.serif` was the display face; it is now the system display
    face, set tight. `.mono` is the system monospace. */
 .serif { font-family: var(--font-display); letter-spacing: -0.022em; font-feature-settings: "ss01", "cv11"; }
+.serif em { font-style: normal; }
 .mono { font-family: var(--font-mono); }
 
 /* Cards: frosted glass with a hairline and a soft lift on hover. */
@@ -1595,6 +1597,15 @@ body::before {
     font-family: var(--font-sans);
     font-weight: 600;
     letter-spacing: 0.045em;
+}
+
+/* The same labels when their uppercase (and sometimes their monospace face)
+   is set inline. React writes inline styles without a space on the server and
+   the browser adds one on the client, so both spellings are matched. Inline
+   weight and tracking still apply; only the face changes. */
+:where(.mono, [class~="font-mono"]):is([style*="text-transform:uppercase"], [style*="text-transform: uppercase"]),
+:is([style*="font-family:var(--font-mono)"], [style*="font-family: var(--font-mono)"]):is([style*="text-transform:uppercase"], [style*="text-transform: uppercase"]) {
+    font-family: var(--font-sans) !important;
 }
 
 /* One focus ring everywhere, the system blue. */

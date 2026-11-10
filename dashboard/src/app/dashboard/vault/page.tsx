@@ -721,7 +721,7 @@ export default function VaultPage() {
                            {newProvider === 'codex' && (
                              <div style={{ paddingTop: '1rem', marginTop: '1rem', borderTop: '1px dashed var(--etched-border)' }}>
                                {codexStep === 'idle' ? (
-                                  <button type="button" onClick={handleCodexStart} className="max-md:min-h-[44px] pointer-coarse:min-h-[44px]" style={{ width: '100%', padding: '10px', background: 'var(--vellum-bg)', border: '1px solid var(--ink-black)', color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                                  <button type="button" onClick={handleCodexStart} className="max-md:min-h-[44px] pointer-coarse:min-h-[44px]" style={{ width: '100%', padding: '10px', background: 'var(--hg-fill-1)', border: '1px solid var(--hg-stroke-strong)', borderRadius: 'var(--hg-radius-md)', color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                                      <Terminal size={14} /> Connect Codex
                                   </button>
                                ) : codexStep === 'starting' ? (
@@ -730,7 +730,7 @@ export default function VaultPage() {
                                     <span style={{ fontSize: 12 }}>Starting official Hermes Codex auth via the active container…</span>
                                   </div>
                                ) : codexStep === 'waiting' ? (
-                                  <div style={{ background: 'var(--vellum-bg)', padding: '16px', border: '1px solid var(--ink-black)' }}>
+                                  <div style={{ background: 'var(--hg-fill-1)', padding: '16px', border: '1px solid var(--hg-stroke)', borderRadius: 'var(--hg-radius-md)' }}>
                                     <div style={{ marginBottom: 12 }}>
                                       <p style={{ margin: '0 0 6px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Step 1 — Open this URL</p>
                                       <a href={codexUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', minHeight: 44, marginBottom: 8, padding: '10px 14px', background: 'var(--ink-black)', color: 'var(--bg-surface)', border: '1px solid var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', textDecoration: 'none' }}>
@@ -787,7 +787,7 @@ export default function VaultPage() {
                                <button
                                  type="button"
                                  onClick={() => setShowNousPortalOAuth(true)}
-                                 style={{ width: '100%', padding: '10px', background: 'var(--vellum-bg)', border: '1px solid var(--ink-black)', color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+                                 style={{ width: '100%', padding: '10px', background: 'var(--hg-fill-1)', border: '1px solid var(--hg-stroke-strong)', borderRadius: 'var(--hg-radius-md)', color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                                >
                                  <Terminal size={14} /> Connect Nous Portal
                                </button>
@@ -826,7 +826,7 @@ export default function VaultPage() {
                                <Link
                                  href="/dashboard/agents"
                                  className="max-md:min-h-[44px] pointer-coarse:min-h-[44px]"
-                                 style={{ width: '100%', padding: '10px', background: 'var(--vellum-bg)', border: '1px solid var(--ink-black)', color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none' }}
+                                 style={{ width: '100%', padding: '10px', background: 'var(--hg-fill-1)', border: '1px solid var(--hg-stroke-strong)', borderRadius: 'var(--hg-radius-md)', color: 'var(--ink-black)', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none' }}
                                >
                                  <Terminal size={14} /> Open Agents →
                                </Link>
@@ -858,7 +858,7 @@ export default function VaultPage() {
 
             <div className="w-full">
               {keys.length === 0 ? (
-                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono)' }}>No keys saved yet.</div>
+                <div style={{ border: '1px solid var(--hg-stroke)', borderRadius: 'var(--hg-radius-lg)', background: "var(--hg-glass)", padding: '3rem', textAlign: 'center', color: 'var(--hg-text-3)', fontSize: 13, fontFamily: 'var(--font-sans)' }}>No keys saved yet.</div>
               ) : (
                 (() => {
                   const filteredKeys = keys.filter(k => 
@@ -869,7 +869,7 @@ export default function VaultPage() {
 
                   if (filteredKeys.length === 0) {
                     return (
-                      <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono)' }}>No keys match your search.</div>
+                      <div style={{ border: '1px solid var(--hg-stroke)', borderRadius: 'var(--hg-radius-lg)', background: "var(--hg-glass)", padding: '3rem', textAlign: 'center', color: 'var(--hg-text-3)', fontSize: 13, fontFamily: 'var(--font-sans)' }}>No keys match your search.</div>
                     );
                   }
 
@@ -943,7 +943,7 @@ export default function VaultPage() {
             
             <div className="w-full">
               {agents.length === 0 ? (
-                <div style={{ border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: 13, fontFamily: 'var(--font-mono)' }}>No running agents yet.</div>
+                <div style={{ border: '1px solid var(--hg-stroke)', borderRadius: 'var(--hg-radius-lg)', background: "var(--hg-glass)", padding: '3rem', textAlign: 'center', color: 'var(--hg-text-3)', fontSize: 13, fontFamily: 'var(--font-sans)' }}>No running agents yet.</div>
               ) : (
                 <>
                   {/* Desktop View: the table needs ~780px, so tablets keep the cards. */}
@@ -1023,7 +1023,7 @@ export default function VaultPage() {
                                 style={{ 
                                   display: 'inline-flex', alignItems: 'center', gap: 6, 
                                   background: hasChanges ? 'var(--gold-leaf)' : 'var(--ink-black)', 
-                                  color: hasChanges ? 'var(--ink-black)' : 'var(--bg-surface)', 
+                                  color: hasChanges ? 'var(--hg-on-accent)' : 'var(--bg-surface)', 
                                   border: hasChanges ? '1px solid var(--gold-leaf)' : 'none', 
                                   padding: '8px 14px', 
                                   cursor: (syncingAgent === agent.id || (!agentAssignments[agent.id]?.vaultKeyId && !agentAssignments[agent.id]?.honchoVaultKeyId && !agentAssignments[agent.id]?.model)) ? 'not-allowed' : 'pointer', 
@@ -1120,7 +1120,7 @@ export default function VaultPage() {
                             type="button"
                             disabled={syncingAgent === agent.id || noSelection}
                             onClick={() => syncAgentKey(agent)}
-                            style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', minHeight: 44, gap: 8, background: hasChanges ? 'var(--gold-leaf)' : 'var(--ink-black)', color: hasChanges ? 'var(--ink-black)' : "var(--bg-surface)", border: hasChanges ? '1px solid var(--gold-leaf)' : 'none', padding: '12px', cursor: (syncingAgent === agent.id || noSelection) ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: noSelection ? 0.3 : 1 }}
+                            style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', minHeight: 44, gap: 8, background: hasChanges ? 'var(--gold-leaf)' : 'var(--ink-black)', color: hasChanges ? 'var(--hg-on-accent)' : "var(--bg-surface)", border: hasChanges ? '1px solid var(--gold-leaf)' : 'none', padding: '12px', cursor: (syncingAgent === agent.id || noSelection) ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: noSelection ? 0.3 : 1 }}
                           >
                             {syncingAgent === agent.id ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                             {hasChanges ? 'Apply changes' : 'Sync agent'}

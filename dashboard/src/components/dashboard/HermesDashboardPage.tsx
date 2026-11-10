@@ -2561,7 +2561,7 @@ export function HermesDashboardPage() {
             <ThinkingOrb state="searching" size={32} />
           </div>
         ) : error ? (
-          <div style={{ gridColumn: "1 / -1", padding: "1.5rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid var(--hg-bad)", background: "transparent" }}>
+          <div style={{ gridColumn: "1 / -1", padding: "1.25rem 1.5rem", display: "flex", alignItems: "center", gap: 12, border: "1px solid color-mix(in srgb, var(--hg-bad) 35%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 6%, transparent)", borderRadius: "var(--hg-radius-lg)" }}>
             <AlertTriangle size={16} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
             <span style={{ fontSize: 13, color: "var(--ink-black)", fontWeight: 500 }}>{error}</span>
           </div>

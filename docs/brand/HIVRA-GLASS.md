@@ -67,5 +67,10 @@ onto these tokens, so existing components follow the new language. Prefer the
 `globals.css` gives Tailwind-built bordered boxes (`border` class) a 10 px
 radius and unrounded buttons and inputs a 7 px radius, unless they carry their
 own `rounded*` class or a component class sets a radius. Uppercase labels set
-in the monospace face are drawn in the sans face. The focus ring is the system
-blue everywhere.
+in the monospace face are drawn in the sans face, whether the uppercase comes
+from a class or an inline style. Emphasis inside a `.serif` heading is upright,
+not italic, and `--font-serif` names the display face. The focus ring is the
+system blue everywhere.
+
+Text on an ink fill (`--hg-accent`, or the legacy `--gold-leaf`) uses
+`--hg-on-accent`, never `--ink-black`, which is the same ink and would vanish.

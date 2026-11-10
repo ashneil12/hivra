@@ -259,7 +259,7 @@ export function SkillInstallPicker({
                 style={{
                   border: "1px solid var(--gold-leaf)",
                   background: selected.size === 0 || installing ? "transparent" : "var(--gold-leaf)",
-                  color: selected.size === 0 || installing ? "var(--text-muted)" : "var(--ink-black)",
+                  color: selected.size === 0 || installing ? "var(--text-muted)" : "var(--hg-on-accent)",
                   padding: "8px 18px",
                   minHeight: 44,
                   cursor: installing || selected.size === 0 ? "default" : "pointer",
