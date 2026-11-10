@@ -67,7 +67,7 @@ describe("GET /api/cron/aeon-tick", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://api.github.com/repos/aaronjmars/aeon/dispatches");
+    expect(url).toBe("https://api.github.com/repos/ashneil12/aeon/dispatches");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ event_type: "cron-tick" });
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer ghtok");
