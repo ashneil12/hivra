@@ -3,7 +3,7 @@ import { z } from "zod";
 /** A provider/model selection, not infrastructure credentials or a recipient.
  * Shared by launch admission and durable settings delivery so a request cannot
  * pass a weaker launch check and fail only after a computer has been allocated. */
-export const VENICE_DEFAULT_MODEL = "deepseek-v4-pro";
+export const VENICE_DEFAULT_MODEL = "deepseek-v4-1-flash";
 const Model = z.string().trim().regex(/^[A-Za-z0-9._:\/\[\]-]{1,64}$|^$/).optional()
   .transform(value => value || VENICE_DEFAULT_MODEL);
 
