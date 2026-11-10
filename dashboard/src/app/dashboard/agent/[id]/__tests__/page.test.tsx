@@ -42,6 +42,8 @@ jest.mock("@/lib/hivra/chat-readiness", () => ({
   inspectChatReadiness: (...args: unknown[]) => mockChatReadiness(...args),
 }));
 
+// Home's day-one checklist reads plans and agents on its own; not under test here.
+jest.mock("@/components/dashboard/OnboardingChecklist", () => ({ OnboardingChecklist: () => null }));
 jest.mock("@/lib/hivra/agent-api", () => ({
   getAgent: (...args: unknown[]) => mockGetAgent(...args),
   listAgents: (...args: unknown[]) => mockListAgents(...args),
