@@ -53,7 +53,7 @@ section.lede p {
 section.callout {
   margin-left: -30px;
   padding: 4px 0 2px 28px;
-  border-left: 2px solid var(--gold-leaf);
+  border-left: 2px solid var(--hg-stroke-strong);
 }
 
 section.callout p:last-child {
@@ -64,7 +64,7 @@ section.callout p:last-child {
 section.note {
   padding: 28px 32px 6px;
   border: 1px solid var(--etched-border);
-  background: var(--public-surface);
+  background: var(--hg-glass);
 }
 
 section.note h2 {
@@ -125,7 +125,7 @@ ol.steps > li::before {
   content: counter(step, decimal-leading-zero);
   padding-top: 5px;
   color: var(--gold-leaf);
-  font: 500 13px/1.6 var(--public-mono, monospace);
+  font: 500 13px/1.6 var(--font-sans);
 }
 
 ol.steps > li > p {
@@ -168,7 +168,7 @@ ol.providers > li::before {
   content: counter(provider, decimal-leading-zero);
   padding-top: 6px;
   color: var(--gold-leaf);
-  font: 500 13px/1.6 var(--public-mono, monospace);
+  font: 500 13px/1.6 var(--font-sans);
 }
 
 ol.providers > li > p {

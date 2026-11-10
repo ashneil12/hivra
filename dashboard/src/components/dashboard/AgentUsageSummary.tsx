@@ -92,7 +92,7 @@ export function AgentUsageSummary({ instanceId, days = 7 }: { instanceId: string
 
   const wrap: React.CSSProperties = {
     border: "1px solid var(--etched-border)",
-    background: "rgba(255,255,255,0.025)",
+    background: "var(--hg-fill-1)",
     padding: "0.9rem 1.1rem",
     display: "grid",
     gap: 12,

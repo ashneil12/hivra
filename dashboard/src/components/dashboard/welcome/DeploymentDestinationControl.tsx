@@ -11,6 +11,7 @@ import {
   Server,
   ShieldCheck,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import { listInfrastructureTargets } from "@/lib/infrastructure/client";
 import { isProxmoxDeploymentTarget, type DeploymentTargetDto } from "@/lib/infrastructure/contracts";
@@ -346,7 +347,7 @@ export function DeploymentDestinationControl({
 
       {!ownServerSupported || otherSelected ? null : state.loading ? (
         <div className={styles.notice} role="status" aria-live="polite">
-          <Loader2 size={14} className={styles.spin} aria-hidden="true" />
+          <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="searching" size={20} /></span>
           <span>Checking your ready hosts...</span>
         </div>
       ) : state.error ? (

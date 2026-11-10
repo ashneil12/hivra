@@ -191,7 +191,7 @@ div.rowBody > p {
   grid-template-columns: calc(76px + 280px - 40px) minmax(0, 1fr);
   padding: 40px;
   border: 1px dashed var(--etched-border);
-  background: color-mix(in srgb, var(--public-surface) 55%, transparent);
+  background: color-mix(in srgb, var(--hg-glass) 55%, transparent);
   margin-bottom: 56px;
 }
 
@@ -286,3 +286,6 @@ main.end {
     padding: 20px;
   }
 }
+
+/* Hivra Glass */
+.marker, .dot { border-radius: 999px; }

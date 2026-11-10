@@ -13,6 +13,7 @@ import {
   Trash2,
   Unplug,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import type {
   HetznerCloudConnectionDto,
@@ -281,7 +282,7 @@ export function HetznerCloudConnectionCard({
 
       {loading && inventory.length === 0 ? (
         <div className={styles.providerInventoryLoading} role="status">
-          <Loader2 size={17} className={styles.spin} aria-hidden="true" />
+          <ThinkingOrb state="searching" size={20} />
           <span>Loading Hetzner servers…</span>
         </div>
       ) : inventory.length > 0 ? (

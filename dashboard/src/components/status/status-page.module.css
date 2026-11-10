@@ -219,3 +219,6 @@
     font-size: 16px;
   }
 }
+
+/* Hivra Glass */
+.card, .panel, .row { border-radius: var(--hg-radius-md); }

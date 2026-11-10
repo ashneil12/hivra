@@ -16,7 +16,8 @@
   text-align: left;
   font: inherit;
   cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease;
+  transition: border-color var(--hg-fast) var(--hg-ease), background-color var(--hg-fast) var(--hg-ease);
+  border-radius: var(--hg-radius-md);
 }
 
 .choice:hover {
@@ -24,19 +25,19 @@
 }
 
 .choice[aria-pressed='true'] {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
   background: var(--bg-elevated);
-  box-shadow: inset 0 2px 0 var(--hivra-red);
+  box-shadow: inset 0 2px 0 var(--hg-stroke-strong);
 }
 
 .choiceHead {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -63,12 +64,13 @@
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
+  border-radius: 999px;
 }
 
 .badge[data-tone='success'] {
@@ -78,7 +80,7 @@
 }
 
 .choice:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 

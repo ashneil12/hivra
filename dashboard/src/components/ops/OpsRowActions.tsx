@@ -66,7 +66,8 @@ export function OpsRowActions({ eventId, title }: OpsRowActionsProps) {
     letterSpacing: '0.1em',
     textTransform: 'uppercase' as const,
     border: '1px solid var(--etched-border)',
-    background: 'var(--bg-surface)',
+    borderRadius: 7,
+    background: 'var(--hg-glass)',
     color: 'var(--ink-black)',
     cursor: disabled ? 'not-allowed' : 'pointer',
     opacity: disabled ? 0.55 : 1,
@@ -91,16 +92,16 @@ export function OpsRowActions({ eventId, title }: OpsRowActionsProps) {
           className="pointer-coarse:min-h-[44px]"
           style={{
             ...buttonStyle,
-            background: '#7f1d1d',
+            background: 'var(--hg-bad)',
             color: 'var(--vellum-bg)',
-            borderColor: '#7f1d1d',
+            borderColor: 'var(--hg-bad)',
           }}
         >
           {busy === 'delete' ? 'Deleting…' : 'Delete'}
         </button>
       </div>
       {error && (
-        <p style={{ margin: 0, fontSize: 11, color: '#b91c1c', maxWidth: 260, textAlign: 'right' }}>
+        <p style={{ margin: 0, fontSize: 11, color: 'var(--hg-bad)', maxWidth: 260, textAlign: 'right' }}>
           {error}
         </p>
       )}

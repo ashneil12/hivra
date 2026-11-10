@@ -62,8 +62,8 @@ export function ArchiveUpgradeWall({
       data-testid="instance-archive-upgrade-wall"
       className="instance-chat-banner"
       style={{
-        background: "rgba(220, 38, 38, 0.10)",
-        borderBottom: "1px solid rgba(220, 38, 38, 0.28)",
+        background: "color-mix(in srgb, var(--hg-bad) 10%, transparent)",
+        borderBottom: "1px solid color-mix(in srgb, var(--hg-bad) 28%, transparent)",
         padding: "14px 24px",
         display: "flex",
         alignItems: "center",
@@ -74,15 +74,15 @@ export function ArchiveUpgradeWall({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: "1 1 460px" }}>
-        <CalendarClock size={18} strokeWidth={2.25} style={{ color: "#b91c1c", flexShrink: 0 }} />
+        <CalendarClock size={18} strokeWidth={2.25} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
         <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
           <span
             className="mono"
-            style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", textTransform: "uppercase", letterSpacing: "0.12em" }}
+            style={{ fontSize: 11, fontWeight: 700, color: "var(--hg-bad)", textTransform: "uppercase", letterSpacing: "0.05em" }}
           >
             {countdownLabel(daysUntilArchive)}
           </span>
-          <span style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.82)", lineHeight: 1.45 }}>
+          <span style={{ fontSize: 13, color: "var(--hg-text-2)", lineHeight: 1.45 }}>
             {`${name} and everything it remembers get packed away: its memory, its files and the chats you connected. A free account doesn't keep a computer running. A paid plan, from ${ENTRY_PLAN_PRICE} a month, keeps yours live and on.`}
           </span>
         </div>
@@ -106,16 +106,16 @@ export function ArchiveUpgradeWall({
           }}
           className="mono"
           style={{
-            background: "#1a1a1a",
-            color: "#ffffff",
+            background: "var(--hg-accent)",
+            color: "var(--hg-on-accent)",
             border: "none",
             padding: "8px 14px",
-            fontSize: 11,
-            fontWeight: 700,
+            fontSize: 12,
+            fontWeight: 600,
+            borderRadius: 7,
             cursor: "pointer",
             textDecoration: "none",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
+            fontFamily: "var(--font-sans)",
             whiteSpace: "nowrap",
           }}
         >

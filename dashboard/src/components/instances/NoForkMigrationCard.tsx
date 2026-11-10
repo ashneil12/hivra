@@ -111,7 +111,7 @@ export function NoForkMigrationCard({ instanceId }: Props) {
   const rolledBack = progress?.state === 'rolled_back';
   const failed = progress?.state === 'failed';
   const refused = progress?.state === 'refused';
-  const accent = rolledBack || failed ? '#92400e' : done ? '#166534' : '#1d4ed8';
+  const accent = rolledBack || failed ? 'var(--hg-warn)' : done ? 'var(--hg-ok)' : 'var(--hg-fg)';
   const Icon = done ? CheckCircle2 : rolledBack || failed ? Undo2 : DownloadCloud;
   const phaseIndex = NOFORK_STEPS.findIndex((s) => s.phase === progress?.phase);
   const version = offer.target?.version ?? progress?.toVersion ?? '';
@@ -124,8 +124,8 @@ export function NoForkMigrationCard({ instanceId }: Props) {
       style={{
         margin: '0.5rem 0 1rem',
         padding: '14px 16px',
-        border: '1px solid rgba(59, 130, 246, 0.28)',
-        background: 'rgba(59, 130, 246, 0.07)',
+        border: '1px solid var(--hg-stroke-strong)',
+        background: 'var(--hg-fill-2)',
         color: 'var(--ink-black)',
       }}
     >
@@ -185,7 +185,7 @@ export function NoForkMigrationCard({ instanceId }: Props) {
         </div>
       ) : null}
       {error ? (
-        <p role="alert" data-testid="nofork-error" style={{ margin: '12px 0 0', fontSize: 12, color: '#991b1b' }}>
+        <p role="alert" data-testid="nofork-error" style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--hg-bad)' }}>
           {error}
         </p>
       ) : null}

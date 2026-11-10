@@ -55,7 +55,7 @@ export default function LogsTab({ instanceId }: { instanceId: string }) {
           <Loader2 size={14} className="animate-spin" style={{ color: "var(--bg-surface)", opacity: 0.5 }} />
        </div>
       {loading && !logs ? <div style={{ opacity: 0.3, color: "var(--bg-surface)" }} className="mono">Connecting to gateway...</div> : (
-        <pre style={{ flex: 1, minHeight: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'var(--font-mono), monospace', fontSize: 11, overflowY: 'auto', overscrollBehavior: 'contain', color: '#a1a1aa', lineHeight: 1.55 }}>
+        <pre style={{ flex: 1, minHeight: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11, overflowY: 'auto', overscrollBehavior: 'contain', color: '#a1a1aa', lineHeight: 1.55 }}>
           {logs || 'No logs available.'}
         </pre>
       )}

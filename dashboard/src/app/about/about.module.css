@@ -218,8 +218,8 @@
   margin-top: 8px;
   padding: 36px 48px;
   border: 1px solid var(--etched-border);
-  border-left: 3px solid var(--gold-leaf);
-  background: var(--public-surface);
+  border-left: 2px solid var(--hg-stroke-strong);
+  background: var(--hg-glass);
   scroll-margin-top: 110px;
 }
 
@@ -331,3 +331,6 @@
     break-inside: avoid;
   }
 }
+
+/* Hivra Glass */
+.notice { border-radius: var(--hg-radius-lg); border-left-width: 1px; -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm); }

@@ -16,7 +16,7 @@
 // both surface:'sleep_wake_banner'.
 
 import { useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import { captureClient } from "@/lib/telemetry/posthog-client";
 
@@ -49,8 +49,8 @@ export function SleepWakeUpgradePrompt({
       data-testid="instance-sleep-wake-upgrade-banner"
       className="instance-chat-banner"
       style={{
-        background: "rgba(59, 130, 246, 0.10)",
-        borderBottom: "1px solid rgba(59, 130, 246, 0.24)",
+        background: "var(--hg-fill-1)",
+        borderBottom: "1px solid var(--hg-stroke)",
         padding: "12px 24px",
         display: "flex",
         alignItems: "center",
@@ -61,15 +61,15 @@ export function SleepWakeUpgradePrompt({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: "1 1 460px" }}>
-        <Loader2 size={18} strokeWidth={2.25} style={{ color: "#1d4ed8" }} className="animate-spin" />
+        <ThinkingOrb state="working" size={20} />
         <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
           <span
             className="mono"
-            style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: "0.12em" }}
+            style={{ fontSize: 11, fontWeight: 600, color: "var(--hg-text-3)", textTransform: "uppercase", letterSpacing: "0.05em" }}
           >
             Warming up your agent
           </span>
-          <span style={{ fontSize: 13, color: "rgba(17, 24, 39, 0.78)", lineHeight: 1.45 }}>
+          <span style={{ fontSize: 13, color: "var(--hg-text-2)", lineHeight: 1.45 }}>
             {instanceName ? `${instanceName} slept` : "Your agent slept"} after 4 idle days. Waking it back
             up now, about a minute. A paid plan keeps the computer running, so it is ready the second you
             are.
@@ -91,17 +91,16 @@ export function SleepWakeUpgradePrompt({
           }}
           className="mono"
           style={{
-            background: "#1a1a1a",
-            color: "#ffffff",
+            background: "var(--hg-accent)",
+            color: "var(--hg-on-accent)",
             border: "none",
             padding: "8px 14px",
-            fontSize: 11,
-            fontWeight: 700,
+            fontSize: 12,
+            fontWeight: 600,
+            borderRadius: 7,
             cursor: "pointer",
             textDecoration: "none",
-            fontFamily: "var(--font-mono)",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
+            fontFamily: "var(--font-sans)",
             whiteSpace: "nowrap",
           }}
         >

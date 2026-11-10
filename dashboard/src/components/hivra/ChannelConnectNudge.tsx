@@ -102,7 +102,7 @@ export function ChannelConnectNudge({
         gap: 10,
         padding: "7px 16px",
         borderBottom: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.03)",
+        background: "var(--hg-fill-1)",
         fontSize: 12.5,
         color: "var(--text-secondary)",
         minWidth: 0,

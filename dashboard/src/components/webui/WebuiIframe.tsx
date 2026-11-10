@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
+import { ThinkingOrb } from '@/components/ui/ThinkingOrb';
 import { useTheme } from 'next-themes';
 import {
   LOCALE_COOKIE_NAME,
@@ -164,7 +165,7 @@ const PANEL_BUTTON_STYLE: React.CSSProperties = {
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
   border: '1px solid var(--border)',
-  borderRadius: 0,
+  borderRadius: 7,
   background: 'var(--btn-bg)',
   color: 'var(--btn-text)',
   cursor: 'pointer',
@@ -329,15 +330,11 @@ function WebuiHandoffLoadingShell({
         padding: 24,
         textAlign: 'center',
         color: 'var(--ink-black)',
-        borderRadius: 0,
+        borderRadius: 14,
         background: 'transparent',
       }}
     >
-      <Loader2
-        size={22}
-        aria-hidden="true"
-        style={{ animation: 'spin 1s linear infinite', color: 'var(--gold-leaf)' }}
-      />
+      <ThinkingOrb size={32} state="connecting" />
       <p
         style={{
           margin: 0,
@@ -1178,8 +1175,8 @@ export function WebuiIframe({
                 onClick={() => onRequestStart?.()}
                 style={{
                   ...PANEL_BUTTON_STYLE,
-                  background: 'var(--gold-leaf, #c9a24b)',
-                  color: 'var(--ink-black, #11151b)',
+                  background: 'var(--hg-accent)',
+                  color: 'var(--hg-on-accent)',
                 }}
               >
                 {state.variant === 'error' ? 'Restart' : 'Start'}

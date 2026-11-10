@@ -16,7 +16,6 @@ import {
   Code2,
   Cpu,
   Droplet,
-  Loader2,
   Monitor,
   Orbit,
   Server,
@@ -24,6 +23,7 @@ import {
   Triangle,
   type LucideIcon,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import {
   DeploymentDestinationControl,
@@ -593,7 +593,7 @@ function LoadingDraft() {
   return (
     <main className={styles.page}>
       <div className={styles.loading} role="status">
-        <Loader2 size={18} aria-hidden /> Restoring your launch
+        <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="searching" size={20} /></span> Restoring your launch
       </div>
     </main>
   );
@@ -649,7 +649,7 @@ function HermesLaunched({
       ) : (
         <>
           {checking ? (
-            <p className={styles.observed} role="status"><Loader2 size={13} className={styles.spin} aria-hidden /> Waiting for the workspace to answer</p>
+            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Waiting for the workspace to answer</p>
           ) : (
             <p className={styles.observed} role="status">
               The workspace hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
@@ -2657,7 +2657,7 @@ export function LaunchJourney(
 
       {draft.stage === "launch" && currentProfile && draft.launchState === "submitting" ? (
         <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-progress-heading" role="status" aria-live="polite">
-          <Loader2 size={30} className={styles.spin} aria-hidden />
+          <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={32} /></span>
           <span className={styles.eyebrow}>Launch in progress</span>
           <h1 id="launch-progress-heading">Confirming your launch…</h1>
           <p>Hivra is checking the request for {draft.name.trim()}. We’ll open it as soon as the launch is confirmed.</p>

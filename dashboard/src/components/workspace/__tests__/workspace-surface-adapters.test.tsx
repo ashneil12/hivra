@@ -14,6 +14,9 @@ import {
   type WorkspaceSurfaceSource,
 } from "../workspace-surface-adapters";
 
+jest.mock("@/components/ui/ThinkingOrb", () => ({
+  ThinkingOrb: ({ label }: { label?: string }) => <span data-testid="thinking-orb" role="img" aria-label={label ?? "Working"} />,
+}));
 jest.mock("@/components/explorer/FileExplorer", () => ({
   FileExplorer: jest.fn(() => <div data-testid="real-hermes-files">Hermes files</div>),
 }));

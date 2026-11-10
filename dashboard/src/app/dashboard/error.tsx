@@ -46,7 +46,7 @@ export default function DashboardError({
           border: '1px solid var(--etched-border)',
           background: 'var(--bg-surface)',
           padding: 'clamp(1.25rem, 5vw, 2rem)',
-          boxShadow: '0 12px 30px rgba(0,0,0,0.06)',
+          boxShadow: '0 12px 30px var(--hg-fill-1)',
         }}
       >
         <p

@@ -62,11 +62,11 @@
 }
 .button:disabled { opacity: 0.55; cursor: not-allowed; }
 .input:focus-visible, .button:focus-visible, .link:focus-visible, .consent input:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 .consent { display: flex; align-items: flex-start; gap: 12px; font-size: 13px; line-height: 1.6; }
-.consent input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 3px; accent-color: var(--hivra-red); }
+.consent input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 3px; accent-color: var(--hg-text); }
 .status, .error { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .error { border-color: var(--red); }
 

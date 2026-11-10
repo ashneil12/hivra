@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import Link from 'next/link';
 import { ArrowUpRight, Cpu, Loader2, MemoryStick, RefreshCw } from 'lucide-react';
 import styles from '../console.module.css';
@@ -179,16 +180,16 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
     <section aria-labelledby="resources-heading" style={{ maxWidth: 820, display: 'grid', gap: 20 }}>
       <div>
         <p className="mono" style={eyebrowStyle}>{snapshot?.plan.name ?? 'Plan'} compute</p>
-        <h2 id="resources-heading" className="serif" style={{ margin: '6px 0 0', fontSize: '2rem', fontWeight: 400 }}>Shared compute pool</h2>
+        <h2 id="resources-heading" className="serif" style={{ margin: '6px 0 0', fontSize: '2rem', fontWeight: 600 }}>Shared compute pool</h2>
         <p style={{ margin: '10px 0 0', lineHeight: 1.6, color: 'var(--text-secondary)' }}>
           Allocate your plan&apos;s virtual CPU and RAM across active agents. Physical GPU allocation is not part of this pool.
         </p>
       </div>
 
       {loadingUsage && !snapshot ? (
-        <div role="status" style={statusStyle}><Loader2 size={16} className="animate-spin" /> Loading current allocations…</div>
+        <div role="status" style={statusStyle}><ThinkingOrb size={20} state="searching" /> Loading current allocations…</div>
       ) : loadError && !snapshot ? (
-        <div role="alert" style={{ ...statusStyle, borderColor: '#fecaca', color: '#991b1b' }}>
+        <div role="alert" style={{ ...statusStyle, borderColor: 'var(--hg-bad)', color: 'var(--hg-bad)' }}>
           <span>{loadError}</span>
           <button type="button" onClick={() => void loadUsage()} style={secondaryButtonStyle}><RefreshCw size={13} /> Retry</button>
         </div>
@@ -253,10 +254,10 @@ export default function ResourcesTab({ instanceId }: { instanceId: string }) {
               </fieldset>
             </div>
 
-            {feedback && <p role={feedback.tone === 'error' ? 'alert' : 'status'} style={{ margin: 0, padding: 12, background: feedback.tone === 'success' ? 'var(--vellum-bg)' : '#fef2f2', color: feedback.tone === 'success' ? 'var(--ink-black)' : '#991b1b', border: `1px solid ${feedback.tone === 'success' ? 'var(--etched-border)' : '#fecaca'}`, lineHeight: 1.55 }}>{feedback.message}</p>}
+            {feedback && <p role={feedback.tone === 'error' ? 'alert' : 'status'} style={{ margin: 0, padding: 12, background: feedback.tone === 'success' ? 'var(--vellum-bg)' : 'color-mix(in srgb, var(--hg-bad) 8%, transparent)', color: feedback.tone === 'success' ? 'var(--ink-black)' : 'var(--hg-bad)', border: `1px solid ${feedback.tone === 'success' ? 'var(--etched-border)' : 'var(--hg-bad)'}`, lineHeight: 1.55 }}>{feedback.message}</p>}
 
             {confirming && selectedCpu !== null && selectedRamMb !== null ? (
-              <div style={{ border: '1px solid rgba(192, 98, 63, 0.35)', background: 'rgba(192, 98, 63, 0.05)', padding: 14, display: 'grid', gap: 10 }}>
+              <div style={{ border: '1px solid color-mix(in srgb, var(--hg-bad) 35%, transparent)', background: 'color-mix(in srgb, var(--hg-bad) 5%, transparent)', padding: 14, display: 'grid', gap: 10 }}>
                 <strong>Confirm {current.name}: {formatNumber(current.cpu)} vCPU / {formatNumber(current.ram / 1024)} GB → {formatNumber(selectedCpu)} vCPU / {formatNumber(selectedRamMb / 1024)} GB</strong>
                 <span style={subtleStyle}>The new limits are applied to the VM and its running containers before capacity is shown as free.</span>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -294,7 +295,7 @@ const manageLinkStyle = { display: 'inline-flex', alignItems: 'center', gap: 5, 
 const fieldsetStyle = { border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 } as const;
 const legendStyle = { fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 };
 const choiceRowStyle = { display: 'flex', gap: 8, flexWrap: 'wrap' as const };
-const choiceButtonStyle = (selected: boolean) => ({ border: '1px solid var(--etched-border)', background: selected ? 'var(--gold-leaf)' : 'transparent', color: 'var(--ink-black)', padding: '7px 11px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' });
+const choiceButtonStyle = (selected: boolean) => ({ border: '1px solid var(--etched-border)', background: selected ? 'var(--gold-leaf)' : 'transparent', color: selected ? 'var(--hg-on-accent)' : 'var(--ink-black)', padding: '7px 11px', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer' });
 const primaryButtonStyle = { display: 'inline-flex', alignItems: 'center', gap: 8, width: 'fit-content', border: '1px solid var(--ink-black)', background: 'var(--ink-black)', color: 'var(--bg-surface)', padding: '10px 14px', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', cursor: 'pointer' };
 const secondaryButtonStyle = { display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--etched-border)', background: 'transparent', color: 'var(--ink-black)', padding: '9px 13px', fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.06em', cursor: 'pointer' };
 const primaryLinkStyle = { ...primaryButtonStyle, textDecoration: 'none' };

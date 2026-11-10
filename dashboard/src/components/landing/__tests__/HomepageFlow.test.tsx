@@ -19,6 +19,13 @@ async function renderHome() {
   return render(await LandingPage({}));
 }
 
+// jsdom has no matchMedia; the hero's ThinkingOrb reads the reduced-motion preference.
+beforeAll(() => {
+  if (typeof window.matchMedia !== "function") {
+    window.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as unknown as typeof window.matchMedia;
+  }
+});
+
 const surfacesBefore = process.env.HIVRA_NEW_TOKEN_SURFACES;
 beforeEach(() => {
   mockCount.mockReset();

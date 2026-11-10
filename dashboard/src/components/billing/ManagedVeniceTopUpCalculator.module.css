@@ -5,6 +5,7 @@
   padding: 1rem;
   border: 1px solid var(--etched-border);
   background: var(--bg-elevated);
+  border-radius: var(--hg-radius-lg);
 }
 
 .calculator[data-bonus='true'] {
@@ -20,10 +21,10 @@
 }
 
 .label {
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
@@ -34,16 +35,17 @@
   min-height: 40px;
   border: 1px solid color-mix(in srgb, var(--ink-black) 22%, transparent);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-sm);
 }
 
 .amountInput:focus-within {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 2px;
 }
 
 .currency {
   padding-left: 0.7rem;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text-secondary);
 }
@@ -55,7 +57,7 @@
   border: 0;
   background: transparent;
   color: var(--ink-black);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   outline: none;
@@ -79,10 +81,11 @@
   right: 0;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-md);
 }
 
 .fill {
-  background: var(--hivra-red);
+  background: var(--hg-accent);
 }
 
 .slider {
@@ -98,7 +101,7 @@
 }
 
 .slider:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 4px;
 }
 
@@ -115,7 +118,7 @@
   margin-top: 3px;
   border: 2px solid var(--ink-black);
   background: var(--bg-surface);
-  box-shadow: 0 0 0 3px var(--hivra-red-soft);
+  box-shadow: 0 0 0 3px var(--hg-fill-2);
 }
 
 .slider::-moz-range-track {
@@ -130,14 +133,14 @@
   border: 2px solid var(--ink-black);
   border-radius: 0;
   background: var(--bg-surface);
-  box-shadow: 0 0 0 3px var(--hivra-red-soft);
+  box-shadow: 0 0 0 3px var(--hg-fill-2);
 }
 
 .scale {
   display: flex;
   justify-content: space-between;
   margin-top: 0.35rem;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-secondary);
 }
@@ -161,29 +164,30 @@
   padding: 0.7rem 0.8rem;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-md);
 }
 
 .metric[data-bonus='true'] {
   border-color: var(--hivra-red-line);
-  box-shadow: inset 0 2px 0 var(--hivra-red);
+  box-shadow: inset 0 2px 0 var(--hg-stroke-strong);
 }
 
 .metricLabel {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 .metricValue {
-  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.15rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--ink-black);
@@ -201,17 +205,18 @@
   border: 1px solid var(--hivra-red-line);
   background: var(--hivra-red-soft);
   color: var(--ink-black);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  border-radius: var(--hg-radius-md);
 }
 
 .metricNote {
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }

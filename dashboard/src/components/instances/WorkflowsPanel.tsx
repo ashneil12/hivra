@@ -349,7 +349,7 @@ function WorkflowRow({
       data-testid={`workflow-row-${wf.id}`}
       style={{
         border: '1px solid var(--etched-border)',
-        background: 'rgba(255,255,255,0.02)',
+        background: 'var(--hg-fill-1)',
         padding: '10px 11px',
         display: 'grid',
         gap: 8,
@@ -439,7 +439,7 @@ function WorkflowRow({
           aria-hidden="true"
           style={{
             border: '1px dashed var(--etched-border)',
-            background: 'rgba(212, 175, 55, 0.06)',
+            background: 'var(--hg-fill-2)',
             padding: '7px 9px',
             display: 'grid',
             gap: 4,
@@ -535,14 +535,14 @@ function HiddenWorkflowRow({
   onDelete: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
-  const DANGER = '#e06c5a';
+  const DANGER = 'var(--hg-bad)';
 
   return (
     <div
       data-testid={`workflow-hidden-row-${wf.id}`}
       style={{
         border: '1px solid var(--etched-border)',
-        background: 'rgba(255,255,255,0.01)',
+        background: 'var(--hg-fill-1)',
         padding: '8px 10px',
         display: 'flex',
         alignItems: 'center',
@@ -677,7 +677,7 @@ function CreateWorkflowForm({
     width: '100%',
     minWidth: 0,
     border: '1px solid var(--etched-border)',
-    background: 'rgba(255,255,255,0.02)',
+    background: 'var(--hg-fill-1)',
     color: 'var(--ink-black)',
     fontSize: 12.5,
     padding: '8px 10px',
@@ -688,7 +688,7 @@ function CreateWorkflowForm({
   return (
     <div
       data-testid="workflow-create-form"
-      style={{ border: '1px solid var(--etched-border)', background: 'rgba(255,255,255,0.02)', padding: '11px', display: 'grid', gap: 8 }}
+      style={{ border: '1px solid var(--etched-border)', background: 'var(--hg-fill-1)', padding: '11px', display: 'grid', gap: 8 }}
     >
       <span className="mono cmdp-small" style={KICKER}>
         New workflow
