@@ -622,6 +622,126 @@ describe("UnifiedWorkspace", () => {
     jest.useRealTimers();
   });
 
+  describe("provisioning poll", () => {
+    const provisioningDetail: WorkspaceSurfaceSource = {
+      kind: "hivra",
+      uid: hivraAgent.uid,
+      agent: {
+        id: hivraAgent.id,
+        type: "codex",
+        name: hivraAgent.name,
+        status: "provisioning",
+        cpu: 2,
+        ram: 4,
+      },
+    };
+    const flush = async (ms: number) => {
+      await act(async () => {
+        jest.advanceTimersByTime(ms);
+        await Promise.resolve();
+      });
+    };
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      window.history.replaceState(
+        {},
+        "",
+        "/dashboard/workspace?agent=x-beta&surface=conversation",
+      );
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it("keeps the last view and never aborts a slow in-flight poll", async () => {
+      const slow = deferred<WorkspaceSurfaceSource>();
+      const signals: AbortSignal[] = [];
+      const loadAgentDetail = jest
+        .fn<Promise<WorkspaceSurfaceSource>, [UnifiedAgent, AbortSignal]>()
+        .mockResolvedValueOnce(provisioningDetail)
+        .mockImplementationOnce((_a, signal) => {
+          signals.push(signal);
+          return slow.promise;
+        });
+
+      render(<UnifiedWorkspace loadAgentDetail={loadAgentDetail} />);
+      expect(await screen.findByText(/Beta is still starting/)).toBeInTheDocument();
+
+      await flush(5_000);
+      expect(loadAgentDetail).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(/Beta is still starting/)).toBeInTheDocument();
+      expect(screen.queryByText("Opening Beta…")).not.toBeInTheDocument();
+
+      // Well past several intervals: no second request, and no abort.
+      await flush(60_000);
+      expect(loadAgentDetail).toHaveBeenCalledTimes(2);
+      expect(signals[0].aborted).toBe(false);
+
+      await act(async () => {
+        slow.resolve(detail(hivraAgent));
+        await slow.promise;
+      });
+      expect(await screen.findByText("HIVRA_CONVERSATION_Beta")).toBeInTheDocument();
+    });
+
+    it("tolerates transient failures, backs off, and errors after three", async () => {
+      const loadAgentDetail = jest
+        .fn<Promise<WorkspaceSurfaceSource>, [UnifiedAgent, AbortSignal]>()
+        .mockResolvedValueOnce(provisioningDetail)
+        .mockRejectedValue(new Error("ssh timeout"));
+
+      render(<UnifiedWorkspace loadAgentDetail={loadAgentDetail} />);
+      expect(await screen.findByText(/Beta is still starting/)).toBeInTheDocument();
+
+      await flush(5_000);
+      expect(loadAgentDetail).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(/Beta is still starting/)).toBeInTheDocument();
+
+      await flush(5_000); // backoff: next poll is at 10s, not 5s
+      expect(loadAgentDetail).toHaveBeenCalledTimes(2);
+      await flush(5_000);
+      expect(loadAgentDetail).toHaveBeenCalledTimes(3);
+      expect(screen.getByText(/Beta is still starting/)).toBeInTheDocument();
+
+      await flush(20_000);
+      expect(loadAgentDetail).toHaveBeenCalledTimes(4);
+      expect(screen.queryByText(/Beta is still starting/)).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows a failed launch's stored reason and offers to launch again", async () => {
+    const failed: UnifiedAgent = {
+      ...hivraAgent,
+      statusRaw: "error",
+      state: "error",
+      agentType: "claude-code",
+      resourceKind: "agent",
+      failureReason: "VM allocation failed on the host",
+    };
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [failed] }));
+    const loadAgentDetail = jest.fn(async (): Promise<WorkspaceSurfaceSource> => ({
+      kind: "hivra",
+      uid: failed.uid,
+      agent: {
+        id: failed.id,
+        type: "claude-code",
+        name: failed.name,
+        status: "error",
+        error: "VM allocation failed on the host",
+        cpu: 2,
+        ram: 4,
+      },
+    }));
+    window.history.replaceState({}, "", "/dashboard/workspace?agent=x-beta&surface=conversation");
+
+    render(<UnifiedWorkspace loadAgentDetail={loadAgentDetail} />);
+
+    expect(await screen.findByText(/VM allocation failed on the host/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Launch again" })).toHaveAttribute(
+      "href",
+      "/dashboard/launch?start=1&profile=claude-code",
+    );
+  });
+
   it("offers the same menu at every width and closes it on Escape", () => {
     // The picker used to be a modal below 1200px and the rail above it, and the
     // rail force-closed the modal, so the header switcher did nothing at all on

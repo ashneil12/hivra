@@ -1,7 +1,9 @@
 "use client";
 
+import { isLaunchProfileId } from "@/lib/launch/contracts";
 import { LoadingState } from "@/components/ui/LoadingState";
 
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -54,6 +56,16 @@ import {
 } from "./WorkspaceStateNotice";
 
 const PROVISIONING_REFRESH_INTERVAL_MS = 5_000;
+const PROVISIONING_REFRESH_MAX_INTERVAL_MS = 30_000;
+const PROVISIONING_REFRESH_MAX_FAILURES = 3;
+
+/** 5s, 10s, 20s, then capped at 30s. */
+export function provisioningRefreshDelay(attempt: number): number {
+  return Math.min(
+    PROVISIONING_REFRESH_INTERVAL_MS * 2 ** attempt,
+    PROVISIONING_REFRESH_MAX_INTERVAL_MS,
+  );
+}
 
 export type WorkspaceDetailLoader = (
   agent: UnifiedAgent,
@@ -192,6 +204,11 @@ function useSelectedAdapters(
   enabled: boolean,
 ) {
   const generationRef = useRef(0);
+  const failuresRef = useRef(0);
+  const pollRef = useRef<{ controller: AbortController; promise: Promise<void> } | null>(
+    null,
+  );
+  const latestRef = useRef({ agent, loader, enabled });
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<AdapterResolutionState>({
     uid: null,
@@ -203,6 +220,11 @@ function useSelectedAdapters(
   });
 
   useEffect(() => {
+    latestRef.current = { agent, loader, enabled };
+  }, [agent, loader, enabled]);
+
+  useEffect(() => {
+    failuresRef.current = 0;
     if (!enabled || !agent) {
       generationRef.current += 1;
       return;
@@ -238,11 +260,58 @@ function useSelectedAdapters(
 
     return () => {
       controller.abort();
+      pollRef.current?.controller.abort();
+      pollRef.current = null;
       generationRef.current += 1;
     };
   }, [agent, enabled, loader, revision]);
 
   const retry = useCallback(() => setRevision((value) => value + 1), []);
+
+  // Silent refresh: keeps the last resolved view on screen while the load is in
+  // flight, is never aborted by a newer refresh request (a pending one is
+  // shared), and tolerates a few consecutive failures before surfacing an error.
+  const refresh = useCallback((): Promise<void> => {
+    if (pollRef.current) return pollRef.current.promise;
+    const { agent: target, loader: load, enabled: on } = latestRef.current;
+    if (!on || !target) return Promise.resolve();
+    const controller = new AbortController();
+    const generation = generationRef.current;
+    const uid = target.uid;
+    const run = async () => {
+      try {
+        const source = await load(target, controller.signal);
+        if (
+          controller.signal.aborted ||
+          generation !== generationRef.current ||
+          source.uid !== uid
+        ) {
+          return;
+        }
+        failuresRef.current = 0;
+        setState((previous) =>
+          previous.uid === uid && previous.agent === target && previous.loader === load
+            ? { ...previous, status: "resolved", adapters: resolveAdapters(source) }
+            : previous,
+        );
+      } catch {
+        if (controller.signal.aborted || generation !== generationRef.current) return;
+        failuresRef.current += 1;
+        if (failuresRef.current >= PROVISIONING_REFRESH_MAX_FAILURES) {
+          setState((previous) =>
+            previous.uid === uid && previous.agent === target && previous.loader === load
+              ? { ...previous, status: "error", adapters: null }
+              : previous,
+          );
+        }
+      } finally {
+        if (pollRef.current?.controller === controller) pollRef.current = null;
+      }
+    };
+    const promise = run();
+    pollRef.current = { controller, promise };
+    return promise;
+  }, []);
   const current =
     enabled &&
     agent &&
@@ -260,7 +329,7 @@ function useSelectedAdapters(
           adapters: null,
         };
 
-  return { state: current, retry };
+  return { state: current, retry, refresh };
 }
 
 function legacyDestination(agent: UnifiedAgent): string {
@@ -274,6 +343,15 @@ function legacyDestination(agent: UnifiedAgent): string {
 function openRecovery(agent: UnifiedAgent): void {
   if (typeof window === "undefined") return;
   window.open(legacyDestination(agent), "_blank", "noopener,noreferrer");
+}
+
+/** Launch page link for a failed launch: same agent type or computer profile preselected. */
+export function relaunchHref(agent: UnifiedAgent): string {
+  const query = new URLSearchParams({ start: "1" });
+  const profile = agent.resourceKind === "computer" ? agent.computerProfile : agent.agentType;
+  if (isLaunchProfileId(profile)) query.set("profile", profile);
+  else if (agent.resourceKind) query.set("kind", agent.resourceKind);
+  return `/dashboard/launch?${query.toString()}`;
 }
 
 function noticeForComputer(computer: AgentComputer): WorkspaceNoticeState | null {
@@ -851,6 +929,7 @@ export function UnifiedWorkspace({
                 agent={selectedAgent}
                 state={selectedAdapters.state}
                 onRetry={selectedAdapters.retry}
+                onRefresh={selectedAdapters.refresh}
               />
             )}
           </div>
@@ -884,10 +963,12 @@ function ResolvedAgentBoundary({
   agent,
   state,
   onRetry,
+  onRefresh,
 }: {
   agent: UnifiedAgent;
   state: AdapterResolutionState;
   onRetry: () => void;
+  onRefresh: () => Promise<void>;
 }) {
   const computer =
     state.adapters?.surfaces?.computer ?? state.adapters?.conversation?.computer;
@@ -896,12 +977,24 @@ function ResolvedAgentBoundary({
 
   useEffect(() => {
     if (!provisioning) return;
-    const timer = window.setInterval(
-      pollWhenVisible(onRetry),
-      PROVISIONING_REFRESH_INTERVAL_MS,
-    );
-    return () => window.clearInterval(timer);
-  }, [onRetry, provisioning]);
+    let cancelled = false;
+    let attempt = 0;
+    let timer: number | undefined;
+    const poll = pollWhenVisible(onRefresh);
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        await poll();
+        if (cancelled) return;
+        attempt += 1;
+        schedule();
+      }, provisioningRefreshDelay(attempt));
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [onRefresh, provisioning]);
 
   if (state.status === "loading" || state.uid !== agent.uid) {
     return (
@@ -941,15 +1034,19 @@ function ResolvedAgentBoundary({
 
   const notice = noticeForComputer(computer);
   if (notice) {
-    return (
+    const failed = agent.state === "error" && agent.failureReason;
+    const observedDetail = failed
+      ? agent.failureReason
+      : `Observed state: ${computer.state.observed}; operation: ${
+          computer.state.operation?.state ?? "none observed"
+        }.`;
+    const noticeElement = (
       <WorkspaceStateNotice
         state={notice}
         agentName={agent.name}
         surfaceLabel="Workspace"
         observedReason={`Observed state: ${computer.state.observed}.`}
-        observedDetail={`Observed state: ${computer.state.observed}; operation: ${
-          computer.state.operation?.state ?? "none observed"
-        }.`}
+        observedDetail={observedDetail}
         observedState={computer.state.observed}
         updatedAt={state.adapters.checkedAt}
         recoveryActionLabel={agent.kind === "hermes" ? "Open Console" : "Open Manage"}
@@ -958,6 +1055,15 @@ function ResolvedAgentBoundary({
           notice === "recovery" ? () => openRecovery(agent) : onRetry
         }
       />
+    );
+    if (agent.state !== "error" || agent.kind !== "hivra") return noticeElement;
+    return (
+      <>
+        {noticeElement}
+        <p>
+          <Link href={relaunchHref(agent)}>Launch again</Link>
+        </p>
+      </>
     );
   }
 

@@ -666,6 +666,13 @@ function HermesLaunched({
   );
 }
 
+/** What a connected server needs before it can run this profile. */
+function ownServerNeeds(profileId: LaunchProfileId | null): string {
+  return profileId === "linux-terminal"
+    ? "Linux Sandbox needs an Ubuntu server connected with the one-command setup."
+    : "This needs a Proxmox VE server connected with SSH details. An Ubuntu server connected with the one-command setup only runs Linux Sandbox.";
+}
+
 export function LaunchJourney(
   { preparedProfiles = [] }: { preparedProfiles?: readonly ("omarchy" | "windows")[] },
 ) {
@@ -801,6 +808,9 @@ export function LaunchJourney(
     managedAvailable: profile?.managedCapacity !== "self-managed-only",
     // Hermes runs on Hivra Cloud only, whatever was chosen for another agent.
     selfManagedAvailable: profile?.lane !== "hermes-instance",
+    // Hivra Cloud needs a paid plan, so a Free account opens on a ready host
+    // it connected instead of on a plan blocker.
+    preferSelfManaged: planChecked && Boolean(plan?.usage) && !isPaidPlan(plan),
     targetKind: profile?.placementRuntimeId === "linux-terminal" ? "gvisor" : "any",
   });
 
@@ -1317,6 +1327,8 @@ export function LaunchJourney(
   );
   // Every computer Hivra Cloud runs needs a paid plan. A Free account is refused
   // below whatever the agent, so this does not decide who needs one.
+  // Hermes (and Omarchy) cannot run on a server you connected.
+  const ownServerOk = fitSubject?.ownServer !== false;
   const managedPaidRequired = fitSubject !== null && fitSubject.hivraCloud === "plan" && fitSubject.minPlan !== "free";
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
   const managedFits = planCanFit(plan, draft.resources, poolExempt);
@@ -1400,7 +1412,12 @@ export function LaunchJourney(
   else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
   else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox requires a compatible gVisor host you connected.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "Omarchy runs on Hivra Cloud only.";
-  else if (destination.mode === "self-managed" && !destination.deployment) capacityBlocker = "No compatible capacity is ready for this profile.";
+  else if (destination.mode === "self-managed" && !destination.deployment) {
+    const agentName = currentProfile?.name ?? "this agent";
+    capacityBlocker = destination.incompatibleReadyTargetCount > 0
+      ? `None of your connected servers can run ${agentName}. ${ownServerNeeds(draft.profileId)}`
+      : "No compatible capacity is ready for this profile.";
+  }
   else if (destination.mode === "self-managed" && !selectedTargetFits) {
     // A size the owner chose is never lowered for them, so say how to get out
     // when a smaller size would fit this host.
@@ -1433,11 +1450,15 @@ export function LaunchJourney(
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && !isPaidPlan(plan)) {
     // A Free account is the platform, not a computer: it works with the
     // owner's own computer. Hivra-hosted compute is bought.
-    capacityBlocker = `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.`;
+    capacityBlocker = ownServerOk
+      ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.`
+      : `${currentProfile?.name ?? "This launch"} runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.`;
     blockerRemedy = "managed-plan";
     paywall = "paid_profile";
   } else if (destination.mode === "hivra-managed" && !managedPlanAllowed) {
-    capacityBlocker = `${currentProfile?.name ?? "This launch"} needs a paid plan on Hivra Cloud, or a server you connected.`;
+    capacityBlocker = ownServerOk
+      ? `${currentProfile?.name ?? "This launch"} needs a paid plan on Hivra Cloud, or a server you connected.`
+      : `${currentProfile?.name ?? "This launch"} runs on Hivra Cloud only, and that needs a paid plan.`;
     blockerRemedy = "managed-plan";
     paywall = "paid_profile";
   } else if (destination.mode === "hivra-managed" && !preparedCanaryProfile && atSlotLimit) {
@@ -1947,10 +1968,10 @@ export function LaunchJourney(
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
           <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
-          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
+          {ownServerOk ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
         </> : blockerRemedy === "settle-plan" && planHold ? <>
           <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
-          <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button>
+          {ownServerOk ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
         </> : null}
     </span>
   ) : null;

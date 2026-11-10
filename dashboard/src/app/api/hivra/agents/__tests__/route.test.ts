@@ -1697,6 +1697,18 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  it("tells the owner a server needs an update before it can run Agent Zero", async () => {
+    mockResolveSelfManagedProxmoxExecutionContext.mockResolvedValueOnce(
+      selfManagedExecutionContext({ provisionerVersion: "2026.10.20.1" }),
+    );
+    const response = await POST(makeRequest({
+      type: "agent-zero", name: "AGENT_ZERO_OLD_HOST", cpu: 1, ram: 2, deployment: SELF_MANAGED_DEPLOYMENT,
+    }) as never);
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/needs an update before it can run Agent Zero/);
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
   it("refuses a self-managed launch on a bundle without capacity admission before touching the host", async () => {
     // A compatible 2026.09.08.3 bundle can still run its computers, but the
     // launch kickoff calls hivra-host-capacity-admission, which it lacks: the
@@ -1706,8 +1718,8 @@ describe("POST /api/hivra/agents", () => {
     );
 
     const response = await POST(makeRequest({
-      type: "agent-zero",
-      name: "AGENT_ZERO_OLD_BUNDLE",
+      type: "claude-code",
+      name: "CLAUDE_OLD_BUNDLE",
       cpu: 1,
       ram: 2,
       deployment: SELF_MANAGED_DEPLOYMENT,
@@ -3601,33 +3613,25 @@ describe("GET /api/hivra/agents", () => {
     });
   });
 
-  it("hides failed deployments from the active agent list", async () => {
+  it("lists a recent failed launch with its reason, and drops one older than 7 days", async () => {
+    const now = Date.now();
+    const iso = (daysAgo: number) => new Date(now - daysAgo * 86_400_000).toISOString();
     mockExistingAgents = [
-      {
-        id: "agent-failed",
-        type: "claude-code",
-        name: "FAILED_AGENT",
-        status: "error",
-        cpu: 2,
-        ram: 4,
-      },
-      {
-        id: "agent-running",
-        type: "claude-code",
-        name: "RUNNING_AGENT",
-        status: "running",
-        cpu: 2,
-        ram: 4,
-      },
+      { id: "agent-failed", type: "claude-code", name: "FAILED_AGENT", status: "error", error: "VM allocation failed", created_at: iso(2), cpu: 2, ram: 4 },
+      { id: "agent-old-failed", type: "claude-code", name: "OLD_FAILED", status: "error", error: "old", created_at: iso(8), cpu: 2, ram: 4 },
+      { id: "agent-undated-failed", type: "claude-code", name: "UNDATED_FAILED", status: "error", cpu: 2, ram: 4 },
+      { id: "agent-running", type: "claude-code", name: "RUNNING_AGENT", status: "running", cpu: 2, ram: 4 },
     ];
 
     const response = await GET(makeGetRequest() as never);
     expect(response.status).toBe(200);
     const body = await response.json();
 
-    expect(body.data.agents).toEqual([
-      expect.objectContaining({ id: "agent-running", status: "running" }),
+    expect(body.data.agents.map((agent: { id: string }) => agent.id)).toEqual([
+      "agent-failed",
+      "agent-running",
     ]);
+    expect(body.data.agents[0]).toEqual(expect.objectContaining({ status: "error", error: "VM allocation failed" }));
   });
 
   it("tags Claude Code / Codex agents from one read of their stored software observations, never their computers", async () => {

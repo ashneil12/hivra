@@ -53,8 +53,29 @@ export function agentSoftwareUpdateError(code: string | null, message: string, m
 
 type Action = { label: string; primary: boolean } | null;
 
+/**
+ * Where Manage already lets the person fix a computer whose update failed and
+ * could not be undone: restore points (Recovery) or Force restart (Advanced).
+ */
+export type SoftwareRecovery = { kind: "restore" | "force-restart"; open: () => void };
+
+/** The next steps after an update that failed and could not be undone. */
+function brokenUpdateNextStep(recovery: SoftwareRecovery | null): string {
+  if (!recovery) return "Try again, or contact support.";
+  return recovery.kind === "restore"
+    ? "Try again first. If that doesn't work, restore this agent from a restore point made before the update (button below). Contact support only if that doesn't help either."
+    : "Try again first. If that doesn't work, use Force restart in Advanced (button below). Contact support only if that doesn't help either.";
+}
+
+const RECOVERY_BUTTON = { restore: "Open Recovery", "force-restart": "Open Advanced" } as const;
+
+/** True when the update failed and the previous version couldn't be put back. */
+function rollbackFailed(view: AgentSoftwareView): boolean {
+  return view.kind === "update_failed" && !["download_failed", "could_not_start", "no_space"].includes(view.reason);
+}
+
 /** The sentence for this state, and the update button it offers (if any). */
-function stateCopy(view: AgentSoftwareView, name: string, tested: string | null): { text: string; action: Action } {
+function stateCopy(view: AgentSoftwareView, name: string, tested: string | null, recovery: SoftwareRecovery | null): { text: string; action: Action } {
   const tv = tested ?? "";
   switch (view.kind) {
     case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
@@ -110,7 +131,7 @@ function stateCopy(view: AgentSoftwareView, name: string, tested: string | null)
         return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: { label: "Try again", primary: false } };
       }
       return {
-        text: `${name} ${view.target} didn't install, and Hivra couldn't put the previous version back. Chat may not work until this is fixed. Try again, or contact support.`,
+        text: `${name} ${view.target} didn't install, and Hivra couldn't put the previous version back. Chat may not work until this is fixed. ${brokenUpdateNextStep(recovery)}`,
         action: { label: "Try again", primary: true },
       };
   }
@@ -121,7 +142,7 @@ function stateCopy(view: AgentSoftwareView, name: string, tested: string | null)
  * until nobody has used it for a while (and it has no work running) instead of
  * for a reply. `v` names a version the way owners see it.
  */
-function appStateCopy(view: AgentSoftwareView, app: AgentAppName, name: string, tested: string): { text: string; action: Action } {
+function appStateCopy(view: AgentSoftwareView, app: AgentAppName, name: string, tested: string, recovery: SoftwareRecovery | null): { text: string; action: Action } {
   const v = agentSoftwareVersionName;
   const tv = v(tested);
   switch (view.kind) {
@@ -183,7 +204,7 @@ function appStateCopy(view: AgentSoftwareView, app: AgentAppName, name: string, 
         return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: { label: "Try again", primary: false } };
       }
       return {
-        text: `${name} ${v(view.target)} didn't start properly, and Hivra couldn't put the previous version back. ${name} may not open until this is fixed. Try again, or contact support.`,
+        text: `${name} ${v(view.target)} didn't start properly, and Hivra couldn't put the previous version back. ${name} may not open until this is fixed. ${brokenUpdateNextStep(recovery)}`,
         action: { label: "Try again", primary: true },
       };
   }
@@ -246,7 +267,7 @@ function AutoUpdateToggle({ agentId, auto, name, onSaved }: {
  * The agent's software in Manage › Updates. `onUpdate` runs the in-place
  * update through Manage (its busy lock, progress and surface sign-in).
  */
-export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
+export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, recovery = null }: {
   agent: HivraAgent;
   /** "Codex", "Claude Code", "Aeon"… */
   name: string;
@@ -255,6 +276,8 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
   /** This panel's update is running. */
   updating: boolean;
   onUpdate: () => Promise<AgentSoftwareUpdateOutcome>;
+  /** Manage's own way back from a failed update, when this computer has one. */
+  recovery?: SoftwareRecovery | null;
 }) {
   // A stopped agent says how to check it; one being set up or in error says nothing yet.
   const enabled = agentSoftwareCovered(agent) && (agent.status === "running" || agent.status === "stopped");
@@ -299,7 +322,7 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
 
   const app = state.app;
   const shown = agentSoftwareDisplayName(app, name);
-  const copy = app && state.tested ? appStateCopy(view, app, shown, state.tested) : stateCopy(view, name, state.tested);
+  const copy = app && state.tested ? appStateCopy(view, app, shown, state.tested, recovery) : stateCopy(view, name, state.tested, recovery);
   const rawInstalled = "installed" in view && view.installed ? view.installed : view.kind === "update_done" ? view.target : null;
   const installed = rawInstalled && app ? agentSoftwareVersionName(rawInstalled) : rawInstalled;
   const tested = state.tested && app ? agentSoftwareVersionName(state.tested) : state.tested;
@@ -358,6 +381,13 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
                 ? `Updating also refreshes Hivra's connection service without restarting the computer. ${shown} itself restarts once, when nobody is using it.`
                 : "Updating also refreshes Hivra's connection service without restarting the computer. Replies being written keep going, and terminals open on this page reconnect when it finishes."}
             </div>
+          </div>
+        ) : null}
+        {recovery && rollbackFailed(view) ? (
+          <div>
+            <button type="button" onClick={recovery.open} style={manageButtonGhost} data-testid="agent-software-recovery">
+              {RECOVERY_BUTTON[recovery.kind]}
+            </button>
           </div>
         ) : null}
         {actionError ? <div role="alert" style={manageError}>{actionError}</div> : null}

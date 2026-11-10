@@ -78,6 +78,7 @@ export function useLaunchDestination(
     handoff = null,
     managedAvailable = true,
     selfManagedAvailable = true,
+    preferSelfManaged = false,
     targetKind = "any",
   }: {
     handoff?: LaunchTargetHandoff | null;
@@ -87,6 +88,9 @@ export function useLaunchDestination(
     /** False for runtimes that run on Hivra Cloud only (Hermes); placement is
      * then always Hivra Cloud, whatever the owner chose for another runtime. */
     selfManagedAvailable?: boolean;
+    /** True for a Free account: Hivra Cloud needs a paid plan, so a ready host
+     * you connected is the default until you choose otherwise. */
+    preferSelfManaged?: boolean;
     targetKind?: "any" | "proxmox" | "gvisor";
   } = {},
 ): LaunchDestinationState {
@@ -100,15 +104,12 @@ export function useLaunchDestination(
     // null means no selection yet; an invalid handoff is an explicit blocked
     // selection, not permission to auto-pick a different computer.
     targetId: handoff ? handoff.targetId ?? "" : null as string | null,
+    // True once the owner picked a destination or a host themselves.
+    explicit: false,
   };
   const [choice, setChoice] = useState(initialChoice);
   if (choice.handoffKey !== handoffKey) setChoice(initialChoice);
   const currentChoice = choice.handoffKey === handoffKey ? choice : initialChoice;
-  // Derived, not stored: switching to a runtime Hivra Cloud can run restores
-  // the owner's own choice instead of inheriting a forced one.
-  const mode: LaunchDestinationMode = !selfManagedAvailable && !selfHosted
-    ? "hivra-managed"
-    : managedAvailable ? currentChoice.mode : "self-managed";
   const [refreshToken, setRefreshToken] = useState(0);
   const scope = useMemo(
     () => ({ catalogRuntimeId, handoffKey, refreshToken, targetKind }),
@@ -128,6 +129,14 @@ export function useLaunchDestination(
   const launchReadyTargets = !loading && evidence ? evidence.launchReadyTargets : [];
   const incompatibleReadyTargetCount = !loading && evidence ? evidence.incompatibleReadyTargetCount : 0;
   const error = !loading && evidence ? evidence.error : null;
+
+  // Derived, not stored: switching to a runtime Hivra Cloud can run restores
+  // the owner's own choice instead of inheriting a forced one.
+  const autoSelfManaged = preferSelfManaged && !selfHosted && !handoff && selfManagedAvailable
+    && managedAvailable && !currentChoice.explicit && targets.length > 0;
+  const mode: LaunchDestinationMode = !selfManagedAvailable && !selfHosted
+    ? "hivra-managed"
+    : managedAvailable ? (autoSelfManaged ? "self-managed" : currentChoice.mode) : "self-managed";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -161,12 +170,13 @@ export function useLaunchDestination(
     return () => controller.abort();
   }, [catalogRuntimeId, handoffKey, scope, targetKind]);
 
-  const selectedTarget = targets.find((target) => target.id === currentChoice.targetId) ?? null;
+  const selectedTarget = targets.find((target) => target.id === currentChoice.targetId)
+    ?? (autoSelfManaged && currentChoice.targetId === null ? targets[0] ?? null : null);
 
   const setMode = useCallback((nextMode: LaunchDestinationMode) => {
     if (selfHosted && nextMode === "hivra-managed") return;
     if (nextMode === "self-managed" && (targets.length === 0 || !selfManagedAvailable)) return;
-    setChoice(current => ({ ...current, mode: nextMode }));
+    setChoice(current => ({ ...current, mode: nextMode, explicit: true }));
   }, [selfHosted, selfManagedAvailable, targets.length]);
 
   const deployment = useMemo<AgentDeploymentDestination | null>(
@@ -195,7 +205,7 @@ export function useLaunchDestination(
     // Selecting or restoring a target is itself an explicit self-managed
     // choice. Preserve even a disappeared ID so a refresh blocks instead of
     // silently falling back to managed capacity.
-    setSelectedTargetId: targetId => setChoice(current => ({ ...current, mode: "self-managed", targetId })),
+    setSelectedTargetId: targetId => setChoice(current => ({ ...current, mode: "self-managed", targetId, explicit: true })),
     deployment,
     loading,
     error,
@@ -324,7 +334,7 @@ export function DeploymentDestinationControl({
           <span>
             <strong>{selfHosted ? "Connected host" : "My infrastructure"}</strong>
             <small>{!ownServerSupported
-              ? <>Not available for {runtimeName} yet. It runs on Hivra Cloud.</>
+              ? <>Not available for {runtimeName}. It runs on Hivra Cloud only.</>
               : selfHosted
                 ? "A compatible computer prepared by this installation. Uses its measured capacity."
                 : "A compatible host you connected. Uses its measured capacity, not Hivra plan compute."}</small>

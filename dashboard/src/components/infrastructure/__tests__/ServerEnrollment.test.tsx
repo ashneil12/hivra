@@ -435,4 +435,14 @@ describe("Is this your server?", () => {
       .toBeInTheDocument();
     expect(screen.queryByText(/Rebuild this server/)).not.toBeInTheDocument();
   });
+
+  it("says what a one-command Ubuntu server can run, and points Proxmox owners to SSH details", async () => {
+    const handlers = renderDialog();
+    await screen.findByTestId("server-enrollment-command");
+    expect(screen.getByText(/An Ubuntu server connected this way runs Linux Sandbox\. Claude Code, Codex, OpenClaw, Agent Zero, Aeon and Ubuntu Desktop need a Proxmox VE server connected with SSH details\./)).toBeInTheDocument();
+    expect(screen.getByText(/Running Proxmox\?/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect it with SSH details instead" }));
+    expect(handlers.onUseSshDetails).toHaveBeenCalledTimes(1);
+    expect(cancelServerEnrollment).not.toHaveBeenCalled();
+  });
 });

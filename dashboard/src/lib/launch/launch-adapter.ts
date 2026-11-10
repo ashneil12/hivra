@@ -358,7 +358,7 @@ async function submitHermes(draft: LaunchDraft, options: LaunchSubmitOptions): P
   if (payload?.reason === "plan_required" || payload?.failureType === HOSTED_COMPUTE_REQUIRES_PLAN_CODE) {
     // A Hivra-run computer needs a plan. There is no card check to offer.
     throw new LaunchCorrectableError(
-      getApiErrorMessage(payload, "A Hivra-hosted computer needs a paid plan."),
+      "Hermes runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.",
       response.status,
       HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
       { kind: "open", label: "Choose a plan", href: "/dashboard/billing?tab=plans" },
@@ -378,6 +378,12 @@ async function submitHermes(draft: LaunchDraft, options: LaunchSubmitOptions): P
   // or a step after creation) still leaves the agent booting.
   const found = await findObservedHermes(draft).catch(() => null);
   if (found) return found;
+  // A gateway timeout (the platform cutting off this long request) or a page
+  // that is not JSON says nothing about whether the agent was created. Keep the
+  // draft in the "check again" flow so a retry cannot start a second Hermes.
+  if (payload === null || response.status === 502 || response.status === 503 || response.status === 504) {
+    throw new HivraLaunchInProgressError(draft.launchRequestId, "Hivra didn't get a clear answer in time. Your agent may still be starting.");
+  }
   throw new HivraLaunchRejectedError(message, response.status, typeof payload?.failureType === "string" ? payload.failureType : null);
 }
 

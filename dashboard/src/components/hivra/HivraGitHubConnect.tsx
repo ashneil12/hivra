@@ -67,6 +67,7 @@ export function HivraGitHubConnect({
   token,
   boxId,
   defaultManagedCredits = false,
+  reconnect = false,
 }: {
   boxUrl: string;
   onDone: () => void;
@@ -83,6 +84,12 @@ export function HivraGitHubConnect({
   /** Seeds the managed-credits toggle from the launch-time deploy-card choice.
    *  OFF unless the user opted in at deploy (hivra_agents.managed_venice). */
   defaultManagedCredits?: boolean;
+  /**
+   * Changing the token from Manage while GitHub still looks connected (the old
+   * token expired or was revoked). It keeps the billing choice made earlier
+   * and doesn't offer a second key.
+   */
+  reconnect?: boolean;
 }) {
   const product = productName || "Aeon";
   const who = (displayName || "").trim() || product;
@@ -90,7 +97,7 @@ export function HivraGitHubConnect({
   const [pat, setPat] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [useManagedCredits, setUseManagedCredits] = useState(defaultManagedCredits);
+  const [useManagedCredits, setUseManagedCredits] = useState(reconnect ? false : defaultManagedCredits);
   const patRef = useRef<HTMLInputElement>(null);
 
   // Focus the token field for keyboard users only: on touch the raised
@@ -171,11 +178,13 @@ export function HivraGitHubConnect({
         {emoji ? <span aria-hidden>{emoji}</span> : <span className="serif" style={{ color: "var(--gold-leaf)", fontSize: 22 }}>{who.charAt(0).toUpperCase()}</span>}
       </div>
       <h2 className="serif" style={{ fontSize: "clamp(1.7rem, 5vw, 2.3rem)", fontWeight: 400, color: "var(--ink-black)", margin: "0 0 10px", lineHeight: 1.12 }}>
-        Connect {who} to GitHub.
+        {reconnect ? `Change ${who}'s GitHub token.` : `Connect ${who} to GitHub.`}
       </h2>
       <p style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.65, margin: "0 0 26px", maxWidth: 470 }}>
         {product} runs on <strong style={{ color: "var(--ink-black)" }}>your own GitHub</strong> — its tasks execute on your Actions and its state lives in your repo.
-        Paste a personal access token once; the box uses it to sign in and start the dashboard. Hivra never stores it.
+        {reconnect
+          ? "Use this if your old token expired, was deleted, or stopped working. Paste a new one and the computer signs in with it. Your skills and workflows stay in your fork. Hivra never stores the token."
+          : "Paste a personal access token once; the box uses it to sign in and start the dashboard. Hivra never stores it."}
       </p>
 
       {error ? (
@@ -190,7 +199,7 @@ export function HivraGitHubConnect({
         <Step n={3}>{who} signs in, boots its dashboard, and is ready to configure.</Step>
       </div>
 
-      <label
+      {reconnect ? null : <label
         style={{
           display: "flex",
           gap: 10,
@@ -216,7 +225,7 @@ export function HivraGitHubConnect({
           Hivra sets a billing key on your fork so {product} runs without you supplying an AI
           provider key — usage is billed from your Hivra credit wallet at provider rates.
         </span>
-      </label>
+      </label>}
 
       <div style={{ display: "flex", gap: 8 }}>
         <input

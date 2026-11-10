@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome } from "../AgentSoftwarePanel";
+import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome, type SoftwareRecovery } from "../AgentSoftwarePanel";
 import { AgentSoftwareChip } from "../AgentSoftwareChip";
 import { nextAgentSoftwarePoll, resetAgentSoftwareForTests } from "../useAgentSoftware";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
@@ -30,9 +30,9 @@ function stateOf(view: AgentSoftwareView, extra: Partial<Extract<AgentSoftwareSt
 }
 const ok: AgentSoftwareUpdateOutcome = { ok: true, report: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } };
 
-function renderPanel(options: { agent?: HivraAgent; onUpdate?: () => Promise<AgentSoftwareUpdateOutcome>; busy?: boolean; name?: string } = {}) {
+function renderPanel(options: { agent?: HivraAgent; onUpdate?: () => Promise<AgentSoftwareUpdateOutcome>; busy?: boolean; name?: string; recovery?: SoftwareRecovery | null } = {}) {
   const onUpdate = options.onUpdate ?? jest.fn(async () => ok);
-  const view = render(<AgentSoftwarePanel agent={options.agent ?? agentOf()} name={options.name ?? "Codex"} busy={options.busy ?? false} updating={false} onUpdate={onUpdate} />);
+  const view = render(<AgentSoftwarePanel agent={options.agent ?? agentOf()} name={options.name ?? "Codex"} busy={options.busy ?? false} updating={false} onUpdate={onUpdate} recovery={options.recovery} />);
   return { onUpdate, ...view };
 }
 const stateText = async () => (await screen.findByTestId("agent-software-state")).textContent;
@@ -40,6 +40,51 @@ const stateText = async () => (await screen.findByTestId("agent-software-state")
 beforeEach(() => {
   jest.clearAllMocks();
   resetAgentSoftwareForTests();
+});
+
+describe("AgentSoftwarePanel after an update that failed and could not be undone", () => {
+  const broken: AgentSoftwareView = { kind: "update_failed", reason: "install_failed", target: TESTED, installed: null };
+
+  it("points to Recovery with a button that opens it, keeping support as the last resort", async () => {
+    mockGet.mockResolvedValue(stateOf(broken));
+    const open = jest.fn();
+    renderPanel({ recovery: { kind: "restore", open } });
+    expect(await stateText()).toMatch(/restore this agent from a restore point made before the update.*Contact support only if that doesn't help either\./);
+    fireEvent.click(screen.getByRole("button", { name: "Open Recovery" }));
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("points to Force restart in Advanced when there are no restore points", async () => {
+    mockGet.mockResolvedValue(stateOf(broken));
+    const open = jest.fn();
+    renderPanel({ recovery: { kind: "force-restart", open } });
+    expect(await stateText()).toMatch(/use Force restart in Advanced/);
+    fireEvent.click(screen.getByRole("button", { name: "Open Advanced" }));
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the old wording and no extra button where Manage has no recovery", async () => {
+    mockGet.mockResolvedValue(stateOf(broken));
+    renderPanel();
+    expect(await stateText()).toMatch(/Try again, or contact support\.$/);
+    expect(screen.queryByTestId("agent-software-recovery")).not.toBeInTheDocument();
+  });
+
+  it("does the same for a hosted app", async () => {
+    const zero = AGENT_APP_VERSIONS["agent-zero"].version;
+    mockGet.mockResolvedValue({ ...stateOf({ kind: "update_failed", reason: "install_failed", target: zero, installed: null }), cli: null, app: "agent-zero", tested: zero, autoUpdate: null });
+    renderPanel({ agent: agentOf({ type: "agent-zero" }), name: "Agent Zero", recovery: { kind: "restore", open: jest.fn() } });
+    expect(await stateText()).toMatch(/restore this agent from a restore point/);
+    expect(screen.getByRole("button", { name: "Open Recovery" })).toBeInTheDocument();
+  });
+
+  it("offers no recovery button when the download failed", async () => {
+    mockGet.mockResolvedValue(stateOf({ kind: "update_failed", reason: "download_failed", target: TESTED, installed: "0.140.0" }));
+    renderPanel({ recovery: { kind: "restore", open: jest.fn() } });
+    await stateText();
+    expect(screen.queryByTestId("agent-software-recovery")).not.toBeInTheDocument();
+  });
 });
 
 describe("AgentSoftwarePanel", () => {

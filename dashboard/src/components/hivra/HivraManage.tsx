@@ -28,7 +28,9 @@ import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
-import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome } from "./AgentSoftwarePanel";
+import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome, type SoftwareRecovery } from "./AgentSoftwarePanel";
+import { HivraLogin } from "./HivraLogin";
+import { HivraGitHubConnect } from "./HivraGitHubConnect";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
@@ -465,6 +467,9 @@ function HivraManageContent({
   const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
   const [snapshotMaximum, setSnapshotMaximum] = useState(manage?.restorePoints?.maximum ?? 5);
   const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null);
+  // Sign in again / Change GitHub token, shown in place in Overview.
+  const [signInOpen, setSignInOpen] = useState(false);
+  const [signInDone, setSignInDone] = useState(false);
   // Stop/Restart/Resize/Restore on a chat computer: which action is asking the
   // computer about replies in progress, and the confirmation when some are.
   const [repliesCheck, setRepliesCheck] = useState<RunEndingAction | null>(null);
@@ -893,6 +898,19 @@ function HivraManageContent({
         offered: forceStopCap.state !== "unavailable",
       }
     : null;
+  // Sign in again (Claude Code, Codex) or Change GitHub token (Aeon): for when a
+  // login ran out but the computer still reports it is signed in.
+  const signInKind: "claude" | "codex" | "github" | null = isComputerOnly || agent.status !== "running" || !agent.chat_url
+    ? null
+    : def?.cliKind === "claude" || def?.cliKind === "codex" ? def.cliKind
+    : def?.id === "aeon" && def?.connect === "github" ? "github" : null;
+  // After a failed update that couldn't be undone: restore points if this
+  // computer keeps them, otherwise Force restart under Advanced.
+  const softwareRecovery: SoftwareRecovery | null = sections.includes("recovery") && restorePointsListed
+    ? { kind: "restore", open: () => openAndFocus("recovery") }
+    : sections.includes("advanced") && forcePower?.offered
+      ? { kind: "force-restart", open: () => openAndFocus("advanced") }
+      : null;
   const signInLine = !isComputerOnly && isChatCli && chatReadiness ? CHAT_READINESS_LINE[chatReadiness] : null;
   const disclaimer = computerTemplate
     ? computerHostingDisclaimer(computerTemplate)
@@ -954,6 +972,48 @@ function HivraManageContent({
               {signInLine ? <Row icon={<LogIn size={14} />} k="Sign-in"><span style={valStyle}>{signInLine}</span></Row> : null}
             </div>
           </div>
+
+          {signInKind ? (
+            <div style={{ display: "grid", gap: 10 }} data-testid="manage-sign-in-again">
+              <div className="mono" style={label}>{signInKind === "github" ? "GitHub token" : "Sign-in"}</div>
+              <div style={card}>
+                {signInOpen ? (
+                  <>
+                    {signInKind === "github" ? (
+                      <HivraGitHubConnect
+                        reconnect boxUrl={agent.chat_url as string} boxId={agent.id} token={agent.api_token}
+                        productName={def?.name} displayName={agent.name} emoji={agent.emoji}
+                        onDone={() => { setSignInOpen(false); setSignInDone(true); onChanged(); }}
+                      />
+                    ) : (
+                      <HivraLogin
+                        reauth boxUrl={agent.chat_url as string} token={agent.api_token} agentKind={signInKind}
+                        productName={def?.name} displayName={agent.name} emoji={agent.emoji}
+                        onDone={() => { setSignInOpen(false); setSignInDone(true); onChanged(); }}
+                      />
+                    )}
+                    <div>
+                      <button type="button" onClick={() => setSignInOpen(false)} style={btnGhost}>Cancel</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>
+                      {signInKind === "github"
+                        ? "If your GitHub token expired or was deleted and Aeon can no longer save changes to your fork, paste a new one here."
+                        : `If ${def?.name ?? "this agent"} says you need to sign in, or stops answering because your sign-in ran out, sign in again here. Your files and chats stay as they are.`}
+                    </div>
+                    {signInDone ? <div role="status" style={{ ...manageMuted, color: "var(--ink-black)" }}>{signInKind === "github" ? "Your new GitHub token is saved." : "Signed in again."}</div> : null}
+                    <div>
+                      <button type="button" onClick={() => { setSignInDone(false); setSignInOpen(true); }} style={btnGhost}>
+                        <LogIn size={14} /> {signInKind === "github" ? "Change GitHub token" : "Sign in again"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <ManageUsageCard agentId={agent.id} cap={manage?.usage} recordedStatus={agent.status} />
 
@@ -1575,6 +1635,7 @@ function HivraManageContent({
                 busy={busy}
                 updating={acting === "cli-update"}
                 onUpdate={updateAgentSoftware}
+                recovery={softwareRecovery}
               />
             </div>
             {connectionUpdate ? (

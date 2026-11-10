@@ -453,7 +453,9 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   tar -C "$PROV_DIR" -cf - . | "${GSSH[@]}" "ubuntu@${IP}" \
     'sudo -n /bin/sh -c '\''set -eu; umask 077; /bin/tar --no-same-owner --no-same-permissions -xf - -C /opt/hivra/provider-bundle'\'''
 else
-  "${GSCP[@]}" -r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}" >/dev/null
+  timeout --kill-after=15s 600s "${GSCP[@]}" -o ServerAliveInterval=15 -o ServerAliveCountMax=8 \
+    -r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}" >/dev/null \
+    || fail "copying the provisioner into the guest failed or timed out"
 fi
 # Model and tunnel credentials travel only through stdin. The shared guest
 # entrypoint owns runtime selection, strict decoding and named-tunnel setup;
@@ -526,8 +528,14 @@ except Exception:
     sys.exit(1)
 '
 }
-guest_launch_document | "${GSSH[@]}" "ubuntu@${IP}" \
-  "sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py" >&2
+# The install runs for minutes (packages, CLIs, images). Keepalives detect a
+# dead host-to-guest path, and the outer bound stops a half-open session from
+# holding the launch in "provisioning" forever; either way the EXIT trap
+# reports ready:false and cleans up instead.
+guest_launch_document | timeout --kill-after=30s 2700s "${GSSH[@]}" \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "ubuntu@${IP}" \
+  "sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py" >&2 \
+  || fail "guest runtime installation failed, lost its connection, or ran past 45 minutes"
 
 TUNNEL=""
 # The shared guest entrypoint has configured the reboot-safe named tunnel.

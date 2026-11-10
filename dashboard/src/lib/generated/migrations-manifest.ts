@@ -398,4 +398,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261028200000", name: "remove_token_base_tier" },
   { version: "20261103010000", name: "prepared_omarchy_refresh" },
   { version: "20261103120000", name: "provider_release_admission_2026_11_03_1" },
+  { version: "20261110120000", name: "provider_release_admission_2026_11_10_1" },
 ];
