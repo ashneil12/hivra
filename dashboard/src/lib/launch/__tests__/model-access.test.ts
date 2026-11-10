@@ -151,7 +151,7 @@ describe("the Private badge", () => {
     expect(parseVenicePrivacy(undefined, "e2ee-glm-5-1")).toBe("e2ee_private");
     expect(isPrivateVeniceModel("kimi-k2-6")).toBe(true);
     expect(isPrivateVeniceModel("claude-sonnet-4-6")).toBe(false);
-    expect(isPrivateVeniceModel("deepseek-v4-pro")).toBe(false);
+    expect(isPrivateVeniceModel("deepseek-v4-pro")).toBe(true); // Venice lists it as private (catalog refresh 2026-11-10)
     expect(isPrivateVeniceModel("not-a-model")).toBe(false);
   });
 
