@@ -115,6 +115,23 @@ async function main() {
     assert.equal((await reserve(6, "computer", "linux-desktop")).status, "reserved");
     assert.equal(await bind(6, codex), null, "a computer launch never binds an agent row");
 
+    // The canonical surfaces function gives a computer without a desktop files and
+    // terminal only. Desktop profiles, no profile and gvisor are unchanged.
+    const surfaces = async (status, extra) => (await one(
+      "select public.hivra_canonical_surfaces('hivra', $1::jsonb, true, false) as s",
+      [JSON.stringify({ status, type: "linux-desktop", ...extra })])).s;
+    assert.deepEqual(await surfaces("running", { computerProfile: "ubuntu-server" }), ["files", "terminal"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: " Ubuntu-Server " }), ["files", "terminal"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: "ubuntu-mini" }), ["files", "terminal"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: "ubuntu-desktop" }), ["files", "terminal", "desktop"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: "omarchy" }), ["files", "terminal", "desktop"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: "windows" }), ["files", "terminal", "desktop"]);
+    assert.deepEqual(await surfaces("running", {}), ["files", "terminal", "desktop"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: null }), ["files", "terminal", "desktop"]);
+    assert.deepEqual(await surfaces("running", { computerProfile: "linux-terminal", computerSubstrate: "gvisor" }), ["terminal"]);
+    assert.deepEqual(await surfaces("stopped", { computerProfile: "ubuntu-server" }), []);
+    const surfacesBefore = (await one("select pg_get_functiondef('public.hivra_canonical_surfaces(text,jsonb,boolean,boolean)'::regprocedure) as d")).d;
+
     // The patch is idempotent, and it refuses a missing or duplicated anchor.
     const before = (await one("select pg_get_functiondef('public.bind_hivra_launch_operation_agent(text,uuid,uuid,text,text,uuid)'::regprocedure) as d")).d;
     await db.exec(migration(TARGET));
@@ -122,6 +139,7 @@ async function main() {
     assert.equal(after, before, "a re-run leaves the function as it is");
     assert.equal(after.split("'ubuntu-server'").length - 1, 1);
     assert.ok(!after.includes("is distinct from 'ubuntu-desktop'"));
+    assert.equal((await one("select pg_get_functiondef('public.hivra_canonical_surfaces(text,jsonb,boolean,boolean)'::regprocedure) as d")).d, surfacesBefore, "a re-run leaves the surfaces function as it is");
 
     const restore = before.replace("coalesce(a.computer_profile, '') not in ('ubuntu-desktop', 'ubuntu-server')", "a.computer_profile is distinct from 'ubuntu-desktop'");
     await db.exec(restore);
@@ -133,6 +151,18 @@ async function main() {
     await rejects(db, migration(TARGET), /anchor mismatch/, "a duplicated anchor");
     await db.exec(restore.replace("a.computer_profile is distinct from 'ubuntu-desktop'", "a.computer_profile is distinct from 'omarchy'"));
     await rejects(db, migration(TARGET), /anchor mismatch/, "a missing anchor");
+
+    await db.exec(before);
+    const surfaceFn = "public.hivra_canonical_surfaces(text,jsonb,boolean,boolean)";
+    const surfaceAnchor = "when p_is_computer then array['files','terminal','desktop']::text[]";
+    const patchedAddition = "when p_is_computer and lower(btrim(coalesce(p_payload->>'computerProfile',''))) not in ('ubuntu-desktop','omarchy','windows','') then array['files','terminal']::text[] ";
+    assert.ok(surfacesBefore.includes(patchedAddition + surfaceAnchor), "the patch is in the surfaces function");
+    const unpatched = surfacesBefore.replace(patchedAddition, "");
+    await db.exec(unpatched);
+    await db.exec(migration(TARGET));
+    assert.equal((await one(`select pg_get_functiondef('${surfaceFn}'::regprocedure) as d`)).d, surfacesBefore);
+    await db.exec(unpatched.replace(surfaceAnchor, "when p_is_computer then array['files']::text[]"));
+    await rejects(db, migration(TARGET), /surfaces anchor mismatch/, "a missing surfaces anchor");
 
     console.log("PASS hivra ubuntu server profile");
   } finally {

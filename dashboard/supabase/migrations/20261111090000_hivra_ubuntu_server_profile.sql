@@ -31,3 +31,29 @@ begin
   execute replace(definition, anchor, addition);
 end;
 $migration$;
+
+-- 3. hivra_canonical_surfaces (20260915170000, the latest definition) gives every
+--    running computer files, terminal and desktop. The parity check compares the
+--    stored surfaces against this function, and the dashboard now projects a
+--    computer without a desktop with files and terminal only. So a computer whose
+--    profile is not one that has a desktop (ubuntu-server, and any profile this
+--    release does not know) gets files and terminal. An absent profile and the
+--    desktop profiles keep files, terminal and desktop. Patched in place on the
+--    one computer branch, with the same guard as above.
+do $migration$
+declare
+  signature constant text := 'public.hivra_canonical_surfaces(text,jsonb,boolean,boolean)';
+  anchor constant text := 'when p_is_computer then array[''files'',''terminal'',''desktop'']::text[]';
+  addition constant text :=
+    'when p_is_computer and lower(btrim(coalesce(p_payload->>''computerProfile'',''''))) not in (''ubuntu-desktop'',''omarchy'',''windows'','''') then array[''files'',''terminal'']::text[] '
+    || anchor;
+  definition text;
+begin
+  definition := pg_get_functiondef(signature::regprocedure);
+  if position('not in (''ubuntu-desktop'',''omarchy'',''windows'','''')' in definition) > 0 then return; end if;
+  if (length(definition) - length(replace(definition, anchor, ''))) / length(anchor) <> 1 then
+    raise exception 'Ubuntu server surfaces anchor mismatch: %', signature;
+  end if;
+  execute replace(definition, anchor, addition);
+end;
+$migration$;
