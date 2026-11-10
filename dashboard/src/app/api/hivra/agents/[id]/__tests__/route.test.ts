@@ -68,6 +68,11 @@ jest.mock("@/lib/hivra/provider-agent-readiness", () => ({
 jest.mock("@/lib/hivra/provider-native-readiness", () => ({
   advanceProviderNativeReadiness: (...args: unknown[]) => mockProviderNativeReadiness(...args),
 }));
+const mockSsrfFetch = jest.fn();
+jest.mock("@/lib/ssrf-safe-fetch", () => ({
+  ...jest.requireActual("@/lib/ssrf-safe-fetch"),
+  ssrfSafeFetch: (...args: unknown[]) => mockSsrfFetch(...args),
+}));
 jest.mock("@/lib/hivra/provider-desktop-readiness", () => ({
   advanceProviderDesktopReadiness: (...args: unknown[]) => mockProviderDesktopReadiness(...args),
 }));
@@ -1195,6 +1200,141 @@ describe("GET /api/hivra/agents/[id]", () => {
     );
     expect(mockCaptureHivraAgentComputerReady).not.toHaveBeenCalled();
     expect(mockSeedAgentBox).not.toHaveBeenCalled();
+  });
+
+  describe("Linux computer without a desktop (ubuntu-server)", () => {
+    const computerId = "00000000-0000-4000-8000-000000001041";
+    const operationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const ownership = `HIVRA_PROVIDER_OWNERSHIP ${operationId}`;
+    const metaOf = (agentKind: string) => ({
+      agentKind, resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", surfaceAuth: "post-cookie-v1",
+    });
+    const answer = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    const row = (profile: string | null, extra: Record<string, unknown> = {}) => {
+      mockAgentRow = {
+        ...mockAgentRow, id: computerId, type: "linux-desktop", computer_profile: profile,
+        allocation_operation_id: operationId, infrastructure_binding_token_enforced: true, ...extra,
+      };
+    };
+    const provisionResult = (kind: string) => ({
+      ok: true,
+      stdout: `{"vmid":1090,"ready":true,"agent_kind":"${kind}","chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}\n${ownership}\n`,
+      stderr: "",
+    });
+    const lifecycleResult = {
+      ok: true,
+      stdout: `{"vmid":1090,"ready":true,"chat_url":"https://box.example.com","ip":"10.253.0.90","api_token":"${"b".repeat(64)}"}\nHIVRA_OPERATION_RECEIPT ${operationId}\n`,
+      stderr: "",
+    };
+    const poll = () => GET(makeGetRequest() as never, { params: Promise.resolve({ id: computerId }) });
+    const released = () => mockSupabaseRpc.mock.calls.filter(([name]) => name === "release_hivra_agent_operation");
+    const completed = () => mockSupabaseRpc.mock.calls.some(([name]) => name === "complete_hivra_agent_running");
+    beforeEach(() => mockSsrfFetch.mockReset());
+
+    it("reaches running on provision with no desktop receipt, after its gateway answers as a linux-server", async () => {
+      row("ubuntu-server", { provisioned_at: null });
+      mockRunProxmoxHostScript.mockResolvedValueOnce(provisionResult("linux-server"));
+      mockSsrfFetch.mockResolvedValue(answer(metaOf("linux-server")));
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      // One host call only: no remote-desktop capability inspection is run.
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(1);
+      expect(mockSsrfFetch).toHaveBeenCalledWith("https://box.example.com/api/meta", expect.objectContaining({ method: "GET", credentials: "omit" }));
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("complete_hivra_agent_running", expect.objectContaining({ p_agent_id: computerId }));
+      expect(released()).toHaveLength(0);
+      expect(mockCaptureHivraAgentComputerReady).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: computerId, agentType: "linux-desktop", evidence: "host_ready_result",
+      }));
+    });
+
+    it.each(["start", "restart"])("returns to running on %s with no desktop receipt", async (kind) => {
+      row("ubuntu-server", { operation_kind: kind, operation_payload: null });
+      mockRunProxmoxHostScript.mockResolvedValueOnce(lifecycleResult);
+      mockSsrfFetch.mockResolvedValue(answer(metaOf("linux-server")));
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(1);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("complete_hivra_agent_running", expect.objectContaining({ p_agent_id: computerId, p_operation_id: operationId }));
+      expect(released()).toHaveLength(0);
+    });
+
+    it("rejects a host that provisioned the desktop kind for it", async () => {
+      row("ubuntu-server", { provisioned_at: null });
+      mockRunProxmoxHostScript.mockResolvedValueOnce(provisionResult("linux-desktop"));
+      mockSsrfFetch.mockResolvedValue(answer(metaOf("linux-server")));
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(completed()).toBe(false);
+      expect(mockSsrfFetch).not.toHaveBeenCalled();
+      expect(released()).toHaveLength(1);
+      expect(released()[0][1]).toMatchObject({ p_agent_id: computerId, p_mark_error: true });
+      expect(mockCaptureHivraAgentComputerReady).not.toHaveBeenCalled();
+    });
+
+    it.each(["start", "restart", "provision"])("rejects a guest that answers as linux-desktop on %s", async (kind) => {
+      row("ubuntu-server", { operation_kind: kind, ...(kind === "provision" ? { provisioned_at: null } : { operation_payload: null }) });
+      mockRunProxmoxHostScript.mockResolvedValueOnce(kind === "provision" ? provisionResult("linux-server") : lifecycleResult);
+      mockSsrfFetch.mockResolvedValue(answer(metaOf("linux-desktop")));
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(completed()).toBe(false);
+      expect(released()).toHaveLength(1);
+      expect(released()[0][1]).toMatchObject({ p_agent_id: computerId, p_mark_error: true, p_error: expect.stringMatching(/wrong kind of computer/) });
+      expect(mockCaptureHivraAgentComputerReady).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a gateway that cannot be reached", () => mockSsrfFetch.mockRejectedValue(new Error("connect ETIMEDOUT"))],
+      ["a gateway answering 502", () => mockSsrfFetch.mockResolvedValue(answer({ error: "bad gateway" }, 502))],
+      ["an answer that is not JSON", () => mockSsrfFetch.mockResolvedValue(new Response("<html>", { status: 200 }))],
+      ["an answer that names no kind", () => mockSsrfFetch.mockResolvedValue(answer({ ok: true }))],
+    ])("does not mark it ready, or fail it, while it has %s", async (_label, arrange) => {
+      row("ubuntu-server", { provisioned_at: null });
+      mockRunProxmoxHostScript.mockResolvedValueOnce(provisionResult("linux-server"));
+      arrange();
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(completed()).toBe(false);
+      expect(released()).toHaveLength(0);
+      expect(mockCaptureHivraAgentComputerReady).not.toHaveBeenCalled();
+    });
+
+    it.each(["ubuntu-desktop", null, "not-a-known-profile"])("still requires the desktop receipt for a %s linux-desktop row", async (profile) => {
+      row(profile, { provisioned_at: null });
+      mockRunProxmoxHostScript
+        .mockResolvedValueOnce(provisionResult("linux-desktop"))
+        .mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" });
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(2);
+      expect(mockSsrfFetch).not.toHaveBeenCalled();
+      expect(completed()).toBe(false);
+      expect(released()[0][1]).toMatchObject({ p_mark_error: true, p_error: DESKTOP_PROVISION_UNVERIFIED_MESSAGE });
+    });
+
+    it("does not accept a linux-server provision result for a desktop row", async () => {
+      row("ubuntu-desktop", { provisioned_at: null });
+      mockRunProxmoxHostScript.mockResolvedValueOnce(provisionResult("linux-server"));
+
+      const response = await poll();
+
+      expect(response.status).toBe(200);
+      expect(completed()).toBe(false);
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(1);
+      expect(released()[0][1]).toMatchObject({ p_mark_error: true });
+    });
   });
 
   it("reads the current managed bundle's one-shot bearer before completing ready JSON without api_token", async () => {

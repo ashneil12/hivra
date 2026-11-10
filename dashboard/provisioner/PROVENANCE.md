@@ -544,6 +544,23 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.10.4` builds on `2026.11.10.3` and adds the `linux-server` kind:
+the Ubuntu computer without a desktop (Files and the two terminals only). It reuses
+the whole `linux-desktop` guest base and skips only the desktop capability install
+and the Claude app helper. `hivra-provision-on-host.sh`, `hivra-install-agent.py`,
+`hivra-runtime-receipt.py`, `hivra-agent-shell`, `hivra-chat/server.js`,
+`hivra-guest-runtime-update.sh` and `provision-claude-code-box.sh` accept the new
+kind; the strict launch-document parser takes a version 3 document for it (computer
+id, control origin and named tunnel, exactly as `linux-desktop`) on Proxmox only and
+still refuses every document it refused before. The kind reports `linux-server` from
+`/api/meta`, so a control plane that expects it can tell it from a desktop. Every
+`linux-desktop` line is unchanged. `hivra-provider-worker.py` only advances its
+native and desktop release labels. Not touched: `hivra-start-on-host.sh` (no kind
+logic), `prepare-proxmox-host.sh` and the remote-desktop assets, so the
+remote-desktop bundle revision and every session revision are preserved. An older
+host that has not synced this release rejects the kind and stays out of placement.
+This source release does not deploy, install, or update any existing computer.
+
 Release `2026.11.10.3` builds on `2026.11.10.2` and ships the Codex sign-in
 freshness fix. `hivra-chat/server.js` reports a repeat Codex sign-in as fresh only
 when the credential actually changed, and says why a repeat sign-in is not finished

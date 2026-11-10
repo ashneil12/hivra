@@ -577,6 +577,24 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByText(/Permanently deletes this computer and everything on it/)).toBeInTheDocument();
     expect(screen.queryByText(/Permanently deletes the agent and everything on it/)).not.toBeInTheDocument();
   });
+  it("lets a Linux computer shrink to its light floor and never mentions a desktop", () => {
+    const server = { ...agent, type: "linux-desktop", computer_profile: "ubuntu-server", computer_substrate: "proxmox-kvm", cpu: 1, ram: 2 } as HivraAgent;
+    const { unmount } = render(<HivraManage agent={server} def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    openSection("Resources");
+    // 0.5 CPU / 1 GB is the floor, so it is offered.
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toBeEnabled();
+    expect(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "1 GB" })).toBeEnabled();
+    openSection("Updates");
+    const updates = screen.getByText(/without restarting the computer/);
+    expect(updates).toHaveTextContent("files and local logins stay as they are");
+    expect(updates).not.toHaveTextContent(/desktop/i);
+    expect(screen.queryByRole("link", { name: "Open Desktop" })).not.toBeInTheDocument();
+    unmount();
+    // A desktop is still held to 2 CPU / 4 GB, so 0.5 CPU is not selectable.
+    render(<HivraManage agent={{ ...server, computer_profile: "ubuntu-desktop", cpu: 2, ram: 4 } as HivraAgent} def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    openSection("Resources");
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toBeDisabled();
+  });
   it.each([
     { profile: "windows" as const, name: "Windows" },
     { profile: "omarchy" as const, name: "Omarchy" },

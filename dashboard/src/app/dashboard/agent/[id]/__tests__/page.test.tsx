@@ -694,6 +694,48 @@ describe("AgentPage", () => {
     expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
   });
 
+  describe("a Linux computer (ubuntu-server) has no desktop", () => {
+    const LINUX_COMPUTER = { ...CONNECTED_UBUNTU, computer_profile: "ubuntu-server", name: "LINUX_COMPUTER" };
+
+    it("lands on its files and never mounts or lists a desktop", async () => {
+      mockGetAgent.mockResolvedValue(LINUX_COMPUTER);
+      render(<AgentPage />);
+      expect(await screen.findByText("Files panel")).toBeInTheDocument();
+      await screen.findByRole("navigation", { name: "Resource surfaces" });
+      expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("windows-desktop")).not.toBeInTheDocument();
+    });
+
+    it("does not open a desktop for a stale ?tab=desktop link", async () => {
+      mockGetAgent.mockResolvedValue(LINUX_COMPUTER);
+      mockSearchGet.mockImplementation((key: string) => key === "tab" ? "desktop" : null);
+      render(<AgentPage />);
+      expect(await screen.findByText("Files panel")).toBeInTheDocument();
+      expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+    });
+
+    it("never reads a desktop capability for it, and still does for Ubuntu Desktop", async () => {
+      const fetchMock = global.fetch as unknown as jest.Mock;
+      fetchMock.mockImplementation((input: unknown) => String(input) === "/api/hivra/agents/agent_123/remote-desktop"
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: { prepared: true } }) })
+        : Promise.resolve({ ok: true, json: async () => ({ success: true, agentKind: "claude", surfaceAuth: "post-cookie-v1" }) }));
+      const proofRequests = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/hivra/agents/agent_123/remote-desktop");
+
+      mockGetAgent.mockResolvedValue(LINUX_COMPUTER);
+      const first = render(<AgentPage />);
+      await screen.findByText("Files panel");
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+      expect(proofRequests()).toHaveLength(0);
+      first.unmount();
+
+      mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
+      render(<AgentPage />);
+      await screen.findByTestId("remote-desktop");
+      await waitFor(() => expect(proofRequests()).toHaveLength(1));
+    });
+  });
+
   it("keeps Desktop on a computer and retains its session while switching surfaces", async () => {
     mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
     render(<AgentPage />);

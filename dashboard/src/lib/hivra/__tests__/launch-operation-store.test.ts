@@ -193,6 +193,19 @@ describe("generic Hivra launch intent", () => {
     expect(hivraLaunchIntentDigest(OWNER, REQUEST_ID, ubuntu)).toMatch(/^[a-f0-9]{64}$/);
     expect(() => hivraLaunchIntentDigest(OWNER, REQUEST_ID, { ...ubuntu, resourceKind: "agent" })).toThrow();
   });
+
+  it("accepts the Linux computer profile on the same linux-desktop runtime and keeps its digest apart", () => {
+    const ubuntu: HivraLaunchIntent = { ...intent, resourceKind: "computer", runtimeId: "linux-desktop",
+      computerProfile: "ubuntu-desktop", browser: false, desktopControlOrigin: "https://canary.hermesos.cloud" };
+    const server: HivraLaunchIntent = { ...ubuntu, computerProfile: "ubuntu-server" };
+    expect(hivraLaunchIntentDigest(OWNER, REQUEST_ID, server)).toMatch(/^[a-f0-9]{64}$/);
+    expect(hivraLaunchIntentDigest(OWNER, REQUEST_ID, server)).not.toBe(hivraLaunchIntentDigest(OWNER, REQUEST_ID, ubuntu));
+    // It is still a computer: never an agent, never with a browser, and still needs its control origin.
+    expect(() => hivraLaunchIntentDigest(OWNER, REQUEST_ID, { ...server, resourceKind: "agent" })).toThrow();
+    expect(() => hivraLaunchIntentDigest(OWNER, REQUEST_ID, { ...server, browser: true })).toThrow();
+    expect(() => hivraLaunchIntentDigest(OWNER, REQUEST_ID, { ...server, desktopControlOrigin: null })).toThrow();
+    expect(() => hivraLaunchIntentDigest(OWNER, REQUEST_ID, { ...server, computerProfile: "linux-terminal" as never })).toThrow();
+  });
 });
 
 describe("generic Hivra launch admission", () => {
@@ -222,6 +235,30 @@ describe("generic Hivra launch admission", () => {
     expect(replay).toMatchObject({ existing: { state: "accepted", requestId: REQUEST_ID,
       phase: "accepted", responseStatus: 201, agent: { id: AGENT_ID, user_id: OWNER } } });
     expect(f.store.reserve).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["ubuntu-desktop", "ubuntu-server"])("replays an accepted %s computer, and refuses a row of any other profile", async profile => {
+    const f = memoryStore();
+    const submitted = { ...requestIntent, type: "linux-desktop" as const, computerProfile: profile, browser: false, cpu: 1, ram: 2 };
+    const wanted = { ...intent, resourceKind: "computer" as const, runtimeId: "linux-desktop" as const,
+      computerProfile: profile as "ubuntu-desktop" | "ubuntu-server", cpu: 1, ram: 2, browser: false, templateSkills: [],
+      desktopControlOrigin: "https://canary.hermesos.cloud" };
+    const prepared = await f.service.prepare(OWNER, REQUEST_ID, submitted, wanted);
+    await f.service.reserve(prepared.admission!);
+    f.addAgent(managedAgent(prepared.admission!.operationId, { type: "linux-desktop", computer_profile: profile }));
+    await f.service.bindAgent(prepared.admission!, AGENT_ID);
+    await f.service.accept(prepared.admission!, AGENT_ID, 201);
+
+    await expect(f.service.lookup(OWNER, REQUEST_ID, submitted)).resolves.toMatchObject({
+      existing: { state: "accepted", agent: { id: AGENT_ID, computer_profile: profile } },
+    });
+
+    const other = memoryStore();
+    const preparedOther = await other.service.prepare(OWNER, REQUEST_ID, submitted, wanted);
+    await other.service.reserve(preparedOther.admission!);
+    other.addAgent(managedAgent(preparedOther.admission!.operationId, { type: "linux-desktop", computer_profile: "omarchy" }));
+    await other.service.bindAgent(preparedOther.admission!, AGENT_ID);
+    await expect(other.service.accept(preparedOther.admission!, AGENT_ID, 201)).rejects.toThrow();
   });
 
   it("reads the original receipt only through its durable owner and request binding", async () => {

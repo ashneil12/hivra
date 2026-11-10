@@ -103,6 +103,13 @@ const MODEL_OPTS: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
+/** What a Linux computer without a desktop says where the others mention the desktop. */
+const HEADLESS_LIFECYCLE_DETAIL: Record<string, string> = {
+  start: "Hivra is powering it on and waiting for its connection. This normally takes under a minute.",
+  restart: "Its terminal and files will disconnect briefly while Hivra confirms the reboot.",
+  force_restart: "Hivra is switching it off at once, then starting it again. Its terminal and files disconnect until it is back.",
+};
+
 const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; section: ManageSectionId }> = {
   start: {
     title: "Starting the computer…",
@@ -439,7 +446,7 @@ function HivraManageContent({
   }, [refreshMcp]);
 
   // resize — floor depends on whether browser automation is on (+1 CPU / +2 GB)
-  const floor = useMemo(() => resizeFloor(agent.type, bOn), [agent.type, bOn]);
+  const floor = useMemo(() => resizeFloor(agent.type, bOn, agent.computer_profile), [agent.type, agent.computer_profile, bOn]);
   const [rcpu, setRcpu] = useState(Math.max(agent.cpu, floor.cpu));
   const [rram, setRram] = useState(Math.max(agent.ram, floor.ram));
   const [maximumCpu, setMaximumCpu] = useState(Math.max(agent.cpu_max ?? agent.cpu, agent.cpu, floor.cpu));
@@ -701,6 +708,7 @@ function HivraManageContent({
   const computerTemplate = agent.computer_profile && agent.computer_profile !== "linux-terminal" ? getComputerTemplate(agent.computer_profile) : undefined;
   const preparedComputer = computerTemplate?.launchMode === "prepared-canary";
   const isComputerOnly = manage ? manage.kind === "computer" : agent.type === "linux-desktop" || Boolean(agent.computer_profile);
+  const headlessComputer = agent.type === "linux-desktop" && agent.computer_profile === "ubuntu-server";
 
   // What the server says this computer supports. An older server that sends
   // no map gets the controls this page offered before sections existed.
@@ -858,7 +866,7 @@ function HivraManageContent({
       <div>
         <div style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{LIFECYCLE_PROGRESS[acting].title}</div>
         <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          {LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
+          {(headlessComputer ? HEADLESS_LIFECYCLE_DETAIL[acting] : undefined) ?? LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
         </div>
       </div>
     </div>
@@ -1688,6 +1696,8 @@ function HivraManageContent({
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                         {agent.type === "deepseek-harness"
                           ? "Update connection service brings Hivra’s DeepSeek service up to date without restarting the computer. It restarts DeepSeek, which ends a task DeepSeek is working on; your files, chats and model settings stay as they are. If the new version doesn’t start cleanly, the previous one comes back. Terminals open on this page reconnect when it finishes."
+                          : headlessComputer
+                          ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so files and local logins stay as they are. Terminals open on this page reconnect when it finishes."
                           : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}

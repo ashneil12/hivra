@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { submitLaunchDraft } from "../launch-adapter";
+import { launchResultHref, submitLaunchDraft } from "../launch-adapter";
 import { createAgent, findHivraLaunchReceipt } from "@/lib/hivra/agent-api";
 
 jest.mock("@/lib/hivra/agent-api", () => {
@@ -69,5 +69,28 @@ describe("bounded launch receipt reconciliation", () => {
       type: "codex", name: "Codex", ...resources, browser,
       deployment: { mode: "hivra-managed" }, launchRequestId: requestId,
     });
+  });
+
+  it.each([
+    ["ubuntu-desktop", { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 }],
+    ["ubuntu-server", { cpu: 1, ram: 2, maximumCpu: 2, maximumRam: 4 }],
+  ] as const)("posts %s as the linux-desktop type with its own profile and no browser", async (profileId, resources) => {
+    const row = { ...accepted, computer_profile: profileId };
+    jest.mocked(createAgent).mockResolvedValue(row);
+
+    await expect(submitLaunchDraft({
+      resourceKind: "computer", profileId, name: "Computer", launchRequestId: requestId, resources,
+    } as never, { mode: "hivra-managed" })).resolves.toEqual(row);
+
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toEqual({
+      type: "linux-desktop", computerProfile: profileId, name: "Computer", ...resources, browser: false,
+      deployment: { mode: "hivra-managed" }, launchRequestId: requestId,
+    });
+  });
+
+  it("opens a Linux computer on its files and a desktop on its desktop", () => {
+    const base = { launchRequestId: requestId, capacity: { mode: "hivra-managed", targetId: null } };
+    expect(launchResultHref({ ...base, profileId: "ubuntu-server" } as never, accepted.id)).toBe(`/dashboard/agent/${accepted.id}?tab=files`);
+    expect(launchResultHref({ ...base, profileId: "ubuntu-desktop" } as never, accepted.id)).toBe(`/dashboard/agent/${accepted.id}?tab=desktop`);
   });
 });

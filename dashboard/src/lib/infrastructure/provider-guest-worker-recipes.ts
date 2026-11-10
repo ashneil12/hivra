@@ -370,6 +370,11 @@ const recipes = Object.freeze({
     workerSha256: "a8459abda395b12e2113fc7fbb4347a5ef050e8f141a3a8f1910f34ad42690c1",
     workerSize: 45185,
   }),
+  "2026.11.10.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the desktop-free linux-server kind to the guest and host scripts. The worker only advances its release labels.
+    workerSha256: "bf584e9d5eb7eea01ba5542d83722f245d527de4d6a1a21177af4eea33256c69",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

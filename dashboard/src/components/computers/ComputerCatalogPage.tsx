@@ -25,6 +25,7 @@ import {
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 import {
   OMARCHY_TEMPLATE,
   UBUNTU_DESKTOP_TEMPLATE,
@@ -88,7 +89,11 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, atta
   gateReason?: boolean;
 }) {
   const isDesktop = getCatalogAgent(computer.type)?.resourceKind === "computer";
-  const desktopQuery = computer.computer_profile === "windows"
+  // A computer with no desktop opens on its files, not on a desktop it lacks.
+  const hasDesktop = computerHasDesktop(computer.computer_profile);
+  const desktopQuery = !hasDesktop
+    ? "?tab=files"
+    : computer.computer_profile === "windows"
     ? "?tab=desktop&open=fast"
     : "?tab=desktop";
   // Choosing a computer for an agent (Launch's "Put an agent on a computer I
@@ -128,7 +133,7 @@ export function ComputerCatalogPage(
     launchQuery.append("targetId", targetId);
   const launchHref = `/dashboard/launch?${launchQuery.toString()}`;
   const profileLaunchHref = (
-    profile: "ubuntu-desktop" | "linux-terminal" | "omarchy" | "windows",
+    profile: "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "omarchy" | "windows",
   ) => {
     const query = new URLSearchParams(launchQuery);
     query.set("profile", profile);
@@ -319,7 +324,10 @@ export function ComputerCatalogPage(
             <div className={styles.empty}>
               <Monitor size={20} />
               <strong>No computers yet</strong>
-              <span>Choose Launch to launch your first computer.</span>
+              <span>A light Linux computer is one tap away. You can browse other systems below.</span>
+              <Link className={styles.primaryButton} href={profileLaunchHref("ubuntu-server")}>
+                Launch a Linux computer <ArrowRight size={14} />
+              </Link>
             </div>
           ) : null}
           {!loading && total > 0 && visibleComputers.length === 0 ? (

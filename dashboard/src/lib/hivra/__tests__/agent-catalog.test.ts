@@ -167,3 +167,16 @@ describe("Hivra agent catalog", () => {
     expect(resizeFloor("claude-code", false)).toEqual({ cpu: BASE_FLOOR.cpu, ram: BASE_FLOOR.ram });
   });
 });
+
+describe("resize floor by computer profile", () => {
+  it("holds a desktop to 2 CPU / 4 GB and a Linux computer without a desktop to 0.5 CPU / 1 GB", () => {
+    expect(resizeFloor("linux-desktop", false)).toEqual({ cpu: 2, ram: 4 });
+    expect(resizeFloor("linux-desktop", false, "ubuntu-desktop")).toEqual({ cpu: 2, ram: 4 });
+    expect(resizeFloor("linux-desktop", false, null)).toEqual({ cpu: 2, ram: 4 });
+    expect(resizeFloor("linux-desktop", false, "ubuntu-server")).toEqual({ cpu: 0.5, ram: 1 });
+  });
+
+  it("does not let the profile change any other type's floor", () => {
+    expect(resizeFloor("codex", false, "ubuntu-server")).toEqual(resizeFloor("codex", false));
+  });
+});
