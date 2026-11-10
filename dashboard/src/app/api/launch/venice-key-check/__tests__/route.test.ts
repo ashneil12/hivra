@@ -5,7 +5,7 @@ import { POST } from "../route";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
 
-const KEY = "venice-secret-key-1234567890";
+const KEY = "synthetic-venice-key-for-tests";
 
 function post(body: unknown) {
   return POST(new NextRequest("http://localhost/api/launch/venice-key-check", {
