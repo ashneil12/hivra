@@ -61,7 +61,7 @@ function readAgentKind() {
   // Root-owned native/computer services bind this gateway to their profile. A
   // writable HOME selector must not switch their authentication/routes back to
   // an agent runtime with chat or account-login surfaces.
-  if (["deepseek-harness", "linux-desktop"].includes(process.env.HIVRA_AGENT_KIND)) {
+  if (["deepseek-harness", "linux-desktop", "linux-server"].includes(process.env.HIVRA_AGENT_KIND)) {
     return process.env.HIVRA_AGENT_KIND;
   }
   try {
@@ -78,8 +78,9 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
+  : _agentKindRaw === "linux-server" ? "linux-server"
   : "claude";
-const COMPUTER_PROFILE = AGENT_KIND === "linux-desktop";
+const COMPUTER_PROFILE = AGENT_KIND === "linux-desktop" || AGENT_KIND === "linux-server";
 const configuredWorkspace = process.env.HIVRA_WORKSPACE_ROOT
   || (COMPUTER_PROFILE ? path.join(HOME, "Hivra") : HOME);
 const WORKSPACE_ROOT = path.resolve(configuredWorkspace);

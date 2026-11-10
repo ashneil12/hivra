@@ -457,6 +457,10 @@ update them yet.
   `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
   model tier set to the chosen model) with mode 0600; without a key the computer
   keeps native `claude auth login` sign-in.
+- **Linux server computer.** The `linux-server` kind is the Ubuntu computer without a
+  desktop: the same access base, `~/Hivra` workspace, Files and two terminals as Linux
+  Desktop, with no desktop capability and no Claude app helper. It takes the same
+  version 3 launch document on Proxmox and reports `linux-server` from `/api/meta`.
 - **Codex sign-in freshness.** The computer's chat page reports a repeat Codex
   sign-in as fresh only when the credential changed, and says why one is not finished
   yet.
