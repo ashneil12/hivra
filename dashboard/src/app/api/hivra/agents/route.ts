@@ -40,7 +40,7 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
-import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
@@ -1100,6 +1100,12 @@ async function launchAgent(request: NextRequest) {
     const resolvedLlmInput = (llmInput ?? (autoManagedLlmBlock
       ? { provider: "venice", mode: "managed", walletType: "hermesos" }
       : null)) as typeof llmInput;
+    // DeepSeek's own settings refuse a key from a remote browser, so its guest
+    // is only useful with a model written at launch. Refuse before any row or
+    // key exists rather than launch it with empty model settings.
+    if (type === "deepseek-harness" && !resolvedLlmInput) {
+      return apiError(`${def.name} needs a model at launch: use Hivra credits or your own Venice API key.`, 400, undefined, { code: "deepseek_model_required" });
+    }
     // Claude Code on Hivra credits needs a host whose installer writes the CLI's
     // managed-model settings; native sign-in runs on any compatible host.
     const anthropicCredits = def?.llm?.wire === "anthropic" && Boolean(resolvedLlmInput);
@@ -1486,7 +1492,8 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         // the dashboard's translating route instead of the OpenAI proxy.
         const anthropicWire = def.llm?.wire === "anthropic";
         llmBaseUrl = anthropicWire ? getManagedVeniceAnthropicBaseUrl() : getManagedVeniceProxyBaseUrl();
-        llmModel = resolvedLlmInput.model ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : "deepseek-v4-pro");
+        llmModel = resolvedLlmInput.model
+          ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : type === "deepseek-harness" ? DEEPSEEK_HARNESS_DEFAULT_MODEL : "deepseek-v4-pro");
       } else {
         llmConfig = {
           provider: "venice",
@@ -1496,7 +1503,14 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         };
         llmKeyEncrypted = encryptApiKey(resolvedLlmInput.apiKey as string);
         llmPlaintextKey = resolvedLlmInput.apiKey as string;
-        llmModel = resolvedLlmInput.model ?? null;
+        // DeepSeek's guest takes the key, base URL and model together, so it
+        // always gets Venice's public base and a model.
+        if (type === "deepseek-harness") {
+          llmBaseUrl = VENICE_DIRECT_BASE_URL;
+          llmModel = resolvedLlmInput.model ?? DEEPSEEK_HARNESS_DEFAULT_MODEL;
+        } else {
+          llmModel = resolvedLlmInput.model ?? null;
+        }
       }
     }
     const releaseLlmKeyOnFailure = async () => {

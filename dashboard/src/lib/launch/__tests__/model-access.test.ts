@@ -34,7 +34,7 @@ const byMode = (profileId: LaunchProfileId, context: ModelAccessContext = CONTEX
 
 describe("the model access choices", () => {
   it("shows every agent the same three choices, and says why one can't be used", () => {
-    for (const profileId of ["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon", "deepseek-harness"] as const) {
+    for (const profileId of ["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon"] as const) {
       expect(modelAccessOptions(profileId, CONTEXT).map(option => option.mode)).toEqual(["native", "api-key", "credits"]);
     }
     expect(byMode("claude-code")["api-key"].unavailable).toMatch(/Not available for Claude Code\. Use Hivra credits/);
@@ -48,24 +48,42 @@ describe("the model access choices", () => {
     expect(byMode("aeon").credits.unavailable).toBeNull();
   });
 
-  it("offers DeepSeek Harness only its own settings, and says where else to add a key", () => {
-    const options = byMode("deepseek-harness");
-    expect(options.native).toMatchObject({
-      title: "Add your key inside DeepSeek after it opens",
-      detail: "Open its Models settings and add the model key you want to use.",
-      unavailable: null,
-    });
-    expect(options["api-key"].unavailable).toBe("Not available for DeepSeek Harness yet. Add your key inside DeepSeek Harness after it opens instead.");
-    expect(options.credits.unavailable).toBe("Not available for DeepSeek Harness yet.");
-    const native = modelAccessOptions("deepseek-harness", CONTEXT);
-    const ready = { name: "DeepSeek Harness 1", pastedKey: "", savedKeys: [], options: native };
-    expect(modelAccessProblem("deepseek-harness", access({ mode: "native" }), ready)).toBeNull();
-    // A stale draft that chose another way can't launch.
-    expect(modelAccessProblem("deepseek-harness", access({ mode: "credits" }), ready)).toBe("Not available for DeepSeek Harness yet.");
-    expect(modelAccessSummary("deepseek-harness", access({ mode: "native" }), { name: "DeepSeek Harness 1", balance: FUNDED, savedKeys: [] }))
-      .toBe("Add your model key in DeepSeek's own settings after it opens.");
-    expect(modelCostNote("deepseek-harness", access({ mode: "native" }))).toBeNull();
-    expect(recommendedModelAccessMode("deepseek-harness", FUNDED, false)).toBe("native");
+  it("gives DeepSeek Harness a model at launch: Hivra credits or a Venice key, never its own sign-in", () => {
+    const options = modelAccessOptions("deepseek-harness", CONTEXT);
+    expect(options.map(option => option.mode)).toEqual(["api-key", "credits"]);
+    expect(byMode("deepseek-harness").credits.unavailable).toBeNull();
+    expect(byMode("deepseek-harness")["api-key"]).toMatchObject({ unavailable: null, detail: "A Venice API key. Venice bills your model usage." });
+    const ready = { name: "DeepSeek Harness 1", pastedKey: "", savedKeys: [], options };
+    expect(modelAccessProblem("deepseek-harness", access({ mode: "credits" }), ready)).toBeNull();
+    // A stale draft that chose its own sign-in can't launch.
+    expect(modelAccessProblem("deepseek-harness", access({ mode: "native" }), ready)).toBe("Choose how this agent reaches a model.");
+    expect(modelAccessProblem("deepseek-harness", access({ mode: "api-key" }), ready)).toBe("Paste your Venice AI API key.");
+    expect(modelAccessProblem("deepseek-harness", access({ mode: "api-key" }), { ...ready, pastedKey: "synthetic-venice-key" })).toBeNull();
+    expect(modelAccessProblem("deepseek-harness", access({ mode: "api-key" }), { ...ready, pastedKey: "short" }))
+      .toBe("Check the key: it should be one line of 8 to 256 characters.");
+    expect(modelAccessSummary("deepseek-harness", access({ mode: "credits" }), { name: "DeepSeek Harness 1", balance: FUNDED, savedKeys: [] }))
+      .toBe("Hivra credits ($4.25 available) · DeepSeek V4.1 Flash");
+    expect(modelCostNote("deepseek-harness", access({ mode: "credits" }))).toBe("Model usage is paid from your Hivra credits at provider rates.");
+  });
+
+  it("defaults DeepSeek Harness to credits, and to a key where this installation has no credits", () => {
+    expect(recommendedModelAccessMode("deepseek-harness", FUNDED, false)).toBe("credits");
+    expect(recommendedModelAccessMode("deepseek-harness", EMPTY, false)).toBe("credits");
+    expect(recommendedModelAccessMode("deepseek-harness", { state: "loading" }, false)).toBe("credits");
+    expect(recommendedModelAccessMode("deepseek-harness", FUNDED, true)).toBe("api-key");
+    expect(modelAccessOptions("deepseek-harness", { ...CONTEXT, selfHosted: true }).map(option => option.mode)).toEqual(["api-key"]);
+  });
+
+  it("runs DeepSeek Harness on DeepSeek V4.1 Flash by default in both modes, with DeepSeek models to pick from", () => {
+    for (const mode of ["credits", "api-key"] as const) {
+      expect(effectiveModel("deepseek-harness", access({ mode }))).toBe("deepseek-v4-1-flash");
+      expect(modelChoices("deepseek-harness", access({ mode }))[0]).toEqual({ value: "deepseek-v4-1-flash", label: "DeepSeek V4.1 Flash" });
+      expect(modelChoices("deepseek-harness", access({ mode })).every(choice => choice.value.startsWith("deepseek-"))).toBe(true);
+    }
+    expect(effectiveModel("deepseek-harness", access({ mode: "credits", model: "deepseek-v4-pro" }))).toBe("deepseek-v4-pro");
+    expect(modelAccessProblem("deepseek-harness", access({ mode: "credits", model: "not a model" }), {
+      name: "DeepSeek Harness 1", pastedKey: "", savedKeys: [], options: modelAccessOptions("deepseek-harness", CONTEXT),
+    })).toBe("Choose a model from the list, or enter a valid model ID.");
   });
 
   it("runs Claude Code on credits with Venice's Claude models only, Sonnet 4.6 by default", () => {

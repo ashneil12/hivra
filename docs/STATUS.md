@@ -39,9 +39,10 @@ credits: Hivra translates its requests for Venice's Claude models and bills the
 credits. Credits need a host on provisioner release 2026.11.10.2 or later.
 
 DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
-through Hivra's authenticated gateway. It launches with no model key, no
-browser and no Hivra credits: the person adds their model key in DeepSeek's own
-settings. It is labelled alpha because the upstream version it runs is pinned
+through Hivra's authenticated gateway. It launches with no browser and gets its
+model at launch, because DeepSeek's own settings refuse a key from a remote
+browser: it runs DeepSeek V4.1 Flash on Hivra credits by default, or on the
+person's own Venice API key. It is labelled alpha because the upstream version it runs is pinned
 at an alpha release. It has no public agent page yet, and a connected server or
 a computer in the owner's own cloud cannot run it. Its Launch tile is not on
 the first-run card, which stays at three choices.

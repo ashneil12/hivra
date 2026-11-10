@@ -291,28 +291,29 @@ describe("every catalog agent launches in the Launch journey", () => {
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
   });
 
-  it("offers DeepSeek Harness as a tile, says in plain words how its model key is added, and launches it on Hivra Cloud", async () => {
+  it("offers DeepSeek Harness as a tile, runs it on Hivra credits by default, and launches it on Hivra Cloud", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     const tile = screen.getByRole("button", { name: /^DeepSeek Harness/ });
-    expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. You add your model key inside it.");
+    expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.");
     fireEvent.click(tile);
     expect(screen.getByRole("heading", { name: "Review and launch DeepSeek Harness 1" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
 
-    // Only its own settings take a key: the other two choices say so instead of working.
-    await waitFor(() => expect(modelChoice(/^Add your key inside DeepSeek after it opens/)).toHaveAttribute("aria-pressed", "true"));
-    expect(modelChoice(/^Use my API key/)).toBeDisabled();
-    expect(modelChoice(/^Hivra credits/)).toBeDisabled();
+    // It gets its model at launch: credits are the default, a Venice key the alternative.
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
+    expect(modelChoice(/^Use my API key/)).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Sign in|^Set up inside|^Add your key inside/ })).not.toBeInTheDocument();
     const review = await reviewLaunch();
-    expect(review.getByText("Add your model key in DeepSeek's own settings after it opens.")).toBeInTheDocument();
+    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4\.1 Flash/)).toBeInTheDocument();
     // It runs on Hivra Cloud only, with no browser and no maxima to choose.
     expect(screen.queryByRole("button", { name: /Set up your own capacity/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch DeepSeek Harness" }));
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
     expect(createAgentMock).toHaveBeenCalledWith({
-      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4, browser: false, managedVenice: false,
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4, browser: false, managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-1-flash", walletType: "card" },
       deployment: { mode: "hivra-managed" },
     });
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));

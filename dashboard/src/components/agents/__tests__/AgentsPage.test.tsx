@@ -61,7 +61,7 @@ describe("AgentsPage", () => {
     await screen.findByRole("heading", { name: "No agents yet" });
     fireEvent.click(screen.getByText("Browse agents you can launch"));
     const link = screen.getByRole("link", { name: "Launch DeepSeek Harness" });
-    expect(link).toHaveTextContent("You add your model key in DeepSeek itself.");
+    expect(link).toHaveTextContent("Runs on DeepSeek V4.1 Flash.");
     expect(link.textContent).not.toMatch(/canary|PTY|ACP|teardown|revocation|gated|runtime/i);
     expect(document.body.textContent).not.toMatch(/Private preview|can't be launched yet/);
     expect(document.getElementById("deepseek-harness")).toBeNull();

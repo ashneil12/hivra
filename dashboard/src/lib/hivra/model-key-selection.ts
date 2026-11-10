@@ -22,3 +22,6 @@ export const ModelKeySelectionSchema = z.discriminatedUnion("mode", [
 
 /** Model Claude Code uses on Hivra credits when the launch names none. */
 export const MANAGED_CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6";
+
+/** Model DeepSeek Harness runs on, on Hivra credits or the owner's Venice key. */
+export const DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-1-flash";

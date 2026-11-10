@@ -10,7 +10,7 @@
  */
 
 import { PROVIDERS, type Provider } from "@/lib/models";
-import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
 
@@ -62,9 +62,10 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
       return ["native", "credits"];
     case "claude-code":
       return ["native", "credits"];
-    // DeepSeek takes no model key at launch: its own settings own the key.
+    // DeepSeek's own settings refuse a key from a remote browser, so Hivra
+    // gives it a model at launch: credits first, or the owner's Venice key.
     case "deepseek-harness":
-      return ["native"];
+      return ["credits", "api-key"];
     default:
       return [];
   }
@@ -158,12 +159,6 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
         detail: "Choose a model provider in its Settings.",
         summary: "Choose a model provider in Agent Zero's Settings after it opens.",
       };
-    case "deepseek-harness":
-      return {
-        title: "Add your key inside DeepSeek after it opens",
-        detail: "Open its Models settings and add the model key you want to use.",
-        summary: "Add your model key in DeepSeek's own settings after it opens.",
-      };
     case "aeon":
       return {
         title: "Use the key on your GitHub fork",
@@ -181,6 +176,7 @@ function unsupportedReason(profileId: LaunchProfileId, mode: LaunchModelAccessMo
   if (mode === "api-key") {
     if (profileId === "claude-code") return "Not available for Claude Code. Use Hivra credits, or its own sign-in with an Anthropic Console account.";
     if (profileId === "aeon") return "Not available for Aeon here. Set your key on your GitHub fork instead.";
+    if (profileId === "deepseek-harness") return `Not available for ${name} here.`;
     return `Not available for ${name} yet. Add your key inside ${name} after it opens instead.`;
   }
   return `Not available for ${name} yet.`;
@@ -194,6 +190,8 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
   const supported = modelAccessModes(profileId);
   return ALL_MODES
     .filter(mode => mode !== "credits" || !context.selfHosted)
+    // A runtime that can't sign in inside itself (DeepSeek Harness) never lists it.
+    .filter(mode => mode !== "native" || supported.includes("native"))
     .map(mode => {
       if (!supported.includes(mode)) {
         const copy = mode === "api-key"
@@ -212,7 +210,7 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
         return {
           mode,
           title: "Use my API key",
-          detail: profileId === "codex"
+          detail: profileId === "codex" || profileId === "deepseek-harness"
             ? "A Venice API key. Venice bills your model usage."
             : "A key from the model provider you use. They bill your model usage.",
           unavailable: codexKeyGap,
@@ -243,6 +241,9 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
  * Hivra credits when the owner has some. Null while that depends on a
  * balance still loading. */
 export function recommendedModelAccessMode(profileId: LaunchProfileId, balance: CreditsBalance, selfHosted: boolean): LaunchModelAccessMode | null {
+  // DeepSeek Harness always needs a model at launch: credits, or a key when
+  // this installation has no credits to offer.
+  if (profileId === "deepseek-harness") return selfHosted ? "api-key" : "credits";
   if (profileId !== "hermes" || selfHosted) return "native";
   if (balance.state === "loading") return null;
   const total = totalMicroUsd(balance);
@@ -295,6 +296,13 @@ export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAcce
       ...claude.filter(model => model.value !== MANAGED_CLAUDE_CODE_DEFAULT_MODEL),
     ];
   }
+  // DeepSeek Harness runs DeepSeek models: its default first.
+  if (profileId === "deepseek-harness") {
+    return [
+      { value: DEEPSEEK_HARNESS_DEFAULT_MODEL, label: "DeepSeek V4.1 Flash" },
+      ...models.filter(model => /^deepseek-/.test(model.value) && model.value !== DEEPSEEK_HARNESS_DEFAULT_MODEL),
+    ];
+  }
   // Codex's model setting only takes plain model IDs.
   return profileId === "codex" ? models.filter(model => CODEX_MODEL.test(model.value)) : models;
 }
@@ -303,7 +311,7 @@ export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAcce
  * pick their own model; native sign-in picks inside the agent. */
 export function choosesModel(profileId: LaunchProfileId, mode: LaunchModelAccessMode): boolean {
   if (mode === "native") return false;
-  return profileId === "codex" || profileId === "hermes" || profileId === "claude-code";
+  return profileId === "codex" || profileId === "hermes" || profileId === "claude-code" || profileId === "deepseek-harness";
 }
 
 /** The model this launch sends: the owner's pick, else the default. */
@@ -311,6 +319,7 @@ export function effectiveModel(profileId: LaunchProfileId, access: LaunchModelAc
   if (access.model.trim()) return access.model.trim();
   if (profileId === "codex") return VENICE_DEFAULT_MODEL;
   if (profileId === "claude-code") return MANAGED_CLAUDE_CODE_DEFAULT_MODEL;
+  if (profileId === "deepseek-harness") return DEEPSEEK_HARNESS_DEFAULT_MODEL;
   // A custom endpoint's model is whatever the owner types; there's no default.
   if (usesCustomEndpoint(profileId, access)) return "";
   return modelChoices(profileId, access)[0]?.value ?? "";
@@ -401,7 +410,7 @@ export function modelAccessProblem(
   } else {
     const key = pastedKey.trim();
     if (!key) return `Paste your ${providerName(provider)} API key.`;
-    if (profileId === "codex" && !CODEX_KEY.test(key)) return "Check the key: it should be one line of 8 to 256 characters.";
+    if ((profileId === "codex" || profileId === "deepseek-harness") && !CODEX_KEY.test(key)) return "Check the key: it should be one line of 8 to 256 characters.";
     const shape = profileId === "hermes" ? validateProviderKeyShape(provider, key) : null;
     if (shape) return shape.message;
   }
@@ -419,7 +428,7 @@ export function modelAccessProblem(
 
 function modelIsValid(profileId: LaunchProfileId, model: string): boolean {
   if (profileId === "claude-code") return CLAUDE_CODE_MODEL.test(model);
-  return profileId === "codex" ? CODEX_MODEL.test(model) : HERMES_MODEL.test(model);
+  return profileId === "codex" || profileId === "deepseek-harness" ? CODEX_MODEL.test(model) : HERMES_MODEL.test(model);
 }
 
 /** The Review row, in plain words. */

@@ -162,16 +162,16 @@ describe("Hivra agent catalog", () => {
     expect(AGENTS.some(agent => agent.id === "deepseek-harness")).toBe(true);
     expect(canLaunchAgent(harness!, "free")).toEqual({ ok: false, reason: "Needs Pro" });
     expect(canLaunchAgent(harness!, "pro")).toEqual({ ok: true });
-    // It takes no launch-time model key and no managed credits.
-    expect(harness?.llm).toBeUndefined();
-    expect(harness?.managedVenice).toBeUndefined();
+    // It gets its model at launch: Hivra credits through managed Venice, or a Venice key.
+    expect(harness?.llm).toEqual({ wire: "openai", providers: ["venice"] });
+    expect(harness?.managedVenice).toBe(true);
     expect(resizeFloor("deepseek-harness", false)).toEqual({ cpu: 2, ram: 3 });
   });
 
   it("describes DeepSeek Harness's hosting without claiming a CLI sign-in or Hivra tabs it lacks", () => {
     const text = hostingDisclaimer(getAgent("deepseek-harness"));
     expect(text).toContain("DeepSeek's coding agent");
-    expect(text).toContain("Add your model key in DeepSeek's own settings.");
+    expect(text).toContain("It runs on DeepSeek V4.1 Flash through Hivra credits, or your own Venice API key.");
     expect(text).not.toMatch(/official .* CLI|chat, terminal, files/);
   });
 

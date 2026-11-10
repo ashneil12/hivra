@@ -585,10 +585,29 @@ export async function submitLaunchDraft(
     return submitHermes(draft, options);
   }
   if (profileId === "deepseek-harness") {
-    // The launch its acceptance ran: Hivra Cloud, no browser, no model key, no
-    // receipt ID. Its model key is added inside DeepSeek after it opens.
+    // The launch its acceptance ran: Hivra Cloud, no browser, no receipt ID.
+    // DeepSeek's own settings refuse a remote key, so the launch always carries
+    // a model: Hivra credits, or the owner's Venice key.
     if (deployment.mode !== "hivra-managed") {
       throw new HivraLaunchCorrectableError("DeepSeek Harness runs on Hivra Cloud only.", 409, "deepseek_managed_only");
+    }
+    const deepseekAccess = accessOf(draft);
+    const model = effectiveModel("deepseek-harness", deepseekAccess);
+    if (deepseekAccess.mode === "credits") {
+      const walletType = creditsWallet(deepseekAccess, options.balance ?? { state: "unknown" });
+      return submitObserved(dashboardAgentRequest({
+        type: "deepseek-harness",
+        name: draft.name.trim(),
+        cpu: draft.resources.cpu,
+        ram: draft.resources.ram,
+        browser: false,
+        credits: { walletType },
+        llm: { provider: "venice", mode: "managed", model, walletType },
+        deployment,
+      }), draft, options);
+    }
+    if (deepseekAccess.mode !== "api-key") {
+      throw new HivraLaunchCorrectableError("Choose Hivra credits or your Venice API key for DeepSeek Harness.", 400, "model_access_required");
     }
     return submitObserved(dashboardAgentRequest({
       type: "deepseek-harness",
@@ -597,6 +616,7 @@ export async function submitLaunchDraft(
       ram: draft.resources.ram,
       browser: false,
       credits: null,
+      llm: { provider: "venice", mode: "byok", model, ...(await launchKey(draft, options)) },
       deployment,
     }), draft, options);
   }

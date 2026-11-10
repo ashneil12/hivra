@@ -520,7 +520,7 @@ const AGENT_TILES: readonly ChooseTile[] = ([
   { id: "openclaw", name: "OpenClaw", description: "An agent you reach from your messaging apps, on a computer that stays on.", icon: Cpu },
   { id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit },
   { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
-  { id: "deepseek-harness", name: "DeepSeek Harness", description: "DeepSeek's coding agent, in its own interface. You add your model key inside it.", icon: Waves },
+  { id: "deepseek-harness", name: "DeepSeek Harness", description: "DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.", icon: Waves },
 ] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
 
 const COMPUTER_TILES: readonly ChooseTile[] = [
