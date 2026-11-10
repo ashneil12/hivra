@@ -134,7 +134,7 @@ describe("Hivra's model access default", () => {
   });
 
   it("recommends a private model on credits", () => {
-    expect(VENICE_DEFAULT_MODEL).toBe("deepseek-v4-pro");
+    expect(VENICE_DEFAULT_MODEL).toBe("deepseek-v4-1-flash");
     expect(isPrivateVeniceModel(VENICE_DEFAULT_MODEL)).toBe(true);
     expect(effectiveModel("codex", access({ mode: "credits" }))).toBe("deepseek-v4-pro");
     expect(effectiveModel("hermes", access({ mode: "credits" }))).toBe("deepseek-v4-flash");
