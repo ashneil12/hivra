@@ -37,8 +37,8 @@ describe("the model access choices", () => {
     for (const profileId of ["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon"] as const) {
       expect(modelAccessOptions(profileId, CONTEXT).map(option => option.mode)).toEqual(["native", "api-key", "credits"]);
     }
-    expect(byMode("claude-code")["api-key"].unavailable).toMatch(/Not available for Claude Code yet/);
-    expect(byMode("claude-code").credits.unavailable).toBe("Not available for Claude Code yet.");
+    expect(byMode("claude-code")["api-key"].unavailable).toMatch(/Not available for Claude Code\. Use Hivra credits/);
+    expect(byMode("claude-code").credits.unavailable).toBeNull();
     expect(byMode("openclaw")["api-key"].unavailable).toBe("Not available for OpenClaw yet. Add your key inside OpenClaw after it opens instead.");
     expect(byMode("aeon")["api-key"].unavailable).toBe("Not available for Aeon here. Set your key on your GitHub fork instead.");
     // What each runtime's own form offered stays available.
@@ -46,6 +46,21 @@ describe("the model access choices", () => {
     expect(byMode("hermes")["api-key"].unavailable).toBeNull();
     expect(byMode("openclaw").credits.unavailable).toBeNull();
     expect(byMode("aeon").credits.unavailable).toBeNull();
+  });
+
+  it("runs Claude Code on credits with Venice's Claude models only, Sonnet 4.6 by default", () => {
+    const credits = access({ mode: "credits" });
+    const choices = modelChoices("claude-code", credits).map(choice => choice.value);
+    expect(choices[0]).toBe("claude-sonnet-4-6");
+    expect(choices.length).toBeGreaterThan(1);
+    expect(choices.every(value => /^claude-(fable|opus|sonnet|haiku)-/.test(value))).toBe(true);
+    expect(effectiveModel("claude-code", credits)).toBe("claude-sonnet-4-6");
+    const options = modelAccessOptions("claude-code", CONTEXT);
+    expect(modelAccessProblem("claude-code", credits, { name: "Claude Code 1", pastedKey: "", savedKeys: [], options })).toBeNull();
+    expect(modelAccessProblem("claude-code", access({ mode: "credits", model: "deepseek-v4-pro" }), { name: "Claude Code 1", pastedKey: "", savedKeys: [], options }))
+      .toBe("Choose a model from the list, or enter a valid model ID.");
+    expect(modelAccessSummary("claude-code", credits, { name: "Claude Code 1", balance: FUNDED, savedKeys: [] }))
+      .toBe("Hivra credits ($4.25 available) · Claude Sonnet 4.6 (via Venice)");
   });
 
   it("offers no model choice for computers", () => {

@@ -452,6 +452,11 @@ update them yet.
   `hivra-claude-app clipboard on|off`, `clipboard-put` (text on stdin, at most
   256 KB) and `clipboard-get` through the same exact-argument sudoers rule; both
   transfers refuse while the switch is off.
+- **Claude Code on Hivra credits.** When a Claude Code computer is launched with a
+  managed model key, the installer writes the CLI's own `~/.claude/settings.json`
+  `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
+  model tier set to the chosen model) with mode 0600; without a key the computer
+  keeps native `claude auth login` sign-in.
 - **Launch and start hardening.** The installer waits for the dpkg lock and
   retries `apt-get`, the pinned downloads and the npm/git fetches a bounded number
   of times; the host launch script bounds the provisioner copy and the in-guest

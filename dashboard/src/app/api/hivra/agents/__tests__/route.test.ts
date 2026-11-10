@@ -2547,7 +2547,8 @@ describe("POST /api/hivra/agents", () => {
     );
   });
 
-  it("ignores the managed-Venice opt-in for an agent type without box wiring (Claude Code)", async () => {
+  it("launches Claude Code on Hivra credits through the Anthropic route with a Claude model", async () => {
+    mockCreateManagedVeniceProxyKey.mockResolvedValueOnce({ id: "key-cc-1", keyPrefix: "hven_live_CC", plaintextKey: "hven_live_CCKEY123" });
     mockSubscriptionRow = {
       plan: "operator",
       status: "active",
@@ -2563,12 +2564,65 @@ describe("POST /api/hivra/agents", () => {
       cpu: 0.5,
       ram: 1,
       managedVenice: true,
+      llm: { provider: "venice", mode: "managed", walletType: "card" },
     }) as never);
 
     expect(response.status).toBe(201);
+    expect(mockCreateManagedVeniceProxyKey).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultWalletType: "card" }),
+    );
+    const provisionScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+    expect(provisionScript).toContain("write_secret_b64 'hven_live_CCKEY123'");
+    expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/anthropic'");
+    expect(provisionScript).toContain("write_secret_b64 'claude-sonnet-4-6'");
+    expect(provisionScript).not.toContain("deepseek-v4-pro");
+    expect(mockAgentInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "claude-code", managed_venice: true }),
+    );
+  });
+
+  it("keeps Claude Code on native sign-in when no credits are chosen", async () => {
+    mockSubscriptionRow = {
+      plan: "operator",
+      status: "active",
+      instance_limit: 2,
+      total_cpu_budget: 2,
+      total_ram_budget: 4096,
+      current_period_end: null,
+    };
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+    }) as never);
+
+    expect(response.status).toBe(201);
+    expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
     expect(mockAgentInsert).toHaveBeenCalledWith(
       expect.objectContaining({ type: "claude-code", managed_venice: false }),
     );
+  });
+
+  it("refuses a Venice API key or a non-Claude model for Claude Code", async () => {
+    const byok = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      llm: { provider: "venice", mode: "byok", apiKey: "venice-key-12345678" },
+    }) as never);
+    expect(byok.status).toBe(400);
+    const wrongModel = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-pro", walletType: "card" },
+    }) as never);
+    expect(wrongModel.status).toBe(400);
+    expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
   });
 
   it("does not count an existing Aeon box against the CPU/RAM pool", async () => {

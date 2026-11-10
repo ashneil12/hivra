@@ -499,7 +499,7 @@ function visibleStep(stage: LaunchStage): number {
 type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
 
 const AGENT_TILES: readonly ChooseTile[] = ([
-  { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account after it opens.", icon: Code2 },
+  { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account, or run it on Hivra credits.", icon: Code2 },
   { id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },
   { id: "hermes", name: "Hermes", description: "A general-purpose agent for research and automation.", icon: Bot },
   { id: "openclaw", name: "OpenClaw", description: "An agent you reach from your messaging apps, on a computer that stays on.", icon: Cpu },

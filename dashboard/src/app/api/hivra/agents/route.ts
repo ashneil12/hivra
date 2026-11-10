@@ -19,7 +19,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { posthogClient } from "@/lib/posthog";
-import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
+import { getManagedVeniceAnthropicBaseUrl, getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
   buildProxmoxVmidReferenceLedger,
   runProxmoxHostScript,
@@ -40,7 +40,7 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
-import { validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
 import { agentSoftwareSummaryFor, type AgentSoftwareAgentRow } from "@/lib/hivra/agent-software-service";
@@ -127,6 +127,7 @@ import {
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   isCompatibleProxmoxProvisionerVersion,
   provisionerVersionMeetsRuntimeMinimum,
+  CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID,
   provisionerSupportsActivityTelemetry,
   provisionerSupportsHostCapacityAdmission,
 } from "@/lib/infrastructure/portable-provisioner-contract";
@@ -1072,6 +1073,9 @@ async function launchAgent(request: NextRequest) {
     const resolvedLlmInput = (llmInput ?? (autoManagedLlmBlock
       ? { provider: "venice", mode: "managed", walletType: "hermesos" }
       : null)) as typeof llmInput;
+    // Claude Code on Hivra credits needs a host whose installer writes the CLI's
+    // managed-model settings; native sign-in runs on any compatible host.
+    const anthropicCredits = def?.llm?.wire === "anthropic" && Boolean(resolvedLlmInput);
 
     const templateSkills = template && bankrSkillsDirForType(type) ? coerceSkillIds(template.skills) : [];
     const launchModels = type === "codex" && resolvedLlmInput ? createLaunchModelAdmissionService() : null;
@@ -1236,6 +1240,10 @@ async function launchAgent(request: NextRequest) {
             409,
           );
         }
+        if (anthropicCredits
+          && !provisionerVersionMeetsRuntimeMinimum(context.runtime.provisionerVersion, CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID)) {
+          return apiError(`This server needs an update before ${def.name} can use Hivra credits. Prepare it again, or launch with native sign-in.`, 409);
+        }
         if (launchAdmission && !targetSupportsLaunchModelSettings(context.target, type)) {
           return apiError("This host needs the model-settings provisioner update before launch with an API key. Prepare it again, or launch with native sign-in.", 409);
         }
@@ -1298,9 +1306,13 @@ async function launchAgent(request: NextRequest) {
         readinessCheck: candidate => checkManagedHivraHostReadiness({
           ...candidate,
           channel: managedProvisionerChannel,
-          runtimeId: compatibilityRuntimeId,
+          runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
           runtimeLabel: def.name,
-          ...(launchAdmission || def.managedVenice ? { requireModelSettings: true } : {}),
+          // Claude Code takes model settings only on Hivra credits; its native
+          // sign-in launch does not need them.
+          ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
+            ? { requireModelSettings: true }
+            : {}),
         }),
       });
       if (!placement.ok) {
@@ -1442,8 +1454,11 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         };
         llmKeyEncrypted = encryptApiKey(proxyKey.plaintextKey);
         llmPlaintextKey = proxyKey.plaintextKey;
-        llmBaseUrl = getManagedVeniceProxyBaseUrl();
-        llmModel = resolvedLlmInput.model ?? "deepseek-v4-pro";
+        // Claude Code speaks Anthropic Messages, so it reaches Venice through
+        // the dashboard's translating route instead of the OpenAI proxy.
+        const anthropicWire = def.llm?.wire === "anthropic";
+        llmBaseUrl = anthropicWire ? getManagedVeniceAnthropicBaseUrl() : getManagedVeniceProxyBaseUrl();
+        llmModel = resolvedLlmInput.model ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : "deepseek-v4-pro");
       } else {
         llmConfig = {
           provider: "venice",

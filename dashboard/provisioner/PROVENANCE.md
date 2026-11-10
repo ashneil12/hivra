@@ -544,6 +544,22 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.10.2` builds on `2026.11.10.1` and lets Claude Code run on
+Hivra credits. `provision-claude-code-box.sh` gains
+`configure_claude_managed_model`: for a Claude Code computer launched with a
+managed model key, it validates the key's format, the Hivra Anthropic Messages
+base URL (`https://<host>/api/managed-venice/anthropic`) and the model name, then
+merges them into the agent user's `~/.claude/settings.json` `env` block
+(`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and every model tier mapped to the
+chosen model, with non-essential traffic disabled) through a mode-0600 atomic
+write, keeping the owner's other settings. With no managed key the computer keeps
+native `claude auth login` sign-in, and every other agent is untouched.
+`hivra-provider-worker.py` only advances its native and desktop release labels.
+No sudoers rule, service or credential path outside that settings file changes,
+and the remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. This source release does not
+deploy, install, or update any existing computer.
+
 Release `2026.11.10.1` builds on `2026.11.03.1` and hardens first launch and
 start against slow or flaky networks, and tells the agent how to look after its
 own computer. `provision-claude-code-box.sh` waits for the dpkg lock (a fresh

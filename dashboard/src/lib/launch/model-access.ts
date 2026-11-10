@@ -10,7 +10,7 @@
  */
 
 import { PROVIDERS, type Provider } from "@/lib/models";
-import { VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
+import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
 
@@ -43,6 +43,8 @@ const VENICE = "venice";
 const CODEX_MODEL = /^[A-Za-z0-9._:/[\]-]{1,64}$/;
 const HERMES_MODEL = /^[\x21-\x7e]{1,128}$/;
 const CODEX_KEY = /^[\x21-\x7e]{8,256}$/;
+/** Claude Code on credits: Venice's Claude models (plain IDs, no legacy dates). */
+const CLAUDE_CODE_MODEL = /^claude-(?:fable|opus|sonnet|haiku)-[a-z0-9-]{1,40}$/;
 
 /** Every agent is shown the same three choices, in this order. */
 const ALL_MODES: readonly LaunchModelAccessMode[] = ["native", "api-key", "credits"];
@@ -59,7 +61,7 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
     case "aeon":
       return ["native", "credits"];
     case "claude-code":
-      return ["native"];
+      return ["native", "credits"];
     default:
       return [];
   }
@@ -168,7 +170,7 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
 function unsupportedReason(profileId: LaunchProfileId, mode: LaunchModelAccessMode): string {
   const name = PROFILE_DETAILS[profileId].name;
   if (mode === "api-key") {
-    if (profileId === "claude-code") return "Not available for Claude Code yet. Its own sign-in takes an Anthropic Console account instead.";
+    if (profileId === "claude-code") return "Not available for Claude Code. Use Hivra credits, or its own sign-in with an Anthropic Console account.";
     if (profileId === "aeon") return "Not available for Aeon here. Set your key on your GitHub fork instead.";
     return `Not available for ${name} yet. Add your key inside ${name} after it opens instead.`;
   }
@@ -275,6 +277,15 @@ export function apiKeyProviders(profileId: LaunchProfileId, savedKeys: readonly 
 export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAccess): { value: string; label: string }[] {
   const provider = access.mode === "credits" ? providerById(VENICE) : providerById(access.provider);
   const models = provider?.models ?? [];
+  // Claude Code on credits speaks Anthropic's protocol, so only Venice's
+  // Claude models can answer it. Sonnet first: fast and the cheaper default.
+  if (profileId === "claude-code") {
+    const claude = models.filter(model => CLAUDE_CODE_MODEL.test(model.value));
+    return [
+      ...claude.filter(model => model.value === MANAGED_CLAUDE_CODE_DEFAULT_MODEL),
+      ...claude.filter(model => model.value !== MANAGED_CLAUDE_CODE_DEFAULT_MODEL),
+    ];
+  }
   // Codex's model setting only takes plain model IDs.
   return profileId === "codex" ? models.filter(model => CODEX_MODEL.test(model.value)) : models;
 }
@@ -283,13 +294,14 @@ export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAcce
  * pick their own model; native sign-in picks inside the agent. */
 export function choosesModel(profileId: LaunchProfileId, mode: LaunchModelAccessMode): boolean {
   if (mode === "native") return false;
-  return profileId === "codex" || profileId === "hermes";
+  return profileId === "codex" || profileId === "hermes" || profileId === "claude-code";
 }
 
 /** The model this launch sends: the owner's pick, else the default. */
 export function effectiveModel(profileId: LaunchProfileId, access: LaunchModelAccess): string {
   if (access.model.trim()) return access.model.trim();
   if (profileId === "codex") return VENICE_DEFAULT_MODEL;
+  if (profileId === "claude-code") return MANAGED_CLAUDE_CODE_DEFAULT_MODEL;
   // A custom endpoint's model is whatever the owner types; there's no default.
   if (usesCustomEndpoint(profileId, access)) return "";
   return modelChoices(profileId, access)[0]?.value ?? "";
@@ -397,6 +409,7 @@ export function modelAccessProblem(
 }
 
 function modelIsValid(profileId: LaunchProfileId, model: string): boolean {
+  if (profileId === "claude-code") return CLAUDE_CODE_MODEL.test(model);
   return profileId === "codex" ? CODEX_MODEL.test(model) : HERMES_MODEL.test(model);
 }
 

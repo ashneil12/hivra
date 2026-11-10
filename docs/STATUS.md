@@ -34,6 +34,10 @@ a free account works with a server the person connects.
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
 | DeepSeek Harness | Preview, not launchable | Shown on Agents only |
 
+Claude Code can sign in with the person's own Claude account, or run on Hivra
+credits: Hivra translates its requests for Venice's Claude models and bills the
+credits. Credits need a host on provisioner release 2026.11.10.2 or later.
+
 The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 
 ## Computers

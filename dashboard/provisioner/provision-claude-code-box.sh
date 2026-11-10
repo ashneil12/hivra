@@ -681,6 +681,62 @@ printf '%s\n' "${AGENT_KIND}" > "${AGENT_HOME}/.hivra/agent-kind"
 chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}/.hivra/agent-kind"
 ok "agent kind recorded: ${AGENT_HOME}/.hivra/agent-kind = ${AGENT_KIND}"
 
+# Claude Code on Hivra credits: point the vanilla CLI at Hivra's Anthropic
+# Messages route (which reaches Venice and bills the user's credits) through
+# its own documented settings.json env. Every model tier maps to the chosen
+# model so side requests never ask for a model the route cannot serve. With
+# no managed key the box keeps native `claude auth login` sign-in.
+configure_claude_managed_model() {
+  [ "$AGENT_KIND" = "claude" ] || return 0
+  [ -n "${HIVRA_MODEL_KEY:-}" ] || return 0
+  printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
+    || die "managed model key has an invalid format"
+  local base="${HIVRA_MODEL_BASE_URL:-}" model="${HIVRA_HERMES_MODEL:-claude-sonnet-4-6}"
+  [[ "$base" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/api/managed-venice/anthropic$ ]] \
+    || die "Claude Code managed model base URL is invalid"
+  [[ "$model" =~ ^[A-Za-z0-9._:-]{1,120}$ ]] \
+    || die "Claude Code managed model name is invalid"
+  install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 "${AGENT_HOME}/.claude"
+  local settings="${AGENT_HOME}/.claude/settings.json"
+  HIVRA_CC_SETTINGS="$settings" HIVRA_CC_BASE="$base" HIVRA_CC_MODEL="$model" \
+    HIVRA_CC_KEY="${HIVRA_MODEL_KEY}" python3 -I -B - <<'PY' || die "could not write Claude Code model settings"
+import json, os
+path = os.environ["HIVRA_CC_SETTINGS"]
+try:
+    with open(path) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        data = {}
+except (OSError, ValueError):
+    data = {}
+env = data.get("env") if isinstance(data.get("env"), dict) else {}
+model = os.environ["HIVRA_CC_MODEL"]
+env.update({
+    "ANTHROPIC_BASE_URL": os.environ["HIVRA_CC_BASE"],
+    "ANTHROPIC_AUTH_TOKEN": os.environ["HIVRA_CC_KEY"],
+    "ANTHROPIC_MODEL": model,
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
+    "ANTHROPIC_SMALL_FAST_MODEL": model,
+    "CLAUDE_CODE_SUBAGENT_MODEL": model,
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+})
+data["env"] = env
+tmp = path + ".tmp"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+  chown "${AGENT_USER}:${AGENT_USER}" "$settings"
+  chmod 600 "$settings"
+  ok "Claude Code set to Hivra credits (model ${model})"
+}
+configure_claude_managed_model
+
 # Codex discovers skills from ~/.agents/skills (per OpenAI's skills spec); bux
 # only installs the cdp (browser-harness-js) skill into ~/.claude/skills. Same
 # SKILL.md format — symlink it across so codex can drive the box browser too.
