@@ -34,7 +34,7 @@ function Bar({ metric, unit }: { metric: PoolMetric; unit: string }) {
           {fmt(free)} free · {fmt(total)} total
         </span>
       </div>
-      <div style={{ position: "relative", height: 7, borderRadius: 4, background: "rgba(0,0,0,0.08)", border: "1px solid var(--etched-border)", overflow: "hidden", display: "flex" }}>
+      <div style={{ position: "relative", height: 7, borderRadius: 4, background: "var(--hg-fill-2)", border: "1px solid var(--hg-stroke)", overflow: "hidden", display: "flex" }}>
         <div style={{ width: `${othersPct}%`, background: "var(--text-muted)", opacity: 0.55 }} />
         <div style={{ width: `${minePct}%`, background: "var(--gold-leaf)" }} />
       </div>
@@ -55,7 +55,7 @@ export function PoolMeter({
   if (!(cpu.total > 0) && !(ram.total > 0)) return null;
   const hasOthers = cpu.othersUsed > 0 || ram.othersUsed > 0;
   return (
-    <div style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.02)", padding: "11px 13px", display: "grid", gap: 9 }}>
+    <div style={{ border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)", padding: "11px 13px", display: "grid", gap: 9 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span className="mono" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800, opacity: 0.78 }}>
           {planName ? `${planName} pool` : "Compute pool"}

@@ -158,10 +158,10 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
   return (
     <div
       style={{
-        backgroundColor: "rgba(239,68,68,0.08)",
-        border: "1px solid rgba(239,68,68,0.25)",
+        backgroundColor: "color-mix(in srgb, var(--hg-bad) 8%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--hg-bad) 25%, transparent)",
         padding: "12px 16px",
-        borderRadius: 0,
+        borderRadius: 10,
         display: "flex",
         flexWrap: "wrap",
         gap: 10,
@@ -213,9 +213,9 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
           fontWeight: 700,
           color: "var(--red)",
           background: "transparent",
-          border: "1px solid rgba(239,68,68,0.4)",
+          border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)",
           cursor: "pointer",
-          borderRadius: 0,
+          borderRadius: 10,
         }}
       >
         {copied ? <Check size={12} /> : <Copy size={12} />}

@@ -425,7 +425,7 @@ export function OnboardingChecklist({
       data-testid="onboarding-checklist"
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         marginBottom: 18,
         position: "relative",
@@ -487,7 +487,7 @@ export function OnboardingChecklist({
                 gap: 10,
                 textAlign: "left",
                 border: "1px solid var(--etched-border)",
-                background: done ? "rgba(255,255,255,0.015)" : "rgba(255,255,255,0.03)",
+                background: done ? "var(--hg-fill-1)" : "var(--hg-fill-1)",
                 padding: "10px 12px",
                 cursor: "pointer",
                 minWidth: 0,

@@ -186,13 +186,13 @@ describe("SignInPage", () => {
     render(await SignInPage({ searchParams: Promise.resolve({}) }));
     const { elements, variables } = mockSignIn.mock.calls[0][0].appearance;
     expect(variables).toMatchObject({
-      colorBackground: "var(--bg-surface)",
-      colorForeground: "var(--ink-black)",
-      colorPrimaryForeground: "var(--vellum-bg)",
+      colorBackground: "var(--hg-glass-strong)",
+      colorForeground: "var(--hg-text)",
+      colorPrimaryForeground: "var(--hg-on-accent)",
     });
     expect(variables).not.toHaveProperty("colorText");
     expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
-    expect(elements.formButtonPrimary).toMatch(/text-\[var\(--vellum-bg\)\].*text-center flex justify-center/);
+    expect(elements.formButtonPrimary).toMatch(/text-\[var\(--hg-on-accent\)\].*text-center flex justify-center/);
   });
 
   it("marks the funnel bar as web chrome that a desktop app replaces", async () => {

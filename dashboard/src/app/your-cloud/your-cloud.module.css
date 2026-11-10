@@ -7,7 +7,7 @@
 .section .steps { list-style: decimal-leading-zero; padding-left: 30px; margin: 0; }
 .steps li { padding: 0 0 20px 16px; border-bottom: 1px solid var(--etched-border); margin: 0 0 24px; }
 .steps li:last-child { border: 0; margin-bottom: 0; padding-bottom: 0; }
-.steps li::marker { color: var(--gold-leaf); font: 12px var(--public-mono, monospace); }
+.steps li::marker { color: var(--gold-leaf); font: 12px var(--font-sans); }
 .steps li h3 { margin: 0 0 12px; }
 .steps li p { margin: 0; }
 .enquiry { max-width: 820px; padding: 0; }

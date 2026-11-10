@@ -30,6 +30,7 @@ import {
 } from "@/lib/integrations/channel-surface";
 import { readJson } from "@/lib/client/read-json";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 // Instrumentation must never make the connect flow throw.
 function captureChannelEvent(event: string, properties: Record<string, unknown>) {
   try {
@@ -64,7 +65,7 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
   border: "1px solid var(--etched-border)",
-  background: "rgba(255,255,255,0.04)",
+  background: "var(--hg-fill-1)",
   color: "var(--ink-black)",
   fontSize: 13,
   fontFamily: "var(--font-mono), monospace",
@@ -321,9 +322,9 @@ export function InstanceChannelConnect({
       {error ? (
         <div
           style={{
-            border: "1px solid #c0392b",
-            background: "rgba(192,57,43,0.08)",
-            color: "#e06c5a",
+            border: "1px solid var(--hg-bad)",
+            background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)",
+            color: "var(--hg-bad)",
             fontSize: 13,
             padding: "10px 14px",
             marginBottom: 16,
@@ -336,7 +337,7 @@ export function InstanceChannelConnect({
         <div
           style={{
             border: "1px solid var(--etched-border)",
-            background: "rgba(255,255,255,0.04)",
+            background: "var(--hg-fill-1)",
             color: "var(--text-secondary)",
             fontSize: 13,
             padding: "10px 14px",
@@ -349,14 +350,14 @@ export function InstanceChannelConnect({
 
       {status === null ? (
         <div style={{ padding: 30, textAlign: "center" }}>
-          <Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} />
+          <ThinkingOrb state="searching" size={20} />
         </div>
       ) : connected ? (
         <ConnectedCard label={label} agentName={agentName} busy={busy} onDisconnect={() => void disconnect()} />
       ) : (
         <div style={{ display: "grid", gap: 16 }}>
           {guide ? (
-            <details style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.02)" }}>
+            <details style={{ border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)" }}>
               <summary
                 className="mono"
                 style={{ ...mono, opacity: 1, cursor: "pointer", padding: "10px 12px", userSelect: "none", minHeight: 44, boxSizing: "border-box", display: "flex", alignItems: "center" }}
@@ -505,14 +506,14 @@ function ConnectedCard({
     <div
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: 20,
         display: "grid",
         gap: 14,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#22c55e" }} />
+        <span style={{ width: 9, height: 9, borderRadius: "50%", background: "var(--hg-ok)" }} />
         <strong className="serif" style={{ fontSize: 18, fontWeight: 400, color: "var(--ink-black)" }}>
           {label} connected
         </strong>
@@ -558,7 +559,7 @@ function ConnectedCard({
             style={{
               border: "1px solid var(--etched-border)",
               background: "transparent",
-              color: "#e06c5a",
+              color: "var(--hg-bad)",
               fontSize: 11,
               textTransform: "uppercase",
               letterSpacing: "0.1em",

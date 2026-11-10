@@ -83,7 +83,7 @@ export function ConfigurationDangerZone({
 
   return (
     <>
-      <div style={{ marginTop: '2rem', padding: 'clamp(16px, 5vw, 2rem)', border: '1px dashed rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.02)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{ marginTop: '2rem', padding: 'clamp(16px, 5vw, 2rem)', border: '1px dashed color-mix(in srgb, var(--hg-bad) 40%, transparent)', background: 'color-mix(in srgb, var(--hg-bad) 2%, transparent)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--red)' }}>
           <AlertTriangle size={18} />
           <h3 className="serif" style={{ fontSize: '1.25rem', margin: 0, fontWeight: 700 }}>Danger Zone</h3>
@@ -96,7 +96,7 @@ export function ConfigurationDangerZone({
           type="button" 
           onClick={() => setDeleteConfirm(true)} 
           disabled={actionLoading} 
-          style={{ width: '100%', border: '1px solid rgba(239,68,68,0.6)', background: "var(--bg-surface)", color: 'var(--red)', padding: '12px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.1em' }}
+          style={{ width: '100%', border: '1px solid color-mix(in srgb, var(--hg-bad) 60%, transparent)', background: "var(--bg-surface)", color: 'var(--red)', padding: '12px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.1em' }}
         >
           {actionLoading ? 'Working...' : 'Delete Instance'}
         </button>
@@ -108,11 +108,11 @@ export function ConfigurationDangerZone({
           role="dialog"
           aria-modal="true"
           aria-labelledby="delete-instance-title"
-          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', overflowY: 'auto', padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))', backdropFilter: 'blur(4px)' }}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', zIndex: 9999, display: 'flex', overflowY: 'auto', padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
         >
-          <div style={{ background: 'var(--bg-elevated)', width: '100%', maxWidth: 480, maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))', margin: 'auto', display: 'flex', flexDirection: 'column', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 0, boxShadow: '0 16px 48px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--hg-glass-strong)', backdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)', WebkitBackdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)', width: '100%', maxWidth: 480, maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))', margin: 'auto', display: 'flex', flexDirection: 'column', border: '1px solid color-mix(in srgb, var(--hg-bad) 30%, transparent)', borderRadius: 20, boxShadow: 'var(--hg-shadow-lg)', overflow: 'hidden' }}>
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid color-mix(in srgb, var(--hg-bad) 20%, transparent)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'color-mix(in srgb, var(--hg-bad) 10%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <AlertTriangle size={20} style={{ color: 'var(--red)' }} />
               </div>
               <div>
@@ -158,7 +158,7 @@ export function ConfigurationDangerZone({
                 autoCorrect="off"
                 spellCheck={false}
                 autoComplete="off"
-                style={{ width: '100%', border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '12px 14px', fontSize: 13, fontFamily: 'var(--font-mono), monospace', borderRadius: 0, boxSizing: 'border-box' }}
+                style={{ width: '100%', border: '1px solid var(--etched-border)', background: "var(--bg-surface)", padding: '12px 14px', fontSize: 13, fontFamily: 'var(--font-mono)', borderRadius: 0, boxSizing: 'border-box' }}
               />
 
               {/* Optional churn reason. Never blocks the delete — purely for us

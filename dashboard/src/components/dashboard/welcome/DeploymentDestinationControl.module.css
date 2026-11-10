@@ -59,7 +59,7 @@
 .option:focus-visible,
 .targetSelect:focus-visible,
 .manageLink:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 2px;
 }
 
@@ -98,7 +98,7 @@
   border-color: var(--ink-black);
   background: var(--bg-elevated);
   color: var(--ink-black);
-  box-shadow: inset 2px 0 0 var(--hivra-red);
+  box-shadow: none;
 }
 
 .option:disabled {
@@ -108,7 +108,7 @@
 
 .option > svg {
   margin-top: 1px;
-  color: var(--hivra-red);
+  color: var(--hg-text);
 }
 
 .option strong,
@@ -131,7 +131,7 @@
 }
 
 .check {
-  color: var(--hivra-red);
+  color: var(--hg-text);
 }
 
 .targetPanel {
@@ -139,8 +139,8 @@
   display: grid;
   gap: 11px;
   padding: 13px;
-  border: 1px solid color-mix(in srgb, var(--hivra-red) 24%, var(--etched-border));
-  background: color-mix(in srgb, var(--hivra-red-soft) 45%, transparent);
+  border: 1px solid var(--hg-stroke-strong);
+  background: var(--hg-fill-1);
 }
 
 .targetLabel {

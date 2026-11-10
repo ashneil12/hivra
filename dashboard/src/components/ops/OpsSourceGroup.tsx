@@ -16,7 +16,8 @@ export function OpsSourceGroup({ source, incidentCount, defaultOpen = false, chi
     <section
       style={{
         border: '1px solid var(--etched-border)',
-        background: 'rgba(255,255,255,0.55)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: '1rem',
       }}
     >
@@ -84,7 +85,8 @@ export function OpsSourceGroup({ source, incidentCount, defaultOpen = false, chi
               textTransform: 'uppercase',
               padding: '6px 10px',
               border: '1px solid var(--etched-border)',
-              background: 'var(--bg-surface)',
+              borderRadius: 7,
+              background: 'var(--hg-glass)',
               color: 'var(--ink-black)',
             }}
           >

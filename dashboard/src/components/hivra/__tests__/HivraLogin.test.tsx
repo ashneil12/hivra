@@ -16,7 +16,13 @@ function setPointer(coarse: boolean) {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
-    value: (query: string) => ({ matches: coarse && query.includes("coarse"), media: query }) as MediaQueryList,
+    value: (query: string) => ({
+      matches: coarse && query.includes("coarse"),
+      media: query,
+      // The thinking orb listens for theme and motion changes.
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }) as unknown as MediaQueryList,
   });
 }
 

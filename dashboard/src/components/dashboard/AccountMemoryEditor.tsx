@@ -118,10 +118,10 @@ export function AccountMemoryEditor() {
       >
         <div style={{ fontSize: 12, minHeight: 18 }}>
           {status === "saved" && (
-            <span style={{ color: "var(--green, #16a34a)" }}>Saved — new agents will start with this.</span>
+            <span style={{ color: "var(--hg-ok)" }}>Saved — new agents will start with this.</span>
           )}
           {status === "error" && error && (
-            <span style={{ color: "var(--red, #ef4444)" }}>{error}</span>
+            <span style={{ color: "var(--red, var(--hg-bad))" }}>{error}</span>
           )}
           {(status === "idle" || status === "saving") && (
             <span style={{ opacity: 0.5 }}>{remaining} characters left</span>

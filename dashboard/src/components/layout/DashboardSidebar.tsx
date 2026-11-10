@@ -47,9 +47,9 @@ const SIDEBAR_EXPANDED_STORAGE_KEY = 'hivra:dashboard:sidebar-expanded';
 
 export function getDashboardSidebarToggleStyle(isExpanded: boolean): React.CSSProperties {
   return {
-    background: isExpanded ? 'var(--bg-elevated)' : 'var(--bg-surface)',
-    border: isExpanded ? '1px solid var(--gold-leaf)' : '1px solid var(--etched-border)',
-    color: isExpanded ? 'var(--ink-black)' : 'var(--text-muted)',
+    background: 'transparent',
+    border: '0',
+    color: isExpanded ? 'var(--hg-text)' : 'var(--hg-text-3)',
   };
 }
 

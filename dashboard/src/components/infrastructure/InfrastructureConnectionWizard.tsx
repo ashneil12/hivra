@@ -17,6 +17,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import {
   Children,
   cloneElement,
@@ -1198,7 +1199,7 @@ function InspectingState({ name }: { name: string }) {
       <span className={styles.checkingVisual} aria-hidden="true">
         <ServerCog size={28} />
         <span />
-        <Loader2 size={18} className={styles.spin} />
+        <ThinkingOrb state="connecting" size={20} />
       </span>
       <span className={styles.eyebrow}>Read-only host inspection</span>
       <h2>Inspecting {name}...</h2>
@@ -1220,7 +1221,7 @@ function ReadinessCheckingState({ name }: { name: string }) {
       <span className={styles.checkingVisual} aria-hidden="true">
         <ShieldCheck size={28} />
         <span />
-        <Loader2 size={18} className={styles.spin} />
+        <ThinkingOrb state="connecting" size={20} />
       </span>
       <span className={styles.eyebrow}>Strict Proxmox readiness</span>
       <h2>Checking {name}...</h2>

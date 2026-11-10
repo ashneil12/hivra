@@ -10,9 +10,13 @@
   min-width: 0;
   padding: 1.1rem clamp(1rem, 3vw, 1.4rem);
   border: 1px solid var(--etched-border);
-  border-top: 2px solid var(--hivra-red);
-  background: var(--bg-surface);
+  border-top: 1px solid var(--hg-stroke);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
   color: var(--ink-black);
+  border-radius: var(--hg-radius-lg);
 }
 
 .banner[data-tone='success'] {
@@ -46,16 +50,16 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink-black);
 }
 
 .eyebrow > svg {
-  color: var(--hivra-red);
+  color: var(--hg-text-2);
 }
 
 .banner[data-tone='success'] .eyebrow > svg { color: var(--skills-success-text); }
@@ -83,11 +87,12 @@
   border: 1px solid var(--skills-success-border);
   background: var(--skills-success-bg);
   color: var(--skills-success-text);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
+  border-radius: var(--hg-radius-md);
 }
 
 .action {
@@ -100,16 +105,17 @@
   border: 1px solid color-mix(in srgb, var(--ink-black) 24%, transparent);
   background: transparent;
   color: var(--ink-black);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
+  border-radius: var(--hg-radius-sm);
 }
 
 .action:hover:not(:disabled) {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
 }
 
 .action:disabled {
@@ -118,18 +124,18 @@
 }
 
 .actionPrimary {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
   background: var(--btn-bg);
   color: var(--btn-text);
 }
 
 .actionPrimary:hover:not(:disabled) {
-  border-color: var(--hivra-red);
+  border-color: var(--hg-stroke-strong);
 }
 
 .action:focus-visible,
 .trust a:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 
@@ -149,6 +155,7 @@
   padding: 0.65rem 0.8rem;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
+  border-radius: 999px;
 }
 
 .stage[data-status='done'] {
@@ -158,7 +165,7 @@
 
 .stage[data-status='active'] {
   border-color: color-mix(in srgb, var(--ink-black) 30%, transparent);
-  box-shadow: inset 0 2px 0 var(--hivra-red);
+  box-shadow: inset 0 2px 0 var(--hg-stroke-strong);
 }
 
 .stage[data-status='failed'] {
@@ -170,10 +177,10 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink-black);
 }
@@ -183,7 +190,7 @@
 }
 
 .stage[data-status='done'] .stageHead > svg { color: var(--skills-success-text); }
-.stage[data-status='active'] .stageHead > svg { color: var(--hivra-red); }
+.stage[data-status='active'] .stageHead > svg { color: var(--hg-text-2); }
 .stage[data-status='failed'] .stageHead {
   color: var(--yearly-danger-ink, color-mix(in srgb, var(--skills-danger-text) 78%, var(--ink-black)));
 }
@@ -196,6 +203,7 @@
   border: 1px solid currentColor;
   font-size: 9px;
   line-height: 1;
+  border-radius: 999px;
 }
 
 .stageSub {
@@ -211,10 +219,10 @@
   gap: 0.45rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--etched-border);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
   text-align: center;
@@ -231,7 +239,7 @@
 .trust a {
   color: var(--ink-black);
   text-decoration: underline;
-  text-decoration-color: var(--hivra-red-line);
+  text-decoration-color: var(--hg-stroke-strong);
   text-underline-offset: 3px;
 }
 
@@ -257,7 +265,7 @@
 }
 
 .expires {
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -266,10 +274,10 @@
 }
 
 .locked {
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }

@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { agentSoftwareSubject, type AgentAppName, type AgentSoftwareUpdateReport, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 import { agentSoftwareDisplayName, agentSoftwareVersionName } from "@/lib/hivra/agent-software-names";
@@ -248,10 +249,10 @@ function AutoUpdateToggle({ agentId, auto, name, onSaved }: {
           onClick={() => void toggle()}
           style={{ minWidth: 56, minHeight: 44, border: 0, background: "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: saving ? "default" : "pointer", flexShrink: 0, padding: 0 }}
         >
-          <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: auto.enabled ? "var(--gold-leaf)" : "rgba(255,255,255,0.05)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
+          <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: auto.enabled ? "var(--gold-leaf)" : "var(--hg-fill-2)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
             {saving
-              ? <Loader2 size={13} style={{ ...manageSpin, color: "var(--ink-black)", position: "absolute", top: 6, left: auto.enabled ? 24 : 6 }} />
-              : <span style={{ position: "absolute", top: 3, left: auto.enabled ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: auto.enabled ? "var(--ink-black)" : "var(--text-muted)", transition: "left .15s ease" }} />}
+              ? <Loader2 size={13} style={{ ...manageSpin, color: auto.enabled ? "var(--hg-on-accent)" : "var(--ink-black)", position: "absolute", top: 6, left: auto.enabled ? 24 : 6 }} />
+              : <span style={{ position: "absolute", top: 3, left: auto.enabled ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: auto.enabled ? "var(--hg-on-accent)" : "var(--text-muted)", transition: "left var(--hg-medium) var(--hg-ease)" }} />}
           </span>
         </button>
       </div>
@@ -356,7 +357,7 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
             change (an update starting, finishing, or not installing); only
             its words change. */}
         <div role="status" aria-live="polite" data-testid="agent-software-state" style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55, display: copy.text ? "flex" : "none", gap: 8, alignItems: "flex-start" }}>
-          {view.kind === "updating" ? <Loader2 size={14} aria-hidden="true" style={{ ...manageSpin, flexShrink: 0, marginTop: 3 }} /> : null}
+          {view.kind === "updating" ? <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={20} /></span> : null}
           <span>{copy.text}</span>
         </div>
         {state.autoUpdate?.pausedFor && view.kind === "update_rolled_back" ? (

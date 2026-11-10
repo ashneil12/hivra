@@ -194,7 +194,7 @@ const LABEL: React.CSSProperties = {
 
 const PANEL: React.CSSProperties = {
   border: "1px solid var(--etched-border)",
-  background: "rgba(255,255,255,0.025)",
+  background: "var(--hg-fill-1)",
   padding: "1.1rem 1.25rem",
   display: "grid",
   gap: 14,

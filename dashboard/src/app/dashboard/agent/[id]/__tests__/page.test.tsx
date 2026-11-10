@@ -24,6 +24,9 @@ const mockTelegramStatus = jest.fn();
 const mockClientWarn = jest.fn();
 let mockAgentId = "agent_123";
 
+jest.mock("@/components/ui/ThinkingOrb", () => ({
+  ThinkingOrb: ({ label }: { label?: string }) => <span data-testid="thinking-orb" role="img" aria-label={label ?? "Working"} />,
+}));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: mockAgentId }),
   useRouter: () => ({ push: pushMock }),
@@ -1831,7 +1834,7 @@ describe("AgentPage", () => {
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent(`${verb} EXISTING_AGENT…`);
     expect(status).toHaveTextContent(body);
-    expect(status.querySelector("svg")).toHaveStyle({ display: "block", margin: "0 auto" });
+    expect(status.querySelector("[data-testid=\"thinking-orb\"]")).toBeInTheDocument();
     expect(screen.queryByText("While you wait")).not.toBeInTheDocument();
     expect(screen.queryByText(/Spinning up a fresh/)).not.toBeInTheDocument();
   });

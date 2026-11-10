@@ -4,27 +4,32 @@
   margin-bottom: 2rem;
   padding: clamp(1.1rem, 3vw, 1.6rem);
   border: 1px solid var(--etched-border);
-  background: var(--bg-surface);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
   color: var(--ink-black);
+  border-radius: var(--hg-radius-lg);
 }
 
 .eyebrow {
   display: block;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
 
 .title {
   margin: 0.25rem 0 1rem;
-  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(1.4rem, 1.2rem + 1.2cqi, 1.75rem);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
 .created {
@@ -35,17 +40,18 @@
   border: 1px solid var(--ink-black);
   border-left-width: 2px;
   background: var(--bg-elevated);
+  border-radius: var(--hg-radius-md);
 }
 
 .createdNote {
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
 }
 
 .secret {
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.55;
   word-break: break-all;
@@ -93,7 +99,7 @@
 .prefix {
   grid-area: prefix;
   min-width: 0;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--ink-black);
@@ -114,13 +120,14 @@
   align-items: center;
   padding: 0.2rem 0.5rem;
   border: 1px solid var(--etched-border);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
   white-space: nowrap;
+  border-radius: 999px;
 }
 
 .status[data-tone='active'] {
@@ -150,16 +157,16 @@
   border: 0;
   background: transparent;
   color: var(--ink-black);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 .revokedToggle svg {
-  transition: transform 150ms ease;
+  transition: transform var(--hg-fast) var(--hg-ease);
 }
 
 .revokedToggle[aria-expanded='true'] svg {
@@ -167,7 +174,7 @@
 }
 
 .revokedToggle:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 

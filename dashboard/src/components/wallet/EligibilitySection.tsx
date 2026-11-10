@@ -50,8 +50,9 @@ export function EligibilityPanel({
     <section
       aria-label={eligibilityCopy.ariaLabel}
       style={{
-        border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: 'clamp(1.25rem, 4vw, 1.75rem)',
         marginBottom: '1.5rem',
         display: 'flex',
@@ -87,7 +88,8 @@ export function EligibilityPanel({
               alignItems: 'center',
               gap: 6,
               padding: '6px 10px',
-              border: '1px solid var(--etched-border)',
+              border: '1px solid var(--hg-stroke)',
+              borderRadius: 7,
               background: 'transparent',
               cursor: refreshing ? 'wait' : 'pointer',
               fontFamily: 'var(--font-mono), monospace',
@@ -113,6 +115,7 @@ export function EligibilityPanel({
               gap: 6,
               padding: '6px 10px',
               border: '1px solid var(--ink-black)',
+              borderRadius: 7,
               background: 'var(--btn-bg)',
               color: 'var(--btn-text)',
               cursor: unlocking ? 'wait' : 'pointer',
@@ -139,8 +142,9 @@ export function EligibilityPanel({
           role="alert"
           style={{
             padding: '0.85rem 1rem',
-            border: '1px solid #b3261e',
-            color: '#b3261e',
+            border: '1px solid var(--hg-bad)',
+            borderRadius: 10,
+            color: 'var(--hg-bad)',
             fontSize: 13,
           }}
         >
@@ -183,12 +187,13 @@ export function VeniceBoostRow({
   const requiredLabel = boost.requiredVvvDisplay
     ? `${boost.requiredVvvDisplay} VVV (≈ $${boost.thresholdUsd})`
     : `$${boost.thresholdUsd} of VVV`;
-  const badgeColor = eligible ? '#16a34a' : 'var(--etched-border)';
+  const badgeColor = eligible ? 'var(--hg-ok)' : 'var(--hg-stroke)';
 
   return (
     <div
       style={{
-        border: '1px solid var(--etched-border)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
         padding: '1rem 1.25rem',
         display: 'flex',
         flexDirection: 'column',
@@ -208,7 +213,8 @@ export function VeniceBoostRow({
             fontWeight: 700,
             padding: '4px 8px',
             border: `1px solid ${badgeColor}`,
-            color: eligible ? '#16a34a' : 'var(--text-muted, var(--text-secondary))',
+            borderRadius: 7,
+            color: eligible ? 'var(--hg-ok)' : 'var(--text-muted, var(--text-secondary))',
           }}
         >
           {eligible ? 'Eligible' : 'Not yet eligible'}
@@ -270,7 +276,8 @@ export function VeniceBoostRow({
             alignItems: 'center',
             gap: 6,
             padding: '6px 10px',
-            border: `1px solid ${eligible ? '#16a34a' : 'var(--etched-border)'}`,
+            border: `1px solid ${eligible ? 'var(--hg-ok)' : 'var(--hg-stroke)'}`,
+            borderRadius: 7,
             background: 'transparent',
             cursor: unlocking ? 'wait' : 'pointer',
             fontFamily: 'var(--font-mono), monospace',
@@ -358,7 +365,8 @@ export function TierEligibilityRow({
   return (
     <div
       style={{
-        border: '1px solid var(--etched-border)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
         padding: '1rem 1.25rem',
         display: 'flex',
         flexDirection: 'column',
@@ -377,8 +385,9 @@ export function TierEligibilityRow({
             letterSpacing: '0.12em',
             fontWeight: 700,
             padding: '4px 8px',
-            border: `1px solid ${eligible ? '#16a34a' : breached ? '#b3261e' : 'var(--etched-border)'}`,
-            color: eligible ? '#16a34a' : breached ? '#b3261e' : 'var(--text-muted, var(--text-secondary))',
+            border: `1px solid ${eligible ? 'var(--hg-ok)' : breached ? 'var(--hg-bad)' : 'var(--hg-stroke)'}`,
+            borderRadius: 7,
+            color: eligible ? 'var(--hg-ok)' : breached ? 'var(--hg-bad)' : 'var(--text-muted, var(--text-secondary))',
           }}
         >
           {eligible ? eligibilityCopy.eligible : breached ? eligibilityCopy.breached : eligibilityCopy.notYetEligible}

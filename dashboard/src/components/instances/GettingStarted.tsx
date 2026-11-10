@@ -98,7 +98,7 @@ function deriveChecklistItems(args: {
 
 const CARD_STYLE: React.CSSProperties = {
   border: "1px solid var(--etched-border)",
-  background: "rgba(255,255,255,0.04)",
+  background: "var(--hg-fill-1)",
   padding: "clamp(1rem, 3vw, 1.4rem)",
   display: "grid",
   gap: 14,
@@ -171,7 +171,7 @@ export function GettingStarted({
     return (
       <section data-testid="getting-started" data-complete="true" style={CARD_STYLE}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <CheckCircle2 size={16} style={{ color: "#16a34a", flexShrink: 0 }} />
+          <CheckCircle2 size={16} style={{ color: "var(--hg-ok)", flexShrink: 0 }} />
           <span style={{ fontSize: 13.5, color: "var(--text-secondary)" }}>You&apos;re set up.</span>
         </div>
       </section>
@@ -191,7 +191,7 @@ export function GettingStarted({
           const inner = (
             <>
               {item.done ? (
-                <CheckCircle2 size={16} style={{ color: "#16a34a", flexShrink: 0 }} />
+                <CheckCircle2 size={16} style={{ color: "var(--hg-ok)", flexShrink: 0 }} />
               ) : (
                 <Circle size={16} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
               )}

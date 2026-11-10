@@ -20,7 +20,7 @@
    ring, so Tabs.module.css draws theirs inset. :where() keeps this rule's
    specificity unchanged for everything else. */
 .page :is(a, button, summary, [role="radio"]):where(:not([role="tab"])):focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 
@@ -59,9 +59,9 @@
 }
 
 .loadingLabel {
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -98,10 +98,10 @@
   min-height: 44px;
   margin-bottom: 0.4rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-decoration: none;
   text-transform: uppercase;
 }
@@ -114,9 +114,9 @@
   gap: 0.6rem;
   margin: 0 0 0.6rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -124,17 +124,18 @@
   content: "";
   width: 7px;
   height: 7px;
-  background: var(--hivra-red);
+  background: var(--hg-text-3);
 }
 
 .title {
   margin: 0;
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(2.1rem, 1.5rem + 3cqi, 3.1rem);
-  font-weight: 400;
+  font-weight: 600;
   line-height: 1.05;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.03em;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .title em {
@@ -156,9 +157,9 @@
   gap: 0.45rem;
   min-height: 28px;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -182,7 +183,7 @@
 }
 
 .alerts:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 
@@ -193,8 +194,12 @@
   gap: 0.75rem;
   padding: 0.85rem 0.85rem 0.85rem 1rem;
   border: 1px solid var(--etched-border);
-  background: var(--bg-surface);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
   min-width: 0;
+  border-radius: var(--hg-radius-lg);
 }
 
 .alertSuccess {
@@ -220,7 +225,7 @@
 }
 
 .alertInfo {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
 }
 
 .alertIcon {
@@ -238,10 +243,10 @@
 
 .alertTitle {
   margin: 0 0 0.2rem;
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -271,6 +276,7 @@
   padding: 0.85rem 1rem;
   border: 1px solid var(--ink-black);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-sm);
 }
 
 .intentText {
@@ -311,20 +317,20 @@
   border: 1px solid var(--etched-border);
   background: transparent;
   color: var(--ink-black);
-  font-family: var(--font-mono), "Space Mono", monospace;
-  font-size: 12px;
-  font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1.3;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   text-align: center;
   text-decoration: none;
-  text-transform: uppercase;
   cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+  transition: border-color var(--hg-fast) var(--hg-ease), background-color var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease), opacity var(--hg-fast) var(--hg-ease);
+  border-radius: var(--hg-radius-sm);
 }
 
 .button:hover:not(:disabled) {
-  border-color: var(--hivra-red);
+  border-color: var(--hg-stroke-strong);
 }
 
 .button:disabled {
@@ -333,7 +339,7 @@
 }
 
 .primary {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
   background: var(--btn-bg);
   color: var(--btn-text);
 }
@@ -359,11 +365,12 @@
   background: transparent;
   color: var(--ink-black);
   cursor: pointer;
-  transition: border-color 150ms ease, color 150ms ease;
+  transition: border-color var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease);
+  border-radius: var(--hg-radius-sm);
 }
 
 .iconButton:hover:not(:disabled) {
-  border-color: var(--hivra-red);
+  border-color: var(--hg-stroke-strong);
 }
 
 .iconButton:disabled {
@@ -415,12 +422,12 @@
   color: var(--ink-black);
   font-size: 13.5px;
   text-decoration: underline;
-  text-decoration-color: var(--hivra-red-line);
+  text-decoration-color: var(--hg-stroke-strong);
   text-underline-offset: 4px;
 }
 
 .link:hover {
-  text-decoration-color: var(--hivra-red);
+  text-decoration-color: var(--hg-text);
 }
 
 /* ── Tabs + panels ───────────────────────────────────────────────────────── */
@@ -446,10 +453,10 @@
   gap: 0.5rem;
   margin: 0 0 0.75rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
   font-weight: 400;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -457,7 +464,11 @@
   min-width: 0;
   padding: clamp(1rem, 4cqi, 1.75rem);
   border: 1px solid var(--etched-border);
-  background: var(--bg-surface);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  border-radius: var(--hg-radius-lg);
 }
 
 .panelHead {
@@ -476,19 +487,20 @@
 .panelEyebrow {
   margin: 0;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .panelTitle {
   margin: 0.3rem 0 0;
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(1.2rem, 1rem + 1cqi, 1.45rem);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.25;
   letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
 }
 
 .panelText {
@@ -515,11 +527,12 @@
   padding: 0.2rem 0.55rem;
   border: 1px solid var(--etched-border);
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   white-space: nowrap;
+  border-radius: 999px;
 }
 
 .statusGood {
@@ -542,7 +555,7 @@
 
 .priceTag {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -553,8 +566,12 @@
   position: relative;
   min-width: 0;
   border: 1px solid var(--etched-border);
-  border-top: 2px solid var(--hivra-red);
-  background: var(--bg-surface);
+  border-top: 1px solid var(--hg-stroke);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  border-radius: var(--hg-radius-lg);
 }
 
 .plateEmpty {
@@ -578,9 +595,9 @@
 .plateEyebrow {
   margin: 0;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -590,12 +607,13 @@
   align-items: center;
   gap: 0.35rem 0.75rem;
   margin: 0.35rem 0 0;
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(2.2rem, 1.6rem + 3.5cqi, 3.4rem);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.03em;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 
 .plateEmpty .plateName {
@@ -611,12 +629,13 @@
   border: 1px solid var(--hivra-red-line);
   background: var(--hivra-red-soft);
   color: var(--ink-black);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   line-height: 1.2;
   text-transform: uppercase;
+  border-radius: var(--hg-radius-md);
 }
 
 .plateLine {
@@ -636,9 +655,10 @@
   border: 1px solid var(--hivra-red-line);
   background: var(--hivra-red-soft);
   color: var(--ink-black);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.04em;
+  border-radius: var(--hg-radius-md);
 }
 
 .plateStatus {
@@ -669,17 +689,17 @@
 
 .plateSpec dt {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .plateSpec dd {
   margin: 0.35rem 0 0;
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(1.1rem, 0.95rem + 0.8cqi, 1.4rem);
-  font-weight: 500;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
   letter-spacing: -0.02em;
@@ -689,7 +709,7 @@
 .plateSpec dd small {
   margin-left: 0.3rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 400;
   letter-spacing: 0.06em;
@@ -717,9 +737,9 @@
 
 .meterLabel {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -750,10 +770,11 @@
   aspect-ratio: 1;
   border: 1px solid color-mix(in srgb, var(--ink-black) 42%, transparent);
   background: var(--bg-elevated);
+  border-radius: var(--hg-radius-md);
 }
 
 .slotUsed {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
   background: var(--ink-black);
   box-shadow: inset 0 0 0 2px var(--bg-surface);
 }
@@ -769,7 +790,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--ink-black);
-  transition: width 180ms ease;
+  transition: width var(--hg-medium) var(--hg-ease);
 }
 
 .plateActions {
@@ -811,15 +832,19 @@
   min-height: 96px;
   padding: 1rem 1.1rem;
   border: 1px solid var(--etched-border);
-  background: var(--bg-surface);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
   color: var(--ink-black);
   text-align: left;
   cursor: pointer;
-  transition: border-color 150ms ease;
+  transition: border-color var(--hg-fast) var(--hg-ease);
+  border-radius: var(--hg-radius-lg);
 }
 
 .tile:hover {
-  border-color: var(--hivra-red);
+  border-color: var(--hg-stroke-strong);
 }
 
 .tile > svg {
@@ -830,16 +855,16 @@
 
 .tileLabel {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .tileValue {
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.6rem;
-  font-weight: 500;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
   letter-spacing: -0.03em;
@@ -877,9 +902,9 @@
 
 .controlLabel {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -897,6 +922,7 @@
   padding: 3px;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-md);
 }
 
 .choiceOption {
@@ -910,14 +936,14 @@
   border: 0;
   background: transparent;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 12px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   line-height: 1.2;
   text-transform: uppercase;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: background-color var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease);
 }
 
 .choiceOption:hover {
@@ -937,11 +963,12 @@
   border: 1px solid var(--hivra-red-line);
   background: var(--hivra-red-soft);
   color: var(--ink-black);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   white-space: nowrap;
+  border-radius: 999px;
 }
 
 .changeNote {
@@ -977,29 +1004,35 @@
   min-width: 0;
   padding: 1.5rem 1.35rem 1.35rem;
   border: 1px solid var(--etched-border);
-  background: var(--bg-surface);
+  background: var(--hg-glass);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  border-radius: var(--hg-radius-lg);
 }
 
 .machine[data-popular="true"]::before {
   content: "";
   position: absolute;
   top: -1px;
-  left: -1px;
-  right: -1px;
+  left: 18px;
+  right: 18px;
   height: 2px;
-  background: var(--hivra-red);
+  border-radius: 0 0 2px 2px;
+  background: var(--hg-accent);
 }
 
 .machine[data-current="true"] {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
 }
 
 .machineEyebrow {
   margin: 0 0 0.4rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -1013,11 +1046,12 @@
 
 .machineName {
   margin: 0;
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.55rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.1;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
 .badge {
@@ -1025,20 +1059,22 @@
   align-items: center;
   min-height: 24px;
   padding: 0.1rem 0.5rem;
-  border: 1px solid var(--hivra-red-line);
-  background: var(--hivra-red-soft);
-  color: var(--ink-black);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  border: 1px solid var(--hg-stroke);
+  background: var(--hg-fill-2);
+  color: var(--hg-text);
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
   line-height: 1.2;
   text-transform: uppercase;
   white-space: nowrap;
+  border-radius: 999px;
 }
 
 .badgeCurrent {
-  border-color: var(--ink-black);
-  background: transparent;
+  border-color: transparent;
+  background: var(--hg-accent);
+  color: var(--hg-on-accent);
 }
 
 .machinePrice {
@@ -1050,17 +1086,17 @@
 }
 
 .machinePrice strong {
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: clamp(2.2rem, 1.9rem + 1.2cqi, 2.75rem);
-  font-weight: 500;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.03em;
 }
 
 .machinePrice span {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.06em;
 }
@@ -1086,7 +1122,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -1154,11 +1190,12 @@
   justify-content: center;
   gap: 0.5rem;
   min-height: 44px;
-  border: 1px dashed var(--etched-border);
+  border: 1px dashed var(--hg-stroke-strong);
+  border-radius: var(--hg-radius-sm);
   color: var(--ink-black);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 12px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -1182,6 +1219,7 @@
   margin-top: 1.5rem;
   padding: clamp(1rem, 3.5cqi, 1.5rem);
   border: 1px dashed color-mix(in srgb, var(--ink-black) 22%, transparent);
+  border-radius: var(--hg-radius-lg);
 }
 
 .plannedHead {
@@ -1195,10 +1233,11 @@
 
 .plannedTitle {
   margin: 0;
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.1rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .plannedList {
@@ -1222,14 +1261,15 @@
 }
 
 .plannedName {
-  font-family: var(--font-grotesk), "Space Grotesk", var(--font-outfit), system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.05rem;
-  font-weight: 500;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .plannedSpec {
   color: var(--text-secondary);
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -1258,6 +1298,7 @@
   min-width: 0;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-md);
 }
 
 .methodHead {
@@ -1274,7 +1315,8 @@
   width: 40px;
   height: 40px;
   border: 1px solid var(--etched-border);
-  color: var(--hivra-red);
+  color: var(--hg-text-2);
+  border-radius: var(--hg-radius-sm);
 }
 
 .methodBody {
@@ -1450,6 +1492,7 @@
   border-collapse: collapse;
   border: 1px solid var(--etched-border);
   background: var(--bg-surface);
+  border-radius: var(--hg-radius-sm);
 }
 .holdTable th,
 .holdTable td {
@@ -1462,10 +1505,10 @@
   color: var(--ink-black);
 }
 .holdTable thead th {
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-sans);
   font-size: 10px;
   font-weight: 400;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
@@ -1477,6 +1520,6 @@
   font-weight: 600;
 }
 .holdAmount {
-  font-family: var(--font-mono), "Space Mono", monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }

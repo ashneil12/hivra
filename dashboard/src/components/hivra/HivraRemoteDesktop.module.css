@@ -26,7 +26,7 @@
 /* The status is one short word. The full sentence is the title tooltip, so a
    long message cannot push the controls off the row or wrap it to two lines. */
 .stripLabel {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -61,7 +61,7 @@
 }
 
 .stripFieldLabel {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -96,7 +96,7 @@
 }
 
 .stripAction {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -112,7 +112,7 @@
 .stripAction:hover,
 .stripIcon:hover {
   color: var(--ink-black);
-  border-color: var(--hivra-red-line);
+  border-color: var(--hg-stroke-strong);
 }
 
 .stripAction:focus-visible,
@@ -120,7 +120,7 @@
 .stripSelect:focus-visible,
 .stripMenu button:focus-visible,
 .stripMenu input:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 1px;
 }
 
@@ -146,7 +146,7 @@
   padding: 10px;
   background: var(--bg-surface);
   border: 1px solid var(--etched-border);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--hg-shadow-lg);
   color: var(--text-secondary);
   font-size: 12px;
   /* First-frame cap; while open the component measures the room left above
@@ -234,7 +234,7 @@
 
 .panelConfirm button:focus-visible,
 .panelAction:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 1px;
 }
 
@@ -256,7 +256,7 @@
 }
 
 .stripEvidence span {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono);
   font-size: 8.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;

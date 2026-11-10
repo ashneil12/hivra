@@ -10,7 +10,8 @@ import { matchesMedia, useMediaQuery } from "@/lib/client/media-query";
 import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Send, Loader2, Check, X, Plus, MessageSquare, Trash2, ChevronRight, ChevronDown, Square, RotateCcw, Copy, Paperclip, PanelLeft, Brain, Cpu, ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
+import { Send, Check, X, Plus, MessageSquare, Trash2, ChevronRight, ChevronDown, Square, RotateCcw, Copy, Paperclip, PanelLeft, Brain, Cpu, ThumbsUp, ThumbsDown } from "lucide-react";
 
 import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
@@ -56,7 +57,7 @@ export const CHAT_MARKDOWN_COMPONENTS = {
  return <CodeBlock language="text" value={String(props.children ?? "")} />;
  },
  code(props: { children?: React.ReactNode }) {
- return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", padding: "1px 5px", overflowWrap: "anywhere" }}>{props.children}</code>;
+ return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--hg-fill-2)", borderRadius: 5, padding: "1px 5px", overflowWrap: "anywhere" }}>{props.children}</code>;
  },
  table({ children }: { children?: React.ReactNode }) {
  return <div className="chat-md-table-wrapper"><table className="chat-md-table">{children}</table></div>;
@@ -161,7 +162,7 @@ function MessageCopy({ text }: { text: string }) {
  });
  }}
  className={`mono ${styles.msgAction}`}
- style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: copied ? "#22c55e" : "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--hg-stroke)", borderRadius: 7, background: "transparent", color: copied ? "var(--hg-ok)" : "var(--text-muted)", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
  >
  {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? "Copied" : "Copy"}
  </button>
@@ -176,7 +177,8 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  display: "inline-flex",
  alignItems: "center",
  justifyContent: "center",
- border: "1px solid var(--etched-border)",
+ border: "1px solid var(--hg-stroke)",
+ borderRadius: 7,
  background: "transparent",
  cursor: "pointer",
  padding: "3px 7px",
@@ -190,7 +192,7 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  aria-pressed={rating === "up"}
  onClick={() => onRate("up")}
  className={styles.msgAction}
- style={{ ...base, color: rating === "up" ? "#22c55e" : "var(--text-muted)" }}
+ style={{ ...base, color: rating === "up" ? "var(--hg-ok)" : "var(--text-muted)" }}
  >
  <ThumbsUp size={11} />
  </button>
@@ -200,7 +202,7 @@ function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (
  aria-pressed={rating === "down"}
  onClick={() => onRate("down")}
  className={styles.msgAction}
- style={{ ...base, color: rating === "down" ? "#c0392b" : "var(--text-muted)" }}
+ style={{ ...base, color: rating === "down" ? "var(--hg-bad)" : "var(--text-muted)" }}
  >
  <ThumbsDown size={11} />
  </button>
@@ -526,7 +528,7 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
   const unconfirmed = tool.status === "unknown" || (!streaming && tool.status === "running");
   const statusLabel = unconfirmed ? (interrupted ? "Interrupted" : "Unconfirmed") : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
   return (
-    <div style={{ background: "var(--bg-elevated)", border: "1px solid var(--etched-border)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>
+    <div style={{ background: "var(--hg-fill-1)", borderRadius: 10, overflow: "hidden", fontFamily: "var(--font-sans)", fontSize: 12 }}>
       <button
         type="button"
         className={`hivra-chat-tool-toggle ${styles.msgAction}`}
@@ -550,17 +552,17 @@ function ToolCard({ tool, streaming = false, interrupted = false }: { tool: Tool
  <span style={{ flex: 1 }} />
  )}
         {unconfirmed ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", flexShrink: 0 }}>{statusLabel}</span>
+          <span style={{ color: "var(--text-muted)", fontSize: 11, letterSpacing: "0.02em", flexShrink: 0 }}>{statusLabel}</span>
         ) : tool.status === "running" ? (
-          <Loader2 className="hivra-chat-spinner" size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <ThinkingOrb size={20} state="working" label="Running" />
  ) : tool.status === "error" ? (
- <X size={13} style={{ color: "#c0392b", flexShrink: 0 }} />
+ <X size={13} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
  ) : (
- <Check size={13} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
+ <Check size={13} style={{ color: "var(--hg-text-3)", flexShrink: 0 }} />
  )}
       </button>
       {hasResult ? (
-        <div id={disclosureId} hidden={!open} style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "#c0392b" : "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
+        <div id={disclosureId} hidden={!open} style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "var(--hg-bad)" : "var(--text-secondary)", fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
           {tool.result}
         </div>
  ) : null}
@@ -635,21 +637,21 @@ const ChatMessageRow = memo(function ChatMessageRow({ m, index: i, accent, agent
  height: 26,
  flexShrink: 0,
  borderRadius: "50%",
- border: "1px solid var(--etched-border)",
- background: isUser ? "var(--bg-elevated)" : accent,
+ border: "1px solid var(--hg-stroke)",
+ background: isUser ? "var(--hg-fill-2)" : accent,
  color: isUser ? "var(--ink-black)" : "#fff",
  alignItems: "center",
  justifyContent: "center",
  fontSize: 11,
  fontWeight: 700,
- fontFamily: "var(--font-mono)",
+ fontFamily: "var(--font-sans)",
  }}
  >
  {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
  </div>
  <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
  {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
- <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hivra-red-soft)", border: "1px solid var(--hivra-red-line)", padding: "9px 13px" } : null) }}>
+ <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hg-fill-2)", borderRadius: 14, padding: "9px 14px" } : null) }}>
  {m.role === "assistant" ? (
  <AssistantMarkdown text={replyMarkdown(m)} />
  ) : (
@@ -670,7 +672,7 @@ const ChatMessageRow = memo(function ChatMessageRow({ m, index: i, accent, agent
  type="button"
  onClick={() => onOpenHistory(historySessionId)}
  className={`mono ${styles.msgAction}`}
- style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
+ style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--hg-stroke)", borderRadius: 7, background: "transparent", color: "var(--text-muted)", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
  >
  <MessageSquare size={11} /> Open the history
  </button>
@@ -1850,7 +1852,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const starters = (goalDef ?? getGoal(undefined)).starters;
 
  return (
- <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "var(--bg-surface)", position: "relative" }}>
+ <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "transparent", position: "relative" }}>
  {/* Sessions sidebar: an overlay drawer below md, an inline column from md up. */}
  {showRail ? (
  <>
@@ -1868,13 +1870,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-modal={drawerOpen ? true : undefined}
  aria-label={drawerOpen ? "Chats" : undefined}
  onKeyDown={drawerOpen ? trapDrawerFocus : undefined}
- className="absolute inset-y-0 left-0 z-20 flex w-[min(85vw,300px)] shrink-0 flex-col border-r border-[var(--etched-border)] bg-[var(--bg-surface)] md:static md:z-auto md:w-[232px]"
+ className="absolute inset-y-0 left-0 z-20 flex w-[min(85vw,300px)] shrink-0 flex-col border-r border-[var(--hg-stroke-subtle)] bg-[var(--hg-glass-strong)] backdrop-blur-xl md:static md:z-auto md:w-[232px]"
  >
  <div className="mx-3 mt-3 flex gap-2">
  <button
  type="button"
  onClick={newChat}
- className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 border border-[var(--etched-border)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] md:min-h-[40px]"
+ className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--hg-stroke)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hg-stroke-strong)] hover:bg-[var(--hg-fill-hover)] md:min-h-[40px]"
  >
  <Plus size={15} /> New chat
  </button>
@@ -1882,7 +1884,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="button"
  aria-label="Close chats"
  onClick={() => setShowRail(false)}
- className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center border border-[var(--etched-border)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:hidden"
+ className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[10px] border border-[var(--hg-stroke)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:hidden"
  >
  <X size={15} />
  </button>
@@ -1896,10 +1898,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  <div
  key={s.id}
  className={[
- "group mb-0.5 flex items-center",
+ "group mb-0.5 flex items-center rounded-[7px]",
  isActive
- ? "bg-[var(--hivra-red-soft)]"
- : "hover:bg-[var(--bg-elevated)]",
+ ? "bg-[var(--hg-fill-2)]"
+ : "hover:bg-[var(--hg-fill-hover)]",
  ].join(" ")}
  >
  <button
@@ -1909,7 +1911,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  className="flex min-h-[44px] min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left md:min-h-0"
  >
  {running ? (
- <Loader2 size={13} className="hivra-chat-spinner shrink-0 text-[var(--gold-leaf)]" aria-label="Working" />
+ <ThinkingOrb size={20} state="working" label="Working" className="shrink-0" />
  ) : (
  <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" />
  )}
@@ -1923,7 +1925,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="button"
  aria-label="Confirm delete chat"
  onClick={() => requestDeleteChat(s.id)}
- className="mono mr-1.5 inline-flex min-h-[24px] shrink-0 items-center justify-center bg-[var(--hivra-red)] px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-white pointer-coarse:min-h-[40px]"
+ className="mono mr-1.5 inline-flex min-h-[24px] shrink-0 items-center justify-center rounded-[7px] bg-[var(--hg-bad)] px-2 text-[11px] font-semibold tracking-[0.03em] text-white pointer-coarse:min-h-[40px]"
  >
  Delete?
  </button>
@@ -1951,7 +1953,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {instanceId ? <MemoryUsageBanner instanceId={instanceId} /> : null}
  {/* Below md an in-flow row under the banner; from md up the floating pair.
  Pixel sizes: the 14px root makes rem spacing 3.5px a step. */}
- <div className="flex h-[48px] shrink-0 items-center gap-1 border-b border-[var(--etched-border)] px-2 md:absolute md:left-2 md:top-2 md:z-[5] md:h-auto md:gap-1.5 md:border-0 md:px-0">
+ <div className="flex h-[48px] shrink-0 items-center gap-1 border-b border-[var(--hg-stroke-subtle)] px-2 md:absolute md:left-2 md:top-2 md:z-[5] md:h-auto md:gap-1.5 md:border-0 md:px-0">
  <button
  ref={railToggleRef}
  type="button"
@@ -1960,7 +1962,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-controls={showRail ? drawerId : undefined}
  title={showRail ? "Hide chats" : "Show chats"}
  onClick={() => setShowRail((v) => !v)}
- className="inline-flex h-[44px] w-[44px] items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-surface)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:w-auto md:p-1.5"
+ className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:w-auto md:p-1.5"
  >
  <PanelLeft size={13} />
  </button>
@@ -1970,19 +1972,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-label="New chat"
  title="New chat — runs alongside the others"
  onClick={newChat}
- className="inline-flex h-[44px] items-center justify-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-3 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:gap-0 md:p-1.5"
+ className="inline-flex h-[44px] items-center justify-center gap-1.5 rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl px-3 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:gap-0 md:p-1.5"
  >
  <Plus size={13} />
- <span className="mono text-[11px] uppercase tracking-[0.06em] md:hidden">New chat</span>
+ <span className="text-[11px] font-semibold tracking-[0.03em] md:hidden">New chat</span>
  </button>
  ) : null}
  {!showRail && busyIds.size > (busy ? 1 : 0) ? (
  <button
  type="button"
  onClick={() => setShowRail(true)}
- className="mono inline-flex h-[44px] items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 text-[11px] uppercase tracking-[0.06em] text-[var(--text-muted)] hover:text-[var(--ink-black)] md:h-auto md:py-1"
+ className="mono inline-flex h-[44px] items-center gap-1.5 rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl px-2 text-[11px] tracking-[0.03em] text-[var(--text-muted)] hover:text-[var(--ink-black)] md:h-auto md:py-1"
  >
- <Loader2 size={11} className="hivra-chat-spinner" aria-hidden /> {busyIds.size - (busy ? 1 : 0)} other{busyIds.size - (busy ? 1 : 0) === 1 ? "" : "s"} working
+ <ThinkingOrb size={20} state="working" /> {busyIds.size - (busy ? 1 : 0)} other{busyIds.size - (busy ? 1 : 0) === 1 ? "" : "s"} working
  </button>
  ) : null}
  </div>
@@ -1991,10 +1993,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  {messages.length === 0 ? (
  <div className="flex min-h-full items-center justify-center px-4">
  <div style={{ textAlign: "center", maxWidth: 470, paddingBottom: "6vh" }}>
- <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 52, height: 52, borderRadius: "50%", background: accent, color: "#fff", fontSize: 22, fontFamily: "var(--font-mono)", marginBottom: 16 }}>
+ <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 52, height: 52, borderRadius: "50%", background: accent, color: accent === "var(--gold-leaf)" ? "var(--hg-on-accent)" : "#fff", fontSize: 22, fontFamily: "var(--font-sans)", marginBottom: 16 }}>
  {emoji || (agentName.trim().charAt(0).toUpperCase() || "A")}
  </div>
- <div className="serif" style={{ fontSize: 26, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
+ <div style={{ fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--ink-black)", marginBottom: 6 }}>
  Hi, I&apos;m {agentName}.
  </div>
  <div style={{ fontSize: 13.5, color: "var(--text-secondary)", maxWidth: 440, margin: "0 auto 22px", lineHeight: 1.6 }}>
@@ -2007,9 +2009,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="button"
  disabled={busy}
  onClick={() => void send(s)}
- className="flex items-center gap-2.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3.5 py-3 text-left text-[13.5px] leading-[1.45] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] disabled:opacity-50"
+ className="flex items-center gap-2.5 rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl px-3.5 py-3 text-left text-[13.5px] leading-[1.45] text-[var(--ink-black)] transition-colors hover:border-[var(--hg-stroke-strong)] hover:bg-[var(--hg-fill-hover)] disabled:opacity-50"
  >
- <span style={{ color: "var(--gold-leaf)", flexShrink: 0 }} aria-hidden>→</span> {s}
+ <span style={{ color: "var(--hg-text-3)", flexShrink: 0 }} aria-hidden>→</span> {s}
  </button>
  ))}
  </div>
@@ -2024,7 +2026,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  </div>
 
- <div ref={composerDockRef} className={`relative border-t border-[var(--etched-border)] bg-[var(--bg-surface)] ${styles.composerDock}`}>
+ <div ref={composerDockRef} className={`relative bg-transparent ${styles.composerDock}`}>
  {showLatest && messages.length > 0 ? (
  <button
  type="button"
@@ -2052,7 +2054,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setLastFailed(activeId, null);
  void send(t);
  }}
- className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hivra-red-line)] md:min-h-[34px] md:min-w-0"
+ className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-fill-1)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hg-stroke-strong)] md:min-h-[34px] md:min-w-0"
  >
  <RotateCcw size={13} /> Retry
  </button>
@@ -2063,7 +2065,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  e.preventDefault();
  void send(input);
  }}
- className="mx-auto w-full max-w-[760px] border border-[var(--etched-border)] transition-colors focus-within:border-[var(--hivra-red-line)]"
+ className="mx-auto w-full max-w-[760px] rounded-[20px] border border-[var(--hg-stroke)] bg-[var(--hg-glass-strong)] backdrop-blur-xl backdrop-saturate-[1.3] shadow-[var(--hg-glass-edge),var(--hg-shadow-md)] transition-colors focus-within:border-[var(--hg-stroke-strong)]"
  >
  <textarea
  ref={composerRef}
@@ -2110,9 +2112,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  title="Attach an image or text file (the agent reads it on the box)"
  disabled={busy || uploading || attachments.length >= 5}
  onClick={() => fileInputRef.current?.click()}
- className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] disabled:opacity-40 md:min-h-[34px] md:min-w-0"
+ className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2.5 text-[var(--text-muted)] transition-colors rounded-full hover:bg-[var(--hg-fill-hover)] hover:text-[var(--ink-black)] disabled:opacity-40 md:min-h-[34px] md:min-w-0"
  >
- {uploading ? <Loader2 size={15} className="hivra-chat-spinner" /> : <Paperclip size={15} />}
+ {uploading ? <ThinkingOrb size={20} state="working" label="Uploading" /> : <Paperclip size={15} />}
  </button>
  </>
  ) : null}
@@ -2131,10 +2133,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  title="Think — let the agent reason for longer before answering"
  onClick={toggleThink}
  className={[
- "mono hidden items-center gap-1.5 border px-2.5 py-1 text-[11px] uppercase tracking-[0.06em] transition-colors md:inline-flex",
+ "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-[0.03em] transition-colors md:inline-flex",
  think
- ? "border-transparent bg-[var(--ink-black)] text-[var(--bg-surface)]"
- : "border-[var(--etched-border)] text-[var(--text-muted)] hover:text-[var(--ink-black)]",
+ ? "border-transparent bg-[var(--hg-accent)] text-[var(--hg-on-accent)]"
+ : "border-[var(--hg-stroke)] text-[var(--text-muted)] hover:text-[var(--ink-black)]",
  ].join(" ")}
  >
  <Brain size={11} /> Think{think ? " · On" : ""}
@@ -2145,7 +2147,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  onClick={stop}
  aria-label="Stop response"
  title="Stop the agent"
- className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 border border-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--bg-elevated)] md:min-h-[34px] md:min-w-0"
+ className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full border border-[var(--hg-stroke-strong)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--hg-fill-hover)] md:min-h-[34px] md:min-w-0"
  >
  <Square size={13} fill="currentColor" /> Stop response
  </button>
@@ -2154,7 +2156,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  type="submit"
  disabled={!input.trim()}
  aria-label="Send message"
- className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 bg-[var(--ink-black)] px-3 text-[12.5px] font-semibold text-[var(--bg-surface)] transition-opacity disabled:opacity-40 md:min-h-[34px] md:min-w-0"
+ className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full bg-[var(--hg-accent)] px-3 text-[12.5px] font-semibold text-[var(--hg-on-accent)] transition-opacity disabled:opacity-40 md:min-h-[34px] md:min-w-0"
  >
  <Send size={14} />
  <span className="hidden md:inline">Send message</span>
@@ -2163,14 +2165,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  </div>
  </form>
  {attachError ? (
- <p role="alert" className="mono mx-auto mt-2 w-full max-w-[760px] text-[12px] text-[var(--hivra-red)]">
+ <p role="alert" className="mono mx-auto mt-2 w-full max-w-[760px] text-[12px] text-[var(--hg-bad)]">
  {attachError}
  </p>
  ) : null}
  {attachments.length > 0 ? (
  <div className="mx-auto mt-2 flex w-full max-w-[760px] flex-wrap gap-1.5">
  {attachments.map((a) => (
- <span key={a.path} className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 border border-[var(--etched-border)] bg-[var(--bg-elevated)] py-1 pl-2.5 pr-2.5 text-[11px] text-[var(--text-secondary)]">
+ <span key={a.path} className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-[var(--hg-stroke)] bg-[var(--hg-fill-1)] py-1 pl-2.5 pr-2.5 text-[11px] text-[var(--text-secondary)]">
  <Paperclip size={10} className="shrink-0" />
  <span className="min-w-0 truncate">{a.name}</span>
  <button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))} className="-my-[11px] -mr-[8px] inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]">

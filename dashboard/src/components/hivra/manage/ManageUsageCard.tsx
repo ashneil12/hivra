@@ -271,7 +271,7 @@ export function ManageUsageCard({ agentId, cap, recordedStatus }: {
         {lines.map((line) => (
           <div key={line.key} role={line.alert ? "alert" : undefined} style={{ ...manageMuted, fontSize: 11.5 }}>{line.text}</div>
         ))}
-        {error ? <div role="alert" style={{ ...manageMuted, color: "#e06c5a" }}>{error}</div> : null}
+        {error ? <div role="alert" style={{ ...manageMuted, color: "var(--hg-bad)" }}>{error}</div> : null}
       </div>
     </div>
   );

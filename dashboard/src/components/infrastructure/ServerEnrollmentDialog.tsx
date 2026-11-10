@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, KeyRound, Loader2, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { InfrastructureApiError } from "@/lib/infrastructure/client";
@@ -223,7 +224,7 @@ export function ServerEnrollmentDialog({
         <div className={styles.wizardBody}>
           {state.kind === "issuing" ? (
             <p className={enrollmentStyles.progress} role="status">
-              <Loader2 size={15} className={styles.spin} aria-hidden="true" /> Making your setup command…
+              <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="connecting" size={20} /></span> Making your setup command…
             </p>
           ) : state.kind === "unavailable" ? (
             <div className={styles.formError} role="alert">

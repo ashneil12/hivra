@@ -26,14 +26,13 @@ function captureChannelEvent(event: string, properties: Record<string, unknown>)
 }
 
 const primaryBtn: React.CSSProperties = {
-  border: "1px solid var(--ink-black)",
-  background: "var(--ink-black)",
-  color: "var(--bg-surface)",
-  fontFamily: "var(--font-mono), monospace",
-  fontSize: 10,
-  textTransform: "uppercase",
-  letterSpacing: "0.1em",
-  fontWeight: 800,
+  border: "1px solid var(--hg-accent)",
+  background: "var(--hg-accent)",
+  color: "var(--hg-on-accent)",
+  borderRadius: "var(--hg-radius-sm)",
+  fontFamily: "var(--font-sans)",
+  fontSize: 13,
+  fontWeight: 600,
   padding: "11px 18px",
   cursor: "pointer",
   display: "inline-flex",
@@ -188,7 +187,7 @@ export function HivraGitHubConnect({
       </p>
 
       {error ? (
-        <div style={{ border: "1px solid #c0392b", background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 13, padding: "10px 14px", marginBottom: 18 }}>{error}</div>
+        <div style={{ border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)", color: "var(--hg-bad)", borderRadius: "var(--hg-radius-md)", fontSize: 13, padding: "10px 14px", marginBottom: 18 }}>{error}</div>
       ) : null}
 
       <div style={{ display: "grid", gap: 12, marginBottom: 22 }}>
@@ -204,8 +203,9 @@ export function HivraGitHubConnect({
           display: "flex",
           gap: 10,
           alignItems: "flex-start",
-          border: "1px solid var(--etched-border)",
-          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--hg-stroke)",
+          background: "var(--hg-fill-1)",
+          borderRadius: "var(--hg-radius-md)",
           padding: "11px 13px",
           marginBottom: 14,
           cursor: "pointer",
@@ -243,7 +243,7 @@ export function HivraGitHubConnect({
           autoCorrect="off"
           spellCheck={false}
           enterKeyHint="go"
-          style={{ flex: 1, minWidth: 0, padding: "11px 12px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 13, fontFamily: "var(--font-mono), monospace", outline: "none" }}
+          style={{ flex: 1, minWidth: 0, padding: "11px 12px", border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 13, fontFamily: "var(--font-mono), monospace", outline: "none" }}
         />
         <button type="button" onClick={() => void connect()} disabled={busy || !pat.trim()} style={{ ...primaryBtn, padding: "0 16px", opacity: busy || !pat.trim() ? 0.5 : 1, cursor: busy || !pat.trim() ? "default" : "pointer" }}>
           {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />} Connect

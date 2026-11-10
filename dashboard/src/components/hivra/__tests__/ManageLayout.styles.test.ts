@@ -39,7 +39,9 @@ describe("Manage layout", () => {
   });
 
   it("gives section tabs a 44px target in both orientations", () => {
-    expect(rule(tabs, ".tab")).toMatch(/min-height:\s*48px/);
+    // The segmented control is compact for a mouse and grows to 44px for touch.
+    const coarse = tabs.slice(tabs.indexOf("@media (pointer: coarse)"));
+    expect(coarse).toMatch(/\.tab\s*\{\s*min-height:\s*44px/);
     expect(rule(tabs, '.bar[data-orientation="vertical"] .tab')).toMatch(/min-height:\s*44px/);
     expect(rule(tabs, '.bar[data-orientation="vertical"] .list')).toMatch(/mask-image:\s*none/);
   });

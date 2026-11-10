@@ -6,12 +6,13 @@
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
 import styles from "./ResourceWorkspace.module.css";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import { Component, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import {
@@ -186,7 +187,7 @@ type Tab = AgentSurfaceId;
 const COMPUTER_WORKSPACE_TABS: Tab[] = ["files", "box"];
 
 const labelStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 10,
   fontWeight: 700,
   textTransform: "uppercase",
@@ -279,7 +280,7 @@ function shownTab(agent: HivraAgent, tab: Tab): Tab {
 function Stub({ title, body }: { title: string; body: string }) {
   return (
     <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>{title}</div>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>{body}</div>
     </div>
   );
@@ -442,7 +443,7 @@ function AuthenticatedSurface({
         <iframe key={generation} name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
       ) : (
         <div className={styles.statusPanel} role="status">
-          {accessStatus === "checking" || accessStatus === "starting" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
+          {accessStatus === "checking" || accessStatus === "starting" ? <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><ThinkingOrb size={32} state="connecting" /></div> : null}
           <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 8 }}>
             {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "starting" ? starting.title : accessStatus === "stalled" ? stalled.title : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
           </div>
@@ -649,7 +650,7 @@ function BrowserDisabledView({
 
   return (
     <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>
         Browser automation is off
       </div>
       <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto 16px", lineHeight: 1.6 }}>
@@ -1331,8 +1332,8 @@ export default function AgentPage() {
         ) : provisioning ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
-              <Loader2 aria-hidden="true" size={20} style={{ display: "block", margin: "0 auto", animation: "spin 1s linear infinite", color: "var(--gold-leaf)" }} />
-              <div className="serif" style={{ fontSize: 24, fontWeight: 400, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
+              <div style={{ display: "flex", justifyContent: "center" }}><ThinkingOrb size={32} state="connecting" /></div>
+              <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
               <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>{activity.body}</div>
               {statusObservation?.agentId === id ? <div
                 aria-live="off"

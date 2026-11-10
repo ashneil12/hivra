@@ -21,7 +21,7 @@ function fmtSize(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const mono: React.CSSProperties = { fontFamily: "var(--font-mono), monospace", fontSize: 11, letterSpacing: "0.02em" };
+const mono: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.02em" };
 
 // Editing is offered up to the box write cap; bigger files stay view-only.
 const EDIT_MAX = 512 * 1024;
@@ -168,7 +168,7 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
           {loading ? (
             <LoadingState compact label="Loading files…" />
           ) : error ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px", color: "#e06c5a", fontSize: 13 }}><AlertTriangle size={16} /> {error}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px", color: "var(--hg-bad)", fontSize: 13 }}><AlertTriangle size={16} /> {error}</div>
           ) : entries.length === 0 ? (
             <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>Empty.</div>
           ) : (
@@ -224,7 +224,7 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
               </div>
             ) : null}
             {saveErr ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", color: "#e06c5a", fontSize: 12, borderBottom: "1px solid var(--etched-border)" }}><AlertTriangle size={13} /> {saveErr}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", color: "var(--hg-bad)", fontSize: 12, borderBottom: "1px solid var(--etched-border)" }}><AlertTriangle size={13} /> {saveErr}</div>
             ) : null}
             {editing ? (
               <textarea
@@ -236,12 +236,12 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
                 autoCapitalize="off"
                 autoCorrect="off"
                 autoComplete="off"
-                style={{ flex: 1, width: "100%", boxSizing: "border-box", resize: "none", border: "none", outline: "none", background: "rgba(255,255,255,0.02)", color: "var(--ink-black)", padding: "14px 16px", fontFamily: "var(--font-mono), monospace", fontSize: 12, lineHeight: 1.55 }}
+                style={{ flex: 1, width: "100%", boxSizing: "border-box", resize: "none", border: "none", outline: "none", background: "var(--hg-fill-1)", color: "var(--ink-black)", padding: "14px 16px", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55 }}
               />
             ) : (
               <div style={{ flex: 1, overflow: "auto", padding: "14px 16px" }}>
                 {file.error ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#e06c5a", fontSize: 13 }}><AlertTriangle size={16} /> {file.error}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--hg-bad)", fontSize: 13 }}><AlertTriangle size={16} /> {file.error}</div>
                 ) : (
                   <pre className="mono" style={{ ...mono, fontSize: 12, lineHeight: 1.55, color: "var(--ink-black)", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{file.content}</pre>
                 )}

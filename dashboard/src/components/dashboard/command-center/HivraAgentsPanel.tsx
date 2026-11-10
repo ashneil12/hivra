@@ -7,13 +7,13 @@ import {
   ArrowUpRight,
   Bot,
   ChevronDown,
-  Loader2,
   Monitor,
   RefreshCw,
   Search,
   ServerCog,
   Wrench,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
@@ -234,7 +234,7 @@ export function HivraAgentsPanel({
       ) : null}
       {loading ? (
         <div className={styles.loading} role="status">
-          <Loader2 size={16} className={styles.spin} aria-hidden />
+          <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="searching" size={20} /></span>
           Loading agents…
         </div>
       ) : null}

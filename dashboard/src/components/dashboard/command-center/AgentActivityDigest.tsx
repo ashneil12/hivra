@@ -9,12 +9,12 @@ import type { InstanceActivityDigest } from "@/lib/command-center/activity";
 // live-work digest.
 
 function stateColor(state: InstanceActivityDigest["state"] | "loading") {
-  if (state === "responding") return "#16a34a";
+  if (state === "responding") return "var(--hg-ok)";
   // "unreachable" is no longer surfaced as an error (the legacy live-activity
   // surface is retired); treat it as a calm neutral state, same as idle — never
   // a red alarm for what is a normal condition on a current box.
   if (state === "unreachable") return "var(--text-muted)";
-  if (state === "not_running") return "#71717a";
+  if (state === "not_running") return "var(--hg-text-3)";
   return "var(--ink-black)";
 }
 
@@ -55,7 +55,7 @@ export function AgentActivityDigest({
       data-testid="agent-activity-digest"
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.04)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         display: "grid",
         gap: 16,
@@ -94,8 +94,8 @@ export function AgentActivityDigest({
               key={`${item.type}-${item.label}`}
               className="mono"
               style={{
-                border: `1px solid ${item.severity === "critical" ? "#b91c1c" : "var(--gold-leaf)"}`,
-                color: item.severity === "critical" ? "#b91c1c" : "var(--gold-leaf)",
+                border: `1px solid ${item.severity === "critical" ? "var(--hg-bad)" : "var(--gold-leaf)"}`,
+                color: item.severity === "critical" ? "var(--hg-bad)" : "var(--gold-leaf)",
                 padding: "6px 8px",
                 fontSize: 10,
                 fontWeight: 800,

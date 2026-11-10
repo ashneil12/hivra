@@ -53,6 +53,7 @@ export function OpsHandoffCopyButton({ text }: OpsHandoffCopyButtonProps) {
       onClick={handleCopy}
       style={{
         border: '1px solid var(--etched-border)',
+        borderRadius: 7,
         background: copied ? 'var(--ink-black)' : 'var(--bg-surface)',
         color: copied ? 'var(--vellum-bg)' : 'var(--ink-black)',
         padding: '8px 12px',
