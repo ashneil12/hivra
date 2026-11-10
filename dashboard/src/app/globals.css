@@ -1622,6 +1622,17 @@ body::before {
     outline-offset: 0;
 }
 
+/* Status words swap with a short fade and slide instead of a jump. Applied
+   by <StatusText> only after the value changes, never on first render. */
+@keyframes hg-status-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+}
+.hg-status-swap { display: inline-block; animation: hg-status-in 240ms var(--hg-ease) both; }
+@media (prefers-reduced-motion: reduce) {
+    .hg-status-swap { animation: none; }
+}
+
 /* Glass surfaces. `hg-glass` for panels and cards, `hg-glass-strong` for
    menus, dialogs and bars that sit over moving content. */
 .hg-glass,
