@@ -15,6 +15,7 @@ import { advanceProviderAgentDelete, ProviderAgentDeleteError } from "@/lib/hivr
 import { advanceProviderAgentReadiness } from "@/lib/hivra/provider-agent-readiness";
 import { advanceProviderNativeReadiness } from "@/lib/hivra/provider-native-readiness";
 import { advanceProviderDesktopReadiness } from "@/lib/hivra/provider-desktop-readiness";
+import { verifyLinuxServerPublicRuntime } from "@/lib/hivra/linux-server-readiness";
 import type { ProviderAgentReadinessStage } from "@/lib/hivra/provider-readiness-contract";
 import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
 import { observeProviderRuntimeUpdate, recordProviderSoftwareUpdate, type ProviderRuntimeUpdateStage } from "@/lib/hivra/provider-runtime-update";
@@ -563,6 +564,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         return apiSuccess({ agent: publicAgent(current) });
       }
       const vmid = Number(current.vmid);
+      // A Linux computer with no desktop is stored as a linux-desktop row with
+      // its own profile. Only that exact profile skips the desktop receipt; a
+      // missing or unknown profile keeps the desktop requirement.
+      const headlessComputer = current.type === "linux-desktop" && current.computer_profile === "ubuntu-server";
       let context: HivraAgentExecutionContext;
       try {
         context = await getExecutionContext();
@@ -719,7 +724,7 @@ fi` : ""}`;
               // Ubuntu computer after every reboot.
               expectedAgentKind:
                 convergenceOperationKind === "provision" && current.type === "linux-desktop"
-                  ? "linux-desktop"
+                  ? headlessComputer ? "linux-server" : "linux-desktop"
                   : null,
               namedHostname:
                 typeof current.cf_hostname === "string" ? current.cf_hostname : null,
@@ -753,7 +758,47 @@ fi` : ""}`;
                 .maybeSingle();
               return apiSuccess({ agent: publicAgent(failed || current) });
             }
-            if (current.type === "linux-desktop") {
+            if (headlessComputer) {
+              // No desktop, so no desktop capability receipt: the host reported
+              // ready (and, on provision, the linux-server kind), and the
+              // gateway must answer as a linux-server computer.
+              const readiness = await verifyLinuxServerPublicRuntime(validatedResult.value.chatUrl);
+              if (!readiness.ok) {
+                if (readiness.retryable) {
+                  log.warn("linux computer gateway is not answering as a linux-server yet", {
+                    source: "hivra/agents/[id]",
+                    failureType: "hivra_linux_server_meta_unavailable",
+                    userId,
+                    agentId: current.id,
+                    vmid,
+                    operationKind: convergenceOperationKind,
+                  });
+                  return apiSuccess({ agent: publicAgent(current) });
+                }
+                await releaseHivraAgentOperation({
+                  userId,
+                  agentId: String(current.id),
+                  operationId: provisionOperationId,
+                  error: readiness.ownerMessage,
+                  markError: true,
+                });
+                log.warn("linux computer gateway answered as the wrong kind of computer", {
+                  source: "hivra/agents/[id]",
+                  failureType: "hivra_linux_server_wrong_kind",
+                  userId,
+                  agentId: current.id,
+                  vmid,
+                  operationKind: convergenceOperationKind,
+                });
+                const { data: failed } = await supabaseAdmin
+                  .from("hivra_agents")
+                  .select("*")
+                  .eq("id", current.id)
+                  .eq("user_id", userId)
+                  .maybeSingle();
+                return apiSuccess({ agent: publicAgent(failed || current) });
+              }
+            } else if (current.type === "linux-desktop") {
               const capabilityResult = await runProxmoxHostScript(
                 buildRemoteDesktopCapabilityInspectionScript({
                   vmid,
@@ -880,7 +925,7 @@ fi` : ""}`;
                   typeof current.deployment_mode === "string" ? current.deployment_mode : null,
                 operationId: provisionOperationId,
                 vmid: Number.isInteger(Number(current.vmid)) ? Number(current.vmid) : null,
-                evidence: current.type === "linux-desktop"
+                evidence: current.type === "linux-desktop" && !headlessComputer
                   ? "remote_desktop_capability_receipt"
                   : "host_ready_result",
               });
