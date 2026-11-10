@@ -226,7 +226,7 @@ export function labelForNavigationItem(
 }
 
 const MOBILE_NAVIGATION_COPY: Record<MobileNavigationCopyKey, string> = {
-  switchOrSearch: "Switch or search", needsAttention: "Needs attention", manage: "Manage", help: "Help",
+  switchOrSearch: "Switch or search", needsAttention: "Need you", manage: "Manage", help: "Help",
   account: "Account", manageAccount: "Manage account", signOut: "Sign out", signingOut: "Signing out…",
   themeDark: "Theme: Dark", themeLight: "Theme: Light", switchToDark: "Switch to dark", switchToLight: "Switch to light",
 };
