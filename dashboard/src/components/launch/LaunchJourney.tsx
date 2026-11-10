@@ -165,6 +165,8 @@ import {
 import { PLANS } from "@/lib/subscription/plans";
 
 import styles from "./LaunchJourney.module.css";
+import { attributionFromParams, captureVeniceAttribution } from "@/lib/venice/attribution";
+import { parseAgentParam, parseVeniceInference, withVeniceInference } from "@/lib/venice/launch-link";
 import { ModelAccessControl } from "./ModelAccessControl";
 
 function planCanFit(plan: PlanInfo | null, resources: LaunchDraft["resources"], poolExempt = false): boolean {
@@ -756,7 +758,14 @@ export function LaunchJourney(
   const targetValues = searchParams?.getAll("targetId") ?? [];
   const targetValuesKey = targetValues.join("\u0000");
   const requestedKindParam = searchParams?.get("kind") ?? null;
-  const requestedProfileParam = searchParams?.get("profile") ?? null;
+  // `agent=` is the short deep-link spelling of `profile=` (Venice links).
+  const requestedProfileParam = searchParams?.get("profile") ?? parseAgentParam(searchParams?.get("agent"));
+  const inferenceParam = parseVeniceInference(searchParams?.get("inference"));
+  const refParam = searchParams?.get("ref") ?? null;
+  const codeParam = searchParams?.get("code") ?? null;
+  useEffect(() => {
+    captureVeniceAttribution(attributionFromParams(key => key === "ref" ? refParam : key === "code" ? codeParam : null));
+  }, [refParam, codeParam]);
   const startParam = searchParams?.get("start") ?? null;
   const draftParam = searchParams?.get("draft") ?? null;
   const upgradedParam = searchParams?.get("upgraded") ?? null;
@@ -967,7 +976,7 @@ export function LaunchJourney(
       const details = PROFILE_DETAILS[requestedProfile];
       const name = linkedTemplate?.name ?? defaultLaunchName(requestedProfile, []);
       if (!linkedTemplate?.name) autoNameRef.current = { launchRequestId: next.launchRequestId, name };
-      return {
+      return withVeniceInference({
         ...next,
         stage: "plan",
         resourceKind: details.resourceKind,
@@ -975,7 +984,7 @@ export function LaunchJourney(
         name,
         resources: { ...details.recommended },
         template: linkedTemplate ? { id: linkedTemplate.id, name: linkedTemplate.name } : null,
-      };
+      }, inferenceParam);
     };
     let initial: LaunchDraft;
     if (stored && (stored.launchState === "uncertain" || stored.launchState === "submitting")) {
@@ -1005,7 +1014,7 @@ export function LaunchJourney(
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
 
   useEffect(() => {
     let active = true;
