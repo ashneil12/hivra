@@ -1113,13 +1113,25 @@ export function LaunchJourney(
     return () => { active = false; };
   }, []);
 
-  // Until the owner chooses, Hermes runs on Hivra credits when they have
-  // some, and every other agent signs in inside itself after it opens.
+  // Until the owner chooses, every agent that can use Hivra credits (Venice)
+  // starts on them, even at $0, where the choice offers to add credit. An
+  // agent signs in inside itself only where credits aren't offered.
+  const defaultSelfManaged = destination.mode === "self-managed";
+  const defaultProviderComputer = defaultSelfManaged && isWholeProviderComputer(destination.selectedTarget);
+  const defaultTarget = destination.selectedTarget;
+  const modelDefaultContext = (profileId: LaunchProfileId | null) => ({
+    selfHosted,
+    providerComputer: defaultProviderComputer,
+    selfManaged: defaultSelfManaged,
+    modelSettingsSupported: !defaultSelfManaged
+      || targetSupportsLaunchModelSettings(defaultTarget, profileId ? PROFILE_DETAILS[profileId].runtimeId : undefined),
+  });
   useLayoutEffect(() => {
-    const context = { balance: creditsBalance, selfHosted };
+    const context = modelDefaultContext(draft?.profileId ?? null);
     if (!draft || withModelAccessDefault(draft, context) === draft) return;
-    setDraft(current => current ? withModelAccessDefault(current, context) : current);
-  }, [creditsBalance, draft, selfHosted]);
+    setDraft(current => current ? withModelAccessDefault(current, modelDefaultContext(current.profileId)) : current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- modelDefaultContext only reads the values listed here.
+  }, [draft, selfHosted, defaultSelfManaged, defaultProviderComputer, defaultTarget]);
 
   // Until the owner chooses, a browser follows the plan on Hivra Cloud
   // and the selected host's measured capacity on their own infrastructure.
@@ -1512,16 +1524,11 @@ export function LaunchJourney(
     modelSettingsSupported,
     balance: creditsBalance,
   }) : [];
-  // Hermes' default waits for the balance: it starts on credits only when
-  // there are some.
-  const modelDefaultPending = Boolean(draft.profileId && modelAccessShown
-    && draft.modelAccess.source === "recommended"
-    && recommendedModelAccessMode(draft.profileId, creditsBalance, selfHosted) === null);
   const modelProblem = digitalOceanLane
     ? digitalOceanHarness ? digitalOceanModelProblem(digitalOceanHarness, draft.digitalOcean, currentPastedKey, savedKeys) : null
     : !draft.profileId || !modelAccessShown
     ? null
-    : modelDefaultPending || (draft.modelAccess.mode === "credits" && creditsBalance.state === "loading")
+    : draft.modelAccess.mode === "credits" && creditsBalance.state === "loading"
       ? "Checking your Hivra credits…"
       : modelAccessProblem(draft.profileId, draft.modelAccess, {
         name: draft.name,
@@ -1604,7 +1611,7 @@ export function LaunchJourney(
         : recommendedHere(profileId, mode, destination.selectedTarget, plan),
       modelAccess: {
         ...freshModelAccess(),
-        mode: recommendedModelAccessMode(profileId, creditsBalance, selfHosted) ?? "native",
+        mode: recommendedModelAccessMode(profileId, modelDefaultContext(profileId)),
       },
       windowsIsoVolume: null,
       windowsIsoEvidence: null,

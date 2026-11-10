@@ -121,14 +121,14 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(modelChoice(/^Hivra credits/)).toHaveTextContent("$4.25 available");
 
     const review = await reviewLaunch();
-    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4 Flash/)).toBeInTheDocument();
+    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · Kimi K2.6/)).toBeInTheDocument();
     expect(review.getByText("Chat, a terminal, files and skills on its own computer.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
 
     await screen.findByRole("heading", { name: "Hermes 1 has its own computer and is starting." });
     expect(instanceBodies).toHaveLength(1);
     expect(instanceBodies[0]).toMatchObject({
-      name: "Hermes 1", provider: "venice", model: "deepseek-v4-flash", apiKey: "",
+      name: "Hermes 1", provider: "venice", model: "kimi-k2-6", apiKey: "",
       managedVenice: { enabled: true, walletType: "card" },
     });
     // Nothing on this screen advances on a timer; it waits for the workspace.
@@ -151,16 +151,18 @@ describe("every catalog agent launches in the Launch journey", () => {
       .toHaveAttribute("href", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1&connect=telegram`);
   });
 
-  it("starts Hermes set up inside itself at $0, with credits disabled and a way to add some", async () => {
+  it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {
     summaryMock.mockResolvedValue(balance(0));
     await chooseAgent("Hermes");
-    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
-    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting.");
+    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Powered by Venice");
+    expect(screen.getByText("Add credit to start chatting, or choose another option.")).toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name: "Add credit" }));
     expect(screen.getByRole("dialog", { name: "Add Hivra credit" })).toBeInTheDocument();
 
+    fireEvent.click(modelChoice(/^Set up inside Hermes after it opens/));
     const review = await reviewLaunch();
     expect(review.getByText("Choose a model provider inside Hermes after it opens.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
@@ -186,9 +188,8 @@ describe("every catalog agent launches in the Launch journey", () => {
     tokenGeoStatus = "blocked";
     summaryMock.mockResolvedValue(balance(0, 7));
     await chooseAgent("Hermes");
-    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeDisabled());
-    expect(modelChoice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
-    expect(modelChoice(/^Set up inside Hermes after it opens/)).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting."));
+    expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("combobox", { name: "Pay from" })).not.toBeInTheDocument();
   });
 
@@ -245,13 +246,13 @@ describe("every catalog agent launches in the Launch journey", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Send this key to Codex 1's computer/ }));
 
     const review = await reviewLaunch();
-    expect(review.getByText("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · DeepSeek V4 Pro (via Venice)")).toBeInTheDocument();
+    expect(review.getByText("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · Kimi K2.6 (via Venice · recommended)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Codex" }));
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
     expect(createAgentMock.mock.calls[0][0]).toMatchObject({
       type: "codex",
-      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VENICE_KEY.id },
+      llm: { provider: "venice", mode: "byok", model: "kimi-k2-6", vaultKeyId: VENICE_KEY.id },
     });
     expect(createAgentMock.mock.calls[0][0].llm).not.toHaveProperty("apiKey");
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`));
