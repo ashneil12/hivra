@@ -51,7 +51,8 @@ const LAUNCH_DRAFT = matching(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][
 const TEMPLATE_REFERENCE = matching(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
 const RESOURCE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
-export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
+// `ubuntu-server` is added here and in the shared grammar file with its Launch tile.
+export const NATIVE_LAUNCH_PROFILES = everyMember<Exclude<LaunchProfileId, "ubuntu-server">>()([
   "claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
   "ubuntu-desktop", "linux-terminal", "omarchy", "windows",
 ]);

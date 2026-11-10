@@ -561,7 +561,9 @@ export async function submitLaunchDraft(
       launchRequestId: draft.launchRequestId,
     }, options.onObserved);
   }
-  if (profileId === "ubuntu-desktop") {
+  if (profileId === "ubuntu-desktop" || profileId === "ubuntu-server") {
+    // Both are stored as the linux-desktop type; the profile tells the route
+    // which one to build, and the route chooses the provisioner kind.
     return submitWithReceipt({
       type: "linux-desktop",
       computerProfile: profileId,
@@ -644,6 +646,8 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
     });
   }
   if (draft.profileId === "linux-terminal") return `/dashboard/agent/${id}?tab=manage`;
+  // A Linux computer has no desktop; it opens on its files.
+  if (draft.profileId === "ubuntu-server") return `/dashboard/agent/${id}?tab=files`;
   if (draft.profileId && PROFILE_DETAILS[draft.profileId].resourceKind === "computer") {
     // The launch operation installs the desktop. Opening its result must not
     // request a second installation (or bypass explicit preparation holds).

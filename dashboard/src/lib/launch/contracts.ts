@@ -9,7 +9,7 @@ export const LAUNCH_DRAFT_SCHEMA_VERSION = 1 as const;
 export type LaunchStage = "choose" | "plan" | "review" | "launch";
 export type LaunchResourceKind = "agent" | "computer";
 export type LaunchAgentProfileId = "claude-code" | "codex" | "hermes" | "openclaw" | "agent-zero" | "aeon";
-export type LaunchComputerProfileId = "ubuntu-desktop" | "linux-terminal" | "omarchy" | "windows";
+export type LaunchComputerProfileId = "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "omarchy" | "windows";
 export type LaunchProfileId = LaunchAgentProfileId | LaunchComputerProfileId;
 export type LaunchState = "idle" | "submitting" | "uncertain" | "accepted" | "failed";
 
@@ -201,7 +201,7 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
    * This is deliberately separate from the guest runtime sent at launch: a
    * generic Linux desktop adapter is not evidence of Windows capability. */
   placementRuntimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "aeon"
-    | "linux-desktop" | "linux-terminal" | "windows-installer";
+    | "linux-desktop" | "linux-server" | "linux-terminal" | "windows-installer";
   managedCapacity: "plan" | "entitlement-required" | "self-managed-only";
   /** Whether a server the owner connected can run it. Hermes runs on Hivra
    * Cloud only. */
@@ -321,6 +321,22 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     cpuOptions: [2, 4, 8],
     ramOptions: [4, 8, 16],
   },
+  "ubuntu-server": {
+    resourceKind: "computer",
+    name: "Linux computer",
+    // Stored and launched as the linux-desktop type with the ubuntu-server
+    // profile; only its provisioner kind and placement evidence are new.
+    runtimeId: "linux-desktop",
+    placementRuntimeId: "linux-server",
+    managedCapacity: "plan",
+    ownServer: true,
+    lane: "hivra-agent",
+    browser: "none",
+    sizing: "burst",
+    recommended: { ...recommendedResourceEnvelope("ubuntu-server"), source: "recommended" },
+    cpuOptions: [0.5, 1, 2, 4],
+    ramOptions: [1, 2, 4, 8],
+  },
   "linux-terminal": {
     resourceKind: "computer",
     name: "Linux Sandbox",
@@ -367,6 +383,9 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
   },
 };
 
+/** The profiles a launch link, draft or tile may name. `ubuntu-server` joins
+ * this list (and the native route grammar that mirrors it) with its Launch
+ * tile; until then a launch link or saved draft cannot select it. */
 export const LAUNCH_PROFILE_IDS: readonly LaunchProfileId[] = [
   "claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
   "ubuntu-desktop", "linux-terminal", "omarchy", "windows",

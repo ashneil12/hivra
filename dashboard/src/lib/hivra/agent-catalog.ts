@@ -294,10 +294,22 @@ export const AGENTS: AgentDef[] = ALL_AGENTS.filter(
   (agent) => agent.available && agent.resourceKind !== "computer",
 );
 
+// The Linux computer without a desktop (profile `ubuntu-server`) is stored as a
+// `linux-desktop` agent, so its resize floor is keyed on the computer profile;
+// the desktop floor must not apply to it.
+export const UBUNTU_SERVER_FLOOR = { cpu: 0.5, ram: 1 } as const;
+
 // Resize floor for an agent type at a given browser-automation state. Starts
 // from the agent's own floor override (Aeon hosts a tiny dashboard → 0.5/0.5)
-// or BASE_FLOOR, plus the browser surcharge for agents that ship one.
-export function resizeFloor(id: AgentId | string, browserOn: boolean): { cpu: number; ram: number } {
+// or BASE_FLOOR, plus the browser surcharge for agents that ship one. Pass the
+// computer profile for a computer so a light machine is not held to the desktop
+// floor.
+export function resizeFloor(
+  id: AgentId | string,
+  browserOn: boolean,
+  computerProfile?: string | null,
+): { cpu: number; ram: number } {
+  if (id === "linux-desktop" && computerProfile === "ubuntu-server") return { ...UBUNTU_SERVER_FLOOR };
   const def = ALL_AGENTS.find((a) => a.id === id);
   const base = def?.floor ?? BASE_FLOOR;
   const withBrowser = browserOn && Boolean(def?.browser);

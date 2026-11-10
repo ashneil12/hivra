@@ -68,6 +68,11 @@ export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSu
   const profile = PROFILE_DETAILS[profileId];
   const floor = launchResourcePolicy(profileId, { browser: false }).floor;
   if (profileId === "ubuntu-desktop") return catalogSubject("linux-desktop", { floor });
+  if (profileId === "ubuntu-server") {
+    // The same plan and pool as Ubuntu Desktop at its own size. Hosts need the
+    // linux-server release to take it.
+    return catalogSubject("linux-desktop", { floor, placementRuntimeId: "linux-server" });
+  }
   if (profileId === "linux-terminal") {
     return catalogSubject("linux-terminal", { hivraCloud: "unavailable", floor, targetKind: "gvisor" });
   }
@@ -329,6 +334,13 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
       { cpu: 8, ram: 16, maximumCpu: 8, maximumRam: 16 },
     );
   }
+  if (profileId === "ubuntu-server") {
+    return presets(
+      { cpu: 0.5, ram: 1, maximumCpu: 1, maximumRam: 2 },
+      { cpu: 1, ram: 2, maximumCpu: 2, maximumRam: 4 },
+      { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
+    );
+  }
   if (profileId === "linux-terminal") {
     // gVisor enforces its reservation as the hard limit.
     return presets(pinned(1, 1), pinned(2, 2), pinned(4, 4));
@@ -528,6 +540,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
+  if (profileId === "ubuntu-server") return "A terminal and files on this computer. No desktop.";
   if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";
   if (profileId === "omarchy") return "A ready-made Omarchy desktop you open in your browser, with a setup console.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
@@ -585,6 +598,7 @@ export function launchChangesSummary({
   }
   const where = substrate === "hivra-cloud" ? "" : ` on ${host}`;
   if (profileId === "aeon") return `Creates one small computer${where} for Aeon's dashboard. Nothing is bought.`;
+  if (profileId === "ubuntu-server") return `Creates one Linux computer${where} with a terminal and files. It has no desktop. Nothing is bought.`;
   return profile.resourceKind === "computer"
     ? `Creates one computer${where} with ${profile.name}. Nothing is bought.`
     : `Creates one computer${where} and installs ${profile.name}. Nothing is bought.`;
