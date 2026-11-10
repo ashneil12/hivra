@@ -365,6 +365,11 @@ const recipes = Object.freeze({
     workerSha256: "edfebf2b849a397c9f26a27e3020e855c7b5ba974f08e5b7e144c8ca6cfc75ad",
     workerSize: 45185,
   }),
+  "2026.11.10.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release carries the Codex sign-in freshness fix in the computer's chat page (hivra-chat/server.js).
+    workerSha256: "a8459abda395b12e2113fc7fbb4347a5ef050e8f141a3a8f1910f34ad42690c1",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

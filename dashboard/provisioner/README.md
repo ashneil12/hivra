@@ -457,6 +457,9 @@ update them yet.
   `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
   model tier set to the chosen model) with mode 0600; without a key the computer
   keeps native `claude auth login` sign-in.
+- **Codex sign-in freshness.** The computer's chat page reports a repeat Codex
+  sign-in as fresh only when the credential changed, and says why one is not finished
+  yet.
 - **Launch and start hardening.** The installer waits for the dpkg lock and
   retries `apt-get`, the pinned downloads and the npm/git fetches a bounded number
   of times; the host launch script bounds the provisioner copy and the in-guest
