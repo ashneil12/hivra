@@ -134,6 +134,8 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("codex"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("claude-code"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("hermes"), free)).toEqual({ label: "Needs Pro", tone: "needs" });
+    // DeepSeek Harness has no own-server option, so a Free account is not pointed at one.
+    expect(launchFit(launchProfileFitSubject("deepseek-harness"), free)).toEqual({ label: "Needs Pro", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("aeon"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("openclaw"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("agent-zero"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
@@ -326,6 +328,22 @@ describe("fitting a size to where it runs", () => {
     expect(recommendedLaunchSize("agent-zero", destinationSizeLimits("hivra-managed", null, { ...PRO, usage: { agentCount: 1, usedCpu: 1, usedRam: 2 } }), { browser: false }))
       .toEqual(pinned(1, 2));
     expect(recommendedLaunchSize("aeon", pro, { browser: false })).toEqual(pinned(0.5, 1));
+    // DeepSeek Harness keeps the 2 CPU / 4 GB its live acceptance ran at.
+    expect(recommendedLaunchSize("deepseek-harness", pro, { browser: false })).toEqual(pinned(2, 4));
+  });
+
+  it("describes DeepSeek Harness as Hivra Cloud only, at its catalog floor, with Small at its accepted size", () => {
+    expect(launchProfileFitSubject("deepseek-harness")).toMatchObject({
+      placementRuntimeId: "deepseek-harness", hivraCloud: "plan", minPlan: "pro", floor: { cpu: 2, ram: 3 },
+      browserFloor: null, poolExempt: false, ownServer: false,
+    });
+    expect(launchFit(launchProfileFitSubject("deepseek-harness"), { ...evidence(PRO), selfHosted: true }))
+      .toEqual({ label: "Runs on Hivra Cloud only", tone: "needs" });
+    expect(sizePresets("deepseek-harness").map(preset => [preset.resources.cpu, preset.resources.ram, preset.resources.maximumCpu, preset.resources.maximumRam]))
+      .toEqual([[2, 4, 2, 4], [4, 8, 4, 8], [8, 16, 8, 16]]);
+    expect(capabilitySummary("deepseek-harness", { browser: false })).toBe("DeepSeek's own interface on its own computer.");
+    expect(launchChangesSummary({ profileId: "deepseek-harness", substrate: "hivra-cloud", targetName: null }))
+      .toBe("Creates one computer and installs DeepSeek Harness. Nothing is bought.");
   });
 
   it("offers the upgrade the Choose badge named for Hivra's own size, and an exact fit for the owner's", () => {

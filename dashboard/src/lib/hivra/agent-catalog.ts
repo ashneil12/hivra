@@ -272,18 +272,25 @@ const ALL_AGENTS: AgentDef[] = [
     id: "deepseek-harness",
     name: "DeepSeek Harness",
     vendor: "DeepSeek",
-    tagline: "Developer-preview coding harness with its complete native interface.",
+    tagline: "DeepSeek's coding agent, in its own interface on a computer of its own. Runs on DeepSeek V4.1 Flash.",
     minPlan: "pro",
     weight: 2,
     browser: false,
-    badge: "Experimental",
+    badge: "Alpha",
     accent: "#4f7cff",
-    // The runtime is fully described so retained/private acceptance rows render
-    // their native surface correctly. Keep it out of AGENTS until the exact
-    // disposable provider UI/model/restart/revocation/teardown gate passes.
-    available: false,
+    // Launchable on Hivra Cloud only, through the same managed Proxmox launch
+    // its acceptance harness exercises (dashboard/scripts/deepseek-proxmox-canary.ts):
+    // no browser, named HTTPS access required. The launch route refuses it on a
+    // connected server or a computer in the owner's own cloud, which have no
+    // acceptance for it. DeepSeek's own settings refuse a key from a remote
+    // browser, so it gets its model at LAUNCH over the generic HIVRA_MODEL_* env
+    // (same path as Agent Zero): Hivra credits through managed Venice, or the
+    // owner's own Venice key. No connect step.
+    available: true,
     surface: "dashboard",
     floor: { cpu: 2, ram: 3 },
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
   },
 ];
 
@@ -385,6 +392,9 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
   }
   if (def.id === "claude-code") {
     return `This runs the official ${def.name} CLI from ${def.vendor} on the agent's private virtual machine. Sign in with your own ${def.vendor} account inside the CLI, or launch it on Hivra credits, which reach models through Venice. ${credentialNotice} The ${def.browser ? "chat, terminal, files, skills, and browser" : "chat, terminal, files, and skills"} tabs connect to that runtime. Hivra is independent and isn't affiliated with, sponsored by, or endorsed by ${def.vendor}.`;
+  }
+  if (def.id === "deepseek-harness") {
+    return `This runs ${def.name}, ${def.vendor}'s coding agent, on the agent's private virtual machine. Its own interface is reached through Hivra's authenticated gateway. It runs on DeepSeek V4.1 Flash through Hivra credits, or your own Venice API key. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
   }
   if (def.id === "agent-zero") {
     return `This hosts Agent Zero in a container on the agent's private virtual machine. Its dashboard is bound to localhost and reached through Hivra's authenticated gateway. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Agent Zero project.`;

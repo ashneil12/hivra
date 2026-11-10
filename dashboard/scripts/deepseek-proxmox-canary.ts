@@ -116,11 +116,13 @@ export interface DeepSeekCanaryLedger {
 }
 
 export interface CliArgs {
-  mode: "inspect" | "launch" | "read-access" | "restart" | "teardown";
+  mode: "inspect" | "launch" | "read-access" | "restart" | "ask" | "teardown";
   target: string;
   expectedHostname: string;
   ledgerPath: string;
   tokenFile: string | null;
+  /** --launch only: private JSON file holding the launch-time model settings. */
+  modelFile: string | null;
   vmid: number | null;
   octet: number | null;
   cpu: number;
@@ -164,9 +166,9 @@ function integer(value: string | undefined, label: string, minimum: number, maxi
 }
 
 export function parseDeepSeekCanaryArgs(argv = process.argv.slice(2)): CliArgs {
-  const selected = (["inspect", "launch", "read-access", "restart", "teardown"] as const)
+  const selected = (["inspect", "launch", "read-access", "restart", "ask", "teardown"] as const)
     .filter(mode => argv.includes(`--${mode}`));
-  if (selected.length !== 1) throw new Error("Choose exactly one operation: --inspect, --launch, --read-access, --restart or --teardown.");
+  if (selected.length !== 1) throw new Error("Choose exactly one operation: --inspect, --launch, --read-access, --restart, --ask or --teardown.");
   const mode = selected[0];
   const target = token(valueAfter(argv, "--target"), /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/, "--target");
   const expectedHostname = token(valueAfter(argv, "--expected-hostname"), /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$/, "--expected-hostname");
@@ -175,6 +177,11 @@ export function parseDeepSeekCanaryArgs(argv = process.argv.slice(2)): CliArgs {
   const tokenFileRaw = valueAfter(argv, "--token-file");
   const tokenFile = tokenFileRaw ? path.resolve(tokenFileRaw) : null;
   if (tokenFile && tokenFile === path.parse(tokenFile).root) throw new Error("--token-file must be a specific file path.");
+  const modelFileRaw = valueAfter(argv, "--model-file");
+  if (argv.includes("--model-file") && !modelFileRaw) throw new Error("--model-file must be a specific file path.");
+  if (modelFileRaw && mode !== "launch") throw new Error("--model-file is only valid with --launch.");
+  const modelFile = modelFileRaw ? path.resolve(modelFileRaw) : null;
+  if (modelFile && modelFile === path.parse(modelFile).root) throw new Error("--model-file must be a specific file path.");
   const needsIdentity = mode === "launch";
   return {
     mode,
@@ -182,6 +189,7 @@ export function parseDeepSeekCanaryArgs(argv = process.argv.slice(2)): CliArgs {
     expectedHostname,
     ledgerPath,
     tokenFile,
+    modelFile,
     vmid: valueAfter(argv, "--vmid") ? integer(valueAfter(argv, "--vmid"), "--vmid", 100, 999_999_999) : needsIdentity ? integer(undefined, "--vmid", 100, 999_999_999) : null,
     octet: valueAfter(argv, "--octet") ? integer(valueAfter(argv, "--octet"), "--octet", 2, 254) : needsIdentity ? integer(undefined, "--octet", 2, 254) : null,
     cpu: integer(valueAfter(argv, "--cpu") || "2", "--cpu", 1, 64),
@@ -262,6 +270,56 @@ function updateLedger(filename: string, apply: (ledger: DeepSeekCanaryLedger) =>
   const next = apply(readLedger(filename));
   writeLedger(filename, next);
   return next;
+}
+
+/** Launch-time model settings, exactly what the dashboard sends the host script. */
+export interface DeepSeekCanaryModel { modelKey: string; modelBaseUrl: string; model: string }
+
+// The same typed rules the guest launch parser enforces (hivra-install-agent.py,
+// valid_native_model): a value the guest would refuse fails here, before a
+// tunnel or a VM exists. Messages never include a value.
+const MODEL_KEY = /^[\x21-\x7e]{8,8192}$/;
+const MODEL_NAME = /^[A-Za-z0-9._:/-]{1,128}$/;
+const MODEL_HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const MODEL_PATH = /^(?:\/[A-Za-z0-9._~-]+)*\/?$/;
+
+function validModelBaseUrl(value: string): boolean {
+  if (Buffer.byteLength(value) > 2048 || !value.startsWith("https://")) return false;
+  const rest = value.slice("https://".length);
+  const slash = rest.indexOf("/");
+  const host = slash < 0 ? rest : rest.slice(0, slash);
+  const pathname = slash < 0 ? "" : rest.slice(slash);
+  const labels = host.split(".");
+  return labels.length > 1 && /^[a-z]{2,63}$/.test(labels[labels.length - 1])
+    && labels.every(label => !label.startsWith("xn--") && MODEL_HOST_LABEL.test(label))
+    && MODEL_PATH.test(pathname) && pathname.split("/").every(segment => segment !== "." && segment !== "..");
+}
+
+export function parseDeepSeekCanaryModel(raw: string): DeepSeekCanaryModel {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error("The model file is not valid JSON."); }
+  const value = parsed as Record<string, unknown> | null;
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).sort().join(",") !== "model,modelBaseUrl,modelKey"
+    || !(["modelKey", "modelBaseUrl", "model"] as const).every(key => typeof value[key] === "string")) {
+    throw new Error("The model file must be a JSON object with exactly modelKey, modelBaseUrl and model strings.");
+  }
+  const { modelKey, modelBaseUrl, model } = value as unknown as DeepSeekCanaryModel;
+  if (!MODEL_KEY.test(modelKey)) throw new Error("The model file has an invalid modelKey.");
+  if (!validModelBaseUrl(modelBaseUrl)) throw new Error("The model file has an invalid modelBaseUrl.");
+  if (!MODEL_NAME.test(model)) throw new Error("The model file has an invalid model.");
+  return { modelKey, modelBaseUrl, model };
+}
+
+/** Reads the model file only if it is a private regular file the caller owns. */
+export function readDeepSeekCanaryModelFile(filename: string): DeepSeekCanaryModel {
+  let stat;
+  try { stat = lstatSync(filename); } catch { throw new Error("The model file does not exist."); }
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
+    || (typeof process.getuid === "function" && stat.uid !== process.getuid())) {
+    throw new Error("The model file must be a private (mode 0600) regular file owned by the caller.");
+  }
+  return parseDeepSeekCanaryModel(readFileSync(filename, "utf8"));
 }
 
 export function buildDeepSeekInventoryScript(params: {
@@ -359,6 +417,8 @@ export function buildDeepSeekLaunchScript(params: {
   tunnelUrl: string;
   bundleManifest: string;
   capacityPolicy?: DeepSeekCapacityPolicy;
+  /** Launch-time model settings; the host script takes all three or none. */
+  model?: DeepSeekCanaryModel;
 }): string {
   const operationTag = `hivra-op-${params.operationId.replace(/-/g, "")}`;
   const claim = `${params.operationId}|${params.bindingTag}|${params.expectedHostname}|${params.vmid}|${params.ip}`;
@@ -445,9 +505,9 @@ install -m 0600 /dev/null "$SECRET_ENV_FILE"
 cat > "$SECRET_ENV_FILE" <<'HIVRA_DEEPSEEK_SECRETS'
 HIVRA_TUNNEL_TOKEN_B64=${secret(params.tunnelToken)}
 HIVRA_TUNNEL_URL_B64=${secret(params.tunnelUrl)}
-HIVRA_MODEL_KEY_B64=
-HIVRA_MODEL_BASE_URL_B64=
-HIVRA_HERMES_MODEL_B64=
+HIVRA_MODEL_KEY_B64=${params.model ? secret(params.model.modelKey) : ""}
+HIVRA_MODEL_BASE_URL_B64=${params.model ? secret(params.model.modelBaseUrl) : ""}
+HIVRA_HERMES_MODEL_B64=${params.model ? secret(params.model.model) : ""}
 HIVRA_DEEPSEEK_SECRETS
 printf '%s\n' "$$" > "$PIDFILE"
 exec env \
@@ -573,6 +633,55 @@ exit 10
 `;
 }
 
+// One headless prompt inside the guest, as the runtime's own account with the
+// runtime's own HOME/DSH_HOME and an environment with no API keys (the model key
+// resolves from the private credential store), mirroring runtime-process.cjs.
+export const DEEPSEEK_ASK_PROMPT = "Reply with exactly the word pong";
+export const DEEPSEEK_ASK_TIMEOUT_SECONDS = 240;
+const GUEST_ASK_HOME = "/home/bux/.hivra/deepseek";
+const GUEST_ASK_RUNTIME = "/opt/hivra/deepseek-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js";
+export function deepSeekAskGuestCommand(): string {
+  const inner = `cd ${GUEST_ASK_HOME} && exec /usr/bin/node --expose-internals ${GUEST_ASK_RUNTIME} --profile headless "${DEEPSEEK_ASK_PROMPT}"`;
+  return `sudo -n -u bux /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=${GUEST_ASK_HOME} DSH_HOME=${GUEST_ASK_HOME}/.dsh `
+    + `LANG=C.UTF-8 TERM=dumb NO_COLOR=1 DSH_TELEMETRY_DISABLED=1 /bin/sh -c ${shellQuote(inner)}`;
+}
+
+// Prints the reply base64-encoded so no byte of it can forge a marker. The guest
+// command's stderr is discarded: only its exit status and stdout are reported.
+export function buildDeepSeekAskScript(ledger: DeepSeekCanaryLedger): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+${ownershipPrelude(ledger)}
+VM_KEY=${shellQuote(DEEPSEEK_CANARY_RUNTIME_PATHS.vmSshKeyPath)}
+SSH_IDENTITY_HELPER=${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDirectory}/hivra-guest-ssh-known-hosts`)}
+[ "$(stat -Lc '%a:%u:%g' "$VM_KEY" 2>/dev/null)" = "600:0:0" ] \
+  || { echo "HIVRA_DEEPSEEK_VM_KEY_INVALID" >&2; exit 5; }
+[ -f "$SSH_IDENTITY_HELPER" ] && [ ! -L "$SSH_IDENTITY_HELPER" ] && [ -x "$SSH_IDENTITY_HELPER" ] \
+  || { echo "HIVRA_DEEPSEEK_SSH_IDENTITY_HELPER_INVALID" >&2; exit 5; }
+vm_owned || { echo "HIVRA_DEEPSEEK_VM_IDENTITY_MISMATCH" >&2; exit 7; }
+GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.\${VMID}.XXXXXXXX")"
+chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
+cleanup_guest_ssh_identity() { rm -rf -- "$GUEST_SSH_IDENTITY_DIR"; }
+trap cleanup_guest_ssh_identity EXIT
+"$SSH_IDENTITY_HELPER" "$VMID" "$EXPECTED_IP" "$GUEST_SSH_IDENTITY_DIR"
+GSSH=(ssh -n -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
+  -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_IDENTITY_DIR/known_hosts" \
+  -o HostKeyAlias="hivra-vmid-$VMID" -o ConnectTimeout=5 -o ConnectionAttempts=1)
+GUEST_COMMAND=${shellQuote(deepSeekAskGuestCommand())}
+started_ns="$(date +%s%N)"
+set +e
+timeout --kill-after=10s ${DEEPSEEK_ASK_TIMEOUT_SECONDS}s "\${GSSH[@]}" "ubuntu@$EXPECTED_IP" "$GUEST_COMMAND" \
+  > "$GUEST_SSH_IDENTITY_DIR/reply" 2>/dev/null
+status=$?
+set -e
+reply="$(head -c 16384 "$GUEST_SSH_IDENTITY_DIR/reply")"
+elapsed_ms=$(( ($(date +%s%N) - started_ns) / 1000000 ))
+printf 'HIVRA_DEEPSEEK_ASK {"vmid":%s,"exitCode":%s,"elapsedMs":%s,"replyB64":"%s"}\n' \
+  "$VMID" "$status" "$elapsed_ms" "$(printf '%s' "$reply" | base64 -w 0)"
+`;
+}
+
 export function buildDeepSeekTeardownScript(ledger: DeepSeekCanaryLedger): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -654,6 +763,21 @@ printf 'HIVRA_DEEPSEEK_CLEAN {"vmid":%s,"operationId":"%s","vmAbsent":true,"volu
 `;
 }
 
+export interface DeepSeekAskOutcome { passed: boolean; exitCode: number; elapsedMs: number; reply: string }
+
+/** Passes only for a clean exit whose reply contains "pong". The reply is the
+ * model's own text (the key never reaches the guest command), shown trimmed. */
+export function evaluateDeepSeekAsk(receipt: Record<string, unknown>): DeepSeekAskOutcome {
+  const { exitCode, elapsedMs, replyB64 } = receipt;
+  if (typeof exitCode !== "number" || typeof elapsedMs !== "number" || typeof replyB64 !== "string"
+    || !/^[A-Za-z0-9+/]*={0,2}$/.test(replyB64)) {
+    throw new Error("Host returned an invalid ask receipt.");
+  }
+  // eslint-disable-next-line no-control-regex
+  const reply = Buffer.from(replyB64, "base64").toString("utf8").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim();
+  return { passed: exitCode === 0 && /pong/i.test(reply), exitCode, elapsedMs, reply: reply.slice(0, 2000) };
+}
+
 function resultJson(stdout: string, marker: string): Record<string, unknown> {
   const match = stdout.match(new RegExp(`${marker}\\s+(\\{[^\\n]+\\})`));
   if (!match) throw new Error(`Host did not emit ${marker}.`);
@@ -681,6 +805,8 @@ async function runHost(script: string, env: Record<string, string | undefined>, 
 
 export async function launchDeepSeekCanary(args: CliArgs): Promise<void> {
   const { target, network } = targetContext(args);
+  // Read (and refuse) the model file before any ledger, tunnel or VM exists.
+  const model = args.modelFile ? readDeepSeekCanaryModelFile(args.modelFile) : undefined;
   const bundleManifest = await loadDeepSeekCanaryBundleManifest();
   const vmid = args.vmid!;
   const operationId = randomUUID();
@@ -703,7 +829,7 @@ export async function launchDeepSeekCanary(args: CliArgs): Promise<void> {
     const stdout = await runHost(buildDeepSeekLaunchScript({
       expectedHostname: args.expectedHostname, vmid, ip, octet: args.octet!, subnetPrefix: network.subnetPrefix,
       gateway: network.gateway, operationId, bindingTag, cpu: args.cpu, memoryMb: args.memoryMb,
-      tunnelToken: tunnel.token, tunnelUrl: tunnel.url, bundleManifest, capacityPolicy: args.capacityPolicy,
+      tunnelToken: tunnel.token, tunnelUrl: tunnel.url, bundleManifest, capacityPolicy: args.capacityPolicy, model,
     }), target.env, 30 * 60_000);
     const result = JSON.parse(stdout.trim().split(/\r?\n/).filter(line => line.startsWith("{")).at(-1) || "null") as Record<string, unknown> | null;
     if (!result || result.vmid !== vmid || result.ip !== ip || result.agent_kind !== "deepseek-harness" || result.chat_url !== tunnel.url || result.ready !== true) {
@@ -716,7 +842,7 @@ export async function launchDeepSeekCanary(args: CliArgs): Promise<void> {
       throw new Error("The Canary bundle changed while the DeepSeek computer was being set up.");
     }
     updateLedger(args.ledgerPath, ledger => ({ ...ledger, phase: "launched", launch: { url: tunnel.url, cpu: args.cpu, memoryMb: args.memoryMb } }));
-    console.log(JSON.stringify({ mode: "launched", target: args.target, vmid, ip, url: tunnel.url, operationId, provisionerVersion: DEEPSEEK_CANARY_VERSION }));
+    console.log(JSON.stringify({ mode: "launched", target: args.target, vmid, ip, url: tunnel.url, operationId, provisionerVersion: DEEPSEEK_CANARY_VERSION, modelSeeded: model !== undefined }));
   } catch (error) {
     const ledger = readLedger(args.ledgerPath);
     let cleanupError: unknown = null;
@@ -756,6 +882,14 @@ async function main(): Promise<void> {
   if (args.mode === "restart") {
     const stdout = await runHost(buildDeepSeekRestartScript(ledger), target.env, 5 * 60_000);
     console.log(JSON.stringify({ mode: "restarted", ...resultJson(stdout, "HIVRA_DEEPSEEK_RESTARTED") }));
+    return;
+  }
+  if (args.mode === "ask") {
+    if (ledger.phase !== "launched") throw new Error("--ask needs a launched lab computer in the ledger.");
+    const receipt = resultJson(await runHost(buildDeepSeekAskScript(ledger), target.env, (DEEPSEEK_ASK_TIMEOUT_SECONDS + 60) * 1000), "HIVRA_DEEPSEEK_ASK");
+    const outcome = evaluateDeepSeekAsk(receipt);
+    console.log(JSON.stringify({ mode: "asked", vmid: ledger.vmid, ...outcome }));
+    if (!outcome.passed) process.exitCode = 1;
     return;
   }
   let tunnelAbsent = !ledger.tunnel?.tunnelId;

@@ -173,6 +173,17 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
   });
 });
 
+describe("DeepSeek Harness launch request", () => {
+  it("carries no credits, key, browser or receipt: its model key is added inside it", () => {
+    const request = dashboardAgentRequest({ type: "deepseek-harness", name: " DeepSeek Harness 1 ", cpu: 2, ram: 4, browser: false, credits: null, deployment: MANAGED });
+    expect(request).toEqual({
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4, browser: false, managedVenice: false, deployment: MANAGED,
+    });
+    expect(request).not.toHaveProperty("llm");
+    expect(request).not.toHaveProperty("launchRequestId");
+  });
+});
+
 describe("Codex model launch requests", () => {
   const shared = {
     name: "Codex 1",

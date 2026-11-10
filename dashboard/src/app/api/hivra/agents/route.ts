@@ -40,7 +40,7 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
-import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
@@ -143,7 +143,7 @@ const emittedBoxCreatedAgentIds = new Set<string>();
 // Catalog agent ids this route can provision as a Hivra box. claude-code/codex
 // run the bux image; aeon + openclaw host a web dashboard/Control UI. The box
 // selects its runtime from agentKind. Hermes is a separate lane (/api/instances).
-const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "linux-desktop"]);
+const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"]);
 
 // Printed by phase 1 only after it wrote the reporter credential into the
 // handoff file for a host bundle that consumes it (the start path uses the
@@ -1039,6 +1039,18 @@ async function launchAgent(request: NextRequest) {
     if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)) {
       return apiError("That agent isn't launchable yet", 400);
     }
+    // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
+    // the named HTTPS access its host script requires. A connected server or a
+    // computer in the owner's own cloud has none (its typed provider adapter
+    // stays private), so refuse before any target is read or row is written.
+    if (type === "deepseek-harness") {
+      if (deployment.mode !== "hivra-managed") {
+        return apiError(`${def.name} runs on Hivra Cloud only.`, 409, undefined, { code: "deepseek_managed_only" });
+      }
+      if (!isTunnelConfigured()) {
+        return apiError(`${def.name} requires this Hivra installation's named HTTPS access.`, 503);
+      }
+    }
     // The runtime the box provisions: the chat CLI for claude-code/codex, or the
     // dashboard host kind for aeon/openclaw (no cliKind). Passed to the host script.
     const agentKind = headless ? "linux-server" : def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
@@ -1088,6 +1100,12 @@ async function launchAgent(request: NextRequest) {
     const resolvedLlmInput = (llmInput ?? (autoManagedLlmBlock
       ? { provider: "venice", mode: "managed", walletType: "hermesos" }
       : null)) as typeof llmInput;
+    // DeepSeek's own settings refuse a key from a remote browser, so its guest
+    // is only useful with a model written at launch. Refuse before any row or
+    // key exists rather than launch it with empty model settings.
+    if (type === "deepseek-harness" && !resolvedLlmInput) {
+      return apiError(`${def.name} needs a model at launch: use Hivra credits or your own Venice API key.`, 400, undefined, { code: "deepseek_model_required" });
+    }
     // Claude Code on Hivra credits needs a host whose installer writes the CLI's
     // managed-model settings; native sign-in runs on any compatible host.
     const anthropicCredits = def?.llm?.wire === "anthropic" && Boolean(resolvedLlmInput);
@@ -1474,7 +1492,8 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         // the dashboard's translating route instead of the OpenAI proxy.
         const anthropicWire = def.llm?.wire === "anthropic";
         llmBaseUrl = anthropicWire ? getManagedVeniceAnthropicBaseUrl() : getManagedVeniceProxyBaseUrl();
-        llmModel = resolvedLlmInput.model ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : "deepseek-v4-pro");
+        llmModel = resolvedLlmInput.model
+          ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : type === "deepseek-harness" ? DEEPSEEK_HARNESS_DEFAULT_MODEL : "deepseek-v4-pro");
       } else {
         llmConfig = {
           provider: "venice",
@@ -1484,7 +1503,14 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         };
         llmKeyEncrypted = encryptApiKey(resolvedLlmInput.apiKey as string);
         llmPlaintextKey = resolvedLlmInput.apiKey as string;
-        llmModel = resolvedLlmInput.model ?? null;
+        // DeepSeek's guest takes the key, base URL and model together, so it
+        // always gets Venice's public base and a model.
+        if (type === "deepseek-harness") {
+          llmBaseUrl = VENICE_DIRECT_BASE_URL;
+          llmModel = resolvedLlmInput.model ?? DEEPSEEK_HARNESS_DEFAULT_MODEL;
+        } else {
+          llmModel = resolvedLlmInput.model ?? null;
+        }
       }
     }
     const releaseLlmKeyOnFailure = async () => {

@@ -327,6 +327,9 @@ function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): Manage
 function hasModelSection(row: ManageCapabilitiesRow, variant: ManageVariant): boolean {
   if (variant !== "chat-agent" && variant !== "dashboard-agent" && variant !== "my-cloud-agent") return false;
   const def = catalogAgent(String(row.type));
+  // DeepSeek Harness gets its model at launch; changing it afterwards from
+  // Manage has no delivery path yet.
+  if (def?.id === "deepseek-harness") return false;
   return Boolean(def && (def.cliKind === "claude" || def.cliKind === "codex" || def.browser || def.llm?.providers.includes("venice")));
 }
 

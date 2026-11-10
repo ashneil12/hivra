@@ -9,6 +9,7 @@ import {
   HIVRA_AGENT_VM_DISK_GB,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_DIRECTORY,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
+  PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION,
   PORTABLE_HIVRA_RUNTIME_COMPATIBILITY,
@@ -38,8 +39,9 @@ const LEGACY_RUNTIME_IDS = [
 ];
 
 // Releases before 2026.10.20.2 lack agent-app-versions.json, which the aeon,
-// openclaw and agent-zero installers need.
-const PREDECESSOR_RUNTIME_IDS = ["claude-code", "codex", "deepseek-harness"];
+// openclaw and agent-zero installers need, and DeepSeek Harness is admitted
+// only from the release its live acceptance ran on.
+const PREDECESSOR_RUNTIME_IDS = ["claude-code", "codex"];
 
 function shellFunction(sourceText: string, name: string, nextMarker: string): string {
   const start = sourceText.indexOf(`${name}() {`);
@@ -929,9 +931,40 @@ describe("per-runtime provisioner minimums", () => {
   });
 
   it("does not hold other runtimes to those minimums", () => {
-    for (const runtime of ["claude-code", "codex", "deepseek-harness"]) {
+    for (const runtime of ["claude-code", "codex"]) {
       expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(true);
     }
+  });
+});
+
+describe("deepseek-harness provisioner minimum", () => {
+  it("is admitted only from the release its live acceptance ran on", () => {
+    expect(portableProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVISIONER_VERSION, "deepseek-harness")).toBe(true);
+    expect(PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS["deepseek-harness"]).toBe("2026.11.10.5");
+    for (const version of ["2026.11.10.4", "2026.11.10.3", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.09.04.2", "2026.08.26.10"]) {
+      expect({ version, deepseek: portableProvisionerSupportsCatalogRuntime(version, "deepseek-harness") }).toEqual({ version, deepseek: false });
+      expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version })?.supportedCatalogRuntimeIds).not.toContain("deepseek-harness");
+    }
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: PORTABLE_HIVRA_PROVISIONER_VERSION })?.supportedCatalogRuntimeIds)
+      .toContain("deepseek-harness");
+  });
+
+  it("skips an older managed host in placement and leaves other runtimes' lists alone", () => {
+    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual([PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("claude-code")).toEqual(compatibleProxmoxVersionsForRuntime(null));
+    expect(compatibleProxmoxVersionsForRuntime("codex")).toEqual(compatibleProxmoxVersionsForRuntime(null));
+  });
+
+  it("keeps a connected server's DeepSeek check off the My cloud lane, which stays private", () => {
+    // Provider VMs keep their own list; this change does not widen it.
+    expect(PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS).toEqual(LEGACY_RUNTIME_IDS);
+  });
+
+  it("ships the guest bundle files the acceptance run installs", () => {
+    for (const file of ["install-native.py", "install-guest.py", "update-guest.py", "runtime-process.cjs", "native-broker.cjs", "gateway-policy.cjs"]) {
+      expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(`deepseek-harness/${file}`);
+    }
+    expect(source("hivra-provision-on-host.sh")).toContain("DeepSeek Harness requires pre-journaled named HTTPS access");
   });
 });
 
@@ -948,7 +981,7 @@ describe("linux-server provisioner minimum", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
       .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
-    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4"]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5"]);
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
     // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));

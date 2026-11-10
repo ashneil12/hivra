@@ -20,7 +20,7 @@ import { publicHivraAgentActivity } from "./agent-authority";
 import { ModelKeySelectionSchema, VENICE_DEFAULT_MODEL } from "./model-key-selection";
 export { VENICE_DEFAULT_MODEL } from "./model-key-selection";
 
-export { MANAGED_CLAUDE_CODE_DEFAULT_MODEL } from "./model-key-selection";
+export { DEEPSEEK_HARNESS_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL } from "./model-key-selection";
 /** Hivra-credit models Claude Code can run: Venice's Anthropic models only. */
 export function isManagedClaudeCodeModel(model: string): boolean {
   return /^claude-[a-z0-9.-]+$/.test(model);

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.10.4.json";
+import release from "../../../../provisioner-releases/2026.11.10.5.json";
+import linuxServerRelease from "../../../../provisioner-releases/2026.11.10.4.json";
 import freshnessRelease from "../../../../provisioner-releases/2026.11.10.3.json";
 import creditsRelease from "../../../../provisioner-releases/2026.11.10.2.json";
 import hardeningRelease from "../../../../provisioner-releases/2026.11.10.1.json";
@@ -233,9 +234,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -350,9 +351,9 @@ it("ships the Codex sign-in freshness fix in 2026.11.10.3, keeping 2026.11.10.2 
 });
 
 it("ships the linux-server kind in 2026.11.10.4, keeping 2026.11.10.3 admitted and desktop assets unchanged", () => {
-  expect(release.version).toBe("2026.11.10.4");
-  expect(release.files.map(file => file.path)).toEqual(freshnessRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== freshnessRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(linuxServerRelease.version).toBe("2026.11.10.4");
+  expect(linuxServerRelease.files.map(file => file.path)).toEqual(freshnessRelease.files.map(file => file.path));
+  const changed = linuxServerRelease.files.filter(file => file.sha256 !== freshnessRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // Exactly the scripts that accept the new kind and the release documents/labels change.
   // No remote-desktop asset changes, so the desktop bundle revision is preserved.
@@ -369,7 +370,35 @@ it("ships the linux-server kind in 2026.11.10.4, keeping 2026.11.10.3 admitted a
   expect(provisionerSupportsActivityTelemetry("2026.11.10.4")).toBe(true);
 });
 
-it("admits the Linux server only on 2026.11.10.4 and never on the provider-VM lane", () => {
+it("ships the DeepSeek launch-time model in 2026.11.10.5, keeping 2026.11.10.4 admitted and desktop assets unchanged", () => {
+  expect(release.version).toBe("2026.11.10.5");
+  expect(release.files.map(file => file.path)).toEqual(linuxServerRelease.files.map(file => file.path));
+  const changed = release.files.filter(file => file.sha256 !== linuxServerRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the host script that forwards the model, the launch parser, the guest
+  // composition that seeds it, and the release documents/labels change. The
+  // service unit, broker, package pins and remote-desktop assets do not.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "deepseek-harness/install-guest.py", "hivra-install-agent.py",
+    "hivra-provider-worker.py", "hivra-provision-on-host.sh"]);
+  expect(changed.filter(file => file.startsWith("remote-desktop/"))).toEqual([]);
+  for (const version of ["2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsWindowsInstaller(version)).toBe(true);
+  }
+  expect(provisionerSupportsActivityTelemetry("2026.11.10.5")).toBe(true);
+});
+
+it("admits DeepSeek Harness only from the release that seeds its model, and keeps the Linux server on both", () => {
+  expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.3", "2026.11.10.2", "2026.11.03.1", "unknown", undefined])
+    expect(portableProvisionerSupportsCatalogRuntime(version, "deepseek-harness")).toBe(false);
+  for (const version of ["2026.11.10.4", "2026.11.10.5"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+});
+
+it("admits the Linux server only on 2026.11.10.4 and later and never on the provider-VM lane", () => {
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-server")).toBe(true);
   for (const version of ["2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.09.04.2", "unknown", undefined])
     expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(false);

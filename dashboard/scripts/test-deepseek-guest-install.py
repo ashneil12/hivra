@@ -130,6 +130,161 @@ class NativeGuestInstall(unittest.TestCase):
         guest.verify_gateway(guest.source_assets(self.source))
         self.assertEqual(list(self.root.rglob(".deepseek-*-*")), [])
 
+    # Launch-time model seed. The fixture runs the real writer as the invoking
+    # user (the agent account does not exist here); ownership is checked against
+    # that same uid, exactly as it is against bux in the guest.
+    KEY = "fixture-model-key-\"quoted\"\\slash#hash"
+    MODEL = {"modelKey": KEY, "modelBaseUrl": "https://models.example.test/api/v1", "model": "deepseek-v4-1-flash"}
+
+    def seeded(self, **overrides):
+        self.launch = {**self.launch, **self.MODEL, **overrides}
+        home = guest.HOME
+
+        def bootstrap():
+            self.events.append("bootstrap")
+            (home / ".hivra").mkdir(parents=True, mode=0o755)
+        self.bootstrap.side_effect = bootstrap
+        change = patch.object(guest, "AGENT_ACCOUNT", None)
+        change.start()
+        self.addCleanup(change.stop)
+        original = guest.seed_model
+        self.addCleanup(setattr, guest, "seed_model", original)
+        guest.seed_model = lambda value: (self.events.append("seed"), original(value))[1]
+        return home / ".hivra/deepseek/.dsh"
+
+    def test_fresh_install_seeds_the_model_before_the_service_starts(self):
+        dsh = self.seeded()
+        previous = os.umask(0o022)
+        try:
+            self.install()
+        finally:
+            os.umask(previous)
+        self.assertEqual(self.events, ["stop", "bootstrap", "stop", "seed", "package", "daemon-reload", "enable", "start", "ready"])
+        for directory in (dsh.parent, dsh):
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((dsh.parent.parent).stat().st_mode & 0o777, 0o755)  # Existing base directory is untouched.
+        for name in ("settings.yaml", ".credentials.yaml"):
+            self.assertEqual((dsh / name).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(sorted(path.name for path in dsh.iterdir()), [".credentials.yaml", "settings.yaml"])
+        self.assertEqual((dsh / "settings.yaml").read_text(), "\n".join([
+            "llm-pi-ai:", "  providers:", "    hivra-venice:", "      displayName: Venice", "      api: openai-completions",
+            '      baseURL: "https://models.example.test/api/v1"', "      apiKeyEnv: HIVRA_MODEL_KEY", "      models:",
+            '        - id: "deepseek-v4-1-flash"', '          name: "deepseek-v4-1-flash"',
+            "          contextWindow: 1000000", "          maxTokens: 262144",
+            "agent-default-model:", "  provider: hivra-venice", '  model: "deepseek-v4-1-flash"', ""]))
+        self.assertEqual((dsh / ".credentials.yaml").read_text(), "version: 1\nrefs:\n  HIVRA_MODEL_KEY: " + json.dumps(self.KEY) + "\n")
+        # The key lives in the credential document only.
+        self.assertNotIn(self.KEY, (dsh / "settings.yaml").read_text())
+
+    def test_seeded_documents_parse_as_the_runtime_shapes(self):
+        try:
+            import yaml as yaml_module
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        settings, credentials = guest.render_model_files(self.KEY, self.MODEL["modelBaseUrl"], "other-model")
+        parsed = yaml_module.safe_load(settings)
+        self.assertEqual(parsed["agent-default-model"], {"provider": "hivra-venice", "model": "other-model"})
+        # A model Hivra has no declared capacity for keeps the runtime defaults.
+        self.assertEqual(parsed["llm-pi-ai"]["providers"]["hivra-venice"]["models"], [{"id": "other-model", "name": "other-model"}])
+        self.assertEqual(yaml_module.safe_load(credentials), {"version": 1, "refs": {"HIVRA_MODEL_KEY": self.KEY}})
+
+    def test_the_key_never_reaches_argv_environment_or_diagnostics(self):
+        self.seeded()
+        real = guest.subprocess.run
+        seen = []
+
+        def run(*args, **kwargs):
+            seen.append((args, kwargs))
+            return real(*args, **kwargs)
+        with patch.object(guest.subprocess, "run", run):
+            self.install()
+        (args, kwargs), = seen
+        self.assertFalse([part for part in args[0] if self.KEY in part])
+        self.assertFalse([value for value in kwargs["env"].values() if self.KEY in value])
+        self.assertIn(json.dumps(self.KEY), json.loads(kwargs["input"])["credentials"])
+        self.assertEqual(kwargs["env"].keys(), {"PATH", "LC_ALL", "HOME"})
+        self.assertEqual(kwargs["umask"], 0o077)
+
+    def test_the_writer_runs_as_the_agent_account_with_no_supplementary_groups(self):
+        self.seeded()
+        with patch.object(guest, "AGENT_ACCOUNT", "bux"), patch.object(guest.subprocess, "run") as run:
+            guest.seed_model(("k" * 8, "https://models.example.test/v1", "m"))
+        self.assertEqual({key: run.call_args.kwargs[key] for key in ("user", "group", "extra_groups")},
+                         {"user": "bux", "group": "bux", "extra_groups": []})
+
+    def test_launch_without_model_settings_seeds_nothing(self):
+        self.seeded(modelKey="", modelBaseUrl="", model="")
+        self.install()
+        self.assertNotIn("seed", self.events)
+        self.assertFalse((guest.HOME / ".hivra/deepseek").exists())
+
+    def test_partial_model_settings_are_refused_before_anything_changes(self):
+        self.seeded(modelBaseUrl="")
+        with self.assertRaisesRegex(guest.files.InstallError, "incomplete model settings"):
+            self.install()
+        self.assertEqual(self.events, [])
+
+    def test_replay_never_reseeds_or_overwrites_owner_edits(self):
+        dsh = self.seeded()
+        self.install()
+        (dsh / "settings.yaml").write_text("owner edited\n")
+        self.reused = True
+        self.events.clear()
+        with patch.object(guest.files, "verified_existing", return_value={}):
+            self.install()
+        self.assertNotIn("seed", self.events)
+        self.assertEqual((dsh / "settings.yaml").read_text(), "owner edited\n")
+
+    def test_fresh_install_refuses_pre_existing_seed_files_and_removes_its_own_partial_write(self):
+        dsh = self.seeded()
+        dsh.mkdir(parents=True)
+        for directory in (dsh, dsh.parent):
+            directory.chmod(0o700)
+        dsh.parent.parent.chmod(0o755)
+        (dsh / "settings.yaml").write_text("pre-existing")
+        # The base bootstrap in this fixture creates .hivra; the seed finds the rest present.
+        self.bootstrap.side_effect = lambda: self.events.append("bootstrap")
+        with patch.object(guest, "base_exists", return_value=False), self.assertRaisesRegex(guest.files.InstallError, r"seeded \(code 12\)"):
+            self.install()
+        self.assertEqual((dsh / "settings.yaml").read_text(), "pre-existing")
+        self.assertFalse((dsh / ".credentials.yaml").exists())  # The credential file written first was removed again.
+        self.assertNotIn("package", self.events)
+
+    def test_seed_refuses_links_and_unsafe_directories(self):
+        self.seeded()
+        outside = self.root / "outside"
+        outside.mkdir(mode=0o700)
+        settings = ("k" * 8, "https://models.example.test/v1", "m")
+        state = guest.HOME / ".hivra"
+        state.mkdir(parents=True, mode=0o755)
+        (state / "deepseek").symlink_to(outside)
+        with self.assertRaisesRegex(guest.files.InstallError, r"code 11"):
+            guest.seed_model(settings)
+        self.assertEqual(list(outside.iterdir()), [])
+        (state / "deepseek").unlink()
+        (state / "deepseek").mkdir(mode=0o700)
+        (state / "deepseek/.dsh").symlink_to(outside)
+        with self.assertRaisesRegex(guest.files.InstallError, r"code 11"):
+            guest.seed_model(settings)
+        self.assertEqual(list(outside.iterdir()), [])
+        (state / "deepseek/.dsh").unlink()
+        for mode in (0o750, 0o705):
+            (state / "deepseek").chmod(mode)
+            with self.subTest(mode=oct(mode)), self.assertRaisesRegex(guest.files.InstallError, r"code 11"):
+                guest.seed_model(settings)
+        (state / "deepseek").chmod(0o700)
+        state.chmod(0o775)
+        with self.assertRaisesRegex(guest.files.InstallError, r"code 11"):
+            guest.seed_model(settings)
+        state.chmod(0o755)
+        # A missing or linked home is refused too.
+        with patch.object(guest, "HOME", self.root / "absent"), self.assertRaisesRegex(guest.files.InstallError, r"code 10"):
+            guest.seed_model(settings)
+        link = self.root / "home-link"
+        link.symlink_to(guest.HOME)
+        with patch.object(guest, "HOME", link), self.assertRaisesRegex(guest.files.InstallError, r"code 10"):
+            guest.seed_model(settings)
+
     def test_owned_replay_preserves_native_state_and_never_reruns_base(self):
         self.install()
         private = self.root / "private-native-state"

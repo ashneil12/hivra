@@ -544,6 +544,26 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.10.5` builds on `2026.11.10.4` and gives DeepSeek Harness its model
+at launch. The upstream web UI only allows settings writes from a local browser, so a
+remote owner could not choose one, and the guest refused launch-time model settings.
+The strict version 2 launch document (`hivra-install-agent.py`) now carries the model
+key, the HTTPS base URL and the model name as a complete set or not at all, with typed
+validation that never echoes an input; `hivra-provision-on-host.sh` forwards the set
+and refuses a partial one. On a fresh install only, `deepseek-harness/install-guest.py`
+runs a child with dropped privileges as the `bux` account (no supplementary groups,
+umask 077, minimal environment, the secret on its stdin alone) that creates the
+runtime's private home directories with mode 0700 and writes `settings.yaml` (one
+hand-declared OpenAI-compatible route plus the default model) and `.credentials.yaml`
+(mode 0600, the key by reference) exclusively and without following links. A replay or
+restart never rewrites them, so later owner edits survive, and the shared base
+installer no longer receives the model variables for this kind. The Linux computer
+documents still refuse a model. The service unit, broker, gateway policy, native
+package pins and remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. `hivra-provider-worker.py` only
+advances its native and desktop release labels. This source release does not deploy,
+install, or update any existing computer.
+
 Release `2026.11.10.4` builds on `2026.11.10.3` and adds the `linux-server` kind:
 the Ubuntu computer without a desktop (Files and the two terminals only). It reuses
 the whole `linux-desktop` guest base and skips only the desktop capability install

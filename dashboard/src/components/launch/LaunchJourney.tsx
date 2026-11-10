@@ -22,6 +22,7 @@ import {
   Terminal,
   TerminalSquare,
   Triangle,
+  Waves,
   type LucideIcon,
 } from "lucide-react";
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
@@ -73,6 +74,7 @@ import {
   LAUNCH_NAME_MAX_LENGTH,
   PROFILE_DETAILS,
   profileHasBrowser,
+  runsOnHivraCloudOnly,
   type LaunchCapacityChoice,
   type LaunchDraft,
   type LaunchModelAccess,
@@ -528,6 +530,7 @@ const AGENT_TILES: readonly ChooseTile[] = ([
   { id: "openclaw", name: "OpenClaw", description: "An agent you reach from your messaging apps, on a computer that stays on.", icon: Cpu },
   { id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit },
   { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
+  { id: "deepseek-harness", name: "DeepSeek Harness", description: "DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.", icon: Waves },
 ] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
 
 const COMPUTER_TILES: readonly ChooseTile[] = [
@@ -839,8 +842,8 @@ export function LaunchJourney(
     // A self-managed-only profile opens on the owner's infrastructure even
     // before a compatible host exists; Hivra Cloud is never its selection.
     managedAvailable: profile?.managedCapacity !== "self-managed-only",
-    // Hermes runs on Hivra Cloud only, whatever was chosen for another agent.
-    selfManagedAvailable: profile?.lane !== "hermes-instance",
+    // Hermes and DeepSeek Harness run on Hivra Cloud only, whatever was chosen for another agent.
+    selfManagedAvailable: !runsOnHivraCloudOnly(draft?.profileId ?? null),
     // Hivra Cloud needs a paid plan, so a Free account opens on a ready host
     // it connected instead of on a plan blocker.
     preferSelfManaged: planChecked && Boolean(plan?.usage) && !isPaidPlan(plan),
@@ -1621,8 +1624,8 @@ export function LaunchJourney(
     }
     const details = PROFILE_DETAILS[profileId];
     const fresh = createLaunchDraft();
-    // Hermes runs on Hivra Cloud only, whatever the last profile used.
-    const mode = details.lane === "hermes-instance" ? "hivra-managed" as const : destination.mode;
+    // Hermes and DeepSeek Harness run on Hivra Cloud only, whatever the last profile used.
+    const mode = runsOnHivraCloudOnly(profileId) ? "hivra-managed" as const : destination.mode;
     const browser = profileHasBrowser(profileId)
       && (recommendedBrowser(profileId, mode, destination.selectedTarget, plan) ?? false);
     const name = defaultLaunchName(profileId, existingNames ?? []);
@@ -1637,7 +1640,7 @@ export function LaunchJourney(
     setDraft({
       ...fresh,
       capacity: keptTeam ? { mode: "digitalocean", targetId: keptTeam.id }
-        : details.lane === "hermes-instance" ? { mode: "hivra-managed", targetId: null } : freshDraftCapacity(destination.choice),
+        : runsOnHivraCloudOnly(profileId) ? { mode: "hivra-managed", targetId: null } : freshDraftCapacity(destination.choice),
       digitalOcean: keptTeam ? draft.digitalOcean : fresh.digitalOcean,
       stage: "review",
       resourceKind: details.resourceKind,
@@ -2453,7 +2456,7 @@ export function LaunchJourney(
                   <DeploymentDestinationControl
                     state={{ ...destination, setMode: chooseDestinationMode, setSelectedTargetId: chooseTarget }}
                     managedAvailable={!selfManagedOnly}
-                    ownServerSupported={currentProfile.lane !== "hermes-instance"}
+                    ownServerSupported={!runsOnHivraCloudOnly(draft.profileId)}
                     runtimeName={currentProfile.name}
                     resourceLabel={draft.resourceKind ?? "agent"}
                     capacitySetupHref={capacitySetupHref}

@@ -43,7 +43,7 @@ const HIVRA_CLI_TYPES = new Set([
   "openclaw",
   "agent-zero",
 ]);
-const HIVRA_DASHBOARD_TYPES = new Set(["aeon"]);
+const HIVRA_DASHBOARD_TYPES = new Set(["aeon", "deepseek-harness"]);
 const HIVRA_COMPUTER_TYPES = new Set(["linux-desktop"]);
 
 function normalizedLabel(value: string | null | undefined): string | undefined {

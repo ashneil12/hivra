@@ -39,7 +39,7 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     floor: resizeFloor("codex", true),
     recommended: { cpu: 1.5, ram: 3, maximumCpu: 2, maximumRam: 4 },
   },
-  // Claude Code, OpenClaw, Agent Zero, Aeon and Hermes keep the size they
+  // Claude Code, OpenClaw, Agent Zero, Aeon, DeepSeek Harness and Hermes keep the size they
   // launch with as their hard limit; their setup forms never sent maxima.
   "claude-code": {
     // With the browser: the welcome form's 2 CPU / 4 GB recommendation.
@@ -56,6 +56,12 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     floor: resizeFloor("agent-zero", false),
     recommended: pinned(2, 4),
     candidates: [pinned(2, 4), pinned(1, 2)],
+  },
+  "deepseek-harness": {
+    // The catalog floor; the recommendation is the 2 CPU / 4 GB its live
+    // acceptance ran at, and it keeps that size as its hard limit.
+    floor: resizeFloor("deepseek-harness", false),
+    recommended: pinned(2, 4),
   },
   aeon: {
     // Only its dashboard runs here; Hivra Cloud pins it to the catalog floor.

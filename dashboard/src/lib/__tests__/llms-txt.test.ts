@@ -62,9 +62,9 @@ describe("buildLlmsTxt", () => {
     );
     expect(txt).not.toMatch(/Also available|Windows and Omarchy are available/i);
     expect(txt).not.toMatch(/private preview/i);
-    // DeepSeek stays "In preview" here: it is true (the product catalogue keeps DeepSeek Harness in
-    // private preview and not launchable) and /why-hivra/evolution groups it under "In preview" too.
-    expect(txt).toContain("In preview: DeepSeek.");
+    // DeepSeek Harness launches from Launch (alpha), so it is listed as available, not as a preview.
+    expect(txt).toContain("OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own");
+    expect(txt).not.toMatch(/In preview/);
     expect(txt).toContain("$HIVRA is a proposed new token and does not exist yet.");
     expect(txt).not.toMatch(/one click|Free tier is live/i);
     // No em or en dashes in the public machine-readable map.
