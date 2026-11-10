@@ -505,7 +505,7 @@ describe("LaunchPage", () => {
     // page's tabs and the note Hivra gives the agent (ATT-15).
     expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
       "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
-    expect(within(review).getByText(/^Hivra credits.* · DeepSeek V4 Pro \(via Venice\)$/)).toBeInTheDocument();
+    expect(within(review).getByText(/^Hivra credits.* · DeepSeek V4\.1 Flash \(via Venice · recommended\)$/)).toBeInTheDocument();
     expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(review).getByText("Creates one computer and installs Codex. Nothing is bought.")).toBeInTheDocument();
     expect(within(screen.getByLabelText("Recommended settings", { selector: "dl" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();

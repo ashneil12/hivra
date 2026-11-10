@@ -155,6 +155,16 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     privacy: "private",
   }),
   model({
+    model: "deepseek-v4-1-flash",
+    displayName: "DeepSeek V4.1 Flash",
+    inputUsd: 0.3,
+    outputUsd: 1.2,
+    cacheReadUsd: 0.0075,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 262_144,
+    privacy: "private",
+  }),
+  model({
     model: "deepseek-v4-flash",
     displayName: "DeepSeek V4 Flash",
     inputUsd: 0.138,
