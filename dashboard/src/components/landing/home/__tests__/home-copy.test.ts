@@ -5,17 +5,14 @@ import {
   CLOSING,
   COMPUTERS,
   FAQ_TITLE,
-  FIT,
   FOUNDER,
   GUARANTEE_LINE,
   HERO,
   HOMEPAGE_FAQ,
   HOME_AGENTS,
-  HOW,
-  OPEN_SOURCE,
   PRICING,
-  REACH,
   STAYS_ON,
+  STEPS,
   STICKY,
   TOKEN_FAQ_SENTENCE,
   homepageFaq,
@@ -49,31 +46,24 @@ function strings(value: unknown): string[] {
   return [];
 }
 
-// The homepage may name Windows and Omarchy (owner decision 2026-09-28), but only
-// with their conditions and never as plainly available, so the shared rule that
-// keeps "Windows" off other public pages is skipped here. The condition that goes
-// with Windows is pinned below.
-const HOMEPAGE_ALLOWED = /Windows computers are not generally available/;
+// The short homepage (10 Nov 2026) names neither Windows nor Omarchy, so the
+// shared rule that keeps "Windows" off public pages applies here in full.
+const HOMEPAGE_ALLOWED = /^$/;
 
 /** A price shown beside its size in the same card, as the page text reads. */
 const PRICE_CARDS = [PRICING.cloud, PRICING.larger].map(card => `${card.price}${card.per} ${card.size}`);
 
 const isLink = (text: string) => text.startsWith("/") || text.startsWith("#") || text.startsWith("https://");
-const isBarePrice = (text: string) => text === PRICING.cloud.price || text === PRICING.larger.price;
+const isBarePrice = (text: string) => text === PRICING.cloud.price || text === PRICING.larger.price || text === PRICING.free.price;
 
-// Links, the bare price figure (it is scanned with its size, above) and the
-// literal `git clone` command are not claims: the "clones" rule is about
-// computer cloning, which is not shipped, not about cloning a repo.
+// Links and the bare price figure (it is scanned with its size, above) are not claims.
 const VISIBLE_COPY = [
   HERO,
   AGENTS_STAT,
-  REACH,
-  FIT,
   AGENTS_SECTION,
   HOME_AGENTS,
   COMPUTERS,
-  HOW,
-  OPEN_SOURCE,
+  STEPS,
   PRICING,
   FOUNDER,
   HOMEPAGE_FAQ,
@@ -84,10 +74,10 @@ const VISIBLE_COPY = [
   GUARANTEE_LINE,
 ]
   .flatMap(strings)
-  .filter(text => !isLink(text) && text !== OPEN_SOURCE.clone && !isBarePrice(text));
+  .filter(text => !isLink(text) && !isBarePrice(text));
 
 /** Copy that is written for this page and makes promises about running (the founder lines are old litepaper text, not shown). */
-const OWN_WORDS = [HERO, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, HOW, PRICING, HOMEPAGE_FAQ, homepageFaq(true), CLOSING, STICKY, GUARANTEE_LINE].flatMap(strings);
+const OWN_WORDS = [HERO, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, STEPS, PRICING, HOMEPAGE_FAQ, homepageFaq(true), CLOSING, STICKY, GUARANTEE_LINE].flatMap(strings);
 
 describe("homepage copy", () => {
   it("makes none of the claims public pages are barred from making", () => {
@@ -106,16 +96,12 @@ describe("homepage copy", () => {
     expect(VISIBLE_COPY.filter(text => /\b(?:favorite|favor|color|center|organization|optimize|license|behavior)\b/i.test(text))).toEqual([]);
   });
 
-  // F-17. The hero once said "It keeps working when you close your laptop".
-  // Only a run started in tmux, or a Claude Code run sent through Telegram, is
-  // certain to keep going on every computer (lib/blog/runtime-facts.ts), so the
+  // F-17. Only a run started in tmux, or a Claude Code run sent through Telegram,
+  // is certain to keep going on every computer (lib/blog/runtime-facts.ts), so the
   // page says what holds everywhere: a paid computer stays on and is not paused.
   it("promises only that a paid computer stays on, never that every run keeps going", () => {
     expect(STAYS_ON).toBe("A paid Hivra Cloud computer stays on and is not paused for inactivity");
-    expect(HERO.subhead[1]).toContain(`${STAYS_ON}, even when you close your laptop.`);
-    expect(HOW.steps[0].body).toContain(`${STAYS_ON}.`);
-    // The only run-level promise names tmux.
-    expect(HOW.steps[0].body).toContain("a run you start in tmux keeps going.");
+    expect(STEPS.steps[2].body).toContain(`${STAYS_ON}.`);
     expect(OWN_WORDS.flatMap(text => unqualifiedKeepRunningClaims(text))).toEqual([]);
   });
 
@@ -139,22 +125,8 @@ describe("homepage copy", () => {
     expect(VISIBLE_COPY.filter(text => /\b(?:affiliated|endorsed|partner(?:ed|ship)?)\b/i.test(text))).toEqual([]);
   });
 
-  // The code runs Omarchy as a prepared computer (it refuses a launch when no
-  // prepared slot exists) and Windows on the visitor's own server from their own
-  // licensed image, so neither is ever called plainly available.
-  it("names Omarchy and Windows only with their conditions, and no other plan or size name", () => {
-    const body = COMPUTERS.body.join(" ");
-    expect(body).toContain(
-      "Ubuntu, Omarchy (prepared computer) and Windows on your own server with your licensed image are among the operating-system options",
-    );
-    expect(body).not.toMatch(/\bavailable\b/i);
-    // The chips follow the sentence's order: Omarchy, then Windows.
-    expect(COMPUTERS.others.map(({ name, note }) => `${name} ${note}`)).toEqual([
-      "Omarchy (prepared computer)",
-      "Windows on your own server with your licensed image",
-    ]);
-    for (const text of VISIBLE_COPY.filter(candidate => candidate.length > 20 && /\bWindows\b/.test(candidate))) expect(text).toContain("Windows on your own server with your licensed image");
-    for (const text of VISIBLE_COPY.filter(candidate => candidate.length > 20 && /\bOmarchy\b/.test(candidate))) expect(text).toContain("Omarchy (prepared computer)");
+  it("names neither Windows nor Omarchy, and no plan or size name", () => {
+    expect(VISIBLE_COPY.filter(text => /\b(?:Windows|Omarchy)\b/.test(text))).toEqual([]);
     expect(VISIBLE_COPY.filter(text => /\b(?:Starter|Power)\b|\bHivra Pro\b|\bPro plan\b/.test(text))).toEqual([]);
   });
 
@@ -166,11 +138,11 @@ describe("homepage copy", () => {
     expect(PRICING.larger.price).toBe(LARGER_PLAN_PRICE);
     expect(PRICING.larger.size).toBe(LARGER_PLAN_SIZE);
     expect(PRICE_CARDS).toEqual(["$9.99/month 2 vCPU and 4 GB of RAM", "$19.99/month 4 vCPU and 8 GB of RAM"]);
-    expect(PRICING.titleTail).toBe(`Or let us run it from ${ENTRY_PLAN_PRICE} a month.`);
+    expect(PRICING.titleTail).toBe(`Hosted from ${ENTRY_PLAN_PRICE} a month.`);
     expect(PRICING.cloud.href).toBe("/get-started?plan=operator");
     expect(PRICING.larger.href).toBe("/get-started?plan=fleet");
-    expect(PRICING.server.href).toBe("/sign-up");
-    expect(PRICING.selfHost.href).toBe("https://github.com/ashneil12/hivra");
+    expect(PRICING.free.href).toBe("/sign-up");
+    expect(PRICING.free.selfHost.href).toBe("https://github.com/ashneil12/hivra");
     expect(STICKY.note).toBe("Free to start");
   });
 
@@ -185,7 +157,9 @@ describe("homepage copy", () => {
     expect(PRICING.aiUsage).toContain(
       "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
     );
-    expect(HERO.proof[1]).toContain("subject to the provider's terms");
+    expect(STEPS.steps[1].body).toContain("subject to the provider's terms");
+    // A login is never promised without the provider's terms.
+    for (const text of VISIBLE_COPY.filter(candidate => /\bsign in with\b|\b(?:ChatGPT|Claude) login\b/i.test(candidate))) expect(text).toContain("subject to the provider's terms");
     const cards = Object.fromEntries(HOME_AGENTS.map(agent => [agent.id, agent]));
     expect(cards["claude-code"].line).toContain("subject to the provider's terms");
     expect(cards.codex.line).toContain("subject to the provider's terms");
@@ -196,7 +170,7 @@ describe("homepage copy", () => {
     expect(keepUsing?.a).toContain("Claude Code uses your own Claude or Anthropic account, or Hivra credits. For Codex, bring your own account or key, or pay with Hivra credits.");
   });
 
-  it("answers the seven questions in the pack's order", () => {
+  it("answers six questions, in this order", () => {
     expect(HOMEPAGE_FAQ.map(({ q }) => q)).toEqual([
       "What exactly is Hivra?",
       "Can I keep using Claude Code or Codex?",
@@ -204,9 +178,8 @@ describe("homepage copy", () => {
       "Does a separate computer make the agent perfectly safe?",
       "Do I have to use Hivra Cloud?",
       "Do I need a token?",
-      "Why not rent a normal server?",
     ]);
-    expect(FAQ_TITLE).toBe("A few questions, answered.");
+    expect(FAQ_TITLE).toBe("Questions.");
   });
 
   it("answers the keep-running question with the verified runtime facts, word for word", () => {
@@ -224,22 +197,21 @@ describe("homepage copy", () => {
     expect(on.find(({ q }) => q === "Do I need a token?")?.a).toBe(`No. You can use card-paid hosting or self-host without one. ${TOKEN_FAQ_SENTENCE}`);
     expect(on.filter(({ q }) => q !== "Do I need a token?")).toEqual(off.filter(({ q }) => q !== "Do I need a token?"));
 
-    const alwaysOn = [HERO, REACH, FIT, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, HOW, OPEN_SOURCE, PRICING, CLOSING, STICKY, off, FAQ_TITLE].flatMap(strings);
+    const alwaysOn = [HERO, AGENTS_SECTION, HOME_AGENTS, COMPUTERS, STEPS, PRICING, CLOSING, STICKY, off, FAQ_TITLE].flatMap(strings);
     expect(alwaysOn.filter(text => /\$HIVRA|\$HermesOS|hermesos token|airdrop|snapshot|litepaper|tokenomics|launchpad|bankr|migrat/i.test(text))).toEqual([]);
     expect(alwaysOn.filter(text => /\btokens?\b/i.test(text))).toEqual(["Do I need a token?"]);
     expect(alwaysOn.concat(on.map(({ a }) => a)).filter(text => /\/litepaper|docs\/litepaper/.test(text))).toEqual([]);
   });
 
   it("sends each agent card to Launch with that agent chosen, with the limits the cards state", () => {
-    expect(HOME_AGENTS.map(agent => agent.id)).toEqual(["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon"]);
+    expect(HOME_AGENTS.map(agent => agent.id)).toEqual(["claude-code", "codex", "hermes", "openclaw", "agent-zero"]);
     for (const agent of HOME_AGENTS) expect(agent.href).toBe(buildLaunchHref({ start: true, profile: agent.id }));
     expect(HOME_AGENTS.map(agent => agent.role)).toEqual([
       "Coding",
       "Coding",
       "Research and automation",
       "Chat-based agent",
-      "General-purpose agent workspace",
-      "Scheduled project automation",
+      "General-purpose agent",
     ]);
     // Only a real limit shows on a card. No card singles out one agent as the paid one: the cost belongs to
     // the computer, and the line above the cards says so once (pinned in the next test).
@@ -249,7 +221,6 @@ describe("homepage copy", () => {
       hermes: "Hermes runs on Hivra Cloud only.",
       openclaw: undefined,
       "agent-zero": undefined,
-      aeon: undefined,
     });
   });
 
@@ -265,12 +236,9 @@ describe("homepage copy", () => {
     expect(CLOSING.paid).toContain("launch on Hivra Cloud with a paid plan");
     expect(CLOSING.paid).not.toMatch(/\$\d/);
     expect(AGENTS_SECTION.paid).toContain(`from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);
-    expect(COMPUTERS.body).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
-    // The hero names the paid route and the free one without a price (the hero test above keeps prices off the first screen).
-    expect(HERO.proof[0]).toBe("Free to start. Sign up, connect your own server or cloud, or self-host the platform.");
-    expect(HERO.proof[2]).toBe("Prefer not to run a server? Hivra can host it for you on a paid plan.");
-    expect(PRICING.server.body).toBe("Use infrastructure you already rent and pay that provider directly. A free account is enough.");
+    expect(HERO.proof[0]).toBe("Free to start");
+    expect(PRICING.free.body).toContain(FREE_ACCOUNT_SENTENCE);
     const hasRule = HOMEPAGE_FAQ.find(({ q }) => q === "Do I have to use Hivra Cloud?");
     expect(hasRule?.a).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
     expect(FREE_ACCOUNT_SENTENCE).toBe("A free account works with a computer or server you connect yourself.");
@@ -279,23 +247,12 @@ describe("homepage copy", () => {
     expect(VISIBLE_COPY.filter(text => /paid size/i.test(text))).toEqual([]);
     expect(HOME_AGENTS.filter(agent => /paid/i.test(`${agent.line} ${agent.note ?? ""}`)).map(agent => agent.id)).toEqual([]);
     const paidLines = VISIBLE_COPY.filter(text => /needs a paid plan/i.test(text));
-    expect(paidLines.length).toBeGreaterThanOrEqual(4);
+    expect(paidLines.length).toBeGreaterThanOrEqual(2);
     for (const text of paidLines) expect(text).toMatch(/Every (?:computer that Hivra Cloud runs for you|Hivra Cloud computer) needs a paid plan/);
   });
 
-  it("points the pack's buttons at the destinations that exist", () => {
-    expect(FIT.moreHref).toBe("/compare");
-    expect(COMPUTERS.explore.href).toBe("#computers");
-    expect(HOW.secondary.href).toBe("#pricing");
-    expect(OPEN_SOURCE.security.href).toBe("/security");
+  it("points the buttons at the destinations that exist", () => {
     expect(PRICING.full.href).toBe("/pricing");
-    expect(OPEN_SOURCE.clone).toBe("git clone https://github.com/ashneil12/hivra");
-  });
-
-  it("compares four places in six rows, each answer present for each column", () => {
-    expect(FIT.columns).toEqual(["Your laptop", "A provider-managed agent", "A typical hosted machine", "Hivra"]);
-    expect(FIT.rows).toHaveLength(6);
-    for (const row of FIT.rows) expect(row.cells).toHaveLength(FIT.columns.length);
-    expect(FIT.rows[0].cells[3]).toBe("Yes, on a paid cloud plan");
+    expect(COMPUTERS.href).toBe("/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop");
   });
 });

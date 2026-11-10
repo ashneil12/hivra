@@ -3,8 +3,8 @@ import { render, screen } from "@testing-library/react";
 
 import Footer from "@/components/landing/Footer";
 import PublicSite from "@/components/public-site/PublicSite";
-import OpenSource from "@/components/landing/home/OpenSource";
-import Fit from "@/components/landing/home/Fit";
+import Pricing from "@/components/landing/home/Pricing";
+import Steps from "@/components/landing/home/Steps";
 
 const original = process.env.HIVRA_NEW_TOKEN_SURFACES;
 afterEach(() => {
@@ -40,9 +40,9 @@ describe("site chrome while the new token surfaces are off", () => {
 
   it("the homepage sections do not point at the litepaper", () => {
     delete process.env.HIVRA_NEW_TOKEN_SURFACES;
-    const fit = render(<Fit />);
-    const open = render(<OpenSource />);
-    expect([...hrefs(fit.container), ...hrefs(open.container)].filter((h) => HELD.test(h ?? ""))).toEqual([]);
-    expect(hrefs(fit.container)).toContain("/compare");
+    const pricing = render(<Pricing />);
+    const steps = render(<Steps />);
+    expect([...hrefs(pricing.container), ...hrefs(steps.container)].filter((h) => HELD.test(h ?? ""))).toEqual([]);
+    expect(hrefs(pricing.container)).toContain("/pricing");
   });
 });
