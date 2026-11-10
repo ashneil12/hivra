@@ -61,7 +61,7 @@ it("says Update pending before the computer acknowledges, and offers Try again a
     lastDelivered: { revision: 2, deliveredAt: NOW } }));
   expect(screen.getByText("Update pending")).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/Delivered \d/);
-  expect(screen.getByText(/Hivra couldn't reach the computer\. Last try/)).toBeInTheDocument();
+  expect(screen.getByText(/Unavailable while the computer can't be reached\. Last try/)).toBeInTheDocument();
   expect(screen.getByText(`Last delivered: rev 2 at ${formatContractTime(NOW)}.`)).toBeInTheDocument();
   mockAction.mockResolvedValueOnce(tracked());
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -74,7 +74,7 @@ it("says when it last looked at a delivered copy, and when a later look failed",
   await renderWith(tracked({ deliveredAt: earlier, checkedAt: earlier, lastAttemptAt: NOW, lastError: "unreachable" }));
   expect(screen.getByText(`Delivered ${formatContractTime(earlier)}`)).toBeInTheDocument();
   expect(screen.getByText(`Last checked ${formatContractTime(earlier)}. Hivra looks again about once an hour when you open Codex 1.`)).toBeInTheDocument();
-  expect(screen.getByText(`Hivra couldn't reach the computer. Last try ${formatContractTime(NOW)}.`)).toBeInTheDocument();
+  expect(screen.getByText(`Unavailable while the computer can't be reached. Last try ${formatContractTime(NOW)}.`)).toBeInTheDocument();
 });
 
 it("offers Send now for a running computer whose note hasn't gone out, and looks again until it lands", async () => {

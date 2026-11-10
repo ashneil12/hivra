@@ -106,7 +106,7 @@ describe("AgentSoftwarePanel", () => {
     ["a failed download", { kind: "update_failed", reason: "download_failed", target: TESTED, installed: "0.140.0" }, /^Hivra couldn't download Codex 0\.149\.1\. Nothing was changed\.$/, "Try again"],
     ["a failed install", { kind: "update_failed", reason: "install_failed", target: TESTED, installed: null }, /couldn't put the previous version back\. Chat may not work until this is fixed/, "Try again"],
     ["an update that couldn't start", { kind: "update_failed", reason: "could_not_start", target: TESTED, installed: "0.140.0" }, /^The connection service was updated, but the Codex update couldn't start\. Try again\.$/, "Try again"],
-    ["unreachable", { kind: "unreachable" }, /^Couldn't reach this agent to check its Codex version\.$/, null],
+    ["unreachable", { kind: "unreachable" }, /^Unavailable while the computer can't be reached$/, null],
     ["checking", { kind: "checking" }, /^Checking which Codex version is installed…$/, null],
   ])("says what is true when %s", async (_case, view, text, action) => {
     mockGet.mockResolvedValue(stateOf(view));

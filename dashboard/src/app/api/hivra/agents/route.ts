@@ -42,6 +42,7 @@ import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { MANAGED_CLAUDE_CODE_DEFAULT_MODEL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readAgentSoftwareRecords } from "@/lib/hivra/agent-cli-store";
 import { agentSoftwareSummaryFor, type AgentSoftwareAgentRow } from "@/lib/hivra/agent-software-service";
 import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
@@ -2304,6 +2305,9 @@ const FAILED_LAUNCH_LIST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function isRecentFailedLaunch(row: Record<string, unknown>, now: number): boolean {
   if (row.status !== "error") return false;
+  // A computer its host reported gone stays listed, whatever its age, so its
+  // owner can open Manage and remove the record.
+  if (isComputerMissingOnHostRow(row)) return true;
   // hivra_agents has no updated_at column today; honour one if it appears.
   const stamp = [row.updated_at, row.created_at].find((v): v is string => typeof v === "string");
   const at = stamp ? Date.parse(stamp) : NaN;

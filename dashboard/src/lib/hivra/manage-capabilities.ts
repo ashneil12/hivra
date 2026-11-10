@@ -11,6 +11,7 @@
 // permissions, tools and CLI version) is still detected by the page.
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { getComputerTemplate } from "@/lib/hivra/computer-catalog";
 import {
   COMPUTER_PLACEMENT_LABEL,
@@ -45,6 +46,7 @@ export type { ManageCapabilities } from "@/lib/hivra/manage-sections";
 export interface ManageCapabilitiesRow extends LifecycleSupportRow {
   id?: unknown;
   name?: unknown;
+  error?: unknown;
   cpu?: unknown;
   ram?: unknown;
   ip?: unknown;
@@ -114,6 +116,11 @@ function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Mana
     const cap = unavailable("prepared_mismatch", "This prepared computer no longer matches the setup Hivra has on record, so its power controls are off. Contact support.");
     return { start: cap, stop: cap, restart: cap, forceStop: cap, forceRestart: cap };
   }
+  // The host reported this computer gone: no power control can reach it.
+  if (isComputerMissingOnHostRow(row)) {
+    const cap = blocked("missing_on_host", "This computer no longer exists on its host. Remove it from Hivra.");
+    return { start: cap, stop: cap, restart: cap, forceStop: cap, forceRestart: cap };
+  }
   const busy = operationInProgress(row);
   const stopped = row.status === "stopped";
   const errored = row.status === "error";
@@ -169,14 +176,16 @@ function usageCap(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Manag
   return available;
 }
 
+/** Prepared and Windows computers can't change size: say so in plain words, with the real size. */
+const FIXED_SIZE_SENTENCE = (row: ManageCapabilitiesRow) =>
+  `This computer has a fixed size (${amount(row.cpu)} CPU, ${amount(row.ram)} GB). For a different size, launch a new one.`;
+
 function resizeCap(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["resize"] {
   switch (variant) {
-    case "prepared": {
-      const name = getComputerTemplate(String(row.computer_profile))?.name ?? "prepared";
-      return { kind: "fixed", cap: unavailable("prepared_fixed", `This prepared ${name} computer has a fixed size of ${sizeOf(row)}. Hivra can't resize prepared computers yet.`) };
-    }
+    case "prepared":
+      return { kind: "fixed", cap: unavailable("prepared_fixed", FIXED_SIZE_SENTENCE(row)) };
     case "windows-my-server":
-      return { kind: "fixed", cap: unavailable("windows_fixed", `This Windows computer uses ${sizeOf(row)}. Hivra can't resize Windows computers yet.`) };
+      return { kind: "fixed", cap: unavailable("windows_fixed", FIXED_SIZE_SENTENCE(row)) };
     case "digitalocean":
       return { kind: "fixed", cap: unavailable("digitalocean_fixed", `DigitalOcean set this session's size (${sizeOf(row)}) when it was created, and it can't be changed.`) };
     case "my-cloud":

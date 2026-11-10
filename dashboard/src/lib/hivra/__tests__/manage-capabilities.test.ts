@@ -270,8 +270,9 @@ describe("manageCapabilitiesFor", () => {
   describe("resources", () => {
     it("fixes a prepared computer's size and says so with its real size", () => {
       expect(map("preparedWindows").resize).toEqual({ kind: "fixed", cap: { state: "unavailable", code: "prepared_fixed",
-        reason: "This prepared Windows computer has a fixed size of 4 CPU / 8 GB. Hivra can't resize prepared computers yet." } });
-      expect(map("preparedOmarchy").resize.cap).toMatchObject({ reason: expect.stringContaining("This prepared Omarchy computer has a fixed size of 4 CPU / 8 GB.") });
+        reason: "This computer has a fixed size (4 CPU, 8 GB). For a different size, launch a new one." } });
+      expect(map("preparedOmarchy").resize.cap).toMatchObject({ reason: "This computer has a fixed size (4 CPU, 8 GB). For a different size, launch a new one." });
+      expect(map("windowsMyServer").resize.cap).toMatchObject({ code: "windows_fixed", reason: expect.stringContaining("For a different size, launch a new one.") });
     });
 
     it.each([
