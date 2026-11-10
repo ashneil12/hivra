@@ -21,7 +21,7 @@ import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connection
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
-import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
+import { agentSoftwareAutoUpdates, agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { readAgentSoftwareRecord, saveAgentSoftwareAutoUpdate } from "@/lib/hivra/agent-cli-store";
 import {
   agentSoftwareResponse,
@@ -95,7 +95,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (failed) return apiError("Could not load this agent.", 503);
     if (!agent) return apiError("Agent not found", 404);
     const subject = agentSoftwareSubject(agent);
-    if (!subject?.cli) return apiError("Hivra doesn't update this agent's software automatically.", 400);
+    if (!subject?.cli || !agentSoftwareAutoUpdates(agent)) return apiError("Hivra doesn't update this agent's software automatically.", 400);
 
     const saved = await saveAgentSoftwareAutoUpdate({ id: agent.id, user_id: userId, type: agent.type }, subject, body.autoUpdate);
     if (!saved) return apiError("Your choice couldn't be saved. Try again.", 503);

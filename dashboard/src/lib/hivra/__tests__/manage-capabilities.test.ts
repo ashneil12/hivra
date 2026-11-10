@@ -284,7 +284,13 @@ describe("manageCapabilitiesFor", () => {
       expect(map("codex").agentCli).toEqual({ name: "codex", vetted: AGENT_CLI_VERSIONS.codex });
       expect(map("claude").agentCli).toEqual({ name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] });
       expect(map("aeon").agentCli).toBeNull();
-      expect(map("codexMyCloud").agentCli).toBeNull();
+      expect(map("codexMyCloud").agentCli).toEqual({ name: "codex", vetted: AGENT_CLI_VERSIONS.codex });
+      expect(map("hetznerUbuntu").agentCli).toBeNull();
+      const myCloudApp = manageCapabilitiesFor({ ...rows.codexMyCloud, type: "openclaw" }, { preparedMatch: true });
+      expect(myCloudApp.agentApp).toMatchObject({ name: "openclaw" });
+      const myCloudDeepSeek = manageCapabilitiesFor({ ...rows.codexMyCloud, type: "deepseek-harness" }, { preparedMatch: true });
+      expect(myCloudDeepSeek.agentCli).toBeNull();
+      expect(myCloudDeepSeek.agentApp).toBeNull();
     });
 
     it("needs a running computer to update the connection service", () => {

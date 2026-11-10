@@ -2,6 +2,7 @@ import {
   agentCliAutoUpdateGate,
   agentCliAutoUpdateMode,
   agentSoftwareBadge,
+  agentSoftwareAutoUpdates,
   agentSoftwareSubject,
   compareCliVersions,
   compareSoftwareVersions,
@@ -85,12 +86,25 @@ describe("agentSoftwareSubject", () => {
   it.each([
     ["DeepSeek, whose update is refused", { type: "deepseek-harness" }],
     ["a computer", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }],
-    ["My cloud", { type: "codex", computer_substrate: "provider-vm" }],
+    ["a My cloud desktop", { type: "codex", computer_substrate: "provider-vm", computer_profile: "ubuntu-desktop" }],
+    ["a My cloud DeepSeek computer", { type: "deepseek-harness", computer_substrate: "provider-vm" }],
     ["a Linux Sandbox", { type: "codex", computer_substrate: "gvisor" }],
     ["a DigitalOcean session", { type: "codex", computer_substrate: "do-managed-session" }],
     ["an agent on a prepared computer", { type: "codex", computer_profile: "windows" }],
   ])("leaves out %s", (_case, row) => {
     expect(agentSoftwareSubject(row)).toBeNull();
+  });
+});
+
+describe("agentSoftwareSubject on My cloud", () => {
+  it.each(["claude-code", "codex", "aeon", "openclaw", "agent-zero"])("covers a My cloud %s agent", (type) => {
+    expect(agentSoftwareSubject({ type, computer_substrate: "provider-vm" })).toMatchObject({ type });
+  });
+
+  it("keeps automatic updates to Proxmox computers", () => {
+    expect(agentSoftwareAutoUpdates({ computer_substrate: "provider-vm" })).toBe(false);
+    expect(agentSoftwareAutoUpdates({ computer_substrate: "proxmox-kvm" })).toBe(true);
+    expect(agentSoftwareAutoUpdates({ computer_substrate: null })).toBe(true);
   });
 });
 
