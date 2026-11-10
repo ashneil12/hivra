@@ -383,12 +383,11 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
   },
 };
 
-/** The profiles a launch link, draft or tile may name. `ubuntu-server` joins
- * this list (and the native route grammar that mirrors it) with its Launch
- * tile; until then a launch link or saved draft cannot select it. */
+/** The profiles a launch link, draft or tile may name. The native route
+ * grammar mirrors this list. */
 export const LAUNCH_PROFILE_IDS: readonly LaunchProfileId[] = [
   "claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
-  "ubuntu-desktop", "linux-terminal", "omarchy", "windows",
+  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
 ];
 
 /** Profiles whose computer can carry the optional browser. */

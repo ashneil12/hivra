@@ -45,6 +45,7 @@ The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and U
 | Computer | Status | Condition |
 | --- | --- | --- |
 | Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
+| Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
 | Linux Sandbox | Available | A gVisor-ready server you connected |
 | Omarchy | Available, with a condition | A prepared computer on Hivra Cloud. A launch claims the one prepared Omarchy computer the site holds, so the tile appears only where that computer is configured. Hivra does not yet build a fresh Omarchy computer per customer. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |

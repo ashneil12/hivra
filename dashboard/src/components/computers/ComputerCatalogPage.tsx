@@ -133,7 +133,7 @@ export function ComputerCatalogPage(
     launchQuery.append("targetId", targetId);
   const launchHref = `/dashboard/launch?${launchQuery.toString()}`;
   const profileLaunchHref = (
-    profile: "ubuntu-desktop" | "linux-terminal" | "omarchy" | "windows",
+    profile: "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "omarchy" | "windows",
   ) => {
     const query = new URLSearchParams(launchQuery);
     query.set("profile", profile);
@@ -324,7 +324,10 @@ export function ComputerCatalogPage(
             <div className={styles.empty}>
               <Monitor size={20} />
               <strong>No computers yet</strong>
-              <span>Choose Launch to launch your first computer.</span>
+              <span>A light Linux computer is one tap away. You can browse other systems below.</span>
+              <Link className={styles.primaryButton} href={profileLaunchHref("ubuntu-server")}>
+                Launch a Linux computer <ArrowRight size={14} />
+              </Link>
             </div>
           ) : null}
           {!loading && total > 0 && visibleComputers.length === 0 ? (
