@@ -79,15 +79,6 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     ],
   },
   {
-    // Where agents and computers run: Hivra Cloud, My cloud, My server.
-    // The route keeps its original path for existing links.
-    id: "infrastructure",
-    label: "Capacity",
-    href: "/dashboard/infrastructure",
-    icon: ServerCog,
-    routePrefixes: ["/dashboard/infrastructure"],
-  },
-  {
     id: "activity",
     label: "Activity",
     href: "/dashboard/activity",
@@ -129,6 +120,15 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     // funded, so it belongs with Billing, not Settings.
     // The optional $HermesOS → $HIVRA conversion page sits with the wallet.
     routePrefixes: ["/dashboard/billing", WALLET_ROUTE, "/dashboard/convert"],
+  },
+  {
+    // Where agents and computers run: Hivra Cloud, or a server or cloud
+    // account of your own. The route keeps its original path for existing links.
+    id: "infrastructure",
+    label: "Servers",
+    href: "/dashboard/infrastructure",
+    icon: ServerCog,
+    routePrefixes: ["/dashboard/infrastructure"],
   },
 ];
 
@@ -183,7 +183,7 @@ export type DashboardNavigationGroup = {
 
 /** Phone More sheet, in display order. Every destination not on the bar. */
 export const DASHBOARD_MOBILE_MORE_GROUPS: readonly DashboardNavigationGroup[] = [
-  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.infrastructure, PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
+  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
   { id: "help", items: DASHBOARD_UTILITY_NAVIGATION },
 ];
 

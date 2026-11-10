@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Check, Loader2, Pencil, X } from "lucide-react";
 import { manageButtonGhost, manageLabel, manageSpin } from "./manage-styles";
+import { StatusText } from "@/components/ui/StatusText";
 
 const STATUS_COLOR: Record<string, string> = {
   running: "var(--hg-ok)", ready: "var(--hg-ok)", provisioning: "var(--yellow)", stopped: "var(--text-muted)", paused: "var(--text-muted)",
@@ -91,7 +92,7 @@ export function ManageHeader({
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-secondary)" }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "1px solid var(--hg-stroke)", borderRadius: 999, background: "var(--hg-fill-1)", padding: "3px 10px 3px 9px" }}>
           <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLOR[status] || "var(--text-muted)", display: "inline-block" }} />
-          <span style={{ textTransform: "capitalize" }}>{statusLabel}</span>
+          <span style={{ textTransform: "capitalize" }}><StatusText value={statusLabel} /></span>
         </span>
         <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{subtitle}</span>
         {chips}

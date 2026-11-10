@@ -111,6 +111,11 @@
 
 .attention { color: var(--yellow); margin-top: 12px; }
 .attentionCount { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Continue: the last agent or computer, under Home. 44px for touch. */
+.continueItem { min-height: 44px; }
+.continueCopy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 1px; }
+.continueCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; color: var(--ink-black); }
+.continueCopy small { color: var(--hg-text-3, var(--text-muted)); font-size: 11px; font-weight: 600; letter-spacing: .05em; }
 /* ⌘K: the resource on screen, and the digit that opens a Recent entry. */
 .resultCurrent { flex-shrink: 0; font-size: 11px; color: var(--hg-text-2); }
 .resultKey { flex-shrink: 0; min-width: 20px; padding: 1px 5px; border: 1px solid var(--hg-stroke); border-radius: 5px; color: var(--hg-text-3); font: 10px var(--font-mono); text-align: center; }

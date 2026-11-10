@@ -178,7 +178,7 @@ const BASE_MARKETING_COPY = {
         home: "Home",
         computers: "Computers",
         agents: "Agents",
-        infrastructure: "Capacity",
+        infrastructure: "Servers",
         collaboration: "Collaboration",
         settings: "Settings",
         launch: "Launch",

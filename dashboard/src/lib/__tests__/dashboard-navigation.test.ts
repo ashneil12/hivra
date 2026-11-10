@@ -27,16 +27,15 @@ describe("dashboard navigation", () => {
     }
   });
   it("keeps daily work, launch, and management in explicit groups", () => {
-    // Capacity (where agents and computers run) is a primary destination.
+    // Servers (where your own agents and computers can run) is a Manage item.
     expect(DASHBOARD_PRIMARY_NAVIGATION.map((item) => item.id)).toEqual([
       "home",
       "computers",
       "agents",
-      "infrastructure",
       "activity",
     ]);
-    expect(DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "infrastructure")).toMatchObject({
-      label: "Capacity",
+    expect(DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "infrastructure")).toMatchObject({
+      label: "Servers",
       href: "/dashboard/infrastructure",
     });
     // No "chat" item: the interaction area IS home now, and a separate item
@@ -48,6 +47,7 @@ describe("dashboard navigation", () => {
     expect(DASHBOARD_SECONDARY_NAVIGATION.map((item) => item.id)).toEqual([
       "settings",
       "billing",
+      "infrastructure",
     ]);
     expect(DASHBOARD_LAUNCH_NAVIGATION).toMatchObject({
       id: "launch",
@@ -66,10 +66,10 @@ describe("dashboard navigation", () => {
     // The nav no longer gates anything on the shell flag.
     expect(
       filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION, false).map((item) => item.id),
-    ).toEqual(["home", "computers", "agents", "infrastructure", "activity"]);
+    ).toEqual(["home", "computers", "agents", "activity"]);
     expect(
       filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION, true).map((item) => item.id),
-    ).toEqual(["home", "computers", "agents", "infrastructure", "activity"]);
+    ).toEqual(["home", "computers", "agents", "activity"]);
   });
 
   it("builds the phone bar from the shared configuration with Launch centered between the inventories", () => {
@@ -87,11 +87,11 @@ describe("dashboard navigation", () => {
 
   it("puts every destination that is not on the phone bar in exactly one More group", () => {
     expect(DASHBOARD_MOBILE_MORE_GROUPS.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([
-      ["manage", ["infrastructure", "activity", "settings", "billing"]],
+      ["manage", ["activity", "settings", "billing", "infrastructure"]],
       ["help", ["applications", "help"]],
     ]);
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => item.id)).toEqual([
-      "infrastructure", "activity", "settings", "billing", "applications", "help",
+      "activity", "settings", "billing", "infrastructure", "applications", "help",
     ]);
     // The same item objects as the sidebar, so a destination cannot drift.
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION).toContain(DASHBOARD_SECONDARY_NAVIGATION[0]);
@@ -124,7 +124,7 @@ describe("dashboard navigation", () => {
       },
     };
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => labelForNavigationItem(item, localized)))
-      .toEqual(["容量", "动态", "设置", "账单", "应用", "帮助"]);
+      .toEqual(["动态", "设置", "账单", "容量", "应用", "帮助"]);
     expect(mobileNavigationCopy(localized)).toMatchObject({ more: "更多", signOut: "退出登录", manage: "管理", account: "Account" });
   });
 
