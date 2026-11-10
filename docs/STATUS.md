@@ -26,19 +26,21 @@ a free account works with a server the person connects.
 
 | Agent | Status | Where it runs |
 | --- | --- | --- |
-| Claude Code | Available | Hivra Cloud or a server you connected |
-| Codex | Available | Hivra Cloud or a server you connected |
+| Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
+| Codex | Available | Hivra Cloud or a Proxmox server you connected |
 | Hermes | Available | Hivra Cloud only |
-| OpenClaw | Available | Hivra Cloud or a server you connected |
-| Agent Zero | Available | Hivra Cloud or a server you connected |
-| Aeon | Available | Hivra Cloud or a server you connected |
+| OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
+| Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
+| Aeon | Available | Hivra Cloud or a Proxmox server you connected |
 | DeepSeek Harness | Preview, not launchable | Shown on Agents only |
+
+The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 
 ## Computers
 
 | Computer | Status | Condition |
 | --- | --- | --- |
-| Ubuntu Desktop | Available | Hivra Cloud or a server you connected |
+| Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
 | Linux Sandbox | Available | A gVisor-ready server you connected |
 | Omarchy | Available, with a condition | A prepared computer on Hivra Cloud. A launch claims the one prepared Omarchy computer the site holds, so the tile appears only where that computer is configured. Hivra does not yet build a fresh Omarchy computer per customer. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |

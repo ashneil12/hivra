@@ -254,6 +254,12 @@ export function ServerEnrollmentDialog({
             </p>
           ) : item && ready ? (
             <>
+              <p className={enrollmentStyles.meta}>
+                Running Proxmox?{" "}
+                <button type="button" className={enrollmentStyles.linkButton} onClick={() => { close(); onUseSshDetails(); }}>
+                  Connect it with SSH details instead
+                </button>
+              </p>
               <p className={enrollmentStyles.lead}>Run this on the server, as a user who can use sudo:</p>
               {open ? (
                 <div className={enrollmentStyles.commandRow}>
@@ -293,6 +299,10 @@ export function ServerEnrollmentDialog({
                 <li>
                   Works with Ubuntu 22.04 or 24.04 on x86. The server needs a public IPv4 address and must accept SSH from
                   the internet. Home or office machine? Hosted Hivra can&apos;t reach private networks yet.
+                </li>
+                <li>
+                  An Ubuntu server connected this way runs Linux Sandbox. Claude Code, Codex, OpenClaw, Agent Zero, Aeon
+                  and Ubuntu Desktop need a Proxmox VE server connected with SSH details.
                 </li>
                 <li>
                   Proxmox VE connects with a root login for now: use <strong>Connect with SSH details instead</strong>.

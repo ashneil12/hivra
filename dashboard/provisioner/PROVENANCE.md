@@ -544,6 +544,34 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.10.1` builds on `2026.11.03.1` and hardens first launch and
+start against slow or flaky networks, and tells the agent how to look after its
+own computer. `provision-claude-code-box.sh` waits for the dpkg lock (a fresh
+cloud image runs apt-daily right after first boot) and retries `apt-get` up to
+four times through one `apt_get` helper, retries the bux checkout, the pinned
+Claude Code and Codex npm installs through `with_retries`, and adds
+`--retry-connrefused --retry-delay 3` to every pinned download, whose size and
+SHA-256 checks are unchanged. `qemu-guest-agent` is still installed and enabled
+on Proxmox computers and its failure still stops the launch. The Codex CLI is
+installed under `~/.npm-global` and the installer now requires it at exactly
+that path, where chat, the terminal and the CLI updater run it. Agent Zero's
+model name and base URL are validated before they are written to its env file,
+the default port in messages matches the unit's (50080), and its readiness wait
+is five minutes. `hivra-provision-on-host.sh` bounds the provisioner copy (600
+seconds) and the in-guest install (45 minutes) with `timeout` and SSH
+keepalives, still through the VMID-attested key (`GSCP`/`GSSH`), and fails the
+launch with a reason instead of hanging in "provisioning"; the existing EXIT
+trap still reports `ready:false` and cleans up. `hivra-start-on-host.sh` waits
+up to five minutes, matching provisioning, for the named tunnel after a start.
+`system-prompt.md` and `system-prompt-codex.md` gain a "Looking after this
+computer" section that points the owner to Manage for updates, restarts and
+restore points, tells the agent not to upgrade its own CLI or touch the Hivra
+connection services, and asks it to confirm before deleting anything of the
+owner's. No runtime behaviour, sudoers rule, service or credential path
+changes, and the remote-desktop assets are unchanged, so the remote-desktop
+bundle revision and every session revision are preserved. This source release
+does not deploy, install, or update any existing computer.
+
 Release `2026.11.03.1` builds on `2026.10.20.2` and makes the optional Claude
 app easier to work in. `hivra-claude-app` gains the owner's clipboard switch for
 the desktop: `clipboard on|off` sets a root-only flag in

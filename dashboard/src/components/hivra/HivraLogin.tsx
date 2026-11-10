@@ -90,6 +90,7 @@ export function HivraLogin({
   emoji,
   token,
   untrustedLinks = false,
+  reauth = false,
 }: {
   boxUrl: string;
   onDone: () => void;
@@ -108,6 +109,12 @@ export function HivraLogin({
    * OpenAI or ChatGPT sign-in hosts, and as plain text with a warning otherwise.
    */
   untrustedLinks?: boolean;
+  /**
+   * Signing in again from Manage while the computer still says it is signed in
+   * (an expired or revoked login). The sign-in status can't show when the new
+   * sign-in is done, so Codex asks the person to say so instead of waiting.
+   */
+  reauth?: boolean;
 }) {
   const isCodex = agentKind === "codex";
   const product = productName || (isCodex ? "Codex" : "Claude Code");
@@ -144,7 +151,7 @@ export function HivraLogin({
   // checks for a bounded window, skips checks while the tab is hidden, and then
   // stops and offers a visible "Check again" instead of polling forever.
   useEffect(() => {
-    if (!isCodex || step !== "awaiting") return;
+    if (!isCodex || reauth || step !== "awaiting") return;
     const controller = new AbortController();
     const started = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -170,7 +177,7 @@ export function HivraLogin({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [isCodex, step, boxUrl, token, pollRound]);
+  }, [isCodex, reauth, step, boxUrl, token, pollRound]);
 
   async function start() {
     setBusy(true);
@@ -203,6 +210,22 @@ export function HivraLogin({
       setCopied("copied");
     } catch {
       setCopied("failed");
+    }
+  }
+
+  // Hivra can't see a second Codex sign-in finish, so this trusts the person
+  // and the box's own answer; a message to the agent is the real check.
+  async function finishCodexReauth() {
+    setBusy(true);
+    setError(null);
+    try {
+      await boxLoginComplete(boxUrl, "", token);
+      setStep("done");
+      onDoneRef.current();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -240,11 +263,15 @@ export function HivraLogin({
         {emoji ? <span aria-hidden>{emoji}</span> : <span className="serif" style={{ color: "var(--gold-leaf)", fontSize: "0.92em" }}>{who.charAt(0).toUpperCase()}</span>}
       </div>
       <h2 className="serif hivra-login__title">
-        {who} is almost ready.
+        {reauth ? `Sign in to ${product} again.` : `${who} is almost ready.`}
       </h2>
       <p className="hivra-login__lede">
-        It runs the official {product} on <strong style={{ color: "var(--ink-black)" }}>your own {accountLabel}</strong>.
-        Connect once — the session is stored on this computer. Administrators of its host may have infrastructure access.
+        {reauth ? (
+          <>Use this if {who} says it needs you to sign in, or stops answering because your sign-in ran out. Sign in to the same <strong style={{ color: "var(--ink-black)" }}>{accountLabel}</strong> again; your files and chats stay as they are. </>
+        ) : (
+          <>It runs the official {product} on <strong style={{ color: "var(--ink-black)" }}>your own {accountLabel}</strong>. Connect once — </>
+        )}
+        {reauth ? "The new session is stored on this computer. " : "the session is stored on this computer. "}Administrators of its host may have infrastructure access.
       </p>
 
       {error ? (
@@ -265,7 +292,7 @@ export function HivraLogin({
             Sign in with {signInWith}
           </button>
           <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "18px 0 0", lineHeight: 1.55 }}>
-            Once connected, {who} introduces itself and gets straight to work.
+            {reauth ? `When you finish, ${who} uses your new sign-in.` : `Once connected, ${who} introduces itself and gets straight to work.`}
           </p>
         </>
       ) : isCodex ? (
@@ -289,7 +316,14 @@ export function HivraLogin({
             </span>
           </div>
           {openSignIn}
-          {pollExpired ? (
+          {reauth ? (
+            <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+              <button type="button" onClick={() => void finishCodexReauth()} disabled={busy} className="hivra-login__primary hivra-login__cta">
+                {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />} I&apos;ve entered the code
+              </button>
+              <span style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5 }}>Press this after you authorize on the sign-in page. Then send {who} a message to check it works.</span>
+            </div>
+          ) : pollExpired ? (
             <div role="status" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, fontSize: 12.5, color: "var(--text-muted)" }}>
               <span>Hivra hasn&apos;t seen the sign-in yet.</span>
               <button type="button" className="hivra-login__secondary" onClick={() => { setPollExpired(false); setPollRound((n) => n + 1); }}>

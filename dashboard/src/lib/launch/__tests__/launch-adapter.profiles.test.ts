@@ -330,7 +330,8 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
     const error = await submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED).catch(caught => caught);
     expect(error).toBeInstanceOf(LaunchCorrectableError);
     expect(error.action).toEqual({ kind: "open", label: "Choose a plan", href: "/dashboard/billing?tab=plans" });
-    expect(error.message).toBe("A Hivra-hosted computer needs a paid plan.");
+    expect(error.message).toBe("Hermes runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.");
+    expect(error.message).not.toMatch(/own computer|connect one/i);
   });
 
   it("offers the owner's existing agent when the plan holds only one", async () => {
@@ -358,6 +359,18 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
 
   it("stays uncertain when a lost connection left nothing visible yet", async () => {
     route((url, init) => url === "/api/instances" && init?.method === "POST", () => { throw new TypeError("Failed to fetch"); });
+    route(url => url === "/api/instances", () => json(200, { success: true, data: [] }));
+    await expect(submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
+  });
+
+  it.each([502, 503, 504])("keeps a %i with nothing visible in the check-again flow so a retry cannot start a second Hermes", async status => {
+    route((url, init) => url === "/api/instances" && init?.method === "POST", () => json(status, { success: false, error: "Gateway timeout." }));
+    route(url => url === "/api/instances", () => json(200, { success: true, data: [] }));
+    await expect(submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
+  });
+
+  it("keeps a non-JSON error page with nothing visible in the check-again flow", async () => {
+    route((url, init) => url === "/api/instances" && init?.method === "POST", () => new Response("<html>Gateway Timeout</html>", { status: 504 }));
     route(url => url === "/api/instances", () => json(200, { success: true, data: [] }));
     await expect(submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
   });

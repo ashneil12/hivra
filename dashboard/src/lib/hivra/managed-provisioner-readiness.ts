@@ -1,8 +1,9 @@
 import "server-only";
 
 import {
-  PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS,
   PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS,
+  PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
+  compatibleProxmoxVersionsForRuntime,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
@@ -34,13 +35,24 @@ export function managedHivraHostReadinessScript(
   channel: ManagedHivraProvisionerChannel,
   purpose: ManagedHivraHostReadinessPurpose = "provision",
   requireModelSettings = false,
+  runtimeId: string | null = null,
 ): string {
+  const runtimeVersions = compatibleProxmoxVersionsForRuntime(runtimeId);
   const runtimePaths = managedHivraProvisionerChannelConfiguration(channel).runtime;
   const versions = purpose === "runtime-update" || (channel === "canary" && purpose === "provision")
     ? [PORTABLE_HIVRA_PROVISIONER_VERSION]
-    : requireModelSettings ? PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS : PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS;
+    : requireModelSettings
+      ? PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS.filter(v => runtimeVersions.includes(v))
+      : runtimeVersions;
   const modelCapabilities = requireModelSettings ? `need_file "$PROVISIONER_DIR/hivra-chat/llm-application.js"
 need_file "$PROVISIONER_DIR/hivra-chat/server.js"` : "";
+  // Only runtimes whose installer reads the pinned app versions need these
+  // files; a host legitimately running other agents is not held to them.
+  const agentAppFiles = runtimeId && runtimeId in PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS
+    && (purpose === "provision" || purpose === "runtime-update")
+    ? `need_file "$PROVISIONER_DIR/agent-app-versions.json"
+need_file "$PROVISIONER_DIR/hivra-agent-app-update.sh"`
+    : "";
   const provisionPrerequisites = purpose === "provision"
     ? `need_file "$PROVISION_SCRIPT"
 need_file "$PROVISIONER_DIR/provision-claude-code-box.sh"
@@ -97,6 +109,7 @@ need_file "$PROVISIONER_DIR/BUNDLE.sha256"
 need_readable ${shellQuote(runtimePaths.vmSshKeyPath)}
 ${provisionPrerequisites}
 ${modelCapabilities}
+${agentAppFiles}
 ${runtimeUpdateCapabilities}
 ${capacityAdmissionCapabilities}
 if [ -n "$missing" ]; then
@@ -134,6 +147,9 @@ export async function checkManagedHivraHostReadiness(
     channel: ManagedHivraProvisionerChannel;
     purpose?: ManagedHivraHostReadinessPurpose;
     requireModelSettings?: boolean;
+    /** Catalog runtime being launched; gates the host's release per runtime. */
+    runtimeId?: string | null;
+    runtimeLabel?: string;
   },
   runner: (
     script: string,
@@ -145,21 +161,29 @@ export async function checkManagedHivraHostReadiness(
     candidate.channel,
     candidate.purpose,
     candidate.requireModelSettings,
+    candidate.runtimeId ?? null,
   ), candidate.env, {
     timeoutMs: HOST_READINESS_TIMEOUT_MS,
   });
   if (result.ok && result.stdout.includes("HIVRA_HOST_READY")) return { ok: true };
 
+  // A host that is otherwise ready but predates this runtime's minimum release
+  // must say so, not read as "no capacity".
+  const needsUpdate = Boolean(candidate.runtimeId
+    && candidate.runtimeId in PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS)
+    && /version mismatch|agent-app-versions\.json|hivra-agent-app-update\.sh/.test(`${result.stderr} ${result.error ?? ""}`);
   return {
     ok: false,
     status: 503,
-    message: candidate.purpose === "runtime-update"
+    message: needsUpdate
+      ? `This server needs an update before it can run ${candidate.runtimeLabel ?? "this agent"}. Please try again shortly.`
+      : candidate.purpose === "runtime-update"
       ? "This computer cannot be updated until its infrastructure target has the current Hivra runtime bundle. Prepare the target, then try again."
       : candidate.requireModelSettings
         ? "Could not confirm model-settings support on this host. Use native sign-in or choose a prepared model-capable host."
         : "Deployment target is temporarily unavailable while the Hivra provisioner is being prepared. Please try again shortly.",
     error: {
-      code: "HIVRA_HOST_READINESS_FAILED",
+      code: needsUpdate ? "HIVRA_HOST_NEEDS_UPDATE" : "HIVRA_HOST_READINESS_FAILED",
       targetId: candidate.targetId,
       reason: result.error ?? "readiness marker missing",
       stdout: result.stdout.slice(0, 300),

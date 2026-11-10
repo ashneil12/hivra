@@ -8,7 +8,7 @@
 import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
 import agentAppVersions from "../../../provisioner/agent-app-versions.json";
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.03.1";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.10.1";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -70,11 +70,48 @@ export const PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS = [
   "2026.10.07.1",
   "2026.10.20.1",
   "2026.10.20.2",
+  "2026.11.03.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function isCompatibleProxmoxProvisionerVersion(version: unknown): version is string {
   return typeof version === "string"
     && (PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS as readonly string[]).includes(version);
+}
+/**
+ * Per-runtime minimum compatible release. A release in the compatible list can
+ * still lack what one runtime's installer needs, and a host that old would
+ * accept the launch and then fail inside the guest (the Agent Zero launches on
+ * an older host were exactly this). Runtimes not listed here are available on
+ * every compatible release.
+ *
+ * Evidence: provisioner/agent-app-versions.json and hivra-agent-app-update.sh
+ * first ship in 2026.10.20.2 (provisioner-releases/2026.10.20.2.json is the
+ * first manifest listing them; 2026.10.20.1 does not). The aeon, openclaw and
+ * agent-zero installers pin their app version from that file, and their
+ * managed-model (HIVRA_MODEL_*) wiring needs the model-settings releases, which
+ * 2026.10.20.2 also satisfies.
+ */
+export const PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS: Readonly<Record<string, string>> = {
+  aeon: "2026.10.20.2",
+  openclaw: "2026.10.20.2",
+  "agent-zero": "2026.10.20.2",
+};
+/** True when the exact compatible release is at or above the runtime's minimum
+ * (always true for a runtime without one). Ordering is the compatible list's
+ * own release order, never string comparison. */
+export function provisionerVersionMeetsRuntimeMinimum(version: unknown, catalogRuntimeId: string): boolean {
+  if (!isCompatibleProxmoxProvisionerVersion(version)) return false;
+  const minimum = PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS[catalogRuntimeId];
+  if (!minimum) return true;
+  const list = PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS as readonly string[];
+  const minimumIndex = list.indexOf(minimum);
+  return minimumIndex >= 0 && list.indexOf(version) >= minimumIndex;
+}
+/** Compatible releases that can run the runtime; used by the managed host
+ * readiness script so an older host is skipped by placement. */
+export function compatibleProxmoxVersionsForRuntime(catalogRuntimeId: string | null | undefined): readonly string[] {
+  return (PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS as readonly string[])
+    .filter(v => !catalogRuntimeId || provisionerVersionMeetsRuntimeMinimum(v, catalogRuntimeId));
 }
 export const PORTABLE_HIVRA_RUNTIME_COMPATIBILITY_CONTRACT_VERSION = 1 as const;
 
@@ -142,6 +179,7 @@ const PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS = [
   "2026.10.07.1",
   "2026.10.20.1",
   "2026.10.20.2",
+  "2026.11.03.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 
@@ -165,6 +203,7 @@ const PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS = [
   "2026.10.07.1",
   "2026.10.20.1",
   "2026.10.20.2",
+  "2026.11.03.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
@@ -188,6 +227,7 @@ const PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS = [
   "2026.10.07.1",
   "2026.10.20.1",
   "2026.10.20.2",
+  "2026.11.03.1",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsHostCapacityAdmission(version: unknown): boolean {
@@ -210,12 +250,12 @@ export function providerProvisionerSupportsCatalogRuntime(version: unknown, runt
     ? version === PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION
     : (PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).includes(runtime));
 }
-export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
 
 /** Native launch compatibility is not model-key delivery capability. Only the
  * reviewed atomic model-settings release can opt into launch-time custody.
  * Actual guest capability and receipt checks still run before key delivery. */
-export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
 export function supportsModelSettingsProvisionerVersion(version: unknown): version is string {
   return (PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -223,7 +263,7 @@ export function supportsModelSettingsProvisionerVersion(version: unknown): versi
 /** Releases whose host script and guest installer carry the agent-run
  * reporter (launch document v4). A predecessor ignores the credential, so the
  * control plane does not issue one to a host known to run an older bundle. */
-export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1"] as const;
+export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1"] as const;
 export function provisionerSupportsActivityTelemetry(version: unknown): version is string {
   return (PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -239,7 +279,8 @@ export function portableProvisionerSupportsCatalogRuntime(
   const supported = provisionerSupportsLinuxDesktop(version)
       ? [...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS, "linux-desktop"]
       : PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS;
-  return (supported as readonly string[]).includes(catalogRuntimeId);
+  return (supported as readonly string[]).includes(catalogRuntimeId)
+    && provisionerVersionMeetsRuntimeMinimum(version, catalogRuntimeId);
 }
 
 export type PortableHivraRuntimeCompatibilityRecord = {
@@ -276,9 +317,10 @@ export function portableRuntimeCompatibilityForProvisioner(
     // A compatible predecessor remains usable for the runtimes it actually
     // shipped, but must not inherit a new catalog claim merely because the
     // control plane was upgraded.
-    supportedCatalogRuntimeIds: provisionerSupportsLinuxDesktop(provisioner.version)
-        ? [...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS, "linux-desktop"]
-        : [...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS],
+    supportedCatalogRuntimeIds: (provisionerSupportsLinuxDesktop(provisioner.version)
+        ? [...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS, "linux-desktop" as const]
+        : [...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS]
+      ).filter(id => provisionerVersionMeetsRuntimeMinimum(provisioner.version, id)),
     supportedHostCapabilities: provisionerSupportsWindowsInstaller(provisioner.version)
       ? ["windows-installer"] : [],
   };

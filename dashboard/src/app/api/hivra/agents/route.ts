@@ -125,6 +125,8 @@ import {
   HIVRA_AGENT_VM_DISK_GB,
   HIVRA_AGENT_VM_STORAGE_HEADROOM_GB,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
+  isCompatibleProxmoxProvisionerVersion,
+  provisionerVersionMeetsRuntimeMinimum,
   provisionerSupportsActivityTelemetry,
   provisionerSupportsHostCapacityAdmission,
 } from "@/lib/infrastructure/portable-provisioner-contract";
@@ -1225,6 +1227,10 @@ async function launchAgent(request: NextRequest) {
         capacityPolicy = context.capacityPolicy ?? DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
 
         if (!targetSupportsCatalogRuntime(context.target, compatibilityRuntimeId)) {
+          if (isCompatibleProxmoxProvisionerVersion(context.runtime.provisionerVersion)
+            && !provisionerVersionMeetsRuntimeMinimum(context.runtime.provisionerVersion, compatibilityRuntimeId)) {
+            return apiError(`This server needs an update before it can run ${def.name}. Prepare it again, then launch.`, 409);
+          }
           return apiError(
             `Run preflight again: this infrastructure target does not have compatibility evidence for ${def.name}.`,
             409,
@@ -1286,16 +1292,16 @@ async function launchAgent(request: NextRequest) {
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
         skipTemplateAvailabilityCheck: true,
-        readinessCheck: launchAdmission
-          ? candidate => checkManagedHivraHostReadiness({
-              ...candidate,
-              channel: managedProvisionerChannel,
-              requireModelSettings: true,
-            })
-          : candidate => checkManagedHivraHostReadiness({
-              ...candidate,
-              channel: managedProvisionerChannel,
-            }),
+        // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
+        // so their host must carry model-settings support as well as the
+        // runtime's own minimum release.
+        readinessCheck: candidate => checkManagedHivraHostReadiness({
+          ...candidate,
+          channel: managedProvisionerChannel,
+          runtimeId: compatibilityRuntimeId,
+          runtimeLabel: def.name,
+          ...(launchAdmission || def.managedVenice ? { requireModelSettings: true } : {}),
+        }),
       });
       if (!placement.ok) {
         // error, not warn: a blocked launch is customer-visible and only error
@@ -2276,6 +2282,19 @@ qm set ${vmid} --cpuunits ${cpuunits}`,
   }
 }
 
+// A failed launch stays listed this long so the person can read why it failed
+// and delete it (it may still hold a VM). It is display-only: `error` rows are
+// not active compute, so slots, the pool and billing usage never count them.
+const FAILED_LAUNCH_LIST_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isRecentFailedLaunch(row: Record<string, unknown>, now: number): boolean {
+  if (row.status !== "error") return false;
+  // hivra_agents has no updated_at column today; honour one if it appears.
+  const stamp = [row.updated_at, row.created_at].find((v): v is string => typeof v === "string");
+  const at = stamp ? Date.parse(stamp) : NaN;
+  return Number.isFinite(at) && now - at <= FAILED_LAUNCH_LIST_WINDOW_MS;
+}
+
 export async function GET(request: NextRequest) {
   try {
     if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
@@ -2291,7 +2310,10 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false });
     if (error) return apiError("Failed to list agents", 500);
     const rows = (Array.isArray(data) ? data : [])
-      .filter((row) => isActiveComputeStatus((row as { status?: unknown }).status)) as Record<string, unknown>[];
+      .filter((row) => {
+        const status = (row as { status?: unknown }).status;
+        return isActiveComputeStatus(status) || isRecentFailedLaunch(row as Record<string, unknown>, Date.now());
+      }) as Record<string, unknown>[];
     // One read of the stored software observations, never the computers
     // themselves: the list tags agents whose Claude Code / Codex is behind.
     const covered = new Set(rows.filter((row) => agentSoftwareSubject(row) !== null).map((row) => String(row.id)));

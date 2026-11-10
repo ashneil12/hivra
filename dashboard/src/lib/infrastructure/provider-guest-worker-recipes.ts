@@ -355,6 +355,11 @@ const recipes = Object.freeze({
     workerSha256: "5f30e02197d1daca7530ccd12610cdeea568aa0399a37ce1ff4a7a332ee89919",
     workerSize: 45185,
   }),
+  "2026.11.10.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens first launch and start against slow networks (apt lock, retries, bounded SSH steps) and adds the "Looking after this computer" guidance to the agent system prompts.
+    workerSha256: "1d07dd4c82c14bf566837c9c87a3b7389881cba49342557f41222a8dc78590d7",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

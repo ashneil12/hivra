@@ -228,10 +228,35 @@ fi
 say "1/7  base packages"
 # ===========================================================================
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils
+# A fresh cloud image runs apt-daily/unattended-upgrades right after first boot
+# and holds the dpkg lock. Wait for the lock, and retry a flaky mirror a few
+# times, instead of failing the whole launch on the first transient error.
+apt_get() {
+  local attempt
+  for attempt in 1 2 3 4; do
+    apt-get -o DPkg::Lock::Timeout=300 "$@" && return 0
+    [ "$attempt" -lt 4 ] || break
+    warn "apt-get $1 failed (attempt ${attempt}/4); retrying in $((attempt * 10))s"
+    sleep $((attempt * 10))
+  done
+  return 1
+}
+# Retry a network step (git fetch, npm install) that a brief outage can break.
+with_retries() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return 0
+    [ "$attempt" -lt 3 ] || break
+    warn "network step failed (attempt ${attempt}/3); retrying in $((attempt * 15))s"
+    sleep $((attempt * 15))
+  done
+  return 1
+}
+apt_get update -y || die "apt-get update failed after retries"
+apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
+  || die "base package installation failed after retries"
 if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
-  apt-get install -y qemu-guest-agent
+  apt_get install -y qemu-guest-agent || die "qemu-guest-agent installation failed after retries"
   systemctl enable --now qemu-guest-agent \
     || die "qemu-guest-agent failed to start"
 fi
@@ -241,7 +266,7 @@ if [ -z "$ACCESS_HOSTNAME" ] && { ! command -v cloudflared >/dev/null 2>&1 || ! 
   say "installing verified cloudflared ${CLOUDFLARED_VERSION}"
   CLOUDFLARED_TMP="$(mktemp /tmp/cloudflared.XXXXXX)"
   trap 'rm -f -- "${CLOUDFLARED_TMP:-}"' EXIT
-  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
     "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
     -o "$CLOUDFLARED_TMP"
   printf '%s  %s\n' "$CLOUDFLARED_LINUX_AMD64_SHA256" "$CLOUDFLARED_TMP" | sha256sum -c - >/dev/null \
@@ -265,7 +290,7 @@ if [ -n "$ACCESS_HOSTNAME" ]; then
     say "installing verified Caddy ${CADDY_VERSION} for standalone HTTPS"
     CADDY_TMP_DIR="$(mktemp -d /tmp/hivra-caddy.XXXXXX)"
     trap 'rm -rf -- "${CADDY_TMP_DIR:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" \
       -o "$CADDY_TMP_DIR/caddy.tar.gz"
     printf '%s  %s\n' "$CADDY_LINUX_AMD64_SHA256" "$CADDY_TMP_DIR/caddy.tar.gz" | sha256sum -c - >/dev/null \
@@ -306,7 +331,7 @@ if [ "$AGENT_KIND" = "linux-desktop" ]; then
     [ ! -e "${NODE_ROOT}" ] || die "existing Node.js runtime differs from the pinned desktop runtime"
     NODE_TMP_DIR="$(mktemp -d /tmp/hivra-node.XXXXXX)"
     trap 'rm -rf -- "${NODE_TMP_DIR:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
       -o "${NODE_TMP_DIR}/node.tar.xz"
     printf '%s  %s\n' "$NODE_LINUX_X64_SHA256" "${NODE_TMP_DIR}/node.tar.xz" | sha256sum -c - >/dev/null \
@@ -329,7 +354,7 @@ if [ "$AGENT_KIND" = "linux-desktop" ]; then
   if [ ! -x /usr/local/bin/ttyd ] || ! /usr/local/bin/ttyd --version 2>&1 | grep -Fq "$TTYD_VERSION"; then
     TTYD_TMP="$(mktemp /tmp/hivra-ttyd.XXXXXX)"
     trap 'rm -f -- "${TTYD_TMP:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
       -o "$TTYD_TMP"
     printf '%s  %s\n' "$TTYD_LINUX_X64_SHA256" "$TTYD_TMP" | sha256sum -c - >/dev/null \
@@ -390,7 +415,7 @@ if [ ! -e "${BUX_DIR}" ] && [ ! -L "${BUX_DIR}" ]; then
     mkdir "${BUX_DIR}"
     git -C "${BUX_DIR}" init -q
     git -C "${BUX_DIR}" remote add origin https://github.com/browser-use/bux
-    git -C "${BUX_DIR}" fetch --depth 1 origin "${BUX_REF}"
+    with_retries git -C "${BUX_DIR}" fetch --depth 1 origin "${BUX_REF}"
     git -C "${BUX_DIR}" checkout -q --detach FETCH_HEAD
   )
   BUX_CHECKOUT_CREATED=1
@@ -449,7 +474,7 @@ fi
 ensure_bux_installed
 
 if ! claude --version 2>/dev/null | grep -Fq "$CLAUDE_CODE_VERSION"; then
-  run_public_bootstrap npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+  with_retries run_public_bootstrap npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     || die "failed to install pinned Claude Code ${CLAUDE_CODE_VERSION}"
 fi
 
@@ -482,15 +507,20 @@ prepare_linux_desktop_workspace() {
 prepare_linux_desktop_workspace
 # For codex boxes, make sure the installer's codex pre-install actually landed.
 if [ "$AGENT_KIND" = "codex" ]; then
-  if sudo -iu "${AGENT_USER}" command -v codex >/dev/null 2>&1; then
-    ok "codex CLI present ($(sudo -iu "${AGENT_USER}" bash -lc 'codex --version' 2>/dev/null || echo present))"
+  if [ -x "${AGENT_HOME}/.npm-global/bin/codex" ]; then
+    ok "codex CLI present ($(sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" "${AGENT_HOME}/.npm-global/bin/codex" --version 2>/dev/null || echo present))"
   else
     say "codex CLI absent — installing @openai/codex for ${AGENT_USER}"
-    sudo -iu "${AGENT_USER}" bash -lc "npm i -g @openai/codex@${CODEX_CLI_VERSION}" \
+    with_retries sudo -iu "${AGENT_USER}" bash -lc "npm i -g --prefix \"\$HOME/.npm-global\" @openai/codex@${CODEX_CLI_VERSION}" \
       || die "failed to install @openai/codex for ${AGENT_USER}"
     ok "codex CLI installed"
   fi
-  sudo -iu "${AGENT_USER}" bash -lc 'codex --version' 2>/dev/null | grep -Fq "$CODEX_CLI_VERSION" \
+  # The gateway, terminal shell and CLI updater all run this exact path, so a
+  # codex found elsewhere on the login PATH is not good enough.
+  CODEX_BIN_PATH="${AGENT_HOME}/.npm-global/bin/codex"
+  [ -x "$CODEX_BIN_PATH" ] \
+    || die "codex CLI is not at ${CODEX_BIN_PATH}, where chat, terminal and updates expect it"
+  sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" "$CODEX_BIN_PATH" --version 2>/dev/null | grep -Fq "$CODEX_CLI_VERSION" \
     || die "Codex CLI version does not match ${CODEX_CLI_VERSION}"
   sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py" >/dev/null \
     || die "could not turn off the Codex startup update check"
@@ -507,12 +537,12 @@ if [ "$WANT_BROWSER" = 1 ]; then
   else
     CHROME_TMP="$(mktemp /tmp/google-chrome.XXXXXX.deb)"
     trap 'rm -f -- "${CHROME_TMP:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}_amd64.deb" \
       -o "$CHROME_TMP"
     printf '%s  %s\n' "$CHROME_LINUX_AMD64_SHA256" "$CHROME_TMP" | sha256sum -c - >/dev/null \
       || die "Chrome checksum verification failed"
-    apt-get install -y "$CHROME_TMP"
+    apt_get install -y "$CHROME_TMP"
     rm -f -- "$CHROME_TMP"
     trap - EXIT
     dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null | grep -Fxq "$CHROME_VERSION" \
@@ -521,7 +551,7 @@ if [ "$WANT_BROWSER" = 1 ]; then
   fi
   # Live-view stack: Xvfb (virtual display) + x11vnc + noVNC/websockify so the
   # agent's headful Chrome can be streamed into the dashboard Browser tab.
-  apt-get install -y xvfb x11vnc novnc websockify
+  apt_get install -y xvfb x11vnc novnc websockify
   ok "installed browser-view stack (xvfb x11vnc novnc websockify)"
 else
   ok "browser off — skipping Chrome"
@@ -760,12 +790,12 @@ say "5b/7  Aeon dashboard (hosted Next.js; tasks run on the user's own GitHub Ac
 if ! dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION"; then
   GH_TMP="$(mktemp /tmp/github-cli.XXXXXX.deb)"
   trap 'rm -f -- "${GH_TMP:-}"' EXIT
-  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
     "https://cli.github.com/packages/pool/main/g/gh/gh_${GH_VERSION}_amd64.deb" \
     -o "$GH_TMP"
   printf '%s  %s\n' "$GH_LINUX_AMD64_SHA256" "$GH_TMP" | sha256sum -c - >/dev/null \
     || die "GitHub CLI checksum verification failed"
-  apt-get install -y "$GH_TMP"
+  apt_get install -y "$GH_TMP"
   rm -f -- "$GH_TMP"
   trap - EXIT
 fi
@@ -1060,7 +1090,7 @@ A0_IMAGE="agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}"
 # --- Docker engine (boxes are full VMs — no LXC-nesting problem here) ---
 if ! command -v docker >/dev/null 2>&1; then
   say "installing Docker from Ubuntu's signed package repository"
-  apt-get install -y docker.io || die "docker.io package installation failed"
+  apt_get install -y docker.io || die "docker.io package installation failed"
 fi
 systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
 systemctl is-active --quiet docker || die "Docker service is not active"
@@ -1090,6 +1120,11 @@ fi
   if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
     A0_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
     A0_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+    # These land verbatim in an env file: never let a stray newline or space in
+    # either value add or rewrite another setting.
+    printf '%s' "$A0_MODEL" | grep -qE '^[A-Za-z0-9_.:/-]+$' || A0_MODEL="deepseek-v4-pro"
+    printf '%s' "$A0_BASEURL" | grep -qE '^https://[A-Za-z0-9.:/_-]+$' \
+      || A0_BASEURL="https://hivra.cloud/api/managed-venice/v1"
     # Managed Venice is OpenAI-compatible: Agent Zero models it as provider "openai"
     # with a custom api_base. A0_SET_<setting> seeds Agent Zero's settings.json
     # defaults (exact lowercase field names from its model-config schema —
@@ -1266,15 +1301,15 @@ fi
 if [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl enable --now hivra-agent-zero.service >/dev/null 2>&1 \
     || die "Agent Zero service did not start"
-  ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-8080}, mounted at /agent-zero)"
+  ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-50080}, mounted at /agent-zero)"
 fi
 
 # --- post-flight ------------------------------------------------------------
 echo
 say "post-flight checks"
 wait_for_http() {
-  local url="$1" code
-  for _ in $(seq 1 60); do
+  local url="$1" tries="${2:-60}" code
+  for _ in $(seq 1 "$tries"); do
     code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
     case "$code" in 2??|3??|401|403) return 0 ;; esac
     sleep 2
@@ -1415,7 +1450,9 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
   ok "OpenClaw passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl is-active --quiet hivra-agent-zero.service || die "Agent Zero service is not active"
-  wait_for_http "http://127.0.0.1:${A0_PORT}/" || die "Agent Zero dashboard did not become ready"
+  # The Agent Zero image is several GB and initialises on first start; allow
+  # up to 5 minutes instead of failing a healthy cold start at 2.
+  wait_for_http "http://127.0.0.1:${A0_PORT}/" 150 || die "Agent Zero dashboard did not become ready within 5 minutes"
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
   ok "Agent Zero passed runtime-specific readiness"
@@ -1453,7 +1490,7 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
   STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
-  STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-8080}/ -o /dev/null -w '%{http_code}\n'"
+  STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "linux-desktop" ]; then
   LOGIN_HINT="none — Linux Desktop has no agent account login"
   STATUS_HINT="systemctl status bux-hivra-chat bux-ttyd bux-box-ttyd --no-pager"

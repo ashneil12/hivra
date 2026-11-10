@@ -452,6 +452,14 @@ update them yet.
   `hivra-claude-app clipboard on|off`, `clipboard-put` (text on stdin, at most
   256 KB) and `clipboard-get` through the same exact-argument sudoers rule; both
   transfers refuse while the switch is off.
+- **Launch and start hardening.** The installer waits for the dpkg lock and
+  retries `apt-get`, the pinned downloads and the npm/git fetches a bounded number
+  of times; the host launch script bounds the provisioner copy and the in-guest
+  install with `timeout` and SSH keepalives (still over the VMID-attested key) and
+  fails with a reason instead of staying in "provisioning"; the host start script
+  waits up to five minutes for the named tunnel. `system-prompt.md` and
+  `system-prompt-codex.md` tell the agent to send owners to **Manage** for updates,
+  restarts and restore points and not to upgrade or restart Hivra's own services.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops

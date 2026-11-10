@@ -155,6 +155,7 @@ function parseHivraEnvelope(value: unknown): HivraAgent[] {
       ram: finiteNumber(row.ram),
       emoji: optionalString(row.emoji),
       provisioned_at: optionalString(row.provisioned_at),
+      error: optionalString(row.error),
       // Where the agent's computer runs, for its linked-pair line (ATT-11).
       computer_substrate: knownValue<NonNullable<HivraAgent["computer_substrate"]>>(row.computer_substrate, HIVRA_SUBSTRATES),
       deployment_mode: knownValue<NonNullable<HivraAgent["deployment_mode"]>>(row.deployment_mode, HIVRA_DEPLOYMENT_MODES),

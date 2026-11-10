@@ -36,6 +36,10 @@ const LEGACY_RUNTIME_IDS = [
   "claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness",
 ];
 
+// Releases before 2026.10.20.2 lack agent-app-versions.json, which the aeon,
+// openclaw and agent-zero installers need.
+const PREDECESSOR_RUNTIME_IDS = ["claude-code", "codex", "deepseek-harness"];
+
 function shellFunction(sourceText: string, name: string, nextMarker: string): string {
   const start = sourceText.indexOf(`${name}() {`);
   const end = sourceText.indexOf(nextMarker, start);
@@ -159,46 +163,46 @@ describe("portable provisioner source contract", () => {
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.26.10"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.26.10",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:false,version:"2026.08.26.10"})).toBeNull();
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.1"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.1",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.2"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.2",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.26.4"})).toBeNull();
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.3"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.3",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.4"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.4",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.09.04.2"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.09.04.2",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: [...LEGACY_RUNTIME_IDS, "linux-desktop"],
+      supportedCatalogRuntimeIds: [...PREDECESSOR_RUNTIME_IDS, "linux-desktop"],
     });
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.04.2", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.09.04.3"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.09.04.3",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: [...LEGACY_RUNTIME_IDS, "linux-desktop"],
+      supportedCatalogRuntimeIds: [...PREDECESSOR_RUNTIME_IDS, "linux-desktop"],
     });
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.04.3", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.09.04.4"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.09.04.4",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: [...LEGACY_RUNTIME_IDS, "linux-desktop"],
+      supportedCatalogRuntimeIds: [...PREDECESSOR_RUNTIME_IDS, "linux-desktop"],
     });
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.04.4", "linux-desktop")).toBe(true);
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.05.1", "linux-desktop")).toBe(true);
@@ -346,7 +350,9 @@ describe("portable provisioner source contract", () => {
     expect(hostProvisioner).toContain('-o HostKeyAlgorithms=ssh-ed25519');
     expect(hostProvisioner).toContain('-o HostKeyAlias="$GUEST_SSH_HOST_ALIAS"');
     expect(hostProvisioner).toContain('GSCP=(scp');
-    expect(hostProvisioner).toContain('"${GSCP[@]}" -r "$PROV_DIR"');
+    // Still the VMID-attested key array; the copy is now bounded and keepalive-checked.
+    expect(hostProvisioner).toContain('"${GSCP[@]}" -o ServerAliveInterval=15 -o ServerAliveCountMax=8');
+    expect(hostProvisioner).toContain('-r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}"');
     expect(hostProvisioner).not.toContain("StrictHostKeyChecking=no");
     expect(hostProvisioner).not.toContain("UserKnownHostsFile=/dev/null");
     expect(identityGate).toBeGreaterThan(0);
@@ -584,7 +590,7 @@ describe("portable provisioner source contract", () => {
     const runtimeInstaller = source("provision-claude-code-box.sh");
 
     expect(hostProvisioner).toContain("--agent enabled=1");
-    expect(runtimeInstaller).toMatch(/apt-get install -y[^\n]*qemu-guest-agent/);
+    expect(runtimeInstaller).toMatch(/apt_get install -y[^\n]*qemu-guest-agent/);
     expect(runtimeInstaller).toContain("systemctl enable --now qemu-guest-agent");
   });
 
@@ -906,6 +912,23 @@ wait_for_browser_ready '${envFile}' 9333
       "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",
     ]) {
       expect(provenance).toContain(pin);
+    }
+  });
+});
+
+describe("per-runtime provisioner minimums", () => {
+  it.each(["aeon", "openclaw", "agent-zero"])("%s needs a release that ships agent-app-versions.json", (runtime) => {
+    expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.09.24.4", runtime)).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.2", runtime)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVISIONER_VERSION, runtime)).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.10.20.1" })?.supportedCatalogRuntimeIds)
+      .not.toContain(runtime);
+  });
+
+  it("does not hold other runtimes to those minimums", () => {
+    for (const runtime of ["claude-code", "codex", "deepseek-harness"]) {
+      expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(true);
     }
   });
 });

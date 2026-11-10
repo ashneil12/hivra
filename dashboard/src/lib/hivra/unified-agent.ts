@@ -74,6 +74,8 @@ export interface UnifiedAgent {
   attachment?: UnifiedAttachment | null;
   /** Where the row opens, when that is more than /dashboard/agent/<id>. */
   href?: string;
+  /** The stored failure message of a failed launch (status `error`). */
+  failureReason?: string;
 }
 
 export interface UnifiedAttachment {
@@ -156,6 +158,7 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
     cpu: a.cpu, ram: a.ram, model: null, provider: null, agentType: a.type,
     computerPair: resourceKind === "agent" ? agentComputerPair(a) : null,
     software: resourceKind === "agent" && a.agent_software?.badge ? a.agent_software : null,
+    ...(a.status === "error" && a.error?.trim() ? { failureReason: a.error.trim() } : {}),
   };
 }
 

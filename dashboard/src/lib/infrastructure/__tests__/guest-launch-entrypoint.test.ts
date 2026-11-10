@@ -169,7 +169,7 @@ it("forwards the guest installer's reporter marker into the host provisioning lo
   // replaced by a local guest), the guest installer's own marker writer, the
   // phase 1 kickoff's `>> "$LOG" 2>&1`, and the poll's exact grep pattern.
   const hostSource = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
-  const statement = hostSource.match(/^guest_launch_document \| "\$\{GSSH\[@\]\}" "ubuntu@\$\{IP\}" \\\n.*hivra-install-agent\.py" >&2$/m)?.[0];
+  const statement = hostSource.match(/^guest_launch_document \| timeout [^\n]*"\$\{GSSH\[@\]\}" \\\n[^\n]*"ubuntu@\$\{IP\}" \\\n[^\n]*hivra-install-agent\.py" >&2 \\\n\s*\|\| fail "[^"\n]*"$/m)?.[0];
   expect(statement).toBeDefined();
   const pollSource = readFileSync(path.join(process.cwd(), "src/app/api/hivra/agents/[id]/route.ts"), "utf8");
   const pattern = pollSource.match(/const ACTIVITY_COLLECTOR_MARKER_PATTERN = "([^"]+)";/)?.[1];
@@ -180,6 +180,9 @@ it("forwards the guest installer's reporter marker into the host provisioning lo
     const log = path.join(directory, "hivra-prov-1090.log");
     const guest = () => `set -euo pipefail
 guest_launch_document() { printf 'document'; }
+# The host bounds the install with timeout(1), which cannot run a shell function.
+timeout() { shift 2; "$@"; }
+fail() { echo "$*" >&2; exit 1; }
 guest() {
   cat >/dev/null
   # Bootstrap output on stdout that ends mid-line, then the reporter marker.
