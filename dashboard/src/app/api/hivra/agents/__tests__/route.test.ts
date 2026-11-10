@@ -2548,7 +2548,7 @@ describe("POST /api/hivra/agents", () => {
   });
 
   it("launches Claude Code on Hivra credits through the Anthropic route with a Claude model", async () => {
-    mockCreateManagedVeniceProxyKey.mockResolvedValueOnce({ id: "key-cc-1", keyPrefix: "hven_live_CC", plaintextKey: "hven_live_CCKEY123" });
+    mockCreateManagedVeniceProxyKey.mockResolvedValueOnce({ id: "key-cc-1", keyPrefix: "hven_live_CC", plaintextKey: "hven_live_TESTKEY123" });
     mockSubscriptionRow = {
       plan: "operator",
       status: "active",
@@ -2572,7 +2572,7 @@ describe("POST /api/hivra/agents", () => {
       expect.objectContaining({ defaultWalletType: "card" }),
     );
     const provisionScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
-    expect(provisionScript).toContain("write_secret_b64 'hven_live_CCKEY123'");
+    expect(provisionScript).toContain("write_secret_b64 'hven_live_TESTKEY123'");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/anthropic'");
     expect(provisionScript).toContain("write_secret_b64 'claude-sonnet-4-6'");
     expect(provisionScript).not.toContain("deepseek-v4-pro");
@@ -2611,7 +2611,7 @@ describe("POST /api/hivra/agents", () => {
       name: "CLAUDE_CODE_AGENT",
       cpu: 0.5,
       ram: 1,
-      llm: { provider: "venice", mode: "byok", apiKey: "venice-key-12345678" },
+      llm: { provider: "venice", mode: "byok", apiKey: "synthetic-launch-key" },
     }) as never);
     expect(byok.status).toBe(400);
     const wrongModel = await POST(makeRequest({
