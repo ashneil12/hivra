@@ -104,6 +104,12 @@ export const PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS: Readonly<Record<string, st
   // The desktop-free Linux computer: the kind and its strict v3 launch document
   // first ship in 2026.11.10.4; an older host rejects the kind inside the guest.
   "linux-server": "2026.11.10.4",
+  // DeepSeek Harness is launched only on the release its live acceptance ran on
+  // (dashboard/scripts/deepseek-proxmox-canary.ts pins it). Its guest bundle
+  // last changed in 2026.10.20.1, but no earlier release has been run against
+  // the current host and guest scripts, so a host on one is skipped by placement.
+  // Lower this only with a live run on the older release.
+  "deepseek-harness": "2026.11.10.4",
 };
 /** Minimum-version key for Claude Code launched on Hivra credits. */
 export const CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID = "claude-code:hivra-credits";

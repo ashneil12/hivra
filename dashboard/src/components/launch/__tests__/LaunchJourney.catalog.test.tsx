@@ -290,4 +290,39 @@ describe("every catalog agent launches in the Launch journey", () => {
     });
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
   });
+
+  it("offers DeepSeek Harness as a tile, says in plain words how its model key is added, and launches it on Hivra Cloud", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    const tile = screen.getByRole("button", { name: /^DeepSeek Harness/ });
+    expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. You add your model key inside it.");
+    fireEvent.click(tile);
+    expect(screen.getByRole("heading", { name: "Review and launch DeepSeek Harness 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+
+    // Only its own settings take a key: the other two choices say so instead of working.
+    await waitFor(() => expect(modelChoice(/^Add your key inside DeepSeek after it opens/)).toHaveAttribute("aria-pressed", "true"));
+    expect(modelChoice(/^Use my API key/)).toBeDisabled();
+    expect(modelChoice(/^Hivra credits/)).toBeDisabled();
+    const review = await reviewLaunch();
+    expect(review.getByText("Add your model key in DeepSeek's own settings after it opens.")).toBeInTheDocument();
+    // It runs on Hivra Cloud only, with no browser and no maxima to choose.
+    expect(screen.queryByRole("button", { name: /Set up your own capacity/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch DeepSeek Harness" }));
+
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
+    expect(createAgentMock).toHaveBeenCalledWith({
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4, browser: false, managedVenice: false,
+      deployment: { mode: "hivra-managed" },
+    });
+    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
+  });
+
+  it("does not launch DeepSeek Harness for a Free account, and offers a plan rather than its own computer", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    await chooseAgent("DeepSeek Harness");
+    await waitFor(() => expect(screen.getByText(/DeepSeek Harness runs on Hivra Cloud only, and that needs a paid plan/)).toBeInTheDocument());
+    expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+    expect(createAgentMock).not.toHaveBeenCalled();
+  });
 });

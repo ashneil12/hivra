@@ -210,7 +210,7 @@ describe("a launch without a receipt is only ever looked for again, never resent
     jest.mocked(findHivraLaunchReceipt).mockResolvedValue({ state: "accepted", phase: "accepted", agent: created("codex") });
     await expect(reconcileLaunchDraft(draftFor("codex"))).resolves.toMatchObject({ id: AGENT_ID });
     expect(launchResumeMode("codex")).toBe("resend");
-    for (const profileId of ["claude-code", "hermes", "openclaw", "agent-zero", "aeon"] as const) {
+    for (const profileId of ["claude-code", "hermes", "openclaw", "agent-zero", "aeon", "deepseek-harness"] as const) {
       expect(launchResumeMode(profileId)).toBe("observe");
     }
   });
@@ -400,6 +400,44 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
   });
 });
 
+describe("DeepSeek Harness launches as its acceptance did", () => {
+  it("sends only the kind, name and size on Hivra Cloud: no browser, key, credits, receipt or maxima", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("deepseek-harness"));
+    const draft = draftFor("deepseek-harness");
+
+    await expect(submitLaunchDraft(draft, MANAGED)).resolves.toMatchObject({ id: AGENT_ID });
+
+    expect(wire(jest.mocked(createAgent).mock.calls[0][0])).toEqual({
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4,
+      browser: false, managedVenice: false, deployment: { mode: "hivra-managed" },
+    });
+  });
+
+  it("sends no key or credits even from a draft that carries another model choice", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("deepseek-harness"));
+    const draft = draftFor("deepseek-harness", {}, { mode: "credits", keySource: "saved", vaultKeyId: VAULT_KEY_ID, sendSavedKey: true });
+    await submitLaunchDraft(draft, MANAGED, { apiKey: "synthetic-venice-key", balance: FUNDED });
+    const sent = jest.mocked(createAgent).mock.calls[0][0];
+    expect(sent).not.toHaveProperty("llm");
+    expect(sent).not.toHaveProperty("templateId");
+    expect(sent).toMatchObject({ managedVenice: false, browser: false });
+  });
+
+  it("never sends it to a server the owner connected", async () => {
+    await expect(submitLaunchDraft(draftFor("deepseek-harness"), SELF_MANAGED)).rejects.toMatchObject({ code: "deepseek_managed_only" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("looks for what a lost answer created instead of sending it again", async () => {
+    jest.mocked(createAgent).mockRejectedValue(new Error("Failed to fetch"));
+    jest.mocked(listAgentsResult).mockResolvedValue({ error: null, agents: [
+      created("deepseek-harness", { name: "DeepSeek Harness 1", created_at: new Date().toISOString() } as Partial<HivraAgent>),
+    ] });
+    await expect(submitLaunchDraft(draftFor("deepseek-harness"), MANAGED)).resolves.toMatchObject({ id: AGENT_ID });
+    expect(createAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a launch started from a saved template", () => {
   const TEMPLATE = { id: "77777777-7777-4777-8777-777777777777", name: "Research Bot" };
 
@@ -436,6 +474,7 @@ describe("each runtime opens its own surface", () => {
     ["openclaw", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["agent-zero", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["aeon", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
+    ["deepseek-harness", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["hermes", "native", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1`],
     ["hermes", "credits", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1`],
   ] as const)("opens %s (%s) where its form did", (profileId, mode, href) => {

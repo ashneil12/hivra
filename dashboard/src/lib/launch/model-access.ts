@@ -62,6 +62,9 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
       return ["native", "credits"];
     case "claude-code":
       return ["native", "credits"];
+    // DeepSeek takes no model key at launch: its own settings own the key.
+    case "deepseek-harness":
+      return ["native"];
     default:
       return [];
   }
@@ -154,6 +157,12 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
         title: "Set up inside Agent Zero after it opens",
         detail: "Choose a model provider in its Settings.",
         summary: "Choose a model provider in Agent Zero's Settings after it opens.",
+      };
+    case "deepseek-harness":
+      return {
+        title: "Add your key inside DeepSeek after it opens",
+        detail: "Open its Models settings and add the model key you want to use.",
+        summary: "Add your model key in DeepSeek's own settings after it opens.",
       };
     case "aeon":
       return {

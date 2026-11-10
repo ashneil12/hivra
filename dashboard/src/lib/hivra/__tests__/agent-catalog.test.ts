@@ -59,8 +59,8 @@ describe("Hivra agent catalog", () => {
     expect(canLaunchAgent(claude!, "free")).toEqual({ ok: true });
   });
 
-  it("offers Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero as launchable box agents", () => {
-    expect(AGENTS.map((agent) => agent.id)).toEqual(["hermes", "claude-code", "codex", "aeon", "openclaw", "agent-zero"]);
+  it("offers Hermes, Claude Code, Codex, Aeon, OpenClaw, Agent Zero, and DeepSeek Harness as launchable box agents", () => {
+    expect(AGENTS.map((agent) => agent.id)).toEqual(["hermes", "claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness"]);
     expect(getAgent("codex")).toMatchObject({
       id: "codex",
       cliKind: "codex",
@@ -156,11 +156,23 @@ describe("Hivra agent catalog", () => {
     expect(canLaunchAgent(agentZero!, "pro")).toEqual({ ok: true });
   });
 
-  it("describes DeepSeek Harness for retained native rows without exposing an unaccepted launch card", () => {
+  it("lists DeepSeek Harness as a launchable dashboard agent that keeps its floor", () => {
     const harness = getAgent("deepseek-harness");
-    expect(harness).toMatchObject({ surface: "dashboard", available: false, minPlan: "pro", floor: { cpu: 2, ram: 3 } });
-    expect(AGENTS.some(agent => agent.id === "deepseek-harness")).toBe(false);
-    expect(canLaunchAgent(harness!, "power")).toEqual({ ok: false, reason: "Coming soon" });
+    expect(harness).toMatchObject({ surface: "dashboard", available: true, minPlan: "pro", floor: { cpu: 2, ram: 3 }, browser: false });
+    expect(AGENTS.some(agent => agent.id === "deepseek-harness")).toBe(true);
+    expect(canLaunchAgent(harness!, "free")).toEqual({ ok: false, reason: "Needs Pro" });
+    expect(canLaunchAgent(harness!, "pro")).toEqual({ ok: true });
+    // It takes no launch-time model key and no managed credits.
+    expect(harness?.llm).toBeUndefined();
+    expect(harness?.managedVenice).toBeUndefined();
+    expect(resizeFloor("deepseek-harness", false)).toEqual({ cpu: 2, ram: 3 });
+  });
+
+  it("describes DeepSeek Harness's hosting without claiming a CLI sign-in or Hivra tabs it lacks", () => {
+    const text = hostingDisclaimer(getAgent("deepseek-harness"));
+    expect(text).toContain("DeepSeek's coding agent");
+    expect(text).toContain("Add your model key in DeepSeek's own settings.");
+    expect(text).not.toMatch(/official .* CLI|chat, terminal, files/);
   });
 
   it("keeps the standard BASE_FLOOR for CLI agents (no per-agent override)", () => {

@@ -143,7 +143,7 @@ const emittedBoxCreatedAgentIds = new Set<string>();
 // Catalog agent ids this route can provision as a Hivra box. claude-code/codex
 // run the bux image; aeon + openclaw host a web dashboard/Control UI. The box
 // selects its runtime from agentKind. Hermes is a separate lane (/api/instances).
-const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "linux-desktop"]);
+const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"]);
 
 // Printed by phase 1 only after it wrote the reporter credential into the
 // handoff file for a host bundle that consumes it (the start path uses the
@@ -1038,6 +1038,18 @@ async function launchAgent(request: NextRequest) {
     // provisioned via /api/instances, not here.)
     if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)) {
       return apiError("That agent isn't launchable yet", 400);
+    }
+    // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
+    // the named HTTPS access its host script requires. A connected server or a
+    // computer in the owner's own cloud has none (its typed provider adapter
+    // stays private), so refuse before any target is read or row is written.
+    if (type === "deepseek-harness") {
+      if (deployment.mode !== "hivra-managed") {
+        return apiError(`${def.name} runs on Hivra Cloud only.`, 409, undefined, { code: "deepseek_managed_only" });
+      }
+      if (!isTunnelConfigured()) {
+        return apiError(`${def.name} requires this Hivra installation's named HTTPS access.`, 503);
+      }
     }
     // The runtime the box provisions: the chat CLI for claude-code/codex, or the
     // dashboard host kind for aeon/openclaw (no cliKind). Passed to the host script.

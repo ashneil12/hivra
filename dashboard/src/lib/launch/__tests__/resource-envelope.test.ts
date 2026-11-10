@@ -53,6 +53,15 @@ describe("launch resource envelope policy", () => {
     expect(validateResourceEnvelope("ubuntu-server", { cpu: 0.5, ram: 0.5 })).toEqual({ ok: false, reason: "below_floor" });
   });
 
+  it("holds DeepSeek Harness to its catalog floor and recommends the size its acceptance ran at, always kept", () => {
+    expect(LAUNCH_RESOURCE_POLICY["deepseek-harness"].floor).toEqual({ cpu: 2, ram: 3 });
+    expect(recommendedResourceEnvelope("deepseek-harness")).toEqual({ cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4 });
+    const accepted = { cpu: 2, ram: 4, maximumCpu: 2, maximumRam: 4 };
+    expect(validateResourceEnvelope("deepseek-harness", accepted)).toEqual({ ok: true, envelope: accepted });
+    expect(validateResourceEnvelope("deepseek-harness", { cpu: 1, ram: 4 })).toEqual({ ok: false, reason: "below_floor" });
+    expect(validateResourceEnvelope("deepseek-harness", { cpu: 2, ram: 2 })).toEqual({ ok: false, reason: "below_floor" });
+  });
+
   it("treats missing legacy maxima as pinned", () => {
     expect(validateResourceEnvelope("ubuntu-desktop", { cpu: 2, ram: 4 })).toEqual({
       ok: true,

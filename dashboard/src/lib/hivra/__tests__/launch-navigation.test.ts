@@ -24,6 +24,8 @@ describe("launch navigation", () => {
 
   it("opens a new launch of the agent a link named, or the agent choice", () => {
     expect(buildAgentLaunchHref("general")).toBe("/dashboard/launch?kind=agent&start=1&profile=hermes");
+    expect(buildAgentLaunchHref("deepseek-harness")).toBe("/dashboard/launch?kind=agent&start=1&profile=deepseek-harness");
+    expect(launchProfileForAgentType("deepseek-harness")).toBe("deepseek-harness");
     expect(buildAgentLaunchHref("nope")).toBe("/dashboard/launch?kind=agent&start=1");
     expect(buildAgentLaunchHref()).toBe("/dashboard/launch?kind=agent&start=1");
   });

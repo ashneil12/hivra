@@ -75,6 +75,7 @@ const AGENT_TYPE_PROFILES: Readonly<Record<string, LaunchAgentProfileId>> = {
   aeon: "aeon",
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
+  "deepseek-harness": "deepseek-harness",
 };
 
 export function launchProfileForAgentType(value: string | null | undefined): LaunchAgentProfileId | null {

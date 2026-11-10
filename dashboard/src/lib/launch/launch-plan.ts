@@ -327,6 +327,10 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
   if (profileId === "hermes") {
     return presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
   }
+  if (profileId === "deepseek-harness") {
+    // Small is the size its acceptance ran at; every preset holds the floor.
+    return presets(pinned(2, 4), pinned(4, 8), pinned(8, 16));
+  }
   if (profileId === "ubuntu-desktop") {
     return presets(
       { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
@@ -539,6 +543,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "openclaw") return `OpenClaw's Control UI, a terminal and files on its own computer.${browserNote}`;
   if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
+  if (profileId === "deepseek-harness") return "DeepSeek's own interface on its own computer.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
   if (profileId === "ubuntu-server") return "A terminal and files on this computer. No desktop.";
   if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";

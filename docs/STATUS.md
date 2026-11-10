@@ -16,12 +16,12 @@ must match it.
 | --- | --- |
 | Agents that can be launched | `dashboard/src/lib/hivra/agent-catalog.ts` (`available`) |
 | Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`) and the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx` |
-| Previews that are shown but not launchable | `dashboard/src/lib/hivra/preview-catalog.ts` |
+| Previews that are shown but not launchable (Buzz only) | `dashboard/src/lib/hivra/preview-catalog.ts` |
 | Public wording for crawlers and the homepage | `dashboard/src/lib/llms-txt.ts` and `dashboard/src/components/landing/home/content.ts` |
 
 ## Agents
 
-All six launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
+All seven launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
 a free account works with a server the person connects.
 
 | Agent | Status | Where it runs |
@@ -32,11 +32,19 @@ a free account works with a server the person connects.
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
-| DeepSeek Harness | Preview, not launchable | Shown on Agents only |
+| DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.4 or later |
 
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
 credits. Credits need a host on provisioner release 2026.11.10.2 or later.
+
+DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
+through Hivra's authenticated gateway. It launches with no model key, no
+browser and no Hivra credits: the person adds their model key in DeepSeek's own
+settings. It is labelled alpha because the upstream version it runs is pinned
+at an alpha release. It has no public agent page yet, and a connected server or
+a computer in the owner's own cloud cannot run it. Its Launch tile is not on
+the first-run card, which stays at three choices.
 
 The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 

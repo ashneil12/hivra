@@ -111,7 +111,7 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
   return profileId === "claude-code" || profileId === "hermes" || profileId === "openclaw"
-    || profileId === "agent-zero" || profileId === "aeon"
+    || profileId === "agent-zero" || profileId === "aeon" || profileId === "deepseek-harness"
     ? "observe"
     : "resend";
 }
@@ -583,6 +583,22 @@ export async function submitLaunchDraft(
       throw new HivraLaunchCorrectableError("Hermes runs on Hivra Cloud only.", 409, "hermes_managed_only");
     }
     return submitHermes(draft, options);
+  }
+  if (profileId === "deepseek-harness") {
+    // The launch its acceptance ran: Hivra Cloud, no browser, no model key, no
+    // receipt ID. Its model key is added inside DeepSeek after it opens.
+    if (deployment.mode !== "hivra-managed") {
+      throw new HivraLaunchCorrectableError("DeepSeek Harness runs on Hivra Cloud only.", 409, "deepseek_managed_only");
+    }
+    return submitObserved(dashboardAgentRequest({
+      type: "deepseek-harness",
+      name: draft.name.trim(),
+      cpu: draft.resources.cpu,
+      ram: draft.resources.ram,
+      browser: false,
+      credits: null,
+      deployment,
+    }), draft, options);
   }
   if (profileId === "claude-code") {
     const claudeAccess = accessOf(draft);

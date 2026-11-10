@@ -2381,6 +2381,129 @@ describe("POST /api/hivra/agents", () => {
     });
   });
 
+  describe("DeepSeek Harness", () => {
+    const paidPlan = () => {
+      mockSubscriptionRow = {
+        plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+      };
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({
+        token: "synthetic-tunnel", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test",
+      });
+    };
+
+    it("is accepted on Hivra Cloud and provisions the deepseek-harness kind with named access and no model key", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "DEEPSEEK", cpu: 2, ram: 4 }) as never);
+
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+        type: "deepseek-harness", cpu: 2, ram: 4, deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm",
+        managed_venice: false, llm_config: null, llm_api_key_encrypted: null,
+      }));
+      // The arguments its acceptance harness passes the host provisioner: the
+      // kind, no browser, and the named tunnel it requires. No model key travels.
+      const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(script).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "deepseek-harness"');
+      expect(script).toContain("HIVRA_WANT_BROWSER='0'");
+      expect(script).toContain("HIVRA_TUNNEL_URL_B64=");
+      expect(script).toContain("printf 'HIVRA_MODEL_KEY_B64='; write_secret_b64 ''");
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+      expect(mockCreateBoxTunnel).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks managed placement for hosts on the release it was accepted on", async () => {
+      paidPlan();
+      mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: false, stdout: "", stderr: "version mismatch" });
+      mockSelectAvailableProxmoxProvisionTarget.mockImplementationOnce(async (options: ManagedPlacementOptions) => {
+        const readiness = await options.readinessCheck!({ targetId: "fixturenode7", env: { NODE_ENV: "test", PROXMOX_NODE: "fixturenode7" } });
+        return readiness.ok ? { ok: true, targetId: "fixturenode7" } : { ok: false, status: readiness.status, message: readiness.message };
+      });
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "PLACEMENT", cpu: 2, ram: 4 }) as never);
+      expect(response.status).toBe(503);
+      expect(mockCheckManagedReadiness).toHaveBeenCalledWith(expect.objectContaining({
+        runtimeId: "deepseek-harness", runtimeLabel: "DeepSeek Harness",
+      }));
+      // A predecessor host is skipped: only the accepted release and later are listed.
+      const readinessScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(readinessScript).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
+      expect(readinessScript).not.toContain("'2026.11.10.3'");
+    });
+
+    it("holds the catalog floor on Hivra Cloud", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "SMALL", cpu: 1, ram: 2 }) as never);
+      expect(response.status).toBe(403);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("refuses a Free account before any allocation, like every Hivra-hosted computer", async () => {
+      mockTunnelConfigured = true;
+      mockEnforceFreeAccountRefusal = true;
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "FREE", cpu: 2, ram: 4 }) as never);
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toMatch(/paid plan/i);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockCreateBoxTunnel).not.toHaveBeenCalled();
+    });
+
+    it("requires named HTTPS access before any target work, row or tunnel", async () => {
+      paidPlan();
+      mockTunnelConfigured = false;
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "NO ACCESS", cpu: 2, ram: 4 }) as never);
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toMatch(/named HTTPS access/);
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("is refused on a server the owner connected before any host is read", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "deepseek-harness", name: "OWN SERVER", cpu: 2, ram: 4, deployment: SELF_MANAGED_DEPLOYMENT,
+      }) as never);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual(expect.objectContaining({ code: "deepseek_managed_only" }));
+      expect(mockResolveSelfManagedProxmoxExecutionContext).not.toHaveBeenCalled();
+      expect(mockGetInfrastructureTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("never reaches the private provider adapter for a computer in the owner's own cloud", async () => {
+      paidPlan();
+      mockGetInfrastructureTarget.mockResolvedValue(providerVmTarget());
+      const request = makeRequest({ type: "deepseek-harness", name: "MY CLOUD", cpu: 2, ram: 4, deployment: SELF_MANAGED_DEPLOYMENT });
+      request.headers.set("Origin", "https://hivra.cloud");
+      const response = await POST(request as never);
+      expect(response.status).toBe(409);
+      expect(mockLaunchProviderAgent).not.toHaveBeenCalled();
+      expect(mockGetInfrastructureTarget).not.toHaveBeenCalled();
+    });
+
+    it("takes no launch-time model key, browser, or launch receipt", async () => {
+      paidPlan();
+      const keyed = await POST(makeRequest({
+        type: "deepseek-harness", name: "KEYED", cpu: 2, ram: 4,
+        llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key" },
+      }) as never);
+      expect(keyed.status).toBe(400);
+      expect((await keyed.json()).error).toMatch(/DeepSeek Harness doesn't support an alternative LLM provider/);
+      const receipt = await POST(makeRequest({
+        type: "deepseek-harness", name: "RECEIPT", cpu: 2, ram: 4, launchRequestId: LAUNCH_REQUEST_ID,
+      }) as never);
+      expect(receipt.status).toBe(400);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+      // A browser request is ignored: the harness never provisions one.
+      const browser = await POST(makeRequest({ type: "deepseek-harness", name: "BROWSER", cpu: 2, ram: 4, browser: true }) as never);
+      expect(browser.status).toBe(201);
+      expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("HIVRA_WANT_BROWSER='0'");
+    });
+  });
+
   it("rejects a staged computer profile before allocating capacity", async () => {
     mockSubscriptionRow = {
       plan: "operator",
