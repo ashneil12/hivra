@@ -14,7 +14,8 @@ import { buildWelcomeAgentSettings } from "@/lib/welcome-deploy";
 
 type Wallet = "card" | "hermesos";
 
-/** Claude Code and native Codex: the runtime's own sign-in after it opens.
+/** Claude Code and native Codex: the runtime's own sign-in after it opens, or
+ * for Claude Code, Hivra credits through Hivra's Anthropic-to-Venice route.
  * Native Codex carries its stable receipt ID; Claude Code has none. */
 export function nativeCliAgentRequest(input: {
   type: "claude-code" | "codex";
@@ -24,13 +25,23 @@ export function nativeCliAgentRequest(input: {
   browser: boolean;
   deployment: AgentDeploymentDestination;
   launchRequestId?: string | null;
+  /** Claude Code on Hivra credits: the wallet that pays and the Claude model
+   * Venice serves. Null or absent keeps the runtime's own sign-in. */
+  credits?: { walletType: Wallet; model: string } | null;
 }): CreateAgentInput {
+  const credits = input.type === "claude-code" ? input.credits ?? null : null;
   return {
     type: input.type,
     name: input.name.trim(),
     cpu: input.cpu,
     ram: input.ram,
     browser: input.browser,
+    ...(credits
+      ? {
+          managedVenice: true,
+          llm: { provider: "venice", mode: "managed", model: credits.model, walletType: credits.walletType },
+        }
+      : {}),
     deployment: input.deployment,
     ...(input.launchRequestId ? { launchRequestId: input.launchRequestId } : {}),
   };

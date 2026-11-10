@@ -583,6 +583,7 @@ export async function submitLaunchDraft(
     return submitHermes(draft, options);
   }
   if (profileId === "claude-code") {
+    const claudeAccess = accessOf(draft);
     return submitObserved(withTemplate(nativeCliAgentRequest({
       type: "claude-code",
       name: draft.name.trim(),
@@ -590,6 +591,12 @@ export async function submitLaunchDraft(
       ram: draft.resources.ram,
       browser: draft.browser,
       deployment,
+      credits: claudeAccess.mode === "credits"
+        ? {
+            walletType: creditsWallet(claudeAccess, options.balance ?? { state: "unknown" }),
+            model: effectiveModel("claude-code", claudeAccess),
+          }
+        : null,
     }), draft), draft, options);
   }
   // OpenClaw, Agent Zero and Aeon, as their setup form launched them.

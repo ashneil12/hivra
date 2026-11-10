@@ -116,8 +116,13 @@ const ALL_AGENTS: AgentDef[] = [
     accent: "#d97757",
     available: true,
     cliKind: "claude",
-    // Speaks Anthropic Messages only — providers stays empty until the
-    // Anthropic↔OpenAI gateway shim ships (managed-Venice translation boundary).
+    // Hivra credits: the launch mints a managed-Venice key and the installer
+    // points Claude Code at the Anthropic Messages shim
+    // (/api/managed-venice/anthropic) through ~/.claude/settings.json. Only the
+    // managed mode works: Venice itself speaks OpenAI chat, so a raw Venice key
+    // can't reach it, which is why `providers` (the Venice key/model picker in
+    // Manage, Codex's coordinator path) stays empty.
+    managedVenice: true,
     llm: { wire: "anthropic", providers: [] },
   },
   {
@@ -365,6 +370,9 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
   }
   if (def.id === "openclaw") {
     return `This hosts OpenClaw on the agent's private virtual machine. Its Control UI is bound to localhost and reached through Hivra's authenticated gateway. Configure your model providers and messaging channels inside that UI. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the OpenClaw project.`;
+  }
+  if (def.id === "claude-code") {
+    return `This runs the official ${def.name} CLI from ${def.vendor} on the agent's private virtual machine. Sign in with your own ${def.vendor} account inside the CLI, or launch it on Hivra credits, which reach models through Venice. ${credentialNotice} The ${def.browser ? "chat, terminal, files, skills, and browser" : "chat, terminal, files, and skills"} tabs connect to that runtime. Hivra is independent and isn't affiliated with, sponsored by, or endorsed by ${def.vendor}.`;
   }
   if (def.id === "agent-zero") {
     return `This hosts Agent Zero in a container on the agent's private virtual machine. Its dashboard is bound to localhost and reached through Hivra's authenticated gateway. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Agent Zero project.`;

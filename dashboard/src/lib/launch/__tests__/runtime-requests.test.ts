@@ -121,6 +121,21 @@ describe("Claude Code and native Codex request parity with their welcome form", 
     }));
   });
 
+  it("puts Claude Code on Hivra credits with the chosen Claude model and wallet", () => {
+    expect(nativeCliAgentRequest({
+      type: "claude-code", name: "Claude Code 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED,
+      credits: { walletType: "card", model: "claude-opus-4-8" },
+    })).toMatchObject({
+      managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "claude-opus-4-8", walletType: "card" },
+    });
+    // Codex never takes credits through the native lane.
+    expect(nativeCliAgentRequest({
+      type: "codex", name: "Codex 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED,
+      credits: { walletType: "card", model: "claude-opus-4-8" },
+    })).not.toHaveProperty("llm");
+  });
+
   it("names Claude Code's launch without a receipt id: its lane takes none", () => {
     expect(nativeCliAgentRequest({ type: "claude-code", name: "Claude Code 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED }))
       .not.toHaveProperty("launchRequestId");

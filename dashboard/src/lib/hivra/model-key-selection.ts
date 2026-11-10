@@ -19,3 +19,6 @@ export const ModelKeySelectionSchema = z.discriminatedUnion("mode", [
     apiKey: z.undefined().optional(),
   }).strict(),
 ]).nullable();
+
+/** Model Claude Code uses on Hivra credits when the launch names none. */
+export const MANAGED_CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6";

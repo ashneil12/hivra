@@ -112,6 +112,19 @@ describe("Claude Code, OpenClaw, Agent Zero and Aeon launch through the agent AP
     expect(jest.mocked(createAgent).mock.calls[0][0]).not.toHaveProperty("maximumCpu");
   });
 
+  it("sends Claude Code on Hivra credits with the chosen Claude model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("claude-code"));
+    const draft = draftFor("claude-code", {}, { mode: "credits", model: "claude-opus-4-8", walletType: "card" });
+
+    await submitLaunchDraft(draft, MANAGED, { balance: { state: "known", cardMicroUsd: 1_000_000, hermesosMicroUsd: 0 } });
+
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({
+      type: "claude-code",
+      managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "claude-opus-4-8", walletType: "card" },
+    });
+  });
+
   it.each([
     ["openclaw", "native", false, { state: "unknown" }, false],
     ["openclaw", "credits", true, FUNDED, true],

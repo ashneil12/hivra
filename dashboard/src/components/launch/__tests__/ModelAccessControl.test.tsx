@@ -69,13 +69,18 @@ describe("ModelAccessControl", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("shows Claude Code's unavailable choices with why, never pressed", () => {
+  it("offers Claude Code its own sign-in or Hivra credits with a Claude model, never an API key", () => {
     render(<Harness profileId="claude-code" />);
     expect(choice(/^Sign in inside Claude Code after it opens/)).toHaveAttribute("aria-pressed", "true");
     expect(choice(/^Use my API key/)).toBeDisabled();
     expect(choice(/^Use my API key/)).toHaveAttribute("aria-pressed", "false");
-    expect(choice(/^Use my API key/)).toHaveTextContent("Not available for Claude Code yet.");
-    expect(choice(/^Hivra credits/)).toBeDisabled();
+    expect(choice(/^Use my API key/)).toHaveTextContent("Not available for Claude Code. Use Hivra credits");
+    expect(choice(/^Hivra credits/)).toBeEnabled();
+    fireEvent.click(choice(/^Hivra credits/));
+    expect(latest.access.mode).toBe("credits");
+    const options = within(screen.getByRole("combobox")).getAllByRole("option").map(option => option.getAttribute("value"));
+    expect(options[0]).toBe("claude-sonnet-4-6");
+    expect(options.every(value => !value || value.startsWith("claude-"))).toBe(true);
   });
 
   it("offers the saved Vault key first and sends it only after the per-launch consent", () => {

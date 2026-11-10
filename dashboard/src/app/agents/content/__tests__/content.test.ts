@@ -138,10 +138,9 @@ describe("what each page says about AI usage, credits and where the agent runs",
     for (const { slug } of PAGES) {
       const mentionsCredits = /Hivra credits/.test(copyOf(slug));
       const accepts = modelAccessModes(profileOf(slug) as never).includes("credits");
-      // Claude Code takes its own sign-in only (modelAccessModes), so its page never mentions Hivra credits.
       expect({ slug, mentionsCredits }).toEqual({ slug, mentionsCredits: accepts });
     }
-    expect(modelAccessModes("claude-code")).toEqual(["native"]);
+    expect(modelAccessModes("claude-code")).toEqual(["native", "credits"]);
     expect(copyOf("claude-code")).toMatch(/does not include or replace your Anthropic subscription/);
   });
 

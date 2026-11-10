@@ -360,6 +360,11 @@ const recipes = Object.freeze({
     workerSha256: "1d07dd4c82c14bf566837c9c87a3b7389881cba49342557f41222a8dc78590d7",
     workerSize: 45185,
   }),
+  "2026.11.10.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release has the installer point Claude Code at Hivra credits through its own settings.json env (configure_claude_managed_model).
+    workerSha256: "edfebf2b849a397c9f26a27e3020e855c7b5ba974f08e5b7e144c8ca6cfc75ad",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

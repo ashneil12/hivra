@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.10.1.json";
+import currentRelease from "../../../provisioner-releases/2026.11.10.2.json";
+import hardeningRelease from "../../../provisioner-releases/2026.11.10.1.json";
 import clipboardRelease from "../../../provisioner-releases/2026.11.03.1.json";
 import appUpdateRelease from "../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../provisioner-releases/2026.10.20.1.json";
@@ -87,8 +88,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.10.1"
+  const release = identity.bundle.provisionerVersion === "2026.11.10.2"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.1"
+      ? hardeningRelease
     : identity.bundle.provisionerVersion === "2026.11.03.1"
       ? clipboardRelease
     : identity.bundle.provisionerVersion === "2026.10.20.2"

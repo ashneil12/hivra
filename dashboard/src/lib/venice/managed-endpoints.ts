@@ -41,6 +41,15 @@ export function getManagedVeniceProxyBaseUrl(
   return `${base}/api/managed-venice/v1`;
 }
 
+// Base URL for Anthropic Messages clients (Claude Code's ANTHROPIC_BASE_URL;
+// the client appends /v1/messages). Always the dashboard route: the off-Vercel
+// worker only proxies the OpenAI-compatible /v1 surface.
+export function getManagedVeniceAnthropicBaseUrl(
+  appUrl: string | undefined = runtimeAppUrl()
+): string {
+  return `${getDashboardOrigin(appUrl)}/api/managed-venice/anthropic`;
+}
+
 // Dashboard origin (no trailing slash) for USER-FACING managed-Venice links —
 // e.g. the top-up URL embedded in 402 "insufficient balance" + spend-cap errors
 // returned by the proxy. Computed-key runtime read (via runtimeAppUrl) for the
