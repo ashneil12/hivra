@@ -183,7 +183,7 @@ export function HivraGitHubConnect({
       <p style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.65, margin: "0 0 26px", maxWidth: 470 }}>
         {product} runs on <strong style={{ color: "var(--ink-black)" }}>your own GitHub</strong> — its tasks execute on your Actions and its state lives in your repo.
         {reconnect
-          ? "Use this if your old token expired, was deleted, or stopped working. Paste a new one and the box signs in with it. Your skills and workflows stay in your fork. Hivra never stores the token."
+          ? "Use this if your old token expired, was deleted, or stopped working. Paste a new one and the computer signs in with it. Your skills and workflows stay in your fork. Hivra never stores the token."
           : "Paste a personal access token once; the box uses it to sign in and start the dashboard. Hivra never stores it."}
       </p>
 
