@@ -17,7 +17,7 @@ import { advanceProviderNativeReadiness } from "@/lib/hivra/provider-native-read
 import { advanceProviderDesktopReadiness } from "@/lib/hivra/provider-desktop-readiness";
 import type { ProviderAgentReadinessStage } from "@/lib/hivra/provider-readiness-contract";
 import { advanceProviderAgentPower } from "@/lib/hivra/provider-agent-power";
-import { observeProviderRuntimeUpdate, type ProviderRuntimeUpdateStage } from "@/lib/hivra/provider-runtime-update";
+import { observeProviderRuntimeUpdate, recordProviderSoftwareUpdate, type ProviderRuntimeUpdateStage } from "@/lib/hivra/provider-runtime-update";
 import type { ProviderAgentPowerStage } from "@/lib/hivra/provider-power-contract";
 import { advanceProviderResize } from "@/lib/hivra/provider-agent-resize";
 import type { ProviderResizeStage } from "@/lib/hivra/provider-agent-resize-contract";
@@ -407,7 +407,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             runtimeUpdate = observed.stage;
             if (observed.stage === "updated") {
               await logHivraAgentEvent({ userId, event: "runtime_updated", agentId: agent.id, agentType: agent.type,
-                detail: { inPlace: true, myCloud: true, ...(observed.agentCli ? { agentCli: observed.agentCli } : {}) } });
+                detail: { inPlace: true, myCloud: true, ...(observed.agentCli ? { agentCli: observed.agentCli } : {}), ...(observed.agentApp ? { agentApp: observed.agentApp } : {}) } });
+              await recordProviderSoftwareUpdate(agent, observed);
             }
           }
           else power = await advanceProviderAgentPower(operation, "observe");

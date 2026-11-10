@@ -197,6 +197,15 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
   "agent-zero": "agent-zero",
 };
 
+/**
+ * Whether Hivra's automatic updates can ever apply to this agent. A My cloud
+ * computer updates when its owner presses Update; the automatic sweep and its
+ * switch are for Proxmox computers only.
+ */
+export function agentSoftwareAutoUpdates(row: { computer_substrate?: unknown }): boolean {
+  return row.computer_substrate !== "provider-vm";
+}
+
 export interface AgentSoftwareSubject {
   type: AgentSoftwareType;
   /** Claude Code or Codex; null for the app agents. */
@@ -215,7 +224,10 @@ export function agentSoftwareSubject(row: {
   computer_substrate?: unknown;
 }): AgentSoftwareSubject | null {
   if (row.computer_profile != null) return null;
-  if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
+  // Proxmox computers (Hivra Cloud or the owner's server) and "My cloud"
+  // computers (a provider VM the owner pays for) update through the same
+  // in-guest scripts; every other substrate has its own update path.
+  if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm" && row.computer_substrate !== "provider-vm") return null;
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
   const cli = type === "claude-code" || type === "codex" ? type : null;

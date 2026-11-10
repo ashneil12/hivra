@@ -10,7 +10,7 @@ const SOURCE = "aeon-tick";
 
 // Drive the Aeon scheduler's cadence.
 //
-// The Aeon framework (ashneil12/aeon `messages.yml`) only evaluates its
+// The Aeon framework (aaronjmars/aeon `messages.yml`) only evaluates its
 // per-skill crons (in aeon.yml) when it receives a `repository_dispatch` of
 // type `cron-tick`; its own native GitHub `schedule:` triggers are unreliable
 // because the repo is a FORK (of aaronjmars/aeon) and GitHub throttles/disables
@@ -23,7 +23,9 @@ const SOURCE = "aeon-tick";
 // route must NOT replicate that gating — it would double-gate and could mask a
 // real outage. One dispatch per cron tick; the scheduler + its 90m dedup handle
 // which skills (if any) are due.
-const DEFAULT_AEON_REPO = "ashneil12/aeon";
+// Customer installs use upstream Aeon. Set AEON_DISPATCH_REPO to dispatch to a
+// different repo (for example a private fork).
+const DEFAULT_AEON_REPO = "aaronjmars/aeon";
 const DISPATCH_TIMEOUT_MS = 8_000;
 
 export const dynamic = "force-dynamic";

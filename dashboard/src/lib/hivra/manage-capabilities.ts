@@ -18,6 +18,7 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
+  errorKeepsComputer,
   folderRecoveryEligible,
   hasOwnershipBinding,
   isPreparedProfile,
@@ -118,6 +119,10 @@ function powerCaps(row: ManageCapabilitiesRow, variant: ManageVariant, ctx: Mana
   const errored = row.status === "error";
   const start = busy ? blocked("operation_in_progress", WAIT)
     : stopped ? available
+      : errored && (variant === "ubuntu-proxmox" || variant === "chat-agent" || variant === "dashboard-agent")
+        ? (errorKeepsComputer(row)
+          ? available
+          : blocked("never_set_up", "This computer never finished setting up, so there is nothing to start. Delete it, then launch it again."))
       : errored ? blocked("needs_check", "This computer reported an error. Check it before you start it.")
         : blocked("already_on", "This computer is already on.");
   const stop = busy ? blocked("operation_in_progress", WAIT)
@@ -283,17 +288,26 @@ function selfUpdateFor(row: ManageCapabilitiesRow, variant: ManageVariant): Mana
   return null;
 }
 
+/**
+ * Whether Hivra moves this agent's own software to its tested version: a
+ * Proxmox computer, or a My cloud agent (whose variant is my-cloud-agent
+ * whatever its kind). A My cloud desktop or DeepSeek computer is not one.
+ */
+function softwareUpdatesHere(row: ManageCapabilitiesRow, variant: ManageVariant, proxmoxVariant: ManageVariant): boolean {
+  if (row.computer_substrate === "provider-vm") return variant === "my-cloud-agent" && row.computer_profile == null;
+  if (variant !== proxmoxVariant) return false;
+  return row.computer_substrate == null || row.computer_substrate === "proxmox-kvm";
+}
+
 function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentCli"] {
-  if (variant !== "chat-agent") return null;
-  if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
+  if (!softwareUpdatesHere(row, variant, "chat-agent")) return null;
   if (row.type === "claude-code") return { name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] };
   if (row.type === "codex") return { name: "codex", vetted: AGENT_CLI_VERSIONS.codex };
   return null;
 }
 
 function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentApp"] {
-  if (variant !== "dashboard-agent") return null;
-  if (row.computer_substrate != null && row.computer_substrate !== "proxmox-kvm") return null;
+  if (!softwareUpdatesHere(row, variant, "dashboard-agent")) return null;
   if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero") {
     return { name: row.type, vetted: AGENT_APP_VERSIONS[row.type].label };
   }

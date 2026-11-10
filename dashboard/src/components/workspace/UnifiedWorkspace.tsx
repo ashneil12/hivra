@@ -13,7 +13,7 @@ import {
 } from "react";
 
 import type { AgentComputer, AgentComputerSurface } from "@/lib/agent-computers/contracts";
-import type { HivraAgent } from "@/lib/hivra/agent-api";
+import { startAgent, type HivraAgent } from "@/lib/hivra/agent-api";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { pollWhenVisible } from "@/lib/poll-when-visible";
@@ -343,6 +343,32 @@ function legacyDestination(agent: UnifiedAgent): string {
 function openRecovery(agent: UnifiedAgent): void {
   if (typeof window === "undefined") return;
   window.open(legacyDestination(agent), "_blank", "noopener,noreferrer");
+}
+
+/** Start on a computer in error that still has its machine; the lifecycle path re-checks everything. */
+function TryAgainButton({ agentId, onStarted }: { agentId: string; onStarted: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await startAgent(agentId);
+      onStarted();
+    } catch (error) {
+      setMessage(error instanceof Error && error.message ? error.message : "Hivra could not try again. Nothing was changed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button type="button" disabled={busy} onClick={() => void run()}>
+        {busy ? "Trying again…" : "Try again"}
+      </button>
+      {message ? <span role="alert"> {message}</span> : null}
+    </>
+  );
 }
 
 /** Launch page link for a failed launch: same agent type or computer profile preselected. */
@@ -1061,7 +1087,11 @@ function ResolvedAgentBoundary({
       <>
         {noticeElement}
         <p>
-          <Link href={relaunchHref(agent)}>Launch again</Link>
+          {agent.canTryAgain ? (
+            <TryAgainButton agentId={agent.id} onStarted={onRetry} />
+          ) : (
+            <Link href={relaunchHref(agent)}>Launch again</Link>
+          )}
         </p>
       </>
     );

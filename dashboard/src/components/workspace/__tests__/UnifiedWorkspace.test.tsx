@@ -16,6 +16,11 @@ import {
 import { AgentSwitcherMenu } from "../AgentSwitcherMenu";
 import { UnifiedWorkspace } from "../UnifiedWorkspace";
 
+const mockedStartAgent = jest.fn();
+jest.mock("@/lib/hivra/agent-api", () => ({
+  ...jest.requireActual("@/lib/hivra/agent-api"),
+  startAgent: (...args: unknown[]) => mockedStartAgent(...args),
+}));
 jest.mock("../useWorkspaceAgents", () => ({
   useWorkspaceAgents: jest.fn(),
 }));
@@ -740,6 +745,31 @@ describe("UnifiedWorkspace", () => {
       "href",
       "/dashboard/launch?start=1&profile=claude-code",
     );
+  });
+
+  it("offers Try again instead of Launch again when the failed computer kept its machine", async () => {
+    const failed: UnifiedAgent = {
+      ...hivraAgent,
+      statusRaw: "error",
+      state: "error",
+      agentType: "linux-desktop",
+      resourceKind: "computer",
+      failureReason: "The desktop never answered",
+      canTryAgain: true,
+    };
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [failed] }));
+    const loadAgentDetail = jest.fn(async (): Promise<WorkspaceSurfaceSource> => ({
+      kind: "hivra",
+      uid: failed.uid,
+      agent: { id: failed.id, type: "linux-desktop", name: failed.name, status: "error", error: "The desktop never answered", cpu: 2, ram: 4 },
+    }));
+    window.history.replaceState({}, "", "/dashboard/workspace?agent=x-beta&surface=conversation");
+
+    render(<UnifiedWorkspace loadAgentDetail={loadAgentDetail} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mockedStartAgent).toHaveBeenCalledWith(failed.id));
+    expect(screen.queryByRole("link", { name: "Launch again" })).not.toBeInTheDocument();
   });
 
   it("offers the same menu at every width and closes it on Escape", () => {

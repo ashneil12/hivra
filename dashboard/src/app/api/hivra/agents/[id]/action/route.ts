@@ -85,6 +85,7 @@ import {
 } from "@/lib/hivra/prepared-canary-computers";
 import {
   doSessionActionFor,
+  errorKeepsComputer,
   isForcePowerAction,
   isGvisorAction,
   isPreparedAction,
@@ -939,6 +940,35 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
     }
 
     if (action === "start") {
+      // Try again on a computer in error. It must still have its computer: a
+      // launch that never finished is launched again, not started. Error rows
+      // are not counted in the plan's slots or pool, so bringing one back is
+      // admitted like a new launch of the same size before anything is sent.
+      if (agent.status === "error") {
+        if (!errorKeepsComputer(agent)) {
+          return apiError("This computer never finished setting up, so there is nothing to start. Delete it, then launch it again.", 409);
+        }
+        if (executionContext.kind === "managed") {
+          const agentDef = getAgent(String(agent.type));
+          const cpu = Number(agent.cpu) || 0;
+          const ram = Number(agent.ram) || 0;
+          const gate = await validateAgentResources({
+            userId,
+            type: String(agent.type),
+            cpu,
+            ram,
+            maximumCpu: Math.max(cpu, Number(agent.cpu_max) || cpu),
+            maximumRam: Math.max(ram, Number(agent.ram_max) || ram),
+            browser: false,
+            mode: "launch",
+            poolExempt: Boolean(agentDef?.poolExempt),
+            // The computer already exists at this size; the launch floor must not refuse it.
+            floor: { cpu, ram },
+            agentLabel: agentDef?.name,
+          });
+          if (!gate.ok) return apiError(gate.message, gate.status);
+        }
+      }
       // Wake-admission: don't wake onto a host without headroom (OOM guard).
       const cap = await checkHostWakeCapacity(Number(agent.ram) * 1024, env);
       if (!cap.ok) return apiError("Host is at capacity — try again shortly", 503);

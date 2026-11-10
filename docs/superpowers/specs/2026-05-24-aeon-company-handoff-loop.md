@@ -81,7 +81,7 @@ From finance/risk:
 Implement a Hermes cron job:
 
 - Schedule: daily after AEON morning jobs, plus manual run anytime.
-- Script context: clone/pull `ashneil12/aeon`, list changed `.outputs/*.md` since last handoff state.
+- Script context: clone/pull `aaronjmars/aeon`, list changed `.outputs/*.md` since last handoff state.
 - Agent prompt: summarize changed outputs and use `send_message` for routed owner summaries.
 - State: `~/.hermes/state/aeon_company_handoff.json` stores last processed AEON HEAD and output mtimes.
 - Delivery: final Augustine rollup to `#augustine-briefs`.

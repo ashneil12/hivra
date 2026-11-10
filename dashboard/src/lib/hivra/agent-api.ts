@@ -813,11 +813,11 @@ export interface AeonConnectStatus {
   at: string;
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null; fresh?: boolean | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null; fresh?: boolean | null };
   } catch {
     return { loggedIn: false };
   }

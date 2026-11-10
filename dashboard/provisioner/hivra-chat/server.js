@@ -2509,7 +2509,9 @@ function handleLoginStatus(res) {
       const out = String(stdout || "") + String(stderr || "");
       const loggedIn = /logged in/i.test(out) && !/not logged in/i.test(out);
       const m = out.match(/([\w.+-]+@[\w.-]+\.\w+)/);
-      jsonRes(res, 200, { loggedIn, email: m ? m[1] : null, sub: null });
+      // `fresh` is false while a re-sign-in is still waiting, so the dashboard
+      // does not report success on the old credential.
+      jsonRes(res, 200, { loggedIn, email: m ? m[1] : null, sub: null, fresh: codexSignInFresh() });
     });
     return;
   }
@@ -2573,11 +2575,30 @@ function handleLoginComplete(res, body) {
 // There is no code to paste back — /start returns {url, code}; the dashboard
 // polls /status until loggedIn. The box's own codex does the login; Hivra never
 // sees the token.
+// ---- BEGIN codex-sign-in-freshness ----
+// `codex login status` says "logged in" for the OLD credential too, so a
+// re-sign-in cannot be told from the previous one by status alone. Before a
+// login starts we remember a fingerprint (never the contents) of the auth file;
+// a sign-in counts as fresh only once the CLI itself reports success or the file
+// has changed since.
+function codexAuthFingerprint() {
+  const home = String((AGENT_ENV && AGENT_ENV.CODEX_HOME) || process.env.CODEX_HOME || path.join(HOME, ".codex"));
+  try { return crypto.createHash("sha256").update(fs.readFileSync(path.join(home, "auth.json"))).digest("hex"); } catch { return null; }
+}
+// null: no sign-in attempted; true: new sign-in confirmed; false: still waiting
+// for (or never got) a new one.
+function codexSignInFresh() {
+  if (!loginState || loginState.baseline === undefined) return null;
+  if (loginState.ok || (loginState.done && loginState.exit === 0)) return true;
+  return codexAuthFingerprint() !== loginState.baseline;
+}
+// ---- END codex-sign-in-freshness ----
+
 function handleLoginStartCodex(res) {
   const fresh = !(loginState && loginState.proc && loginState.proc.exitCode === null && !loginState.done);
   if (fresh) {
     const child = spawn(CODEX, ["login", "--device-auth"], { env: AGENT_ENV, cwd: HOME, stdio: ["pipe", "pipe", "pipe"] });
-    loginState = { proc: child, url: null, code: null, out: "", done: false, ok: false, exit: null };
+    loginState = { proc: child, url: null, code: null, out: "", done: false, ok: false, exit: null, baseline: codexAuthFingerprint() };
     const onData = (d) => {
       loginState.out += d.toString();
       // codex colorizes its output (\x1b[..m); strip ANSI so the \b-anchored code
@@ -2609,8 +2630,9 @@ function handleLoginCompleteCodex(res) {
   if (loginState && (loginState.ok || (loginState.done && loginState.exit === 0))) return jsonRes(res, 200, { ok: true });
   execFile(CODEX, ["login", "status"], { env: AGENT_ENV, cwd: HOME, timeout: 8000 }, (e, so, se) => {
     const out = String(so || "") + String(se || "");
-    const ok = /logged in/i.test(out) && !/not logged in/i.test(out);
-    jsonRes(res, ok ? 200 : 202, { ok });
+    // Still signed in on the previous credential is not a finished sign-in.
+    const ok = /logged in/i.test(out) && !/not logged in/i.test(out) && codexSignInFresh() !== false;
+    jsonRes(res, ok ? 200 : 202, ok ? { ok } : { ok, error: "The new sign-in hasn't finished yet. Finish it on the sign-in page, then try again." });
   });
 }
 

@@ -41,7 +41,11 @@ jest.mock("@/lib/agent-wallets/hivra-lane", () => ({
 }));
 jest.mock("@/lib/hivra/provider-agent-power", () => ({ advanceProviderAgentPower: (...args: unknown[]) => mockProviderPower(...args) }));
 const mockObserveProviderUpdate = jest.fn();
-jest.mock("@/lib/hivra/provider-runtime-update", () => ({ observeProviderRuntimeUpdate: (...args: unknown[]) => mockObserveProviderUpdate(...args) }));
+const mockRecordProviderSoftware = jest.fn();
+jest.mock("@/lib/hivra/provider-runtime-update", () => ({
+  observeProviderRuntimeUpdate: (...args: unknown[]) => mockObserveProviderUpdate(...args),
+  recordProviderSoftwareUpdate: (...args: unknown[]) => mockRecordProviderSoftware(...args),
+}));
 jest.mock("@/lib/hivra/provider-agent-resize", () => ({ advanceProviderResize: (...args: unknown[]) => mockProviderResize(...args) }));
 jest.mock("@/lib/hivra/tailscale-private-access", () => ({
   ...jest.requireActual("@/lib/hivra/tailscale-private-access"),
@@ -393,11 +397,13 @@ describe("DELETE /api/hivra/agents/[id]", () => {
       mockAgentRow = { ...mockAgentRow, status: "provisioning", operation_kind: "runtime_update", operation_id: "provider-update-operation" };
       mockObserveProviderUpdate.mockImplementation(async () => {
         mockAgentRow = { ...mockAgentRow, status: "running", operation_kind: null, operation_id: null };
-        return { stage: "updated", agentCli: null };
+        return { stage: "updated", agentCli: null, agentApp: null };
       });
       const response = await GET(makeGetRequest() as never, params);
       expect(response.headers.get("Cache-Control")).toBe("no-store");
       expect(await response.json()).toMatchObject({ data: { agent: { status: "running", runtime_update_stage: "updated" } } });
+      // The software move the update scheduled is recorded for Manage > Updates and the update tag.
+      expect(mockRecordProviderSoftware).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-1" }), expect.objectContaining({ agentCli: null, agentApp: null }));
       expect(mockObserveProviderUpdate).toHaveBeenCalledWith({ userId: "user-free", agentId: "agent-1", operationId: "provider-update-operation" });
       expect(mockLogHivraAgentEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "runtime_updated", agentId: "agent-1" }));
       expect(mockProviderPower).not.toHaveBeenCalled();

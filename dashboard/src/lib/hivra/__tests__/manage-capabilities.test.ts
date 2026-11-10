@@ -149,10 +149,37 @@ describe("manageCapabilitiesFor", () => {
       expect(busy.power.stop).toEqual({ state: "blocked", code: "operation_in_progress", reason: "Wait for the current operation to finish." });
     });
 
-    it("says a computer in error needs checking before Start, not that it is already on", () => {
+    it("offers Start (Try again) on a computer in error that kept its machine, not 'already on'", () => {
       const errored = manageCapabilitiesFor({ ...rows.ubuntu, status: "error" }, { preparedMatch: true }).power;
-      expect(errored.start).toEqual({ state: "blocked", code: "needs_check", reason: "This computer reported an error. Check it before you start it." });
+      expect(errored.start).toEqual({ state: "available" });
       expect(errored.start).not.toMatchObject({ code: "already_on" });
+    });
+
+    it("says a launch that never finished has nothing to start and must be launched again", () => {
+      for (const patch of [{ provisioned_at: null }, { vmid: null }, { provisioned_at: null, vmid: 1113 }]) {
+        const errored = manageCapabilitiesFor({ ...rows.ubuntu, status: "error", ...patch }, { preparedMatch: true }).power;
+        expect(errored.start).toMatchObject({ state: "blocked", code: "never_set_up" });
+        expect((errored.start as { reason: string }).reason).toMatch(/launch it again/);
+      }
+    });
+
+    it("waits while an operation holds an errored computer", () => {
+      const busy = manageCapabilitiesFor({ ...rows.ubuntu, status: "error", operation_id: "op", operation_kind: "start" }, { preparedMatch: true }).power;
+      expect(busy.start).toMatchObject({ state: "blocked", code: "operation_in_progress" });
+    });
+
+    it("offers Try again to an agent in error that kept its computer, and launch again when it never set up", () => {
+      for (const name of ["claude", "aeon"] as const) {
+        const kept = manageCapabilitiesFor({ ...rows[name], status: "error" }, { preparedMatch: true }).power;
+        expect(kept.start).toEqual({ state: "available" });
+        const never = manageCapabilitiesFor({ ...rows[name], status: "error", provisioned_at: null }, { preparedMatch: true }).power;
+        expect(never.start).toMatchObject({ state: "blocked", code: "never_set_up" });
+      }
+    });
+
+    it("keeps other kinds of computer in error on the check-first message", () => {
+      const errored = manageCapabilitiesFor({ ...rows.hetznerUbuntu, status: "error" }, { preparedMatch: true }).power;
+      expect(errored.start).toMatchObject({ state: "blocked", code: "needs_check" });
     });
 
     it("says a Windows computer on My server has no power controls yet, instead of offering and refusing them", () => {
@@ -284,7 +311,13 @@ describe("manageCapabilitiesFor", () => {
       expect(map("codex").agentCli).toEqual({ name: "codex", vetted: AGENT_CLI_VERSIONS.codex });
       expect(map("claude").agentCli).toEqual({ name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] });
       expect(map("aeon").agentCli).toBeNull();
-      expect(map("codexMyCloud").agentCli).toBeNull();
+      expect(map("codexMyCloud").agentCli).toEqual({ name: "codex", vetted: AGENT_CLI_VERSIONS.codex });
+      expect(map("hetznerUbuntu").agentCli).toBeNull();
+      const myCloudApp = manageCapabilitiesFor({ ...rows.codexMyCloud, type: "openclaw" }, { preparedMatch: true });
+      expect(myCloudApp.agentApp).toMatchObject({ name: "openclaw" });
+      const myCloudDeepSeek = manageCapabilitiesFor({ ...rows.codexMyCloud, type: "deepseek-harness" }, { preparedMatch: true });
+      expect(myCloudDeepSeek.agentCli).toBeNull();
+      expect(myCloudDeepSeek.agentApp).toBeNull();
     });
 
     it("needs a running computer to update the connection service", () => {

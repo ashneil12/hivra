@@ -544,6 +544,15 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.10.3` builds on `2026.11.10.2` and ships the Codex sign-in
+freshness fix. `hivra-chat/server.js` reports a repeat Codex sign-in as fresh only
+when the credential actually changed, and says why a repeat sign-in is not finished
+yet. `hivra-provider-worker.py` only advances its native and desktop release labels.
+No installer, sudoers rule, service or credential path changes, and the
+remote-desktop assets are unchanged, so the remote-desktop bundle revision and every
+session revision are preserved. This source release does not deploy, install, or
+update any existing computer.
+
 Release `2026.11.10.2` builds on `2026.11.10.1` and lets Claude Code run on
 Hivra credits. `provision-claude-code-box.sh` gains
 `configure_claude_managed_model`: for a Claude Code computer launched with a

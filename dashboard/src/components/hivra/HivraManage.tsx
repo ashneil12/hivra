@@ -1025,9 +1025,9 @@ function HivraManageContent({
                 <div style={manageMuted}>{capReason(power.start)}</div>
               ) : (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {agent.status === "stopped" ? (
+                  {agent.status === "stopped" || agent.status === "error" ? (
                     <button type="button" disabled={busy || !capAvailable(power.start)} title={capReason(power.start) ?? undefined} onClick={() => { setPowerNotice(null); void run("start", () => startAgent(agent.id)); }} style={{ ...btnDark, cursor: busy || !capAvailable(power.start) ? "default" : "pointer", opacity: busy || !capAvailable(power.start) ? 0.6 : 1 }}>
-                      {acting === "start" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Start
+                      {acting === "start" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} {agent.status === "error" ? "Try again" : "Start"}
                     </button>
                   ) : (
                     <button type="button" disabled={busy || !capAvailable(power.stop)} title={capReason(power.stop) ?? undefined} onClick={() => void requestRunEnding("stop")} style={{ ...btnGhost, cursor: busy || !capAvailable(power.stop) ? "default" : "pointer", opacity: busy || !capAvailable(power.stop) ? 0.6 : 1 }}>
@@ -1043,6 +1043,7 @@ function HivraManageContent({
               {powerNotice && powerNotice.agentId === agent.id ? <div role="status" style={{ ...manageMuted, color: "var(--ink-black)" }}>{powerNotice.text}</div> : null}
               {errorFor("power")}
               {!powerUnavailable && lifecyclePending ? <CapReasonLine cap={power.stop} /> : null}
+              {!powerUnavailable && agent.status === "error" && !capAvailable(power.start) ? <CapReasonLine cap={power.start} /> : null}
               {/* Only explains buttons that are there. */}
               {powerUnavailable ? null : <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                 {stopSwitchesOff

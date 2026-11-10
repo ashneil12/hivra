@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.10.2.json";
+import release from "../../../../provisioner-releases/2026.11.10.3.json";
+import creditsRelease from "../../../../provisioner-releases/2026.11.10.2.json";
 import hardeningRelease from "../../../../provisioner-releases/2026.11.10.1.json";
 import clipboardRelease from "../../../../provisioner-releases/2026.11.03.1.json";
 import appUpdateRelease from "../../../../provisioner-releases/2026.10.20.2.json";
@@ -231,9 +232,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -319,9 +320,9 @@ it("ships the launch and start hardening and the agent self-care guidance in 202
 });
 
 it("ships Claude Code on Hivra credits in 2026.11.10.2, keeping 2026.11.10.1 admitted and desktop assets unchanged", () => {
-  expect(release.version).toBe("2026.11.10.2");
-  expect(release.files.map(file => file.path)).toEqual(hardeningRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== hardeningRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(creditsRelease.version).toBe("2026.11.10.2");
+  expect(creditsRelease.files.map(file => file.path)).toEqual(hardeningRelease.files.map(file => file.path));
+  const changed = creditsRelease.files.filter(file => file.sha256 !== hardeningRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // Exactly the installer and the release documents/labels change.
   expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "provision-claude-code-box.sh"]);
@@ -330,4 +331,19 @@ it("ships Claude Code on Hivra credits in 2026.11.10.2, keeping 2026.11.10.1 adm
   expect(provisionerSupportsActivityTelemetry("2026.11.10.1")).toBe(true);
   expect(supportsModelSettingsProvisionerVersion("2026.11.10.1")).toBe(true);
   expect(provisionerSupportsWindowsInstaller("2026.11.10.1")).toBe(true);
+});
+
+
+it("ships the Codex sign-in freshness fix in 2026.11.10.3, keeping 2026.11.10.2 admitted and desktop assets unchanged", () => {
+  expect(release.version).toBe("2026.11.10.3");
+  expect(release.files.map(file => file.path)).toEqual(creditsRelease.files.map(file => file.path));
+  const changed = release.files.filter(file => file.sha256 !== creditsRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the chat server and the release documents/labels change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-chat/server.js", "hivra-provider-worker.py"]);
+  expect(isCompatibleProxmoxProvisionerVersion("2026.11.10.2")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.11.10.2")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.11.10.2")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.11.10.2")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.11.10.2")).toBe(true);
 });
