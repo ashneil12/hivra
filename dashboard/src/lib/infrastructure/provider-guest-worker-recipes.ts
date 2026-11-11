@@ -380,6 +380,11 @@ const recipes = Object.freeze({
     workerSha256: "8fe3d90ebcae733730bf094f7c062ba99557b6c7b3c1ea8d5604dfac1c55a35d",
     workerSize: 45185,
   }),
+  "2026.11.11.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release gives the agent's browser a clean view (keeper, managed policy, pinned Chrome) on new computers and through the runtime update. The worker only advances its release labels.
+    workerSha256: "5be0eedad458669ea8efba8d5a42f4263d94cb778d93b90b5330c9da6854cf02",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

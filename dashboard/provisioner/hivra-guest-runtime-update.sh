@@ -128,6 +128,10 @@ for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.jso
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
+for asset in local-browser-keeper.py; do
+  [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
+    || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
+done
 if [ "$KIND_BEFORE" = linux-desktop ]; then
   for pair in "$CLAUDE_APP:hivra-claude-app" "$CLAUDE_APP_UNIT:hivra-claude-app.service" "$CLAUDE_APP_PIN:claude-desktop-pin.json" "$CLAUDE_APP_SUDOERS:hivra-claude-app.sudoers"; do
     target="${pair%%:*}"; name="${pair##*:}"
@@ -175,6 +179,7 @@ bash -n "$WORK/hivra-agent-app-update.sh"
 bash -n "$WORK/hivra-tg-apply"
 python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-claude-app.py"
 python3 -I -B -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$WORK/claude-desktop-pin.json"
+python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/local-browser-keeper.py"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -440,4 +445,74 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
   printf 'HIVRA_AGENT_APP name=%s version=%s target=%s state=%s\n' "$name" "$version" "$target" "$state"
 }
 agent_app_report || true
+
+# Agent browser (computers with the browser stack). A computer provisioned before
+# 2026.11.03.1 still runs a keeper that launches Chrome with --no-sandbox, which
+# Chrome answers with an "unsupported command-line flag" infobar, and a pinned
+# Chrome that is eight weeks old shows "Can't update Chrome" and a "Finish update"
+# chip in the Browser tab. This installs the release's keeper, writes the managed
+# policy that turns the outdated-build detector off (the installer writes the
+# identical text), and keeps google-chrome-stable on the pinned build by dropping
+# Google's apt source and holding the package. The browser restarts only when
+# nobody is attached to its debugging port; otherwise the new keeper and policy
+# apply at its next start. A browser that does not come back is put back on the
+# keeper it had. Nothing here can fail the committed update above.
+BROWSER_KEEPER=/opt/bux/local-browser-keeper.py
+BROWSER_UNIT=/etc/systemd/system/bux-local-browser.service
+CHROME_POLICY_DIR=/etc/opt/chrome/policies/managed
+CHROME_POLICY_FILE="$CHROME_POLICY_DIR/hivra-browser.json"
+CHROME_POLICY_JSON='{"DefaultBrowserSettingEnabled":false,"PromotionsEnabled":false,"BrowserSignin":0,"SuppressUnsupportedOSWarning":true}'
+agent_browser_refresh() {
+  local port out changed=0 legacy=0 state=current i
+  [ -f "$BROWSER_UNIT" ] && [ ! -L "$BROWSER_UNIT" ] && [ -f "$BROWSER_KEEPER" ] && [ ! -L "$BROWSER_KEEPER" ] || return 0
+  dpkg-query -W -f='${Status}' google-chrome-stable 2>/dev/null | grep -Fq 'install ok installed' || return 0
+  port="$(sed -n 's/^Environment=BUX_LOCAL_CDP_PORT=\([0-9]\{1,5\}\)$/\1/p' "$BROWSER_UNIT" | head -n 1)"
+  port="${port:-9222}"
+  # Keep Chrome on its pinned build (Google's documented switch, then the source and a hold).
+  printf '%s\n' 'repo_add_once="false"' 'repo_reenable_on_distupgrade="false"' > /etc/default/google-chrome
+  chmod 0644 /etc/default/google-chrome
+  rm -f /etc/apt/sources.list.d/google-chrome.sources /etc/apt/sources.list.d/google-chrome.list
+  apt-mark hold google-chrome-stable >/dev/null 2>&1 || true
+  install -d -o root -g root -m 0755 /etc/opt/chrome /etc/opt/chrome/policies "$CHROME_POLICY_DIR"
+  printf '%s\n' "$CHROME_POLICY_JSON" > "$CHROME_POLICY_FILE.next"
+  chmod 0644 "$CHROME_POLICY_FILE.next"
+  if ! cmp -s "$CHROME_POLICY_FILE.next" "$CHROME_POLICY_FILE"; then changed=1; fi
+  mv -f -- "$CHROME_POLICY_FILE.next" "$CHROME_POLICY_FILE"
+  cp -p -- "$BROWSER_KEEPER" "$WORK/keeper.previous"
+  if ! cmp -s "$WORK/local-browser-keeper.py" "$BROWSER_KEEPER"; then
+    changed=1
+    install -o bux -g bux -m 0755 "$WORK/local-browser-keeper.py" "$BROWSER_KEEPER.next"
+    mv -f -- "$BROWSER_KEEPER.next" "$BROWSER_KEEPER"
+  fi
+  # A browser still running with --no-sandbox needs its restart even when the files already match.
+  if pgrep -u bux -f -- 'google/chrome/chrome .*--no-sandbox' >/dev/null 2>&1; then legacy=1; fi
+  if [ "$changed" = 0 ] && [ "$legacy" = 0 ]; then
+    printf 'HIVRA_AGENT_BROWSER state=current\n'
+    return 0
+  fi
+  if ! systemctl is-active --quiet bux-local-browser.service; then
+    printf 'HIVRA_AGENT_BROWSER state=installed\n'
+    return 0
+  fi
+  # A check that cannot run counts as busy, as for the terminals.
+  if ! out="$(ss -Htn state established "( sport = :$port )" 2>/dev/null)" || [ -n "$out" ]; then
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'
+    return 0
+  fi
+  systemctl restart bux-local-browser.service || true
+  for i in $(seq 1 30); do
+    if curl -fsS --max-time 3 -o /dev/null "http://127.0.0.1:${port}/json/version" 2>/dev/null; then
+      state=restarted
+      break
+    fi
+    sleep 1
+  done
+  if [ "$state" != restarted ]; then
+    install -o bux -g bux -m 0755 "$WORK/keeper.previous" "$BROWSER_KEEPER"
+    systemctl restart bux-local-browser.service || true
+    state=restored
+  fi
+  printf 'HIVRA_AGENT_BROWSER state=%s\n' "$state"
+}
+agent_browser_refresh || true
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'
