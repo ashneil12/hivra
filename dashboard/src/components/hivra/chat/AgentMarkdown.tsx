@@ -60,7 +60,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text, streami
     [cadence.durationMs, cadence.easing],
   );
   return (
-    <div className={`hivra-md ${styles.markdown} ${fading ? `${styles.wordFading} word-fading` : ""}`} style={fadeStyle}>
+    <div data-selectable-agent-response className={`hivra-md ${styles.markdown} ${fading ? `${styles.wordFading} word-fading` : ""}`} style={fadeStyle}>
       <ReactMarkdown remarkPlugins={CHAT_REMARK_PLUGINS} rehypePlugins={fading ? FADING_REHYPE_PLUGINS : NO_REHYPE_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
         {shown.text}
       </ReactMarkdown>

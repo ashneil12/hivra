@@ -24,7 +24,7 @@ import {
   restartAgent,
   stopAgent,
 } from "../agent-api";
-import { boxLoginStartRaw } from "../agent-api";
+import { boxLoginStartRaw, getBoxChatMeta } from "../agent-api";
 
 describe("listBoxSessions", () => {
   const originalFetch = global.fetch;
@@ -819,5 +819,30 @@ describe("boxLoginStartRaw", () => {
       code: "ABCD-EFGH",
       deviceAuth: false,
     });
+  });
+});
+
+describe("getBoxChatMeta", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it("reads the effort levels a computer offers, sending the owner's token to that computer only", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ agentKind: "claude", model: "opus", chatEffort: ["low", "high", 3, null] }) }) as unknown as typeof fetch;
+    await expect(getBoxChatMeta("https://box.example.test/", "token")).resolves.toEqual({ agentKind: "claude", model: "opus", chatEffort: ["low", "high"] });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("https://box.example.test/api/meta");
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer token" });
+  });
+
+  it("offers no effort from a computer that does not say", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ agentKind: "codex" }) }) as unknown as typeof fetch;
+    await expect(getBoxChatMeta("https://box.example.test", "token")).resolves.toEqual({ agentKind: "codex", model: null, chatEffort: [] });
+  });
+
+  it("is null when the computer does not answer or answers with an error", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }) as unknown as typeof fetch;
+    await expect(getBoxChatMeta("https://box.example.test", "token")).resolves.toBeNull();
+    global.fetch = jest.fn().mockRejectedValue(new Error("offline")) as unknown as typeof fetch;
+    await expect(getBoxChatMeta("https://box.example.test", "token")).resolves.toBeNull();
   });
 });

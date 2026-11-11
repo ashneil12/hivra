@@ -15,7 +15,7 @@ import posthog from "posthog-js";
 
 import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
 import { AgentChatListSlotContext } from "../agent-shell/AgentChatListSlot";
-import { listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
+import { getBoxChatMeta, getBoxModel, getBoxRestrict, listBoxChatRuns, listBoxSessions, readBoxSession, setBoxModel, setBoxRestrict, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
 import { startAgentWelcomeRun } from "@/lib/hivra/agent-welcome";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
@@ -67,6 +67,11 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   uploadBoxFile: jest.fn(),
   listBoxChatRuns: jest.fn(),
   stopBoxChatRun: jest.fn(),
+  getBoxChatMeta: jest.fn(),
+  getBoxModel: jest.fn(),
+  setBoxModel: jest.fn(),
+  getBoxRestrict: jest.fn(),
+  setBoxRestrict: jest.fn(),
   boxChatRunEventsUrl: (boxUrl: string, runId: string) => `${boxUrl}/api/chat/runs/${runId}/events`,
 }));
 
@@ -134,6 +139,12 @@ describe("HivraChat", () => {
     (stampAgentFirstUsage as jest.Mock).mockResolvedValue(undefined);
     (listBoxChatRuns as jest.Mock).mockResolvedValue(null);
     (stopBoxChatRun as jest.Mock).mockResolvedValue(true);
+    // An older computer: no effort levels, and no model or access setting to change from the chat.
+    (getBoxChatMeta as jest.Mock).mockResolvedValue(null);
+    (getBoxModel as jest.Mock).mockResolvedValue({ model: null, error: "HTTP 404" });
+    (getBoxRestrict as jest.Mock).mockResolvedValue({ restrict: "", error: "HTTP 404" });
+    (setBoxModel as jest.Mock).mockResolvedValue({ ok: true, error: null });
+    (setBoxRestrict as jest.Mock).mockResolvedValue({ ok: true, error: null });
     (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(welcomeResponse()));
   });
 
@@ -2020,6 +2031,316 @@ describe("HivraChat", () => {
       } finally {
         slot.remove();
       }
+    });
+  });
+
+  describe("the composer's pickers, queue and rich rows", () => {
+    const assistantEvent = (content: unknown[], extra: Record<string, unknown> = {}) => ({ type: "assistant", message: { content, ...extra } });
+    const bodyOf = (fetchMock: jest.Mock, call = 0) => JSON.parse(String((fetchMock.mock.calls[call][1] as RequestInit).body)) as Record<string, unknown>;
+    const finishedTurn = (text: string) => jest.fn()
+      .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText(text), { type: "_done", code: 0 }))
+      .mockResolvedValue({ done: true, value: undefined });
+    // A computer that lets the owner change its model and says which effort levels it takes.
+    function modernComputer(levels: string[] = ["low", "medium", "high"]) {
+      (getBoxChatMeta as jest.Mock).mockResolvedValue({ agentKind: "claude", model: null, chatEffort: levels });
+      (getBoxModel as jest.Mock).mockResolvedValue({ model: null, error: null });
+      (getBoxRestrict as jest.Mock).mockResolvedValue({ restrict: "", error: null });
+    }
+
+    it("sends the effort picked from the model pill, and never the old reasoning key", async () => {
+      modernComputer();
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(finishedTurn("Done.")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="effort-sent" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      fireEvent.click(await screen.findByRole("button", { name: "Model: Default" }));
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
+      expect(await screen.findByRole("button", { name: "Model: Default, High effort" })).toBeInTheDocument();
+      expect(window.localStorage.getItem("hivra_effort_effortsent")).toBe("high");
+      await sendMessage("think hard");
+      await screen.findByText("Done.");
+      const body = bodyOf(fetchMock);
+      expect(body.effort).toBe("high");
+      expect(body).not.toHaveProperty("reasoning");
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    });
+
+    it("sends no effort until one is picked, and offers none on a computer without chatEffort", async () => {
+      (getBoxModel as jest.Mock).mockResolvedValue({ model: null, error: null });
+      (getBoxChatMeta as jest.Mock).mockResolvedValue({ agentKind: "claude", model: null, chatEffort: [] });
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(finishedTurn("Done.")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="effort-none" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      fireEvent.click(await screen.findByRole("button", { name: "Model: Default" }));
+      expect(screen.queryByText("Effort")).not.toBeInTheDocument();
+      fireEvent.keyDown(screen.getByRole("menu", { name: "Model and effort" }), { key: "Escape" });
+      await sendMessage("plain");
+      await screen.findByText("Done.");
+      const body = bodyOf(fetchMock);
+      expect(body).not.toHaveProperty("effort");
+      expect(body).not.toHaveProperty("reasoning");
+    });
+
+    it("ignores a remembered effort the computer does not offer", async () => {
+      window.localStorage.setItem("hivra_effort_effortstale", "max");
+      modernComputer(["low", "high"]);
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(finishedTurn("Done.")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="effort-stale" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await screen.findByRole("button", { name: "Model: Default" });
+      await sendMessage("hello");
+      await screen.findByText("Done.");
+      expect(bodyOf(fetchMock)).not.toHaveProperty("effort");
+    });
+
+    it("changes the model and the access from the composer on the computer", async () => {
+      modernComputer();
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(finishedTurn("Done."))) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="pickers-apply" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      fireEvent.click(await screen.findByRole("button", { name: "Model: Default" }));
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Opus" }));
+      await waitFor(() => expect(setBoxModel).toHaveBeenCalledWith("https://box.example.com", "opus", "box-token"));
+      expect(await screen.findByRole("button", { name: "Model: Opus" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Access: Full access" }));
+      fireEvent.click(screen.getByRole("option", { name: /Read-only/ }));
+      await waitFor(() => expect(setBoxRestrict).toHaveBeenCalledWith("https://box.example.com", "readonly", "box-token"));
+    });
+
+    it("names the provider model on the pill and offers only effort when the model is not the CLI one", async () => {
+      modernComputer();
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="pickers-locked" token="box-token" agentName="Atlas" agentKind="claude" modelLabel="Venice Large" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await waitFor(() => expect(getBoxModel).toHaveBeenCalled());
+      // The pill names the provider's model; with nothing to switch, its menu holds only the effort levels.
+      fireEvent.click(await screen.findByRole("button", { name: "Model: Venice Large" }));
+      expect(screen.getAllByRole("menuitemradio").map((el) => el.textContent)).toEqual(["Default", "Low", "Medium", "High"]);
+    });
+
+    it("queues a message sent while the agent works and sends it once the reply ends", async () => {
+      const first = deferred<{ done: boolean; value?: Uint8Array }>();
+      const firstRead = jest.fn()
+        .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Working")))
+        .mockImplementationOnce(() => first.promise)
+        .mockResolvedValue({ done: true, value: undefined });
+      const fetchMock = jest.fn()
+        .mockResolvedValueOnce(chatResponse(firstRead))
+        .mockResolvedValueOnce(chatResponse(finishedTurn("Second done.")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="queue-send" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("first");
+      await screen.findByText("Working");
+      fireEvent.change(screen.getByPlaceholderText("Message Atlas"), { target: { value: "then the second" } });
+      fireEvent.click(screen.getByLabelText("Queue message"));
+      expect(screen.getByText("then the second")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Message Atlas")).toHaveValue("");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await act(async () => first.resolve(eventChunk(replyText(" on it."), { type: "_done", code: 0 })));
+      expect(await screen.findByText("Second done.")).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(bodyOf(fetchMock, 1).message).toBe("then the second");
+      expect(screen.queryByRole("button", { name: "Remove queued message" })).not.toBeInTheDocument();
+    });
+
+    it("pauses the queue when the reply is stopped, and sends it on Resume", async () => {
+      const first = deferred<{ done: boolean; value?: Uint8Array }>();
+      const firstRead = jest.fn()
+        .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Working")))
+        .mockImplementationOnce(() => first.promise);
+      const fetchMock = jest.fn()
+        .mockResolvedValueOnce(chatResponse(firstRead))
+        .mockResolvedValueOnce(chatResponse(finishedTurn("After resume.")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="queue-stop" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("first");
+      await screen.findByText("Working");
+      fireEvent.change(screen.getByPlaceholderText("Message Atlas"), { target: { value: "queued one" } });
+      fireEvent.click(screen.getByLabelText("Queue message"));
+      fireEvent.click(await screen.findByRole("button", { name: "Stop response" }));
+      expect(await screen.findByText("Queue paused because you stopped the reply")).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
+      expect(await screen.findByText("After resume.")).toBeInTheDocument();
+      expect(bodyOf(fetchMock, 1).message).toBe("queued one");
+    });
+
+    it("lets the owner remove a queued message before it goes out", async () => {
+      const first = deferred<{ done: boolean; value?: Uint8Array }>();
+      const firstRead = jest.fn()
+        .mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true }, replyText("Working")))
+        .mockImplementationOnce(() => first.promise)
+        .mockResolvedValue({ done: true, value: undefined });
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(firstRead));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="queue-remove" token="box-token" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("first");
+      await screen.findByText("Working");
+      fireEvent.change(screen.getByPlaceholderText("Message Atlas"), { target: { value: "never mind" } });
+      fireEvent.click(screen.getByLabelText("Queue message"));
+      fireEvent.click(screen.getByRole("button", { name: "Remove queued message" }));
+      expect(screen.queryByText("never mind")).not.toBeInTheDocument();
+      await act(async () => first.resolve(eventChunk({ type: "_done", code: 0 })));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the agent's task list as a card and keeps it out of the tool count", async () => {
+      const todos = [
+        { content: "Read the failing test", status: "completed" },
+        { content: "Fix the parser", status: "in_progress" },
+        { content: "Run the suite", status: "pending" },
+      ];
+      const read = jest.fn()
+        .mockResolvedValueOnce(eventChunk(
+          assistantEvent([{ type: "tool_use", id: "todo-1", name: "TodoWrite", input: { todos } }]),
+          replyText("On it."),
+          { type: "_done", code: 0 },
+        ))
+        .mockResolvedValue({ done: true, value: undefined });
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="task-card" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("fix it");
+      const card = await screen.findByRole("region", { name: "Task progress" });
+      expect(within(card).getByText("1 of 3")).toBeInTheDocument();
+      expect(within(card).getByText("Fix the parser")).toBeInTheDocument();
+      expect(within(card).getByRole("img", { name: "In progress" })).toBeInTheDocument();
+      expect(within(card).getByRole("img", { name: "Completed" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Used 1 tool/ })).not.toBeInTheDocument();
+    });
+
+    it("shows an edit as a file chip whose preview lists the removed and added lines", async () => {
+      const read = jest.fn()
+        .mockResolvedValueOnce(eventChunk(
+          assistantEvent([{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "/work/src/parser.ts", old_string: "const a = 1;", new_string: "const a = 2;\nconst b = 3;" } }]),
+          { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "edit-1", content: "ok" }] } },
+          replyText("Edited."),
+          { type: "_done", code: 0 },
+        ))
+        .mockResolvedValue({ done: true, value: undefined });
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="diff-chip" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("change it");
+      fireEvent.click(await screen.findByRole("button", { name: "Used 1 tool" }));
+      const chip = await screen.findByRole("button", { name: "Preview changes: parser.ts" });
+      expect(chip).toHaveTextContent("+2");
+      fireEvent.click(chip);
+      const preview = await screen.findByRole("dialog", { name: "Change preview: parser.ts" });
+      expect(within(preview).getByText("const a = 1;")).toBeInTheDocument();
+      expect(within(preview).getByText("const b = 3;")).toBeInTheDocument();
+      expect(preview.querySelectorAll('[data-diff="add"]')).toHaveLength(2);
+      expect(preview.querySelectorAll('[data-diff="remove"]')).toHaveLength(1);
+    });
+
+    it("shows the agent's plan in place and builds it on a tap", async () => {
+      const first = jest.fn()
+        .mockResolvedValueOnce(eventChunk(
+          assistantEvent([{ type: "tool_use", id: "plan-1", name: "ExitPlanMode", input: { plan: "# Move the parser\n\nSplit it in two." } }]),
+          { type: "_done", code: 0 },
+        ))
+        .mockResolvedValue({ done: true, value: undefined });
+      const fetchMock = jest.fn()
+        .mockResolvedValueOnce(chatResponse(first))
+        .mockResolvedValueOnce(chatResponse(finishedTurn("Building.")));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="plan-build" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("plan it");
+      fireEvent.click(await screen.findByRole("button", { name: /Build/ }));
+      expect(await screen.findByText("Building.")).toBeInTheDocument();
+      expect(bodyOf(fetchMock, 1).message).toBe("The plan looks good. Go ahead and build it.");
+    });
+
+    it("shows the model's reasoning as its own muted row that opens to the text", async () => {
+      const read = jest.fn()
+        .mockResolvedValueOnce(eventChunk(
+          assistantEvent([{ type: "thinking", thinking: "Checking the parser\nIt splits on commas, which breaks quoted fields." }, { type: "text", text: "Fixed." }]),
+          { type: "_done", code: 0 },
+        ))
+        .mockResolvedValue({ done: true, value: undefined });
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="thinking-row" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      await sendMessage("why");
+      expect(await screen.findByText("Fixed.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Used \d+ tool/ })).not.toBeInTheDocument();
+      fireEvent.click(await screen.findByRole("button", { name: "Thinking" }));
+      expect(screen.queryByText(/breaks quoted fields/)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Show thinking: Checking the parser" }));
+      expect(await screen.findByText(/breaks quoted fields/)).toBeInTheDocument();
+    });
+
+    it("rings the context once the agent reports the level and the window", async () => {
+      const read = jest.fn()
+        .mockResolvedValueOnce(eventChunk(
+          { type: "stream_event", event: { type: "message_start", message: { usage: { input_tokens: 20000, cache_read_input_tokens: 60000, cache_creation_input_tokens: 0 } } } },
+          replyText("Hi."),
+          { type: "result", subtype: "success", modelUsage: { "claude-x": { inputTokens: 80000, contextWindow: 200000 } } },
+          { type: "_done", code: 0 },
+        ))
+        .mockResolvedValue({ done: true, value: undefined });
+      global.fetch = jest.fn().mockResolvedValue(chatResponse(read)) as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="context-ring" agentName="Atlas" agentKind="claude" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      expect(screen.queryByRole("img", { name: /context/i })).not.toBeInTheDocument();
+      await sendMessage("hello");
+      expect(await screen.findByRole("img", { name: /40%/ })).toBeInTheDocument();
+    });
+  });
+
+  describe("files dropped or picked, and find", () => {
+    it("attaches several picked files one after another", async () => {
+      (uploadBoxFile as jest.Mock).mockImplementation((_url: string, name: string) => Promise.resolve({ ok: true, path: `/box/${name}` }));
+      const { container } = render(<HivraChat boxUrl="https://box.example.com" storageKey="attach-many" token="box-token" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const files = [new File(["1"], "a.txt", { type: "text/plain" }), new File(["2"], "b.txt", { type: "text/plain" })];
+      fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files } });
+      expect(await screen.findByRole("button", { name: "Remove a.txt" })).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Remove b.txt" })).toBeInTheDocument();
+      expect(uploadBoxFile).toHaveBeenCalledTimes(2);
+    });
+
+    it("attaches files dropped on the chat, and shows the drop hint while they are over it", async () => {
+      (uploadBoxFile as jest.Mock).mockImplementation((_url: string, name: string) => Promise.resolve({ ok: true, path: `/box/${name}` }));
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="attach-drop" token="box-token" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const pane = screen.getByRole("region", { name: "Conversation" }).parentElement!;
+      const file = new File(["x"], "dropped.txt", { type: "text/plain" });
+      const dataTransfer = { files: [file], types: ["Files"], items: [{ kind: "file" }], dropEffect: "none" };
+      fireEvent.dragOver(pane, { dataTransfer });
+      expect(await screen.findByText("Drop files to attach")).toBeInTheDocument();
+      fireEvent.drop(pane, { dataTransfer });
+      expect(await screen.findByRole("button", { name: "Remove dropped.txt" })).toBeInTheDocument();
+      expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
+    });
+
+    it("ignores a drop on a computer that takes no uploads", async () => {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="attach-drop-none" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const pane = screen.getByRole("region", { name: "Conversation" }).parentElement!;
+      const file = new File(["x"], "dropped.txt", { type: "text/plain" });
+      fireEvent.drop(pane, { dataTransfer: { files: [file], types: ["Files"], items: [{ kind: "file" }] } });
+      expect(uploadBoxFile).not.toHaveBeenCalled();
+    });
+
+    it("opens find with Ctrl+F in the chat, counts the matches, and closes with Escape", async () => {
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="find-open" agentName="Atlas" />);
+      await screen.findByText("Atlas here, ready to grow the SaaS.");
+      const box = screen.getByPlaceholderText("Message Atlas");
+      fireEvent.keyDown(box, { key: "f", ctrlKey: true });
+      const search = await screen.findByRole("textbox", { name: "Find in conversation" });
+      fireEvent.change(search, { target: { value: "ready" } });
+      expect(await screen.findByText("1 of 1")).toBeInTheDocument();
+      fireEvent.change(search, { target: { value: "zzz" } });
+      expect(await screen.findByText("No results")).toBeInTheDocument();
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(screen.queryByRole("search", { name: "Find in conversation" })).not.toBeInTheDocument();
     });
   });
 });
