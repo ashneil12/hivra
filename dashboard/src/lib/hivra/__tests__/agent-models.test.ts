@@ -1,4 +1,4 @@
-import { BOX_MODEL_OPTIONS, effortLabel, isEffortLevel, modelLabelFor, parseChatEffort } from "@/lib/hivra/agent-models";
+import { BOX_MODEL_OPTIONS, cliTitle, defaultEffortLevels, effortHint, effortLabel, isEffortLevel, modelLabelFor, parseChatEffort } from "@/lib/hivra/agent-models";
 
 describe("agent-models", () => {
   it("offers the default first for each CLI, then its models", () => {
@@ -33,5 +33,19 @@ describe("agent-models", () => {
     expect(modelLabelFor("codex", "gpt-5.1-codex-max")).toBe("Codex Max");
     expect(modelLabelFor("claude", " my-model ")).toBe("my-model");
     expect(modelLabelFor("claude", null)).toBe("Default");
+  });
+
+  it("lists every level for Claude Code and low to extra high for Codex, whatever the computer says", () => {
+    expect(defaultEffortLevels("claude")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(defaultEffortLevels("codex")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(defaultEffortLevels("hermes")).toEqual([]);
+  });
+
+  it("words each level's trade and names the CLIs", () => {
+    expect(effortHint("max")).toMatch(/most thinking/i);
+    expect(effortHint("turbo")).toBeUndefined();
+    expect(cliTitle("claude")).toBe("Claude Code");
+    expect(cliTitle("codex")).toBe("Codex");
+    expect(cliTitle("other")).toBe("other");
   });
 });

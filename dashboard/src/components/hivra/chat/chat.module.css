@@ -618,8 +618,6 @@
 @media (prefers-reduced-motion: reduce) { .popoverOpen { animation: none; } }
 
 .menu { padding: 4px; }
-.menuHeader { padding: 6px 8px 2px; color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
-.menuHeaderRule { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--hg-stroke-subtle); }
 .menuItem {
   position: relative;
   isolation: isolate;
@@ -650,41 +648,6 @@
 .menuHint { display: block; margin-top: 2px; color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
 .menuNote { margin: 0; padding: 6px 8px; color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
 @media (pointer: coarse) { .menuItem { min-height: 44px; } }
-
-/* The stronger effort levels light up (MonoCode's tile shimmer). */
-.effortOption[data-effort-tone="strong"] { --effort-color: var(--hg-focus); }
-.effortOption[data-effort-tone="max"] { --effort-color: var(--hg-warn); }
-.effortTiles {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  display: grid;
-  grid-template-columns: repeat(32, minmax(0, 1fr));
-  grid-template-rows: repeat(5, minmax(0, 1fr));
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 160ms ease-out;
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent), linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent), linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
-  mask-composite: intersect;
-}
-.effortOption > :not(.effortTiles) { position: relative; z-index: 1; }
-.effortTile { box-sizing: border-box; background-color: transparent; box-shadow: inset -1px -1px 0 color-mix(in srgb, var(--effort-color) 32%, transparent); }
-.effortOption:is(:hover, :focus-visible, .effortActive) > .effortTiles { animation: effortTilesClear 5000ms linear 1 both; }
-.effortOption:is(:hover, :focus-visible, .effortActive) .effortTileFilled { animation: effortTileFill 1400ms ease-out 3 both; animation-delay: calc(var(--tile-distance) * 420ms); }
-@keyframes effortTilesClear { 0%, 92% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
-@keyframes effortTileFill {
-  0%, 100% { background-color: transparent; }
-  26% { background-color: var(--effort-color); }
-  52% { background-color: color-mix(in srgb, var(--effort-color) 18%, transparent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .effortTiles { transition: none; }
-  .effortOption:is(:hover, :focus-visible, .effortActive) > .effortTiles { animation: none; opacity: 0.5; visibility: visible; }
-  .effortOption:is(:hover, :focus-visible, .effortActive) .effortTileFilled { animation: none; background-color: color-mix(in srgb, var(--effort-color) 40%, transparent); }
-}
 
 /* ── Context ring ──────────────────────────────────────────────────────── */
 .meter { display: inline-grid; flex: none; place-items: center; margin: 0 4px; border-radius: 4px; outline: none; }

@@ -21,7 +21,10 @@ type Props = Omit<ComponentPropsWithoutRef<"div">, "style"> & {
   align?: PopoverAlign;
   gap?: number;
   width?: number;
+  minHeight?: number;
   maxHeight?: number;
+  /** Stacking above the other menus, for a flyout opened from a menu. */
+  layer?: number;
   style?: CSSProperties;
   autoFocus?: boolean;
   onDismiss?: (reason: PopoverDismissReason) => void;
@@ -54,7 +57,7 @@ function origin(side: PopoverSide, align: PopoverAlign): string {
   return side === "right" ? `0% ${near}` : `100% ${near}`;
 }
 
-export function Popover({ anchor, side = "bottom", align = "start", gap, width, maxHeight, className, style, autoFocus = false, onDismiss, ignore, ref, children, ...rest }: Props) {
+export function Popover({ anchor, side = "bottom", align = "start", gap, width, minHeight, maxHeight, layer, className, style, autoFocus = false, onDismiss, ignore, ref, children, ...rest }: Props) {
   const frame = useRef<HTMLDivElement | null>(null);
   const surface = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<PopoverPosition | null>(null);
@@ -69,9 +72,9 @@ export function Popover({ anchor, side = "bottom", align = "start", gap, width, 
     const el = frame.current;
     const rect = anchorRect(anchorRef.current);
     if (!el || !rect) return;
-    const next = placePopover(rect, { width: el.offsetWidth, height: el.offsetHeight }, { width: window.innerWidth, height: window.innerHeight }, { side, align, gap, width, maxHeight });
+    const next = placePopover(rect, { width: el.offsetWidth, height: el.offsetHeight }, { width: window.innerWidth, height: window.innerHeight }, { side, align, gap, width, minHeight, maxHeight });
     setPosition((prev) => (samePosition(prev, next) ? prev : next));
-  }, [side, align, gap, width, maxHeight]);
+  }, [side, align, gap, width, minHeight, maxHeight]);
 
   useLayoutEffect(() => {
     place();
@@ -120,8 +123,8 @@ export function Popover({ anchor, side = "bottom", align = "start", gap, width, 
   // The first pass measures the surface off to the side; the layout effect
   // lands it before the browser paints.
   const placed: CSSProperties = position
-    ? { position: "fixed", left: position.left, top: position.top, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight }
-    : { position: "fixed", left: 0, top: 0, width, maxHeight: maxHeight ?? "calc(100vh - 16px)", visibility: "hidden" };
+    ? { position: "fixed", left: position.left, top: position.top, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight, zIndex: layer }
+    : { position: "fixed", left: 0, top: 0, width, maxHeight: maxHeight ?? "calc(100vh - 16px)", visibility: "hidden", zIndex: layer };
 
   return createPortal(
     <div ref={frame} data-popover-side={position?.side ?? side} style={placed} className={styles.popoverFrame}>

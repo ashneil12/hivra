@@ -1352,7 +1352,7 @@ export default function AgentPage() {
         </DesktopTabOpen.Provider>
         {chatOpened && chatSurfaceReady && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
-            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
           </div>
         ) : null}
         {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
