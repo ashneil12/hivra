@@ -52,6 +52,8 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   browserToggle: (...args: unknown[]) => mockBrowserToggle(...args),
   fetchPlanStrict: (...args: unknown[]) => mockFetchPlan(...args),
   telegramStatus: (...args: unknown[]) => mockTelegramStatus(...args),
+  // The command panel beside a dashboard agent reads the computer's history.
+  getAgentEvents: async () => [],
 }));
 
 jest.mock("@/lib/client/logger", () => ({
@@ -692,6 +694,24 @@ describe("AgentPage", () => {
     expect(await screen.findByRole("button", { name: /^dashboard$/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
+  });
+
+  it("docks the command panel beside a dashboard agent's own UI, and its Terminal tile switches the page", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
+      cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    const panel = await screen.findByRole("complementary", { name: "Command panel" });
+    fireEvent.click(within(panel).getByRole("button", { name: /^Terminal/ }));
+    expect(within(panel).getByRole("status")).toHaveTextContent("Opening Terminal");
+    expect(window.location.search).toContain("tab=box");
+  });
+
+  it("shows no command panel beside a chat agent", async () => {
+    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "CODEX_AGENT", status: "running", cpu: 2, ram: 4,
+      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
+    render(<AgentPage />);
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(screen.queryByRole("complementary", { name: "Command panel" })).not.toBeInTheDocument();
   });
 
   describe("a Linux computer (ubuntu-server) has no desktop", () => {
