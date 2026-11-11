@@ -17,7 +17,6 @@ const mockReapply = jest.fn();
 const mockRateLimit = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/rate-limit", () => ({
   enforceRateLimit: (...args: unknown[]) => mockRateLimit(...args), getIP: () => "127.0.0.1",
 }));

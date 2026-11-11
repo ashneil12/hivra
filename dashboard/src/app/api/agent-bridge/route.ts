@@ -16,7 +16,6 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { findAgentByKey, loadOwnedRow } from "@/lib/agent-links/store";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
@@ -42,7 +41,7 @@ const refuse = (message: string, status: number, failureType: string) =>
   noStore(apiError(message, status, undefined, undefined, { source: "agent-bridge", route: ROUTE, failureType, logLevel: status >= 500 ? "error" : "warn" }));
 
 async function caller(req: NextRequest): Promise<{ agentId: string; userId: string } | Response> {
-  if (!isHivraApiAllowed(req.headers.get("host")) || !isLocalBridgeEnabled()) return noStore(apiError("Not found", 404));
+  if (!isLocalBridgeEnabled()) return noStore(apiError("Not found", 404));
   const match = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "");
   const found = match ? await findAgentByKey(match[1]) : null;
   if (!found) return refuse("Unauthorized", 401, "invalid_agent_link_key");

@@ -1,13 +1,9 @@
 import { createLaunchDraft } from "@/lib/launch/draft-store";
-import { hermesLaunchProfile, withHermesLane } from "../launch-lane";
+import { HERMES_LAUNCH_PROFILE, withHermesLane } from "../launch-lane";
 
 describe("which launch profile a new Hermes agent uses", () => {
-  it("is the official Hermes computer lane wherever that lane is on, for every account", () => {
-    expect(hermesLaunchProfile(true)).toBe("hermes-computer");
-  });
-
-  it("stays on the instances lane where the computer lane is off", () => {
-    expect(hermesLaunchProfile(false)).toBe("hermes");
+  it("is the official Hermes computer lane, for every account", () => {
+    expect(HERMES_LAUNCH_PROFILE).toBe("hermes-computer");
   });
 });
 

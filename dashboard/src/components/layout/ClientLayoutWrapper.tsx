@@ -59,9 +59,6 @@ export function ClientLayoutWrapper({
 }: ClientLayoutWrapperProps) {
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [activeResource, setActiveResource] = useState<{
-    owner: string; pathname: string | null; kind: 'agent' | 'computer' | null;
-  } | null>(null);
   const [attention, setAttention] = useState<{ owner: string; count: number } | null>(null);
   const pathname = usePathname();
   const nativeWorkspace = useNativeWorkspaceEnabled();
@@ -75,12 +72,6 @@ export function ClientLayoutWrapper({
   // resourceOwnerKey is the signed-in user id: the account code shown in the
   // account menu is the one the server setup script names.
   const ownerAccountCode = resourceOwnerKey ? accountCode(resourceOwnerKey) : null;
-  const handleActiveResourceKindChange = useCallback((kind: 'agent' | 'computer' | null) => {
-    setActiveResource((current) => current?.owner === owner && current.pathname === pathname && current.kind === kind
-      ? current : { owner, pathname, kind });
-  }, [owner, pathname]);
-  const activeResourceKind = activeResource?.owner === owner && activeResource.pathname === pathname
-    ? activeResource.kind : null;
   const handleAttentionCountChange = useCallback((count: number) => {
     setAttention((current) => current?.owner === owner && current.count === count ? current : { owner, count });
   }, [owner]);
@@ -150,7 +141,6 @@ export function ClientLayoutWrapper({
             userEmail={userEmail}
             accountCode={ownerAccountCode}
             resourceOwnerKey={resourceOwnerKey}
-            onActiveResourceKindChange={handleActiveResourceKindChange}
             onAttentionCountChange={handleAttentionCountChange}
             switcherOpen={switcherOpen}
             onSwitcherOpenChange={setSwitcherOpen}
@@ -185,7 +175,6 @@ export function ClientLayoutWrapper({
 
         {showPwaBottomNavigation && (
           <PwaBottomNavigation
-            resourceKind={activeResourceKind}
             attentionCount={attentionCount}
             userName={userName}
             userEmail={userEmail}

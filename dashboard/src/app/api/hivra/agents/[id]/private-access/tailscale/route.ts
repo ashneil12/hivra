@@ -13,7 +13,6 @@ import {
   isSameOriginMutationRequest,
   readBoundedJson,
 } from "@/app/api/infrastructure/connections/request-security";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   connectHivraNetbird,
   connectHivraTailscale,
@@ -243,7 +242,7 @@ type AuthenticationResult =
 async function authenticate(request: NextRequest, id: string): Promise<AuthenticationResult> {
   const { userId } = await auth();
   if (!userId) return { failure: response({ success: false, error: "Unauthorized" }, 401) };
-  if (!isHivraApiAllowed(request.headers.get("host")) || !z.string().uuid().safeParse(id).success) {
+  if (!z.string().uuid().safeParse(id).success) {
     return { failure: response({ success: false, error: "Computer not found" }, 404) };
   }
   if (!supabaseAdmin) return { failure: response({ success: false, error: "Private access is unavailable." }, 503) };

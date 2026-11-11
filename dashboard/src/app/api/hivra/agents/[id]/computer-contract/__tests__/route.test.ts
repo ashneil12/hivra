@@ -14,7 +14,6 @@ const queries: Array<Array<[string, unknown]>> = [];
 let mockDbError: { code: string; message: string } | null = null;
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   RATE_LIMIT_PRESETS: { settingsWrite: { limit: 10, windowMs: 60_000 } },
   enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args),

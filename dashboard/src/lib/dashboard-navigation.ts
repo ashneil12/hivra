@@ -45,8 +45,6 @@ export type DashboardNavigationItem = {
    * stays reachable. Without this, those routes would highlight nothing.
    */
   selfHostRoutePrefixes?: readonly string[];
-  /** Held back until the workspace shell rollout flag is enabled for this environment. */
-  requiresWorkspaceShell?: boolean;
 };
 
 export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = [
@@ -247,12 +245,8 @@ export function mobileNavigationCopy(copy: DashboardNavigationCopy) {
  */
 export function filterDashboardNavigation(
   items: readonly DashboardNavigationItem[],
-  workspaceShellEnabled: boolean,
 ): DashboardNavigationItem[] {
-  return items.filter((item) =>
-    (!item.requiresWorkspaceShell || workspaceShellEnabled) &&
-    (item.id !== "billing" || !isLocalAuthMode())
-  );
+  return items.filter((item) => item.id !== "billing" || !isLocalAuthMode());
 }
 
 function matchesRoutePrefix(pathname: string, prefix: string): boolean {
@@ -277,36 +271,24 @@ export function isRuntimeDetailPath(pathname: string): boolean {
 export function isDashboardNavigationItemActive(
   item: DashboardNavigationItem,
   pathname: string | null,
-  resourceKind?: "agent" | "computer" | null,
-  workspaceShellEnabled = false,
 ): boolean {
   if (!pathname) return false;
   if (item.excludedPrefixes?.some((prefix) => matchesRoutePrefix(pathname, prefix))) return false;
 
-  if (workspaceShellEnabled) {
-    // Under the workspace shell, Home is the runtime home, so opening a runtime
-    // is still being home. Agents and Computers used to claim this route, which
-    // meant Home could not highlight while you were inside the box you reached
-    // from it — the item naming the place you came from lost to the one naming
-    // its kind. Those two still own their inventory routes.
-    if (item.id === "home" && isRuntimeDetailPath(pathname)) return true;
-    if (item.id === "agents" || item.id === "computers") {
-      return (
-        item.routePrefixes?.some(
-          (prefix) =>
-            prefix !== "/dashboard/agent" &&
-            prefix !== "/dashboard/instances" &&
-            matchesRoutePrefix(pathname, prefix),
-        ) ?? false
-      );
-    }
-  } else if (
-    (item.id === "agents" || item.id === "computers") &&
-    pathname.startsWith("/dashboard/agent/")
-  ) {
-    // Legacy shell (prod): Agents and desktop computers share the detail route;
-    // an unresolved kind stays neutral.
-    return resourceKind != null && item.id === `${resourceKind}s`;
+  // Home is the runtime home, so opening a runtime is still being home.
+  // Agents and Computers used to claim this route, which meant Home could not
+  // highlight while you were inside the box you reached from it. Those two
+  // still own their inventory routes.
+  if (item.id === "home" && isRuntimeDetailPath(pathname)) return true;
+  if (item.id === "agents" || item.id === "computers") {
+    return (
+      item.routePrefixes?.some(
+        (prefix) =>
+          prefix !== "/dashboard/agent" &&
+          prefix !== "/dashboard/instances" &&
+          matchesRoutePrefix(pathname, prefix),
+      ) ?? false
+    );
   }
 
   if (item.exactPaths?.includes(pathname)) return true;

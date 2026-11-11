@@ -207,7 +207,7 @@ describe('ClientLayoutWrapper', () => {
     expect(screen.getByRole('navigation', { name: /app navigation/i })).toBeInTheDocument();
   });
 
-  it('shares the resolved section with mobile navigation without confusing matching source IDs', () => {
+  it('keeps Home selected in every navigation while a runtime is open', () => {
     const resources: DashboardResource[] = [
       { uid: 'h-shared', id: 'shared', source: 'hermes', kind: 'agent', name: 'Writer', description: 'Hermes', status: 'running', href: '/dashboard/instances/shared' },
       { uid: 'x-shared', id: 'shared', source: 'hivra', kind: 'computer', name: 'Desktop', description: 'Ubuntu Desktop', status: 'running', href: '/dashboard/agent/shared?tab=desktop' },
@@ -215,32 +215,21 @@ describe('ClientLayoutWrapper', () => {
     (useDashboardResources as jest.Mock).mockReturnValue({ resources, loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
     const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const expectSelected = (name: string | null) => {
+    const expectHomeSelected = () => {
       // The agent view draws its own sidebar, so the global rail ("Primary") is only there on other pages.
       const onAgentPage = /^\/dashboard\/agent\//.test((usePathname as jest.Mock)() ?? '');
       for (const label of onAgentPage ? ['App navigation'] : ['Primary', 'App navigation']) {
         const nav = within(screen.getByRole('navigation', { name: label }));
-        if (name) expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name })]);
-        else expect(nav.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
+        expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name: 'Home' })]);
       }
     };
-    expectSelected('Computers');
+    expectHomeSelected();
 
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/instances/shared/console');
-    view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected('Agents');
-
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/unknown');
-    view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected(null);
-
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
-    view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected('Computers');
-
-    (useDashboardResources as jest.Mock).mockReturnValue({ resources: [], loading: true, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
-    view.rerender(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="another-owner">{mockChildren}</ClientLayoutWrapper>);
-    expectSelected(null);
+    for (const pathname of ['/dashboard/instances/shared/console', '/dashboard/agent/unknown']) {
+      (usePathname as jest.Mock).mockReturnValue(pathname);
+      view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expectHomeSelected();
+    }
   });
 
   it('preserves the active work pane while the shell switcher opens and closes', () => {
@@ -447,7 +436,7 @@ describe('ClientLayoutWrapper', () => {
     expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
     const appNav = screen.getByRole('navigation', { name: /app navigation/i });
     expect(appNav).toBeInTheDocument();
-    expect(within(appNav).getByRole('link', { name: /agents/i })).toHaveAttribute('aria-current', 'page');
+    expect(within(appNav).getByRole('link', { name: /home/i })).toHaveAttribute('aria-current', 'page');
   });
 
   it('suppresses app navigation on the dedicated full-screen TUI route', () => {

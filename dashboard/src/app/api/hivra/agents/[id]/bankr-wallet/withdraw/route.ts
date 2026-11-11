@@ -4,7 +4,7 @@
 // /api/instances/[id]/bankr-wallet/withdraw. The shared safety core (zod body,
 // ownership check, 3/60s rate limit, per-(user,agent) in-memory lock, full
 // status→HTTP map) lives in @/lib/billing/bankr-withdraw-route; this file
-// supplies only what differs: an isHivraApiAllowed host gate, a
+// supplies only what differs: a
 // bankrSkillsDirForType type gate, ownership against hivra_agents, and the
 // hivra_bankr_withdraw_* failureType prefix.
 //
@@ -13,12 +13,10 @@
 // wrong wallet. The per-user DB in-flight claim is shared across lanes, so a
 // concurrent Hermes withdraw for the same user surfaces as a 409.
 
-import { apiError } from "@/lib/api-response";
 import { isUserConnectedBankrWallet } from "@/lib/billing/bankr-instance-wallets";
 import { withdrawForOwner } from "@/lib/billing/bankr-instance-withdraw";
 import { createBankrWithdrawHandler } from "@/lib/billing/bankr-withdraw-route";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -80,7 +78,6 @@ export const POST = createBankrWithdrawHandler({
   failureTypePrefix: "hivra_bankr_withdraw",
   walletNoun: "agent",
   logMessagePrefix: "hivra ",
-  gate: (req, logContext) => (isHivraApiAllowed(req.headers.get("host")) ? null : apiError("Not found", 404, undefined, undefined, logContext)),
   loadOwner: (id, userId) => loadOwnedAgent(id, userId),
   withdraw: async ({ owner, id, userId, body }) => {
     if (body.token) {

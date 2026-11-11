@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { log } from "@/lib/logger";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { progressAttachmentWork, type AttachmentWorkProgress } from "@/lib/agent-computers/attachment-worker";
 
@@ -38,7 +37,6 @@ export async function GET(req: NextRequest) {
     return apiError("Cron secret is not configured", 500);
   }
   if (!verifyBearerHeader(req, cronSecret)) return apiError("Unauthorized", 401);
-  if (!isAgentAttachEnabled()) return apiSuccess({ enabled: false, results: [] });
   const deadline = Date.now() + DEADLINE_MS;
   try {
     const work = await createAttachmentLifecycleStore().listWork(MAX_ITEMS);

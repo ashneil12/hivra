@@ -18,7 +18,6 @@ const mockSweep = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth(), currentUser: jest.fn() }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/hivra/after-response", () => ({ runAfterResponse: (task: () => Promise<unknown>) => mockAfter(task) }));
 jest.mock("@/lib/hermes-releases/ops-auth", () => ({ requireOpsAdmin: () => mockOps() }));
 jest.mock("@/lib/bearer-auth", () => ({ verifyBearerHeader: (req: NextRequest, secret: string) => req.headers.get("authorization") === `Bearer ${secret}` }));
@@ -27,7 +26,6 @@ jest.mock("@/lib/hermes-move/deps", () => ({
   createMoveDeps: () => ({
     store,
     now: () => new Date("2026-11-12T10:00:00Z"),
-    isEnabled: () => true,
     encrypt: (s: string) => `enc(${s})`,
     randomKeyHex: () => "k".repeat(64),
   }),

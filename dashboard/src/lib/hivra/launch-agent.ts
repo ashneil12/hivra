@@ -30,7 +30,6 @@ import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, r
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
-import { isHermesComputerEnabled } from "@/lib/hermes-computer/flag";
 import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
 import { getTemplateForLaunch, type TemplateIdentity } from "@/lib/hivra/agent-templates";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
@@ -1031,7 +1030,7 @@ export async function launchHivraAgentForUser(
     // or not-yet-available agent can't provision a box. Hermes launches here only
     // while the Hermes computer lane is on for this deployment (Canary first);
     // otherwise it stays on its own lane, /api/instances, as it always was.
-    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type) || (type === "hermes" && !isHermesComputerEnabled())) {
+    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)) {
       return apiError("That agent isn't launchable yet", 400);
     }
     // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with

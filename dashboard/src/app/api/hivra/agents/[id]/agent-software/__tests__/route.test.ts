@@ -12,7 +12,6 @@ let mockRecord: Record<string, unknown> | null;
 const writes: Array<{ op: string; payload: unknown }> = [];
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args) }));
 jest.mock("@/lib/hivra/agent-cli-meta", () => ({ readAgentSoftwareFromBox: (...args: unknown[]) => mockReadBox(...args) }));
 jest.mock("@/lib/hivra/agent-events", () => ({ logHivraAgentEvent: (...args: unknown[]) => mockLogEvent(...args) }));

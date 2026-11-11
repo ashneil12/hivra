@@ -122,7 +122,6 @@ function makeWorld(opts: { instance?: Partial<InstanceRow> } = {}) {
     randomKeyHex: () => "k".repeat(64),
     encrypt: (s) => `enc(${s})`,
     decrypt: (s) => s.replace(/^enc\(|\)$/g, ""),
-    isEnabled: () => true,
     async launch(_u, body, options) {
       w.calls.push("launch");
       w.launchBodies.push(body);
@@ -188,21 +187,20 @@ async function toPacking(deps: MoveDeps, id: string) {
 
 describe("moveOffer", () => {
   const base = { status: "running", backend: "gateway", deleted_at: null, config: { infrastructure: { provider: "proxmox", vmid: 1 } } };
-  it("is available for a running old Hermes agent when the lane is on", () => {
-    expect(moveOffer(base, null, true)).toEqual({ available: true, reason: "available" });
+  it("is available for a running old Hermes agent", () => {
+    expect(moveOffer(base, null)).toEqual({ available: true, reason: "available" });
   });
   it.each([
-    ["lane off", { ...base }, null, false, "not_enabled"],
-    ["stopped", { ...base, status: "stopped" }, null, true, "not_running"],
-    ["not a Hermes box", { ...base, backend: "aeon" }, null, true, "not_hermes"],
-    ["already moved", { ...base, config: { ...base.config, movedTo: { agentId: "a" } } }, null, true, "already_moved"],
-    ["scheduled for deletion", { ...base, status: "scheduled_for_deletion" }, null, true, "already_moved"],
-    ["active move", { ...base }, { state: "packing" as const }, true, "move_in_progress"],
-  ])("is not available: %s", (_n, row, active, enabled, reason) => {
-    expect(moveOffer(row, active, enabled)).toEqual({ available: false, reason });
+    ["stopped", { ...base, status: "stopped" }, null, "not_running"],
+    ["not a Hermes box", { ...base, backend: "aeon" }, null, "not_hermes"],
+    ["already moved", { ...base, config: { ...base.config, movedTo: { agentId: "a" } } }, null, "already_moved"],
+    ["scheduled for deletion", { ...base, status: "scheduled_for_deletion" }, null, "already_moved"],
+    ["active move", { ...base }, { state: "packing" as const }, "move_in_progress"],
+  ])("is not available: %s", (_n, row, active, reason) => {
+    expect(moveOffer(row, active)).toEqual({ available: false, reason });
   });
   it("treats a finished move as no active move", () => {
-    expect(moveOffer(base, { state: "failed" }, true).available).toBe(true);
+    expect(moveOffer(base, { state: "failed" }).available).toBe(true);
   });
 });
 

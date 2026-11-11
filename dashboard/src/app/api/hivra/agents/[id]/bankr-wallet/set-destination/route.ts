@@ -22,7 +22,6 @@ import {
 } from "@/lib/billing/bankr-instance-wallets";
 import { withdrawDestinationStepUpResponse } from "@/lib/billing/withdraw-destination-notice";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -55,7 +54,6 @@ async function loadOwnedAgent(id: string, userId: string): Promise<HivraAgentRow
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await ctx.params;
     const authObject = await auth();
     const { userId } = authObject;

@@ -13,7 +13,6 @@ import {
   readBoundedJson,
 } from "@/app/api/infrastructure/connections/request-security";
 import { remoteDesktopResponse } from "@/app/api/remote-desktop/session-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { inspectRemoteDesktopCapability } from "@/lib/remote-computers/capability-inspection";
@@ -76,7 +75,6 @@ function inspectionFailureReason(error: unknown): string {
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
   if (!userId) return response({ success: false, error: "Unauthorized" }, 401);
-  if (!isHivraApiAllowed(request.headers.get("host"))) return response({ success: false, error: "Not found" }, 404);
   if (request.nextUrl.search || !isSameOriginMutationRequest(request)) {
     return response({ success: false, error: "Request denied" }, 403);
   }

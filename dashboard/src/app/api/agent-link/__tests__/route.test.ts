@@ -1,8 +1,6 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
-jest.mock("@/lib/agent-links/flag", () => ({ isAgentLinksEnabled: jest.fn() }));
 jest.mock("@/lib/agent-links/exec", () => ({ runLinkedCommand: jest.fn(), execRefusalCopy: (reason: string) => `refused:${reason}` }));
 jest.mock("@/lib/agent-links/store", () => ({
   findAgentByKey: jest.fn(), loadOwnedRow: jest.fn(), loadOwnedRows: jest.fn(), loadLinks: jest.fn(), touchLink: jest.fn(async () => undefined),
@@ -14,8 +12,6 @@ jest.mock("@/lib/api-response", () => ({
   apiError: (error: string, status: number) => Response.json({ success: false, error }, { status }),
 }));
 
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentLinksEnabled } from "@/lib/agent-links/flag";
 import { runLinkedCommand } from "@/lib/agent-links/exec";
 import { findAgentByKey, loadLinks, loadOwnedRow, loadOwnedRows } from "@/lib/agent-links/store";
 import { GET, POST } from "../route";
@@ -36,8 +32,6 @@ function request(method: "GET" | "POST", body?: unknown, key: string | null = KE
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
-  jest.mocked(isAgentLinksEnabled).mockReturnValue(true);
   jest.mocked(findAgentByKey).mockResolvedValue({ agentId: AGENT.id, userId: OWNER });
   jest.mocked(loadOwnedRow).mockResolvedValue(AGENT as never);
   jest.mocked(loadOwnedRows).mockResolvedValue([AGENT, STUDIO, OTHER] as never);
@@ -45,12 +39,6 @@ beforeEach(() => {
 });
 
 describe("/api/agent-link", () => {
-  it("is not there off Canary", async () => {
-    jest.mocked(isAgentLinksEnabled).mockReturnValue(false);
-    expect((await GET(request("GET"))).status).toBe(404);
-    expect(findAgentByKey).not.toHaveBeenCalled();
-  });
-
   it("refuses a missing or unknown key", async () => {
     expect((await GET(request("GET", undefined, null))).status).toBe(401);
     jest.mocked(findAgentByKey).mockResolvedValue(null);

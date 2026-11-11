@@ -9,7 +9,6 @@ import { DashboardResourceSwitcher } from '../DashboardResourceSwitcher';
 import type { DashboardResource } from '../dashboard-resources';
 import { resetResourceInventory } from '@/lib/workspace/resource-inventory';
 
-jest.mock('@/lib/hivra/hivra-flag', () => ({ isHivraEnabled: () => true }));
 
 const COMPUTER_ID = '11111111-1111-4111-8111-111111111111';
 const computer: DashboardResource = { uid: `x-${COMPUTER_ID}`, id: COMPUTER_ID, source: 'hivra', kind: 'computer', name: 'MY_UBUNTU_DESKTOP',

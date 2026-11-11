@@ -11,7 +11,6 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 import { claimPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { log } from "@/lib/logger";
@@ -27,7 +26,6 @@ export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
-    if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
     if (request.nextUrl.search || !isSameOriginMutationRequest(request)) return apiError("Request denied", 403);
     if (!hasStrictJsonContentType(request) || request.headers.has("content-encoding")) return apiError("JSON required", 415);
     const limited = enforceAuthenticatedRouteRateLimit(request, {

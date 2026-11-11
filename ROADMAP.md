@@ -280,9 +280,9 @@ None closes Phase 1. Each dated entry, bound to its own revision, is in
 - Remove hidden dependencies on Hivra-only hosts, mutable scripts, environment assumptions, and business-only wiring from the portable path.
 - Preserve each runtime's working Hivra or native interface after launch.
 - Keep `/dashboard/workspace` optional; do not make it a dependency of portable provisioning.
-  **Current:** on Canary, `/dashboard` opens the workspace view behind the server
-  flag `HIVRA_WORKSPACE_SHELL_ENABLED`, and `/dashboard/workspace` forwards
-  there; production still opens the Hermes command center at `/dashboard`.
+  **Current:** `/dashboard` opens the workspace view and `/dashboard/workspace`
+  forwards there. Production still runs the older build until the next
+  owner-approved promotion.
 
 **Exit:** A user can launch one supported existing agent with their own runtime key on supported user-owned infrastructure, open its working interface, restart it, and remove it without Hivra-held credentials or Hivra model credits.
 

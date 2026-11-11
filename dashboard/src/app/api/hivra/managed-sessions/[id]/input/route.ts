@@ -9,11 +9,9 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { sendManagedSessionInput } from "@/lib/hivra/do-managed-sessions";
 import { ManagedSessionInputSchema } from "@/lib/hivra/managed-session-contracts";
-import { managedSessionFailure, noStore, readMutationBody, UUID, hivraApiUnavailable } from "../../route-support";
+import { managedSessionFailure, noStore, readMutationBody, UUID } from "../../route-support";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;
