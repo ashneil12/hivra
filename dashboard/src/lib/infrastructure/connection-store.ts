@@ -659,7 +659,10 @@ export async function updateInfrastructureConnection(
   ) {
     throw new InfrastructureConnectionStoreError("conflict");
   }
-  if (input.endpoint?.sshHost && !(await connectorHostAllowedForUser(userId, input.endpoint.sshHost))) {
+  // Only when the host actually changes: an unrelated edit must not depend on the connector row.
+  const hostChanged = Boolean(input.endpoint?.sshHost)
+    && input.endpoint!.sshHost.trim().toLowerCase() !== (current.ssh_host ?? "").trim().toLowerCase();
+  if (hostChanged && !(await connectorHostAllowedForUser(userId, input.endpoint!.sshHost))) {
     throw new InfrastructureConnectionStoreError("invalid_request");
   }
   const nextSetupMode = input.setupMode ?? current.setup_mode;

@@ -2,6 +2,9 @@
 
 jest.mock("server-only", () => ({}));
 
+jest.mock("../home-connector", () => ({ userOwnsActiveConnector: jest.fn() }));
+
+import { userOwnsActiveConnector } from "../home-connector";
 import {
   buildUserProxmoxEnvironment,
   InfrastructureNetworkError,
@@ -160,11 +163,25 @@ describe("a machine reached through the home connector", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it("is accepted only as the reserved name when the flag and relay are on", async () => {
+  it("is accepted only as the reserved name, when the flag and relay are on, for the user who owns it", async () => {
     const lookup = jest.fn();
-    await expect(resolveValidatedSshDestination(NAME, { env: ON, lookup })).resolves.toEqual({ hostname: NAME, address: NAME, family: 0, connectorId: ID });
-    await expect(resolveValidatedSshDestination("bad.connector.hivra.invalid", { env: ON, lookup })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    (userOwnsActiveConnector as jest.Mock).mockResolvedValue(true);
+    await expect(resolveValidatedSshDestination(NAME, { env: ON, lookup, userId: "owner" })).resolves.toEqual({ hostname: NAME, address: NAME, family: 0, connectorId: ID });
+    expect(userOwnsActiveConnector).toHaveBeenCalledWith("owner", ID);
+    await expect(resolveValidatedSshDestination("bad.connector.hivra.invalid", { env: ON, lookup, userId: "owner" })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("refuses another user's connector, an unknown caller, and a failed ownership check", async () => {
+    const owns = userOwnsActiveConnector as jest.Mock;
+    owns.mockResolvedValue(false);
+    await expect(resolveValidatedSshDestination(NAME, { env: ON, userId: "someone-else" })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    owns.mockClear();
+    owns.mockResolvedValue(true);
+    await expect(resolveValidatedSshDestination(NAME, { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    expect(owns).not.toHaveBeenCalled();
+    owns.mockRejectedValue(new Error("db down"));
+    await expect(resolveValidatedSshDestination(NAME, { env: ON, userId: "owner" })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
   });
 
   it("does not weaken private address refusal, with or without the flag", async () => {

@@ -7,6 +7,7 @@ import { log } from "@/lib/logger";
 import { connectorHostname, parseConnectorHostname } from "./home-connector-host";
 import {
   consumeEnrolmentToken,
+  countPendingEnrolments,
   getHomeConnector,
   insertHomeConnector,
   markHomeConnectorRevoked,
@@ -16,10 +17,11 @@ import { trustedAppOrigin } from "./trusted-app-origin";
 
 const LOG_SOURCE = "home-connector";
 export const ENROLMENT_TOKEN_LIFETIME_MS = 15 * 60_000;
+export const MAX_PENDING_ENROLMENTS = 5;
 export const ENROLMENT_TOKEN_PATTERN = /^hvc_[A-Za-z0-9_-]{32}$/;
 
 export class HomeConnectorError extends Error {
-  constructor(readonly code: "disabled" | "not_found" | "not_usable" | "unavailable", message: string) {
+  constructor(readonly code: "disabled" | "not_found" | "not_usable" | "unavailable" | "too_many", message: string) {
     super(message);
     this.name = "HomeConnectorError";
   }
@@ -60,8 +62,13 @@ export async function startHomeConnectorEnrolment(
   if (!homeConnectorEnabled(env)) throw new HomeConnectorError("disabled", "Connecting a machine on your network is not available here.");
   const origin = trustedAppOrigin(env);
   if (!origin) throw new HomeConnectorError("unavailable", "This deployment has no public address to install from.");
+  const nowMs = (options.now ?? Date.now)();
+  // Durable cap: a user can't pile up unused install commands.
+  if (await countPendingEnrolments(userId, new Date(nowMs).toISOString()) >= MAX_PENDING_ENROLMENTS) {
+    throw new HomeConnectorError("too_many", "You already have several install commands waiting. Use one, or wait for them to expire.");
+  }
   const token = `hvc_${randomBytes(24).toString("base64url")}`;
-  const expiresAt = new Date((options.now ?? Date.now)() + ENROLMENT_TOKEN_LIFETIME_MS).toISOString();
+  const expiresAt = new Date(nowMs + ENROLMENT_TOKEN_LIFETIME_MS).toISOString();
   const row = await insertHomeConnector({ userId, tokenHash: tokenHash(token), expiresAt });
   return { connectorId: row.id, hostname: connectorHostname(row.id), expiresAt, command: installCommand(origin, token) };
 }

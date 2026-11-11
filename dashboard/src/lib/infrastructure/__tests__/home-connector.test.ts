@@ -4,6 +4,7 @@ jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), error: jest.fn(), inf
 jest.mock("../home-connector-store", () => ({
   insertHomeConnector: jest.fn(),
   consumeEnrolmentToken: jest.fn(),
+  countPendingEnrolments: jest.fn(),
   getHomeConnector: jest.fn(),
   markHomeConnectorRevoked: jest.fn(),
 }));
@@ -42,7 +43,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 const mocked = <T,>(fn: T) => fn as unknown as jest.Mock;
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => { jest.clearAllMocks(); mocked(store.countPendingEnrolments).mockResolvedValue(0); });
 // issueConnectorConfig reads the relay settings from the process environment.
 const savedEnv = { url: process.env.HOST_RELAY_URL, secret: process.env.HOST_RELAY_SECRET };
 beforeAll(() => { process.env.HOST_RELAY_URL = ON.HOST_RELAY_URL; process.env.HOST_RELAY_SECRET = SECRET; });
@@ -84,6 +85,15 @@ describe("enrolment", () => {
     expect(JSON.stringify(stored)).not.toContain(token);
     expect(stored.expiresAt).toBe("2029-01-01T00:15:00.000Z");
     expect(enrolment.hostname).toBe(connectorHostname(ID));
+  });
+
+  it("refuses a sixth pending install command", async () => {
+    mocked(store.countPendingEnrolments).mockResolvedValue(5);
+    await expect(startHomeConnectorEnrolment("user_1", { env: ON })).rejects.toMatchObject({ code: "too_many" });
+    expect(store.insertHomeConnector).not.toHaveBeenCalled();
+    mocked(store.countPendingEnrolments).mockResolvedValue(4);
+    mocked(store.insertHomeConnector).mockImplementation(async () => row());
+    await expect(startHomeConnectorEnrolment("user_1", { env: ON })).resolves.toBeTruthy();
   });
 
   it("refuses to issue anything while the flag is off", async () => {

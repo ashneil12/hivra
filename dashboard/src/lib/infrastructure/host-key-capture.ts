@@ -37,13 +37,13 @@ const defaults: Dependencies = {
  * compares it with the provider's console and confirms before it is pinned.
  */
 export async function captureServerHostKey(
-  input: { sshHost: string; sshPort: number },
+  input: { sshHost: string; sshPort: number; userId: string },
   dependencies: Partial<Dependencies> = {},
 ): Promise<CanonicalEd25519HostKey | null> {
   const deps = { ...defaults, ...dependencies };
   let destination: Awaited<ReturnType<typeof resolveValidatedSshDestination>>;
   try {
-    destination = await deps.resolve(input.sshHost);
+    destination = await deps.resolve(input.sshHost, { userId: input.userId });
   } catch {
     return null;
   }

@@ -4,6 +4,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
 
 import { reservedAddressReason } from "@/lib/url-safety";
+import { userOwnsActiveConnector } from "./home-connector";
 import { isConnectorNamespace, parseConnectorHostname } from "./home-connector-host";
 import { hostRelayConfigured } from "./host-relay";
 import { normalizeProxmoxSshHostFingerprint } from "@/lib/services/proxmox-instance-service";
@@ -105,6 +106,8 @@ export async function resolveValidatedSshDestination(
   options: {
     env?: EnvLike;
     lookup?: DnsLookup;
+    /** The signed-in owner. A home-connector name resolves only for the user who enrolled that machine. */
+    userId?: string;
   } = {},
 ): Promise<ValidatedSshDestination> {
   const hostname = rawHostname.trim().replace(/^\[|\]$/g, "");
@@ -125,6 +128,17 @@ export async function resolveValidatedSshDestination(
   if (isConnectorNamespace(hostname)) {
     const connectorId = parseConnectorHostname(hostname);
     if (!connectorId || env.HIVRA_HOME_CONNECTOR_ENABLED?.trim().toLowerCase() !== "true" || !hostRelayConfigured(env as NodeJS.ProcessEnv)) {
+      throw new InfrastructureNetworkError("ssh_host_forbidden", "SSH host resolves to an address that this control plane is not allowed to reach.");
+    }
+    // Ownership is checked here, the one choke point every SSH caller passes,
+    // so another user's connector id never yields a host key, a status or a session.
+    let owned = false;
+    try {
+      owned = Boolean(options.userId) && await userOwnsActiveConnector(options.userId as string, connectorId);
+    } catch {
+      owned = false;
+    }
+    if (!owned) {
       throw new InfrastructureNetworkError("ssh_host_forbidden", "SSH host resolves to an address that this control plane is not allowed to reach.");
     }
     return { hostname: normalizedHostname, address: normalizedHostname, family: 0, connectorId };

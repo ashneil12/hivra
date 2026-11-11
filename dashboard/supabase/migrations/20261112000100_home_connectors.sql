@@ -29,5 +29,17 @@ create index if not exists infrastructure_home_connectors_user_idx
 
 alter table public.infrastructure_home_connectors enable row level security;
 
+-- Only the dashboard's service role touches this table (insert on enrol,
+-- update on redeem and revoke, select to check ownership). Nobody else, and
+-- no delete: a revoked row stays as the record of its generation.
+revoke all on public.infrastructure_home_connectors from public, anon, authenticated, service_role;
+grant select, insert, update on public.infrastructure_home_connectors to service_role;
+
+-- One connection per connector, so removing a connection can stop its machine
+-- without cutting off a second connection that shares it. Reserved names only.
+create unique index if not exists infrastructure_connections_connector_host_key
+  on public.infrastructure_connections (lower(ssh_host))
+  where ssh_host like '%.connector.hivra.invalid';
+
 comment on table public.infrastructure_home_connectors is
   'Machines that reach Hivra through the outbound connector and relay. id is the relay connection id. No secret is stored: the connector secret derives from the relay secret, id and generation.';

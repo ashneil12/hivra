@@ -58,6 +58,19 @@ export async function consumeEnrolmentToken(tokenHash: string, nowIso: string): 
   return (data as HomeConnectorRow | null) ?? null;
 }
 
+/** Unexpired, unredeemed, unrevoked enrolments this user already has. */
+export async function countPendingEnrolments(userId: string, nowIso: string): Promise<number> {
+  const { count, error } = await database()
+    .from("infrastructure_home_connectors")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .is("enrolment_consumed_at", null)
+    .is("revoked_at", null)
+    .gt("enrolment_expires_at", nowIso);
+  if (error) throw new HomeConnectorStoreError("database_error");
+  return count ?? 0;
+}
+
 export async function getHomeConnector(userId: string, id: string): Promise<HomeConnectorRow | null> {
   const { data, error } = await database()
     .from("infrastructure_home_connectors")

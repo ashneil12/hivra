@@ -44,7 +44,7 @@ describe("captureServerHostKey (T44, T45)", () => {
   it("reads the Ed25519 key a real SSH server presents, sending no authentication and no command", async () => {
     const server = await sshServer("ed25519");
     try {
-      const captured = await captureServerHostKey({ sshHost: "server.test", sshPort: server.port }, { resolve: loopback });
+      const captured = await captureServerHostKey({ sshHost: "server.test", sshPort: server.port, userId: "user_1" }, { resolve: loopback });
       expect(captured).toEqual(canonicalEd25519HostKey(server.publicKey));
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(server.seen.authentications).toBe(0);
@@ -57,7 +57,7 @@ describe("captureServerHostKey (T44, T45)", () => {
   it("returns nothing for an RSA-only server", async () => {
     const server = await sshServer("rsa");
     try {
-      expect(await captureServerHostKey({ sshHost: "server.test", sshPort: server.port }, { resolve: loopback })).toBeNull();
+      expect(await captureServerHostKey({ sshHost: "server.test", sshPort: server.port, userId: "user_1" }, { resolve: loopback })).toBeNull();
       expect(server.seen.authentications).toBe(0);
     } finally {
       await server.close();
@@ -75,28 +75,28 @@ describe("captureServerHostKey (T44, T45)", () => {
     await new Promise<void>(resolve => plain.listen(0, "127.0.0.1", resolve));
     const port = (plain.address() as AddressInfo).port;
     try {
-      expect(await captureServerHostKey({ sshHost: "server.test", sshPort: port }, { resolve: loopback })).toBeNull();
+      expect(await captureServerHostKey({ sshHost: "server.test", sshPort: port, userId: "user_1" }, { resolve: loopback })).toBeNull();
       // The capture closed its side too; nothing is left half-open.
       expect(closed).toHaveLength(1);
       await closed[0];
     } finally {
       await new Promise(resolve => plain.close(resolve));
     }
-    expect(await captureServerHostKey({ sshHost: "server.test", sshPort: port }, { resolve: loopback })).toBeNull();
+    expect(await captureServerHostKey({ sshHost: "server.test", sshPort: port, userId: "user_1" }, { resolve: loopback })).toBeNull();
   });
 
   it("never dials a destination the SSRF rules refuse", async () => {
     const client = jest.fn();
     const refuse = jest.fn().mockRejectedValue(new InfrastructureNetworkError("ssh_host_forbidden", "no"));
-    expect(await captureServerHostKey({ sshHost: "169.254.169.254", sshPort: 22 }, { resolve: refuse, client })).toBeNull();
-    expect(refuse).toHaveBeenCalledWith("169.254.169.254");
+    expect(await captureServerHostKey({ sshHost: "169.254.169.254", sshPort: 22, userId: "user_1" }, { resolve: refuse, client })).toBeNull();
+    expect(refuse).toHaveBeenCalledWith("169.254.169.254", { userId: "user_1" });
     expect(client).not.toHaveBeenCalled();
   });
 
   it("uses the real resolver by default, which refuses reserved addresses", async () => {
     const client = jest.fn();
     for (const host of ["127.0.0.1", "10.240.0.1", "169.254.169.254", "localhost"]) {
-      expect(await captureServerHostKey({ sshHost: host, sshPort: 22 }, { client })).toBeNull();
+      expect(await captureServerHostKey({ sshHost: host, sshPort: 22, userId: "user_1" }, { client })).toBeNull();
     }
     expect(client).not.toHaveBeenCalled();
   });
@@ -106,7 +106,7 @@ describe("captureServerHostKey (T44, T45)", () => {
     try {
       const openRelay = jest.fn(async () => net.connect(server.port, "127.0.0.1"));
       const resolve = jest.fn(async () => ({ hostname: "x", address: "x.connector.hivra.invalid", family: 0, connectorId: "11111111-1111-4111-8111-111111111111" }));
-      const captured = await captureServerHostKey({ sshHost: "x.connector.hivra.invalid", sshPort: 22 }, { resolve, openRelay });
+      const captured = await captureServerHostKey({ sshHost: "x.connector.hivra.invalid", sshPort: 22, userId: "user_1" }, { resolve, openRelay });
       expect(openRelay).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
       expect(captured?.publicKey).toBe(canonicalEd25519HostKey(server.publicKey).publicKey);
       expect(server.seen.authentications).toBe(0);
@@ -118,6 +118,6 @@ describe("captureServerHostKey (T44, T45)", () => {
   it("returns nothing when the relay will not open a session", async () => {
     const resolve = jest.fn(async () => ({ hostname: "x", address: "x", family: 0, connectorId: "11111111-1111-4111-8111-111111111111" }));
     const openRelay = jest.fn(async () => { throw new Error("offline"); });
-    expect(await captureServerHostKey({ sshHost: "x", sshPort: 22 }, { resolve, openRelay })).toBeNull();
+    expect(await captureServerHostKey({ sshHost: "x", sshPort: 22, userId: "user_1" }, { resolve, openRelay })).toBeNull();
   });
 });

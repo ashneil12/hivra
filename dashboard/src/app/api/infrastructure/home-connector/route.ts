@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     return noStore(apiSuccess({ enrolment }, 201));
   } catch (error) {
     if (error instanceof HomeConnectorError) {
-      return noStore(apiError(error.message, error.code === "disabled" ? 404 : 503));
+      return noStore(apiError(error.message, error.code === "disabled" ? 404 : error.code === "too_many" ? 429 : 503));
     }
     log.warn("Home connector enrolment could not start", { source: "home-connector-route", failureType: "enrolment_start_failed" });
     return noStore(apiError("Hivra could not start connecting a machine. Try again shortly.", 503));
