@@ -120,7 +120,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const rows = instances || [];
+    // An old computer kept for a week after its agent moved to the official
+    // Hermes is no longer an agent of its own: the new computer is listed.
+    const rows = (instances || []).filter(
+      (inst) => !(inst.status === "scheduled_for_deletion" && (inst.config as { movedTo?: unknown } | null)?.movedTo),
+    );
 
     // Sync status for instances that are actively provisioning/redeploying,
     // OR if we're doing a full fetch (summary=false) and they are running.

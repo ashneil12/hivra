@@ -61,6 +61,14 @@ const choices = () => screen.getByRole("group", { name: "Model access" });
 const choice = (name: RegExp) => within(choices()).getByRole("button", { name });
 
 describe("ModelAccessControl", () => {
+  it("shows every choice as a one-click button with no disclosure step first", () => {
+    render(<Harness profileId="codex" />);
+    const group = within(choices());
+    expect(group.getAllByRole("button").length).toBeGreaterThan(1);
+    expect(group.getByRole("button", { name: /^Hivra credits/ })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Change/ })).not.toBeInTheDocument();
+  });
+
   it("defaults Codex to signing in inside it, with a key and Hivra credits as the other choices", () => {
     render(<Harness profileId="codex" />);
     expect(choice(/^Sign in inside Codex after it opens/)).toHaveAttribute("aria-pressed", "true");
