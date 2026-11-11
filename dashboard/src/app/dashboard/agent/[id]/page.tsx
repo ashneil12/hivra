@@ -31,6 +31,7 @@ import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
+import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
 import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
@@ -1311,6 +1312,7 @@ export default function AgentPage() {
   // pane that holds every surface (mounted and retained exactly as before).
   const content = (
     <>
+      <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputer} />
       {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
           connected get a one-line pointer to the Telegram tab (the component
           gates itself on this visit's welcome + probe + per-box dismiss).
