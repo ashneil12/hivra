@@ -544,6 +544,20 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.11.5` builds on `2026.11.11.4` and runs Hermes's gateway on Hermes
+computers. Upstream Hermes runs scheduled tasks and chat channels (Telegram, Discord,
+Slack) in its gateway process, separate from the dashboard, so before this release they
+never ran. `provision-claude-code-box.sh` now turns on linger for the agent user, starts
+its user manager and runs Hermes's own installer for the gateway as that user
+(`hermes gateway install --start-now --start-on-login`, then `hermes gateway start`, with stdin from /dev/null and one retry without the flags for an older stable channel), the
+setup upstream recommends for headless machines so `hermes update` restarts the gateway
+without root. Hivra writes no gateway unit and no drop-in. A gateway failure only warns
+and is recorded; the dashboard still comes up, and readiness reports the gateway as
+active or as a warning. `hivra-guest-runtime-update.sh` does the same, idempotently, for
+an existing Hermes computer and does nothing on any other kind; it never fails the update.
+`hivra-provider-worker.py` advances its release labels. This source release does not
+deploy, install, or update any existing computer.
+
 Release `2026.11.11.4` builds on `2026.11.11.3` and adds the official Hermes Agent
 (NousResearch/hermes-agent) as a kind of Hivra computer, as thinly as possible. There is
 no Hivra-built image, fork, overlay or patch: `provision-claude-code-box.sh` downloads

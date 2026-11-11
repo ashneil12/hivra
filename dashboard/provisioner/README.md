@@ -501,6 +501,9 @@ update them yet.
   `X-Forwarded-Prefix: /hermes`. Updates are `hermes update` (Terminal, or the Update Hermes
   button, which runs `hermes update --yes` as the agent user); the version comes from
   `hermes --version`.
+  The Hermes gateway (scheduled tasks and chat channels) runs as a user service of the
+  agent user with linger, installed by `hermes gateway install`, at launch and by the
+  runtime update on existing Hermes computers.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
