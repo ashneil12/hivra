@@ -1,0 +1,41 @@
+[Unit]
+Description=Hivra connector (outbound relay so hosted Hivra can reach this machine's SSH server)
+Documentation=https://github.com/ashneil12/hivra/tree/canary/services/host-connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hivra-connector
+Group=hivra-connector
+ExecStart=/usr/bin/python3 /opt/hivra-connector/hivra_connector.py run --config /etc/hivra-connector/config.json
+Restart=always
+RestartSec=5
+# Exit status 3: Hivra revoked this connector. Stay stopped.
+RestartPreventExitStatus=3
+
+# It only needs outbound TCP and read access to its own config.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/hivra-connector /opt/hivra-connector
+
+[Install]
+WantedBy=multi-user.target

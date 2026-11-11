@@ -878,7 +878,7 @@ export async function discoverInfrastructureHost(
 
   let destination: Awaited<ReturnType<typeof resolveValidatedSshDestination>>;
   try {
-    destination = await deps.resolveDestination(connection.endpoint.sshHost);
+    destination = await deps.resolveDestination(connection.endpoint.sshHost, { userId });
   } catch (error) {
     return failure(
       connectionId,

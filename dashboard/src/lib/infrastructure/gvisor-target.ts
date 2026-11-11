@@ -107,7 +107,7 @@ export async function preflightGvisorTarget(userId: string, connectionId: string
     throw new GvisorTargetError("database_failed", "Another infrastructure preparation or inspection is already running.");
   }
   try {
-  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost);
+  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost, { userId });
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
     sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
