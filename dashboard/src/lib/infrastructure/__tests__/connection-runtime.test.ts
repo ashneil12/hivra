@@ -186,7 +186,7 @@ describe("a machine reached through the home connector", () => {
 
   it("does not weaken private address refusal, with or without the flag", async () => {
     await expect(resolveValidatedSshDestination("192.168.1.20", { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
-    await expect(resolveValidatedSshDestination("10.0.0.4", { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    await expect(resolveValidatedSshDestination("10.250.0.4", { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
     await expect(resolveValidatedSshDestination("127.0.0.1", { env: { ...ON, HIVRA_INFRA_ALLOW_PRIVATE_NETWORKS: "true" } })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
   });
 
