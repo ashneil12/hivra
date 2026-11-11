@@ -4,12 +4,14 @@ import { ArrowLeft, ArrowRight, Bot, Cloud, ExternalLink, Server, ShieldCheck } 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { HivraCloudCapacityDto } from "@/lib/infrastructure/hivra-cloud-client";
+import { HomeConnectorInstall } from "./HomeConnectorInstall";
 import styles from "./Infrastructure.module.css";
 
 type Path = "choose" | "cloud" | "machine" | "remote" | "local";
 
 export function InfrastructureEntryChooser({
   firstConnection, hivraCloud, selfHosted, onChooseHivraCloud, onConnectHetzner, onConnectDigitalOcean, onConnectExisting,
+  homeConnectorEnabled = false, onConnectHomeMachine,
 }: {
   firstConnection: boolean;
   hivraCloud: HivraCloudCapacityDto | null;
@@ -18,7 +20,12 @@ export function InfrastructureEntryChooser({
   onConnectHetzner: () => void;
   onConnectDigitalOcean?: () => void;
   onConnectExisting: () => void;
+  /** The server's own answer. When on, hosted Hivra offers the one-command connector for a machine at home. */
+  homeConnectorEnabled?: boolean;
+  /** Called with the machine's reserved name once its connector is online. */
+  onConnectHomeMachine?: (hostname: string) => void;
 }) {
+  const homeConnector = homeConnectorEnabled && !selfHosted && Boolean(onConnectHomeMachine);
   const [path, setPath] = useState<Path>("choose");
   const [remoteOrigin, setRemoteOrigin] = useState<"cloud" | "machine">("machine");
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -109,7 +116,8 @@ export function InfrastructureEntryChooser({
         </div>
       ) : (
         <div className={styles.guidedPreparation}>
-          {path === "local" && <div className={styles.providerSafetyNote}><ShieldCheck size={19} aria-hidden="true" /><div><strong>{selfHosted ? "Your Hivra server must be able to reach this machine." : "Hosted Hivra cannot connect to your local network."}</strong><span>{selfHosted ? "Private network connections require the self-hosted operator’s explicit network opt-in. A localhost address refers to the Hivra server, not the computer running this browser." : "A home IP such as 192.168.x.x or localhost is not reachable from hosted Hivra. Use a self-hosted Hivra installation on your network with private networking explicitly enabled, or connect a reachable remote server."}</span></div></div>}
+          {path === "local" && homeConnector && onConnectHomeMachine ? <HomeConnectorInstall onContinue={onConnectHomeMachine} /> : null}
+          {path === "local" && !homeConnector && <div className={styles.providerSafetyNote}><ShieldCheck size={19} aria-hidden="true" /><div><strong>{selfHosted ? "Your Hivra server must be able to reach this machine." : "Hosted Hivra cannot connect to your local network."}</strong><span>{selfHosted ? "Private network connections require the self-hosted operator’s explicit network opt-in. A localhost address refers to the Hivra server, not the computer running this browser." : "A home IP such as 192.168.x.x or localhost is not reachable from hosted Hivra. Use a self-hosted Hivra installation on your network with private networking explicitly enabled, or connect a reachable remote server."}</span></div></div>}
           {path === "local" && selfHosted ? (
             <details className={styles.hostSupportDisclosure}>
               <summary>Set up local network access</summary>

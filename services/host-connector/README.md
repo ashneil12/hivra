@@ -15,8 +15,14 @@ that address. SSH stays end to end, and the host key Hivra pinned at
   optionally the local SSH port.
 - Exit status 3 means Hivra revoked it; systemd leaves it stopped.
 
-**Status:** built and tested locally; the one-command enrollment will install
-it. Not in use yet.
+**Status:** built and tested locally. Hivra's one-command enrolment now installs
+it (`curl -fsSL <app>/api/infrastructure/home-connector/install | sudo bash -s -- <one-time code>`;
+the code works once, expires in 15 minutes and is exchanged for this machine's
+config, so no long-lived secret lands in shell history). That flow is behind
+`HIVRA_HOME_CONNECTOR_ENABLED`, **off by default**, and the relay is not
+deployed, so nothing uses it yet. The installer carries copies of
+`hivra_connector.py`, `hivra-connector.service` and `install.sh` kept
+identical in `dashboard/bootstrap/home-connector/` (a test enforces it).
 
 ```sh
 sudo bash install.sh < config.json   # installs, checks the relay accepts it, starts it

@@ -81,6 +81,7 @@ import {
   parsePortableLaunchResourceId,
   type PortableLaunchResourceId,
 } from "@/lib/hivra/launch-navigation";
+import { getHomeConnectorEnabled } from "@/lib/infrastructure/home-connector-client";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 
 import { pollWhenVisible } from "@/lib/poll-when-visible";
@@ -221,6 +222,13 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
   const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
   useEffect(() => {
     setHivraAgentsEnabled(isHivraEnabled());
+  }, []);
+  // The server decides whether a machine on the owner's network can connect through the outbound connector.
+  const [homeConnectorEnabled, setHomeConnectorEnabled] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    void getHomeConnectorEnabled(controller.signal).then(setHomeConnectorEnabled);
+    return () => controller.abort();
   }, []);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -694,6 +702,16 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
     setActionNotice(null);
   }
 
+  /** A machine at home whose connector is online: its reserved name fills the SSH host, and the usual
+   * "Is this your server?" check pins its key before anything is saved. */
+  function connectHomeMachine(sshHost: string) {
+    setWizardPrefill({ name: "Home machine", sshHost });
+    setEditingConnection(null);
+    setWizardOpen(true);
+    setActionError(null);
+    setActionNotice(null);
+  }
+
   function openHetznerDialog() {
     setEntryChooserOpen(true);
     setHetznerDialogOpen(true);
@@ -1056,6 +1074,8 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
             onConnectHetzner={openHetznerDialog}
             onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
             onConnectExisting={openServerEnrollment}
+            homeConnectorEnabled={homeConnectorEnabled}
+            onConnectHomeMachine={connectHomeMachine}
           />
         ) : null}
 

@@ -2,7 +2,10 @@ import "server-only";
 
 import { Client as Ssh2Client, type ConnectConfig } from "ssh2";
 
+import type { Duplex } from "node:stream";
+
 import { resolveValidatedSshDestination } from "./connection-runtime";
+import { openRelaySocket } from "./host-relay";
 import { canonicalEd25519HostKey, type CanonicalEd25519HostKey } from "./ssh-host-key";
 
 /** Every failure answers at this fixed delay after the request, so neither
@@ -16,11 +19,14 @@ type CaptureClient = Pick<Ssh2Client, "on" | "connect" | "end" | "destroy">;
 type Dependencies = {
   resolve: typeof resolveValidatedSshDestination;
   client: () => CaptureClient;
+  /** Opens the relay session for a machine reached through its connector. */
+  openRelay: (connectorId: string) => Promise<Duplex>;
 };
 
 const defaults: Dependencies = {
   resolve: resolveValidatedSshDestination,
   client: () => new Ssh2Client(),
+  openRelay: (connectorId) => openRelaySocket(connectorId),
 };
 
 /**
@@ -41,6 +47,14 @@ export async function captureServerHostKey(
   } catch {
     return null;
   }
+  let relaySocket: Duplex | null = null;
+  if (destination.connectorId) {
+    try {
+      relaySocket = await deps.openRelay(destination.connectorId);
+    } catch {
+      return null;
+    }
+  }
   return new Promise((resolve) => {
     let captured: Buffer | null = null;
     let settled = false;
@@ -56,6 +70,7 @@ export async function captureServerHostKey(
       settled = true;
       clearTimeout(timer);
       try { client.destroy(); } catch { /* Best-effort teardown. */ }
+      try { relaySocket?.destroy(); } catch { /* Best-effort teardown. */ }
       if (!captured) {
         resolve(null);
         return;
@@ -70,6 +85,7 @@ export async function captureServerHostKey(
     const config: ConnectConfig = {
       host: destination.address,
       port: input.sshPort,
+      ...(relaySocket ? { sock: relaySocket } : {}),
       username: "hivra-key-check",
       algorithms: { serverHostKey: ["ssh-ed25519"] },
       readyTimeout: CAPTURE_TIMEOUT_MS,

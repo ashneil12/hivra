@@ -100,4 +100,24 @@ describe("captureServerHostKey (T44, T45)", () => {
     }
     expect(client).not.toHaveBeenCalled();
   });
+
+  it("reads a home machine's key through the relay socket, still pinning nothing by itself", async () => {
+    const server = await sshServer("ed25519");
+    try {
+      const openRelay = jest.fn(async () => net.connect(server.port, "127.0.0.1"));
+      const resolve = jest.fn(async () => ({ hostname: "x", address: "x.connector.hivra.invalid", family: 0, connectorId: "11111111-1111-4111-8111-111111111111" }));
+      const captured = await captureServerHostKey({ sshHost: "x.connector.hivra.invalid", sshPort: 22 }, { resolve, openRelay });
+      expect(openRelay).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+      expect(captured?.publicKey).toBe(canonicalEd25519HostKey(server.publicKey).publicKey);
+      expect(server.seen.authentications).toBe(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns nothing when the relay will not open a session", async () => {
+    const resolve = jest.fn(async () => ({ hostname: "x", address: "x", family: 0, connectorId: "11111111-1111-4111-8111-111111111111" }));
+    const openRelay = jest.fn(async () => { throw new Error("offline"); });
+    expect(await captureServerHostKey({ sshHost: "x", sshPort: 22 }, { resolve, openRelay })).toBeNull();
+  });
 });

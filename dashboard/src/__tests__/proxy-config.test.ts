@@ -80,7 +80,7 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "activity/ingest$", "activity/collector/renew$", "agent-link$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "infrastructure/home-connector/install$", "infrastructure/home-connector/enrol$", "activity/ingest$", "activity/collector/renew$", "agent-link$"]);
   });
 
   // The exclusion used to end at "aeon-gate" with no `$`, unlike every other
@@ -100,6 +100,17 @@ describe("proxy config", () => {
       `/api/instances/${id}/aeon-gate.json`,
       `/api/instances/${id}`,
     ]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("routes only the exact home connector installer and enrol paths around Clerk", async () => {
+    const { config } = await import("@/proxy");
+    for (const url of ["/api/infrastructure/home-connector/install", "/api/infrastructure/home-connector/enrol"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
+    }
+    for (const url of ["/api/infrastructure/home-connector", "/api/infrastructure/home-connector/install/x",
+      "/api/infrastructure/home-connector/11111111-1111-4111-8111-111111111111", "/api/infrastructure/home-connector/enrol-other"]) {
       expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
     }
   });

@@ -4,6 +4,8 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import net from "node:net";
 
 import { reservedAddressReason } from "@/lib/url-safety";
+import { isConnectorNamespace, parseConnectorHostname } from "./home-connector-host";
+import { hostRelayConfigured } from "./host-relay";
 import { normalizeProxmoxSshHostFingerprint } from "@/lib/services/proxmox-instance-service";
 
 type DnsAddress = { address: string; family: number };
@@ -39,6 +41,9 @@ export type ValidatedSshDestination = {
   /** Validated address used for the SSH socket, preventing DNS-rebind TOCTOU. */
   address: string;
   family: number;
+  /** Set when the machine is reached through Hivra's outbound-connector relay.
+   * `address` is then the reserved connector name, never a network address. */
+  connectorId?: string;
 };
 
 export class InfrastructureNetworkError extends Error {
@@ -112,7 +117,20 @@ export async function resolveValidatedSshDestination(
     throw new InfrastructureNetworkError("ssh_host_invalid", "SSH host is invalid.");
   }
 
-  const allowPrivateNetwork = privateNetworksAllowed(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  // A machine behind a home router is reached by its connector, not by an
+  // address. The reserved name is never resolved or dialled directly, and it is
+  // accepted only when the home connector flag is on. Private-address refusal
+  // below is unchanged.
+  if (isConnectorNamespace(hostname)) {
+    const connectorId = parseConnectorHostname(hostname);
+    if (!connectorId || env.HIVRA_HOME_CONNECTOR_ENABLED?.trim().toLowerCase() !== "true" || !hostRelayConfigured(env as NodeJS.ProcessEnv)) {
+      throw new InfrastructureNetworkError("ssh_host_forbidden", "SSH host resolves to an address that this control plane is not allowed to reach.");
+    }
+    return { hostname: normalizedHostname, address: normalizedHostname, family: 0, connectorId };
+  }
+
+  const allowPrivateNetwork = privateNetworksAllowed(env);
   const literalFamily = net.isIP(hostname);
   if (literalFamily) {
     validateResolvedAddress(hostname, allowPrivateNetwork);
@@ -181,6 +199,10 @@ export function buildUserProxmoxEnvironment(
       connection.sshHostFingerprintSha256,
     ),
   };
+  if (destination.connectorId) {
+    env.PROXMOX_SSH_TRANSPORT = "connector";
+    env.PROXMOX_SSH_CONNECTOR_ID = destination.connectorId;
+  }
   if (connection.sshPrivilege === "sudo") env.PROXMOX_SSH_PRIVILEGE = "sudo";
   if (connection.sshHostKeyType === "ssh-ed25519") env.PROXMOX_SSH_HOST_KEY_TYPE = "ssh-ed25519";
 
