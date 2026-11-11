@@ -1042,3 +1042,37 @@
 
 .noticeActions a:focus-visible,
 .noticeActions button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+
+/* One-click on/off setting in a Review row. */
+.switch {
+  flex: none;
+  position: relative;
+  width: 44px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid var(--etched-border);
+  border-radius: 999px;
+  background: var(--hg-glass);
+  cursor: pointer;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch[aria-checked="true"] { background: var(--launch-accent); border-color: var(--launch-accent); }
+.switch[aria-checked="true"]::after { transform: translateX(18px); background: #fff; }
+.switch:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .switch::after { transition: none; }
+}

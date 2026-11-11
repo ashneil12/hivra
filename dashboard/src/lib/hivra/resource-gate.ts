@@ -44,7 +44,7 @@ export interface ComputeUsage {
 // no hivra_agents row and use none of the pool's CPU or memory.
 export async function loadCurrentComputeUsage(
   userId: string,
-  opts?: { excludeHivraAgentId?: string },
+  opts?: { excludeHivraAgentId?: string; excludeInstanceIds?: string[] },
 ): Promise<ComputeUsage> {
   if (!supabaseAdmin) return { usedCpu: 0, usedRamGb: 0, activeCount: 0 };
 
@@ -90,9 +90,14 @@ export async function loadCurrentComputeUsage(
   const hivra = (Array.isArray(hivraAgents) ? hivraAgents : []).filter(
     (row) => isActiveComputeStatus((row as { status?: unknown }).status) && (row as { id?: unknown }).id !== excludeId,
   );
-  const legacy = (Array.isArray(legacyInstances) ? legacyInstances : []).filter((row) =>
+  // A move launch replaces a Hermes instance: its compute and its agent slot
+  // are not counted, so the launch may exceed the plan by exactly that instance.
+  const excludedInstances = new Set(opts?.excludeInstanceIds ?? []);
+  const activeLegacy = (Array.isArray(legacyInstances) ? legacyInstances : []).filter((row) =>
     isActiveComputeStatus((row as { status?: unknown }).status),
   );
+  const legacy = activeLegacy.filter((row) => !excludedInstances.has(String((row as { id?: unknown }).id)));
+  const excludedSlots = activeLegacy.length - legacy.length;
   // Pool-exempt agents (e.g. Aeon) consume a slot but not the CPU/RAM pool, so
   // their reserved compute is excluded from the budget other agents draw from.
   const usedHivraCpu = hivra.reduce((sum, row) => sum + (isPoolExempt(String(row.type)) ? 0 : (Number(row.cpu) || 0)), 0);
@@ -103,7 +108,7 @@ export async function loadCurrentComputeUsage(
   return {
     usedCpu: usedHivraCpu + usedLegacyCpu,
     usedRamGb: usedHivraRamGb + usedLegacyRamGb,
-    activeCount: slotCount as number,
+    activeCount: Math.max(0, (slotCount as number) - excludedSlots),
   };
 }
 
@@ -157,6 +162,11 @@ export interface ValidateResourcesInput {
   mode: "launch" | "resize" | "attach";
   /** Hivra agent id to exclude from pool usage (required for "resize"). */
   excludeAgentId?: string;
+  /**
+   * Hermes instance ids a "launch" replaces: their CPU/memory and agent slot are
+   * left out, so the launch may exceed the plan by exactly those instances.
+   */
+  excludeInstanceIds?: string[];
   /** Slot-only agents (Aeon): skip the pool + per-agent-cap checks. */
   poolExempt?: boolean;
   /** Per-agent launch/resize floor (CPU cores / GB). Defaults to BASE_FLOOR + browser surcharge. */
@@ -199,7 +209,9 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   }
   const usage = await loadCurrentComputeUsage(
     params.userId,
-    params.mode === "resize" ? { excludeHivraAgentId: params.excludeAgentId } : undefined,
+    params.mode === "resize"
+      ? { excludeHivraAgentId: params.excludeAgentId }
+      : params.excludeInstanceIds?.length ? { excludeInstanceIds: params.excludeInstanceIds } : undefined,
   );
   const totalCpu = Number(sub.total_cpu_budget) || plan.totalCpu;
   const totalRamGb = (Number(sub.total_ram_budget) || plan.totalRam) / 1024;

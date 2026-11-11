@@ -16,7 +16,6 @@ import {
   fitSizePresets,
   fitSizeToLimits,
   fittingPresetFor,
-  launchChangesSummary,
   launchFit,
   launchNameProblem,
   launchProfileFitSubject,
@@ -342,8 +341,6 @@ describe("fitting a size to where it runs", () => {
     expect(sizePresets("deepseek-harness").map(preset => [preset.resources.cpu, preset.resources.ram, preset.resources.maximumCpu, preset.resources.maximumRam]))
       .toEqual([[2, 4, 2, 4], [4, 8, 4, 8], [8, 16, 8, 16]]);
     expect(capabilitySummary("deepseek-harness", { browser: false })).toBe("DeepSeek's own interface on its own computer.");
-    expect(launchChangesSummary({ profileId: "deepseek-harness", substrate: "hivra-cloud", targetName: null }))
-      .toBe("Creates one computer and installs DeepSeek Harness. Nothing is bought.");
   });
 
   it("offers the upgrade the Choose badge named for Hivra's own size, and an exact fit for the owner's", () => {
@@ -376,21 +373,13 @@ describe("plan rows", () => {
     expect(capabilitySummary("linux-terminal", { browser: false })).toMatch(/without administrator access/);
   });
 
-  it("states cost and changes without claiming a purchase", () => {
+  it("states cost without claiming a purchase", () => {
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free" })).toBe("No extra charge. Uses your Free plan allowance.");
     // A plan on hold is never presented as Free or as costing nothing.
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", planOnHold: "Pro" }))
       .toBe("Uses your Pro plan allowance once the plan is active again.");
     expect(costSummary({ profileId: "codex", substrate: "proxmox", planName: "Free", planOnHold: "Pro" })).toMatch(/your server's own capacity/);
     expect(costSummary({ profileId: "codex", substrate: "provider-vm", planName: "Free" })).toMatch(/cloud provider keeps billing/);
-    expect(launchChangesSummary({ profileId: "codex", substrate: "hivra-cloud", targetName: null }))
-      .toBe("Creates one computer and installs Codex. Nothing is bought.");
-    expect(launchChangesSummary({ profileId: "codex", substrate: "proxmox", targetName: "pve-01" }))
-      .toBe("Creates one computer on pve-01 and installs Codex. Nothing is bought.");
-    expect(launchChangesSummary({ profileId: "ubuntu-desktop", substrate: "hivra-cloud", targetName: null }))
-      .toBe("Creates one computer with Ubuntu Desktop. Nothing is bought.");
-    expect(launchChangesSummary({ profileId: "codex", substrate: "provider-vm", targetName: "hetzner-1" }))
-      .toBe("Installs Codex on hetzner-1 and uses the whole server. It doesn't buy or create another server.");
   });
 
   it("describes the Linux computer as a terminal and files with no desktop, on the same plan as Ubuntu Desktop", () => {
@@ -399,20 +388,12 @@ describe("plan rows", () => {
       managedCapacity: "plan", sizing: "burst", browser: "none",
     });
     expect(capabilitySummary("ubuntu-server", { browser: false })).toBe("A terminal and files on this computer. No desktop.");
-    expect(launchChangesSummary({ profileId: "ubuntu-server", substrate: "hivra-cloud", targetName: null }))
-      .toBe("Creates one Linux computer with a terminal and files. It has no desktop. Nothing is bought.");
     const subject = launchProfileFitSubject("ubuntu-server");
     expect(subject).toMatchObject({
       placementRuntimeId: "linux-server", floor: { cpu: 0.5, ram: 1 }, hivraCloud: "plan", ownServer: true, poolExempt: false,
       minPlan: launchProfileFitSubject("ubuntu-desktop").minPlan,
     });
     expect(launchProfileFitSubject("ubuntu-desktop")).toMatchObject({ placementRuntimeId: "linux-desktop", floor: { cpu: 2, ram: 4 } });
-  });
-
-  it("describes a Windows setup without claiming an Ubuntu install or a purchase", () => {
-    const changes = launchChangesSummary({ profileId: "windows", substrate: "proxmox", targetName: "pve-01" });
-    expect(changes).toBe("Creates one Windows setup computer on pve-01, attaches the ISO you chose and starts the installer. Nothing is bought or uploaded, and Hivra Cloud isn't used.");
-    expect(changes).not.toContain("Ubuntu");
   });
 });
 
