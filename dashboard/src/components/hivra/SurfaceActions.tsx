@@ -24,7 +24,12 @@ const ICONS: Record<SurfaceActionIcon, typeof ExternalLink> = {
 
 const EMPTY_ACTIONS: readonly SurfaceAction[] = Object.freeze([]);
 
-export function SurfaceActions({ surfaceId }: { surfaceId?: string }) {
+export function SurfaceActions({ surfaceId, className, buttonClassName }: {
+  surfaceId?: string;
+  /** Replaces the bar's own wrapper and button styling, for a host that draws them itself. */
+  className?: string;
+  buttonClassName?: string;
+}) {
   const store = useSurfaceActionStore();
 
   // `useSyncExternalStore` compares snapshots by identity and re-subscribes when
@@ -54,16 +59,16 @@ export function SurfaceActions({ surfaceId }: { surfaceId?: string }) {
             disabled={action.disabled}
             aria-label={action.label}
             title={action.label}
-            className={styles.actionIcon}
+            className={buttonClassName ?? styles.actionIcon}
           >
             <Icon size={14} aria-hidden="true" />
           </button>
         );
       }),
-    [actions],
+    [actions, buttonClassName],
   );
 
   if (!store || !surfaceId || actions.length === 0) return null;
 
-  return <div className={styles.actions}>{rendered}</div>;
+  return <div className={className ?? styles.actions}>{rendered}</div>;
 }

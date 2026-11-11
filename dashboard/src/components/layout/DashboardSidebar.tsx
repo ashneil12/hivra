@@ -42,6 +42,12 @@ interface DashboardSidebarProps {
   switcherOpen?: boolean;
   onSwitcherOpenChange?: (open: boolean) => void;
   showOpsLink?: boolean;
+  /**
+   * A page that draws its own navigation (the agent view) hides the rail and its
+   * spacer. The switcher dialog and the ⌘K handler stay, so the page can open
+   * them through AppShellContext.
+   */
+  hideRail?: boolean;
 }
 
 const SIDEBAR_EXPANDED_STORAGE_KEY = 'hivra:dashboard:sidebar-expanded';
@@ -58,7 +64,7 @@ const COMPACT_RAIL_QUERY = '(min-width: 768px) and (max-width: 1023px)';
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
   userName, userEmail, accountCode, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
-  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange,
+  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, hideRail = false,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
   const pathname = usePathname();
@@ -205,6 +211,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const launchLabel = localizedLabel(DASHBOARD_LAUNCH_NAVIGATION);
 
   return <>
+    {hideRail ? null : <>
     <div className={styles.spacer} style={{ width: !compactRail && isExpanded ? 248 : 72, minWidth: !compactRail && isExpanded ? 248 : 72 }} />
     <aside ref={aside} id="dashboard-navigation" aria-label="Workspace navigation" className={`${styles.sidebar} ${effectivelyExpanded ? styles.expanded : styles.collapsed} ${compactRail && compactExpanded ? styles.compactOpen : ''}`}
       onKeyDown={(event) => {
@@ -251,6 +258,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         </div>
       </div>
     </aside>
+    </>}
     {switcherOpen && <DashboardResourceSwitcher resources={resources} currentUid={currentResource?.uid ?? null} loading={loading} errors={errors}
       onSelect={openResource} onClose={closeSwitcher} onBrowse={() => { closeSwitcher(); closeNavigation(); }} onRefresh={refresh} />}
   </>;

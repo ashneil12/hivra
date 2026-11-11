@@ -6,3 +6,11 @@
 .copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .copy small { font-size: 11px; color: var(--text-secondary); text-transform: capitalize; }
+/* The agent view's sidebar header: the name and a chevron, nothing else. */
+.sidebarSwitcher { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; min-width: 0; max-width: 100%; padding: 0 6px; border: 0; border-radius: var(--hg-radius-sm); background: transparent; color: var(--hg-text); cursor: pointer; text-align: left; transition: background var(--hg-fast) var(--hg-ease); }
+.sidebarSwitcher:hover, .sidebarSwitcher[aria-expanded="true"] { background: var(--hg-fill-hover); }
+.sidebarSwitcher:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+.sidebarSwitcher > svg { flex-shrink: 0; color: var(--hg-text-3); }
+.sidebarSwitcher .copy { gap: 0; }
+.sidebarSwitcher .copy strong { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+@media (pointer: coarse) { .sidebarSwitcher { min-height: 44px; } }
