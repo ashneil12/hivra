@@ -3,7 +3,7 @@
 // Adapted from MonoCode (MIT License, Copyright (c) 2026 Nick); see THIRD_PARTY_LICENSES/monocode.txt.
 
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Download, PanelLeft } from "lucide-react";
+import { Download } from "lucide-react";
 import { StatusText } from "@/components/ui/StatusText";
 import { statusTone } from "@/components/hivra/ResourceSwitcher";
 import { SurfaceActions } from "@/components/hivra/SurfaceActions";
@@ -18,9 +18,9 @@ export interface AgentTitleBarProps<T extends string> {
   nameTitle?: string;
   /** Beside the status: the software update chip. */
   extras?: ReactNode;
-  /** The active group's name, for the segmented control's label. */
+  /** The open row's name, for the segmented control's label. */
   groupLabel?: string;
-  /** The active group's surfaces. Fewer than two draws no control. */
+  /** The open row's surfaces. Fewer than two draws no control. */
   surfaces: AgentShellSurface<T>[];
   active: T;
   onSelect: (id: T) => void;
@@ -31,22 +31,19 @@ export interface AgentTitleBarProps<T extends string> {
   /** A small muted note beside the status, e.g. the live browser being view-only. */
   note?: string;
   exportHref?: string;
-  /** The button that brings the sidebar back: when it is collapsed, or a drawer. */
-  sidebarToggle?: { onClick: () => void; controlsId: string; expanded: boolean };
 }
 
 /**
- * One 44px row over the work pane. At the left the name and a muted status
- * word; at the right the active group's views as a quiet segmented control,
+ * The agent page's part of the title bar: at the left the name and a muted
+ * status word; at the right the open row's views as a quiet segmented control,
  * the active surface's lifted actions, and the export link where it exists.
  *
- * It replaces the three rows (identity, group buttons, view tabs) the page
- * used to stack. The views keep tablist semantics: arrow keys move between
- * them and the selected one names the pane it controls.
+ * The shell's title bar is the row; this fills it (through a portal, so the
+ * page's context reaches it). The views keep tablist semantics: arrow keys move
+ * between them and the selected one names the pane it controls.
  */
 export function AgentTitleBar<T extends string>({
-  name, status, nameTitle, extras, groupLabel, surfaces, active, onSelect, panelId, actionSurface,
-  note, exportHref, sidebarToggle,
+  name, status, nameTitle, extras, groupLabel, surfaces, active, onSelect, panelId, actionSurface, note, exportHref,
 }: AgentTitleBarProps<T>) {
   const tablist = useRef<HTMLDivElement>(null);
   const showViews = surfaces.length > 1;
@@ -61,14 +58,7 @@ export function AgentTitleBar<T extends string>({
   };
 
   return (
-    <header className={styles.bar}>
-      {sidebarToggle ? (
-        <button type="button" className={styles.iconButton} onClick={sidebarToggle.onClick}
-          aria-label="Show sidebar" title="Show sidebar" aria-controls={sidebarToggle.controlsId} aria-expanded={sidebarToggle.expanded}>
-          <PanelLeft size={16} aria-hidden="true" />
-        </button>
-      ) : null}
-
+    <div className={styles.content}>
       <div className={styles.identity}>
         <span className={styles.name} title={nameTitle}>{name}</span>
         <span className={styles.status} data-tone={statusTone(status)}><StatusText value={status} /></span>
@@ -99,6 +89,6 @@ export function AgentTitleBar<T extends string>({
           </a>
         ) : null}
       </div>
-    </header>
+    </div>
   );
 }

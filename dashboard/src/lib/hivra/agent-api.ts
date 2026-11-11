@@ -1220,6 +1220,29 @@ export async function setBoxModel(boxUrl: string, model: string | null, token?: 
 // Manage model-key settings use the server-only delivery flow exposed through
 // agent-model-settings-api.ts; no browser-to-guest credential writes.
 
+// ---- what the chat gateway offers (GET /api/meta) ------------------------------
+export interface BoxChatMeta {
+  agentKind: string | null;
+  model: string | null;
+  /** The effort levels this computer's agent takes with a chat turn. Empty: none, so the chat offers no effort. */
+  chatEffort: string[];
+}
+/** Null: the computer did not answer (an older gateway, or unreachable). The bearer goes only to the
+ * computer the chat already sends its turns to; it widens nothing the public answer says about effort. */
+export async function getBoxChatMeta(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatMeta | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/meta`, { cache: "no-store", headers: boxHeaders(token), signal });
+    if (!r.ok) return null;
+    const j = (await r.json().catch(() => null)) as { agentKind?: unknown; model?: unknown; chatEffort?: unknown } | null;
+    if (!j || typeof j !== "object") return null;
+    return {
+      agentKind: typeof j.agentKind === "string" ? j.agentKind : null,
+      model: typeof j.model === "string" && j.model ? j.model : null,
+      chatEffort: Array.isArray(j.chatEffort) ? j.chatEffort.filter((level): level is string => typeof level === "string") : [],
+    };
+  } catch { return null; }
+}
+
 // ---- permission presets (Manage → Permissions) -------------------------------
 // null/"" = full access (the box default). "limited" = no shell (claude) /
 // workspace sandbox (codex). "readonly" = deny mutating tools / read-only sandbox.

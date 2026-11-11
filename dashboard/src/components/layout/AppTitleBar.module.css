@@ -1,0 +1,19 @@
+/* One 44px row over the page. The inner row is the container the agent view's
+   narrow-width rules measure (a container query cannot style its own container). */
+.bar { flex-shrink: 0; height: 44px; border-bottom: 1px solid var(--hg-stroke-subtle); background: var(--hg-glass); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); font-family: var(--font-sans); }
+.inner { container-type: inline-size; display: flex; align-items: center; gap: 8px; width: 100%; height: 100%; min-width: 0; padding: 0 12px; }
+/* The page's own title and controls land here and join this row. */
+.slot { display: contents; }
+.identity { display: flex; align-items: baseline; flex: 1 1 auto; gap: 8px; min-width: 0; }
+.title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hg-text); font-family: var(--font-sans); font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.status { flex-shrink: 0; color: var(--hg-text-3); font-size: 12px; }
+.iconButton { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--hg-radius-sm); background: transparent; color: var(--hg-text-3); cursor: pointer; transition: background var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease); }
+.iconButton:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.iconButton:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .iconButton { transition: none; } }
+@media (pointer: coarse) { .iconButton { width: 44px; height: 44px; } }
+/* Phones: the bar is the page's top edge, so it clears the status bar / notch. */
+@media (max-width: 767px) {
+  .bar { height: calc(44px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); }
+  .inner { padding: 0 6px; }
+}

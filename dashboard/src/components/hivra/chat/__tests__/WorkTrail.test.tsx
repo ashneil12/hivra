@@ -3,12 +3,18 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
+import { within } from "@testing-library/react";
 import { WorkTrail } from "../WorkTrail";
 import { liveStepLabel, toolStep } from "../liveStep";
 import type { ToolChip } from "../types";
 
 // The orb paints on a canvas, which jsdom does not have; what it paints is not under test.
 jest.mock("@/components/ui/ThinkingOrb", () => ({ ThinkingOrb: () => <span data-testid="orb" /> }));
+// A reasoning row opens to Markdown; the renderer is an ES module jest does not transform.
+jest.mock("react-markdown", () => ({ __esModule: true, default: ({ children }: { children?: React.ReactNode }) => <>{children}</> }));
+jest.mock("remark-gfm", () => ({ __esModule: true, default: jest.fn() }));
+jest.mock("react-syntax-highlighter/dist/esm/prism-async-light", () => ({ __esModule: true, default: ({ children }: { children: string }) => <pre>{children}</pre> }));
+jest.mock("@/components/markdown/prism-languages", () => ({ prismLanguage: (name: string) => name }));
 
 const tool = (patch: Partial<ToolChip> & Pick<ToolChip, "name">): ToolChip => ({ detail: "", status: "done", ...patch });
 
@@ -62,6 +68,50 @@ describe("WorkTrail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show activity" }));
     expect(screen.getByRole("button", { name: "Bash · ls — Running" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Hide activity" })).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+describe("WorkTrail rich rows", () => {
+  it("shows reasoning as its own muted row that opens to the text, never counted as a tool", () => {
+    render(<WorkTrail hasText tools={[tool({ id: "t", name: "Thinking", kind: "thinking", detail: "Checking the parser", result: "It splits on commas." })]} />);
+    // The fold is named for the reasoning, not for tools; its row opens to the whole text.
+    expect(screen.queryByText(/Used \d+ tool/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Thinking" }));
+    const row = screen.getByRole("button", { name: "Show thinking: Checking the parser" });
+    expect(screen.queryByText("It splits on commas.")).not.toBeInTheDocument();
+    fireEvent.click(row);
+    expect(screen.getByText("It splits on commas.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide thinking" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("keeps reasoning out of view while the reply streams, and says Thinking for it", () => {
+    render(<WorkTrail streaming hasText={false} tools={[tool({ id: "t", name: "Thinking", kind: "thinking", status: "running", result: "Secret musings" })]} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Thinking");
+    expect(screen.queryByText("Secret musings")).not.toBeInTheDocument();
+  });
+
+  it("shows an edit as a file chip with its line counts, opening a diff of the change", () => {
+    const edit = tool({ id: "e", name: "Edit", detail: "/w/src/a.ts", input: { file_path: "/w/src/a.ts", old_string: "a", new_string: "b\nc" } });
+    render(<WorkTrail hasText tools={[edit, tool({ id: "b", name: "Bash", detail: "ls" })]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Used 2 tools" }));
+    const chip = screen.getByRole("button", { name: "Preview changes: a.ts" });
+    expect(chip).toHaveTextContent("+2");
+    expect(chip).toHaveTextContent("1");
+    fireEvent.click(chip);
+    const dialog = screen.getByRole("dialog", { name: "Change preview: a.ts" });
+    expect(within(dialog).getByText("c")).toBeInTheDocument();
+  });
+
+  it("lists an edit whose input says nothing about the change as an ordinary tool row", () => {
+    render(<WorkTrail hasText tools={[tool({ id: "e", name: "Edit", detail: "a.ts" })]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Used 1 tool" }));
+    expect(screen.getByRole("button", { name: "Edit · a.ts — Completed" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Preview/ })).not.toBeInTheDocument();
+  });
+
+  it("leaves task lists and plans to their own cards", () => {
+    render(<WorkTrail hasText tools={[tool({ id: "t", name: "TodoWrite", input: { todos: [{ content: "x", status: "pending" }] } }), tool({ id: "p", name: "ExitPlanMode", input: { plan: "# P" } })]} />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });
 

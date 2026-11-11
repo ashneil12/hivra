@@ -19,7 +19,10 @@
 
 /* The transcript is one centred column. */
 .scroll { flex: 1; overflow-y: auto; padding: 28px 0 8px; }
-.scroll[data-empty="true"] .transcript { display: flex; min-height: 100%; }
+/* The clip keeps the bottom motion's temporary offset out of the scroll height. */
+.clip { overflow: clip; }
+.scroll[data-empty="true"] .clip { display: flex; min-height: 100%; }
+.scroll[data-empty="true"] .transcript { display: flex; flex: 1; min-height: 100%; }
 .scroll[data-empty="true"] .transcript > * { flex: 1; }
 .transcript { max-width: 752px; margin: 0 auto; padding: 0 16px; }
 

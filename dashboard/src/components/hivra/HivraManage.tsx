@@ -50,6 +50,7 @@ import {
   listAgentSnapshots, snapshotAgent, restoreAgentSnapshot, AgentActionError,
   type HivraAgent, type HivraAgentSnapshot, type PlanInfo, type BoxRestrict, type McpServer,
 } from "@/lib/hivra/agent-api";
+import { BOX_MODEL_OPTIONS } from "@/lib/hivra/agent-models";
 import { resizeFloor, hostingDisclaimer, MAX_CPU, MAX_RAM, type AgentDef } from "@/lib/hivra/agent-catalog";
 import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
@@ -80,28 +81,6 @@ function resourceOptions(base: readonly number[], ...saved: Array<number | null 
   return Array.from(new Set([...base, ...saved.filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)]))
     .sort((a, b) => a - b);
 }
-
-// Curated model choices per CLI. "Default" = clear the override (the CLI's own
-// default / whatever the user's plan resolves). The claude values are CLI
-// ALIASES — the CLI resolves them to the newest build, so this list doesn't go
-// stale when Anthropic ships new versions. Codex ids are the ChatGPT-account
-// allowlist; both CLIs also accept a custom id typed in the free-text field.
-const MODEL_OPTS: Record<string, { value: string; label: string }[]> = {
-  claude: [
-    { value: "", label: "Default" },
-    { value: "fable", label: "Fable" },
-    { value: "opus", label: "Opus" },
-    { value: "sonnet", label: "Sonnet" },
-    { value: "haiku", label: "Haiku" },
-  ],
-  codex: [
-    { value: "", label: "Default" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-    { value: "gpt-5.1-codex-max", label: "Codex Max" },
-    { value: "gpt-5.1-codex", label: "Codex" },
-    { value: "gpt-5-codex", label: "Codex (5)" },
-  ],
-};
 
 /** What a Linux computer without a desktop says where the others mention the desktop. */
 const HEADLESS_LIFECYCLE_DETAIL: Record<string, string> = {
@@ -1197,7 +1176,7 @@ function HivraManageContent({
                     Which model {def?.name || "the agent"} uses, within your own {def?.vendor || "provider"} plan. Applies from the next message — running turns aren&apos;t interrupted.
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    {(MODEL_OPTS[def?.cliKind || "claude"] || []).map((o) => {
+                    {(BOX_MODEL_OPTIONS[def?.cliKind || "claude"] || []).map((o) => {
                       const active = (model || "") === o.value;
                       return (
                         <button
@@ -1220,7 +1199,7 @@ function HivraManageContent({
                     {acting === "model" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }} /> : null}
                   </div>
                   {errorFor("model")}
-                  {model && !(MODEL_OPTS[def?.cliKind || "claude"] || []).some((o) => o.value === model) ? (
+                  {model && !(BOX_MODEL_OPTIONS[def?.cliKind || "claude"] || []).some((o) => o.value === model) ? (
                     <div className="mono" style={{ fontSize: 11, color: "var(--text-secondary)" }}>Current: {model}</div>
                   ) : null}
                   <div style={{ display: "flex", gap: 8 }}>

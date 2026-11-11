@@ -13,6 +13,9 @@ import { Check, Copy, MessageSquare, ThumbsDown, ThumbsUp } from "lucide-react";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { AssistantMarkdown } from "./AgentMarkdown";
 import { WorkTrail } from "./WorkTrail";
+import { PlanPreview, BUILD_PLAN_MESSAGE } from "./PlanPreview";
+import { TaskListPreview } from "./TaskListPreview";
+import { planFromToolInput, taskListFromToolInput } from "./toolInput";
 import type { ChatMessage } from "./types";
 import styles from "./chat.module.css";
 
@@ -88,26 +91,44 @@ interface AgentTurnProps {
   rating?: "up" | "down";
   onRate: (index: number, rating: "up" | "down") => void;
   onOpenHistory: (sessionId: string) => void;
+  /** Tell the agent to build the plan its reply ends with. */
+  onBuildPlan?: (message: string) => void;
+  /** The chat is working: Build waits. */
+  busy?: boolean;
 }
 
-export const AgentTurn = memo(function AgentTurn({ m, index: i, agentName, emoji, historySessionId, rating, onRate, onOpenHistory }: AgentTurnProps) {
+/** The newest task list and plan a reply's tool calls carry: each call restates the whole of it. */
+function richCards(m: ChatMessage) {
+  let tasks = null as ReturnType<typeof taskListFromToolInput>;
+  let plan: string | null = null;
+  for (const tool of m.tools) {
+    tasks = taskListFromToolInput(tool.name, tool.input) ?? tasks;
+    plan = planFromToolInput(tool.name, tool.input) ?? plan;
+  }
+  return { tasks, plan };
+}
+
+export const AgentTurn = memo(function AgentTurn({ m, index: i, agentName, emoji, historySessionId, rating, onRate, onOpenHistory, onBuildPlan, busy }: AgentTurnProps) {
   if (m.role === "user") {
     return (
-      <div className={`hivra-chat-message ${styles.turn} ${styles.turnUser}`}>
-        <div className={styles.userBubble}>{m.text}</div>
+      <div className={`hivra-chat-message ${styles.turn} ${styles.turnUser}`} data-chat-message={i} data-chat-message-role="user" data-transcript-search-item data-prompt-anchor={i}>
+        <div className={styles.userBubble} data-selectable-agent-response>{m.text}</div>
       </div>
     );
   }
   const reply = replyMarkdown(m);
+  const { tasks, plan } = richCards(m);
   const mark = (emoji || "").trim() || agentName.trim().charAt(0).toUpperCase() || "A";
   return (
-    <div className={`hivra-chat-message ${styles.turn} ${styles.turnAssistant}`}>
+    <div className={`hivra-chat-message ${styles.turn} ${styles.turnAssistant}`} data-chat-message={i} data-chat-message-role="assistant" data-transcript-search-item>
       <div className={styles.chip}>
         <span className={styles.chipMark} aria-hidden>{mark}</span>
         <span className={styles.chipName}>{agentName}</span>
       </div>
       <WorkTrail tools={m.tools} streaming={m.streaming} outcome={m.outcome} hasText={Boolean(m.text.trim())} />
+      {tasks ? <TaskListPreview items={tasks} /> : null}
       {reply ? <AssistantMarkdown text={reply} streaming={m.streaming} /> : null}
+      {plan ? <PlanPreview text={plan} busy={busy || m.streaming} onBuild={!m.streaming && onBuildPlan ? () => onBuildPlan(BUILD_PLAN_MESSAGE) : undefined} /> : null}
       {m.streaming && m.pending ? (
         <div className={styles.turnState} role="status" aria-label="Waiting for the agent update">{m.pending}</div>
       ) : null}
