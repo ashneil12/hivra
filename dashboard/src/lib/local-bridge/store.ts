@@ -6,7 +6,9 @@ import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase";
 
-export type BridgeStatus = "pending" | "approved" | "running" | "done" | "denied" | "expired" | "failed";
+import { canMoveBridgeRequest, RUNNING_GRACE_MS, type BridgeStatus } from "@/lib/local-bridge/states";
+
+export type { BridgeStatus };
 
 export interface BridgeComputer { bridge_key_encrypted: string | null; id: string; user_id: string; label: string; generation: number; revoked_at: string | null; created_at: string }
 
@@ -95,8 +97,12 @@ export async function countPending(agentId: string): Promise<number> {
   return result.count ?? 0;
 }
 
-/** Moves a request from one status to another only if it is still in `from`. Returns whether this call did it. */
+/**
+ * Moves a request from one status to another only if it is still in `from`. Returns whether this call did it.
+ * The move must be in BRIDGE_TRANSITIONS; the database refuses any other.
+ */
 export async function transition(id: string, from: BridgeStatus, patch: Record<string, unknown> & { status: BridgeStatus }): Promise<boolean> {
+  if (!canMoveBridgeRequest(from, patch.status)) throw new Error(`bridge request cannot move ${from} -> ${patch.status}`);
   const row = check(await db().from("hivra_bridge_requests").update(patch).eq("id", id).eq("status", from).select("id").maybeSingle());
   return Boolean(row);
 }
@@ -131,6 +137,21 @@ export async function expireOpenRequests(userId: string, computerId: string, now
 export async function expireStalePending(now: number = Date.now()): Promise<void> {
   check(await db().from("hivra_bridge_requests").update({ status: "expired", finished_at: new Date(now).toISOString() })
     .eq("status", "pending").lt("expires_at", new Date(now).toISOString()));
+}
+
+/**
+ * Requests that can no longer finish on their own (the daily cleanup):
+ *  - approved but never dispatched, past their time -> expired;
+ *  - running past their own timeout plus a grace (the dispatcher died mid-run) -> failed.
+ */
+export async function closeStuckRequests(now: number = Date.now()): Promise<void> {
+  const nowIso = new Date(now).toISOString();
+  check(await db().from("hivra_bridge_requests").update({ status: "expired", finished_at: nowIso })
+    .eq("status", "approved").lt("expires_at", nowIso));
+  // timeout_seconds is at most 120, so anything dispatched before this cutoff is past its own timeout.
+  const cutoff = new Date(now - 120_000 - RUNNING_GRACE_MS).toISOString();
+  check(await db().from("hivra_bridge_requests").update({ status: "failed", error_code: "lost", finished_at: nowIso })
+    .eq("status", "running").lt("dispatched_at", cutoff));
 }
 
 /** Nulls stored output older than 7 days for every owner (the daily cleanup). */

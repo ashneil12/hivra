@@ -11,6 +11,7 @@ import {
   getHomeConnector,
   insertHomeConnector,
   markHomeConnectorRevoked,
+  type HomeConnectorRow,
 } from "./home-connector-store";
 import { hostRelayConfigured, issueConnectorConfig, revokeRelayConnector } from "./host-relay";
 import { trustedAppOrigin } from "./trusted-app-origin";
@@ -90,10 +91,22 @@ export async function redeemHomeConnectorEnrolment(
   return issueConnectorConfig(row.id, row.generation);
 }
 
+/**
+ * A connector's state, named in one place. The table has no state column: the
+ * state follows from three timestamps, and revoked wins over everything.
+ */
+export type HomeConnectorState = "awaiting_enrolment" | "enrolment_expired" | "enrolled" | "revoked";
+
+export function homeConnectorState(row: HomeConnectorRow, now: number = Date.now()): HomeConnectorState {
+  if (row.revoked_at) return "revoked";
+  if (row.enrolment_consumed_at) return "enrolled";
+  return Date.parse(row.enrolment_expires_at) > now ? "awaiting_enrolment" : "enrolment_expired";
+}
+
 /** Does this user own an enrolled, not-revoked connector with this id? */
 export async function userOwnsActiveConnector(userId: string, connectorId: string): Promise<boolean> {
   const row = await getHomeConnector(userId, connectorId);
-  return Boolean(row && row.enrolment_consumed_at && !row.revoked_at);
+  return Boolean(row && homeConnectorState(row) === "enrolled");
 }
 
 /**

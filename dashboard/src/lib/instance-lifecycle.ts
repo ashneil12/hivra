@@ -97,15 +97,33 @@ const LEGACY_STATUS_TO_LIFECYCLE: Record<string, InstanceLifecycleState> = {
   deleted: "deleted",
 };
 
-const ALLOWED_TRANSITIONS: Record<InstanceLifecycleState, InstanceLifecycleState[]> = {
+/** Every value the lifecycle_state column accepts, including the cold-storage states. */
+export type StoredLifecycleState =
+  | InstanceLifecycleState
+  | "archiving"
+  | "cold_archived"
+  | "restoring"
+  | "pending_deletion";
+
+/**
+ * The one list of how a computer's lifecycle_state may move. The database
+ * watches the same list (hermes_instance_lifecycle_allowed in
+ * 20261112130000_explicit_state_transitions.sql) and records any other move on
+ * the ops page, without blocking it yet. Keep the two in step; a test checks.
+ */
+export const ALLOWED_TRANSITIONS: Readonly<Record<StoredLifecycleState, readonly StoredLifecycleState[]>> = {
   pending: ["provisioning", "failed", "deleting", "deleted"],
-  provisioning: ["active", "failed", "deleting", "deleted"],
+  provisioning: ["active", "paused", "failed", "deleting", "deleted"],
   active: ["provisioning", "paused", "suspended", "failed", "deleting", "deleted"],
-  paused: ["provisioning", "active", "suspended", "failed", "deleting", "deleted"],
+  paused: ["provisioning", "active", "suspended", "failed", "deleting", "deleted", "archiving"],
   suspended: ["provisioning", "active", "paused", "failed", "deleting", "deleted"],
+  failed: ["provisioning", "active", "paused", "deleting", "deleted"],
   deleting: ["deleted", "failed"],
   deleted: [],
-  failed: ["provisioning", "deleting", "deleted"],
+  archiving: ["paused", "cold_archived", "failed"],
+  cold_archived: ["restoring", "pending_deletion", "deleted"],
+  pending_deletion: ["restoring", "deleted"],
+  restoring: ["active", "cold_archived", "pending_deletion", "failed"],
 };
 
 export interface ProvisioningKillSwitchState {
@@ -187,8 +205,8 @@ export function getLifecycleStateForStatus(status: string | null | undefined): I
 }
 
 export function canTransitionInstanceLifecycle(
-  from: InstanceLifecycleState,
-  to: InstanceLifecycleState
+  from: StoredLifecycleState,
+  to: StoredLifecycleState
 ): boolean {
   return from === to || ALLOWED_TRANSITIONS[from].includes(to);
 }

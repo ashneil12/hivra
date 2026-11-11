@@ -2,7 +2,7 @@
 import { NextRequest } from "next/server";
 
 jest.mock("@/lib/local-bridge/flag", () => ({ isLocalBridgeEnabled: jest.fn() }));
-jest.mock("@/lib/local-bridge/store", () => ({ expireStalePending: jest.fn(async () => undefined), purgeAllOldResults: jest.fn(async () => undefined) }));
+jest.mock("@/lib/local-bridge/store", () => ({ expireStalePending: jest.fn(async () => undefined), closeStuckRequests: jest.fn(async () => undefined), purgeAllOldResults: jest.fn(async () => undefined) }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 jest.mock("@/lib/api-response", () => ({
   apiSuccess: (data: unknown, status = 200) => Response.json({ success: true, data }, { status }),
@@ -10,7 +10,7 @@ jest.mock("@/lib/api-response", () => ({
 }));
 
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
-import { expireStalePending, purgeAllOldResults } from "@/lib/local-bridge/store";
+import { closeStuckRequests, expireStalePending, purgeAllOldResults } from "@/lib/local-bridge/store";
 import { GET } from "../route";
 
 const call = (secret: string | null) => new NextRequest("https://canary.hermesos.cloud/api/cron/purge-bridge-results", {
@@ -39,6 +39,7 @@ describe("purge-bridge-results cron", () => {
   it("clears old output and expires unanswered requests", async () => {
     expect((await GET(call("cron-secret"))).status).toBe(200);
     expect(expireStalePending).toHaveBeenCalledTimes(1);
+    expect(closeStuckRequests).toHaveBeenCalledTimes(1);
     expect(purgeAllOldResults).toHaveBeenCalledTimes(1);
   });
 });
