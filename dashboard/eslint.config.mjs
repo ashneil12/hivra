@@ -21,6 +21,9 @@ const eslintConfig = defineConfig([
     // reviewed root litepaper source, including minified vendor bundles.
     // Gitignored generated output; not dashboard source.
     "public/docs/litepaper/**",
+    // Verbatim third-party UI source kept for reference only (reference/*/README.md);
+    // not built, linted or type-checked.
+    "reference/**",
     "**/*.bak",
     "**/eslint-errors.txt",
     "**/eslint_output.txt",

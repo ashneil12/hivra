@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Reference-only source (dashboard/reference) must not add utilities to the build. */
+@source not "../../reference";
 
 /* ═══════════════════════════════════════════════════════════════════════
    HIVRA GLASS — the design language (Nov 2026 redesign)
