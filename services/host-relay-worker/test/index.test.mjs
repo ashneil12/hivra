@@ -259,3 +259,46 @@ test('reports whether the machine is connected, to the control plane only', asyn
   const online = await mf.dispatchFetch(url, { headers: { authorization: `Bearer ${adminToken()}` } });
   assert.deepEqual(await online.json(), { online: true, generation: 3, minGeneration: 1, sessions: 0 });
 });
+
+const execCall = (mf, body, token = adminToken()) => mf.dispatchFetch(`${BASE}/v1/hosts/${HOST_A}/exec`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+test('local bridge: forwards one exec to the machine and returns its answer, control plane only', async (t) => {
+  const mf = await relay(t);
+  const body = { ticket: 'ticket.value', request: { argv: ['uname', '-s'], timeoutSeconds: 5 } };
+  assert.equal((await execCall(mf, body, 'nope')).status, 401);
+  assert.equal((await mf.dispatchFetch(`${BASE}/v1/hosts/${HOST_A}/exec`)).status, 405);
+  const offline = await execCall(mf, body);
+  assert.equal(offline.status, 503);
+  assert.deepEqual(await offline.json(), { error: 'host_offline' });
+
+  const control = await agent(mf);
+  assert.equal((await execCall(mf, { ticket: 3 })).status, 400);
+  const pending = execCall(mf, body);
+  const sent = JSON.parse(await control.next('the exec request'));
+  assert.equal(sent.type, 'exec');
+  assert.equal(sent.ticket, 'ticket.value');
+  assert.deepEqual(sent.request, body.request);
+  // A second command while one is running is refused.
+  assert.equal((await execCall(mf, body)).status, 429);
+  // An answer with the wrong id is ignored; the right one settles the call.
+  control.socket.send(JSON.stringify({ type: 'exec_result', id: 'other', ok: true, stdout: 'nope' }));
+  control.socket.send(JSON.stringify({ type: 'exec_result', id: sent.id, ok: true, stdout: 'Darwin\n', stderr: '', exitCode: 0, truncated: false, durationMs: 3 }));
+  const answer = await pending;
+  assert.equal(answer.status, 200);
+  assert.deepEqual(await answer.json(), { ok: true, stdout: 'Darwin\n', stderr: '', exitCode: 0, truncated: false, durationMs: 3 });
+});
+
+test('local bridge: a revoked connector ends the pending exec', async (t) => {
+  const mf = await relay(t);
+  const control = await agent(mf);
+  const pending = execCall(mf, { ticket: 'ticket.value', request: { argv: ['sleep', '5'], timeoutSeconds: 60 } });
+  await control.next('the exec request');
+  await mf.dispatchFetch(`${BASE}/v1/hosts/${HOST_A}/revoke`, {
+    method: 'POST', headers: { authorization: `Bearer ${adminToken()}`, 'content-type': 'application/json' }, body: '{"minGeneration":2}',
+  });
+  assert.equal((await pending).status, 504);
+});
