@@ -14,8 +14,9 @@ import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
-import { allowanceActive, decideRequest, dispatchRequest, enrollComputer, publicRequest, revokeAllowance, revokeComputer } from "@/lib/local-bridge/service";
-import { listAllowances, listRequests, loadComputers } from "@/lib/local-bridge/store";
+import { loadOwnedRows } from "@/lib/agent-links/store";
+import { allowanceActive, decideRequest, dispatchRequest, enrollComputer, publicRequest, revokeAllowance, revokeComputer, withoutOldResult } from "@/lib/local-bridge/service";
+import { listAllowances, listRequests, loadComputers, purgeOldResults } from "@/lib/local-bridge/store";
 import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
@@ -34,11 +35,14 @@ export async function GET(req: NextRequest) {
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra:bridge:read", userId, limit: 120, windowMs: 60_000 });
     if (limited) return noStore(limited);
-    const [computers, requests, allowances] = await Promise.all([loadComputers(userId), listRequests(userId), listAllowances(userId)]);
+    // Output older than 7 days is cleared from the table, and never shown.
+    await purgeOldResults(userId).catch(() => undefined);
+    const [computers, requests, allowances, owned] = await Promise.all([loadComputers(userId), listRequests(userId), listAllowances(userId), loadOwnedRows(userId)]);
     const now = Date.now();
     return noStore(apiSuccess({
       computers: computers.map((row) => ({ id: row.id, name: row.label, revoked: Boolean(row.revoked_at) })),
-      requests: requests.map((row) => publicRequest(row)),
+      agents: owned.map((row) => ({ id: row.id, name: String(row.name ?? "Agent") })),
+      requests: requests.map((row) => publicRequest(withoutOldResult(row, now))),
       allowances: allowances.filter((row) => allowanceActive(row, now))
         .map((row) => ({ agentId: row.agent_id, computerId: row.computer_id, expiresAt: row.expires_at })),
     }));

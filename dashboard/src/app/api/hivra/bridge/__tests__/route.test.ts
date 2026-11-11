@@ -12,9 +12,13 @@ jest.mock("@/app/api/infrastructure/connections/request-security", () => ({
   readBoundedJson: async (req: Request) => ({ ok: true, body: await req.json() }),
 }));
 jest.mock("@/app/api/hivra/managed-sessions/route-support", () => ({ noStore: (response: Response) => response }));
-jest.mock("@/lib/local-bridge/store", () => ({ loadComputers: jest.fn(async () => []), listRequests: jest.fn(async () => []), listAllowances: jest.fn(async () => []) }));
+jest.mock("@/lib/agent-links/store", () => ({ loadOwnedRows: jest.fn(async () => [{ id: "a1", name: "Claude" }]) }));
+jest.mock("@/lib/local-bridge/store", () => ({
+  loadComputers: jest.fn(async () => []), listRequests: jest.fn(async () => []), listAllowances: jest.fn(async () => []),
+  purgeOldResults: jest.fn(async () => undefined),
+}));
 jest.mock("@/lib/local-bridge/service", () => ({
-  allowanceActive: () => true, publicRequest: (row: unknown) => row,
+  allowanceActive: () => true, publicRequest: (row: unknown) => row, withoutOldResult: (row: unknown) => row,
   decideRequest: jest.fn(), dispatchRequest: jest.fn(), enrollComputer: jest.fn(), revokeAllowance: jest.fn(), revokeComputer: jest.fn(),
 }));
 jest.mock("@/lib/api-response", () => ({
@@ -27,6 +31,7 @@ import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { decideRequest, revokeComputer } from "@/lib/local-bridge/service";
+import { purgeOldResults } from "@/lib/local-bridge/store";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { GET, POST } from "../route";
 
@@ -53,6 +58,14 @@ describe("/api/hivra/bridge", () => {
     expect((await GET(get())).status).toBe(404);
     expect((await POST(post({ action: "decide", requestId: REQUEST_ID, decision: "approve" }))).status).toBe(404);
     expect(decideRequest).not.toHaveBeenCalled();
+  });
+
+  it("reads clear old output, then lists computers, agents and requests", async () => {
+    const response = await GET(get());
+    expect(response.status).toBe(200);
+    const data = (await response.json()).data;
+    expect(data.agents).toEqual([{ id: "a1", name: "Claude" }]);
+    expect(purgeOldResults).toHaveBeenCalledWith("user_owner");
   });
 
   it("needs a signed-in owner and a same-origin request", async () => {

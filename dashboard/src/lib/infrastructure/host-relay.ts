@@ -150,9 +150,13 @@ export async function revokeRelayConnector(connectionId: string, minGeneration: 
 
 const BRIDGE_TICKET_LIFETIME_SECONDS = 60;
 
-/** The key a bridge verifies tickets with: HMAC(secret, "bridge-ticket|v1|<connectionId>"), distinct from the SSH ticket key. */
-export function bridgeTicketKey(masterSecret: string, connectionId: string): string {
-  return hmacHex(masterSecret, `bridge-ticket|v1|${connectionId}`);
+/**
+ * A fresh random 32-byte key (64 hex) for one bridge. It is NOT derived from the
+ * relay secret, so the relay (which holds that secret) cannot mint tickets. The
+ * control plane stores it encrypted; the owner gets it once in the bridge config.
+ */
+export function generateBridgeKey(): string {
+  return randomBytes(32).toString("hex");
 }
 
 /** sha256 over the UTF-8 argv items joined by NUL, as hivra_bridge.py computes it. */
@@ -163,7 +167,8 @@ export function bridgeArgvHash(argv: string[]): string {
 export type BridgeTicketClaims = { ownerId: string; agentId: string; computerId: string; argv: string[]; cwd: string | null };
 
 /** A single-use ticket for exactly this owner, agent, computer and command. Mint it only after the owner approved. */
-export function mintBridgeTicket(masterSecret: string, claims: BridgeTicketClaims, nowMs: number = Date.now()): string {
+export function mintBridgeTicket(bridgeKeyHex: string, claims: BridgeTicketClaims, nowMs: number = Date.now()): string {
+  if (!/^[0-9a-f]{64}$/.test(bridgeKeyHex)) throw new HostRelayError("invalid_request", "The bridge key is not valid.");
   const iat = Math.floor(nowMs / 1000);
   const body = Buffer.from(JSON.stringify({
     v: 1,
@@ -177,14 +182,14 @@ export function mintBridgeTicket(masterSecret: string, claims: BridgeTicketClaim
     iat,
     exp: iat + BRIDGE_TICKET_LIFETIME_SECONDS,
   })).toString("base64url");
-  const signature = createHmac("sha256", bridgeTicketKey(masterSecret, claims.computerId)).update(body).digest("base64url");
+  const signature = createHmac("sha256", bridgeKeyHex).update(body).digest("base64url");
   return `${body}.${signature}`;
 }
 
 /** What `hivra_bridge.py` reads (the owner adds allowedFolders on their own computer). */
-export function issueBridgeConfig(computerId: string, generation: number, ownerId: string) {
+export function issueBridgeConfig(computerId: string, generation: number, ownerId: string, bridgeKeyHex: string) {
   const base = issueConnectorConfig(computerId, generation);
-  return { ...base, bridgeKey: bridgeTicketKey(requireConfig().secret, computerId), ownerId, computerId };
+  return { ...base, bridgeKey: bridgeKeyHex, ownerId, computerId };
 }
 
 export type BridgeExecRequest = { argv: string[]; cwd?: string; timeoutSeconds: number; maxOutputBytes: number };

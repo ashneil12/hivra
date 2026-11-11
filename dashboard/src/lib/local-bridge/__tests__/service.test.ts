@@ -22,6 +22,7 @@ jest.mock("../store", () => {
   const state = { computers: new Map<string, any>(), requests: new Map<string, any>(), allowances: new Map<string, any>(), seq: 0 };
   return {
     __state: state,
+    RESULT_RETENTION_MS: 7 * 24 * 60 * 60 * 1000,
     loadComputer: async (user: string, id: string) => { const row = state.computers.get(id); return row && row.user_id === user ? row : null; },
     loadComputers: async (user: string) => [...state.computers.values()].filter((row) => row.user_id === user),
     insertRequest: async (row: any) => {
@@ -46,10 +47,10 @@ jest.mock("../store", () => {
       state.allowances.set(`${agent}|${computer}`, { user_id: user, agent_id: agent, computer_id: computer, granted_at: granted, expires_at: expires });
     },
     deleteAllowance: async (_user: string, agent: string, computer: string) => { state.allowances.delete(`${agent}|${computer}`); },
-    bumpGeneration: async (_user: string, computer: any) => { computer.generation += 1; computer.revoked_at = "now"; return computer.generation; },
-    markComputerEnrolled: async (_user: string, id: string) => { state.computers.get(id).revoked_at = null; },
-    insertComputer: async (user: string, label: string) => {
-      const row = { id: "11111111-1111-4111-8111-111111111111", user_id: user, label, generation: 1, revoked_at: null, created_at: "x" };
+    bumpGeneration: async (_user: string, computer: any, key: string) => { computer.generation += 1; computer.revoked_at = "now"; computer.bridge_key_encrypted = key; return computer.generation; },
+    markComputerEnrolled: async (_user: string, id: string, key: string) => { const row = state.computers.get(id); row.revoked_at = null; row.bridge_key_encrypted = key; },
+    insertComputer: async (user: string, label: string, key: string) => {
+      const row = { id: "11111111-1111-4111-8111-111111111111", user_id: user, label, generation: 1, revoked_at: null, created_at: "x", bridge_key_encrypted: key };
       state.computers.set(row.id, row);
       return row;
     },
@@ -57,9 +58,10 @@ jest.mock("../store", () => {
 });
 
 import { createHmac } from "node:crypto";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { execViaRelay, hostRelayStatus, revokeRelayConnector } from "@/lib/infrastructure/host-relay";
 import {
-  BRIDGE_OFF_MESSAGE, ALLOWANCE_MS, allowanceActive, decideRequest, dispatchRequest, enrollComputer, readRequestForAgent, revokeComputer, submitRequest,
+  BRIDGE_OFF_MESSAGE, ALLOWANCE_MS, allowanceActive, decideRequest, dispatchRequest, enrollComputer, readRequestForAgent, revokeComputer, submitRequest, withoutOldResult,
 } from "../service";
 import * as storeModule from "../store";
 
@@ -69,6 +71,7 @@ const OTHER_OWNER = "user_other";
 const AGENT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const COMPUTER = "11111111-1111-4111-8111-111111111111";
 const ARGV = ["uname", "-s"];
+const STORED_KEY = "c3".repeat(32);
 
 const mockStatus = jest.mocked(hostRelayStatus);
 const mockExec = jest.mocked(execViaRelay);
@@ -76,6 +79,7 @@ const mockExec = jest.mocked(execViaRelay);
 beforeAll(() => {
   process.env.HOST_RELAY_URL = "https://relay.test";
   process.env.HOST_RELAY_SECRET = SECRET;
+  process.env.ENCRYPTION_KEY = "ab".repeat(32);
 });
 
 beforeEach(() => {
@@ -83,7 +87,7 @@ beforeEach(() => {
   state.computers.clear();
   state.requests.clear();
   state.allowances.clear();
-  state.computers.set(COMPUTER, { id: COMPUTER, user_id: OWNER, label: "Mac", generation: 1, revoked_at: null, created_at: "x" });
+  state.computers.set(COMPUTER, { id: COMPUTER, user_id: OWNER, label: "Mac", generation: 1, revoked_at: null, created_at: "x", bridge_key_encrypted: encryptSecret(STORED_KEY) });
   mockStatus.mockResolvedValue({ online: true, generation: 1, minGeneration: 1, sessions: 0 });
   mockExec.mockResolvedValue({ ok: true, stdout: "Darwin\n", stderr: "", exitCode: 0, truncated: false, durationMs: 4 });
 });
@@ -129,8 +133,14 @@ describe("local bridge service", () => {
     const claims = JSON.parse(Buffer.from(body, "base64url").toString());
     expect(claims).toMatchObject({ v: 1, owner: OWNER, agent: AGENT, computer: COMPUTER, aud: COMPUTER });
     expect(claims.exp - claims.iat).toBeLessThanOrEqual(120);
-    const bridgeKey = createHmac("sha256", SECRET).update(`bridge-ticket|v1|${COMPUTER}`).digest("hex");
-    expect(createHmac("sha256", bridgeKey).update(body).digest("base64url")).toBe(signature);
+    // Signed with the bridge's own stored key, and not with anything the relay can derive.
+    expect(createHmac("sha256", STORED_KEY).update(body).digest("base64url")).toBe(signature);
+    const relayDerived = [
+      createHmac("sha256", SECRET).update(`bridge-ticket|v1|${COMPUTER}`).digest("hex"),
+      createHmac("sha256", SECRET).update("client-ticket|v1").digest("hex"),
+      createHmac("sha256", SECRET).update("admin|v1").digest("hex"),
+    ];
+    for (const key of relayDerived) expect(createHmac("sha256", key).update(body).digest("base64url")).not.toBe(signature);
     const row = state.requests.get(id);
     expect(row.status).toBe("done");
     expect(row.result).toMatchObject({ stdout: "Darwin\n", exitCode: 0 });
@@ -215,5 +225,37 @@ describe("local bridge service", () => {
   it("enrolling issues a config for this owner and computer", async () => {
     const enrolled = await enrollComputer(OWNER, "Mac", COMPUTER);
     expect(enrolled.ok && enrolled.value.config).toMatchObject({ connectionId: COMPUTER, computerId: COMPUTER, ownerId: OWNER, generation: 1 });
+  });
+
+  it("the bridge key is random, stored encrypted, rotated on re-enroll and on revoke, and never relay-derived", async () => {
+    const first = await enrollComputer(OWNER, "Mac", COMPUTER);
+    const key1 = first.ok ? (first.value.config as { bridgeKey: string }).bridgeKey : "";
+    expect(key1).toMatch(/^[0-9a-f]{64}$/);
+    const derived = createHmac("sha256", SECRET).update(`bridge-ticket|v1|${COMPUTER}`).digest("hex");
+    expect(key1).not.toBe(derived);
+    const stored1 = state.computers.get(COMPUTER).bridge_key_encrypted as string;
+    expect(stored1).not.toContain(key1);
+    expect(decryptSecret(stored1)).toBe(key1);
+    const second = await enrollComputer(OWNER, "Mac", COMPUTER);
+    const key2 = second.ok ? (second.value.config as { bridgeKey: string }).bridgeKey : "";
+    expect(key2).not.toBe(key1);
+    await revokeComputer(OWNER, COMPUTER);
+    const stored3 = state.computers.get(COMPUTER).bridge_key_encrypted as string;
+    expect(decryptSecret(stored3)).not.toBe(key2);
+  });
+
+  it("a revoked computer gets no ticket even if a request was already approved", async () => {
+    const id = (await submit() as any).value.request.id;
+    await decideRequest(OWNER, id, "approve");
+    state.computers.get(COMPUTER).revoked_at = "now";
+    await dispatchRequest(OWNER, id);
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(state.requests.get(id).status).toBe("failed");
+  });
+
+  it("output older than 7 days reads as gone", () => {
+    const row = { result: { stdout: "x" }, finished_at: "2026-11-01T00:00:00Z" } as any;
+    expect(withoutOldResult(row, Date.parse("2026-11-07T00:00:00Z")).result).toEqual({ stdout: "x" });
+    expect(withoutOldResult(row, Date.parse("2026-11-09T00:00:01Z")).result).toBeNull();
   });
 });

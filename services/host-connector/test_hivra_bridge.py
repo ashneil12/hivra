@@ -15,8 +15,12 @@ import hivra_bridge as hb
 import hivra_connector as hc
 from test_hivra_connector import CONNECTION, MASTER, SECRET, connected_pair
 
-# The control plane derives the same key: HMAC(master, "bridge-ticket|v1|<connectionId>").
-BRIDGE_KEY = hmac.new(MASTER.encode(), ("bridge-ticket|v1|%s" % CONNECTION).encode(), hashlib.sha256).hexdigest()
+# The bridge key is random, made by the control plane at enroll; it is NOT derived from the relay secret.
+BRIDGE_KEY = "9f" * 32
+RELAY_DERIVED_KEYS = [
+    hmac.new(MASTER.encode(), label.encode(), hashlib.sha256).hexdigest()
+    for label in ("bridge-ticket|v1|%s" % CONNECTION, "client-ticket|v1", "admin|v1", "connector|%s|1" % CONNECTION)
+]
 ARGV_HASH_VECTOR = hashlib.sha256(b"uname\0-s").hexdigest()
 OWNER = "user_owner"
 AGENT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -180,6 +184,14 @@ class TicketTests(BridgeCase):
 
     def test_wrong_key(self):
         self.assertRefused("ticket_invalid", make_ticket(["uname", "-s"], key="0" * 64))
+
+    def test_a_ticket_signed_with_a_relay_derived_key_is_rejected(self):
+        for key in RELAY_DERIVED_KEYS + [SECRET]:
+            self.assertRefused("ticket_invalid", make_ticket(["uname", "-s"], key=key))
+        marker = os.path.join(self.work, "ran")
+        reply = self.exec(["touch", marker], ticket=make_ticket(["touch", marker], key=RELAY_DERIVED_KEYS[0]))
+        self.assertEqual(reply["error"], "ticket_invalid")
+        self.assertFalse(os.path.exists(marker))
 
     def test_tampered_or_garbage(self):
         _, signature = make_ticket(["uname", "-s"]).split(".")

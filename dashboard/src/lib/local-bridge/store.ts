@@ -8,7 +8,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export type BridgeStatus = "pending" | "approved" | "running" | "done" | "denied" | "expired" | "failed";
 
-export interface BridgeComputer { id: string; user_id: string; label: string; generation: number; revoked_at: string | null; created_at: string }
+export interface BridgeComputer { bridge_key_encrypted: string | null; id: string; user_id: string; label: string; generation: number; revoked_at: string | null; created_at: string }
 
 export interface BridgeRequest {
   id: string; user_id: string; agent_id: string; computer_id: string; argv: string[]; argv_sha256: string; cwd: string | null;
@@ -24,7 +24,7 @@ const db = () => {
   return supabaseAdmin;
 };
 const REQUEST_COLUMNS = "id,user_id,agent_id,computer_id,argv,argv_sha256,cwd,timeout_seconds,max_output_bytes,status,decision,decided_at,result,error_code,created_at,expires_at,dispatched_at,finished_at";
-const COMPUTER_COLUMNS = "id,user_id,label,generation,revoked_at,created_at";
+const COMPUTER_COLUMNS = "bridge_key_encrypted,id,user_id,label,generation,revoked_at,created_at";
 
 function check<T>(result: { data: T | null; error: unknown }): T | null {
   if (result.error) throw new Error("database_unavailable");
@@ -39,21 +39,21 @@ export async function loadComputer(userId: string, id: string): Promise<BridgeCo
   return check(await db().from("hivra_bridge_computers").select(COMPUTER_COLUMNS).eq("id", id).eq("user_id", userId).maybeSingle()) as unknown as BridgeComputer | null;
 }
 
-export async function insertComputer(userId: string, label: string): Promise<BridgeComputer> {
-  const row = check(await db().from("hivra_bridge_computers").insert({ user_id: userId, label }).select(COMPUTER_COLUMNS).single());
+export async function insertComputer(userId: string, label: string, bridgeKeyEncrypted: string): Promise<BridgeComputer> {
+  const row = check(await db().from("hivra_bridge_computers").insert({ user_id: userId, label, bridge_key_encrypted: bridgeKeyEncrypted }).select(COMPUTER_COLUMNS).single());
   if (!row) throw new Error("database_unavailable");
   return row as unknown as BridgeComputer;
 }
 
-/** Re-issue after a revoke: clears the revoked mark; the generation was already raised. */
-export async function markComputerEnrolled(userId: string, id: string): Promise<void> {
-  check(await db().from("hivra_bridge_computers").update({ revoked_at: null }).eq("id", id).eq("user_id", userId));
+/** Re-enroll: stores the new (rotated) key and clears the revoked mark; the generation was already raised. */
+export async function markComputerEnrolled(userId: string, id: string, bridgeKeyEncrypted: string): Promise<void> {
+  check(await db().from("hivra_bridge_computers").update({ revoked_at: null, bridge_key_encrypted: bridgeKeyEncrypted }).eq("id", id).eq("user_id", userId));
 }
 
 /** Raises the generation by one and marks the computer revoked; returns the new generation. */
-export async function bumpGeneration(userId: string, computer: BridgeComputer): Promise<number> {
+export async function bumpGeneration(userId: string, computer: BridgeComputer, bridgeKeyEncrypted: string): Promise<number> {
   const next = computer.generation + 1;
-  const row = check(await db().from("hivra_bridge_computers").update({ generation: next, revoked_at: new Date().toISOString() })
+  const row = check(await db().from("hivra_bridge_computers").update({ generation: next, revoked_at: new Date().toISOString(), bridge_key_encrypted: bridgeKeyEncrypted })
     .eq("id", computer.id).eq("user_id", userId).eq("generation", computer.generation).select("generation").maybeSingle());
   if (!row) throw new Error("conflict");
   return next;
@@ -115,4 +115,12 @@ export async function upsertAllowance(userId: string, agentId: string, computerI
 
 export async function deleteAllowance(userId: string, agentId: string, computerId: string): Promise<void> {
   check(await db().from("hivra_bridge_allowances").delete().eq("user_id", userId).eq("agent_id", agentId).eq("computer_id", computerId));
+}
+
+export const RESULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Nulls the stored output of this owner's requests that finished more than 7 days ago. */
+export async function purgeOldResults(userId: string, now: number = Date.now()): Promise<void> {
+  check(await db().from("hivra_bridge_requests").update({ result: null })
+    .eq("user_id", userId).not("result", "is", null).lt("finished_at", new Date(now - RESULT_RETENTION_MS).toISOString()));
 }

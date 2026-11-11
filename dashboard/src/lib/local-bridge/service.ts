@@ -10,8 +10,9 @@ import "server-only";
 //   lives 60 s and works once on the bridge.
 // - There is no allow-forever: an allowance is at most one hour.
 
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
-  bridgeArgvHash, execViaRelay, hostRelayConfig, hostRelayStatus, HostRelayError, issueBridgeConfig, mintBridgeTicket,
+  generateBridgeKey, bridgeArgvHash, execViaRelay, hostRelayStatus, HostRelayError, issueBridgeConfig, mintBridgeTicket,
   revokeRelayConnector,
 } from "@/lib/infrastructure/host-relay";
 import { log } from "@/lib/logger";
@@ -28,6 +29,12 @@ export type Result<T> = { ok: true; value: T } | { ok: false; status: number; me
 const fail = (status: number, message: string): { ok: false; status: number; message: string } => ({ ok: false, status, message });
 
 export type SubmitInput = { argv: string[]; cwd?: string | null; timeoutSeconds?: number; maxOutputBytes?: number };
+
+/** Output is kept for 7 days; past that it reads as gone (and is nulled in the table on the owner's next read). */
+export function withoutOldResult(row: BridgeRequest, now: number): BridgeRequest {
+  const finished = row.finished_at ? Date.parse(row.finished_at) : NaN;
+  return row.result && Number.isFinite(finished) && now - finished > store.RESULT_RETENTION_MS ? { ...row, result: null } : row;
+}
 
 /** What the agent and the owner see of a request. */
 export function publicRequest(row: BridgeRequest, includeResult = true) {
@@ -111,9 +118,9 @@ export async function dispatchRequest(userId: string, requestId: string, now: nu
   const finish = (patch: Record<string, unknown> & { status: "done" | "failed" }) =>
     store.transition(request.id, "running", { ...patch, finished_at: new Date().toISOString() });
   try {
-    const config = hostRelayConfig();
-    if (!config) throw new HostRelayError("not_configured", BRIDGE_OFF_MESSAGE);
-    const ticket = mintBridgeTicket(config.secret, { ownerId: userId, agentId: request.agent_id, computerId: request.computer_id, argv: request.argv, cwd: request.cwd }, now);
+    const computer = await store.loadComputer(userId, request.computer_id);
+    if (!computer?.bridge_key_encrypted || computer.revoked_at) throw new HostRelayError("host_offline", BRIDGE_OFF_MESSAGE);
+    const ticket = mintBridgeTicket(decryptSecret(computer.bridge_key_encrypted), { ownerId: userId, agentId: request.agent_id, computerId: request.computer_id, argv: request.argv, cwd: request.cwd }, now);
     const reply = await execViaRelay(request.computer_id, ticket, {
       argv: request.argv, ...(request.cwd ? { cwd: request.cwd } : {}), timeoutSeconds: request.timeout_seconds, maxOutputBytes: request.max_output_bytes,
     });
@@ -133,6 +140,7 @@ export async function dispatchRequest(userId: string, requestId: string, now: nu
 export async function readRequestForAgent(userId: string, agentId: string, requestId: string, now: number = Date.now()): Promise<Result<BridgeRequest>> {
   let request = await store.loadRequestForAgent(userId, agentId, requestId);
   if (!request) return fail(404, "That request was not found.");
+  request = withoutOldResult(request, now);
   if (request.status === "pending" && Date.parse(request.expires_at) <= now) {
     await store.transition(request.id, "pending", { status: "expired", finished_at: new Date(now).toISOString() });
     request = { ...request, status: "expired" };
@@ -141,22 +149,25 @@ export async function readRequestForAgent(userId: string, agentId: string, reque
 }
 
 export async function enrollComputer(userId: string, label: string, computerId?: string) {
+  // A new random key every time: re-enrolling rotates it, so an old config stops working.
+  const key = generateBridgeKey();
   let computer: BridgeComputer | null;
   if (computerId) {
     computer = await store.loadComputer(userId, computerId);
     if (!computer) return fail(404, "That computer was not found.");
-    await store.markComputerEnrolled(userId, computer.id);
+    await store.markComputerEnrolled(userId, computer.id, encryptSecret(key));
   } else {
-    computer = await store.insertComputer(userId, label);
+    computer = await store.insertComputer(userId, label, encryptSecret(key));
   }
-  return { ok: true as const, value: { computer, config: issueBridgeConfig(computer.id, computer.generation, userId) } };
+  return { ok: true as const, value: { computer, config: issueBridgeConfig(computer.id, computer.generation, userId, key) } };
 }
 
 /** One action: raise the generation and tell the relay, which stops the bridge. */
 export async function revokeComputer(userId: string, computerId: string): Promise<Result<{ generation: number }>> {
   const computer = await store.loadComputer(userId, computerId);
   if (!computer) return fail(404, "That computer was not found.");
-  const next = await store.bumpGeneration(userId, computer);
+  // The key rotates too: nothing the revoked bridge holds can sign a ticket again.
+  const next = await store.bumpGeneration(userId, computer, encryptSecret(generateBridgeKey()));
   await revokeRelayConnector(computer.id, next);
   return { ok: true, value: { generation: next } };
 }

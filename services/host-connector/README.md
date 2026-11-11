@@ -36,8 +36,10 @@ It is not the system connector: you start it, and stopping it is the off switch.
   first folder is used), `timeoutSeconds` up to 120 and `maxOutputBytes` up to
   1 MiB. No terminal, port forwarding or file transfer.
 - Every request carries a ticket (at most 120 s, single use) bound to you, one
-  agent, this computer and the exact argv and cwd, signed with `bridgeKey` =
-  HMAC(relay secret, `bridge-ticket|v1|<connectionId>`). Hivra mints it only
+  agent, this computer and the exact argv and cwd, signed with `bridgeKey`,
+  a random 32-byte key made when you enroll, shown to you once in the config and
+  kept encrypted by Hivra's control plane. It is not derived from the relay
+  secret, so the relay cannot mint tickets. Hivra mints a ticket only
   after you approve that exact command in the dashboard (Approve, Deny, or
   Allow this agent for 1 hour; there is no allow-forever).
 - Every request, allowed or refused, is appended to `log.jsonl` beside the

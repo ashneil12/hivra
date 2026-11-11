@@ -25,6 +25,11 @@ create table if not exists public.hivra_bridge_computers (
   created_at  timestamptz not null default now()
 );
 
+-- The bridge's own random ticket key, encrypted with the dashboard's secret
+-- encryption (ENCRYPTION_KEY). Never derived from the relay secret, so the relay
+-- cannot mint tickets. Rotated on every enroll and revoke.
+alter table public.hivra_bridge_computers add column if not exists bridge_key_encrypted text;
+
 create index if not exists hivra_bridge_computers_user_idx on public.hivra_bridge_computers (user_id);
 
 alter table public.hivra_bridge_computers enable row level security;
