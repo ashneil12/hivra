@@ -81,3 +81,15 @@ No live deployment, database migration or customer launch is established by
 source tests. See [the rollout and recovery notes](OMARCHY-PREPARED-REFRESH.md)
 for migration compatibility, an empty disposable fixture, real desktop/input
 acceptance and failure preservation.
+
+### Architecture-qualified images
+
+Omarchy 4.5 introduced separate x86 and ARM images. Resolve x86 releases from
+`omarchy-<version>-x86.iso` from 4.5 onward; older v4 releases retain the legacy
+`omarchy-<version>.iso` name. The official checksum must name exactly that artifact.
+The resolver and refresh receipt schema share this naming rule, and the additive
+`20261111170000_prepared_omarchy_x86_artifact.sql` migration updates reservation
+validation without changing the already-applied refresh migration. Apply the
+companion migration in each approved environment before testing a new 4.5 claim.
+A resolved checksum is selection evidence; installed-release, reboot and desktop
+acceptance still require their own checks.
