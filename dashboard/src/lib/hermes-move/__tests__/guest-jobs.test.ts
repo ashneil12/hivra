@@ -204,7 +204,7 @@ describe("simulation: pack zipper, upstream acceptance, unpack fixup", () => {
       const home = join(root, "home");
       const w = (p: string, c = "x") => { mkdirSync(dirname(join(home, p)), { recursive: true }); writeFileSync(join(home, p), c); };
       w("config.yaml", "model:\n  default: ''\n  provider: custom\n  base_url: https://x.example/api/managed-venice/v1\nterminal:\n  cwd: /home/hermes/.hermes/work\n");
-      w(".env", "OPENAI_API_KEY=k-old\nOPENAI_BASE_URL=https://x.example/api/managed-venice/v1\nHERMES_INFERENCE_PROVIDER=venice\nVENICE_API_KEY=k-old\nVENICE_BASE_URL=https://old\nHERMES_INSTANCE_ID=abc\nAPI_SERVER_KEY=zzz\nHERMES_HOME=/home/hermes/.hermes\nTELEGRAM_BOT_TOKEN=tg\n");
+      w(".env", "OPENAI_API_KEY=k-old\nOPENAI_BASE_URL=https://x.example/api/managed-venice/v1\nHERMES_INFERENCE_PROVIDER=venice\nVENICE_API_KEY=k-old\nVENICE_BASE_URL=https://old\nHERMES_INSTANCE_ID=abc\nAPI_SERVER_KEY=zzz\nHERMES_HOME=/home/hermes/.hermes\nTELEGRAM_BOT_TOKEN=tg\nPATH=/home/hermes/.hermes/bin:/home/hermes/.local/bin:/usr/bin\nXDG_STATE_HOME=/home/hermes/.hermes/.local/state\nOTHER=/home/hermesx/keep\n");
       w("skills/a/SKILL.md"); w("skills/b/SKILL.md"); w("skills/a/node_modules/c/SKILL.md");
       w("cron/jobs.json", JSON.stringify({ jobs: [{ id: 1, workdir: "/home/hermes/.hermes/x" }] }));
       w("profiles/p1/config.yaml", "x: /home/hermes/.hermes/profiles/p1\n"); w("profiles/p1/.env", "TERMINAL_ENV=docker\nKEEP=1\n");
@@ -262,6 +262,9 @@ sys.exit(0 if ok and _detect_prefix(zf) == "" else 1)
       expect(env).toContain("VENICE_API_KEY=k-new");
       expect(env).toContain("VENICE_BASE_URL=https://new.example/api/managed-venice/v1");
       expect(env).toContain("TELEGRAM_BOT_TOKEN=tg");
+      expect(env).toContain("PATH=/home/bux/.hermes/bin:/home/bux/.local/bin:/usr/bin\n");
+      expect(env).toContain("XDG_STATE_HOME=/home/bux/.hermes/.local/state\n");
+      expect(env).toContain("OTHER=/home/hermesx/keep\n");
       for (const gone of ["HERMES_INSTANCE_ID", "API_SERVER_KEY", "HERMES_HOME", "HERMES_INFERENCE_PROVIDER"]) expect(env).not.toContain(gone);
       expect(readFileSync(join(ex, "profiles/p1/.env"), "utf8")).toBe("KEEP=1\n");
       expect(readFileSync(join(ex, "config.yaml"), "utf8")).toContain("/home/bux/.hermes/work");
@@ -278,6 +281,9 @@ sys.exit(0 if ok and _detect_prefix(zf) == "" else 1)
       expect(v.status).toBe(0);
       writeFileSync(exp, JSON.stringify({ counts: { ...cc, skills: 99 }, managedModel: true }));
       expect(py([unpackPy, "verify", ex, exp]).status).toBe(1);
+      // the official install's own bundled skills may add to the owner's: more is fine
+      writeFileSync(exp, JSON.stringify({ counts: { ...cc, skills: cc.skills - 1 }, managedModel: true }));
+      expect(py([unpackPy, "verify", ex, exp]).status).toBe(0);
       // wiring save from a fresh-install-shaped home
       const ws = join(root, "w2.json");
       expect(py([unpackPy, "wiring-save", home, ws]).status).toBe(0);
