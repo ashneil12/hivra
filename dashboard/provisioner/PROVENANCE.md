@@ -227,9 +227,9 @@ inferring them from a live host.
   - SHA-256: `527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9`
   - upstream license: Apache-2.0 (`LICENSE` retained at `/usr/share/doc/hivra-caddy/LICENSE`)
 - Google Chrome stable Linux amd64:
-  `https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_152.0.7977.64-1_amd64.deb`
-  - package version: `152.0.7977.64-1`
-  - SHA-256: `4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7`
+  `https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_157.0.8103.50-1_amd64.deb`
+  - package version: `157.0.8103.50-1` (shipped as `chrome-pin.json`, which the installer and the runtime update both read; the build it replaced, `152.0.7977.64-1`, SHA-256 `4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7`, stays in its `previous` list so an existing computer can be put back)
+  - SHA-256: `92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79`
 - GitHub CLI Linux amd64:
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
@@ -543,6 +543,50 @@ shutdown budget; the DeepSeek native broker renews its upstream session without
 a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
+
+Release `2026.11.11.2` builds on `2026.11.11.1` and moves the agent's pinned Google
+Chrome from `152.0.7977.64-1` to `157.0.8103.50-1` (SHA-256
+`92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79`), the Linux stable
+that Google's version history lists as serving all users on 2026-11-09. The versioned
+`.deb` is in Google's pool at the URL the installer already used. Because the previous
+release turned Chrome's outdated-build warning off and holds the package, the pin no
+longer moves by itself; this release moves it deliberately, and ships it as data.
+`chrome-pin.json` carries the version, the SHA-256 and a `previous` list (the build it
+replaced, with its SHA-256); the installer reads it instead of carrying its own copy,
+and it is a runtime update asset, so the installer and the update read one file (the
+`CHROME_VERSION` and `CHROME_LINUX_AMD64_SHA256` variables still override it when both
+are set). New computers install the pinned build. For an existing computer, the guest
+half of the runtime update moves `google-chrome-stable` to the pin when the installed
+version differs, and only when the browser can be restarted right then: the unit is not
+running, or nothing is established on its debugging port (re-checked just before the
+binary is replaced, after the downloads). Otherwise it prints
+`HIVRA_AGENT_BROWSER state=deferred` and leaves Chrome alone, because replacing the
+binary under a running Chrome shows "Finish update". It downloads the `.deb` over https
+with the installer's curl flags, verifies its SHA-256, then lifts the hold, installs it
+with apt, drops Google's apt source again, holds the package, restarts the unit and waits
+up to 30 seconds for `/json/version`, which must report the pin's major version. Before
+it touches anything it keeps a recovery copy of the installed build: `dpkg-repack` when
+installed, else the build's own `.deb` when the pin's `previous` list names it with its
+SHA-256; with neither, the upgrade is skipped (`deferred`). If the new browser does not
+answer, or apt refuses it, the previous build and the previous keeper are installed back
+and the state is `restored`. It does not start without 600 seconds of the update's budget
+and 1 GiB of free disk, so the update unit's own time limit cannot cut an install short.
+None of this can fail the committed update. The sandbox stays on, there is no
+`--no-sandbox` or `--test-type`, and the managed policy is unchanged. The keeper's
+`--hide-crash-restore-bubble` and `--window-position=0,0` were checked against Chrome
+157: both switches are present in the binary, a headless run with the keeper's flags
+answers on its debugging port as `Chrome/157.0.8103.50`, and
+`chrome/browser/ui/startup/bad_flags_prompt.cc` at tag `157.0.8103.50` lists none of the
+keeper's flags (it adds Landlock and WebNN compiler sandbox switches, which the test now
+covers too). Chrome's outdated-build detector (`upgrade_detector_impl.cc`) is still
+skipped for a managed browser. Google keeps old versioned `.deb` files in its pool for an
+unpublished period, so the pinned build and the `previous` build must be re-checked at
+every Chrome move. The remote-desktop assets, service units, broker and other package
+pins are unchanged. `hivra-provider-worker.py` advances its native and desktop release
+labels and raises the number of files it accepts in a bundle manifest from 64 to 72:
+`chrome-pin.json` is the 65th file, and the previous bundle already held 64. The bundle
+stays far below the worker's size limits, and no other check in the worker changes. This
+source release does not deploy, install, or update any existing computer.
 
 Release `2026.11.11.1` builds on `2026.11.10.5` and gives the agent's live browser a
 clean view. Computers provisioned before `2026.11.03.1` still ran a keeper that passes

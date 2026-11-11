@@ -40,7 +40,7 @@
 #       sudo HIVRA_AGENT_KIND=codex ./provision-claude-code-box.sh
 #
 # It expects the sibling artifacts to live next to it:
-#   local-browser-keeper.py  bux-local-browser.service
+#   local-browser-keeper.py  bux-local-browser.service  chrome-pin.json
 #   bux-hivra-chat.service   hivra-chat/{server.js,index.html,app.js}
 #   system-prompt.md
 #
@@ -54,8 +54,10 @@ CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2026.8.2}"
 CLOUDFLARED_LINUX_AMD64_SHA256="${CLOUDFLARED_LINUX_AMD64_SHA256:-fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2}"
 CADDY_VERSION="${CADDY_VERSION:-2.11.4}"
 CADDY_LINUX_AMD64_SHA256="${CADDY_LINUX_AMD64_SHA256:-527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9}"
-CHROME_VERSION="${CHROME_VERSION:-152.0.7977.64-1}"
-CHROME_LINUX_AMD64_SHA256="${CHROME_LINUX_AMD64_SHA256:-4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7}"
+# Google Chrome: the build and its SHA-256 come from chrome-pin.json (read below), the
+# one file the runtime updater reads too, unless both are set here.
+CHROME_VERSION="${CHROME_VERSION:-}"
+CHROME_LINUX_AMD64_SHA256="${CHROME_LINUX_AMD64_SHA256:-}"
 GH_VERSION="${GH_VERSION:-2.98.0}"
 GH_LINUX_AMD64_SHA256="${GH_LINUX_AMD64_SHA256:-f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6}"
 NODE_VERSION="${NODE_VERSION:-22.23.2}"
@@ -170,6 +172,22 @@ esac
 if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
   AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)" || die "agent-app-versions.json has no valid agent-zero pin"
 fi
+# The pinned Google Chrome build ships as data too (chrome-pin.json), so this
+# installer and the runtime updater (hivra-guest-runtime-update.sh), which moves
+# an existing computer to the pin, read the same file.
+read_chrome_pin() {
+  python3 -I -c 'import json, re, sys
+entry = json.load(open(sys.argv[1]))
+version, digest = entry.get("version"), entry.get("sha256")
+if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(\.[0-9]+){3}-1", version): sys.exit(1)
+if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest): sys.exit(1)
+print(version + " " + digest)' "$SRC_DIR/chrome-pin.json" 2>/dev/null
+}
+if [ "$WANT_BROWSER" = 1 ] && [ -z "$CHROME_VERSION" ] && [ -z "$CHROME_LINUX_AMD64_SHA256" ]; then
+  CHROME_PIN="$(read_chrome_pin)" || die "chrome-pin.json has no valid Chrome pin"
+  CHROME_VERSION="${CHROME_PIN% *}"
+  CHROME_LINUX_AMD64_SHA256="${CHROME_PIN#* }"
+fi
 # Records the app version this installer put on the computer (root-owned; the
 # gateway reports it) and installs the root-only app updater.
 record_agent_app() {
@@ -188,7 +206,10 @@ record_agent_app() {
 # local-browser unit's ExecStart hardcodes /opt/bux/venv/bin/python.
 [ "${AGENT_USER}" = "bux" ] || die "AGENT_USER must be 'bux' (bux installer + keeper hardcode it)"
 [ "${BUX_DIR}" = "/opt/bux" ] || die "BUX_DIR must be '/opt/bux' (bux unit ExecStart paths hardcode it)"
-[[ "$CHROME_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Chrome checksum"
+if [ "$WANT_BROWSER" = 1 ]; then
+  [[ "$CHROME_VERSION" =~ ^[0-9]+(\.[0-9]+){3}-1$ ]] || die "invalid Chrome version"
+  [[ "$CHROME_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Chrome checksum"
+fi
 [[ "$CADDY_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Caddy checksum"
 [[ "$GH_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid GitHub CLI checksum"
 [[ "$NODE_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Node.js checksum"
@@ -229,7 +250,7 @@ if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" = 1 ]; then
   done
 fi
 if [ "$WANT_BROWSER" = 1 ]; then
-  for f in local-browser-keeper.py bux-local-browser.service; do
+  for f in local-browser-keeper.py bux-local-browser.service chrome-pin.json; do
     [ -f "$SRC_DIR/$f" ] || die "missing browser artifact next to script: $f"
   done
 fi
@@ -542,7 +563,7 @@ install -d -o root -g root -m 0755 /var/log/bux
 say "3/7  Google Chrome stable (.deb, NOT snap) — browser-enabled boxes"
 # ===========================================================================
 if [ "$WANT_BROWSER" = 1 ]; then
-  # Chrome stays on CHROME_VERSION until Hivra moves the pin: the .deb's postinst
+  # Chrome stays on CHROME_VERSION (chrome-pin.json) until Hivra moves the pin: the .deb's postinst
   # adds Google's apt repository unless /etc/default/google-chrome already says not
   # to (Google's documented switch), and an apt upgrade then replaces the binary
   # under the running browser, which Chrome reports as "Finish update". A hold on an

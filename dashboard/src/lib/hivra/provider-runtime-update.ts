@@ -36,7 +36,7 @@ export type ProviderRuntimeUpdateOperation = z.infer<typeof Operation>;
 const GATEWAY_ASSETS = ["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "chat-runs.cjs", "index.html", "app.js"] as const;
 const TERMINAL_ASSETS = ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
   "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service",
-  "claude-desktop-pin.json", "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py"] as const;
+  "claude-desktop-pin.json", "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json"] as const;
 const GUEST_HALF = "hivra-guest-runtime-update.sh";
 
 /** Nothing landed in the guest this long after the claim: the dispatch never ran. */

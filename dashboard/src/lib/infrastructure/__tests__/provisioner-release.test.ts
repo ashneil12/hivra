@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.11.1.json";
+import release from "../../../../provisioner-releases/2026.11.11.2.json";
+import browserViewRelease from "../../../../provisioner-releases/2026.11.11.1.json";
 import deepseekModelRelease from "../../../../provisioner-releases/2026.11.10.5.json";
 import linuxServerRelease from "../../../../provisioner-releases/2026.11.10.4.json";
 import freshnessRelease from "../../../../provisioner-releases/2026.11.10.3.json";
@@ -235,9 +236,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -407,9 +408,9 @@ it("admits the Linux server only on 2026.11.10.4 and later and never on the prov
 });
 
 it("ships the clean agent browser view in 2026.11.11.1, keeping 2026.11.10.5 admitted and desktop assets unchanged", () => {
-  expect(release.version).toBe("2026.11.11.1");
-  expect(release.files.map(file => file.path)).toEqual(deepseekModelRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== deepseekModelRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(browserViewRelease.version).toBe("2026.11.11.1");
+  expect(browserViewRelease.files.map(file => file.path)).toEqual(deepseekModelRelease.files.map(file => file.path));
+  const changed = browserViewRelease.files.filter(file => file.sha256 !== deepseekModelRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // Exactly the keeper, the installer that writes the policy and holds Chrome, both
   // halves of the runtime update that carry them to existing computers, and the
@@ -428,8 +429,47 @@ it("ships the clean agent browser view in 2026.11.11.1, keeping 2026.11.10.5 adm
   expect(provisionerSupportsActivityTelemetry("2026.11.11.1")).toBe(true);
 });
 
+it("ships the Chrome pin in 2026.11.11.2, keeping 2026.11.11.1 admitted and desktop assets unchanged", () => {
+  expect(release.version).toBe("2026.11.11.2");
+  // chrome-pin.json is new; everything else that exists in both releases keeps its place.
+  expect(release.files.map(file => file.path).filter(file => file !== "chrome-pin.json"))
+    .toEqual(browserViewRelease.files.map(file => file.path));
+  expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("chrome-pin.json");
+  expect(browserViewRelease.files.map(file => file.path)).not.toContain("chrome-pin.json");
+  const changed = release.files.filter(file => file.sha256 !== browserViewRelease.files.find(entry => entry.path === file.path)?.sha256)
+    .map(file => file.path).sort();
+  // Exactly the pin, the installer that reads it, both halves of the runtime update
+  // that move existing computers to it, and the release documents/labels change. The
+  // keeper, the browser unit, the policy, package pins and remote-desktop assets do not.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "chrome-pin.json", "hivra-guest-runtime-update.sh",
+    "hivra-provider-worker.py", "hivra-update-guest-runtime.sh", "provision-claude-code-box.sh"]);
+  expect(changed.filter(file => file.startsWith("remote-desktop/"))).toEqual([]);
+  // The file in the manifest is the file the installer and the updater read.
+  const pin = release.files.find(file => file.path === "chrome-pin.json")!;
+  const content = readFileSync(path.join(process.cwd(), "provisioner/chrome-pin.json"));
+  expect({ bytes: content.length, sha256: createHash("sha256").update(content).digest("hex") }).toEqual({ bytes: pin.bytes, sha256: pin.sha256 });
+  for (const version of ["2026.11.10.5", "2026.11.11.1"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsWindowsInstaller(version)).toBe(true);
+  }
+  expect(provisionerSupportsActivityTelemetry("2026.11.11.2")).toBe(true);
+});
+
 it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
   // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
-  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+});
+
+it("keeps the current bundle inside the file count the provider worker accepts in a manifest", () => {
+  // A bundle one file over the cap is rejected before any computer is touched, which
+  // otherwise only shows in the Python-parser tests; say so here first.
+  const worker = readFileSync(path.join(process.cwd(), "provisioner/hivra-provider-worker.py"), "utf8");
+  const cap = Number(/not 1 <= len\(manifest\) <= ([0-9]+):/.exec(worker)?.[1]);
+  expect(cap).toBeGreaterThan(0);
+  expect(release.files.length).toBeLessThanOrEqual(cap);
+  expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES.length).toBe(release.files.length);
 });
