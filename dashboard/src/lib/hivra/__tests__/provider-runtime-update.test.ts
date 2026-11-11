@@ -78,7 +78,7 @@ describe("dispatch script", () => {
 
   it("archives each runtime file once, in the layout the guest half expects", () => {
     const tar = script.split("\n").find(line => line.startsWith("tar -czf"))!;
-    expect(tar).toBe('tar -czf "$DIR/runtime.tar.gz" -C "$DIR/source/hivra-chat" server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js -C "$DIR/source" hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json agent-app-versions.json hivra-agent-app-update.sh');
+    expect(tar).toBe('tar -czf "$DIR/runtime.tar.gz" -C "$DIR/source/hivra-chat" server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js -C "$DIR/source" hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json agent-app-versions.json hivra-agent-app-update.sh local-browser-keeper.py');
   });
 
   it("refuses an operation id that is not a UUID", () => {

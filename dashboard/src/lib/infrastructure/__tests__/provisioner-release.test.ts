@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.10.5.json";
+import release from "../../../../provisioner-releases/2026.11.11.1.json";
+import deepseekModelRelease from "../../../../provisioner-releases/2026.11.10.5.json";
 import linuxServerRelease from "../../../../provisioner-releases/2026.11.10.4.json";
 import freshnessRelease from "../../../../provisioner-releases/2026.11.10.3.json";
 import creditsRelease from "../../../../provisioner-releases/2026.11.10.2.json";
@@ -234,9 +235,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -371,9 +372,9 @@ it("ships the linux-server kind in 2026.11.10.4, keeping 2026.11.10.3 admitted a
 });
 
 it("ships the DeepSeek launch-time model in 2026.11.10.5, keeping 2026.11.10.4 admitted and desktop assets unchanged", () => {
-  expect(release.version).toBe("2026.11.10.5");
-  expect(release.files.map(file => file.path)).toEqual(linuxServerRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== linuxServerRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(deepseekModelRelease.version).toBe("2026.11.10.5");
+  expect(deepseekModelRelease.files.map(file => file.path)).toEqual(linuxServerRelease.files.map(file => file.path));
+  const changed = deepseekModelRelease.files.filter(file => file.sha256 !== linuxServerRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // Exactly the host script that forwards the model, the launch parser, the guest
   // composition that seeds it, and the release documents/labels change. The
@@ -403,4 +404,32 @@ it("admits the Linux server only on 2026.11.10.4 and later and never on the prov
   for (const version of ["2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.09.04.2", "unknown", undefined])
     expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(false);
   expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-server")).toBe(false);
+});
+
+it("ships the clean agent browser view in 2026.11.11.1, keeping 2026.11.10.5 admitted and desktop assets unchanged", () => {
+  expect(release.version).toBe("2026.11.11.1");
+  expect(release.files.map(file => file.path)).toEqual(deepseekModelRelease.files.map(file => file.path));
+  const changed = release.files.filter(file => file.sha256 !== deepseekModelRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the keeper, the installer that writes the policy and holds Chrome, both
+  // halves of the runtime update that carry them to existing computers, and the
+  // release documents/labels change. The service unit, broker, package pins and
+  // remote-desktop assets do not.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-guest-runtime-update.sh", "hivra-provider-worker.py",
+    "hivra-update-guest-runtime.sh", "local-browser-keeper.py", "provision-claude-code-box.sh"]);
+  expect(changed.filter(file => file.startsWith("remote-desktop/"))).toEqual([]);
+  for (const version of ["2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsWindowsInstaller(version)).toBe(true);
+  }
+  expect(provisionerSupportsActivityTelemetry("2026.11.11.1")).toBe(true);
+});
+
+it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
+  // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
+  expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
 });

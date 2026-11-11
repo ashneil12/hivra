@@ -235,8 +235,9 @@ is the alternative long-lived-token path.
    with `BROWSER_USE_API_KEY=<dummy>` and `WITH_ZTK=0`. Cloning to `/opt/bux`
    (not `curl | bash`) is required because the systemd units hardcode
    `/opt/bux/agent/*`.
-3. **Google Chrome stable** — adds Google's apt repo, installs
-   `google-chrome-stable` (the `.deb`, **not** snap).
+3. **Google Chrome stable** — installs the pinned `google-chrome-stable` `.deb`
+   (**not** snap), keeps Google's apt repo out and holds the package at that build,
+   and writes the managed browser policy.
 4. **Browser overlay** — disables + removes the cloud keeper unit
    (`bux-browser-keeper.service`), drops in `local-browser-keeper.py`, creates the
    non-default profile dir, installs `bux-local-browser.service`.
@@ -457,6 +458,18 @@ update them yet.
   `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
   model tier set to the chosen model) with mode 0600; without a key the computer
   keeps native `claude auth login` sign-in.
+- **Clean agent browser view.** The Browser tab streams the agent's own Chrome, so the
+  window must open without Chrome's own warnings. Older computers still run a keeper
+  that passes `--no-sandbox` ("unsupported command-line flag" infobar), and a pinned
+  Chrome older than eight weeks shows "Can't update Chrome" and a "Finish update" chip.
+  The installer and the runtime update now install the sandboxed keeper, write
+  `/etc/opt/chrome/policies/managed/hivra-browser.json` (default-browser prompt,
+  promotional tabs, browser sign-in and the unsupported-OS warning off; any machine
+  policy also turns Chrome's outdated-build detector off), drop Google's apt source and
+  hold `google-chrome-stable` so nothing replaces the binary under the running browser.
+  The update restarts the browser only when nobody is attached to its debugging port,
+  and puts the previous keeper back if the browser does not return. The window opens at
+  the origin at the Xvfb screen's size, so it fills the tab.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
