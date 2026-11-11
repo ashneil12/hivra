@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { omarchyX86IsoFilename } from "../omarchy-iso";
 
 export const PREPARED_OMARCHY_REFRESH_STAGE = "prepared_omarchy_refresh";
 export const PREPARED_OMARCHY_REFRESH_MARKER = "HIVRA_PREPARED_OMARCHY_REFRESH ";
@@ -15,7 +16,7 @@ export const OmarchyRefreshReleaseSchema = z.object({
   release: z.string().regex(/^v4\.[0-9]{1,4}\.[0-9]{1,4}$/),
   releaseCommit: z.string().regex(/^[a-f0-9]{40}$/),
   isoUrl: z.string(), isoFilename: z.string(), isoSha256: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict().refine(value => value.isoFilename === `omarchy-${value.release.slice(1)}.iso`
+}).strict().refine(value => value.isoFilename === omarchyX86IsoFilename(value.release)
   && value.isoUrl === `https://iso.omarchy.org/${value.isoFilename}`);
 export type OmarchyRefreshRelease = z.infer<typeof OmarchyRefreshReleaseSchema>;
 export const OmarchyRefreshRequestSchema = z.object({

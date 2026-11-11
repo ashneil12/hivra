@@ -1,3 +1,5 @@
+import { omarchyX86IsoFilename } from "../src/lib/omarchy-iso";
+
 // Resolve metadata only. The installer bytes are downloaded later and must match
 // this release's official checksum; no code from a floating branch is executed.
 export type OmarchyInstallerRelease = {
@@ -22,7 +24,7 @@ const SHA = /^[a-f0-9]{40}$/;
 export function assertOmarchyInstallerRelease(value: OmarchyInstallerRelease): void {
   if (!TAG.test(value.release) || !SHA.test(value.releaseCommit)
     || !/^[a-f0-9]{64}$/.test(value.isoSha256)
-    || value.isoFilename !== `omarchy-${value.release.slice(1)}.iso`
+    || value.isoFilename !== omarchyX86IsoFilename(value.release)
     || value.isoUrl !== `https://iso.omarchy.org/${value.isoFilename}`) {
     throw new Error("Omarchy installer release metadata is invalid or uses an unvalidated major.");
   }
@@ -75,7 +77,8 @@ export async function resolveLatestOmarchyInstaller(fetcher: typeof fetch = fetc
   if (target?.type !== "commit" || !SHA.test(target.sha ?? "")) {
     throw new Error("Official Omarchy tag did not resolve to one immutable commit.");
   }
-  const isoFilename = `omarchy-${tag.slice(1)}.iso`;
+  const isoFilename = omarchyX86IsoFilename(tag);
+  if (!isoFilename) throw new Error("Official Omarchy x86 artifact is unsupported.");
   const checksum = await metadata(`https://iso.omarchy.org/${isoFilename}.sha256`, fetcher, overallSignal);
   const match = /^([a-f0-9]{64})[ \t]+\*?([^\r\n]+)\r?\n?$/.exec(checksum);
   if (!match || match[2] !== isoFilename) throw new Error("Official Omarchy ISO checksum names a different artifact.");
