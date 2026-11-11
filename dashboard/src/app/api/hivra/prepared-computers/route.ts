@@ -1,4 +1,5 @@
 export const runtime = "nodejs";
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return apiError("Invalid request", 400);
     try {
       const agent = await claimPreparedCanaryComputer({ userId, ...parsed.data });
-      return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, 201);
+      return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, agent.status === "provisioning" ? 202 : 201);
     } catch (error) {
       const raw = error instanceof Error ? error.message : FALLBACK_CLAIM_CODE;
       const code = CLAIM_CODE_PATTERN.test(raw) ? raw : FALLBACK_CLAIM_CODE;

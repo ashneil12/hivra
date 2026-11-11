@@ -140,7 +140,7 @@ async function measureShippedPayloads(): Promise<Measured> {
     guestIp: TARGET.guestIp, publicIpv4: "198.51.100.11", infrastructureBindingTag: BINDING_TAG });
   put("omarchy-capability", "script", "sudo-transport-script", omarchyInspection);
   put("omarchy-capability", "guestArgument", "linux-argument", shellWordsFrom(omarchyInspection,
-    "run_vmid_bound_guest_exec /bin/bash -c 'printf \"%s\" \"$1\" | /usr/bin/base64 --decode | /usr/bin/python3 -I -B - \"$2\"' hivra ")[5]);
+    "run_vmid_bound_guest_exec /bin/bash -c 'printf \"%s\" \"$1\" | /usr/bin/base64 --decode | /usr/bin/python3 -I -B - \"$2\" \"$3\"' hivra ")[5]);
 
   // Omarchy preparation: the guardian bundle on the guest agent's stdin.
   const omarchy = buildOmarchyNativePreparationHostScript({ computerId: TARGET.computerId, operationId: TARGET.operationId,
