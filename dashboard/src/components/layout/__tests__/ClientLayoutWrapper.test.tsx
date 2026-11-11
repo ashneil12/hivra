@@ -425,7 +425,8 @@ describe('ClientLayoutWrapper', () => {
 
   it('badges More with the sidebar attention count on phones', () => {
     const resources: DashboardResource[] = [
-      { uid: 'h-a', id: 'a', source: 'hermes', kind: 'agent', name: 'Writer', description: 'Hermes', status: 'error', href: '/dashboard/instances/a' },
+      // An errored row carries attention "error", as the resource feed builds it; the badge counts what Need you lists.
+      { uid: 'h-a', id: 'a', source: 'hermes', kind: 'agent', name: 'Writer', description: 'Hermes', status: 'error', attention: 'error', href: '/dashboard/instances/a' },
       { uid: 'x-b', id: 'b', source: 'hivra', kind: 'computer', name: 'Desktop', description: 'Ubuntu Desktop', status: 'running', href: '/dashboard/agent/b?tab=desktop' },
     ];
     (useDashboardResources as jest.Mock).mockReturnValue({ resources, loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() });

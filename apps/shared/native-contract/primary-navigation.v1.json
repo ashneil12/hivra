@@ -4,8 +4,8 @@
   "description": "The dashboard's primary navigation, in order. The web sidebar (DASHBOARD_PRIMARY_NAVIGATION) and every native shell sidebar show exactly these labels for exactly these routes; native shells bind them to Command/Ctrl 1-4 in this order.",
   "items": [
     { "label": "Home", "href": "/dashboard" },
-    { "label": "Computers", "href": "/dashboard/computers" },
     { "label": "Agents", "href": "/dashboard/agents" },
+    { "label": "Computers", "href": "/dashboard/computers" },
     { "label": "Activity", "href": "/dashboard/activity" }
   ]
 }
