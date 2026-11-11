@@ -455,6 +455,30 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
 }
 agent_app_report || true
 
+# Hermes computers: scheduled tasks and chat channels run in Hermes's gateway,
+# which older computers never installed (only the dashboard ran). Install it the
+# way upstream advises for headless VMs: Hermes's own `hermes gateway install`
+# as the agent user (a user service) with linger on. Idempotent; other agent
+# kinds are untouched; a failure here only warns and never fails the update.
+hermes_gateway_report() {
+  [ "$KIND_BEFORE" = hermes ] || return 0
+  local uid i bin=/home/bux/.local/bin/hermes
+  [ -x "$bin" ] || return 1
+  uid="$(id -u bux)" || return 1
+  loginctl enable-linger bux || return 1
+  systemctl start "user@${uid}.service" || return 1
+  for i in $(seq 1 30); do [ -S "/run/user/${uid}/bus" ] && break; sleep 1; done
+  [ -S "/run/user/${uid}/bus" ] || return 1
+  local run=(timeout -k 10 240 runuser -u bux -- env -i HOME=/home/bux HERMES_HOME=/home/bux/.hermes LANG=C.UTF-8
+    XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
+    PATH=/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin)
+  "${run[@]}" "$bin" gateway install --start-now --start-on-login || return 1
+  "${run[@]}" "$bin" gateway start || return 1
+}
+if ! hermes_gateway_report; then
+  echo "WARNING: Hermes gateway could not be installed or started; scheduled tasks and chat channels will not run until: hermes gateway install" >&2
+fi
+
 # Agent browser (computers with the browser stack). A computer provisioned before
 # 2026.11.03.1 still runs a keeper that launches Chrome with --no-sandbox, which
 # Chrome answers with an "unsupported command-line flag" infobar, and a pinned

@@ -69,12 +69,48 @@ describe("Hermes guest install", () => {
     expect(readiness).toBeLessThan(script.indexOf("HIVRA_RUNTIME_RECEIPT_V1"));
   });
 
+  it("installs Hermes's own gateway as a user service for the agent user, non-interactively and non-fatally", () => {
+    // Linger and the user manager come first; Hermes's installer writes the unit.
+    expect(block).toContain('loginctl enable-linger "${AGENT_USER}"');
+    expect(block).toContain('systemctl start "user@${uid}.service"');
+    expect(block).toContain('XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"');
+    expect(block).toMatch(/timeout -k 10 240 sudo -u "\$\{AGENT_USER\}" -H env HOME=/);
+    expect(block).toContain('"${HERMES_BIN}" gateway install --start-now --start-on-login');
+    expect(block).toContain('"${HERMES_BIN}" gateway start');
+    // No unit of our own and no drop-ins for it.
+    expect(script).not.toMatch(/hermes-gateway\.service(\.d)?\s*<<|cat > [^\n]*hermes-gateway/);
+    expect(script).not.toContain("hermes-gateway.service.d");
+    // It runs after the dashboard is started, and a failure only warns.
+    const enable = script.indexOf("systemctl enable --now bux-hermes.service");
+    const setup = script.indexOf("if hermes_gateway_setup; then");
+    expect(setup).toBeGreaterThan(enable);
+    expect(script.slice(setup, setup + 700)).toMatch(/else\n\s+warn "Hermes gateway could not be installed or started/);
+    expect(script).not.toMatch(/hermes_gateway_setup \|\| die/);
+    // Readiness only warns; the hints mention the gateway.
+    expect(script).toMatch(/is-active --quiet "\$\{HERMES_GATEWAY_UNIT\}"; then\n\s+ok "Hermes gateway is active[\s\S]*?else\n\s+warn "Hermes gateway is not active/);
+    expect(script).toContain("hermes gateway status");
+  });
+
   it("is carried through the typed installer, the host provisioner and the receipt", () => {
     for (const name of ["hivra-install-agent.py", "hivra-provision-on-host.sh", "hivra-provider-worker.py", "hivra-runtime-receipt.py"]) {
       expect(fs.readFileSync(path.join(PROVISIONER, name), "utf8")).toContain("hermes");
     }
     expect(fs.readFileSync(path.join(PROVISIONER, "hivra-update-guest-runtime.sh"), "utf8")).toContain("name=hermes version=");
     expect(fs.readFileSync(path.join(PROVISIONER, "hivra-guest-runtime-update.sh"), "utf8")).toContain("target=latest");
+  });
+
+  it("gives existing Hermes computers the gateway from the guest runtime update, for Hermes only and without failing the update", () => {
+    const update = fs.readFileSync(path.join(PROVISIONER, "hivra-guest-runtime-update.sh"), "utf8");
+    const fn = update.slice(update.indexOf("hermes_gateway_report() {"), update.indexOf("hermes_gateway_report\n") > 0 ? undefined : update.indexOf("if ! hermes_gateway_report"));
+    expect(fn).toContain('[ "$KIND_BEFORE" = hermes ] || return 0');
+    expect(fn).toContain("loginctl enable-linger bux");
+    expect(fn).toContain('systemctl start "user@${uid}.service"');
+    expect(fn).toContain("runuser -u bux -- env -i");
+    expect(fn).toContain('XDG_RUNTIME_DIR="/run/user/${uid}"');
+    expect(fn).toContain('gateway install --start-now --start-on-login');
+    expect(fn).toContain('gateway start');
+    expect(update).toMatch(/if ! hermes_gateway_report; then\n\s+echo "WARNING: Hermes gateway/);
+    expect(update.indexOf("if ! hermes_gateway_report")).toBeLessThan(update.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
   });
 
   describe("the model key file", () => {
