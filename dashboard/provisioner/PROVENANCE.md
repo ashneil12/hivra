@@ -544,6 +544,30 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.11.3` builds on `2026.11.11.2` and makes the chat's reasoning effort
+real. The gateway (`hivra-chat/server.js`) accepts an optional `effort` on
+`POST /api/chat`, strictly one of `low`, `medium`, `high`, `xhigh` or `max` (anything
+else is ignored), and advertises the levels it will pass as `chatEffort` on
+`GET /api/meta`. It was verified against the pinned CLI packages, not assumed. Claude
+Code `2.1.292` (`@anthropic-ai/claude-code-linux-x64`, the native binary the main
+package installs): the binary declares `--effort <level>` with the description "Effort
+level for the current session (low, medium, high, xhigh, max)" and an allowed list of
+those five; an unknown value is warned about and ignored there. Releases older than
+`2.1.117` differ (`2.1.100` stops at `max`, and a value outside its list ends the turn
+with a usage error), so the gateway passes `--effort` only when the installed CLI
+reports `2.1.117` or later. Codex `0.149.1` (`@openai/codex@0.149.1-linux-x64`): the
+binary has the `model_reasoning_effort` config key and a reasoning-effort enumeration of
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `ultra`; the gateway passes
+`-c model_reasoning_effort="<level>"` for `low`, `medium`, `high` and `xhigh`, and maps
+`max` to `xhigh`, because each model lists the levels it supports and the pinned CLI
+cannot be asked which. That ceiling is one table in `server.js`. The override is placed
+with the other `-c` overrides, so it applies to fresh and resumed turns and next to a
+configured provider. Generic, Aeon, OpenClaw and Agent Zero computers ignore `effort`
+and advertise nothing. No other asset changes: `server.js` is already a runtime update
+asset, so existing computers receive it with the update. `hivra-provider-worker.py`
+advances its native and desktop release labels. No runtime's placement minimum moves.
+This source release does not deploy, install, or update any existing computer.
+
 Release `2026.11.11.2` builds on `2026.11.11.1` and moves the agent's pinned Google
 Chrome from `152.0.7977.64-1` to `157.0.8103.50-1` (SHA-256
 `92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79`), the Linux stable

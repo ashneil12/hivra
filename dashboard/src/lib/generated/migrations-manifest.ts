@@ -408,4 +408,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261111170000", name: "prepared_omarchy_x86_artifact" },
   { version: "20261111180000", name: "provider_release_admission_2026_11_11_1" },
   { version: "20261111200000", name: "provider_release_admission_2026_11_11_2" },
+  { version: "20261111220000", name: "provider_release_admission_2026_11_11_3" },
 ];
