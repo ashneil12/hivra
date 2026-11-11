@@ -448,8 +448,11 @@ async function stepStartLaunch(row: MoveRow, deps: MoveDeps): Promise<MovePatch>
     return failBeforeChange(row, "move_not_available", offerMessage(offer.reason), `offer ${offer.reason}`, deps, false);
   }
   const startedAt = iso(deps.now());
+  // A move an operator queued straight into the table carries no key (only the
+  // server can encrypt one), so it gets its key here, before anything is packed.
+  const keyPatch: MovePatch = row.key_encrypted ? {} : { key_encrypted: deps.encrypt(deps.randomKeyHex()) };
   // Recorded first: a launch that outlives this call can be found again by its time.
-  await deps.store.patchMove(row.id, { state: "launching", step: "creating", message: "Setting up the new computer.", step_started_at: startedAt, step_attempts: 0 });
+  await deps.store.patchMove(row.id, { state: "launching", step: "creating", message: "Setting up the new computer.", step_started_at: startedAt, step_attempts: 0, ...keyPatch });
   let response: Response;
   try {
     response = await deps.launch(row.user_id, launchBody(instance), { moveFromInstanceId: instance.id });
