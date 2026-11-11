@@ -586,36 +586,6 @@ export function costSummary({
   return withModel("No charge from Hivra. It uses your server's own capacity.");
 }
 
-/** Exactly what the launch changes. */
-export function launchChangesSummary({
-  profileId,
-  substrate,
-  targetName,
-}: {
-  profileId: LaunchProfileId;
-  substrate: LaunchSubstrate;
-  targetName: string | null;
-}): string {
-  const profile = PROFILE_DETAILS[profileId];
-  const host = targetName ?? "your server";
-  if (profileId === "omarchy") return "Gives you a ready-made Omarchy computer. Nothing is bought.";
-  if (profileId === "windows") {
-    return `Creates one Windows setup computer on ${host}, attaches the ISO you chose and starts the installer. Nothing is bought or uploaded, and Hivra Cloud isn't used.`;
-  }
-  if (profileId === "linux-terminal") {
-    return `Creates one Linux Sandbox on ${host} with fixed CPU and memory limits. It doesn't create a desktop, public ports or host folders. Nothing is bought.`;
-  }
-  if (substrate === "provider-vm") {
-    return `Installs ${profile.name} on ${host} and uses the whole server. It doesn't buy or create another server.`;
-  }
-  const where = substrate === "hivra-cloud" ? "" : ` on ${host}`;
-  if (profileId === "aeon") return `Creates one small computer${where} for Aeon's dashboard. Nothing is bought.`;
-  if (profileId === "ubuntu-server") return `Creates one Linux computer${where} with a terminal and files. It has no desktop. Nothing is bought.`;
-  return profile.resourceKind === "computer"
-    ? `Creates one computer${where} with ${profile.name}. Nothing is bought.`
-    : `Creates one computer${where} and installs ${profile.name}. Nothing is bought.`;
-}
-
 export function isolationDetail(substrate: LaunchSubstrate): string {
   if (substrate === "hivra-cloud") return "Private virtual machine on Hivra Cloud (Proxmox KVM)";
   if (substrate === "proxmox") return "Private virtual machine on your Proxmox host (KVM)";

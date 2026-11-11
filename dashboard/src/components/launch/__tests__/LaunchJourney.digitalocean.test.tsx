@@ -147,13 +147,13 @@ async function chooseAgent(name: string) {
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
   expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
-  // Hivra's recommended settings are summarised; Change opens the full controls.
-  const change = screen.queryByRole("button", { name: "Change" });
+  // Each setting has its own Change button; open Model access when it shows.
+  const change = screen.queryByRole("button", { name: "Change model access" });
   if (change) fireEvent.click(change);
 }
 
 async function chooseTeam() {
-  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  fireEvent.click(screen.getByRole("button", { name: "Change where it runs" }));
   fireEvent.click(await screen.findByRole("button", { name: /^DigitalOcean · Studio team/ }));
 }
 
@@ -164,7 +164,7 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   await chooseTeam();
 
   // Where it runs says so, and it is the pressed choice.
-  expect(screen.getAllByText("DigitalOcean · Studio team")).toHaveLength(3);
+  expect(screen.getAllByText("DigitalOcean · Studio team")).toHaveLength(2);
   expect(screen.getByRole("button", { name: /^Hivra Cloud/ })).toHaveAttribute("aria-pressed", "false");
   expect(screen.getByRole("button", { name: /^DigitalOcean · Studio team/ })).toHaveAttribute("aria-pressed", "true");
   const size = screen.getByLabelText("Sandbox size");
@@ -174,6 +174,9 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   expect(modelChoice(/^Sign in after it opens, or Hivra credits/)).toBeDisabled();
   expect(screen.getAllByText("DigitalOcean bills this sandbox per second while it runs, to your team.")).not.toHaveLength(0);
   expect((await screen.findAllByText(/Prepaid balance \$25\.00/)).length).toBeGreaterThan(0);
+  // The owner has a choice to make, so the heading says so and the controls stay open.
+  expect(screen.getByRole("heading", { name: "Your launch" })).toBeInTheDocument();
+  expect(screen.queryByText("When you launch")).not.toBeInTheDocument();
   // No Hivra plan, host size or browser applies to a DigitalOcean sandbox.
   expect(screen.queryByRole("checkbox", { name: /Browser for Codex/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
@@ -193,7 +196,6 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   expect(review.getAllByText(/DigitalOcean · Studio team/).length).toBeGreaterThan(0);
   expect(review.getByText("1 vCPU / 1 GB DigitalOcean sandbox")).toBeInTheDocument();
   expect(review.getByText("Your OpenAI API key, sent to DigitalOcean for this sandbox")).toBeInTheDocument();
-  expect(review.getByText(/Creates one DigitalOcean sandbox on Studio team and starts it\. DigitalOcean bills from now\. Hivra sends it a short setup note/)).toBeInTheDocument();
   // The first task shows in its field and again under More details.
   expect(review.getAllByText("Summarize the repo")).toHaveLength(2);
   const launch = screen.getByTestId("launch-primary-action");
@@ -265,7 +267,7 @@ it("lets the owner type a model slug when DigitalOcean's list is unavailable", a
 
 it("never offers DigitalOcean to an agent it can't run", async () => {
   await chooseAgent("OpenClaw");
-  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  fireEvent.click(screen.getByRole("button", { name: "Change where it runs" }));
   await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/managed-sessions", expect.anything()));
   expect(screen.queryByRole("button", { name: /^DigitalOcean ·/ })).not.toBeInTheDocument();
 });
