@@ -366,6 +366,36 @@ describe("GET /api/cron/purge-expired", () => {
     );
   });
 
+  it("purges an old computer kept for a Hermes move even when its owner pays, and never restores it", async () => {
+    process.env.CRON_SECRET = "expected-secret";
+    mockedResolveProxmoxLifecycleTarget.mockReturnValue({
+      provider: "proxmox" as const, vmid: 204, privateIpv4: "10.250.20.56", gatewayHost: "agent-moved.example.com",
+    });
+    mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
+    mockedDeleteProxmoxInstance.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "pro" });
+    const { updateMock } = makeUpdate();
+    mockedSupabaseAdmin.from
+      .mockImplementationOnce(() => scheduledFetch([{
+        id: "moved", user_id: "user_paying", name: "Moved", status: "scheduled_for_deletion", hetzner_server_id: null, host_id: null,
+        config: { infrastructure: { provider: "proxmox", vmid: 204 }, movedTo: { agentId: "agent-1", moveId: "m1" } },
+      }]))
+      .mockImplementationOnce(() => strandedDeletedFetch([]))
+      .mockImplementation((table: string) => {
+        if (table === "instance_deletion_archives") return { insert: jest.fn().mockResolvedValue({ error: null }) };
+        return { update: updateMock };
+      });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/cron/purge-expired", { method: "GET", headers: { authorization: "Bearer expected-secret" } })
+    );
+
+    expect((await response.json()).data.purged).toBe(1);
+    expect(mockedDeleteProxmoxInstance).toHaveBeenCalled();
+    expect(StripeWebhookService.restoreScheduledDeletions).not.toHaveBeenCalled();
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(null);
+  });
+
   it("hands cold-archived rows to the cold-retention pipeline instead of tearing down the (already destroyed) VM", async () => {
     // Regression: archiveInstance destroys the VM and nulls the routing
     // columns but leaves config.infrastructure behind. purge-expired used to

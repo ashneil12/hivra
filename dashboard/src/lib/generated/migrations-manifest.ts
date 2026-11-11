@@ -411,4 +411,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261111220000", name: "provider_release_admission_2026_11_11_3" },
   { version: "20261111230000", name: "hermes_computer_software" },
   { version: "20261111233000", name: "provider_release_admission_2026_11_11_4" },
+  { version: "20261112110000", name: "hermes_computer_moves" },
 ];
