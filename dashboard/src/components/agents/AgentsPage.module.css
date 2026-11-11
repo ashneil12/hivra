@@ -471,34 +471,6 @@
 .runtimeList small svg {
   color: var(--hg-fg);
 }
-.previewRuntime {
-  padding: 22px 0;
-}
-.previewRuntime h2 {
-  font: 400 22px var(--font-grotesk),
-    sans-serif;
-  margin: 8px 0;
-}
-.previewRuntime p {
-  font-size: 12px;
-  color: var(--text-secondary);
-  max-width: 720px;
-}
-.previewRuntime a {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 0;
-  min-height: 44px;
-  color: var(--ink-black);
-  font: 600
-    11px var(--font-sans);
-  text-transform: uppercase;
-  text-decoration: none;
-}
-.previewRuntime a svg {
-  color: var(--hg-fg);
-}
 .page button:focus-visible,
 .page a:focus-visible,
 .page summary:focus-visible,
@@ -535,8 +507,7 @@
   overflow-wrap: anywhere;
 }
 .header h1,
-.runtimeList a > *,
-.previewRuntime p {
+.runtimeList a > * {
   overflow-wrap: anywhere;
 }
 .header .primaryButton,

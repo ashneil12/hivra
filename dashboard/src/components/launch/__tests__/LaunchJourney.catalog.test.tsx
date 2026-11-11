@@ -125,14 +125,14 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(modelChoice(/^Hivra credits/)).toHaveTextContent("$4.25 available");
 
     const review = await reviewLaunch();
-    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4 Flash/)).toBeInTheDocument();
+    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4\.1 Flash/)).toBeInTheDocument();
     expect(review.getByText("Chat, a terminal, files and skills on its own computer.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
 
     await screen.findByRole("heading", { name: "Hermes 1 has its own computer and is starting." });
     expect(instanceBodies).toHaveLength(1);
     expect(instanceBodies[0]).toMatchObject({
-      name: "Hermes 1", provider: "venice", model: "deepseek-v4-flash", apiKey: "",
+      name: "Hermes 1", provider: "venice", model: "deepseek-v4-1-flash", apiKey: "",
       managedVenice: { enabled: true, walletType: "card" },
     });
     // Nothing on this screen advances on a timer; it waits for the workspace.
@@ -250,13 +250,13 @@ describe("every catalog agent launches in the Launch journey", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Send this key to Codex 1's computer/ }));
 
     const review = await reviewLaunch();
-    expect(review.getByText("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · DeepSeek V4 Pro (via Venice)")).toBeInTheDocument();
+    expect(review.getByText("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · DeepSeek V4.1 Flash (via Venice · recommended)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Codex" }));
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
     expect(createAgentMock.mock.calls[0][0]).toMatchObject({
       type: "codex",
-      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VENICE_KEY.id },
+      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-1-flash", vaultKeyId: VENICE_KEY.id },
     });
     expect(createAgentMock.mock.calls[0][0].llm).not.toHaveProperty("apiKey");
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`));
@@ -290,5 +290,41 @@ describe("every catalog agent launches in the Launch journey", () => {
       llm: { provider: "venice", mode: "managed", walletType: "card" }, deployment: { mode: "hivra-managed" },
     });
     await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
+  });
+
+  it("offers DeepSeek Harness as a tile, runs it on Hivra credits by default, and launches it on Hivra Cloud", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    const tile = screen.getByRole("button", { name: /^DeepSeek Harness/ });
+    expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.");
+    fireEvent.click(tile);
+    expect(screen.getByRole("heading", { name: "Review and launch DeepSeek Harness 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+
+    // It gets its model at launch: credits are the default, a Venice key the alternative.
+    await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
+    expect(modelChoice(/^Use my API key/)).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Sign in|^Set up inside|^Add your key inside/ })).not.toBeInTheDocument();
+    const review = await reviewLaunch();
+    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4\.1 Flash/)).toBeInTheDocument();
+    // It runs on Hivra Cloud only, with no browser and no maxima to choose.
+    expect(screen.queryByRole("button", { name: /Set up your own capacity/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Launch DeepSeek Harness" }));
+
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
+    expect(createAgentMock).toHaveBeenCalledWith({
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4, browser: false, managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-1-flash", walletType: "card" },
+      deployment: { mode: "hivra-managed" },
+    });
+    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
+  });
+
+  it("does not launch DeepSeek Harness for a Free account, and offers a plan rather than its own computer", async () => {
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    await chooseAgent("DeepSeek Harness");
+    await waitFor(() => expect(screen.getByText(/DeepSeek Harness runs on Hivra Cloud only, and that needs a paid plan/)).toBeInTheDocument());
+    expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
+    expect(createAgentMock).not.toHaveBeenCalled();
   });
 });

@@ -232,6 +232,28 @@ async function main() {
     });
     await db.exec(LINUX_SERVER_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedLinuxServer, "re-applying the 2026.11.10.4 admission changes nothing");
+    // 2026.11.10.5 anchors on the 2026.11.10.4 entry; idempotent too.
+    const DEEPSEEK_MODEL_ADMISSION = migration("20261111160000_provider_release_admission_2026_11_10_5.sql");
+    await db.exec(DEEPSEEK_MODEL_ADMISSION);
+    const admittedDeepSeekModel = await admissionDefinitions();
+    admittedDeepSeekModel.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(DEEPSEEK_MODEL_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedDeepSeekModel, "re-applying the 2026.11.10.5 admission changes nothing");
+    // 2026.11.11.1 anchors on the 2026.11.10.5 entry; idempotent too.
+    const BROWSER_VIEW_ADMISSION = migration("20261111180000_provider_release_admission_2026_11_11_1.sql");
+    await db.exec(BROWSER_VIEW_ADMISSION);
+    const admittedBrowserView = await admissionDefinitions();
+    admittedBrowserView.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(BROWSER_VIEW_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedBrowserView, "re-applying the 2026.11.11.1 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

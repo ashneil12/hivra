@@ -542,6 +542,14 @@ install -d -o root -g root -m 0755 /var/log/bux
 say "3/7  Google Chrome stable (.deb, NOT snap) — browser-enabled boxes"
 # ===========================================================================
 if [ "$WANT_BROWSER" = 1 ]; then
+  # Chrome stays on CHROME_VERSION until Hivra moves the pin: the .deb's postinst
+  # adds Google's apt repository unless /etc/default/google-chrome already says not
+  # to (Google's documented switch), and an apt upgrade then replaces the binary
+  # under the running browser, which Chrome reports as "Finish update". A hold on an
+  # older install would also refuse the pinned .deb below, so lift it first.
+  printf '%s\n' 'repo_add_once="false"' 'repo_reenable_on_distupgrade="false"' > /etc/default/google-chrome
+  chmod 0644 /etc/default/google-chrome
+  apt-mark unhold google-chrome-stable >/dev/null 2>&1 || true
   if dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null | grep -Fxq "$CHROME_VERSION"; then
     ok "verified google-chrome-stable ${CHROME_VERSION}"
   else
@@ -559,6 +567,20 @@ if [ "$WANT_BROWSER" = 1 ]; then
       || die "Chrome version does not match ${CHROME_VERSION}"
     ok "installed verified google-chrome-stable ${CHROME_VERSION}"
   fi
+  rm -f /etc/apt/sources.list.d/google-chrome.sources /etc/apt/sources.list.d/google-chrome.list
+  apt-mark hold google-chrome-stable >/dev/null
+  # Machine-level Chrome policy for the agent's browser. Any mandatory machine
+  # policy makes Chrome treat itself as managed, which turns off its outdated-build
+  # detector (the "Can't update Chrome" bubble and "Finish update" chip that a
+  # pinned build trips eight weeks after it was built); the policies themselves
+  # only silence the default-browser prompt, promotional tabs, browser sign-in and
+  # the unsupported-OS warning. Nothing here touches the sandbox or site isolation.
+  # The runtime updater (hivra-guest-runtime-update.sh) writes the identical text.
+  CHROME_POLICY_JSON='{"DefaultBrowserSettingEnabled":false,"PromotionsEnabled":false,"BrowserSignin":0,"SuppressUnsupportedOSWarning":true}'
+  install -d -o root -g root -m 0755 /etc/opt/chrome /etc/opt/chrome/policies /etc/opt/chrome/policies/managed
+  printf '%s\n' "$CHROME_POLICY_JSON" > /etc/opt/chrome/policies/managed/hivra-browser.json
+  chmod 0644 /etc/opt/chrome/policies/managed/hivra-browser.json
+  ok "google-chrome-stable held at ${CHROME_VERSION}; managed browser policy written"
   # Live-view stack: Xvfb (virtual display) + x11vnc + noVNC/websockify so the
   # agent's headful Chrome can be streamed into the dashboard Browser tab.
   apt_get install -y xvfb x11vnc novnc websockify

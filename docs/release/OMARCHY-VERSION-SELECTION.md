@@ -13,6 +13,16 @@ fall back to an older installer. Unsupported new major versions fail explicitly;
 the browser desktop contract currently accepts validated Omarchy v4 releases.
 Teardown needs no upstream lookup.
 
+The default full-disk CIDATA selects `linux-omarchy` and explicitly requests
+`linux-omarchy-headers`, the matching pair bundled in the official ISO. A fresh
+4.0.6 ISO fixture exposed a defect in the old generic `linux` recipe: only the
+T2 provider's headers landed, and the installer correctly refused boot
+validation because the generic kernel had no matching headers. The corrected
+recipe preserves the vendor's header validation and package signature policy;
+it does not modify the failed install or pretend it booted. A fresh corrected
+install remains the runtime acceptance gate. The kernel choice matches the
+[official ISO integration fixture](https://github.com/omacom/omarchy-iso/blob/e54fbda40c1a1e7d481f1e33f87839ec96d516a1/test/integration.d/base-test.sh).
+
 The plan and launch output include the resolved release, commit and ISO checksum.
 The host retains the selection in
 `/var/lib/hivra/omarchy-receipts/<vmid>-<operation>.installer.json`. This receipt
@@ -71,3 +81,15 @@ No live deployment, database migration or customer launch is established by
 source tests. See [the rollout and recovery notes](OMARCHY-PREPARED-REFRESH.md)
 for migration compatibility, an empty disposable fixture, real desktop/input
 acceptance and failure preservation.
+
+### Architecture-qualified images
+
+Omarchy 4.5 introduced separate x86 and ARM images. Resolve x86 releases from
+`omarchy-<version>-x86.iso` from 4.5 onward; older v4 releases retain the legacy
+`omarchy-<version>.iso` name. The official checksum must name exactly that artifact.
+The resolver and refresh receipt schema share this naming rule, and the additive
+`20261111170000_prepared_omarchy_x86_artifact.sql` migration updates reservation
+validation without changing the already-applied refresh migration. Apply the
+companion migration in each approved environment before testing a new 4.5 claim.
+A resolved checksum is selection evidence; installed-release, reboot and desktop
+acceptance still require their own checks.

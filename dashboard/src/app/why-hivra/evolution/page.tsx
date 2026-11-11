@@ -249,14 +249,16 @@ function WhyHivraContent({ geoNotice }: { geoNotice: string | null }) {
                   ))}
                 </ul>
               </div>
-              <div className={styles.supportCard}>
-                <h3>In preview</h3>
-                <ul>
-                  {inPreview.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
+              {inPreview.length > 0 ? (
+                <div className={styles.supportCard}>
+                  <h3>In preview</h3>
+                  <ul>
+                    {inPreview.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           </SectionShell>
 

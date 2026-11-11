@@ -110,8 +110,10 @@ try:
  selected=kernel_package[1]+'-omarchy'
  config=pathlib.Path('/boot/limine.conf').read_text()
  assert re.search(r'^default_entry:\s*2\s*$',config,re.M),'boot_selection_unverified'
- a=config.index('  //linux-omarchy\n');end=config.find('  //',a+5);entry=config[a:end if end>=0 else None]
- assert a<config.index('  //linux\n') and 'Kernel version: '+selected in entry,'selected_kernel_mismatch'
+ entries=list(re.finditer(r'^  //[^\n]+\n',config,re.M))
+ assert entries and entries[0].group()=='  //linux-omarchy\n','selected_kernel_mismatch'
+ a=entries[0].start();end=entries[1].start() if len(entries)>1 else len(config);entry=config[a:end]
+ assert 'Kernel version: '+selected in entry,'selected_kernel_mismatch'
  m=re.search(r'path: boot\(\):([^#\n]+)#([0-9a-f]+)',entry);assert m,'boot_uki_unavailable'
  uki=pathlib.Path('/boot'+m[1]);assert uki.is_file() and uki.resolve().is_relative_to(pathlib.Path('/boot').resolve()),'boot_uki_unsafe'
  digest=hashlib.blake2b()

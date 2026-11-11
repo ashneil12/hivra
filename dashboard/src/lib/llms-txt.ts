@@ -149,11 +149,11 @@ export function buildLlmsTxt({
   lines.push(`> ${SITE_DESCRIPTION}`);
   lines.push("");
   lines.push(
-    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw or Aeon on a computer of its own, or launch an Ubuntu computer and use it yourself. ${HOSTED_COMPUTE_NEEDS_PLAN} Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
+    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own, or launch an Ubuntu computer and use it yourself. ${HOSTED_COMPUTE_NEEDS_PLAN} Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
   );
   lines.push("");
   lines.push(
-    `Also offered, with conditions: Omarchy (prepared computer), and Windows on your own server with your licensed image (your own Proxmox host and your own licensed ISO). In preview: DeepSeek. Coming next, planned and not yet available: ${ECOSYSTEM_NEXT_NAMES} on the ecosystem map. We also intend to explore an Orchestrator, macOS computers where technically and legally feasible, and custom images.${restricted || !tokenSurfaces ? "" : ` ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`}`
+    `Also offered, with conditions: Omarchy (prepared computer), and Windows on your own server with your licensed image (your own Proxmox host and your own licensed ISO). Coming next, planned and not yet available: ${ECOSYSTEM_NEXT_NAMES} on the ecosystem map. We also intend to explore an Orchestrator, macOS computers where technically and legally feasible, and custom images.${restricted || !tokenSurfaces ? "" : ` ${getTokenPhaseCopy(phase).llmsTxt.tokenStatus}`}`
   );
   lines.push("");
   lines.push(NON_AFFILIATION_LINE);

@@ -878,7 +878,8 @@ function HivraManageContent({
     || snapshots.length >= snapshotMaximum || !restorePointsUsable;
 
   const chatModelSection = isChatCli && Boolean(agent.chat_url) && modelSupported;
-  const veniceModelSection = Boolean(def?.llm?.providers.includes("venice"));
+  // DeepSeek Harness has no post-launch model delivery path, so no Manage section.
+  const veniceModelSection = Boolean(def?.llm?.providers.includes("venice")) && agent.type !== "deepseek-harness";
   const permissionsSection = isChatCli && Boolean(agent.chat_url) && restrictSupported;
   const toolsSection = isChatCli && Boolean(agent.chat_url);
 

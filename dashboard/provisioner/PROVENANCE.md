@@ -544,6 +544,55 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.11.1` builds on `2026.11.10.5` and gives the agent's live browser a
+clean view. Computers provisioned before `2026.11.03.1` still ran a keeper that passes
+`--no-sandbox`, which Chrome answers with an "unsupported command-line flag" infobar
+(`chrome/browser/ui/startup/bad_flags_prompt.cc` lists the flag; nothing else the keeper
+passes is listed), and the runtime updater never reinstalled the keeper. The pinned
+Chrome `.deb` (packaged 2026-08-24) also passed Chrome's own outdated-build threshold
+of eight weeks (`UpgradeDetectorImpl`, `kOutdatedBuildAge`), which shows the "Can't
+update Chrome" bubble and the "Finish update" chip; that detector is skipped whenever
+the browser is managed, and any mandatory machine-level policy makes it managed
+(`ChromeBrowserPolicyConnector::HasMachineLevelPolicies`). The installer and the guest
+half of the runtime update now write `/etc/opt/chrome/policies/managed/hivra-browser.json`
+with `DefaultBrowserSettingEnabled`, `PromotionsEnabled`, `BrowserSignin` and
+`SuppressUnsupportedOSWarning`, all documented Chrome policies and none of them touching
+the sandbox, site isolation or the debugging port. Chrome stays on its pinned build:
+`/etc/default/google-chrome` is written with `repo_add_once="false"` before the `.deb`
+installs (Google's documented switch), Google's apt source is removed and
+`google-chrome-stable` is held, so an apt upgrade cannot replace the binary under the
+running browser. The keeper also passes `--hide-crash-restore-bubble` and
+`--window-position=0,0` (beside its `--window-size`, equal to the Xvfb screen, so the
+window fills the Browser tab where no window manager places it), and still launches
+with Chromium's sandbox on and `about:blank` as its start page. The runtime
+update installs this release's keeper and policy on computers that have the browser
+unit, restarts the browser only when nothing is attached to its debugging port (the
+keeper and policy otherwise apply at its next start), and puts the previous keeper
+back when the browser does not answer on its port within 30 seconds. The remote-desktop
+assets, service units, broker and package pins are unchanged. `hivra-provider-worker.py`
+only advances its native and desktop release labels. This source release does not
+deploy, install, or update any existing computer.
+
+Release `2026.11.10.5` builds on `2026.11.10.4` and gives DeepSeek Harness its model
+at launch. The upstream web UI only allows settings writes from a local browser, so a
+remote owner could not choose one, and the guest refused launch-time model settings.
+The strict version 2 launch document (`hivra-install-agent.py`) now carries the model
+key, the HTTPS base URL and the model name as a complete set or not at all, with typed
+validation that never echoes an input; `hivra-provision-on-host.sh` forwards the set
+and refuses a partial one. On a fresh install only, `deepseek-harness/install-guest.py`
+runs a child with dropped privileges as the `bux` account (no supplementary groups,
+umask 077, minimal environment, the secret on its stdin alone) that creates the
+runtime's private home directories with mode 0700 and writes `settings.yaml` (one
+hand-declared OpenAI-compatible route plus the default model) and `.credentials.yaml`
+(mode 0600, the key by reference) exclusively and without following links. A replay or
+restart never rewrites them, so later owner edits survive, and the shared base
+installer no longer receives the model variables for this kind. The Linux computer
+documents still refuse a model. The service unit, broker, gateway policy, native
+package pins and remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. `hivra-provider-worker.py` only
+advances its native and desktop release labels. This source release does not deploy,
+install, or update any existing computer.
+
 Release `2026.11.10.4` builds on `2026.11.10.3` and adds the `linux-server` kind:
 the Ubuntu computer without a desktop (Files and the two terminals only). It reuses
 the whole `linux-desktop` guest base and skips only the desktop capability install

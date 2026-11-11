@@ -1,36 +1,78 @@
-/* Assistant markdown. Tailwind preflight strips list markers, paragraph margins
-   and heading sizes; restore them for chat replies only. */
-.markdown > :first-child { margin-top: 0; }
-.markdown > :last-child { margin-bottom: 0; }
-.markdown p { margin: 0.45em 0; }
-.markdown ul { list-style: square; padding-left: 1.3em; margin: 0.45em 0; }
-.markdown ol { list-style: decimal; padding-left: 1.5em; margin: 0.45em 0; }
-.markdown li { margin: 0.15em 0; }
-.markdown h1 { font-size: 1.3em; font-weight: 700; margin: 0.8em 0 0.3em; }
-.markdown h2 { font-size: 1.15em; font-weight: 700; margin: 0.7em 0 0.25em; }
-.markdown h3 { font-size: 1.05em; font-weight: 700; margin: 0.6em 0 0.2em; }
-/* The reply container breaks long words; table cells scroll instead. */
-.markdown :global(.chat-md-table) :is(th, td) {
-  word-break: normal;
-  overflow-wrap: normal;
-  min-width: 8ch;
-}
-.markdown :global(.chat-md-table) th { font-size: 11px; }
-
-/* Per-message copy, thumbs and tool toggles. */
-.msgFeedback { gap: 6px; }
-@media (pointer: coarse) {
-  .msgAction { min-height: 40px; min-width: 40px; }
-  .msgFeedback { gap: 10px; }
+/* The chat's frame: its column, the transcript scroller and the inline chat
+   list that stands in for the agent sidebar's slot. The turns, the work trail,
+   the composer and the list rows are in chat/chat.module.css. */
+.root {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  background: transparent;
 }
 
-/* Composer dock. Below 768px the bottom bar owns the home-indicator inset. */
-.composerDock {
-  padding-top: 12px;
-  padding-bottom: 12px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
+.column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+/* The transcript is one centred column. */
+.scroll { flex: 1; overflow-y: auto; padding: 28px 0 8px; }
+.scroll[data-empty="true"] .transcript { display: flex; min-height: 100%; }
+.scroll[data-empty="true"] .transcript > * { flex: 1; }
+.transcript { max-width: 752px; margin: 0 auto; padding: 0 16px; }
+
+/* With no sidebar to hold the chat list, a thin row opens it. */
+.listBar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 6px 8px 0;
+}
+.listBarButton {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.listBarButton:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+@media (pointer: coarse) { .listBarButton { width: 44px; height: 44px; } }
+
+/* The inline chat list: an overlay drawer below 768px, a column from there. */
+.railBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border: 0;
+  background: rgb(0 0 0 / 0.4);
+}
+.rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: min(85vw, 300px);
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--hg-stroke-subtle);
+  background: var(--hg-glass-strong);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
 }
 @media (min-width: 768px) {
-  .composerDock { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+  .railBackdrop { display: none; }
+  .rail { position: static; z-index: auto; width: 232px; }
 }

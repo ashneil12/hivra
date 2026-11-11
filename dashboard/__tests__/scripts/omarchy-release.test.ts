@@ -93,3 +93,18 @@ it("refuses caller-supplied shell and download URL substitutions", () => {
   expect(() => assertOmarchyInstallerRelease({ ...VALIDATED_OMARCHY_INSTALLER, isoUrl: "https://untrusted.example/install.iso" })).toThrow(/invalid/);
   expect(() => assertOmarchyInstallerRelease({ ...VALIDATED_OMARCHY_INSTALLER, releaseCommit: "$(id)" })).toThrow(/invalid/);
 });
+
+it("resolves the official architecture-qualified x86 artifact from Omarchy 4.5 onward", async () => {
+  const base = "https://api.github.com/repos/omacom/omarchy";
+  const fetcher = upstream({
+    [`${base}/releases/latest`]: JSON.stringify({ tag_name: "v4.5.0", draft: false, prerelease: false }),
+    [`${base}/git/ref/tags/v4.5.0`]: JSON.stringify({ ref: "refs/tags/v4.5.0", object: { type: "commit", sha: "a".repeat(40) } }),
+    "https://iso.omarchy.org/omarchy-4.5.0-x86.iso.sha256": `${"b".repeat(64)}  omarchy-4.5.0-x86.iso\n`,
+  });
+  const release = await resolveLatestOmarchyInstaller(fetcher);
+  expect(release.isoFilename).toBe("omarchy-4.5.0-x86.iso");
+  expect(release.isoUrl).toBe("https://iso.omarchy.org/omarchy-4.5.0-x86.iso");
+  expect(() => assertOmarchyInstallerRelease(release)).not.toThrow();
+  expect(() => assertOmarchyInstallerRelease({ ...release, isoFilename: "omarchy-4.5.0-arm.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.5.0-arm.iso" })).toThrow();
+  expect(fetcher).not.toHaveBeenCalledWith("https://iso.omarchy.org/omarchy-4.5.0.iso.sha256", expect.anything());
+});
