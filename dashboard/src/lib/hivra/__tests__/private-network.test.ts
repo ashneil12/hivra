@@ -37,14 +37,35 @@ describe("version floor", () => {
     expect(parseClientVersion("not a version")).toBeNull();
   });
 
-  function runFloor(version: string) {
+  function runFloor(version: string, upgradeTo?: string) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-floor-"));
+    const stub = (v: string) => `#!/bin/sh\nprintf '%s\\n' '${v}' 'commit: x'\n`;
     try {
-      fs.writeFileSync(path.join(dir, "tailscale"), `#!/bin/sh\nprintf '%s\\n' '${version}' 'commit: x'\n`, { mode: 0o755 });
-      return spawnSync("/bin/bash", ["-c", `set -euo pipefail\n${buildTailscaleVersionFloorScript()}\necho JOINED`],
+      fs.writeFileSync(path.join(dir, "tailscale"), stub(version), { mode: 0o755 });
+      // A stand-in apt-get: records its arguments, and "upgrades" tailscale when asked to.
+      const upgrade = upgradeTo ? `cp '${dir}/tailscale.new' '${dir}/tailscale'\n` : "";
+      if (upgradeTo) fs.writeFileSync(path.join(dir, "tailscale.new"), stub(upgradeTo), { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "apt-get"), `#!/bin/sh\necho "$@" >> '${dir}/apt.log'\n${upgrade}`, { mode: 0o755 });
+      const result = spawnSync("/bin/bash", ["-c", `set -euo pipefail\n${buildTailscaleVersionFloorScript()}\necho JOINED`],
         { encoding: "utf8", env: { PATH: `${dir}:/usr/bin:/bin` } as unknown as NodeJS.ProcessEnv });
+      const aptLog = fs.existsSync(path.join(dir, "apt.log")) ? fs.readFileSync(path.join(dir, "apt.log"), "utf8") : "";
+      return Object.assign(result, { aptLog });
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   }
+
+  it("tries one upgrade below the floor and joins if that fixes it", () => {
+    const result = runFloor("1.100.0", "1.104.6");
+    expect(result.aptLog).toContain("install -y --only-upgrade tailscale");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("JOINED");
+  });
+
+  it("still refuses when the upgrade does not help, and does not try to upgrade a current client", () => {
+    const stuck = runFloor("1.100.0");
+    expect(stuck.aptLog).toContain("--only-upgrade");
+    expect(extractPrivateAccessFailureCode(stuck.stdout)).toBe("client_too_old");
+    expect(runFloor("1.104.6").aptLog).toBe("");
+  });
 
   it.each(["1.104.4", "1.104.6", "1.110.0-t1234"])("lets %s continue", version => {
     const result = runFloor(version);
@@ -102,6 +123,29 @@ describe("outbound block", () => {
     expect(script).not.toMatch(/flush ruleset/);
   });
 
+  it("loads after nftables.service and is required by the client's service, with no useless Wants", () => {
+    const script = buildOutboundBlockInstallScript();
+    expect(script).toContain("After=nftables.service");
+    expect(script).not.toContain("Wants=network-pre.target");
+    expect(script).not.toContain("Before=network-pre.target");
+    expect(script).toContain("/etc/systemd/system/tailscaled.service.d/hivra-private-access.conf");
+    expect(script).toMatch(/Requires=hivra-private-access-block\.service\nAfter=hivra-private-access-block\.service/);
+    // start, never restart: a restart would restart the client that requires the unit.
+    expect(script).toContain("systemctl start hivra-private-access-block.service");
+    expect(script).not.toContain("systemctl restart hivra-private-access-block.service");
+    expect(buildOutboundBlockInstallScript(NETBIRD_INTERFACE)).toContain("/etc/systemd/system/netbird.service.d/hivra-private-access.conf");
+  });
+
+  it("gives an apt failure its own code", () => {
+    expect(buildOutboundBlockInstallScript()).toContain("HIVRA_PRIVATE_ACCESS_FAILURE apt_failed");
+  });
+
+  it("removes both drop-ins on disconnect", () => {
+    const script = buildOutboundBlockRemoveScript();
+    expect(script).toContain("/etc/systemd/system/tailscaled.service.d/hivra-private-access.conf");
+    expect(script).toContain("/etc/systemd/system/netbird.service.d/hivra-private-access.conf");
+  });
+
   it("is valid shell and the heredocs close", () => {
     for (const script of [buildOutboundBlockInstallScript(), buildOutboundBlockInstallScript(NETBIRD_INTERFACE),
       buildOutboundBlockRemoveScript()]) {
@@ -131,7 +175,7 @@ describe("ready-made policy", () => {
     expect(policy.acls).toEqual([{ action: "accept", src: ["autogroup:member"], dst: ["tag:hivra:22"] }]);
     expect(policy.acls.some((rule: { src: string[] }) => rule.src.includes("tag:hivra"))).toBe(false);
     expect(policy.tests).toEqual(expect.arrayContaining([
-      { src: "you@example.com", accept: ["tag:hivra:22"] },
+      { src: "REPLACE-ME@example.com", accept: ["tag:hivra:22"] },
       expect.objectContaining({ src: "tag:hivra", deny: expect.arrayContaining(["tag:hivra:22"]) }),
     ]));
     const denied = policy.tests.find((entry: { src: string }) => entry.src === "tag:hivra").deny as string[];
@@ -142,7 +186,16 @@ describe("ready-made policy", () => {
     const text = buildPrivateNetworkPolicy("headscale");
     expect(text).not.toContain("autogroup");
     expect(text).toContain("Headscale user");
-    expect(parse(text).acls[0].src).toEqual(["you@"]);
+    expect(parse(text).acls[0].src).toEqual(["REPLACE-ME@"]);
+  });
+
+  it("tells people to merge, and makes the placeholder login unmistakable", () => {
+    for (const kind of ["tailscale", "headscale"] as const) {
+      const text = buildPrivateNetworkPolicy(kind);
+      expect(text).toContain("MERGE these entries into your existing policy file");
+      expect(text).toContain("REPLACE-ME@");
+      expect(text).not.toContain("you@");
+    }
   });
 
   it("never mentions SSH features, Funnel, exit nodes or routes", () => {

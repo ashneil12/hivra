@@ -409,7 +409,7 @@ describe('ConfigurationTab Component', () => {
         url === '/api/instances/test-inst-123/private-access/tailscale' && options?.method === 'POST'
     );
     const sent = JSON.parse(String(postCall?.[1]?.body));
-    expect(sent.tags).toEqual(['tag:hivra']);
+    expect(sent).not.toHaveProperty('tags');
     expect(sent.enableSsh).toBe(false);
 
     expect(await screen.findByText(/tailscale is connected/i)).toBeInTheDocument();

@@ -207,3 +207,48 @@ it("keeps the original screen when the flag is off", async () => {
   expect(screen.queryByRole("radio", { name: "NetBird" })).not.toBeInTheDocument();
   expect(screen.queryByText(/tag:hivra/)).not.toBeInTheDocument();
 });
+
+describe("protection and wording", () => {
+  const FLAG = "NEXT_PUBLIC_HIVRA_PRIVATE_NETWORK_V2";
+  const saved = process.env[FLAG];
+  afterEach(() => { if (saved === undefined) delete process.env[FLAG]; else process.env[FLAG] = saved; });
+  const live = (extra: Record<string, unknown> = {}) => ({ state: "connected", loginServer: "https://controlplane.tailscale.com",
+    ipv4: "100.64.0.7", observedAt: "2026-11-12T12:00:00Z", provider: "tailscale", ...extra });
+
+  it("says when the safety rule is missing and reapplies it with one action, even with the flag off", async () => {
+    delete process.env[FLAG];
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live({ blockPresent: false, clientVersion: "1.104.6" }) } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live({ blockPresent: true, clientVersion: "1.104.6" }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/safety rule is not active on this computer/)).toBeInTheDocument();
+    expect(screen.getByText("1.104.6")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reapply protection" }));
+    await waitFor(() => expect(screen.queryByText(/safety rule is not active/)).not.toBeInTheDocument());
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ action: "reapply" });
+  });
+
+  it("shows nothing about protection when the computer did not report it", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live() } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    await screen.findByText("100.64.0.7");
+    expect(screen.queryByRole("button", { name: "Reapply protection" })).not.toBeInTheDocument();
+  });
+
+  it("explains what disconnecting NetBird does, not what it does for Tailscale", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true,
+      connection: live({ providerKind: "netbird", loginServer: "https://api.netbird.io" }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/removes its saved login, so it cannot reconnect by itself/)).toBeInTheDocument();
+    expect(screen.queryByText(/Tailscale or Headscale admin page/)).not.toBeInTheDocument();
+  });
+
+  it("tells people to merge the policy, and where their own login goes", async () => {
+    process.env[FLAG] = "1";
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live() } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/Merge these entries into your existing Tailscale policy file/)).toBeInTheDocument();
+    expect(screen.getByText(/Pasting over the whole file replaces your other rules/)).toBeInTheDocument();
+    expect(screen.getByText(/Replace REPLACE-ME@example\.com with your own login/)).toBeInTheDocument();
+  });
+});

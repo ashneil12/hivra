@@ -9,6 +9,8 @@ import {
   buildHivraTailscaleConnectProgram,
   buildHivraNetbirdConnectProgram,
   connectHivraNetbird,
+  observeHivraNetbird,
+  reapplyHivraOutboundBlock,
   parseHivraNetbirdReceipt,
   DEFAULT_TAILSCALE_LOGIN_SERVER,
   disconnectHivraTailscale,
@@ -320,5 +322,118 @@ describe("NetBird", () => {
     expect(result.ok).toBe(true);
     expect(withStdin.mock.calls[0][1]).toBe("setup-key\n");
     expect(withStdin.mock.calls[0][0]).not.toContain("setup-key");
+  });
+});
+
+describe("review fixes: disconnect, status extras, reapply, NetBird SSH", () => {
+  const FLAG = "NEXT_PUBLIC_HIVRA_PRIVATE_NETWORK_V2";
+  const saved = process.env[FLAG];
+  afterEach(() => { if (saved === undefined) delete process.env[FLAG]; else process.env[FLAG] = saved; });
+
+  const decodedPrograms = (script: string) =>
+    (script.match(/[A-Za-z0-9+/]{100,}={0,2}/g) ?? []).map(value => Buffer.from(value, "base64").toString("utf8"));
+  const nbMarker = (body: Record<string, unknown>) => `HIVRA_NETBIRD_STATUS ${JSON.stringify(body)}\n`;
+
+  function pythonCompiles(program: string) {
+    const code = program.split("python3 - <<'PY'\n")[1]?.split("\nPY")[0] ?? "";
+    expect(code.length).toBeGreaterThan(20);
+    const result = spawnSync("python3", ["-I", "-c", "import sys; compile(sys.stdin.read(), 'status', 'exec')"], { input: code, encoding: "utf8" });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  }
+
+  it("joins with --accept-dns=false", () => {
+    expect(buildHivraTailscaleConnectProgram(DEFAULT_TAILSCALE_LOGIN_SERVER)).toContain("--accept-dns=false");
+  });
+
+  it("ships status programs whose Python is valid", () => {
+    pythonCompiles(buildHivraTailscaleConnectProgram(DEFAULT_TAILSCALE_LOGIN_SERVER));
+    pythonCompiles(buildHivraNetbirdConnectProgram("https://api.netbird.io"));
+  });
+
+  it("reports whether the block is loaded and the client version", () => {
+    const withExtras = { ...connectedDocument, HivraBlock: false, HivraVersion: "1.104.6" };
+    expect(parseHivraTailscaleReceipt(`HIVRA_TAILSCALE_STATUS ${JSON.stringify(withExtras)}\n`, DEFAULT_TAILSCALE_LOGIN_SERVER))
+      .toEqual(expect.objectContaining({ blockPresent: false, clientVersion: "1.104.6" }));
+    expect(parseHivraNetbirdReceipt(nbMarker({ Connected: true, Ip: "100.92.1.2/16", PeerCount: 0, SshServer: false,
+      BlockPresent: true, ClientVersion: "0.59.1" }), "https://api.netbird.io"))
+      .toEqual(expect.objectContaining({ blockPresent: true, clientVersion: "0.59.1" }));
+  });
+
+  it("disconnects NetBird in order: down, verify, stop and disable, remove its login, and only then the block", async () => {
+    const runHostScript = jest.fn().mockResolvedValue({ ok: true, stdout: disconnected + nbMarker({ Connected: false }), stderr: "" });
+    const result = await disconnectHivraTailscale(agent, DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, runHostScriptWithStdin: jest.fn(),
+    });
+    expect(result.ok).toBe(true);
+    const program = decodedPrograms(runHostScript.mock.calls[0][0] as string).find(text => text.includes("netbird down")) ?? "";
+    const order = ["netbird down", "disconnect_unconfirmed", "systemctl disable --now netbird", "rm -f /etc/netbird/config.json",
+      "nft delete table inet hivra_private_access"].map(part => program.indexOf(part));
+    expect(order.every(index => index > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(spawnSync("/bin/bash", ["-n"], { input: program, encoding: "utf8" }).status).toBe(0);
+  });
+
+  it("does not call the disconnect done while NetBird still reports connected", async () => {
+    const runHostScript = jest.fn().mockResolvedValue({ ok: true,
+      stdout: disconnected + nbMarker({ Connected: true, Ip: "100.92.1.2/16" }), stderr: "" });
+    const result = await disconnectHivraTailscale(agent, DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, runHostScriptWithStdin: jest.fn(),
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: false,
+      receipt: expect.objectContaining({ state: "unknown", failureCode: "disconnect_unconfirmed" }) }));
+  });
+
+  it("refuses to join Tailscale while NetBird is up (when the v2 flag is on)", async () => {
+    process.env[FLAG] = "1";
+    const runHostScriptWithStdin = jest.fn();
+    const runHostScript = jest.fn()
+      .mockResolvedValueOnce({ ok: true, stdout: disconnected, stderr: "" })
+      .mockResolvedValueOnce({ ok: true, stdout: nbMarker({ Connected: true, Ip: "100.92.1.2/16" }), stderr: "" });
+    await expect(connectHivraTailscale(agent, "secret", DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, runHostScriptWithStdin,
+    })).rejects.toThrow("existing_connection");
+    expect(runHostScriptWithStdin).not.toHaveBeenCalled();
+  });
+
+  it("takes a NetBird client down, keeping the block, when it reports its own SSH server on", async () => {
+    const runHostScript = jest.fn()
+      .mockResolvedValueOnce({ ok: true, stdout: nbMarker({ Connected: true, Ip: "100.92.1.2/16", SshServer: true }), stderr: "" })
+      .mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" });
+    const result = await observeHivraNetbird(agent, "https://api.netbird.io", {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.receipt).toEqual(expect.objectContaining({ state: "unknown", failureCode: "client_ssh_enabled" }));
+    const teardown = decodedPrograms(runHostScript.mock.calls[1][0] as string).join("\n");
+    expect(teardown).toContain("netbird down");
+    expect(teardown).not.toContain("nft delete table");
+  });
+
+  it("brings NetBird down at join time when its SSH server comes up, and keeps the block", () => {
+    const guest = buildHivraNetbirdConnectProgram("https://api.netbird.io");
+    expect(guest).toContain("client_ssh_enabled");
+    expect(guest.indexOf("client_ssh_enabled")).toBeGreaterThan(guest.indexOf("netbird up"));
+    expect(guest).not.toContain("nft delete table");
+    expect(guest).toContain("HIVRA_PRIVATE_ACCESS_FAILURE apt_failed");
+  });
+
+  it("reapplies the block without joining again", async () => {
+    const withBlock = `HIVRA_TAILSCALE_STATUS ${JSON.stringify({ ...connectedDocument, HivraBlock: true })}\n`;
+    const runHostScript = jest.fn().mockResolvedValue({ ok: true, stdout: withBlock, stderr: "" });
+    const result = await reapplyHivraOutboundBlock(agent, "tailscale", DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, runHostScriptWithStdin: jest.fn(),
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: true, receipt: expect.objectContaining({ blockPresent: true }) }));
+    const program = decodedPrograms(runHostScript.mock.calls[0][0] as string).join("\n");
+    expect(program).toContain("table inet hivra_private_access {");
+    expect(program).not.toContain("tailscale up");
+
+    const stillMissing = `HIVRA_TAILSCALE_STATUS ${JSON.stringify({ ...connectedDocument, HivraBlock: false })}\n`;
+    const failed = await reapplyHivraOutboundBlock(agent, "tailscale", DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context),
+      runHostScript: jest.fn().mockResolvedValue({ ok: true, stdout: stillMissing, stderr: "" }), runHostScriptWithStdin: jest.fn(),
+    });
+    expect(failed.ok).toBe(false);
   });
 });

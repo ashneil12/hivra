@@ -298,8 +298,8 @@ export function ConfigurationTailscalePanel({
         body: JSON.stringify({
           authKey: trimmedAuthKey,
           machineName: machineName.trim() || undefined,
-          // Hivra accepts only this tag, and never Tailscale SSH.
-          tags: ['tag:hivra'],
+          // No tags: forcing one makes `tailscale up` fail for anyone whose policy has no
+          // tagOwners for it. Never Tailscale SSH.
           enableSsh: false,
         }),
       });
@@ -643,8 +643,7 @@ export function ConfigurationTailscalePanel({
                 </div>
 
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  This host joins with the tag tag:hivra. Tailscale SSH is off for security; use
-                  normal SSH over your tailnet.
+                  Tailscale SSH is off for security; use normal SSH over your tailnet.
                 </div>
               </div>
             )}

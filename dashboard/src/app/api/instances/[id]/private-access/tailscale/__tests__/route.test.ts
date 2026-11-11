@@ -136,6 +136,7 @@ describe("instance tailscale private access route", () => {
             DNSName: "atlas-agent.customer.ts.net.",
             TailscaleIPs: ["100.64.0.4", "fd7a:115c:a1e0::4"],
             SSHEnabled: false,
+            Tags: ["tag:hivra"],
           },
           CurrentTailnet: {
             Name: "customer.ts.net",
@@ -163,7 +164,16 @@ describe("instance tailscale private access route", () => {
     expect(sshExec).toHaveBeenCalledTimes(2);
     expect(String((sshExec as jest.Mock).mock.calls[0][1])).toContain("TAILSCALE_AUTH_KEY");
     expect(String((sshExec as jest.Mock).mock.calls[0][1])).toContain("tailscale up");
-    expect((sshExec as jest.Mock).mock.calls[0][2]).toBeUndefined();
+    const script = String((sshExec as jest.Mock).mock.calls[0][1]);
+    // The key travels on stdin into a private file, never in the command line.
+    expect(script).not.toContain("tskey-auth-123");
+    expect(script).toContain('--auth-key="file:$TAILSCALE_AUTH_FILE"');
+    expect(script).toContain("--ssh=false --accept-routes=false --advertise-exit-node=false --accept-dns=false");
+    expect((sshExec as jest.Mock).mock.calls[0][2]).toEqual({ stdin: "tskey-auth-123\n" });
+    // Version floor and outbound block come after install and before the join.
+    expect(script.indexOf("HIVRA_TS_MIN='1.104.4'")).toBeGreaterThan(script.indexOf("tailscale.com/install.sh"));
+    expect(script.indexOf("table inet hivra_private_access {")).toBeGreaterThan(script.indexOf("HIVRA_TS_MIN"));
+    expect(script.indexOf("tailscale up")).toBeGreaterThan(script.indexOf("table inet hivra_private_access {"));
     expect(json.data.tailscale).toEqual({
       enabled: true,
       hostScoped: true,
@@ -179,6 +189,33 @@ describe("instance tailscale private access route", () => {
       lastError: null,
     });
     expect(json.data.tailscale).not.toHaveProperty("authKey");
+  });
+
+  it("does not save a tag the node did not report", async () => {
+    (sshExec as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ ok: true, stdout: JSON.stringify({ Self: { HostName: "a", TailscaleIPs: ["100.64.0.4"] } }), stderr: "" });
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
+        method: "POST", body: JSON.stringify({ authKey: "tskey-auth-123", tags: ["tag:hivra"] }),
+      }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.tailscale.tags).toBeUndefined();
+  });
+
+  it("names a client that is too old in plain words", async () => {
+    (sshExec as jest.Mock)
+      .mockResolvedValueOnce({ ok: false, stdout: "HIVRA_PRIVATE_ACCESS_FAILURE client_too_old\n", stderr: "", error: "Remote bash exited with code 1" });
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
+        method: "POST", body: JSON.stringify({ authKey: "tskey-auth-123" }),
+      }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
+    );
+    expect(response.status).toBe(500);
+    expect((await response.json()).error).toContain("1.104.4");
   });
 
   it.each([

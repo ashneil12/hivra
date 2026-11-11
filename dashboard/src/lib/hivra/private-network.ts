@@ -54,22 +54,37 @@ export function meetsMinimumVersion(version: string | null, minimum: string = TA
   return true;
 }
 
-/** Guest shell, run after install and before `tailscale up`. Prints a failure code and exits 1 below the floor. */
+/**
+ * Guest shell, run after install and before `tailscale up`. Below the floor it
+ * tries one upgrade (apt --only-upgrade, quietly; a failed upgrade is not an
+ * error by itself) and checks again. Still below: prints `client_too_old` and exits 1.
+ */
 export function buildTailscaleVersionFloorScript(minimum: string = TAILSCALE_MIN_VERSION): string {
   if (!/^\d+\.\d+\.\d+$/.test(minimum)) throw new Error("Invalid minimum version");
   return [
     `HIVRA_TS_MIN='${minimum}'`,
-    "HIVRA_TS_VERSION=\"$(tailscale version 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)\"",
-    "case \"$HIVRA_TS_VERSION\" in",
-    "  [0-9]*.[0-9]*.[0-9]*) ;;",
-    `  *) echo '${PRIVATE_ACCESS_FAILURE_MARKER} client_version_unreadable'; exit 1 ;;`,
-    "esac",
-    "HIVRA_TS_VERSION=\"${HIVRA_TS_VERSION%%[!0-9.]*}\"",
-    "HIVRA_TS_LOWEST=\"$(printf '%s\\n%s\\n' \"$HIVRA_TS_MIN\" \"$HIVRA_TS_VERSION\" | sort -V | head -n 1)\"",
-    "if [ \"$HIVRA_TS_LOWEST\" != \"$HIVRA_TS_MIN\" ]; then",
-    `  echo '${PRIVATE_ACCESS_FAILURE_MARKER} client_too_old'`,
-    "  exit 1",
+    "hivra_ts_check() {",
+    "  local v",
+    "  v=\"$(tailscale version 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)\"",
+    "  case \"$v\" in",
+    "    [0-9]*.[0-9]*.[0-9]*) ;;",
+    "    *) return 2 ;;",
+    "  esac",
+    "  v=\"${v%%[!0-9.]*}\"",
+    "  [ \"$(printf '%s\\n%s\\n' \"$HIVRA_TS_MIN\" \"$v\" | sort -V | head -n 1)\" = \"$HIVRA_TS_MIN\" ]",
+    "}",
+    "HIVRA_TS_RC=0",
+    "hivra_ts_check || HIVRA_TS_RC=$?",
+    "if [ \"$HIVRA_TS_RC\" = 1 ] && command -v apt-get >/dev/null 2>&1; then",
+    "  { apt-get update -y && apt-get install -y --only-upgrade tailscale; } >/dev/null 2>&1 || true",
+    "  HIVRA_TS_RC=0",
+    "  hivra_ts_check || HIVRA_TS_RC=$?",
     "fi",
+    "case \"$HIVRA_TS_RC\" in",
+    "  0) ;;",
+    `  2) echo '${PRIVATE_ACCESS_FAILURE_MARKER} client_version_unreadable'; exit 1 ;;`,
+    `  *) echo '${PRIVATE_ACCESS_FAILURE_MARKER} client_too_old'; exit 1 ;;`,
+    "esac",
   ].join("\n");
 }
 
@@ -80,6 +95,9 @@ export function buildTailscaleVersionFloorScript(minimum: string = TAILSCALE_MIN
 export const OUTBOUND_BLOCK_TABLE = "hivra_private_access";
 export const OUTBOUND_BLOCK_UNIT = "hivra-private-access-block.service";
 export const OUTBOUND_BLOCK_RULES_FILE = "/etc/hivra/private-access.nft";
+const CLIENT_UNITS = ["tailscaled.service", "netbird.service"] as const;
+const DROPIN_NAME = "hivra-private-access.conf";
+const dropInPath = (unit: string) => `/etc/systemd/system/${unit}.d/${DROPIN_NAME}`;
 
 function assertInterface(name: string): string {
   if (!/^[a-z][a-z0-9]{0,14}$/.test(name)) throw new Error("Invalid network interface name");
@@ -111,13 +129,20 @@ export function buildOutboundBlockRules(iface: string = TAILSCALE_INTERFACE): st
   ].join("\n");
 }
 
-/** Guest shell: install the rules now and on every boot. Fails closed (before the join) if it cannot. */
+/**
+ * Guest shell: install the rules now and on every boot. The unit loads after
+ * nftables.service (which can flush rules) and the client's service requires
+ * it, so the client never runs without the block. Fails closed (before the
+ * join) if it cannot. Safe to run again at any time without re-joining.
+ */
 export function buildOutboundBlockInstallScript(iface: string = TAILSCALE_INTERFACE): string {
   const rules = buildOutboundBlockRules(iface);
+  const clientUnit = iface === NETBIRD_INTERFACE ? "netbird.service" : "tailscaled.service";
   const fail = `echo '${PRIVATE_ACCESS_FAILURE_MARKER} outbound_block_failed'; exit 1`;
+  const aptFail = `echo '${PRIVATE_ACCESS_FAILURE_MARKER} apt_failed'; exit 1`;
   return [
     "if ! command -v nft >/dev/null 2>&1; then",
-    "  if command -v apt-get >/dev/null 2>&1; then apt-get update -y && apt-get install -y nftables; fi",
+    `  if command -v apt-get >/dev/null 2>&1; then { apt-get update -y && apt-get install -y nftables; } || { ${aptFail}; }; fi`,
     "fi",
     `command -v nft >/dev/null 2>&1 || { ${fail}; }`,
     "HIVRA_NFT_BIN=\"$(command -v nft)\"",
@@ -130,8 +155,7 @@ export function buildOutboundBlockInstallScript(iface: string = TAILSCALE_INTERF
     `  cat > /etc/systemd/system/${OUTBOUND_BLOCK_UNIT} <<HIVRA_NFT_UNIT`,
     "[Unit]",
     "Description=Hivra: no new outbound connections to other devices on the private network",
-    "Before=network-pre.target tailscaled.service",
-    "Wants=network-pre.target",
+    "After=nftables.service",
     "",
     "[Service]",
     "Type=oneshot",
@@ -142,22 +166,32 @@ export function buildOutboundBlockInstallScript(iface: string = TAILSCALE_INTERF
     "[Install]",
     "WantedBy=multi-user.target",
     "HIVRA_NFT_UNIT",
+    `  install -d -m 0755 /etc/systemd/system/${clientUnit}.d`,
+    `  cat > ${dropInPath(clientUnit)} <<'HIVRA_NFT_DROPIN'`,
+    "[Unit]",
+    `Requires=${OUTBOUND_BLOCK_UNIT}`,
+    `After=${OUTBOUND_BLOCK_UNIT}`,
+    "HIVRA_NFT_DROPIN",
     "  systemctl daemon-reload",
     `  systemctl enable ${OUTBOUND_BLOCK_UNIT} >/dev/null 2>&1 || { ${fail}; }`,
-    `  systemctl restart ${OUTBOUND_BLOCK_UNIT} || { ${fail}; }`,
-    "else",
-    `  "$HIVRA_NFT_BIN" -f ${OUTBOUND_BLOCK_RULES_FILE} || { ${fail}; }`,
+    // start, not restart: a restart would restart the client that requires it.
+    `  systemctl start ${OUTBOUND_BLOCK_UNIT} || { ${fail}; }`,
     "fi",
+    // Load the latest rules now (they replace the table, so this is safe to repeat).
+    `"$HIVRA_NFT_BIN" -f ${OUTBOUND_BLOCK_RULES_FILE} || { ${fail}; }`,
     `"$HIVRA_NFT_BIN" list table inet ${OUTBOUND_BLOCK_TABLE} >/dev/null 2>&1 || { ${fail}; }`,
   ].join("\n");
 }
 
-/** Guest shell: take the rules and their unit away. Safe to run when nothing was installed. */
+/** Guest shell: take the rules, their unit and the clients' drop-ins away. Safe to run when nothing was installed. */
 export function buildOutboundBlockRemoveScript(): string {
+  const dropIns = CLIENT_UNITS.map(unit => dropInPath(unit));
   return [
     "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
     `  systemctl disable --now ${OUTBOUND_BLOCK_UNIT} >/dev/null 2>&1 || true`,
     "fi",
+    `rm -f ${dropIns.join(" ")}`,
+    ...CLIENT_UNITS.map(unit => `rmdir /etc/systemd/system/${unit}.d 2>/dev/null || true`),
     `rm -f /etc/systemd/system/${OUTBOUND_BLOCK_UNIT} ${OUTBOUND_BLOCK_RULES_FILE}`,
     "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi",
     `if command -v nft >/dev/null 2>&1; then nft delete table inet ${OUTBOUND_BLOCK_TABLE} 2>/dev/null || true; fi`,
@@ -186,21 +220,27 @@ export function normalizeNetbirdManagementUrl(value: unknown): string | null {
 // Ready-made policy for the owner's own network
 // ---------------------------------------------------------------------------
 
+/** Shown in the policy snippet where the owner must put their own login. Deliberately not a real address. */
+export const POLICY_LOGIN_PLACEHOLDER = "REPLACE-ME@example.com";
+export const POLICY_HEADSCALE_USER_PLACEHOLDER = "REPLACE-ME@";
+
 /**
- * huJSON for the owner's Tailscale or Headscale policy file. Full-line `//`
- * comments only, so a test can strip them and parse the rest.
+ * huJSON entries for the owner's Tailscale or Headscale policy file, to be
+ * merged into the file they already have. Full-line `//` comments only, so a
+ * test can strip them and parse the rest.
  */
 export function buildPrivateNetworkPolicy(kind: "tailscale" | "headscale"): string {
-  const owner = kind === "tailscale" ? "autogroup:member" : "you@";
-  const ownerLogin = kind === "tailscale" ? "you@example.com" : "you@";
-  const header = kind === "tailscale"
-    ? "// Your own devices may reach your Hivra computers on SSH (port 22). Hivra computers may reach nothing."
-    : "// Your own devices may reach your Hivra computers on SSH (port 22). Hivra computers may reach nothing. Replace you@ with your Headscale user.";
+  const owner = kind === "tailscale" ? "autogroup:member" : POLICY_HEADSCALE_USER_PLACEHOLDER;
+  const ownerLogin = kind === "tailscale" ? POLICY_LOGIN_PLACEHOLDER : POLICY_HEADSCALE_USER_PLACEHOLDER;
+  const tagOwner = kind === "tailscale" ? "autogroup:admin" : POLICY_HEADSCALE_USER_PLACEHOLDER;
   const lines = [
-    header,
+    "// MERGE these entries into your existing policy file. Pasting this over the whole file would replace your other rules.",
+    "// Your own devices may reach your Hivra computers on SSH (port 22). Hivra computers may reach nothing.",
+    ...(kind === "headscale" ? [`// Replace ${POLICY_HEADSCALE_USER_PLACEHOLDER} (below, three times) with your Headscale user.`] : [
+      `// Replace ${POLICY_LOGIN_PLACEHOLDER} (in the first test below) with your own login.`]),
     "{",
     '  "tagOwners": {',
-    `    "${HIVRA_TAILNET_TAG}": ["${kind === "tailscale" ? "autogroup:admin" : "you@"}"]`,
+    `    "${HIVRA_TAILNET_TAG}": ["${tagOwner}"]`,
     "  },",
     '  "acls": [',
     `    { "action": "accept", "src": ["${owner}"], "dst": ["${HIVRA_TAILNET_TAG}:22"] }`,
@@ -208,7 +248,7 @@ export function buildPrivateNetworkPolicy(kind: "tailscale" | "headscale"): stri
     "  // These checks make your network refuse a policy edit that would let a Hivra computer reach your devices.",
     '  "tests": [',
     `    { "src": "${ownerLogin}", "accept": ["${HIVRA_TAILNET_TAG}:22"] },`,
-    "    // Use the private address of one of your own devices below.",
+    "    // Replace 100.64.0.1 with the private address of one of your own devices.",
     `    { "src": "${HIVRA_TAILNET_TAG}", "deny": ["100.64.0.1:22", "${HIVRA_TAILNET_TAG}:22"] }`,
     "  ]",
     "}",
@@ -230,6 +270,9 @@ export const NETBIRD_POLICY_STEPS: readonly string[] = [
 export const PRIVATE_ACCESS_FAILURE_COPY: Record<string, string> = {
   client_too_old: `This computer's Tailscale is older than ${TAILSCALE_MIN_VERSION}, which Hivra needs to connect safely. Update Tailscale on the computer, then connect again.`,
   client_version_unreadable: "Hivra could not read this computer's Tailscale version, so it did not connect. Try again in a minute.",
+  apt_failed: "Hivra could not install a needed package on this computer (its package manager failed), so it did not connect. Check the computer can reach the internet, then try again.",
+  client_ssh_enabled: "The NetBird client turned its own SSH server on, which Hivra does not allow, so it was disconnected. Turn that off in NetBird and connect again.",
+  disconnect_unconfirmed: "Hivra could not confirm NetBird disconnected, so it left the safety rule in place. Refresh status and try again.",
   outbound_block_failed: "Hivra could not put its safety rule in place on this computer, so it did not connect. Try again; if it keeps failing, contact support.",
 };
 

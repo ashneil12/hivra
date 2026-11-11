@@ -7,6 +7,8 @@ import {
   HIVRA_TAILNET_TAG,
   isPrivateNetworkV2Enabled,
   NETBIRD_POLICY_STEPS,
+  POLICY_HEADSCALE_USER_PLACEHOLDER,
+  POLICY_LOGIN_PLACEHOLDER,
   TAILSCALE_MIN_VERSION,
   type PrivateNetworkProvider,
 } from "@/lib/hivra/private-network";
@@ -26,6 +28,10 @@ type Connection = {
   visiblePeerCount?: number;
   canSeeOtherDevices?: boolean;
   taggedHivra?: boolean;
+  blockPresent?: boolean;
+  clientVersion?: string;
+  /** "tailscale", "headscale" or "netbird" when the saved connection knows it. */
+  providerKind?: PrivateNetworkProvider;
 };
 
 const DEFAULT_SERVER = "https://controlplane.tailscale.com";
@@ -36,6 +42,7 @@ const PROVIDER_LABEL: Record<PrivateNetworkProvider, string> = {
 };
 
 function inferProvider(connection: Connection): PrivateNetworkProvider {
+  if (connection.providerKind) return connection.providerKind;
   if (connection.provider === "netbird") return "netbird";
   if (connection.loginServer === DEFAULT_SERVER) return "tailscale";
   try {
@@ -76,7 +83,7 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
   const [reason, setReason] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [action, setAction] = useState<"connect" | "refresh" | "disconnect" | null>(null);
+  const [action, setAction] = useState<"connect" | "refresh" | "disconnect" | "reapply" | null>(null);
   const [authKey, setAuthKey] = useState("");
   const [loginServer, setLoginServer] = useState(DEFAULT_SERVER);
   const [advanced, setAdvanced] = useState(false);
@@ -110,7 +117,7 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
 
   useEffect(() => { void load(); }, [load, observedStatus]);
 
-  async function mutate(kind: "connect" | "refresh" | "disconnect") {
+  async function mutate(kind: "connect" | "refresh" | "disconnect" | "reapply") {
     const submittedKey = authKey;
     if (kind === "connect") setAuthKey("");
     setAction(kind);
@@ -149,7 +156,7 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
     try { await navigator.clipboard.writeText(text); setCopied("yes"); } catch { setCopied("no"); }
   }
   useReportManageFeedback(onFeedbackChange, error ? { kind: "alert", message: error }
-    : action && action !== "refresh" ? { kind: "status", message: "Updating private access…" } : null);
+    : action && action !== "refresh" ? { kind: "status", message: action === "reapply" ? "Reapplying protection…" : "Updating private access…" } : null);
   const buttonStyle: React.CSSProperties = {
     border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)",
     padding: "8px 12px", minHeight: 40, fontSize: 11, fontWeight: 700, cursor: busy ? "default" : "pointer",
@@ -184,6 +191,7 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
             {connection.magicDnsName ? <div><strong>Private name:</strong> <span className="mono">{connection.magicDnsName}</span></div> : null}
             {connection.ipv4 ? <div><strong>Private IPv4:</strong> <span className="mono">{connection.ipv4}</span></div> : null}
             {connection.tailnetName ? <div><strong>Network:</strong> {connection.tailnetName}</div> : null}
+            {connection.clientVersion ? <div><strong>Client version:</strong> {connection.clientVersion}</div> : null}
             <div style={{ color: "var(--text-muted)" }}>Observed {new Date(connection.observedAt).toLocaleString()}</div>
           </div>
         ) : !loading ? (
@@ -274,7 +282,17 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
           </div>
         </div> : null}
         {connection ? <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          Disconnect logs this computer out while leaving the local service available for a verified refresh or later reconnect. Your Tailscale or Headscale admin page may retain an offline device record for its own retention period.
+          {connectedProvider === "netbird"
+            ? "Disconnect takes this computer off NetBird, stops its NetBird service and removes its saved login, so it cannot reconnect by itself. Your NetBird dashboard may keep an offline entry for this computer until you remove it."
+            : "Disconnect logs this computer out while leaving the local service available for a verified refresh or later reconnect. Your Tailscale or Headscale admin page may retain an offline device record for its own retention period."}
+        </div> : null}
+        {connection && connected && connection.blockPresent === false && !pending ? <div role="status" style={{ border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", padding: 10, fontSize: 12, lineHeight: 1.5, display: "grid", gap: 8 }}>
+          <div>Hivra&apos;s safety rule is not active on this computer. Until it is back, the computer could start connections to your other devices if your network allows it.</div>
+          <div className="private-access-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" disabled={busy || !supported} onClick={() => void mutate("reapply")} style={buttonStyle}>
+              {action === "reapply" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <ShieldCheck size={14} />} Reapply protection
+            </button>
+          </div>
         </div> : null}
         {v2 && connection && connected && connectedProvider ? <div style={{ display: "grid", gap: 8, fontSize: 12, lineHeight: 1.5 }}>
           {connection.canSeeOtherDevices === true ? <div role="status" style={{ border: "1px solid color-mix(in srgb, var(--hg-warn, var(--hg-bad)) 40%, transparent)", padding: 10, color: "var(--ink-black)" }}>
@@ -292,8 +310,10 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
               {NETBIRD_POLICY_STEPS.map(step => <li key={step}>{step}</li>)}
             </ol> : <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
               <div style={{ color: "var(--text-secondary)" }}>
-                Paste this into your {PROVIDER_LABEL[connectedProvider]} policy file. Your own devices can reach this computer on SSH; this computer can reach nothing.
-                {connectedProvider === "headscale" ? " Replace you@ with your Headscale user." : ""}
+                Merge these entries into your existing {PROVIDER_LABEL[connectedProvider]} policy file. Pasting over the whole file replaces your other rules. Your own devices can reach this computer on SSH; this computer can reach nothing.
+                {connectedProvider === "headscale"
+                  ? ` Replace ${POLICY_HEADSCALE_USER_PLACEHOLDER} with your Headscale user.`
+                  : ` Replace ${POLICY_LOGIN_PLACEHOLDER} with your own login.`}
               </div>
               <pre className="mono" aria-label="Policy to copy" style={{ margin: 0, padding: 10, overflowX: "auto", fontSize: 11, border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)" }}>{buildPrivateNetworkPolicy(connectedProvider)}</pre>
               <div className="private-access-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

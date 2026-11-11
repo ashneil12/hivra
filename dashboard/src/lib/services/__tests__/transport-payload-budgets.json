@@ -245,7 +245,7 @@
         "percent": 76.6
       },
       "providerSeedScript": {
-        "bytes": 282839,
+        "bytes": 283347,
         "limit": "provider-guest-seed",
         "percent": 27
       }
@@ -334,14 +334,14 @@
     },
     "tailscale-connect": {
       "script": {
-        "bytes": 6925,
+        "bytes": 11837,
         "limit": "host-script-with-stdin.script",
-        "percent": 7
+        "percent": 12
       },
       "guestLoginCommand": {
-        "bytes": 4068,
+        "bytes": 8980,
         "limit": "linux-argument",
-        "percent": 3.1
+        "percent": 6.9
       }
     },
     "windows-rdp-capability": {

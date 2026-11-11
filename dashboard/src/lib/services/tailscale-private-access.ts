@@ -1,4 +1,8 @@
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
+import {
+  buildOutboundBlockRemoveScript,
+  PRIVATE_ACCESS_FAILURE_MARKER,
+} from "@/lib/hivra/private-network";
 
 export type TailscaleStatusSnapshot = {
   machineName?: string;
@@ -7,6 +11,8 @@ export type TailscaleStatusSnapshot = {
   ipv4?: string;
   ipv6?: string;
   sshEnabled?: boolean;
+  /** Only what the node itself reports (Self.Tags). Never what was asked for. */
+  tags?: string[];
 };
 
 type TailscaleCommandResult = {
@@ -23,7 +29,7 @@ export function buildTailscaleInstallScript(): string {
     // container.
     "if ! command -v tailscale >/dev/null 2>&1; then",
     "  if ! command -v curl >/dev/null 2>&1; then",
-    "    if command -v apt-get >/dev/null 2>&1; then apt-get update -y && apt-get install -y curl; fi",
+    `    if command -v apt-get >/dev/null 2>&1; then { apt-get update -y && apt-get install -y curl; } || { echo '${PRIVATE_ACCESS_FAILURE_MARKER} apt_failed'; exit 1; }; fi`,
     "  fi",
     "  if ! command -v curl >/dev/null 2>&1; then",
     "    echo 'curl is required to install Tailscale but is not available on this host' >&2",
@@ -74,16 +80,26 @@ export function buildTailscaleInstallScript(): string {
 }
 
 export function buildTailscaleEnrollCommand(params: {
-  authKeyEnvVar: string;
+  /** Name of a shell variable holding the auth key itself. Puts the key in the command line; prefer authKeyFileVar. */
+  authKeyEnvVar?: string;
+  /** Name of a shell variable holding the path of a private file that holds the key. */
+  authKeyFileVar?: string;
   machineName?: string;
   tags?: string[];
   enableSsh?: boolean;
 }): string {
-  if (!/^[A-Z_][A-Z0-9_]*$/.test(params.authKeyEnvVar)) {
+  if (params.enableSsh === true) {
+    throw new Error("Tailscale SSH is not available");
+  }
+  const variable = params.authKeyFileVar ?? params.authKeyEnvVar;
+  if (!variable || !/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
     throw new Error("Invalid auth key env var name");
   }
 
-  const parts = [`tailscale up --auth-key "$${params.authKeyEnvVar}"`];
+  const parts = [params.authKeyFileVar
+    ? `tailscale up --auth-key="file:$${variable}"`
+    : `tailscale up --auth-key "$${variable}"`];
+  parts.push("--ssh=false", "--accept-routes=false", "--advertise-exit-node=false", "--accept-dns=false");
 
   if (params.machineName?.trim()) {
     parts.push(`--hostname=${quoteShellArg(params.machineName.trim())}`);
@@ -91,10 +107,6 @@ export function buildTailscaleEnrollCommand(params: {
 
   if (params.tags && params.tags.length > 0) {
     parts.push(`--advertise-tags=${quoteShellArg(params.tags.join(","))}`);
-  }
-
-  if (params.enableSsh) {
-    parts.push("--ssh");
   }
 
   return parts.join(" ");
@@ -115,7 +127,7 @@ export function buildTailscaleSetCommand(params: {
   }
 
   if (params.enableSsh === true) {
-    parts.push("--ssh");
+    throw new Error("Tailscale SSH is not available");
   } else if (params.enableSsh === false) {
     parts.push("--ssh=false");
   }
@@ -126,6 +138,7 @@ export function buildTailscaleSetCommand(params: {
 export function buildTailscaleDisableScript(): string {
   return [
     "tailscale logout || true",
+    buildOutboundBlockRemoveScript(),
     "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
     "  systemctl disable --now tailscaled || true",
     "elif command -v pkill >/dev/null 2>&1; then",
@@ -141,6 +154,7 @@ export function parseTailscaleStatusJson(raw: string): TailscaleStatusSnapshot {
       DNSName?: string;
       TailscaleIPs?: string[];
       SSHEnabled?: boolean;
+      Tags?: string[];
     };
     CurrentTailnet?: {
       Name?: string;
@@ -151,6 +165,8 @@ export function parseTailscaleStatusJson(raw: string): TailscaleStatusSnapshot {
   const ipv4 = ips.find((value) => value.includes("."));
   const ipv6 = ips.find((value) => value.includes(":"));
   const dnsName = parsed.Self?.DNSName?.replace(/\.$/, "");
+  const selfTags = Array.isArray(parsed.Self?.Tags)
+    ? parsed.Self.Tags.filter((tag): tag is string => typeof tag === "string") : [];
 
   return {
     machineName: parsed.Self?.HostName,
@@ -159,6 +175,7 @@ export function parseTailscaleStatusJson(raw: string): TailscaleStatusSnapshot {
     ipv4,
     ipv6,
     sshEnabled: parsed.Self?.SSHEnabled,
+    ...(selfTags.length > 0 ? { tags: selfTags } : {}),
   };
 }
 

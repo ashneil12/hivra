@@ -25,6 +25,7 @@ import {
   normalizeTailscaleLoginServer,
   observeHivraNetbird,
   observeHivraTailscale,
+  reapplyHivraOutboundBlock,
   sameHivraPrivateAccessAuthority,
   type HivraPrivateAccessAgentRow,
   type HivraTailscaleReceipt,
@@ -46,6 +47,7 @@ const inputSchema = z.discriminatedUnion("action", [
     provider: z.enum(["tailscale", "headscale", "netbird"]).optional(),
   }).strict(),
   z.object({ action: z.literal("refresh") }).strict(),
+  z.object({ action: z.literal("reapply") }).strict(),
   z.object({ action: z.literal("disconnect") }).strict(),
 ]);
 
@@ -68,7 +70,17 @@ type StoredConnection = {
   connected_at: string | null;
   observed_at: string;
   failure_code: string | null;
+  // Saved by the additive 20261112000200 migration; absent where it is not applied.
+  provider?: "tailscale" | "headscale" | "netbird" | null;
+  can_see_other_devices?: boolean | null;
+  visible_peer_count?: number | null;
+  tagged_hivra?: boolean | null;
+  block_present?: boolean | null;
+  client_version?: string | null;
 };
+
+const BASE_COLUMNS = "authority,state,machine_name,magic_dns_name,tailnet_name,login_server,ipv4,ipv6,connected_at,observed_at,failure_code";
+const EXTRA_COLUMNS = "provider,can_see_other_devices,visible_peer_count,tagged_hivra,block_present,client_version";
 
 type ActiveOperation = {
   id: string;
@@ -96,7 +108,41 @@ function publicConnection(row: StoredConnection | null) {
     connectedAt: row.connected_at,
     observedAt: row.observed_at,
     failureCode: row.failure_code,
+    ...(row.provider ? { provider: row.provider === "netbird" ? "netbird" : "tailscale", providerKind: row.provider } : {}),
+    ...(row.can_see_other_devices != null ? { canSeeOtherDevices: row.can_see_other_devices } : {}),
+    ...(row.visible_peer_count != null ? { visiblePeerCount: row.visible_peer_count } : {}),
+    ...(row.tagged_hivra != null ? { taggedHivra: row.tagged_hivra } : {}),
+    ...(row.block_present != null ? { blockPresent: row.block_present } : {}),
+    ...(row.client_version ? { clientVersion: row.client_version } : {}),
   };
+}
+
+/**
+ * Keeps the provider and the computer's own view next to the saved connection,
+ * so a reload still knows them. Best effort: where the migration is not applied
+ * the columns do not exist, the write fails, and the live receipt still carries them.
+ */
+async function persistExtras(userId: string, agentId: string, receipt: HivraTailscaleReceipt,
+  kind: "tailscale" | "headscale" | "netbird") {
+  if (receipt.state !== "connected") return;
+  try {
+    await supabaseAdmin!.from("hivra_private_access_connections").update({
+      provider: kind,
+      can_see_other_devices: receipt.canSeeOtherDevices ?? null,
+      visible_peer_count: receipt.visiblePeerCount ?? null,
+      tagged_hivra: receipt.taggedHivra ?? null,
+      block_present: receipt.blockPresent ?? null,
+      client_version: receipt.clientVersion ?? null,
+    }).eq("agent_id", agentId).eq("user_id", userId);
+  } catch { /* best effort */ }
+}
+
+function providerKind(receipt: HivraTailscaleReceipt, stored: StoredConnection | null,
+  requested?: "tailscale" | "headscale" | "netbird"): "tailscale" | "headscale" | "netbird" {
+  if (receipt.provider === "netbird") return "netbird";
+  if (requested) return requested;
+  if (stored?.provider === "headscale" || stored?.provider === "tailscale") return stored.provider;
+  return receipt.loginServer === DEFAULT_TAILSCALE_LOGIN_SERVER ? "tailscale" : "headscale";
 }
 
 async function loadOwned(id: string, userId: string) {
@@ -107,8 +153,12 @@ async function loadOwned(id: string, userId: string) {
 }
 
 async function loadConnection(id: string, userId: string): Promise<StoredConnection | null> {
-  const { data, error } = await supabaseAdmin!.from("hivra_private_access_connections")
-    .select("authority,state,machine_name,magic_dns_name,tailnet_name,login_server,ipv4,ipv6,connected_at,observed_at,failure_code")
+  const table = () => supabaseAdmin!.from("hivra_private_access_connections");
+  const withExtras = await table().select(`${BASE_COLUMNS},${EXTRA_COLUMNS}`)
+    .eq("agent_id", id).eq("user_id", userId).maybeSingle();
+  if (!withExtras.error) return withExtras.data as StoredConnection | null;
+  // The extra columns are missing where the migration is not applied: read what is there.
+  const { data, error } = await table().select(BASE_COLUMNS)
     .eq("agent_id", id).eq("user_id", userId).maybeSingle();
   if (error) throw new Error("connection_lookup_failed");
   return data as StoredConnection | null;
@@ -304,9 +354,40 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
       if (!saved) return response({ success: false, error: "The fresh private-access observation could not be saved." }, 409);
     }
+    if (stored) await persistExtras(owner.userId, id, observed.receipt, providerKind(observed.receipt, stored));
     return response({ success: observed.ok, data: { supported: true,
       connection: observed.receipt.state === "disconnected" ? null : observed.receipt },
-      ...(!observed.ok ? { error: "The computer's private-network state could not be confirmed." } : {}) }, observed.ok ? 200 : 202);
+      ...(!observed.ok ? { ...(observed.receipt.failureCode ? { failureCode: observed.receipt.failureCode } : {}),
+        error: privateAccessFailureMessage(observed.receipt.failureCode)
+          ?? "The computer's private-network state could not be confirmed." } : {}) }, observed.ok ? 200 : 202);
+  }
+
+  if (parsed.data.action === "reapply") {
+    if (!stored || stored.state !== "connected") {
+      return response({ success: false, code: "not_managed", error: "Connect a private network before reapplying protection." }, 409);
+    }
+    const seen = await observeAnyNetwork(owner.agent, stored.login_server);
+    if (seen.receipt.state !== "connected") {
+      return response({ success: false, code: "not_connected", error: "The computer isn't connected to a private network right now. Refresh status first." }, 409);
+    }
+    const kind = providerKind(seen.receipt, stored);
+    let redone: { ok: boolean; receipt: HivraTailscaleReceipt };
+    try {
+      redone = await reapplyHivraOutboundBlock(owner.agent, kind === "netbird" ? "netbird" : "tailscale", stored.login_server);
+    } catch {
+      redone = { ok: false, receipt: { ...seen.receipt, failureCode: "guest_command_failed" } };
+    }
+    if (redone.ok) {
+      if (redone.receipt.connectedAt === undefined && stored.connected_at) redone.receipt.connectedAt = stored.connected_at;
+      const saved = await rpcBoolean("record_hivra_private_access_observation", {
+        p_user_id: owner.userId, p_agent_id: id, p_expected_authority: authority, p_receipt: redone.receipt,
+      });
+      if (saved) await persistExtras(owner.userId, id, redone.receipt, kind);
+    }
+    return response({ success: redone.ok, data: { supported: true, connection: redone.receipt },
+      ...(!redone.ok ? { ...(redone.receipt.failureCode ? { failureCode: redone.receipt.failureCode } : {}),
+        error: privateAccessFailureMessage(redone.receipt.failureCode)
+          ?? "Hivra could not confirm the protection is back. Refresh status and try again." } : {}) }, redone.ok ? 200 : 202);
   }
 
   const v2 = isPrivateNetworkV2Enabled();
@@ -344,7 +425,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   if (parsed.data.action === "connect") {
-    const before = await observeHivraTailscale(owner.agent, loginServer);
+    const before = await observeAnyNetwork(owner.agent, loginServer);
     if (before.connectionPresent !== false) {
       return response({ success: false, code: "unmanaged_connection",
         error: "This computer is already connected outside Hivra. Disconnect it in the guest before connecting here." }, 409);
@@ -356,6 +437,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     run: () => parsed.data.action === "connect" ? connectFor() : disconnectHivraTailscale(owner.agent, loginServer) });
   if ("response" in outcome) return outcome.response;
   const result = outcome.result;
+  if (result.ok && parsed.data.action === "connect") {
+    await persistExtras(owner.userId, id, result.receipt, provider === "netbird" ? "netbird"
+      : provider === "headscale" || loginServer !== DEFAULT_TAILSCALE_LOGIN_SERVER ? "headscale" : "tailscale");
+  }
   const failureCode = result.receipt.failureCode;
   return response({ success: result.ok, data: { supported: true,
     connection: result.receipt.state === "disconnected" ? null : result.receipt },
