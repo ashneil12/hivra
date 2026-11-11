@@ -1,7 +1,7 @@
 "use client";
 
-// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Desktop,
-// Browser, Files, Terminal) · Manage. Server-backed: polls the agent until provisioning finishes, then the
+// Hivra per-agent view — Chat (<Agent> session) · Computer (Desktop,
+// Browser, Files, Terminal) · Settings, in the agent sidebar and one title bar. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -12,7 +12,7 @@ import { Component, createContext, useCallback, useContext, useEffect, useId, us
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, ArrowLeft, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import {
@@ -42,7 +42,8 @@ import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
-import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
+import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
+import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
 import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
@@ -329,7 +330,6 @@ function AuthenticatedSurface({
   url,
   token,
   label,
-  description,
   background,
   permissions,
   onManage,
@@ -340,7 +340,6 @@ function AuthenticatedSurface({
   url: string;
   token: string;
   label: string;
-  description?: string;
   background: string;
   permissions?: readonly SurfacePermission[];
   onManage: () => void;
@@ -391,10 +390,10 @@ function AuthenticatedSurface({
   }, [accessStatus, bootstrapUrl, destination, token]);
 
   // "Open in new tab" is the everyday action of this surface, so it belongs in
-  // the bar with the rest of the chrome rather than in a strip of its own. The
-  // button below still drives the same hidden form — the behaviour does not
-  // move, only which row draws it. It renders inline when nothing received the
-  // publish (a standalone render, or this surface not being the active one).
+  // the title bar with the rest of the chrome. The button below still drives
+  // the same hidden form — the behaviour does not move, only where it is drawn.
+  // It renders as a small ghost icon in the pane's corner when nothing received
+  // the publish (a standalone render, or this surface not being the active one).
   const openInNewTabActions = useMemo(
     () => [
       {
@@ -414,7 +413,7 @@ function AuthenticatedSurface({
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
       {accessStatus === "ready" ? (
         <>
           <form ref={formRef} action={bootstrapUrl} method="POST" target={frameName} style={{ display: "none" }}>
@@ -427,24 +426,11 @@ function AuthenticatedSurface({
           </form>
         </>
       ) : null}
-      {/* No strip when there is nothing of its own to say.
-          `{description || label}` restated the agent name (already in the bar's
-          identity cluster) and the surface name (already the active tab), so on
-          the terminal and dashboard tabs this row was pure echo. It still
-          renders when the host passes a real `description` — the live browser's
-          read-only note is information, not decoration — and whenever the action
-          was not lifted, because then the button needs somewhere to live. */}
-      {description || !actionsLifted ? (
-        <div className={styles.surfaceToolbar}>
-          {description ? <span className={`mono ${styles.surfaceDescription}`}>{description}</span> : null}
-          <div style={{ flex: 1 }} />
-          {actionsLifted ? null : (
-            <button type="button" onClick={openInNewTab} disabled={accessStatus !== "ready"} aria-label="Open in new tab" className={`mono ${styles.newTabButton}`}>
-              <span>Open in new tab</span><ExternalLink size={13} aria-hidden="true" />
-            </button>
-          )}
-        </div>
-      ) : null}
+      {actionsLifted || accessStatus !== "ready" ? null : (
+        <button type="button" onClick={openInNewTab} aria-label="Open in new tab" title="Open in new tab" className={styles.newTabCorner}>
+          <ExternalLink size={14} aria-hidden="true" />
+        </button>
+      )}
       {accessStatus === "ready" ? (
         <iframe key={generation} name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
       ) : (
@@ -634,9 +620,10 @@ function DashboardView({ url, token, label, onManage, surfaceId, active = true }
 // Live browser — the agent's real Chrome (headful on the box's Xvfb), streamed
 // over noVNC through the box tunnel. This legacy surface has no shared session
 // input fence, so default its viewer to read-only instead of implying that the
-// agent has paused or that conflict-free takeover is available.
+// agent has paused or that conflict-free takeover is available. The title bar
+// says "View only" beside the status.
 function BrowserView({ url, token, onManage, surfaceId, active = true }: { url: string; token: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label="Live browser" description="Live browser · read-only view of the agent's Chrome. Conflict-free human takeover isn't available on this legacy surface." background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+  return <AuthenticatedSurface url={url} token={token} label="Live browser" background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
 }
 
 function BrowserDisabledView({
@@ -1185,9 +1172,17 @@ export default function AgentPage() {
     // surface, with its own Chat, Files and Manage views. The computer tabs
     // (Terminal, Browser, Git) and Skills do not apply.
     return (
-      <SurfaceCodeBoundary>
-        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onChanged={listChanged} onDeleted={() => { listChanged(); go("/dashboard"); }} />
-      </SurfaceCodeBoundary>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        {/* The global rail is not drawn on agent pages and this session has no sidebar of its own. */}
+        <div className={styles.backBar}>
+          <button type="button" className={styles.backLink} onClick={() => go("/dashboard")}>
+            <ArrowLeft size={14} aria-hidden="true" /> All agents
+          </button>
+        </div>
+        <SurfaceCodeBoundary>
+          <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onChanged={listChanged} onDeleted={() => { listChanged(); go("/dashboard"); }} />
+        </SurfaceCodeBoundary>
+      </div>
     );
   }
 
@@ -1219,20 +1214,18 @@ export default function AgentPage() {
   // Files the first time (the Desktop entry there is a choice, not a place to land).
   const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
     id: group.id,
-    label: group.label,
+    // The sidebar's rows: the agent's chat, its computer, and its settings.
+    label: group.id === "manage" ? "Settings" : group.id === "work" && !isDashboard ? "Chat" : group.label,
     icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
     surfaces: group.surfaces,
     home: group.id === "computer" ? undefined : group.surfaces[0],
     start: group.id === "computer" && group.surfaces.includes("files") ? "files" as const : undefined,
   }));
-  // One muted line under the Computer group saying what it is: this agent's own
-  // computer, where it runs and how big it is.
+  // Where this agent's computer runs and how big it is: a tooltip on the name in
+  // the title bar (Settings does not repeat it).
   const computerDetail = agentComputerPairDetail(agentComputerPair(agent));
   const computerNote = `${agent.name || "This agent"}’s own computer${computerDetail ? ` · ${computerDetail}` : ""}`;
-  // The switcher's caption names the kind ("Agent · Running"). A chat agent's
-  // bar already opens with an Agent button, so there it keeps only the status.
   const switcherKind = isComputer ? "computer" : "agent";
-  const kindInBar = Boolean(surfaceGroups?.some((group) => group.label === resourceKindLabel(switcherKind)));
   // One shared decision with the workspace: resource-landing owns "what does
   // this resource open on", so the two routes cannot drift apart again.
   const landing = resolveResourceLanding({
@@ -1302,40 +1295,10 @@ export default function AgentPage() {
     </SurfaceCodeBoundary>
   );
 
-  return (
-    <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
-    <SurfaceActionProvider store={actionStore}>
-    <SurfaceMetadataContext.Provider value={surfaceMetadataCache}>
-    <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
-      <CanonicalizeUnavailableTab
-        unavailableTab={unavailableTab}
-        canonicalTab={effectiveTab}
-      />
-      {/* Keep identity, switching and work surfaces together. Native chrome owns
-          identity on native clients; the existing session components stay below. */}
-      <ResourceSurfaceNavigation
-        surfaces={tabs}
-        groups={surfaceGroups}
-        panelId={WORK_PANE_ID}
-        // The linked pair, where the owner is looking at the computer.
-        groupNotes={isComputer ? undefined : { computer: computerNote }}
-        active={effectiveTab}
-        onSelect={selectTab}
-        exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
-        identity={
-          nativeWorkspace ? undefined : (
-            <div className={styles.identity}>
-              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} showKind={!kindInBar} status={provisioning ? activity.label : agent.status} />
-              {isComputer ? null : (
-                <span className={styles.softwareChip}>
-                  <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />
-                </span>
-              )}
-            </div>
-          )
-        }
-      />
-
+  // The page's own rows under the title bar: the channel nudge, then the work
+  // pane that holds every surface (mounted and retained exactly as before).
+  const content = (
+    <>
       {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
           connected get a one-line pointer to the Telegram tab (the component
           gates itself on this visit's welcome + probe + per-box dismiss).
@@ -1589,6 +1552,48 @@ export default function AgentPage() {
           )
         ) : null}
       </div>
+    </>
+  );
+
+  return (
+    <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
+    <SurfaceActionProvider store={actionStore}>
+    <SurfaceMetadataContext.Provider value={surfaceMetadataCache}>
+    <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
+      <CanonicalizeUnavailableTab
+        unavailableTab={unavailableTab}
+        canonicalTab={effectiveTab}
+      />
+      {nativeWorkspace ? (
+        <>
+          {/* A native client draws its own chrome; the bar only publishes the surface list and lifts actions. */}
+          <ResourceSurfaceNavigation
+            surfaces={tabs}
+            active={effectiveTab}
+            onSelect={selectTab}
+            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+          />
+          {content}
+        </>
+      ) : (
+        <AgentShell
+          name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
+          status={provisioning ? activity.label : agent.status}
+          nameTitle={isComputer ? undefined : computerNote}
+          switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
+          titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
+          surfaces={tabs}
+          groups={surfaceGroups}
+          active={effectiveTab}
+          onSelect={selectTab}
+          chatSurface="chat"
+          panelId={WORK_PANE_ID}
+          exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+          surfaceNote={{ browser: "View only" }}
+        >
+          {content}
+        </AgentShell>
+      )}
 
       {paywallOpen ? (
         <UpgradePaywallModal

@@ -190,8 +190,8 @@ const CONNECTED_UBUNTU = {
 // Reach a surface the way an owner does: its tab, then its group, then Tools.
 const GROUP_OF_LABEL: Record<string, string> = {
   Desktop: "Computer", Terminal: "Computer", Files: "Computer", Browser: "Computer",
-  "Claude Code session": "Agent", "Codex session": "Agent",
-  Skills: "Manage", Telegram: "Manage",
+  "Claude Code session": "Chat", "Codex session": "Chat",
+  Skills: "Settings", Telegram: "Settings",
 };
 function groupFor(name: string | RegExp): string | null {
   const label = Object.keys(GROUP_OF_LABEL).find((candidate) => typeof name === "string" ? candidate === name : name.test(candidate));
@@ -321,7 +321,7 @@ describe("AgentPage", () => {
     expect(serverMarkup).not.toContain("This preview isn");
   });
 
-  it.each(["Manage", "Open Manage"])("shows observed provider readiness and opens %s during installation", async button => {
+  it.each(["Settings", "Open Manage"])("shows observed provider readiness and opens %s during installation", async button => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "CLOUD_AGENT", cpu: 2, ram: 4,
       status: "provisioning", activity: "provision", computer_substrate: "provider-vm", deployment_mode: "self-managed",
       readiness_stage: "public_access_pending" });
@@ -375,15 +375,15 @@ describe("AgentPage", () => {
   it("keeps Manage mounted, with its drafts, while the owner uses Chat", async () => {
     render(<AgentPage />);
     expect(await screen.findByText("Chat panel")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^settings$/i }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Manage draft" }), { target: { value: "unsaved size" } });
     await waitFor(() => expect(screen.getByTestId("manage-sign-in")).toHaveTextContent("native_connected"));
 
-    fireEvent.click(screen.getByRole("button", { name: /^agent$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^chat$/i }));
     expect(screen.getByText("Manage panel")).not.toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Manage draft" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^settings$/i }));
     expect(screen.getByRole("textbox", { name: "Manage draft" })).toHaveValue("unsaved size");
     expect(screen.getByText("Manage panel")).toBeVisible();
   });
@@ -743,7 +743,7 @@ describe("AgentPage", () => {
     expect(desktop).toBeVisible();
     expect(desktop).toHaveTextContent("UBUNTU desktop session");
 
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(desktop).not.toBeVisible();
     expect(screen.getByTestId("remote-desktop")).toBe(desktop);
@@ -858,7 +858,7 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^(?:Box )?Terminal$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Desktop" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Manage" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(document.querySelector('iframe[title="Terminal"], form[action*="windows-box"]')).toBeNull();
   });
 
@@ -946,7 +946,7 @@ describe("AgentPage", () => {
     expect(pushMock).not.toHaveBeenCalled();
     expect(screen.getByTestId("remote-desktop")).toBe(desktop);
     expect(desktop).not.toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(new URLSearchParams(window.location.search).get("tab")).toBe("manage");
     first.unmount();
     render(<AgentPage />);
@@ -1015,13 +1015,13 @@ describe("AgentPage", () => {
     requestSubmit.mockRestore();
   });
 
-  it("groups an agent's surfaces as Agent · Computer · Manage and names its computer (ATT-11, ATT-12)", async () => {
+  it("groups an agent's surfaces as Chat · Computer · Settings and names its computer (ATT-11, ATT-12)", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
     render(<AgentPage />);
     const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
-    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Agent", "Computer", "Manage"]);
-    expect(within(screen.getByRole("tablist", { name: "Agent views" })).getAllByRole("tab").map((tab) => tab.textContent))
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Chat", "Computer", "Settings"]);
+    expect(within(screen.getByRole("tablist", { name: "Chat views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Chat", "Codex session"]);
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
@@ -1029,10 +1029,12 @@ describe("AgentPage", () => {
     // The Computer button opens Files, not the Desktop choice; Git is not a tab.
     expect(screen.getByText("Files panel")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Git" })).not.toBeInTheDocument();
-    expect(screen.getByText("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
-    // The group is Manage, so its own pane's tab is Settings: no "Manage › Manage".
-    expect(within(screen.getByRole("tablist", { name: "Manage views" })).getAllByRole("tab").map((tab) => tab.textContent))
+    // Where it runs is a tooltip on the title bar's name, not a row of its own.
+    expect(screen.getByTitle("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).toHaveTextContent("Codex 1");
+    expect(screen.queryByText("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    // The group is Settings, so its own pane's tab says so too: no "Settings › Settings".
+    expect(within(screen.getByRole("tablist", { name: "Settings views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Settings", "Skills", "Telegram"]);
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     // Retired: "Box Terminal", "<Agent> Terminal" and the Tools overflow.
@@ -1040,26 +1042,27 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
   });
 
-  it("says Agent once in a chat agent's bar: the group button, not the switcher's caption as well", async () => {
+  it("shows the agent's name once in the sidebar switcher and its status in the title bar", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
     render(<AgentPage />);
-    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
-    expect(nav.textContent?.match(/Agent/g)).toEqual(["Agent"]);
-    const switcher = within(nav).getByRole("button", { name: "Switch agent or computer: Codex 1" });
-    expect(switcher).toHaveTextContent(/^Codex 1running$/);
-    expect(switcher).toHaveAccessibleDescription("running");
+    const sidebar = await screen.findByRole("complementary", { name: "Agent navigation" });
+    const switcher = within(sidebar).getByRole("button", { name: "Switch agent or computer: Codex 1" });
+    expect(switcher).toHaveTextContent(/^Codex 1$/);
+    const bar = screen.getByRole("banner");
+    expect(bar).toHaveTextContent(/^Codex 1running/);
   });
 
-  it("keeps the kind in the switcher's caption where no group button already names it", async () => {
+  it("names the status beside the name in the title bar, with no kind caption", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
     const { unmount } = render(<AgentPage />);
-    expect(await screen.findByRole("button", { name: "Switch agent or computer: OPENCLAW_AGENT" })).toHaveTextContent("Agent · running");
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: OPENCLAW_AGENT" })).toHaveTextContent(/^OPENCLAW_AGENT$/);
+    expect(screen.getByRole("banner")).toHaveTextContent("running");
     unmount();
     mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
     render(<AgentPage />);
-    expect(await screen.findByRole("button", { name: "Switch agent or computer: UBUNTU" })).toHaveTextContent("Computer · running");
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: UBUNTU" })).toHaveTextContent(/^UBUNTU$/);
   });
 
   it("gives a dashboard agent's single-surface groups no second row, with Export data still in reach", async () => {
@@ -1067,16 +1070,16 @@ describe("AgentPage", () => {
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
     render(<AgentPage />);
     const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
-    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Dashboard", "Computer", "Manage"]);
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Dashboard", "Computer", "Settings"]);
     expect(await screen.findByTitle("OpenClaw · dashboard")).toBeInTheDocument();
-    // Dashboard and Manage each hold one surface: their buttons open it, and
-    // no "Dashboard › Dashboard" or "Manage › Manage" row repeats the name.
+    // Dashboard and Settings each hold one surface: their rows open it, and
+    // no "Dashboard › Dashboard" or "Settings › Settings" control repeats the name.
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
+    expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
     expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Desktop", "Browser", "Files", "Terminal"]);
@@ -1311,7 +1314,7 @@ describe("AgentPage", () => {
     });
     view.rerender(<AgentPage />);
     // The next agent opens on its own surface, so its session is opened by hand.
-    expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: NEXT_AGENT" })).toBeInTheDocument();
     fireEvent.click(await findSurfaceButton(/claude code session/i));
     const frame = await screen.findByTitle("Claude Code session");
     expect(frame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
@@ -1347,7 +1350,7 @@ describe("AgentPage", () => {
     expect(boxFrame).not.toBeVisible();
     expect(requestSubmit).toHaveBeenCalledTimes(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(agentFrame).toBeInTheDocument();
     expect(boxFrame).toBeInTheDocument();
     expect(agentFrame).not.toBeVisible();
@@ -1457,7 +1460,7 @@ describe("AgentPage", () => {
   it("keeps the chat mounted while working in other surfaces", async () => {
     mockChatMounts.mockClear();
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Chat" }));
     const chat = await screen.findByText("Chat panel");
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
 
@@ -1466,7 +1469,7 @@ describe("AgentPage", () => {
     expect(chat).toBeInTheDocument();
     expect(chat).not.toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(screen.getByText("Chat panel")).toBe(chat);
     expect(chat).toBeVisible();
     expect(mockChatMounts).toHaveBeenCalledTimes(1);
@@ -1489,7 +1492,7 @@ describe("AgentPage", () => {
     const agentFrame = await screen.findByTitle("Claude Code session");
     fireEvent.click(getSurfaceButton("Terminal"));
     const boxFrame = await screen.findByTitle("Terminal");
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     mockGetAgent.mockResolvedValue({
       id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT", status: "stopped",
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token",
@@ -1516,7 +1519,7 @@ describe("AgentPage", () => {
       await act(async () => { view.rerender(<AgentPage />); });
       expect(oldFrame).not.toBeInTheDocument();
       await act(async () => { jest.advanceTimersByTime(2000); });
-      expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Switch agent or computer: NEXT_AGENT" })).toBeInTheDocument();
       fireEvent.click(await findSurfaceButton(/claude code session/i));
       const nextFrame = await screen.findByTitle("Claude Code session");
       expect(nextFrame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
@@ -1529,7 +1532,7 @@ describe("AgentPage", () => {
     render(<AgentPage />);
     fireEvent.click(await findSurfaceButton(/claude code session/i));
     const oldFrame = await screen.findByTitle("Claude Code session");
-    fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     let resolveMetadata: (value: unknown) => void = () => undefined;
     (global.fetch as jest.Mock).mockImplementation(() => new Promise(resolve => { resolveMetadata = resolve; }));
     mockGetAgent.mockResolvedValue({
@@ -1610,7 +1613,7 @@ describe("AgentPage", () => {
       await waitFor(() => expect(requestSubmit).toHaveBeenCalledTimes(2));
       const metaProbes = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "https://box.example.com/api/meta").length;
 
-      fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
       bootId = after;
       later();
       fireEvent.click(screen.getByRole("button", { name: "Finish connection update" }));
@@ -1736,7 +1739,9 @@ describe("AgentPage", () => {
     expect(frame).not.toHaveAttribute("allowfullscreen");
     if (tab === "browser") {
       expect(frame).toHaveAttribute("allow", "fullscreen https://box.example.com");
-      expect(screen.getByText("Live browser · read-only view of the agent's Chrome. Conflict-free human takeover isn't available on this legacy surface.")).toBeVisible();
+      // The long caption is gone: the title bar just says the view is view-only.
+      expect(screen.queryByText(/Conflict-free human takeover/)).not.toBeInTheDocument();
+      expect(screen.getByText("View only")).toBeVisible();
     } else {
       expect(frame).not.toHaveAttribute("allow");
     }
@@ -2087,7 +2092,7 @@ describe("AgentPage", () => {
     let resolveRefresh: (value: unknown) => void = () => undefined;
     mockFetchPlan.mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
     render(<AgentPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
     await waitFor(() => expect(screen.getByTestId("manage-usage")).toHaveTextContent("2"));
     fireEvent.click(screen.getByRole("button", { name: "Refresh capacity" }));
     await waitFor(() => expect(mockFetchPlan).toHaveBeenCalledTimes(2));
@@ -2327,7 +2332,7 @@ describe("AgentPage", () => {
     render(<AgentPage />);
 
     expect(await screen.findByText("Provisioning failed")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^manage$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^settings$/i }));
 
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
     expect(screen.queryByText("Provisioning failed")).not.toBeInTheDocument();
@@ -2457,7 +2462,7 @@ describe("AgentPage", () => {
     render(<AgentPage />);
 
     expect(await screen.findByText("Manage panel")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Manage" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^(?:Box )?Terminal$/ })).not.toBeInTheDocument();
