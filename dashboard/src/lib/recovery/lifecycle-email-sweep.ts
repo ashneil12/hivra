@@ -367,8 +367,7 @@ function chooseEmail(user: ClerkUser): string | null {
 /**
  * Resolve a Clerk user id to a recipient (the primary email when verified,
  * else any verified address) plus first name. Unverified addresses are never
- * returned. Exported so the warm-pool campaign uses
- * the exact same mechanism as the lifecycle sweep. Returns null when the
+ * returned. Returns null when the
  * Clerk user is gone or has no usable address; throws on Clerk API errors.
  */
 export async function resolveClerkRecipient(
