@@ -4,6 +4,9 @@
 // for the Aeon dashboard, OpenClaw and Agent Zero, the installed version next
 // to the version Hivra has tested, what an update is doing or did, and Update
 // now; for the CLIs also automatic updates (shown only while Hivra runs them).
+// Hermes is the exception: Hivra pins no Hermes version, so its card shows the
+// installed version and an Update Hermes button that runs Hermes's own
+// `hermes update`, and says the same can be done in Terminal.
 // Nothing here is guessed: every line comes from what the computer last
 // reported (GET /api/hivra/agents/[id]/agent-software).
 
@@ -212,6 +215,64 @@ function appStateCopy(view: AgentSoftwareView, app: AgentAppName, name: string, 
   }
 }
 
+/** What the owner types in Terminal to do what the Update Hermes button does. */
+export const HERMES_TERMINAL_UPDATE = "hermes update";
+
+/**
+ * The same for Hermes. There is no tested version to compare with: the card
+ * says what is installed, what an update is doing or did, and always offers
+ * the update (Hermes's own updater decides whether anything is newer).
+ */
+function hermesStateCopy(view: AgentSoftwareView, name: string): { text: string; action: Action } {
+  const update = (label = `Update ${name}`, primary = false): Action => ({ label, primary });
+  switch (view.kind) {
+    case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
+    case "checking": return { text: `Checking which ${name} version is installed…`, action: null };
+    case "unreachable": return { text: UNREACHABLE_CARD_LINE, action: null };
+    case "older_connection_service":
+    case "not_reported":
+      return {
+        text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below to bring it up to date. You can still update ${name} yourself in Terminal.`,
+        action: null,
+      };
+    case "version_unreadable":
+      return { text: `Hivra couldn't read which ${name} version is installed.`, action: update() };
+    case "current": return { text: "", action: update() };
+    case "updating":
+      switch (view.phase) {
+        case "starting": return { text: "Starting the update…", action: null };
+        case "waiting":
+          return { text: `Waiting until nobody is using ${name}. It updates once ${name} has been idle for 5 minutes, so close it in any other tab. Hivra waits up to 6 hours.`, action: null };
+        case "downloading":
+        case "installing": return { text: `Updating ${name} with its own updater. ${name} restarts and is back in a few minutes.`, action: null };
+        case "finishing": return { text: "Checking the new version…", action: null };
+      }
+      return { text: "", action: null };
+    case "update_done": return { text: `${name} ${view.installed} is installed.`, action: update() };
+    case "update_deferred":
+      return { text: `${name} wasn't updated because it was still in use after 6 hours. Nothing was changed.`, action: update("Try again", true) };
+    case "update_failed":
+      if (view.reason === "local_changes") {
+        return {
+          text: `${name} didn't update because its install has changes of your own, and its updater leaves those alone. Nothing was changed. Run ${HERMES_TERMINAL_UPDATE} in Terminal to see what it needs.`,
+          action: update("Try again"),
+        };
+      }
+      if (view.reason === "no_space") {
+        return { text: `There isn't enough free disk space on this agent's computer to update ${name}. Nothing was changed.`, action: null };
+      }
+      if (view.reason === "could_not_start") {
+        return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: update("Try again") };
+      }
+      return {
+        text: `The ${name} update didn't finish. ${name} keeps its current version${view.installed ? ` (${view.installed})` : ""}. Try again, or run ${HERMES_TERMINAL_UPDATE} in Terminal to see why.`,
+        action: update("Try again", true),
+      };
+    // Hermes has no tested version, so these never arise for it.
+    default: return { text: "", action: null };
+  }
+}
+
 function AutoUpdateToggle({ agentId, auto, name, onSaved }: {
   agentId: string;
   auto: AgentSoftwareAutoUpdate;
@@ -328,7 +389,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
 
   const app = state.app;
   const shown = agentSoftwareDisplayName(app, name);
-  const copy = app && state.tested ? appStateCopy(view, app, shown, state.tested, recovery) : stateCopy(view, name, state.tested, recovery);
+  const hermes = app === "hermes";
+  const copy = hermes ? hermesStateCopy(view, shown)
+    : app && state.tested ? appStateCopy(view, app, shown, state.tested, recovery) : stateCopy(view, name, state.tested, recovery);
   const rawInstalled = "installed" in view && view.installed ? view.installed : view.kind === "update_done" ? view.target : null;
   const installed = rawInstalled && app ? agentSoftwareVersionName(rawInstalled) : rawInstalled;
   const tested = state.tested && app ? agentSoftwareVersionName(state.tested) : state.tested;
@@ -349,7 +412,7 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
       <div style={card}>
         <div style={{ display: "grid", gap: 8 }}>
           <Fact label={`${shown} installed`}>{installed ?? (view.kind === "checking" || view.kind === "not_running" || view.kind === "unreachable" ? "—" : "Not reported")}</Fact>
-          <Fact label="Hivra's tested version">{tested ?? "—"}</Fact>
+          {hermes ? null : <Fact label="Hivra's tested version">{tested ?? "—"}</Fact>}
           <Fact label="Last checked">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span>{checkedAt(state.observedAt)}</span>
@@ -383,7 +446,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
               </button>
             </div>
             <div style={{ ...manageMuted, fontSize: 11.5 }}>
-              {app
+              {hermes
+                ? <>Updating runs Hermes&apos;s own updater, and also refreshes Hivra&apos;s connection service without restarting the computer. Hermes restarts once, when nobody is using it. Or run <code>{HERMES_TERMINAL_UPDATE}</code> in Terminal.</>
+                : app
                 ? `Updating also refreshes Hivra's connection service without restarting the computer. ${shown} itself restarts once, when nobody is using it.`
                 : "Updating also refreshes Hivra's connection service without restarting the computer. Replies being written keep going, and terminals open on this page reconnect when it finishes."}
             </div>
@@ -403,7 +468,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
         ) : null}
 
         <div style={{ ...manageMuted, fontSize: 11.5 }}>
-          {app
+          {hermes
+            ? <>Hermes is the official Hermes Agent, installed and updated by Hermes&apos;s own installer and updater. Hivra doesn&apos;t change it or pin a version. To update it yourself, run <code>{HERMES_TERMINAL_UPDATE}</code> in Terminal.</>
+            : app
             ? `Hivra installs only ${name} versions it has tested, so this can be older than the newest ${name} release.${app === "aeon" ? " Hivra updates the dashboard it hosts. Your Aeon skills and workflows live in your GitHub fork, which you keep up to date on GitHub." : ""}`
             : <>Hivra installs only versions it has tested with Hivra chat, so this can be older than {VENDOR[state.cli ?? ""] ?? "the vendor"}&apos;s newest {name} release.</>}
         </div>

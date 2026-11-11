@@ -42,6 +42,13 @@ const OPENCLAW_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT) || 18789;
 // its own web UI with a seeded basic-auth login, and MUST sit behind this token
 // proxy — mounted under /agent-zero with a path strip + Referer re-home.
 const AGENT_ZERO_PORT = Number(process.env.AGENT_ZERO_PORT) || 50080;
+// Loopback port Hermes's own web UI (`hermes dashboard`) serves on. It is the
+// official, unmodified Hermes; it knows how to live under a path prefix, so it
+// is mounted under /hermes with the prefix stripped and announced in
+// X-Forwarded-Prefix. It only accepts a loopback Host/Origin and peer, so this
+// gateway presents exactly that and is the only way in.
+const HERMES_PORT = Number(process.env.HERMES_DASHBOARD_PORT) || 9119;
+const HERMES_ORIGIN = "http://127.0.0.1:" + HERMES_PORT;
 // Attached mode (design 5.4): the same gateway code runs as an attached agent's
 // own sandboxed instance on a computer its owner already has. Its root-written
 // unit sets these; nothing in the agent's writable HOME can change them.
@@ -76,6 +83,7 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "aeon" ? "aeon"
   : _agentKindRaw === "openclaw" ? "openclaw"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
+  : _agentKindRaw === "hermes" ? "hermes"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -191,12 +199,17 @@ function agentCliUpdateRefusal() {
 // by root, which records them in a root-owned file.
 const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
-  : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] } : null;
+  : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
+  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/ };
+const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
+const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+// What an update status may name as its target. Hermes has no Hivra pin: its
+// update is always to whatever Hermes itself publishes as latest.
+const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/ };
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -225,6 +238,37 @@ function probeOpenclaw() {
   }
 }
 probeOpenclaw();
+// Hermes updates itself (the owner runs `hermes update` in Terminal or uses the
+// Update button), so its version is asked of Hermes, not read from a record:
+// again at most every ten minutes, and sooner once the updater has written its
+// record or status.
+let hermesVersion;
+let hermesProbedKey = null;
+let hermesProbing = false;
+function fileStamp(file) {
+  try { return String(fs.statSync(file).mtimeMs); } catch { return "-"; }
+}
+function probeHermes() {
+  if (!AGENT_APP || AGENT_APP.name !== "hermes" || hermesProbing) return;
+  const key = Math.floor(Date.now() / 600000) + ":" + fileStamp(AGENT_APP_RECORD) + ":" + fileStamp(AGENT_APP_STATUS);
+  if (key === hermesProbedKey) return;
+  hermesProbing = true;
+  const done = (version, detail) => {
+    hermesProbing = false;
+    hermesProbedKey = key;
+    hermesVersion = version;
+    if (!version) console.warn("hivra-chat: hermes --version failed: " + detail);
+  };
+  try {
+    execFile(HERMES_BIN, ["--version"], { env: AGENT_ENV, cwd: HOME, timeout: 30000 }, (err, stdout) => {
+      const match = !err && /(?:^|[^\d.])(\d+\.\d+\.\d+)/.exec(String(stdout || "").split("\n", 1)[0]);
+      done(match ? match[1] : null, err ? (err.code || err.message) : "no version in output");
+    });
+  } catch (error) {
+    done(null, (error && error.message) || String(error));
+  }
+}
+probeHermes();
 function readSmallJson(file) {
   try {
     const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
@@ -238,6 +282,7 @@ function readSmallJson(file) {
 function agentAppReport() {
   if (!AGENT_APP) return null;
   const pattern = AGENT_APP_VERSION[AGENT_APP.name];
+  const targetPattern = AGENT_APP_TARGET[AGENT_APP.name];
   let version = null;
   const activity = { lastUsedAt: new Date(agentAppLastUsedAt).toISOString(), openConnections: agentAppOpenConnections };
   if (AGENT_APP.name === "openclaw") {
@@ -245,6 +290,10 @@ function agentAppReport() {
     // Until the first probe after this gateway started has finished.
     if (openclawVersion === undefined) return { name: AGENT_APP.name, checking: true, activity };
     version = openclawVersion;
+  } else if (AGENT_APP.name === "hermes") {
+    probeHermes();
+    if (hermesVersion === undefined) return { name: AGENT_APP.name, checking: true, activity };
+    version = hermesVersion;
   } else {
     const record = readSmallJson(AGENT_APP_RECORD);
     if (record && record.name === AGENT_APP.name && typeof record.version === "string" && pattern.test(record.version)) version = record.version;
@@ -252,7 +301,7 @@ function agentAppReport() {
   const report = { name: AGENT_APP.name, version, activity };
   const status = readSmallJson(AGENT_APP_STATUS);
   if (status && status.name === AGENT_APP.name && AGENT_CLI_UPDATE_STATES.has(status.state)
-    && typeof status.to === "string" && pattern.test(status.to)) {
+    && typeof status.to === "string" && targetPattern.test(status.to)) {
     report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
       ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
   }
@@ -1741,8 +1790,8 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") {
-    // Aeon + OpenClaw + Agent Zero are hosted dashboards, not chat-CLI agents — no
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") {
+    // Aeon + OpenClaw + Agent Zero + Hermes are hosted dashboards, not chat-CLI agents — no
     // /api/chat surface; the user works in the agent's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
@@ -1985,13 +2034,16 @@ function handleChatRuns(req, res, u, q) {
 // ---- reverse-proxy (one tunnel serves chat + both terminals + the noVNC view) ----
 // `strip` lets us mount a backend that serves at root (noVNC/websockify) under a
 // sub-path: we drop the prefix before forwarding (ttyd keeps its prefix via -b).
-function proxyHttp(req, res, port, strip, preserveAuthority = false) {
+function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders = null) {
   // A loopback port, or { socketPath } for a backend on an owner-only unix socket.
   const target = port && typeof port === "object" ? port : { port };
   let path = req.url;
   if (strip) { path = req.url.slice(strip.length); if (!path.startsWith("/")) path = "/" + path; }
   const headers = Object.assign({}, req.headers);
   if (!preserveAuthority) headers.host = target.socketPath ? "localhost" : "127.0.0.1:" + target.port;
+  // A mounted app that needs more than a path strip (Hermes) names the headers
+  // it must see; null removes one the client sent.
+  if (setHeaders) for (const [name, value] of Object.entries(setHeaders)) { if (value === null) delete headers[name]; else headers[name] = value; }
   // The outer gateway authenticates Hivra authority. Never forward that
   // replayable authority into a bux-owned terminal/browser/native backend.
   // Preserve unrelated backend cookies and non-Hivra Authorization schemes.
@@ -2350,6 +2402,27 @@ function gateProxy(req, res, port, strip) {
   if (isAgentAppPort(port) && agentAppHold(req, res)) return;
   return proxyHttp(req, res, port, strip);
 }
+// Hermes's web UI behind the same gate. It checks that Host and Origin are its
+// own loopback address and that the peer is loopback, and it builds its links
+// from X-Forwarded-Prefix. The gate has already authenticated the owner, so
+// the request presents Hermes's own address, and anything the client sent that
+// could steer Hermes's idea of its public address is dropped.
+const HERMES_MOUNT = "/hermes";
+const HERMES_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
+function hermesHeaders(origin) {
+  const set = { "x-forwarded-prefix": HERMES_MOUNT };
+  for (const name of HERMES_DROPPED_HEADERS) set[name] = null;
+  set.origin = origin ? HERMES_ORIGIN : null;
+  return set;
+}
+function hermesMounted(u) {
+  return AGENT_KIND === "hermes" && (u === HERMES_MOUNT || u.startsWith(HERMES_MOUNT + "/"));
+}
+function hermesProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, HERMES_PORT, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin)));
+}
 
 // ---- terminals on owner-only unix sockets -----------------------------------
 // ttyd serves the agent terminal and the computer's shell on unix sockets owned
@@ -2531,7 +2604,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -3793,8 +3866,8 @@ const server = http.createServer((req, res) => {
     }
   }
   if (req.method === "GET" && u === "/api/login/status") return authed(req) ? handleLoginStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
   // Introspection endpoints (token-gated): chat history, file browser, skills.
   if (req.method === "GET" && (u === "/api/sessions" || u.startsWith("/api/sessions/"))) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
@@ -3841,6 +3914,8 @@ const server = http.createServer((req, res) => {
   // by the re-home block above. Same gate-as-access-boundary model as Aeon.
   if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
   if (u === "/agent-zero" || u.startsWith("/agent-zero/")) return a0Proxy(req, res);
+  // Hermes's own web UI (the official one, unmodified), prefix stripped.
+  if (hermesMounted(u)) return hermesProxy(req, res);
   res.writeHead(404); res.end("not found");
 });
 
@@ -3870,6 +3945,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = "/openclaw"; } // gateway WS control/RPC (served at root)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
+  else if (hermesMounted(u)) { port = HERMES_PORT; strip = HERMES_MOUNT; } // Hermes /api/ws and /api/pty (served at root)
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
   if (isAgentAppPort(port)) {
@@ -3895,6 +3971,10 @@ server.on("upgrade", (req, socket, head) => {
   // Agent Zero's WS also rides its form-login session (the browser never holds one —
   // we inject our managed cookie), so its live chat/canvas connect behind our gate.
   const a0Ws = port === AGENT_ZERO_PORT;
+  // Hermes accepts a WebSocket only from its own loopback Host and Origin (or
+  // none) and reads its path prefix from X-Forwarded-Prefix.
+  const hermesWs = hermesMounted(u);
+  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin)) : null;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -3909,6 +3989,7 @@ server.on("upgrade", (req, socket, head) => {
     for (const [k, raw] of Object.entries(req.headers)) {
       const key = k.toLowerCase();
       if (a0Ws && key === "cookie") continue;
+      if (hermesWs && (key === "host" || key in hermesSet)) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;
@@ -3919,6 +4000,10 @@ server.on("upgrade", (req, socket, head) => {
         if (!v) continue;
       }
       hdr += k + ": " + v + "\r\n";
+    }
+    if (hermesWs) {
+      hdr += "host: 127.0.0.1:" + HERMES_PORT + "\r\n";
+      for (const [name, value] of Object.entries(hermesSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";

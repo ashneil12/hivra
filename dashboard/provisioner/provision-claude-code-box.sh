@@ -71,7 +71,7 @@ HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
 AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|linux-desktop|linux-server) ;;
+  claude|codex|aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
@@ -119,6 +119,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "aeon" ] && WANT_BROWSER=0
 # Agent Zero ships its OWN browser inside its container — never the box CDP stack.
 [ "$AGENT_KIND" = "agent-zero" ] && WANT_BROWSER=0
+# Hermes is installed with --skip-browser; it never gets the box CDP stack.
+[ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
 # The desktop-free Linux server has no browser stack either.
@@ -1308,11 +1310,129 @@ ok "Agent Zero service + restart helper installed (container :80 -> 127.0.0.1:${
 fi
 
 # ===========================================================================
+if [ "$AGENT_KIND" = "hermes" ]; then
+say "5e/7  Hermes Agent (official installer + Hermes's own web UI)"
+# ===========================================================================
+# Hermes Agent is installed with ITS OWN installer, unmodified: no fork, no
+# overlay, no patches, no version pin. Hivra only creates the computer, points
+# Hermes at managed inference, and fronts its dashboard (loopback :9119) with
+# the box token gate under /hermes. The owner updates it with `hermes update`
+# (Terminal) or the Update button, which runs exactly that.
+HERMES_PORT=9119
+HERMES_DIR="${AGENT_HOME}/.hermes"
+HERMES_BIN="${AGENT_HOME}/.local/bin/hermes"
+HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
+
+# The first install builds a Python environment and a web UI; ensure swap so a
+# small box does not run out of memory half way through.
+if ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
+  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile; mkswap /swapfile >/dev/null 2>&1 || true; swapon /swapfile 2>/dev/null || true
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  ok "2G swapfile enabled (install headroom for small boxes)"
+fi
+
+# Download the installer to a file over HTTPS only (never piped into a shell,
+# never run as root), then run it as the agent user. Its stable channel is the
+# latest published release; --non-interactive/--skip-browser keep it unattended
+# and leave the browser stack off (this computer has no desktop).
+HERMES_TMP="$(sudo -u "${AGENT_USER}" -H mktemp -d /tmp/hivra-hermes.XXXXXX)" \
+  || die "could not create a Hermes install directory"
+sudo -u "${AGENT_USER}" -H curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 \
+  "${HERMES_INSTALL_URL}" -o "${HERMES_TMP}/install.sh" \
+  || die "could not download the Hermes installer"
+head -c 2 "${HERMES_TMP}/install.sh" | grep -q '^#!' || die "the Hermes installer download is not a script"
+say "running the official Hermes installer for ${AGENT_USER} (stable channel)"
+sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+  bash "${HERMES_TMP}/install.sh" --non-interactive --skip-browser --channel stable \
+  || die "the Hermes installer failed"
+[ -x "${HERMES_BIN}" ] || die "hermes binary not found after install"
+HERMES_VERSION="$(timeout 60 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" "${HERMES_BIN}" --version 2>/dev/null \
+  | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+[[ "$HERMES_VERSION" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] \
+  || die "could not read the installed Hermes version"
+ok "hermes installed (${HERMES_VERSION})"
+record_agent_app hermes "$HERMES_VERSION"
+
+# Managed inference: Venice through the Hivra gateway, as a custom
+# OpenAI-compatible endpoint. Non-secret model settings go through Hermes's
+# own `hermes config set`; the key goes into ~/.hermes/.env (mode 600) over
+# stdin so it never appears in a process list. Hermes only uses OPENAI_API_KEY
+# for an endpoint whose OPENAI_BASE_URL matches model.base_url, so both are set.
+HERMES_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-1-flash}"
+HERMES_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+if [ -n "${HIVRA_MODEL_KEY:-}" ] \
+   && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
+   && printf '%s' "${HERMES_MODEL}" | grep -qE '^[A-Za-z0-9_.:/-]+$' \
+   && printf '%s' "${HERMES_BASEURL}" | grep -qE '^https://[A-Za-z0-9.:/_-]+$'; then
+  hermes_cfg() {
+    sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+      "${HERMES_BIN}" config set "$1" "$2" >/dev/null
+  }
+  hermes_cfg model.provider custom       || die "could not set the Hermes model provider"
+  hermes_cfg model.base_url "${HERMES_BASEURL}" || die "could not set the Hermes model endpoint"
+  hermes_cfg model.default "${HERMES_MODEL}"   || die "could not set the Hermes model"
+  cat > "${HERMES_TMP}/seed-env.py" <<'PY'
+import os, sys
+base = sys.argv[1]
+key = sys.stdin.read().strip()
+path = os.path.join(os.environ["HERMES_HOME"], ".env")
+keep = []
+if os.path.exists(path):
+    with open(path) as fh:
+        keep = [ln for ln in fh.read().splitlines()
+                if not ln.startswith(("OPENAI_API_KEY=", "OPENAI_BASE_URL="))]
+keep += ["OPENAI_BASE_URL=" + base, "OPENAI_API_KEY=" + key]
+tmp = path + ".next"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as fh:
+    fh.write("\n".join(keep) + "\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+  chown "${AGENT_USER}:${AGENT_USER}" "${HERMES_TMP}/seed-env.py"
+  printf '%s' "${HIVRA_MODEL_KEY}" \
+    | sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+        python3 -I "${HERMES_TMP}/seed-env.py" "${HERMES_BASEURL}" \
+    || die "could not write the Hermes model key"
+  chmod 700 "${HERMES_DIR}"
+  ok "managed-Venice wired into Hermes (model ${HERMES_MODEL})"
+elif [ -n "${HIVRA_MODEL_KEY:-}" ]; then
+  warn "managed-Venice key/model has unexpected characters — skipping model wiring (Hermes starts unconfigured)"
+else
+  warn "no managed-Venice key at launch — Hermes starts unconfigured; set a model in its own settings"
+fi
+rm -rf -- "${HERMES_TMP}"
+
+# Hermes's own web UI on loopback. The box gateway is the only public path.
+cat > /etc/systemd/system/bux-hermes.service <<UNIT
+[Unit]
+Description=Hivra Hermes Agent dashboard (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=${AGENT_USER}
+Group=${AGENT_USER}
+WorkingDirectory=${AGENT_HOME}
+Environment=HOME=${AGENT_HOME}
+Environment=HERMES_HOME=${HERMES_DIR}
+Environment=PATH=${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=${HERMES_BIN} dashboard --host 127.0.0.1 --port ${HERMES_PORT} --no-open
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 /etc/systemd/system/bux-hermes.service
+ok "Hermes dashboard service installed (127.0.0.1:${HERMES_PORT})"
+fi
+
+# ===========================================================================
 if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && ! is_linux_computer; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1411,6 +1531,12 @@ if [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl enable --now hivra-agent-zero.service >/dev/null 2>&1 \
     || die "Agent Zero service did not start"
   ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-50080}, mounted at /agent-zero)"
+fi
+
+if [ "$AGENT_KIND" = "hermes" ]; then
+  systemctl enable --now bux-hermes.service >/dev/null 2>&1 \
+    || die "Hermes service did not start"
+  ok "bux-hermes enabled + started (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)"
 fi
 
 # --- post-flight ------------------------------------------------------------
@@ -1565,6 +1691,11 @@ elif [ "$AGENT_KIND" = "agent-zero" ]; then
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
   ok "Agent Zero passed runtime-specific readiness"
+elif [ "$AGENT_KIND" = "hermes" ]; then
+  systemctl is-active --quiet bux-hermes.service || die "Hermes service is not active"
+  # The first start loads Hermes's Python environment; allow up to 3 minutes.
+  wait_for_http "http://127.0.0.1:${HERMES_PORT}/" 90 || die "Hermes web UI did not become ready within 3 minutes"
+  ok "Hermes passed runtime-specific readiness"
 fi
 
 # Record the exact installed state after every runtime-specific readiness gate.
@@ -1597,6 +1728,9 @@ if [ "$AGENT_KIND" = "aeon" ]; then
 elif [ "$AGENT_KIND" = "openclaw" ]; then
   LOGIN_HINT="open the Control UI (/openclaw) and configure model providers + channels there"
   STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "hermes" ]; then
+  LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Update with: sudo -iu ${AGENT_USER} hermes update"
+  STATUS_HINT="systemctl status bux-hermes --no-pager; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"

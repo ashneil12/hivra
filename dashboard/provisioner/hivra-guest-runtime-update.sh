@@ -380,28 +380,37 @@ print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
 }
 agent_cli_report || true
 
-# Agent app (Aeon dashboard, OpenClaw, Agent Zero computers). Hivra moves the
+# Agent app (Aeon dashboard, OpenClaw, Agent Zero, Hermes computers). Hivra moves the
 # app to this release's tested version (agent-app-versions.json) the same way:
 # hivra-agent-app-update.sh runs as a transient unit that prepares the new
 # version next to the running one, waits until nobody is using the app, swaps,
-# checks it and puts the previous version back on failure. Nothing here can
-# fail the committed update above.
+# checks it and puts the previous version back on failure. Hermes has no Hivra
+# pin: its target is the word "latest" and the helper runs Hermes's own
+# `hermes update --yes`. Nothing here can fail the committed update above.
 AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
 AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
 agent_app_report() {
   local name="$KIND_BEFORE" target version state
-  case "$name" in aeon|openclaw|agent-zero) ;; *) return 0 ;; esac
+  case "$name" in aeon|openclaw|agent-zero|hermes) ;; *) return 0 ;; esac
+  if [ "$name" = hermes ]; then
+    target=latest
+  else
   target="$(python3 -I -c 'import json, re, sys
 pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
 entry = json.load(open(sys.argv[1])).get(sys.argv[2])
 value = entry.get("version") if isinstance(entry, dict) else None
 if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
 print(value)' "$WORK/agent-app-versions.json" "$name")" || return 0
+  fi
   install -o root -g root -m 0700 "$WORK/hivra-agent-app-update.sh" "$AGENT_APP_HELPER"
   case "$name" in
     openclaw)
       version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         timeout -k 5 30 /home/bux/.npm-global/bin/openclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
+      ;;
+    hermes)
+      version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin \
+        timeout -k 5 30 /home/bux/.local/bin/hermes --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
       ;;
     agent-zero)
       version="$(docker inspect --format '{{.Config.Image}}' hivra-agent-zero 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n 1)" || version=""
@@ -422,7 +431,7 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
   # can't ask Docker itself) and the next update agree: computers provisioned
   # before the record existed, and any swap that ended without recording.
   if [ -n "$version" ] && ! systemctl is-active --quiet hivra-agent-app-update.service \
-    && { [ "$name" = agent-zero ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
+    && { [ "$name" = agent-zero ] || [ "$name" = hermes ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
     install -d -o root -g root -m 0755 /var/lib/hivra
     printf '{"name":"%s","version":"%s"}\n' "$name" "$version" > "$AGENT_APP_RECORD.next"
     chmod 0644 "$AGENT_APP_RECORD.next"

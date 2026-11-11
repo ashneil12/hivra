@@ -7,6 +7,13 @@
 #   hivra-agent-app-update.sh aeon <40-hex commit>
 #   hivra-agent-app-update.sh openclaw <x.y.z>
 #   hivra-agent-app-update.sh agent-zero sha256:<64 hex>
+#   hivra-agent-app-update.sh hermes latest
+#
+# Hermes is the exception: it has no Hivra pin and is never rebuilt or
+# rolled back by Hivra. "hermes latest" waits for the same idle moment, holds
+# the same surface lock, and runs Hermes's own `hermes update --yes` as the
+# agent's user (exactly what the owner would type in Terminal), then restarts
+# the dashboard and reports the version it finds.
 #
 # hivra-update-guest-runtime.sh starts it as a transient systemd unit, so a slow
 # download or build never holds the dashboard's update request. It first
@@ -29,7 +36,8 @@ case "$NAME" in
   aeon) [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid Aeon commit" >&2; exit 64; } ;;
   openclaw) [[ "$TARGET" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || { echo "invalid OpenClaw version" >&2; exit 64; } ;;
   agent-zero) [[ "$TARGET" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid Agent Zero image digest" >&2; exit 64; } ;;
-  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION" >&2; exit 64 ;;
+  hermes) [ "$TARGET" = latest ] || { echo "Hermes updates to latest only" >&2; exit 64; } ;;
+  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION | hermes latest" >&2; exit 64 ;;
 esac
 
 # Fixed guest paths; the overrides exist only for the offline test fixture.
@@ -53,7 +61,7 @@ LOCK_SETTLE_SECONDS="${HIVRA_AGENT_APP_LOCK_SETTLE_SECONDS:-2}"
 HEALTH_SECONDS="${HIVRA_AGENT_APP_HEALTH_SECONDS:-180}"
 HEALTH_POLL_SECONDS="${HIVRA_AGENT_APP_HEALTH_POLL_SECONDS:-3}"
 ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-AGENT_PATH="$AGENT_HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+AGENT_PATH="$AGENT_HOME/.local/bin:$AGENT_HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 if [ -n "${HIVRA_AGENT_APP_TEST_BIN:-}" ]; then
   ROOT_PATH="$HIVRA_AGENT_APP_TEST_BIN:$ROOT_PATH"
   AGENT_PATH="$HIVRA_AGENT_APP_TEST_BIN:$AGENT_PATH"
@@ -86,6 +94,14 @@ case "$NAME" in
     DATA="$A0_ROOT/usr"
     DATA_BACKUP="$A0_ROOT/usr.hivra-update-backup"
     NEED_FREE_MB=12288
+    ;;
+  hermes)
+    UNIT=bux-hermes.service
+    BIN="$AGENT_HOME/.local/bin/hermes"
+    HERMES_HOME_DIR="$AGENT_HOME/.hermes"
+    # `hermes update` fetches code and rebuilds its environment in place.
+    HERMES_UPDATE_SECONDS="${HIVRA_HERMES_UPDATE_SECONDS:-1800}"
+    NEED_FREE_MB=3072
     ;;
 esac
 UNIT_FILE="$SYSTEMD_DIR/$UNIT"
@@ -170,6 +186,10 @@ installed_version() {
       [ -e "$BIN" ] || return 1
       as_agent timeout -k 5 60 "$BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
       ;;
+    hermes)
+      [ -e "$BIN" ] || return 1
+      as_agent timeout -k 5 60 "$BIN" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
+      ;;
     agent-zero)
       local ref
       ref="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)"
@@ -249,6 +269,11 @@ app_working() {
       # the agent's user: the folder is the agent's own.
       [ -d "$AGENT_HOME/.openclaw" ] || return 1
       as_agent python3 -I -c "$CHANGED_SINCE_PY" "$AGENT_HOME/.openclaw" '*/sessions/*' "$since"
+      ;;
+    hermes)
+      # A chat turn appends to its session as it runs; read as the agent.
+      [ -d "$HERMES_HOME_DIR/sessions" ] || return 1
+      as_agent python3 -I -c "$CHANGED_SINCE_PY" "$HERMES_HOME_DIR/sessions" '*' "$since"
       ;;
     agent-zero)
       # A scheduled task marked running, or a chat that saved a step recently.
@@ -351,6 +376,7 @@ healthy() {
     openclaw) url="http://127.0.0.1:$(unit_port 18789 '--port[ =][0-9]+')/healthz" ;;
     agent-zero) url="http://127.0.0.1:$(unit_port 50080 '127\.0\.0\.1:[0-9]+')/" ;;
     aeon) url="http://127.0.0.1:$(unit_port 5555 '-p[ =][0-9]+')/aeon" ;;
+    hermes) url="http://127.0.0.1:$(unit_port 9119 '--port[ =][0-9]+')/" ;;
   esac
   while :; do
     if systemctl is-active --quiet "$UNIT"; then
@@ -520,6 +546,67 @@ trap 'exit 143' TERM INT HUP
 
 # ── run ─────────────────────────────────────────────────────────────────────
 
+# Waits for a quiet moment and holds the app's surface (release_lock lets it
+# go). Past the wait limit the update is deferred, not forced.
+wait_until_idle() {
+  local deadline=$(( $(date +%s) + WAIT_LIMIT_SECONDS ))
+  while :; do
+    # Only an app that looks idle is held, then checked again: someone who
+    # arrived meanwhile is counted and the hold is let go at once.
+    if ! in_use; then
+      hold_lock
+      sleep "$LOCK_SETTLE_SECONDS"
+      in_use || break
+      release_lock
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      write_status deferred app_in_use
+      exit 0
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+# Hermes: no pin, no staged copy, no rollback. Hermes's own updater does the
+# work as the agent's user; this only waits for a quiet moment, holds the
+# surface, restarts the dashboard and reports what it finds.
+run_hermes() {
+  local rc=0 now
+  [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
+  FROM="$(installed_version || true)"
+  if [ "$(free_mb "$AGENT_HOME")" -lt "$NEED_FREE_MB" ]; then
+    write_status failed no_space
+    exit 1
+  fi
+  write_status waiting
+  wait_until_idle
+  write_status installing
+  as_agent timeout -k 30 "$HERMES_UPDATE_SECONDS" "$BIN" update --yes >/dev/null 2>&1 </dev/null || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # Exit 2 is Hermes saying it would not touch local changes (or another
+    # update holds its lock); anything else did not complete.
+    systemctl is-active --quiet "$UNIT" || systemctl start "$UNIT" || true
+    release_lock
+    write_record "$(installed_version || true)"
+    if [ "$rc" -eq 2 ]; then write_status failed local_changes; else write_status failed install_failed; fi
+    exit 1
+  fi
+  systemctl restart "$UNIT" || true
+  now="$(installed_version || true)"
+  if [ -z "$now" ] || ! healthy "$now"; then
+    release_lock
+    write_record "$now"
+    write_status failed install_failed
+    exit 1
+  fi
+  release_lock
+  write_record "$now"
+  write_status done
+  exit 0
+}
+
+[ "$NAME" != hermes ] || run_hermes
+
 # A swap cut short (a reboot) left its journal behind. If the new version is
 # the one running and it answers, the swap finished in all but name: keep it.
 # Otherwise put the previous version back.
@@ -565,22 +652,7 @@ if ! prepare; then
 fi
 
 write_status waiting
-deadline=$(( $(date +%s) + WAIT_LIMIT_SECONDS ))
-while :; do
-  # Only an app that looks idle is held, then checked again: someone who
-  # arrived meanwhile is counted and the hold is let go at once.
-  if ! in_use; then
-    hold_lock
-    sleep "$LOCK_SETTLE_SECONDS"
-    in_use || break
-    release_lock
-  fi
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    write_status deferred app_in_use
-    exit 0
-  fi
-  sleep "$POLL_SECONDS"
-done
+wait_until_idle
 
 # Agent Zero copies its data aside first; that must fit next to it.
 if [ "$NAME" = agent-zero ] && [ -d "$DATA" ]; then

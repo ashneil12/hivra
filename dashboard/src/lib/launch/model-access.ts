@@ -10,7 +10,7 @@
  */
 
 import { PROVIDERS, type Provider } from "@/lib/models";
-import { DEEPSEEK_HARNESS_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
 import { isPrivateVenicePrivacy, isPrivateVeniceModel, type VenicePrivacy } from "@/lib/venice/model-privacy";
@@ -43,6 +43,9 @@ const VENICE = "venice";
 /** Codex, OpenClaw and Agent Zero reach models through Venice's API. */
 const CODEX_MODEL = /^[A-Za-z0-9._:/[\]-]{1,64}$/;
 const HERMES_MODEL = /^[\x21-\x7e]{1,128}$/;
+/** Hermes as a Hivra computer takes a plain model ID: the computer writes it
+ * into Hermes's own settings, and rejects anything else. */
+const HERMES_COMPUTER_MODEL = /^[A-Za-z0-9._:/-]{1,64}$/;
 const CODEX_KEY = /^[\x21-\x7e]{8,256}$/;
 /** Claude Code on credits: Venice's Claude models (plain IDs, no legacy dates). */
 const CLAUDE_CODE_MODEL = /^claude-(?:fable|opus|sonnet|haiku)-[a-z0-9-]{1,40}$/;
@@ -61,6 +64,10 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
     case "agent-zero":
     case "aeon":
       return ["native", "credits"];
+    // Hermes on a Hivra computer is pointed at Venice at install: credits, the
+    // owner's Venice key, or its own setup screen.
+    case "hermes-computer":
+      return ["native", "api-key", "credits"];
     case "claude-code":
       return ["native", "credits"];
     // DeepSeek's own settings refuse a key from a remote browser, so Hivra
@@ -148,6 +155,12 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
         detail: "Hermes asks which model provider to use before your first chat.",
         summary: "Choose a model provider inside Hermes after it opens.",
       };
+    case "hermes-computer":
+      return {
+        title: "Set up inside Hermes after it opens",
+        detail: "Choose a model provider in Hermes's own settings.",
+        summary: "Choose a model provider in Hermes's own settings after it opens.",
+      };
     case "openclaw":
       return {
         title: "Set up inside OpenClaw after it opens",
@@ -211,7 +224,7 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
         return {
           mode,
           title: "Use my API key",
-          detail: profileId === "codex" || profileId === "deepseek-harness"
+          detail: profileId === "codex" || profileId === "deepseek-harness" || profileId === "hermes-computer"
             ? "A Venice API key. Venice bills your model usage."
             : "A key from the model provider you use. They bill your model usage.",
           unavailable: codexKeyGap,
@@ -332,6 +345,13 @@ export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAcce
       ...models.filter(model => /^deepseek-/.test(model.value) && model.value !== DEEPSEEK_HARNESS_DEFAULT_MODEL),
     ];
   }
+  // Hermes as a Hivra computer starts on its default; any other Venice model after it.
+  if (profileId === "hermes-computer") {
+    return [
+      { value: HERMES_DEFAULT_MODEL, label: models.find(model => model.value === HERMES_DEFAULT_MODEL)?.label ?? "DeepSeek V4.1 Flash" },
+      ...models.filter(model => model.value !== HERMES_DEFAULT_MODEL && HERMES_COMPUTER_MODEL.test(model.value)),
+    ];
+  }
   // Codex's model setting only takes plain model IDs.
   return profileId === "codex" ? models.filter(model => CODEX_MODEL.test(model.value)) : models;
 }
@@ -340,7 +360,8 @@ export function modelChoices(profileId: LaunchProfileId, access: LaunchModelAcce
  * pick their own model; native sign-in picks inside the agent. */
 export function choosesModel(profileId: LaunchProfileId, mode: LaunchModelAccessMode): boolean {
   if (mode === "native") return false;
-  return profileId === "codex" || profileId === "hermes" || profileId === "claude-code" || profileId === "deepseek-harness";
+  return profileId === "codex" || profileId === "hermes" || profileId === "claude-code" || profileId === "deepseek-harness"
+    || profileId === "hermes-computer";
 }
 
 /** The model this launch sends: the owner's pick, else the default. */
@@ -349,6 +370,7 @@ export function effectiveModel(profileId: LaunchProfileId, access: LaunchModelAc
   if (profileId === "codex") return VENICE_DEFAULT_MODEL;
   if (profileId === "claude-code") return MANAGED_CLAUDE_CODE_DEFAULT_MODEL;
   if (profileId === "deepseek-harness") return DEEPSEEK_HARNESS_DEFAULT_MODEL;
+  if (profileId === "hermes-computer") return HERMES_DEFAULT_MODEL;
   // A custom endpoint's model is whatever the owner types; there's no default.
   if (usesCustomEndpoint(profileId, access)) return "";
   return modelChoices(profileId, access)[0]?.value ?? "";
@@ -441,7 +463,7 @@ export function modelAccessProblem(
   } else {
     const key = pastedKey.trim();
     if (!key) return `Paste your ${providerName(provider)} API key.`;
-    if ((profileId === "codex" || profileId === "deepseek-harness") && !CODEX_KEY.test(key)) return "Check the key: it should be one line of 8 to 256 characters.";
+    if ((profileId === "codex" || profileId === "deepseek-harness" || profileId === "hermes-computer") && !CODEX_KEY.test(key)) return "Check the key: it should be one line of 8 to 256 characters.";
     const shape = profileId === "hermes" ? validateProviderKeyShape(provider, key) : null;
     if (shape) return shape.message;
   }
@@ -459,6 +481,7 @@ export function modelAccessProblem(
 
 function modelIsValid(profileId: LaunchProfileId, model: string): boolean {
   if (profileId === "claude-code") return CLAUDE_CODE_MODEL.test(model);
+  if (profileId === "hermes-computer") return HERMES_COMPUTER_MODEL.test(model);
   return profileId === "codex" || profileId === "deepseek-harness" ? CODEX_MODEL.test(model) : HERMES_MODEL.test(model);
 }
 

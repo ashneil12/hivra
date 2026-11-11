@@ -340,3 +340,48 @@ describe("automatic updates", () => {
     expect(agentCliAutoUpdateGate({ kind: "behind", installed: "0.149.0" }, { auto_paused_target: "0.148.0", auto_paused_reason: "failed" }, TESTED)).toEqual({ ok: true });
   });
 });
+
+describe("Hermes (updated by `hermes update`, never pinned by Hivra)", () => {
+  const hermes = agentSoftwareSubject({ type: "hermes", computer_substrate: "proxmox-kvm" }) as AgentSoftwareSubject;
+  const view = (record: AgentSoftwareRecord | null, status = "running") =>
+    deriveAgentSoftware({ subject: hermes, status, tested: null, record, now: NOW });
+  const base = { observation: "reported", installed_version: "0.23.1", observed_at: ago(MIN) } as const;
+
+  it("is its own software kind with the literal `latest` as its only update target", () => {
+    expect(hermes).toMatchObject({ app: "hermes", gatewayKind: "hermes" });
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled"))
+      .toEqual({ name: "hermes", version: "0.23.1", target: "latest", state: "scheduled" });
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=hermes version=unknown target=latest state=failed"))
+      .toEqual({ name: "hermes", version: null, target: "latest", state: "failed" });
+    // A pin or any other word is not a Hermes target.
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=hermes version=0.23.1 target=0.24.0 state=scheduled")).toBeNull();
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=hermes version=0.23.1 target=stable state=scheduled")).toBeNull();
+  });
+
+  it("shows the installed version with nothing to be behind", () => {
+    expect(view(base)).toEqual({ kind: "current", installed: "0.23.1" });
+    expect(view({ ...base, installed_version: null, observation: "version_unreadable" })).toEqual({ kind: "version_unreadable" });
+    expect(view(base, "stopped")).toEqual({ kind: "not_running" });
+    expect(view(null)).toEqual({ kind: "checking" });
+    expect(agentSoftwareBadge(view(base))).toBeNull();
+  });
+
+  it("follows the owner's update and reads why it stopped", () => {
+    const at = { ...base, update_updated_at: ago(MIN), update_target: "latest" } as const;
+    expect(view({ ...at, update_state: "installing" })).toEqual({ kind: "updating", phase: "installing", target: "latest", installed: "0.23.1" });
+    expect(view({ ...at, update_state: "waiting" })).toMatchObject({ kind: "updating", phase: "waiting" });
+    expect(view({ ...at, update_state: "done", installed_version: "0.24.0" })).toEqual({ kind: "update_done", target: "0.24.0", installed: "0.24.0" });
+    expect(view({ ...at, update_state: "failed", update_reason: "local_changes" }))
+      .toEqual({ kind: "update_failed", reason: "local_changes", target: "latest", installed: "0.23.1" });
+    expect(view({ ...at, update_state: "failed", update_reason: "no_space" })).toMatchObject({ kind: "update_failed", reason: "no_space" });
+    expect(view({ ...at, update_state: "failed", update_reason: "anything_else" })).toMatchObject({ kind: "update_failed", reason: "install_failed" });
+    expect(view({ ...at, update_state: "deferred" })).toMatchObject({ kind: "update_deferred" });
+  });
+
+  it("stops showing a failure after a day, and shows a requested update as starting", () => {
+    const old = { ...base, update_state: "failed", update_reason: "install_failed", update_updated_at: ago(25 * 60 * MIN) } as const;
+    expect(view(old)).toEqual({ kind: "current", installed: "0.23.1" });
+    expect(view({ ...base, requested_target: "latest", requested_at: ago(MIN / 2), request_result: "scheduled" }))
+      .toEqual({ kind: "updating", phase: "starting", target: "latest", installed: "0.23.1" });
+  });
+});

@@ -1,4 +1,4 @@
-import { resizeFloor, UBUNTU_SERVER_FLOOR } from "@/lib/hivra/agent-catalog";
+import { BASE_FLOOR, resizeFloor, UBUNTU_SERVER_FLOOR } from "@/lib/hivra/agent-catalog";
 import type { LaunchProfileId } from "./contracts";
 
 export type ResourceEnvelope = {
@@ -69,12 +69,21 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     recommended: pinned(0.5, 1),
   },
   hermes: {
-    floor: resizeFloor("hermes", false),
+    // The Hermes instance lane's own floor, not the catalog's: the catalog
+    // entry now describes Hermes as a Hivra computer (see hermes-computer).
+    floor: { ...BASE_FLOOR },
     // The Hermes setup form gave a new agent the whole plan, leaving nothing
     // for a second agent. Hivra proposes Medium, or the largest smaller size
     // that fits what is left; Large stays one click away.
     recommended: pinned(2, 4),
     candidates: [pinned(2, 4), pinned(1, 2), pinned(0.5, 1)],
+  },
+  // Hermes as a Hivra computer: the catalog floor (its web UI is built on the
+  // computer at install). Medium is proposed; the floor stays one click away.
+  "hermes-computer": {
+    floor: resizeFloor("hermes", false),
+    recommended: pinned(2, 4),
+    candidates: [pinned(2, 4), pinned(1, 2)],
   },
   "ubuntu-desktop": {
     floor: { cpu: 2, ram: 4 },

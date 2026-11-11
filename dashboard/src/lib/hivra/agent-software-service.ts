@@ -14,6 +14,7 @@ import {
   agentSoftwareSubject,
   deriveAgentSoftware,
   effectiveAgentCliAutoUpdate,
+  isAgentSoftwareTarget,
   isAgentSoftwareVersion,
   summarizeAgentSoftware,
   type AgentCliAutoUpdateMode,
@@ -44,12 +45,14 @@ export interface AgentSoftwareAgentRow {
 
 export function testedVersionFor(subject: AgentSoftwareSubject): string | null {
   if (subject.cli) return AGENT_CLI_VERSIONS[subject.cli];
+  // Hermes is the official Hermes Agent, updated by its own updater: Hivra tests no version of it.
+  if (subject.app === "hermes") return null;
   return subject.app ? AGENT_APP_VERSIONS[subject.app].version : null;
 }
 
 /** The app's tested versions Hivra moved off, newest first (empty for the CLIs). */
 export function previousVersionsFor(subject: AgentSoftwareSubject): string[] {
-  return subject.app ? AGENT_APP_VERSIONS[subject.app].previous.map((pin) => pin.version) : [];
+  return subject.app && subject.app !== "hermes" ? AGENT_APP_VERSIONS[subject.app].previous.map((pin) => pin.version) : [];
 }
 
 
@@ -131,6 +134,8 @@ export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: Agen
   const auto = effectiveAgentCliAutoUpdate(record, agent.deployment_mode);
   const updateState = record?.update_state as AgentCliUpdateState | null | undefined;
   const isVersion = (value: unknown): value is string => isAgentSoftwareVersion(subject.software, value);
+  // An update's target is also the word "latest" for Hermes, which pins no version.
+  const isTarget = (value: unknown): value is string => isAgentSoftwareTarget(subject.software, value);
   return {
     supported: true,
     cli: subject.cli,
@@ -138,10 +143,10 @@ export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: Agen
     view,
     tested,
     observedAt: record?.observed_at ?? null,
-    update: updateState && isVersion(record?.update_target)
+    update: updateState && isTarget(record?.update_target)
       ? { state: updateState, target: record.update_target, reason: record.update_reason ?? null, updatedAt: record.update_updated_at ?? null }
       : null,
-    lastRequest: record?.requested_at && isVersion(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
+    lastRequest: record?.requested_at && isTarget(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
       ? { by: record.requested_by, at: record.requested_at, target: record.requested_target, result: (record.request_result ?? null) as AgentCliRequestResult | null }
       : null,
     autoUpdate: subject.cli && agentSoftwareAutoUpdates(agent)

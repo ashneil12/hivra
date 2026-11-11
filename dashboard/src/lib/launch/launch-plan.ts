@@ -91,9 +91,11 @@ export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSu
       targetKind: "any",
     };
   }
-  // Every agent reads its floors, plan tier and pool use from the catalog.
-  // Hermes runs on Hivra Cloud only.
-  return catalogSubject(profileId, { ownServer: profile.ownServer });
+  // Every agent reads its plan tier and pool use from the catalog. The floor
+  // is the launch policy's: the same as the catalog's for every agent but the
+  // Hermes instance lane, which keeps its own smaller one. Hermes as an
+  // instance runs on Hivra Cloud only.
+  return catalogSubject(profile.runtimeId, { ownServer: profile.ownServer, floor });
 }
 
 export type LaunchFit = {
@@ -327,6 +329,10 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
   if (profileId === "hermes") {
     return presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
   }
+  if (profileId === "hermes-computer") {
+    // Small is Hermes's minimum (its web UI is built at install); Medium is recommended.
+    return presets(pinned(1, 2), pinned(2, 4), pinned(4, 8));
+  }
   if (profileId === "deepseek-harness") {
     // Small is the size its acceptance ran at; every preset holds the floor.
     return presets(pinned(2, 4), pinned(4, 8), pinned(8, 16));
@@ -540,6 +546,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
     return `Terminal, files and administrator access on its own computer.${browserNote}`;
   }
   if (profileId === "hermes") return "Chat, a terminal, files and skills on its own computer.";
+  if (profileId === "hermes-computer") return "Hermes's own web UI, a terminal and files on its own computer.";
   if (profileId === "openclaw") return `OpenClaw's Control UI, a terminal and files on its own computer.${browserNote}`;
   if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";

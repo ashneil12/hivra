@@ -544,6 +544,29 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.11.4` builds on `2026.11.11.3` and adds the official Hermes Agent
+(NousResearch/hermes-agent) as a kind of Hivra computer, as thinly as possible. There is
+no Hivra-built image, fork, overlay or patch: `provision-claude-code-box.sh` downloads
+Hermes's own installer over HTTPS and runs it as the agent user with
+`--non-interactive --skip-browser --channel stable`, writes `~/.hermes/config.yaml` with
+`hermes config set` and the inference key to `~/.hermes/.env` (mode 600) from the launch
+model settings (default model `deepseek-v4-1-flash`, the managed inference endpoint), and
+runs Hermes's own web UI as `bux-hermes.service`
+(`hermes dashboard --host 127.0.0.1 --port 9119 --no-open`). The gateway
+(`hivra-chat/server.js`) serves it at `/hermes/` behind the same token gate as every other
+route: HTTP and the dashboard's WebSockets (`/api/ws`, `/api/pty`), with the prefix
+stripped, `X-Forwarded-Prefix: /hermes`, `Host` set to `127.0.0.1:9119` and `Origin`
+rewritten to loopback, because the dashboard refuses any other host or origin. It records
+the installed version from `hermes --version` and reports it on `GET /api/meta`. Owners
+update with `hermes update` in Terminal, or the Update Hermes button, which runs exactly
+`hermes update --yes` as the agent user (`hivra-agent-app-update.sh hermes latest`, a
+runtime update asset): exit status 2 (local changes, or another update running) is
+reported as such and nothing is forced. Hermes has no Hivra-pinned version, so the update
+target is the literal `latest`. The runtime-update scripts, the receipt and the install
+allow-lists learn the `hermes` kind. `hivra-provider-worker.py` advances its native and
+desktop release labels. The placement minimum for `hermes` is this release. This source
+release does not deploy, install, or update any existing computer.
+
 Release `2026.11.11.3` builds on `2026.11.11.2` and makes the chat's reasoning effort
 real. The gateway (`hivra-chat/server.js`) accepts an optional `effort` on
 `POST /api/chat`, strictly one of `low`, `medium`, `high`, `xhigh` or `max` (anything

@@ -70,6 +70,20 @@ describe("the model access choices", () => {
     expect(modelCostNote("deepseek-harness", access({ mode: "credits" }))).toBe("Model usage is paid from your Hivra credits at provider rates.");
   });
 
+  it("gives Hermes on a Hivra computer the default model first, a Venice key, or its own setup", () => {
+    const options = modelAccessOptions("hermes-computer", CONTEXT);
+    expect(options.map(option => option.mode)).toEqual(["native", "api-key", "credits"]);
+    expect(byMode("hermes-computer").credits.unavailable).toBeNull();
+    expect(byMode("hermes-computer")["api-key"].unavailable).toBeNull();
+    expect(byMode("hermes-computer").native.title).toBe("Set up inside Hermes after it opens");
+    const ready = { name: "Hermes 1", pastedKey: "", savedKeys: [], options };
+    expect(modelAccessProblem("hermes-computer", access({ mode: "credits" }), ready)).toBeNull();
+    expect(modelAccessProblem("hermes-computer", access({ mode: "api-key" }), ready)).toBe("Paste your Venice AI API key.");
+    expect(modelAccessProblem("hermes-computer", access({ mode: "api-key" }), { ...ready, pastedKey: "short" }))
+      .toBe("Check the key: it should be one line of 8 to 256 characters.");
+    expect(effectiveModel("hermes-computer", access({ mode: "credits" }))).toBe("deepseek-v4-1-flash");
+  });
+
   it("defaults DeepSeek Harness to credits, and to a key where this installation has no credits", () => {
     expect(recommendedModelAccessMode("deepseek-harness", { selfHosted: false })).toBe("credits");
     expect(recommendedModelAccessMode("deepseek-harness", { selfHosted: true })).toBe("api-key");

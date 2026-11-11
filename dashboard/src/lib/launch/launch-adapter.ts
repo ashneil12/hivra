@@ -110,7 +110,7 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 }
 
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
-  return profileId === "claude-code" || profileId === "hermes" || profileId === "openclaw"
+  return profileId === "claude-code" || profileId === "hermes" || profileId === "hermes-computer" || profileId === "openclaw"
     || profileId === "agent-zero" || profileId === "aeon" || profileId === "deepseek-harness"
     ? "observe"
     : "resend";
@@ -619,6 +619,51 @@ export async function submitLaunchDraft(
       llm: { provider: "venice", mode: "byok", model, ...(await launchKey(draft, options)) },
       deployment,
     }), draft, options);
+  }
+  if (profileId === "hermes-computer") {
+    // Hermes as a Hivra computer: the official Hermes, its own web UI. It is
+    // pointed at Venice at install (Hivra credits or the owner's Venice key),
+    // or left to be set up inside Hermes. Always the generic Hivra agent
+    // launch, like OpenClaw.
+    if (deployment.mode !== "hivra-managed") {
+      throw new HivraLaunchCorrectableError("Hermes runs on Hivra Cloud only.", 409, "hermes_managed_only");
+    }
+    const hermesAccess = accessOf(draft);
+    const model = effectiveModel("hermes-computer", hermesAccess);
+    if (hermesAccess.mode === "credits") {
+      const walletType = creditsWallet(hermesAccess, options.balance ?? { state: "unknown" });
+      return submitObserved(withTemplate(dashboardAgentRequest({
+        type: "hermes",
+        name: draft.name.trim(),
+        cpu: draft.resources.cpu,
+        ram: draft.resources.ram,
+        browser: false,
+        credits: { walletType },
+        llm: { provider: "venice", mode: "managed", model, walletType },
+        deployment,
+      }), draft), draft, options);
+    }
+    if (hermesAccess.mode === "api-key") {
+      return submitObserved(withTemplate(dashboardAgentRequest({
+        type: "hermes",
+        name: draft.name.trim(),
+        cpu: draft.resources.cpu,
+        ram: draft.resources.ram,
+        browser: false,
+        credits: null,
+        llm: { provider: "venice", mode: "byok", model, ...(await launchKey(draft, options)) },
+        deployment,
+      }), draft), draft, options);
+    }
+    return submitObserved(withTemplate(dashboardAgentRequest({
+      type: "hermes",
+      name: draft.name.trim(),
+      cpu: draft.resources.cpu,
+      ram: draft.resources.ram,
+      browser: false,
+      credits: null,
+      deployment,
+    }), draft), draft, options);
   }
   if (profileId === "claude-code") {
     const claudeAccess = accessOf(draft);
