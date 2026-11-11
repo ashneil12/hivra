@@ -1674,7 +1674,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  );
 
  return (
- <div ref={rootRef} className={`hivra-chat-root ${styles.root} ${chatStyles.findHost}`}>
+ <div ref={rootRef} className={`hivra-chat-root ${styles.root}`}>
  {/* The chat list lives in the agent sidebar when it provides a place for it. */}
  {slotElement ? createPortal(list(), slotElement) : null}
  {/* Anywhere else: an overlay drawer below md, an inline column from md up. */}

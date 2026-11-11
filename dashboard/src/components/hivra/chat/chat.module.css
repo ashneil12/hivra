@@ -991,9 +991,8 @@
 .findButton:hover:not(:disabled) { background: var(--hg-fill-hover); color: var(--hg-text); }
 .findButton:disabled { opacity: 0.3; cursor: default; }
 @media (pointer: coarse) { .findButton { width: 44px; height: 44px; } }
-/* A highlight is styled from an element that holds it; the chat root does, and its text inherits. */
-.findHost::highlight(hivra-chat-find-match) { background-color: color-mix(in srgb, var(--hg-warn) 30%, transparent); color: inherit; }
-.findHost::highlight(hivra-chat-find-current) { background-color: color-mix(in srgb, var(--hg-warn) 62%, transparent); color: inherit; }
+/* The find highlights (::highlight) are styled in transcriptHighlights.ts: the CSS
+   parser behind CSS modules can't read that pseudo-element and drops the rule. */
 
 /* ── Prompt outline ────────────────────────────────────────────────────── */
 .outline { position: absolute; inset: 0; z-index: 30; pointer-events: none; container-type: inline-size; }
