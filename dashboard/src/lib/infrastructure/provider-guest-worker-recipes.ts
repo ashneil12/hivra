@@ -390,6 +390,11 @@ const recipes = Object.freeze({
     workerSha256: "5cb9d2fa1659860d7a87bc0fce6812e2bf657d6e0aac887506e65aae6a3f4e16",
     workerSize: 45185,
   }),
+  "2026.11.11.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release makes the chat's reasoning effort real in the gateway (server.js), on new computers and through the runtime update. The worker only advances its release labels.
+    workerSha256: "1686c9fd7a69213565cc8adec37f978a42b2d04a50b480d1801b361e0a4f7ce3",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

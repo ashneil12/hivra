@@ -481,6 +481,19 @@ update them yet.
   build (`dpkg-repack`, else the pin's `previous` build). It confirms the browser answers
   on the pin's major version and otherwise puts the previous build back. A busy browser
   keeps its current Chrome until a later update (`HIVRA_AGENT_BROWSER state=deferred`).
+- **Chat effort.** `POST /api/chat` takes an optional `effort`, exactly one of `low`,
+  `medium`, `high`, `xhigh` or `max`; any other value, or none, runs the turn with no
+  flag. Claude Code gets `--effort <level>` (checked in the pinned 2.1.292 package, and
+  accepted with all five levels from 2.1.117). Codex gets
+  `-c model_reasoning_effort="<level>"` on fresh and resumed turns, next to any provider
+  overrides (the pinned 0.149.1 parses minimal through ultra; the gateway stops at
+  `xhigh` and passes `max` as `xhigh`, because whether a model takes a higher level is
+  the model's decision). Other agent kinds ignore it. `GET /api/meta` lists the levels
+  the gateway will pass as `chatEffort`, only for Claude Code 2.1.117 or later and Codex
+  0.149.1 or later (a CLI that is older, or whose version could not be read, gets no
+  flag and no `chatEffort`), so a client shows the picker exactly when it has an effect.
+  `server.js` is a runtime update asset, so existing computers receive this with the
+  update.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

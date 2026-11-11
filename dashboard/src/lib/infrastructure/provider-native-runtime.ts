@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.11.2.json";
+import currentRelease from "../../../provisioner-releases/2026.11.11.3.json";
+import chromePinRelease from "../../../provisioner-releases/2026.11.11.2.json";
 import browserViewRelease from "../../../provisioner-releases/2026.11.11.1.json";
 import deepseekModelRelease from "../../../provisioner-releases/2026.11.10.5.json";
 import linuxServerRelease from "../../../provisioner-releases/2026.11.10.4.json";
@@ -93,8 +94,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.11.2"
+  const release = identity.bundle.provisionerVersion === "2026.11.11.3"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.2"
+      ? chromePinRelease
     : identity.bundle.provisionerVersion === "2026.11.11.1"
       ? browserViewRelease
     : identity.bundle.provisionerVersion === "2026.11.10.5"

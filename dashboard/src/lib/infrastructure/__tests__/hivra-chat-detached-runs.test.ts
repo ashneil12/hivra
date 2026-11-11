@@ -26,6 +26,7 @@ const FAKE_AGENT = `#!${process.execPath}
 const fs = require("fs");
 const path = require("path");
 const dir = process.env.FAKE_AGENT_DIR;
+if (process.argv[2] === "--version") { process.stdout.write((process.env.FAKE_AGENT_VERSION || "") + "\\n"); process.exit(0); }
 const readStdin = () => { try { return fs.readFileSync(0, "utf8"); } catch { return ""; } };
 const prompt = process.env.FAKE_AGENT_PROMPT_VIA_ARG === "1" ? process.argv[process.argv.length - 1] : readStdin();
 const tag = (prompt.match(/TAG:([a-z0-9-]+)/) || [, "untagged"])[1];
@@ -352,6 +353,127 @@ describe("detached chat runs in the Hivra guest gateway", () => {
     const runDir = path.join(home, ".hivra", "chat-runs", id);
     for (const name of fs.readdirSync(runDir)) expect(fs.readFileSync(path.join(runDir, name), "utf8")).not.toContain(key);
     expect(done.body).not.toContain(key);
+  });
+
+  // Chat effort: POST /api/chat takes an optional `effort`; the gateway passes it to
+  // the two CLI agents when the installed CLI is known to accept it, and says so
+  // on GET /api/meta as `chatEffort`.
+  const CLAUDE_BASE = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions"];
+  async function advertised(gateway: Gateway) {
+    const meta = JSON.parse((await request(gateway, "GET", "/api/meta")).body) as { chatEffort?: string[] };
+    return meta.chatEffort;
+  }
+  // The gateway probes `<cli> --version` once after it starts; wait for that.
+  async function probed(gateway: Gateway) {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const meta = JSON.parse((await request(gateway, "GET", "/api/meta")).body) as { agentCli?: { version: string | null } };
+      if (meta.agentCli || Date.now() > deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  async function chat(gateway: Gateway, tag: string, extra: Record<string, unknown> = {}) {
+    const done = await request(gateway, "POST", "/api/chat", { message: `TAG:${tag} WAIT:0 hi`, detach: true, runId: runId(), ...extra });
+    expect(ndjson(done.body).pop()).toEqual({ type: "_done", code: 0 });
+    return argvOf(tag).argv;
+  }
+
+  it("passes a validated effort to claude as --effort and advertises the levels", async () => {
+    const gateway = await boot("claude", { FAKE_AGENT_VERSION: "2.1.292 (Claude Code)" });
+    await probed(gateway);
+    expect(await advertised(gateway)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(await chat(gateway, "cl-none")).toEqual(CLAUDE_BASE);
+    for (const level of ["low", "medium", "high", "xhigh", "max"]) {
+      expect(await chat(gateway, `cl-${level}`, { effort: level })).toEqual([...CLAUDE_BASE, "--effort", level]);
+    }
+    // A resumed turn keeps the effort and adds only --resume <id>.
+    expect(await chat(gateway, "cl-resume", { effort: "high", sessionId: SESSION_ID })).toEqual([...CLAUDE_BASE, "--effort", "high", "--resume", SESSION_ID]);
+    // The restrict presets are unchanged next to it.
+    fs.writeFileSync(path.join(home, ".hivra", "agent-restrict"), "limited\n");
+    expect(await chat(gateway, "cl-limited", { effort: "low" })).toEqual([...CLAUDE_BASE, "--disallowedTools", "Bash", "--effort", "low"]);
+  });
+
+  it("ignores an effort that is not exactly one of the five levels", async () => {
+    const claude = await boot("claude", { FAKE_AGENT_VERSION: "2.1.292 (Claude Code)" });
+    await probed(claude);
+    const bad: unknown[] = ["ultra", "HIGH", "High", " high", "high ", "", "none", "minimal", "--effort", 3, true, null, ["high"], { level: "high" }];
+    for (const [index, value] of bad.entries()) {
+      expect(await chat(claude, `bad-${index}`, { effort: value })).toEqual(CLAUDE_BASE);
+    }
+    // The legacy dashboard flag does nothing either.
+    expect(await chat(claude, "legacy-reasoning", { reasoning: true })).toEqual(CLAUDE_BASE);
+    await claude.close();
+    gateways.splice(gateways.indexOf(claude), 1);
+    const codex = await boot("codex", { FAKE_AGENT_PROMPT_VIA_ARG: "1", FAKE_AGENT_VERSION: "codex-cli 0.149.1" });
+    await probed(codex);
+    for (const [index, value] of ["ultra", "HIGH", "", 3, null].entries()) {
+      const argv = await chat(codex, `bad-codex-${index}`, { effort: value });
+      expect(argv.join(" ")).not.toContain("model_reasoning_effort");
+    }
+  });
+
+  it("passes effort to codex as a model_reasoning_effort override on fresh and resumed turns", async () => {
+    const gateway = await boot("codex", { FAKE_AGENT_PROMPT_VIA_ARG: "1", FAKE_AGENT_VERSION: "codex-cli 0.149.1" });
+    await probed(gateway);
+    // Codex stops at xhigh: max is passed as the highest level it is asked for.
+    expect(await advertised(gateway)).toEqual(["low", "medium", "high", "xhigh"]);
+    const fixed = ["--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"];
+    const none = await chat(gateway, "cx-none");
+    expect(none).toEqual(["exec", ...fixed, "-C", home, "TAG:cx-none WAIT:0 hi"]);
+    const cases: Array<[string, string]> = [["low", "low"], ["medium", "medium"], ["high", "high"], ["xhigh", "xhigh"], ["max", "xhigh"]];
+    for (const [level, passed] of cases) {
+      expect(await chat(gateway, `cx-${level}`, { effort: level })).toEqual(
+        ["exec", ...fixed, "-c", `model_reasoning_effort="${passed}"`, "-C", home, `TAG:cx-${level} WAIT:0 hi`]);
+    }
+    const resumed = await chat(gateway, "cx-resume", { effort: "medium", sessionId: SESSION_ID });
+    expect(resumed).toEqual(["exec", "resume", ...fixed, "-c", 'model_reasoning_effort="medium"', SESSION_ID, "TAG:cx-resume WAIT:0 hi"]);
+    expect(resumed).not.toContain("-C");
+  });
+
+  it("keeps the effort override next to the Venice provider overrides", async () => {
+    const gateway = await boot("codex", { FAKE_AGENT_PROMPT_VIA_ARG: "1", FAKE_AGENT_VERSION: "codex-cli 0.149.1" });
+    await probed(gateway);
+    const configured = await request(gateway, "POST", "/api/llm", { provider: "venice", baseUrl: "https://api.venice.ai/api/v1", apiKey: "fixture-private-model-key", model: "fixture-model" });
+    expect(configured.status).toBe(200);
+    for (const sessionId of [undefined, SESSION_ID]) {
+      const tag = sessionId ? "vn-resume" : "vn-fresh";
+      const argv = await chat(gateway, tag, { effort: "max", ...(sessionId ? { sessionId } : {}) });
+      expect(argv).toEqual(expect.arrayContaining(['model_provider="venice"', 'model_providers.venice.env_key="HIVRA_LLM_API_KEY"', "-m", "fixture-model", 'model_reasoning_effort="xhigh"']));
+      expect(argv.filter((arg) => arg.startsWith("model_reasoning_effort"))).toHaveLength(1);
+      expect(argv.indexOf('model_reasoning_effort="xhigh"')).toBeGreaterThan(argv.indexOf('model_provider="venice"'));
+      expect(argv.indexOf("-c", argv.indexOf('model_provider="venice"') + 1)).toBe(argv.indexOf('model_reasoning_effort="xhigh"') - 1);
+      expect(JSON.stringify(argv)).not.toContain("fixture-private-model-key");
+    }
+  });
+
+  it("advertises chatEffort only for a CLI that accepts it", async () => {
+    // Claude Code and Codex at or above the checked versions.
+    const claude = await boot("claude", { FAKE_AGENT_VERSION: "2.1.117 (Claude Code)" });
+    await probed(claude);
+    expect(await advertised(claude)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    await claude.close(); gateways.splice(gateways.indexOf(claude), 1);
+    // An older CLI is not asked for effort: its flag list stops before xhigh and a value outside it ends the turn.
+    const oldClaude = await boot("claude", { FAKE_AGENT_VERSION: "2.1.100 (Claude Code)" });
+    await probed(oldClaude);
+    expect(await advertised(oldClaude)).toBeUndefined();
+    expect(await chat(oldClaude, "old-claude", { effort: "high" })).toEqual(CLAUDE_BASE);
+    await oldClaude.close(); gateways.splice(gateways.indexOf(oldClaude), 1);
+    // A CLI whose version could not be read is treated the same way.
+    const unknown = await boot("claude");
+    await probed(unknown);
+    expect(await advertised(unknown)).toBeUndefined();
+    expect(await chat(unknown, "unknown-claude", { effort: "high" })).toEqual(CLAUDE_BASE);
+    await unknown.close(); gateways.splice(gateways.indexOf(unknown), 1);
+    const oldCodex = await boot("codex", { FAKE_AGENT_PROMPT_VIA_ARG: "1", FAKE_AGENT_VERSION: "codex-cli 0.148.0" });
+    await probed(oldCodex);
+    expect(await advertised(oldCodex)).toBeUndefined();
+    expect((await chat(oldCodex, "old-codex", { effort: "high" })).join(" ")).not.toContain("model_reasoning_effort");
+    await oldCodex.close(); gateways.splice(gateways.indexOf(oldCodex), 1);
+    // Generic agents ignore it entirely.
+    fs.writeFileSync(path.join(home, ".hivra", "agent-cmd.json"), JSON.stringify({ bin: fakeAgent, args: ["--flag"], promptVia: "arg" }));
+    const generic = await boot("generic", { FAKE_AGENT_PROMPT_VIA_ARG: "1", FAKE_AGENT_VERSION: "9.9.9" });
+    expect(await advertised(generic)).toBeUndefined();
+    expect(await chat(generic, "generic-effort", { effort: "high" })).toEqual(["--flag", "TAG:generic-effort WAIT:0 hi"]);
   });
 
   it("refuses a second turn on a conversation that is still running, and guards the run API", async () => {

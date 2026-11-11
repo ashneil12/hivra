@@ -1701,10 +1701,45 @@ function readGenericCmd() {
   return null;
 }
 
+// Reasoning effort for a chat turn. POST /api/chat takes an optional `effort`
+// that must be exactly one of CHAT_EFFORT_LEVELS; anything else (absent, other
+// case, other type, unknown word) is ignored and the turn runs with no flag.
+// Only the two CLI agents take it, and only from the first version whose option
+// was checked to accept every level (read from each pinned package, see
+// provisioner/README.md "Chat effort"):
+//  - Claude Code: `--effort <level>` takes low, medium, high, xhigh and max from
+//    2.1.117 (2.1.100 stops at max without xhigh, and a value its list lacks
+//    ends the turn with a usage error). 2.1.292, the pin, takes the same five.
+//  - Codex: `-c model_reasoning_effort="<level>"`. 0.149.1, the pin, parses
+//    minimal, low, medium, high, xhigh, max and ultra, but whether a model takes
+//    the top ones is the model's call, so the gateway stops at xhigh and maps
+//    `max` down to it. That mapping is the whole Codex difference.
+// The gateway advertises the levels it will pass as `chatEffort` on /api/meta
+// (nothing for a CLI that is older, not yet probed, or any other agent kind), so
+// the dashboard shows the picker exactly when choosing a level has an effect.
+const CHAT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+const CHAT_EFFORT_CODEX = { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "xhigh" };
+const CHAT_EFFORT_MIN_CLI = { claude: [2, 1, 117], codex: [0, 149, 1] };
+function chatEffortLevel(raw) {
+  return typeof raw === "string" && CHAT_EFFORT_LEVELS.includes(raw) ? raw : null;
+}
+function chatEffortAdvertised() {
+  const need = CHAT_EFFORT_MIN_CLI[AGENT_KIND];
+  if (COMPUTER_PROFILE || !AGENT_CLI || !need) return null;
+  probeAgentCli();
+  const have = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(agentCliVersion || ""));
+  if (!have) return null;
+  const at = [Number(have[1]), Number(have[2]), Number(have[3])];
+  const older = at[0] !== need[0] ? at[0] < need[0] : at[1] !== need[1] ? at[1] < need[1] : at[2] < need[2];
+  if (older) return null;
+  return AGENT_KIND === "codex" ? [...new Set(CHAT_EFFORT_LEVELS.map((level) => CHAT_EFFORT_CODEX[level]))] : CHAT_EFFORT_LEVELS.slice();
+}
+
 // Resolve how to spawn the agent for one chat turn. `textMode` distinguishes the
 // two stream shapes: structured agents (claude/codex) emit their own NDJSON which
 // we pass through; a generic agent emits plain text which we wrap as `_text`.
-function resolveChatSpawn(message, sessionId, images) {
+// `effort` is a level already checked by chatEffortLevel(), or null.
+function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
   if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero") {
     // Aeon + OpenClaw + Agent Zero are hosted dashboards, not chat-CLI agents — no
@@ -1748,6 +1783,9 @@ function resolveChatSpawn(message, sessionId, images) {
       const model = readAgentModel();
       if (model) flags.push("-m", model);
     }
+    // Reasoning effort rides on the command line like the provider overrides, so
+    // it applies to fresh and resumed turns and to a Venice provider alike.
+    if (effort && chatEffortAdvertised()) flags.push("-c", `model_reasoning_effort="${CHAT_EFFORT_CODEX[effort]}"`);
     for (const img of images || []) flags.push("-i", img);
     // An attached agent's own config.toml cannot switch off the AGENTS.md
     // Hivra wrote in its starting folder: pin Codex's project-doc budget on
@@ -1777,6 +1815,7 @@ function resolveChatSpawn(message, sessionId, images) {
   if (restrict === "limited") args.push("--disallowedTools", "Bash");
   const model = readAgentModel();
   if (model) args.push("--model", model); // alias (sonnet/opus/haiku) or full id
+  if (effort && chatEffortAdvertised()) args.push("--effort", effort);
   if (sessionId && /^[0-9a-f-]{8,}$/i.test(sessionId)) args.push("--resume", sessionId);
   return { bin: CLAUDE, args, useStdin: true, textMode: false }; // claude reads the prompt from stdin
 }
@@ -1811,11 +1850,12 @@ function handleChat(req, res) {
   let body = "";
   req.on("data", (c) => { body += c; if (body.length > 2e6) req.destroy(); });
   req.on("end", () => {
-    let message, sessionId, imagesRaw, runId, clientRef, detach;
+    let message, sessionId, imagesRaw, runId, clientRef, detach, effort;
     try {
       const j = JSON.parse(body);
       message = j.message; sessionId = j.sessionId; imagesRaw = j.images;
       runId = j.runId; clientRef = j.clientRef; detach = j.detach === true;
+      effort = chatEffortLevel(j.effort);
     }
     catch (e) { res.writeHead(400); return res.end("bad json"); }
     if (!message || typeof message !== "string") { res.writeHead(400); return res.end("no message"); }
@@ -1829,7 +1869,7 @@ function handleChat(req, res) {
     }
 
     let spawnCfg;
-    try { spawnCfg = resolveChatSpawn(sendMsg, sessionId, AGENT_KIND === "codex" ? images : []); }
+    try { spawnCfg = resolveChatSpawn(sendMsg, sessionId, AGENT_KIND === "codex" ? images : [], effort); }
     catch (error) { return llmApplicationFailure(res, error); }
     if (spawnCfg.error) { res.writeHead(400); return res.end(spawnCfg.error); }
     if (!CHAT_RUNS) return jsonRes(res, 409, { error: "agent chat is unavailable for this computer" });
@@ -3708,7 +3748,7 @@ const server = http.createServer((req, res) => {
     // no-store: bootId (the sign-in epoch) and nativeReady describe the live
     // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
-    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}), ...(authed(req) ? ((app) => app ? { agentApp: app } : {})(agentAppReport()) : {}) });
+    return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...((levels) => levels ? { chatEffort: levels } : {})(chatEffortAdvertised()), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}), ...(authed(req) ? ((app) => app ? { agentApp: app } : {})(agentAppReport()) : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
