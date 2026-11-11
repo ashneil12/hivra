@@ -11,7 +11,7 @@ const slot={host:"node-b",node:"node-b",vmid:2099,ip:"10.240.20.99",claim:"019d1
 const row={id,user_id:"owner",type:"linux-desktop",computer_profile:"omarchy",computer_substrate:"proxmox-kvm",deployment_mode:"hivra-managed",proxmox_host:slot.host,vmid:slot.vmid,ip:slot.ip,status:"provisioning",desired_state:"running",cpu:4,ram:8,managed_provisioner_channel:"canary",operation_id:op,allocation_operation_id:op,operation_kind:"provision",operation_started_at:"2026-11-03T01:00:00Z",operation_payload:{stage:"prepared_omarchy_refresh",refreshId:op},infrastructure_binding_token_hash:"c".repeat(64),infrastructure_binding_token_enforced:false};
 const receipt={version:1,operationId:op,computerId:id,vmid:slot.vmid,bindingTag:"hivra-bind-"+"c".repeat(32),requestedRelease:release,guestUpdaterStopped:true,state:"complete",observed:{packageVersion:"4.0.6-1",osVersion:"4.0.6",kernelRelease:"7.2.15-1-omarchy",selectedKernel:"7.2.15-1-omarchy",bootIdBefore:"33333333-3333-4333-8333-333333333333",bootIdAfter:"55555555-5555-4555-8555-555555555555",desktopReady:true,migrationsComplete:true,observedAt:"2026-11-03T01:10:00Z"}};
 async function scalar(sql,args=[]){const result=await db.query(sql,args);return Object.values(result.rows[0])[0];}
-async function reserve(value=row,limit=4){return scalar("select public.reserve_hivra_prepared_omarchy($1::jsonb,$2,$3::jsonb,$4::jsonb)",[JSON.stringify(value),limit,JSON.stringify(release),JSON.stringify(slot)]);}
+async function reserve(value=row,limit=4,requested=release){return scalar("select public.reserve_hivra_prepared_omarchy($1::jsonb,$2,$3::jsonb,$4::jsonb)",[JSON.stringify(value),limit,JSON.stringify(requested),JSON.stringify(slot)]);}
 async function dispatch(){expect(await scalar("select public.bind_hivra_prepared_omarchy('owner',$1)",[op])).toBe(true);expect(await scalar("select public.dispatch_hivra_prepared_omarchy('owner',$1)",[op])).toBe(true);}
 async function finish(value=receipt){return scalar("select public.complete_hivra_prepared_omarchy('owner',$1,$2::jsonb)",[op,JSON.stringify(value)]);}
 beforeEach(async()=>{
@@ -30,6 +30,7 @@ beforeEach(async()=>{
  const compatibilityEnd=compatibility.indexOf("\n-- Validate and serialize a portable binding",compatibilityStart);
  await db.exec(compatibility.slice(compatibilityStart,compatibilityEnd));
  await db.exec(readFileSync(path.join(process.cwd(),"supabase/migrations/20261103010000_prepared_omarchy_refresh.sql"),"utf8")).catch(error=>{console.error("MIGRATION",error.message,error.position,error.where,error.internalQuery);throw error;});
+ await db.exec(readFileSync(path.join(process.cwd(),"supabase/migrations/20261111170000_prepared_omarchy_x86_artifact.sql"),"utf8")).catch(error=>{console.error("ARTIFACT_MIGRATION",error.message,error.position,error.where,error.internalQuery);throw error;});
 });
 afterEach(async()=>{await db.close();});
 test("reserves one pending owner and refuses another customer's same-slot race",async()=>{
@@ -83,4 +84,29 @@ test("preserves legacy compatibility completion for other profiles and ordinary 
   await db.query("update public.hivra_agents set status='error' where id=$1",[legacyId]);
   expect(await scalar("select operation_id from public.hivra_agents where id=$1",[legacyId])).toBeNull();
  }
+});
+
+const x86Release={...release,release:"v4.5.0",isoFilename:"omarchy-4.5.0-x86.iso",isoUrl:"https://iso.omarchy.org/omarchy-4.5.0-x86.iso"};
+test("reserves and admits the exact architecture-qualified x86 release",async()=>{
+ expect((await reserve(row,4,x86Release)).status).toBe("inserted");await dispatch();
+ expect(await finish({...receipt,requestedRelease:x86Release,observed:{...receipt.observed,packageVersion:"4.5.0-1",osVersion:"4.5.0"}})).toBe(true);
+});
+for(const filename of ["omarchy-4.5.0.iso","omarchy-4.5.0-arm.iso","omarchy-4.5.1-x86.iso"]){
+ test("refuses mismatched x86 artifact "+filename,async()=>{
+  expect((await reserve(row,4,{...x86Release,isoFilename:filename,isoUrl:"https://iso.omarchy.org/"+filename})).status).toBe("invalid_request");
+  expect(await scalar("select count(*) from public.hivra_agents")).toBe(0);
+ });
+}
+test("refuses malformed release before interpreting its numeric components",async()=>{
+ expect((await reserve(row,4,{...x86Release,release:"v4.bad.0"})).status).toBe("invalid_request");
+});
+test("reapplies its exact definition but refuses an externally changed reservation",async()=>{
+ const migration=readFileSync(path.join(process.cwd(),"supabase/migrations/20261111170000_prepared_omarchy_x86_artifact.sql"),"utf8");
+ await db.exec(migration);
+ await db.exec(`create or replace function public.reserve_hivra_prepared_omarchy(p_row jsonb,p_agent_limit integer,p_release jsonb,p_slot jsonb) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$begin return '{}'::jsonb;end;$$;`);
+ await expect(db.exec(migration)).rejects.toThrow(/definition changed/);
+});
+test("keeps reservation execution restricted to the service role",async()=>{
+ for(const role of ['anon','authenticated'])expect(await scalar("select has_function_privilege($1,'public.reserve_hivra_prepared_omarchy(jsonb,integer,jsonb,jsonb)','EXECUTE')",[role])).toBe(false);
+ expect(await scalar("select has_function_privilege('service_role','public.reserve_hivra_prepared_omarchy(jsonb,integer,jsonb,jsonb)','EXECUTE')")).toBe(true);
 });
