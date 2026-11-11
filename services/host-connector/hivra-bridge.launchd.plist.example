@@ -14,13 +14,13 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/YOU/hivra-bridge/hivra_bridge.py</string>
+    <string>/Users/example/hivra-bridge/hivra_bridge.py</string>
     <string>run</string>
     <string>--config</string>
-    <string>/Users/YOU/.config/hivra-bridge/config.json</string>
+    <string>/Users/example/.config/hivra-bridge/config.json</string>
   </array>
   <key>RunAtLoad</key><false/>
   <!-- No KeepAlive on purpose: a bridge that stopped (or was revoked, exit status 3) stays stopped. -->
-  <key>StandardErrorPath</key><string>/Users/YOU/.config/hivra-bridge/bridge.err</string>
+  <key>StandardErrorPath</key><string>/Users/example/.config/hivra-bridge/bridge.err</string>
 </dict>
 </plist>

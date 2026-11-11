@@ -17,7 +17,7 @@ function bridgeView(overrides: Record<string, unknown> = {}) {
   return {
     computers: [{ id: MAC, name: "Ash's Mac", revoked: false }],
     agents: [{ id: AGENT, name: "Claude" }],
-    requests: [{ id: "r1", agentId: AGENT, computerId: MAC, argv: ["ls", "-la", "my folder"], cwd: "/Users/ash/work", status: "pending", createdAt: "2026-11-12T10:00:00Z", expiresAt: "2999-01-01T00:00:00Z" }],
+    requests: [{ id: "r1", agentId: AGENT, computerId: MAC, argv: ["ls", "-la", "my folder"], cwd: "/Users/example/work", status: "pending", createdAt: "2026-11-12T10:00:00Z", expiresAt: "2999-01-01T00:00:00Z" }],
     allowances: [{ agentId: AGENT, computerId: MAC, expiresAt: "2026-11-12T11:00:00Z" }],
     ...overrides,
   };
