@@ -211,6 +211,10 @@ export function canTransitionInstanceLifecycle(
   return from === to || ALLOWED_TRANSITIONS[from].includes(to);
 }
 
+// Since 20261112140000_computer_status_follows_lifecycle.sql the database keeps
+// `status`, deleted_at and scheduled_deletion_at in step whenever
+// lifecycle_state changes (hermes_instance_follow_lifecycle), so a writer that
+// sets only lifecycle_state no longer leaves them stale.
 export function buildInstanceLifecyclePatch(
   status: string,
   options: { now?: string | Date } = {}
