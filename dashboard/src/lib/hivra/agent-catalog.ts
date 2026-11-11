@@ -354,7 +354,9 @@ interface PlanDef {
 }
 
 export const PLANS: Record<PlanTier, PlanDef> = {
-  free: { id: "free", name: "Free", maxAgents: AGENT_SLOTS.free, cpu: 0.5, ramGb: 1, blurb: "One lean agent, within limits. No browser automation." },
+  // A free account is sign-up only: the owner connects their own computer.
+  // It holds no Hivra-run computer, so it has no CPU or memory here.
+  free: { id: "free", name: "Free", maxAgents: AGENT_SLOTS.free, cpu: 0, ramGb: 0, blurb: "Connect your own computer. Hivra-run computers need a paid plan." },
   pro: { id: "pro", name: "Pro", maxAgents: AGENT_SLOTS.operator, cpu: 2, ramGb: 4, blurb: "Up to 3 agents. Full capability." },
   power: { id: "power", name: "Power", maxAgents: AGENT_SLOTS.fleet, cpu: 4, ramGb: 8, blurb: "Up to 5 agents. No capability caps." },
 };

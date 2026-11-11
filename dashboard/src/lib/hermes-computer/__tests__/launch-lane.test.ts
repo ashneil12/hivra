@@ -1,29 +1,13 @@
-import type { PlanInfo } from "@/lib/hivra/agent-api";
 import { createLaunchDraft } from "@/lib/launch/draft-store";
 import { hermesLaunchProfile, withHermesLane } from "../launch-lane";
 
-const plan = (key: string, subscribed = true): PlanInfo => ({
-  subscribed, name: key, key, maxAgents: 3, maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4,
-  usage: { agentCount: 0, usedCpu: 0, usedRam: 0 },
-});
-
 describe("which launch profile a new Hermes agent uses", () => {
+  it("is the official Hermes computer lane wherever that lane is on, for every account", () => {
+    expect(hermesLaunchProfile(true)).toBe("hermes-computer");
+  });
+
   it("stays on the instances lane where the computer lane is off", () => {
-    expect(hermesLaunchProfile({ enabled: false, plan: plan("operator"), planChecked: true })).toBe("hermes");
-  });
-
-  it("uses the computer lane for a paid plan, and while the plan is still being read", () => {
-    expect(hermesLaunchProfile({ enabled: true, plan: plan("operator"), planChecked: true })).toBe("hermes-computer");
-    expect(hermesLaunchProfile({ enabled: true, plan: null, planChecked: false })).toBe("hermes-computer");
-  });
-
-  it("keeps the instances lane for an account without a paid plan, which holds no Hivra Cloud computer", () => {
-    expect(hermesLaunchProfile({ enabled: true, plan: plan("free"), planChecked: true })).toBe("hermes");
-    expect(hermesLaunchProfile({ enabled: true, plan: plan("free", false), planChecked: true })).toBe("hermes");
-  });
-
-  it("keeps the computer lane when the plan could not be read, leaving the launch to re-check it", () => {
-    expect(hermesLaunchProfile({ enabled: true, plan: null, planChecked: true })).toBe("hermes-computer");
+    expect(hermesLaunchProfile(false)).toBe("hermes");
   });
 });
 
