@@ -94,6 +94,7 @@ describe('ClientLayoutWrapper', () => {
     // The marker alone is a presentation signal: the app draws its own chrome...
     expect(screen.queryByTestId('dashboard-sidebar-chrome')).not.toBeInTheDocument();
     expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('app-title-bar')).not.toBeInTheDocument();
     // ...but it never enables the bridge or loads inventory for it.
     expect(useDashboardResources).not.toHaveBeenCalled();
 
@@ -163,7 +164,7 @@ describe('ClientLayoutWrapper', () => {
       expect(sidebar.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
       expect(sidebar.getByRole('button', { name: 'Switch agent or computer' })).toBeInTheDocument();
       expect(sidebar.getByTestId('mock-user-button')).toBeInTheDocument();
-      expect(screen.getByTestId('dashboard-mobile-header')).toBeInTheDocument();
+      expect(screen.getByTestId('app-title-bar')).toBeInTheDocument();
       expect(screen.getByTestId('environment-banner')).toBeInTheDocument();
       // Account and sign-out stay in the sidebar, once.
       expect(screen.queryByRole('region', { name: 'Account' })).not.toBeInTheDocument();
@@ -187,9 +188,10 @@ describe('ClientLayoutWrapper', () => {
   it('marks every piece of server-rendered web chrome so a desktop app can hide it before hydration', () => {
     process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV = 'canary';
     render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    for (const testId of ['dashboard-sidebar-chrome', 'dashboard-mobile-header', 'pwa-bottom-navigation', 'environment-banner']) {
+    for (const testId of ['dashboard-sidebar-chrome', 'app-title-bar', 'pwa-bottom-navigation', 'environment-banner']) {
       expect(screen.getByTestId(testId)).toHaveAttribute('data-web-chrome');
     }
+    expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toHaveAttribute('data-web-chrome');
     expect(screen.getByRole('main')).not.toHaveAttribute('data-web-chrome');
     expect(screen.getByTestId('test-content').closest('[data-web-chrome]')).toBeNull();
   });
@@ -215,32 +217,32 @@ describe('ClientLayoutWrapper', () => {
     (useDashboardResources as jest.Mock).mockReturnValue({ resources, loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
     const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const expectSelected = (name: string | null) => {
-      // The agent view draws its own sidebar, so the global rail ("Primary") is only there on other pages.
-      const onAgentPage = /^\/dashboard\/agent\//.test((usePathname as jest.Mock)() ?? '');
-      for (const label of onAgentPage ? ['App navigation'] : ['Primary', 'App navigation']) {
-        const nav = within(screen.getByRole('navigation', { name: label }));
-        if (name) expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name })]);
-        else expect(nav.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
-      }
+    // The bottom bar names the kind; the sidebar opens the one resource whose route this is.
+    const expectSelected = (bottom: string | null, open: string | null) => {
+      const nav = within(screen.getByRole('navigation', { name: 'App navigation' }));
+      if (bottom) expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name: bottom })]);
+      else expect(nav.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
+      const sidebar = within(screen.getByRole('complementary', { name: 'Workspace navigation' }));
+      if (open) expect(sidebar.getAllByRole('link', { current: 'page' }).map((link) => link.textContent)).toEqual([expect.stringContaining(open)]);
+      else expect(sidebar.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
     };
-    expectSelected('Computers');
+    expectSelected('Computers', 'Desktop');
 
     (usePathname as jest.Mock).mockReturnValue('/dashboard/instances/shared/console');
     view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected('Agents');
+    expectSelected('Agents', 'Writer');
 
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/unknown');
     view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected(null);
+    expectSelected(null, null);
 
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
     view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected('Computers');
+    expectSelected('Computers', 'Desktop');
 
     (useDashboardResources as jest.Mock).mockReturnValue({ resources: [], loading: true, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
     view.rerender(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="another-owner">{mockChildren}</ClientLayoutWrapper>);
-    expectSelected(null);
+    expectSelected(null, null);
   });
 
   it('preserves the active work pane while the shell switcher opens and closes', () => {
@@ -286,7 +288,7 @@ describe('ClientLayoutWrapper', () => {
 
     expect(within(screen.getByTestId('dashboard-sidebar-chrome')).getByRole('link', { name: 'Hivra home' })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: /app navigation/i })).toBeInTheDocument();
-    expect(screen.getByTestId('mobile-search-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('app-title-bar')).toBeInTheDocument();
 
     rerender(
       <ClientLayoutWrapper {...mockProps}>
@@ -298,7 +300,8 @@ describe('ClientLayoutWrapper', () => {
       expect(screen.getByTestId('dashboard-sidebar-chrome')).toHaveClass('hidden');
       expect(screen.getByTestId('dashboard-sidebar-chrome')).toHaveAttribute('aria-hidden', 'true');
       expect(screen.queryByRole('navigation', { name: /app navigation/i })).not.toBeInTheDocument();
-      expect(screen.queryByTestId('mobile-search-btn')).not.toBeInTheDocument();
+      // The title bar leaves with the rest of the chrome.
+      expect(screen.getByTestId('app-title-bar').parentElement).toHaveClass('hidden');
     });
     expect(screen.getByTestId('workspace-modal-probe')).toBeInTheDocument();
   });
@@ -350,31 +353,60 @@ describe('ClientLayoutWrapper', () => {
     );
   });
 
-  it('reserves mobile navigation space above the banner on list pages', () => {
+  it('puts the banner in the page, below the title bar, on list pages', () => {
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agents');
     process.env.NEXT_PUBLIC_HERMES_DEPLOY_ENV = 'staging';
     render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const header = screen.getByTestId('dashboard-mobile-header');
-    expect(header.parentElement).toHaveClass('withMobileHeader');
-    expect(within(header).getByRole('link', { name: 'Hivra home' })).toHaveAttribute('href', '/dashboard');
-    expect(header).not.toContainElement(screen.getByTestId('environment-banner'));
+    const bar = screen.getByTestId('app-title-bar');
+    // The title bar is the phone's top edge; the page below it reads its height, not a floating header's.
+    expect(bar.closest('.column')).toHaveClass('webColumn');
+    expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
+    expect(bar).toHaveTextContent('Agents');
+    expect(bar).not.toContainElement(screen.getByTestId('environment-banner'));
     expect(screen.getByRole('main')).toContainElement(screen.getByTestId('environment-banner'));
   });
 
-  it('keeps one phone navigation system: a search button, no hamburger and no drawer', () => {
-    render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const header = screen.getByTestId('dashboard-mobile-header');
-    expect(within(header).getAllByRole('button')).toEqual([within(header).getByRole('button', { name: 'Switch agent or computer' })]);
-    expect(screen.queryByRole('button', { name: /open navigation/i })).not.toBeInTheDocument();
-    expect(screen.queryByTestId('mobile-menu-btn')).not.toBeInTheDocument();
-    expect(document.querySelector('.bg-black\\/50')).not.toBeInTheDocument();
+  describe('on a phone', () => {
+    beforeEach(() => {
+      (window.matchMedia as jest.Mock).mockImplementation((query: string) => ({
+        matches: query === '(max-width: 767px)', media: query, onchange: null,
+        addListener: jest.fn(), removeListener: jest.fn(), addEventListener: jest.fn(), removeEventListener: jest.fn(), dispatchEvent: jest.fn(),
+      }));
+    });
+
+    it('opens the same sidebar as a drawer from the title bar, and keeps the bottom bar', () => {
+      render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Workspace navigation' })).not.toBeInTheDocument();
+      const menu = within(screen.getByTestId('app-title-bar')).getByRole('button', { name: 'Open navigation' });
+      fireEvent.click(menu);
+      const drawer = screen.getByRole('dialog', { name: 'Workspace navigation' });
+      expect(within(drawer).getByRole('link', { name: 'Home' })).toBeInTheDocument();
+      expect(within(drawer).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+      expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeInTheDocument();
+      fireEvent.keyDown(drawer, { key: 'Escape' });
+      expect(screen.queryByRole('dialog', { name: 'Workspace navigation' })).not.toBeInTheDocument();
+    });
+
+    it('closes the drawer behind a choice', () => {
+      render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      fireEvent.click(within(screen.getByTestId('app-title-bar')).getByRole('button', { name: 'Open navigation' }));
+      fireEvent.click(within(screen.getByRole('dialog', { name: 'Workspace navigation' })).getByRole('link', { name: 'Home' }));
+      expect(screen.queryByRole('dialog', { name: 'Workspace navigation' })).not.toBeInTheDocument();
+    });
+
+    it('keeps the menu button on runtime pages, which carry their own bar', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/instances/inst_123');
+      render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(within(screen.getByTestId('app-title-bar')).getByRole('button', { name: 'Open navigation' })).toBeInTheDocument();
+    });
   });
 
-  it('puts the mobile header before the page in reading order', () => {
+  it('puts the title bar after the sidebar and before the page in reading order', () => {
     render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const header = screen.getByTestId('dashboard-mobile-header');
-    expect(header.compareDocumentPosition(screen.getByRole('main')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(header.compareDocumentPosition(screen.getByTestId('dashboard-sidebar-chrome')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const bar = screen.getByTestId('app-title-bar');
+    expect(screen.getByTestId('dashboard-sidebar-chrome').compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.compareDocumentPosition(screen.getByRole('main')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('lets page modals layer above the phone chrome by keeping main out of the stacking order', () => {
@@ -392,12 +424,17 @@ describe('ClientLayoutWrapper', () => {
     const bannerZ = Number(screen.getByTestId('environment-banner').className.match(/(?:^|\s)z-\[?(\d+)\]?/)?.[1]);
     const css = readFileSync(join(__dirname, '..', 'DashboardSidebar.module.css'), 'utf8');
     const sidebarZ = Number(css.match(/\n\.sidebar \{[^}]*z-index:\s*(\d+)/)?.[1]);
+    // The web shell's sidebar is in the page's flow; on a phone it is a drawer over the page.
+    const shellCss = readFileSync(join(__dirname, '..', 'AppSidebar.module.css'), 'utf8');
+    const drawerZ = Number(shellCss.match(/\.sidebar\[data-mode="drawer"\] \{[^}]*z-index:\s*(\d+)/)?.[1]);
     expect(bannerZ).toBeGreaterThan(0);
     expect(sidebarZ).toBeGreaterThan(bannerZ);
     expect(sidebarZ).toBeLessThan(1000);
+    expect(drawerZ).toBeGreaterThan(bannerZ);
+    expect(drawerZ).toBeLessThan(1000);
   });
 
-  it.each(['/dashboard/agent/agent_123', '/dashboard/workspace'])('drops the global header and particle canvas on runtime page %s', (pathname) => {
+  it.each(['/dashboard/agent/agent_123', '/dashboard/workspace'])('drops the particle canvas on runtime page %s and keeps the bottom bar', (pathname) => {
     (usePathname as jest.Mock).mockReturnValue(pathname);
     render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
     expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
@@ -406,18 +443,16 @@ describe('ClientLayoutWrapper', () => {
     expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeInTheDocument();
   });
 
-  it('opens the shell switcher from the header search and from the More sheet', () => {
+  it('opens the shell switcher from the sidebar search and from the More sheet', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
     render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const search = screen.getByTestId('mobile-search-btn');
-    fireEvent.click(search);
-    expect(search).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(within(screen.getByTestId('dashboard-sidebar-chrome')).getByRole('button', { name: 'Switch agent or computer' }));
     expect(screen.getByRole('combobox')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close switcher' }));
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'App navigation' })).getByRole('button', { name: 'More' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: 'More' })).getByRole('button', { name: 'Switch or search' }));
     expect(screen.queryByRole('dialog', { name: 'More' })).not.toBeInTheDocument();
     expect(screen.getByRole('combobox')).toBeInTheDocument();
@@ -495,7 +530,7 @@ describe('ClientLayoutWrapper', () => {
     }
   });
 
-  describe('on the agent view, which draws its own sidebar', () => {
+  describe('the web shell', () => {
     function OpenSearch() {
       const shell = useAppShell();
       return <button type="button" onClick={shell?.openSwitcher}>Agent page search</button>;
@@ -506,23 +541,46 @@ describe('ClientLayoutWrapper', () => {
       Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
     });
 
-    it('draws no global rail and no spacer, but keeps the bottom navigation', () => {
+    it('draws one sidebar and no old rail or spacer on an agent page, and keeps the bottom navigation', () => {
       (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123');
       const { container } = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-      expect(screen.queryByRole('complementary', { name: 'Workspace navigation' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument();
+      expect(screen.getAllByRole('complementary')).toHaveLength(1);
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toHaveAttribute('data-mode', 'inline');
+      expect(container.querySelector('#dashboard-navigation')).not.toBeInTheDocument();
       expect(container.querySelector('[class*="spacer"], .spacer')).not.toBeInTheDocument();
       expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeInTheDocument();
     });
 
-    it('leaves other pages with their rail', () => {
-      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
-      const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toBeInTheDocument();
-      // Sub-paths of the agent route are not the agent view.
-      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123/other');
-      view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toBeInTheDocument();
+    it.each(['/dashboard', '/dashboard/settings', '/dashboard/billing', '/dashboard/agent/agent_123', '/dashboard/agent/agent_123/other'])('draws the same sidebar on %s', (pathname) => {
+      (usePathname as jest.Mock).mockReturnValue(pathname);
+      render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      const sidebar = within(screen.getByRole('complementary', { name: 'Workspace navigation' }));
+      for (const name of ['Home', 'New agent', 'Agents', 'Computers', 'Activity', 'Settings']) {
+        expect(sidebar.getByRole('link', { name })).toBeInTheDocument();
+      }
+    });
+
+    it('lists the agents and computers, the open one marked', () => {
+      const resources: DashboardResource[] = [
+        { uid: 'x-a', id: 'a', source: 'hivra', kind: 'agent', name: 'Site Builder', description: 'Claude Code', status: 'running', href: '/dashboard/agent/a' },
+        { uid: 'x-b', id: 'b', source: 'hivra', kind: 'agent', name: 'Researcher', description: 'Codex', status: 'running', href: '/dashboard/agent/b' },
+        { uid: 'x-c', id: 'c', source: 'hivra', kind: 'computer', name: 'Ubuntu desktop', description: 'Ubuntu', status: 'provisioning', href: '/dashboard/agent/c?tab=desktop' },
+      ];
+      (useDashboardResources as jest.Mock).mockReturnValue({ resources, loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/a');
+      render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      const sidebar = within(screen.getByRole('complementary', { name: 'Workspace navigation' }));
+      expect(within(sidebar.getByRole('region', { name: 'Agents' })).getAllByRole('link').filter((link) => /Site Builder|Researcher/.test(link.textContent ?? '')).map((link) => link.textContent))
+        .toEqual(['Site BuilderRunning', 'ResearcherRunning']);
+      expect(sidebar.getByRole('link', { name: /Site Builder/ })).toHaveAttribute('aria-current', 'page');
+      expect(sidebar.getByRole('link', { name: /Researcher/ })).not.toHaveAttribute('aria-current');
+      expect(within(sidebar.getByRole('region', { name: 'Computers' })).getByRole('link', { name: /Ubuntu desktop/ })).toHaveTextContent('Starting');
+    });
+
+    it('fills the title bar with the page title', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/billing');
+      render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.getByTestId('app-title-bar')).toHaveTextContent('Billing');
     });
 
     it('still opens the switcher with ⌘K, and for the page through AppShellContext', () => {

@@ -1,7 +1,9 @@
 "use client";
 
-// Hivra per-agent view — Chat (<Agent> session) · Computer (Desktop,
-// Browser, Files, Terminal) · Settings, in the agent sidebar and one title bar. Server-backed: polls the agent until provisioning finishes, then the
+// Hivra per-agent view — Chat (<Agent> session) · Browser · Computer (the
+// desktop) · Files · Terminal · Settings, as rows under the open agent in the
+// dashboard's sidebar, with the name and views in its title bar. Server-backed:
+// polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -12,7 +14,7 @@ import { Component, createContext, useCallback, useContext, useEffect, useId, us
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, ArrowLeft, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import {
@@ -20,10 +22,10 @@ import {
   agentComputerPair,
   agentComputerPairDetail,
   agentPageSurfacesFor,
-  agentSurfaceGroups,
+  agentViewRows,
   agentSurfaceLabel,
   agentSurfacesFor,
-  type AgentSurfaceGroupId,
+  type AgentViewRowId,
   type AgentSurfaceId,
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, browserToggle, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
@@ -42,8 +44,7 @@ import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
-import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
-import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
+import { AgentView } from "@/components/hivra/agent-shell/AgentView";
 import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
@@ -211,10 +212,14 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
   manage: <Settings2 size={14} />,
 };
 const TABS: { id: Tab }[] = AGENT_SURFACE_IDS.map((id) => ({ id }));
-const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
-  work: <MessageSquareText size={14} />,
-  computer: <Computer size={14} />,
-  manage: <Settings2 size={14} />,
+const ROW_ICONS: Record<AgentViewRowId, React.ReactNode> = {
+  chat: <MessageSquareText size={14} />,
+  dashboard: <LayoutDashboard size={14} />,
+  browser: <Globe size={14} />,
+  computer: <Monitor size={14} />,
+  files: <FolderTree size={14} />,
+  terminal: <SquareTerminal size={14} />,
+  settings: <Settings2 size={14} />,
 };
 const WORK_PANE_ID = "agent-work-pane";
 
@@ -1173,12 +1178,6 @@ export default function AgentPage() {
     // (Terminal, Browser, Git) and Skills do not apply.
     return (
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-        {/* The global rail is not drawn on agent pages and this session has no sidebar of its own. */}
-        <div className={styles.backBar}>
-          <button type="button" className={styles.backLink} onClick={() => go("/dashboard")}>
-            <ArrowLeft size={14} aria-hidden="true" /> All agents
-          </button>
-        </div>
         <SurfaceCodeBoundary>
           <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onChanged={listChanged} onDeleted={() => { listChanged(); go("/dashboard"); }} />
         </SurfaceCodeBoundary>
@@ -1207,25 +1206,21 @@ export default function AgentPage() {
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
-  // Computer (Desktop, Browser, Files, Terminal) · Manage. Computers keep
-  // their short flat list. Agent and Manage always open their first view (Chat
-  // or the dashboard, Settings); Computer reopens the view last used in it,
-  // Files the first time (the Desktop entry there is a choice, not a place to land).
-  const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
-    id: group.id,
-    // The sidebar's rows: the agent's chat, its computer, and its settings.
-    label: group.id === "manage" ? "Settings" : group.id === "work" && !isDashboard ? "Chat" : group.label,
-    icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
-    surfaces: group.surfaces,
-    home: group.id === "computer" ? undefined : group.surfaces[0],
-    start: group.id === "computer" && group.surfaces.includes("files") ? "files" as const : undefined,
+  // The rows under this agent in the sidebar, one per place to look: Chat
+  // (with its own command-line session as a second view), Browser, Computer
+  // (the desktop and nothing else), Files, Terminal and Settings (with Skills
+  // and Telegram). Each row always opens its first view.
+  const viewRows = agentViewRows(tabs.map((t) => t.id), { isComputer }).map((row) => ({
+    id: row.id,
+    label: row.label,
+    icon: ROW_ICONS[row.id],
+    surfaces: row.surfaces,
+    home: row.home,
   }));
   // Where this agent's computer runs and how big it is: a tooltip on the name in
   // the title bar (Settings does not repeat it).
   const computerDetail = agentComputerPairDetail(agentComputerPair(agent));
   const computerNote = `${agent.name || "This agent"}’s own computer${computerDetail ? ` · ${computerDetail}` : ""}`;
-  const switcherKind = isComputer ? "computer" : "agent";
   // One shared decision with the workspace: resource-landing owns "what does
   // this resource open on", so the two routes cannot drift apart again.
   const landing = resolveResourceLanding({
@@ -1576,14 +1571,13 @@ export default function AgentPage() {
           {content}
         </>
       ) : (
-        <AgentShell
+        <AgentView
           name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
           status={provisioning ? activity.label : agent.status}
           nameTitle={isComputer ? undefined : computerNote}
-          switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
           titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
           surfaces={tabs}
-          groups={surfaceGroups}
+          rows={viewRows}
           active={effectiveTab}
           onSelect={selectTab}
           chatSurface="chat"
@@ -1592,7 +1586,7 @@ export default function AgentPage() {
           surfaceNote={{ browser: "View only" }}
         >
           {content}
-        </AgentShell>
+        </AgentView>
       )}
 
       {paywallOpen ? (

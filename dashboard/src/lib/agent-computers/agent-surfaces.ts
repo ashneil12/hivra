@@ -151,6 +151,51 @@ export function agentPageSurfacesFor(subject: AgentSurfaceSubject): AgentSurface
   return agentOffersDesktopEntry(subject) ? ordered([...base, "desktop"]) : base;
 }
 
+export type AgentViewRowId = "chat" | "dashboard" | "browser" | "computer" | "files" | "terminal" | "settings";
+export interface AgentViewRow {
+  id: AgentViewRowId;
+  label: string;
+  /** The surfaces the row holds. More than one draws a segmented control in the title bar. */
+  surfaces: AgentSurfaceId[];
+  /** The surface the row always opens. */
+  home: AgentSurfaceId;
+}
+
+// Skills, Telegram and Tasks are views inside Settings, as they are today.
+const VIEW_ROWS: ReadonlyArray<{ id: AgentViewRowId; label: string; surfaces: readonly AgentSurfaceId[] }> = [
+  { id: "chat", label: "Chat", surfaces: ["chat", "terminal"] },
+  { id: "dashboard", label: "Dashboard", surfaces: ["aeon"] },
+  { id: "browser", label: "Browser", surfaces: ["browser"] },
+  { id: "computer", label: "Computer", surfaces: ["desktop"] },
+  { id: "files", label: "Files", surfaces: ["files"] },
+  { id: "terminal", label: "Terminal", surfaces: ["box"] },
+  { id: "settings", label: "Settings", surfaces: ["manage", "skills", "tasks", "telegram"] },
+];
+
+/**
+ * The rows the sidebar draws under an open agent or computer, one per place to
+ * look, in the order they read: its chat (its own command-line session is a
+ * second view of that row), its browser, its computer (the desktop and nothing
+ * else), files, the computer's terminal and settings.
+ *
+ * This replaces the three-way grouping (Agent, Computer, Manage), which put
+ * the browser, files and terminal under one "Computer" row beside the desktop.
+ * A computer lists its desktop as "Desktop", since it is the computer itself.
+ * Rows with no surface are dropped.
+ */
+export function agentViewRows(
+  surfaces: readonly AgentSurfaceId[],
+  options: { isComputer?: boolean } = {},
+): AgentViewRow[] {
+  const present = new Set(surfaces);
+  return VIEW_ROWS.flatMap((row) => {
+    const held = row.surfaces.filter((id) => present.has(id));
+    if (held.length === 0) return [];
+    const label = row.id === "computer" && options.isComputer ? "Desktop" : row.label;
+    return [{ id: row.id, label, surfaces: held, home: held[0] }];
+  });
+}
+
 export function agentSurfaceGroupOf(id: AgentSurfaceId): AgentSurfaceGroupId {
   return GROUP_OF[id];
 }
