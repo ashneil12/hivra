@@ -1332,6 +1332,14 @@ if ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
   ok "2G swapfile enabled (install headroom for small boxes)"
 fi
 
+# Hermes's installer downloads the official Node.js build, which links the host's
+# libatomic.so.1. The Ubuntu cloud image leaves that library out, and the installer
+# can only add it with root (`sudo -n apt-get install -y libatomic1`), which the
+# agent user does not have, so without it every Node step fails and the install
+# exits non-zero. Add the OS library as root first; Hermes itself is untouched.
+apt_get install -y libatomic1 \
+  || die "could not install libatomic1, which Hermes's Node.js needs"
+
 # Download the installer to a file over HTTPS only (never piped into a shell,
 # never run as root), then run it as the agent user. Its stable channel is the
 # latest published release; --non-interactive/--skip-browser keep it unattended

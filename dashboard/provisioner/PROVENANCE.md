@@ -544,6 +544,17 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.11.6` builds on `2026.11.11.5` and lets the official Hermes installer
+finish on a fresh Hermes computer. Hermes's installer downloads the official Node.js
+build, which links the host's `libatomic.so.1`; the Ubuntu 22.04 cloud image leaves that
+library out, and the installer can only add it with root (`sudo -n apt-get install -y
+libatomic1`), which the agent user does not have. Every Node step then failed and the
+installer exited non-zero, so no Hermes computer finished its launch.
+`provision-claude-code-box.sh` now installs the `libatomic1` OS package as root just
+before it runs Hermes's installer. Hermes itself is still installed unmodified by its own
+installer. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, or update any existing computer.
+
 Release `2026.11.11.5` builds on `2026.11.11.4` and runs Hermes's gateway on Hermes
 computers. Upstream Hermes runs scheduled tasks and chat channels (Telegram, Discord,
 Slack) in its gateway process, separate from the dashboard, so before this release they

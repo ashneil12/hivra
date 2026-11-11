@@ -405,6 +405,11 @@ const recipes = Object.freeze({
     workerSha256: "a0c9fee41a68a6a73b3282c882673fe34fd3902da6cedb90febb3adfaa58d242",
     workerSize: 45195,
   }),
+  "2026.11.11.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release installs the libatomic1 OS library before Hermes's own installer so its Node.js steps succeed on the Ubuntu image. The worker only advances its release labels.
+    workerSha256: "b053788bb30f0faaab1543510683987fbb2628f775436f311ec588e3235779af",
+    workerSize: 45195,
+  }),
 });
 
 type Version = keyof typeof recipes;
