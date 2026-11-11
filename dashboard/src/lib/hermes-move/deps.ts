@@ -5,8 +5,9 @@ import { randomBytes } from "node:crypto";
 import { launchHivraAgentForUser } from "@/lib/hivra/launch-agent";
 import { advanceProxmoxProvisionPoll } from "@/lib/hivra/proxmox-provision-poll";
 import { deleteProxmoxHivraAgent } from "@/lib/hivra/delete-hivra-agent";
-import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
+import { hivraAgentProvisionLogPath, resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
 import { buildPinnedGuestHostScript, resolvePinnedGuestTarget } from "@/lib/hivra/pinned-guest-seed";
+import { shellQuote } from "@/lib/hivra/proxmox-target";
 import { isHermesComputerEnabled } from "@/lib/hermes-computer/flag";
 import { sshExec } from "@/lib/hetzner/ssh";
 import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
@@ -85,6 +86,14 @@ export function createMoveDeps(): MoveDeps {
     startOldVm: async (instance) => {
       const { infra, hostConfig } = infraFor(instance);
       return asCommand(await startProxmoxInstance(infra, { expectedInstanceId: instance.id, hostConfig, setOnboot: 1 }));
+    },
+    readNewSetupLog: async (userId, agent) => {
+      const vmid = Number(agent.vmid);
+      if (!Number.isSafeInteger(vmid) || vmid < 1) return null;
+      const context = await resolveHivraAgentExecutionContext(userId, agent as unknown as Parameters<typeof resolveHivraAgentExecutionContext>[1]);
+      const path = hivraAgentProvisionLogPath(context, vmid);
+      const res = await runProxmoxHostScript(`tail -n 120 -- ${shellQuote(path)} 2>/dev/null || true`, context.env, 30_000);
+      return res.ok && res.stdout ? res.stdout : null;
     },
     deleteNewComputer: async (userId, agent) => {
       const result = await deleteProxmoxHivraAgent(userId, agent);

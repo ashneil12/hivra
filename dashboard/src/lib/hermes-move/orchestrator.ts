@@ -64,7 +64,7 @@ export interface MoveRow {
   managed_model: boolean | null;
   initiated_by: "owner" | "operator";
   error: string | null;
-  failure: { failureType: string; reason: string; technical: string } | null;
+  failure: { failureType: string; reason: string; technical: string; setupLog?: string } | null;
   lease_until: string | null;
   prev_instance_status: string | null;
   step_attempts: number;
@@ -140,6 +140,8 @@ export interface MoveDeps {
   shutdownOldVm: (instance: InstanceRow) => Promise<CommandResult>;
   startOldVm: (instance: InstanceRow) => Promise<CommandResult>;
   deleteNewComputer: (userId: string, agent: AgentRow) => Promise<{ ok: boolean; message?: string }>;
+  /** The tail of the host's setup log for the new computer, read before it is removed (removal deletes the log). */
+  readNewSetupLog: (userId: string, agent: AgentRow) => Promise<string | null>;
   storage: {
     uploadUrl: (path: string) => Promise<string>;
     downloadUrl: (path: string) => Promise<string>;
@@ -397,17 +399,43 @@ function launchBody(instance: InstanceRow): Record<string, unknown> {
   };
 }
 
+/**
+ * The setup log as kept on the move record: printable text only, anything that
+ * looks like a key or token replaced, and only the last part. Service role only;
+ * owners never see it.
+ */
+export function redactSetupLog(raw: string): string {
+  return raw
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, "")
+    .replace(/\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASS)[A-Z0-9_]*)=\S+/gi, "$1=[redacted]")
+    .replace(/(authorization:\s*)\S+(\s+\S+)?/gi, "$1[redacted]")
+    .replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]")
+    .replace(/[A-Za-z0-9+/]{40,}={0,2}/g, "[redacted]")
+    .split("\n").map((line) => line.trimEnd()).filter(Boolean).join("\n")
+    .slice(-4000);
+}
+
 async function failBeforeChange(row: MoveRow, failureType: string, reason: string, technical: string, deps: MoveDeps, deleteNew: boolean): Promise<MovePatch> {
+  let setupLog: string | null = null;
   if (deleteNew && row.agent_id) {
     const agent = await deps.store.getAgent(row.agent_id);
-    if (agent) await deps.deleteNewComputer(row.user_id, agent).catch((e) => log.warn("hermes move could not remove the new computer", { source: "hermes-move", moveId: row.id, errorMessage: String(e).slice(0, 200) }));
+    if (agent) {
+      // Removing the computer deletes its setup log, so keep why it failed first.
+      setupLog = await deps.readNewSetupLog(row.user_id, agent).then((t) => (t ? redactSetupLog(t) : null)).catch((e) => {
+        log.warn("hermes move could not read the new computer's setup log", { source: "hermes-move", moveId: row.id, errorMessage: String(e).slice(0, 200) });
+        return null;
+      });
+      await deps.deleteNewComputer(row.user_id, agent).catch((e) => log.warn("hermes move could not remove the new computer", { source: "hermes-move", moveId: row.id, errorMessage: String(e).slice(0, 200) }));
+    }
   }
   return {
     state: "failed",
     step: "failed",
     message: `${reason} Nothing was changed on your agent.`,
     error: technical.slice(0, 500),
-    failure: { failureType, reason, technical: technical.slice(0, 500) },
+    failure: { failureType, reason, technical: technical.slice(0, 500), ...(setupLog ? { setupLog } : {}) },
     finished_at: iso(deps.now()),
     step_attempts: 0,
   };

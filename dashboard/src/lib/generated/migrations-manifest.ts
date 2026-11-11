@@ -416,4 +416,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261112000200", name: "hivra_private_access_provider_and_view" },
   { version: "20261112100000", name: "provider_release_admission_2026_11_11_5" },
   { version: "20261112110000", name: "hermes_computer_moves" },
+  { version: "20261112120000", name: "provider_release_admission_2026_11_11_6" },
 ];
