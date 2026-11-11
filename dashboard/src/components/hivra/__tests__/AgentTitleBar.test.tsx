@@ -12,19 +12,20 @@ const all = (["desktop", "browser", "files", "manage"] as const).map((id) => ({
 
 function bar(overrides: Partial<AgentTitleBarProps<Id>> = {}) {
   return <AgentTitleBar<Id> name="Site Builder" status="running" surfaces={all.slice(0, 3)} active="browser"
-    onSelect={jest.fn()} panelId="agent-work-pane" actionSurface="browser" groupLabel="Settings" {...overrides} />;
+    onSelect={jest.fn()} panelId="agent-work-pane" actionSurface="browser" groupLabel="Computer" {...overrides} />;
 }
 
 describe("AgentTitleBar", () => {
   it("is one row with the name and a plain status word", () => {
-    const { container } = render(bar());
-    expect(container).toHaveTextContent(/^Site Builderrunning/);
+    render(bar());
+    const header = screen.getByRole("banner");
+    expect(header).toHaveTextContent(/^Site Builderrunning/);
     expect(screen.getByText("running")).toBeInTheDocument();
   });
 
   it("draws the segmented control only when the group has more than one surface", () => {
     const view = render(bar());
-    const tabs = within(screen.getByRole("tablist", { name: "Settings views" })).getAllByRole("tab");
+    const tabs = within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Desktop", "Browser", "Files"]);
     view.rerender(bar({ surfaces: all.slice(1, 2) }));
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
@@ -76,14 +77,20 @@ describe("AgentTitleBar", () => {
     expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
   });
 
-  it("offers the export link and a note beside the status only when given", () => {
+  it("offers the export link, a note beside the status and the sidebar toggle only when given", () => {
+    const onClick = jest.fn();
     const view = render(bar());
     expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
     expect(screen.queryByText("View only")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
 
-    view.rerender(bar({ exportHref: "/api/hivra/agents/a/export", note: "View only" }));
+    view.rerender(bar({ exportHref: "/api/hivra/agents/a/export", note: "View only", sidebarToggle: { onClick, controlsId: "side", expanded: false } }));
     expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/a/export");
     expect(screen.getByText("View only")).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Show sidebar" });
+    expect(toggle).toHaveAttribute("aria-controls", "side");
+    fireEvent.click(toggle);
+    expect(onClick).toHaveBeenCalled();
   });
 
   it("puts where the agent runs in a tooltip on its name", () => {

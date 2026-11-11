@@ -8,7 +8,6 @@ import {
   agentSurfaceGroups,
   agentSurfaceLabel,
   agentSurfacesFor,
-  agentViewRows,
   computerPlacementFor,
   computerSizeLabel,
 } from "../agent-surfaces";
@@ -84,11 +83,13 @@ describe("agent page tabs", () => {
 });
 
 describe("agent page groups", () => {
-  it("groups a chat agent as Agent (Chat, its session) · Computer (Desktop, Browser, Files, Terminal) · Manage, with no Git tab", () => {
+  it("groups a chat agent as Agent (Chat, its session) · Browser · Computer (Desktop, Files, Terminal) · Manage, with no Git tab", () => {
+    // The browser is its own place, not a view inside the computer (owner feedback).
     const def = getAgent("codex");
     expect(agentSurfaceGroups(agentPageSurfacesFor({ type: "codex" }), def)).toEqual([
       { id: "work", label: "Agent", surfaces: ["chat", "terminal"] },
-      { id: "computer", label: "Computer", surfaces: ["desktop", "browser", "files", "box"] },
+      { id: "browser", label: "Browser", surfaces: ["browser"] },
+      { id: "computer", label: "Computer", surfaces: ["desktop", "files", "box"] },
       { id: "manage", label: "Manage", surfaces: ["manage", "skills", "telegram"] },
     ]);
   });
@@ -99,6 +100,7 @@ describe("agent page groups", () => {
       const def = getAgent(type);
       for (const group of agentSurfaceGroups(agentSurfacesFor({ type }), def)) {
         if (group.id === "manage") continue; // Its own tab reads "Settings" inside the group.
+        if (group.surfaces.length === 1) continue; // A one-view group draws no second row to repeat it.
         expect(group.surfaces.map((id) => agentSurfaceLabel(id, def))).not.toContain(group.label);
       }
     }
@@ -114,39 +116,13 @@ describe("agent page groups", () => {
     expect(agentSurfaceGroups(["manage"], def)).toEqual([{ id: "manage", label: "Manage", surfaces: ["manage"] }]);
   });
 
-  it("lists an agent's views as sidebar rows, with the browser apart from the desktop", () => {
-    const rows = (type: string, isComputer = false, state: Record<string, string> = RUNNING) =>
-      agentViewRows(agentPageSurfacesFor({ type, ...state }), { isComputer });
-    expect(rows("codex").map((row) => [row.id, row.label, row.surfaces])).toEqual([
-      ["chat", "Chat", ["chat", "terminal"]],
-      ["browser", "Browser", ["browser"]],
-      ["computer", "Computer", ["desktop"]],
-      ["files", "Files", ["files"]],
-      ["terminal", "Terminal", ["box"]],
-      ["settings", "Settings", ["manage", "skills", "telegram"]],
-    ]);
-    // Each row opens its first view.
-    expect(rows("codex").map((row) => row.home)).toEqual(["chat", "browser", "desktop", "files", "box", "manage"]);
-    // A dashboard agent opens its dashboard instead of a chat.
-    expect(rows("aeon").map((row) => row.label)).toEqual(["Dashboard", "Computer", "Files", "Terminal", "Settings"]);
-  });
-
-  it("lists a computer's own surfaces, its desktop as Desktop, and drops rows it lacks", () => {
-    const labels = (profile: string | null) => agentViewRows(
-      agentPageSurfacesFor({ type: "linux-desktop", computer_profile: profile, ...RUNNING }), { isComputer: true },
-    ).map((row) => row.label);
-    expect(labels("ubuntu-desktop")).toEqual(["Desktop", "Files", "Terminal", "Settings"]);
-    // A Linux computer with no desktop has no Desktop row.
-    expect(labels("linux-terminal")).toEqual(["Files", "Terminal", "Settings"]);
-    expect(agentViewRows([])).toEqual([]);
-  });
-
   it("calls the shell Terminal everywhere and the agent's own CLI its session", () => {
     expect(agentSurfaceLabel("box", getAgent("codex"))).toBe("Terminal");
     expect(agentSurfaceLabel("terminal", getAgent("codex"))).toBe("Codex session");
     expect(agentSurfaceLabel("terminal", getAgent("claude-code"))).toBe("Claude Code session");
     expect(agentSurfaceGroupOf("git")).toBe("computer");
     expect(agentSurfaceGroupOf("desktop")).toBe("computer");
+    expect(agentSurfaceGroupOf("browser")).toBe("browser");
     expect(agentSurfaceGroupOf("telegram")).toBe("manage");
   });
 });

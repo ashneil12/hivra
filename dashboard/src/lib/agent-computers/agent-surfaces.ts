@@ -91,7 +91,7 @@ export function agentSurfaceLabel(id: AgentSurfaceId, def?: Pick<AgentDef, "name
   }
 }
 
-export type AgentSurfaceGroupId = "work" | "computer" | "manage";
+export type AgentSurfaceGroupId = "work" | "browser" | "computer" | "manage";
 export interface AgentSurfaceGroup {
   id: AgentSurfaceGroupId;
   label: string;
@@ -100,30 +100,33 @@ export interface AgentSurfaceGroup {
 
 const GROUP_OF: Record<AgentSurfaceId, AgentSurfaceGroupId> = {
   chat: "work", terminal: "work", aeon: "work",
-  desktop: "computer", box: "computer", files: "computer", browser: "computer", git: "computer",
+  browser: "browser",
+  desktop: "computer", box: "computer", files: "computer", git: "computer",
   manage: "manage", skills: "manage", tasks: "manage", telegram: "manage",
 };
 // Inside a group the order is the one the owner reads, not the storage order.
-// The agent's own session sits next to Chat. The computer lists what you would
-// look at on it: its screen, browser, files, then a plain shell. Git has no
-// place of its own: its changes are a view inside Files (see HivraFiles).
+// The agent's own session sits next to Chat. The browser the agent drives is
+// its own place, so it is quick to check on. The computer lists what you would
+// look at on the box: its screen, files, then a plain shell. Git has no place
+// of its own: its changes are a view inside Files (see HivraFiles).
 const GROUP_ORDER: Record<AgentSurfaceGroupId, readonly AgentSurfaceId[]> = {
   work: ["chat", "terminal", "aeon"],
-  computer: ["desktop", "browser", "files", "box"],
+  browser: ["browser"],
+  computer: ["desktop", "files", "box"],
   manage: ["manage", "skills", "tasks", "telegram"],
 };
 
 /**
- * Agent pages group their surfaces as the agent, its computer, and Manage:
- * Agent (Chat, its own session) · Computer (Desktop, Browser, Files, Terminal)
- * · Manage. Git is not a tab: its changes are a view inside Files. Groups with
+ * Agent pages group their surfaces as the agent, its browser, its computer, and
+ * Manage: Agent (Chat, its own session) · Browser · Computer (Desktop, Files,
+ * Terminal) · Manage. Git is not a tab: its changes are a view inside Files. Groups with
  * no surface are dropped. Computers keep their short flat list and never call this.
  */
 export function agentSurfaceGroups(surfaces: readonly AgentSurfaceId[], def?: Pick<AgentDef, "surface"> | null): AgentSurfaceGroup[] {
   const present = new Set(surfaces);
-  const groups: AgentSurfaceGroup[] = (["work", "computer", "manage"] as const).map((id) => ({
+  const groups: AgentSurfaceGroup[] = (["work", "browser", "computer", "manage"] as const).map((id) => ({
     id,
-    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "computer" ? "Computer" : "Manage",
+    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "browser" ? "Browser" : id === "computer" ? "Computer" : "Manage",
     surfaces: GROUP_ORDER[id].filter((surface) => present.has(surface)),
   }));
   return groups.filter((group) => group.surfaces.length > 0);
@@ -149,51 +152,6 @@ export function agentOffersDesktopEntry(subject: Pick<AgentSurfaceSubject, "type
 export function agentPageSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[] {
   const base = agentSurfacesFor(subject).filter((id) => id !== "git");
   return agentOffersDesktopEntry(subject) ? ordered([...base, "desktop"]) : base;
-}
-
-export type AgentViewRowId = "chat" | "dashboard" | "browser" | "computer" | "files" | "terminal" | "settings";
-export interface AgentViewRow {
-  id: AgentViewRowId;
-  label: string;
-  /** The surfaces the row holds. More than one draws a segmented control in the title bar. */
-  surfaces: AgentSurfaceId[];
-  /** The surface the row always opens. */
-  home: AgentSurfaceId;
-}
-
-// Skills, Telegram and Tasks are views inside Settings, as they are today.
-const VIEW_ROWS: ReadonlyArray<{ id: AgentViewRowId; label: string; surfaces: readonly AgentSurfaceId[] }> = [
-  { id: "chat", label: "Chat", surfaces: ["chat", "terminal"] },
-  { id: "dashboard", label: "Dashboard", surfaces: ["aeon"] },
-  { id: "browser", label: "Browser", surfaces: ["browser"] },
-  { id: "computer", label: "Computer", surfaces: ["desktop"] },
-  { id: "files", label: "Files", surfaces: ["files"] },
-  { id: "terminal", label: "Terminal", surfaces: ["box"] },
-  { id: "settings", label: "Settings", surfaces: ["manage", "skills", "tasks", "telegram"] },
-];
-
-/**
- * The rows the sidebar draws under an open agent or computer, one per place to
- * look, in the order they read: its chat (its own command-line session is a
- * second view of that row), its browser, its computer (the desktop and nothing
- * else), files, the computer's terminal and settings.
- *
- * This replaces the three-way grouping (Agent, Computer, Manage), which put
- * the browser, files and terminal under one "Computer" row beside the desktop.
- * A computer lists its desktop as "Desktop", since it is the computer itself.
- * Rows with no surface are dropped.
- */
-export function agentViewRows(
-  surfaces: readonly AgentSurfaceId[],
-  options: { isComputer?: boolean } = {},
-): AgentViewRow[] {
-  const present = new Set(surfaces);
-  return VIEW_ROWS.flatMap((row) => {
-    const held = row.surfaces.filter((id) => present.has(id));
-    if (held.length === 0) return [];
-    const label = row.id === "computer" && options.isComputer ? "Desktop" : row.label;
-    return [{ id: row.id, label, surfaces: held, home: held[0] }];
-  });
 }
 
 export function agentSurfaceGroupOf(id: AgentSurfaceId): AgentSurfaceGroupId {

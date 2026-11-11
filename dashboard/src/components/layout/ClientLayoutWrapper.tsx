@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import { Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
@@ -15,9 +15,7 @@ import { NativeWorkspaceProvider, useNativeWorkspace, useNativeWorkspaceEnabled 
 import { accountCode } from '@/lib/account-code';
 import { WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
 import { useDesktopShell } from './useDesktopShell';
-import { AppShellProvider } from './AppShell';
-import { AppSidebar } from './AppSidebar';
-import { AppTitleBar } from './AppTitleBar';
+import { AppShellContext } from './AppShellContext';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -27,6 +25,7 @@ interface ClientLayoutWrapperProps {
   showOpsLink?: boolean;
 }
 
+const AGENT_VIEW_ROUTE_PATTERN = /^\/dashboard\/agent\/[^/]+\/?$/;
 const FULLSCREEN_TUI_ROUTE_PATTERN = /^\/dashboard\/instances\/[^/]+\/tui(?:\/|$)/;
 
 function NativeAccountHeader({ userName }: { userName: string }) {
@@ -87,16 +86,15 @@ export function ClientLayoutWrapper({
   }, [owner]);
   const attentionCount = attention?.owner === owner ? attention.count : 0;
   const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+  const appShell = useMemo(() => ({ openSwitcher, userName }), [openSwitcher, userName]);
   const isInstancePage = pathname?.startsWith('/dashboard/instances/');
   const isWorkspacePage = pathname === '/dashboard/workspace' || /^\/dashboard\/agent\/[^/]+$/.test(pathname ?? '');
-  // The web shell: one sidebar and one title bar for every dashboard page. A
-  // desktop app that draws its own navigation, and a native client with the
-  // metadata bridge, keep what they have today. The old rail stays mounted
-  // (without drawing) only because it hosts the switcher dialog and ⌘K.
-  const webShell = !desktopShell && !nativeWorkspace;
-  const hideRail = webShell;
+  // The agent view draws its own sidebar beside the global rail, so the rail
+  // stays as icons there: Home, computers and settings are always one click
+  // away. A native client's page keeps the global chrome it has today.
+  const compactRail = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '') && !nativeWorkspace;
   // Runtime pages carry identity and back in their own resource bar.
-  const showMobileHeader = !desktopShell && !webShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
+  const showMobileHeader = !desktopShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
   const showPwaBottomNavigation = !desktopShell && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
   // The canvas loop runs behind opaque runtime surfaces for no visible gain.
   const showInteractiveBackground = !pathname?.includes('/chat') && !isWorkspacePage && !isInstancePage;
@@ -110,7 +108,7 @@ export function ClientLayoutWrapper({
         the sidebar does with the same key. */}
     <WorkspaceOwnerContext.Provider value={owner}>
     <WorkspaceModalLayerProvider onActiveChange={setWorkspaceModalOpen}>
-    <AppShellProvider openSwitcher={openSwitcher} userName={userName} chrome={webShell}>
+    <AppShellContext.Provider value={appShell}>
       <div data-testid="dashboard-viewport" data-keyboard-open={keyboardOpen} className={`flex flex-col md:flex-row w-full overflow-hidden relative ${styles.viewport}`}>
       {/* ServiceWorkerRegistration now mounts in the root layout so the offline
           shell registers on public routes too — see src/app/layout.tsx. */}
@@ -157,19 +155,8 @@ export function ClientLayoutWrapper({
             switcherOpen={switcherOpen}
             onSwitcherOpenChange={setSwitcherOpen}
             showOpsLink={showOpsLink}
-            hideRail={hideRail}
+            compact={compactRail}
           />
-          {webShell && <AppSidebar owner={owner} accountCode={ownerAccountCode} />}
-        </div>}
-
-        {/* The column holds the title bar and the page. It is always there, so
-            the page keeps its place in the tree when a desktop app drops the web chrome. */}
-        <div className={`${styles.column} ${webShell && !FULLSCREEN_TUI_ROUTE_PATTERN.test(pathname ?? '') ? styles.webColumn : ''}`}>
-        {webShell && <div
-          aria-hidden={workspaceModalOpen ? "true" : undefined}
-          className={workspaceModalOpen ? "hidden" : "contents"}
-        >
-          <AppTitleBar owner={owner} />
         </div>}
 
         {/* Content Area. No z-index: a stacking context here would trap page
@@ -195,7 +182,6 @@ export function ClientLayoutWrapper({
           {desktopShell && pathname === '/dashboard/settings' && <NativeAccountHeader userName={userName} />}
           {children}
         </main>
-        </div>
 
         {showPwaBottomNavigation && (
           <PwaBottomNavigation
@@ -209,7 +195,7 @@ export function ClientLayoutWrapper({
         )}
       </div>
       </div>
-    </AppShellProvider>
+    </AppShellContext.Provider>
     </WorkspaceModalLayerProvider>
     </WorkspaceOwnerContext.Provider>
     </NativeWorkspaceProvider>

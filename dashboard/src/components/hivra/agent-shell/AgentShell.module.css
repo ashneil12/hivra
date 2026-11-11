@@ -1,0 +1,4 @@
+/* sidebar | column (title bar, then the page's own rows) */
+.shell { position: relative; display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; }
+/* The column is the container the title bar's narrow rules measure. */
+.column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; container-type: inline-size; }
