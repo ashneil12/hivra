@@ -75,8 +75,9 @@ describe("Hermes guest install", () => {
     expect(block).toContain('systemctl start "user@${uid}.service"');
     expect(block).toContain('XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"');
     expect(block).toMatch(/timeout -k 10 240 sudo -u "\$\{AGENT_USER\}" -H env HOME=/);
-    expect(block).toContain('"${HERMES_BIN}" gateway install --start-now --start-on-login');
-    expect(block).toContain('"${HERMES_BIN}" gateway start');
+    expect(block).toContain('"${HERMES_BIN}" gateway install --start-now --start-on-login </dev/null');
+    expect(block).toContain('|| hermes_as_agent "${HERMES_BIN}" gateway install </dev/null || return 1');
+    expect(block).toContain('"${HERMES_BIN}" gateway start </dev/null');
     // No unit of our own and no drop-ins for it.
     expect(script).not.toMatch(/hermes-gateway\.service(\.d)?\s*<<|cat > [^\n]*hermes-gateway/);
     expect(script).not.toContain("hermes-gateway.service.d");
@@ -107,8 +108,9 @@ describe("Hermes guest install", () => {
     expect(fn).toContain('systemctl start "user@${uid}.service"');
     expect(fn).toContain("runuser -u bux -- env -i");
     expect(fn).toContain('XDG_RUNTIME_DIR="/run/user/${uid}"');
-    expect(fn).toContain('gateway install --start-now --start-on-login');
-    expect(fn).toContain('gateway start');
+    expect(fn).toContain('gateway install --start-now --start-on-login </dev/null');
+    expect(fn).toContain('|| "${run[@]}" "$bin" gateway install </dev/null || return 1');
+    expect(fn).toContain('gateway start </dev/null');
     expect(update).toMatch(/if ! hermes_gateway_report; then\n\s+echo "WARNING: Hermes gateway/);
     expect(update.indexOf("if ! hermes_gateway_report")).toBeLessThan(update.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
   });

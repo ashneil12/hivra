@@ -472,8 +472,11 @@ hermes_gateway_report() {
   local run=(timeout -k 10 240 runuser -u bux -- env -i HOME=/home/bux HERMES_HOME=/home/bux/.hermes LANG=C.UTF-8
     XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
     PATH=/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin)
-  "${run[@]}" "$bin" gateway install --start-now --start-on-login || return 1
-  "${run[@]}" "$bin" gateway start || return 1
+  # An older stable channel may reject the flags: retry once with the bare
+  # command. stdin is /dev/null so it can never prompt.
+  "${run[@]}" "$bin" gateway install --start-now --start-on-login </dev/null \
+    || "${run[@]}" "$bin" gateway install </dev/null || return 1
+  "${run[@]}" "$bin" gateway start </dev/null || return 1
 }
 if ! hermes_gateway_report; then
   echo "WARNING: Hermes gateway could not be installed or started; scheduled tasks and chat channels will not run until: hermes gateway install" >&2

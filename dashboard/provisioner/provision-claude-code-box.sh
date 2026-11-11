@@ -1448,8 +1448,11 @@ hermes_gateway_setup() {
   [ -S "/run/user/${uid}/bus" ] || return 1
   # Explicit flags keep it non-interactive; an installed, current unit is left
   # alone and only enabled.
-  hermes_as_agent "${HERMES_BIN}" gateway install --start-now --start-on-login || return 1
-  hermes_as_agent "${HERMES_BIN}" gateway start || return 1
+  # The stable channel can be older than the flags and reject them, so retry
+  # once with the bare command. stdin is /dev/null so it can never prompt.
+  hermes_as_agent "${HERMES_BIN}" gateway install --start-now --start-on-login </dev/null \
+    || hermes_as_agent "${HERMES_BIN}" gateway install </dev/null || return 1
+  hermes_as_agent "${HERMES_BIN}" gateway start </dev/null || return 1
 }
 fi
 
