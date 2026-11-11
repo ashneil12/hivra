@@ -65,3 +65,24 @@ describe("unifyAll canTryAgain", () => {
     }
   });
 });
+
+describe("unifyAll computers gone from their host", () => {
+  const gone = {
+    ...computer("ubuntu-desktop"), status: "error", vmid: 101, provisioned_at: "2026-01-01T00:00:00Z",
+    error: "This computer no longer exists on its host.",
+  } as unknown as HivraAgent;
+
+  it("keeps the stored reason and marks it as only removable", () => {
+    const [row] = unifyAll([], [gone]);
+    expect(row.attention).toBe("error");
+    expect(row.failureReason).toBe("This computer no longer exists on its host.");
+    expect(row.missingOnHost).toBe(true);
+    expect(row.canTryAgain).toBeUndefined();
+  });
+
+  it("does not mark an ordinary failure as gone", () => {
+    const [row] = unifyAll([], [{ ...gone, error: "Setup failed." } as HivraAgent]);
+    expect(row.missingOnHost).toBeUndefined();
+    expect(row.failureReason).toBe("Setup failed.");
+  });
+});

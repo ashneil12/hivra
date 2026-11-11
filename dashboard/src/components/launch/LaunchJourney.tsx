@@ -1032,7 +1032,11 @@ export function LaunchJourney(
         initial = freshFromIntent();
       }
     } else {
-      initial = stored ?? createLaunchDraft();
+      // A plain Launch link names nothing, so it opens Choose with nothing
+      // picked, whatever an earlier visit left saved. Only a reload or a
+      // history step inside the journey (its URL carries a stage) restores it.
+      const insideJourney = new URLSearchParams(window.location.search).has("stage");
+      initial = insideJourney && stored ? stored : createLaunchDraft();
     }
     initial = withCurrentStage(initial);
     setResumeChoice(null);
@@ -1043,6 +1047,21 @@ export function LaunchJourney(
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
   }, [linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+
+  // Following a plain Launch link while already inside the journey drops the
+  // stage from the URL; that is a new start, so Choose opens with nothing picked.
+  const stageParam = searchParams?.get("stage") ?? null;
+  const previousStageParam = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = previousStageParam.current;
+    previousStageParam.current = stageParam;
+    if (previous === null || stageParam !== null) return;
+    if (requestedProfileParam || startParam === "1" || returningDraftId) return;
+    setDraft(current => {
+      if (!current || current.stage === "launch" || current.stage === "choose") return current;
+      return createLaunchDraft();
+    });
+  }, [stageParam, requestedProfileParam, startParam, returningDraftId]);
 
   useEffect(() => {
     let active = true;

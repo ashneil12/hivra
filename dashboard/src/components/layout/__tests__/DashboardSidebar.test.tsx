@@ -76,7 +76,7 @@ describe('DashboardSidebar', () => {
   it('starts expanded for a new preference and keeps work above secondary destinations', () => {
     render(<DashboardSidebar {...props} />);
     expect(screen.getByTitle('Collapse Sidebar')).toHaveAttribute('aria-expanded', 'true');
-    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Activity']);
+    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Home', 'Agents', 'Computers', 'Activity']);
     expect(screen.getByRole('link', { name: 'Applications' })).toHaveAttribute('href', '/dashboard/settings/applications');
     expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('href', '/dashboard/settings/help');
     expect(screen.queryByText('Install Hivra')).not.toBeInTheDocument();
@@ -145,7 +145,7 @@ describe('DashboardSidebar', () => {
     try {
       render(<DashboardSidebar {...props} />);
       const primary = within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link');
-      expect(primary.map((link) => link.textContent)).toEqual(['Home', 'Computers', 'Agents', 'Activity']);
+      expect(primary.map((link) => link.textContent)).toEqual(['Home', 'Agents', 'Computers', 'Activity']);
       expect(screen.queryByRole('link', { name: 'Chat' })).not.toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     } finally {
@@ -206,7 +206,7 @@ describe('DashboardSidebar', () => {
 
   it('reports the attention count so the phone bar can badge More', () => {
     const onAttentionCountChange = jest.fn();
-    (useDashboardResources as jest.Mock).mockReturnValue({ resources: [{ ...resources[0], status: 'error' }, resources[2]], loading: false, errors: { hermes: null, hivra: null }, refresh });
+    (useDashboardResources as jest.Mock).mockReturnValue({ resources: [{ ...resources[0], status: 'error', attention: 'error' }, resources[2]], loading: false, errors: { hermes: null, hivra: null }, refresh });
     render(<DashboardSidebar {...props} onAttentionCountChange={onAttentionCountChange} />);
     expect(onAttentionCountChange).toHaveBeenLastCalledWith(1);
   });
@@ -230,7 +230,7 @@ describe('DashboardSidebar', () => {
     window.localStorage.setItem('hivra:dashboard:sidebar-expanded', 'false');
     const { container } = render(<DashboardSidebar {...props} />);
     const labels = [...container.querySelectorAll('.railLabel')].map((label) => label.textContent);
-    expect(labels).toEqual(['Search', 'Launch', 'Home', 'Computers', 'Agents', 'Activity', 'Settings', 'Billing', 'Servers', 'Apps', 'Help']);
+    expect(labels).toEqual(['Search', 'Launch', 'Home', 'Agents', 'Computers', 'Activity', 'Settings', 'Billing', 'Servers', 'Apps', 'Help']);
     expect(screen.getByRole('link', { name: 'Servers' })).toHaveAttribute('title', 'Servers');
     fireEvent.click(screen.getByTitle('Expand Sidebar'));
     expect(container.querySelector('.railLabel')).not.toBeInTheDocument();
