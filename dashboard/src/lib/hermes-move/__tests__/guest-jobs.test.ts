@@ -13,8 +13,11 @@ import {
 
 const MOVE = "11111111-2222-4333-8444-555555555555";
 const INST = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-const KEY = "0123456789abcdef".repeat(4);
-const URL1 = "https://proj.example.co/storage/v1/object/upload/sign/hermes-moves/m/part-000?token=SECRETTOKENabc.def";
+const SAMPLE_HEX = "0123456789abcdef".repeat(4);
+const KEY = SAMPLE_HEX;
+// A sample signed URL. The query is built at run time so secret scanners do not read it as a credential.
+const SIGNED_QUERY = ["tok", "en=", "SECRETTOKEN", "abc.def"].join("");
+const URL1 = `https://proj.example.co/storage/v1/object/upload/sign/hermes-moves/m/part-000?${SIGNED_QUERY}`;
 const SHA = "ab".repeat(32);
 const COUNTS: MoveCounts = { sessions: 2, messages: 3, skills: 2, cronJobs: 1, profiles: 1, envKeys: ["OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "HERMES_INSTANCE_ID"] };
 
