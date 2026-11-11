@@ -563,7 +563,18 @@ function oldCommon(instanceId: string): string {
 INSTDIR=/opt/hermes/instances/$INST
 STATE_SRC=/var/lib/docker/volumes/agent-@{INST}_webui-state/_data
 WS_SRC=/var/lib/docker/volumes/agent-@{INST}_webui-workspace/_data
-PROJECT_LABEL="com.docker.compose.project=agent-$INST"
+# The compose file sets no top-level name, so compose names the project after the instance
+# directory: the bare instance id (the container names carry the agent- prefix, the project does
+# not). Read it from the agent's own containers (agent-<id>, agent-<id>-gateway, -web, ...), in
+# case an older layout named it differently.
+PROJECT=""
+for c in "agent-$INST-gateway" "agent-$INST" $(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -Ex "agent-$INST(-[a-z0-9-]+)?" || true); do
+  PROJECT=$(docker inspect --type container -f '{{index .Config.Labels "com.docker.compose.project"}}' "$c" 2>/dev/null || true)
+  printf '%s' "$PROJECT" | grep -Eqx '[a-z0-9][a-z0-9_-]{0,99}' && break
+  PROJECT=""
+done
+[ -n "$PROJECT" ] || PROJECT="$INST"
+PROJECT_LABEL="com.docker.compose.project=$PROJECT"
 PAUSE=/var/lib/hermes-roll-paused-$INST
 TOKEN=$(printf '%s' "$INST" | sed 's/[^A-Za-z0-9_.@:-]/_/g')
 
