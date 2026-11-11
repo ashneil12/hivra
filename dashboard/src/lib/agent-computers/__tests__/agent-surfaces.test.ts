@@ -22,7 +22,8 @@ describe("agentSurfacesFor", () => {
     expect(agentSurfacesFor({ type: "codex", ...RUNNING })).toEqual(full);
     // Browser stays discoverable while it is toggled off; the tab says so.
     expect(agentSurfacesFor({ type: "codex", status: "stopped" })).toEqual(full);
-    expect(agentSurfacesFor({ type: "hermes" })).toEqual(full.filter((id) => id !== "browser"));
+    // Hermes on a Hivra computer shows Hermes's own web UI, not Hivra's chat.
+    expect(agentSurfacesFor({ type: "hermes", ...RUNNING })).toEqual(["aeon", "box", "files", "manage"]);
   });
 
   it("never gives an agent a Desktop, and gives dashboard runtimes their dashboard", () => {

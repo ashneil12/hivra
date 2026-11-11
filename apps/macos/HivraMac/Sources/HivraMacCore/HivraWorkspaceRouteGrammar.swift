@@ -132,7 +132,7 @@ extension HivraWorkspaceRouteGrammar {
         static let templateReference = Value.matching("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
         static let resourceID = Value.matching("^[A-Za-z0-9_-]{1,256}$")
         /// LaunchProfileId (launch/contracts.ts).
-        static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
+        static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "aeon",
                                                 "deepseek-harness", "ubuntu-desktop", "ubuntu-server",
                                                 "linux-terminal", "omarchy", "windows"])
         /// Launch history stages, including the names used before Choose merged its steps (LaunchJourney).

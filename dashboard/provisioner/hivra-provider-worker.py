@@ -31,12 +31,12 @@ ROOT = Path("/var/lib/hivra/provider-install")
 UNIT = "hivra-provider-install.service"
 CGROUP = Path("/sys/fs/cgroup/system.slice") / UNIT
 INSTALL_LOCK = Path("/run/hivra-agent-install.lock")
-NATIVE_VERSION = "2026.11.11.3"
+NATIVE_VERSION = "2026.11.11.4"
 NATIVE_PROFILE = "deepseek-owned-service-v1"
 NATIVE_FILES = ("deepseek-harness/bux-hivra-chat.service", "deepseek-harness/install-native.py", "deepseek-harness/service-owner.py")
 DESKTOP_PROFILE = "desktop-owned-services-v1"
 DESKTOP_FILES = ("remote-desktop/provider-service-owner.py",)
-DESKTOP_VERSION = "2026.11.11.3"
+DESKTOP_VERSION = "2026.11.11.4"
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 MAX_INPUT = 128 * 1024
 MAX_RUN_MS = 480000
@@ -253,7 +253,7 @@ def check_launch(expected, launch):
     # In particular a future desktop parser must not make v3 admissible under
     # an older identity that cannot retain/observe desktop cleanup obligations.
     legacy = (expected["version"] == 1 and launch["version"] == 1
-              and launch["agentKind"] in {"claude", "codex", "aeon", "openclaw", "agent-zero"})
+              and launch["agentKind"] in {"claude", "codex", "aeon", "openclaw", "agent-zero", "hermes"})
     native = expected["version"] == 2 and launch["version"] == 2 and launch["agentKind"] == "deepseek-harness"
     desktop = (expected["version"] == 3 and launch["version"] == 3 and launch["agentKind"] == "linux-desktop"
                and launch.get("computerId") == expected.get("agentId") and isinstance(expected.get("agentId"), str))

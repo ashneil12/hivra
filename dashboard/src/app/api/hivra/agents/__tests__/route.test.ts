@@ -369,8 +369,14 @@ describe("POST /api/hivra/agents", () => {
   const originalHivraClaudeCodeProxmoxHost = process.env.HIVRA_CLAUDE_CODE_PROXMOX_HOST;
   const originalNextPublicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   const originalVercelTargetEnvironment = process.env.VERCEL_TARGET_ENV;
+  const originalHermesDeployChannel = process.env.HERMES_DEPLOY_CHANNEL;
 
   afterEach(() => {
+    if (originalHermesDeployChannel === undefined) {
+      delete process.env.HERMES_DEPLOY_CHANNEL;
+    } else {
+      process.env.HERMES_DEPLOY_CHANNEL = originalHermesDeployChannel;
+    }
     if (originalHivraProxmoxHost === undefined) {
       delete process.env.HIVRA_PROXMOX_HOST;
     } else {
@@ -1238,6 +1244,66 @@ describe("POST /api/hivra/agents", () => {
       computer_substrate: "proxmox-kvm",
       managed_provisioner_channel: "canary",
     }));
+  });
+
+  it("does not launch Hermes on a Hivra computer unless the Hermes computer flag is on for this deployment", async () => {
+    process.env.VERCEL_TARGET_ENV = "production";
+    process.env.HERMES_DEPLOY_CHANNEL = "production";
+    const response = await POST(makeRequest({ type: "hermes", name: "HERMES_FLAG_OFF", cpu: 1, ram: 2 }) as never);
+    expect(response.status).toBe(400);
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it("launches the official Hermes Agent as a Hivra computer kind on Canary, on the default model", async () => {
+    process.env.VERCEL_TARGET_ENV = "canary";
+    process.env.HERMES_DEPLOY_CHANNEL = "canary";
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    const candidateEnv: NodeJS.ProcessEnv = {
+      NODE_ENV: "test",
+      PROXMOX_NODE: "fixturenode7",
+      PROXMOX_VMID_START: "200",
+      PROXMOX_VMID_END: "249",
+      PROXMOX_IP_LAST_OCTET_START: "50",
+      PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+      PROXMOX_PRIVATE_GATEWAY: "10.250.21.1",
+    };
+    mockRunProxmoxHostScript
+      .mockReset()
+      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_HOST_READY\n" })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n',
+      })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+    mockSelectAvailableProxmoxProvisionTarget.mockImplementationOnce(
+      async (options: ManagedPlacementOptions) => {
+        const readiness = await options.readinessCheck!({ targetId: "fixturenode7", env: candidateEnv });
+        return readiness.ok
+          ? { ok: true as const, targetId: "fixturenode7", env: candidateEnv }
+          : { ok: false as const, status: readiness.status ?? 503, message: readiness.message };
+      },
+    );
+
+    const response = await POST(makeRequest({
+      type: "hermes",
+      name: "CANARY_HERMES",
+      cpu: 2,
+      ram: 4,
+      managedProvisionerChannel: "default",
+    }) as never);
+
+    expect(response.status).toBe(201);
+    // Placement admits only a bundle that can install the kind.
+    const readinessScript = String(mockRunProxmoxHostScript.mock.calls[0][0]);
+    expect(readinessScript).toContain(`case "$OBSERVED_VERSION" in\n  '${PORTABLE_HIVRA_PROVISIONER_VERSION}') ;;`);
+    const kickoff = String(mockRunProxmoxHostScript.mock.calls[1][0]);
+    expect(kickoff).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "hermes"');
+    expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({ type: "hermes" }));
   });
 
   it("preserves the free Claude half-core request while provisioning a one-core VM capped to 0.5 CPU", async () => {

@@ -14,7 +14,7 @@ const Row = z.object({
   id: Uuid, user_id: z.string(), operation_id: Uuid, operation_kind: z.literal("provision"),
   allocation_operation_id: Uuid, status: z.literal("provisioning"), desired_state: z.enum(["running", "deleted"]),
   computer_substrate: z.literal("provider-vm"), deployment_mode: z.literal("self-managed"), vmid: z.null(),
-  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"]),
+  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "deepseek-harness", "linux-desktop"]),
   computer_profile: z.unknown().optional(),
   infrastructure_connection_id: Uuid, infrastructure_connection_revision: z.number().int().positive().safe(),
   deployment_target_id: Uuid, provider_capacity_order_id: Uuid, provider_enrollment_attempt_id: Uuid,

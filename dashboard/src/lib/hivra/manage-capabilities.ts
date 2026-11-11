@@ -320,6 +320,8 @@ function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): Manage
   if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero") {
     return { name: row.type, vetted: AGENT_APP_VERSIONS[row.type].label };
   }
+  // Official Hermes, updated by its own `hermes update`: nothing Hivra vetted.
+  if (row.type === "hermes") return { name: "hermes", vetted: null };
   return null;
 }
 

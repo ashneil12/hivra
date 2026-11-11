@@ -34,7 +34,7 @@ import { bindProviderDirectAccess } from "./provider-direct-access";
 const Input = z.object({
   userId: z.string().min(1).max(256), targetId: z.string().uuid(), connectionId: z.string().uuid(),
   expectedConnectionRevision: z.number().int().positive().safe(),
-  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"]),
+  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "deepseek-harness", "linux-desktop"]),
   computerProfile: z.literal("ubuntu-desktop").optional(),
   launchOperationId: z.string().uuid().optional(),
   name: z.string().trim().min(1).max(256), browser: z.boolean(),

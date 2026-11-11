@@ -494,6 +494,13 @@ update them yet.
   flag and no `chatEffort`), so a client shows the picker exactly when it has an effect.
   `server.js` is a runtime update asset, so existing computers receive this with the
   update.
+- **Hermes Agent.** `--agent-kind hermes` installs the official Hermes Agent with its own
+  installer (no Hivra image, fork or patch), points it at the launch model settings, and
+  runs Hermes's own web UI as `bux-hermes.service` on `127.0.0.1:9119`. The gateway proxies
+  it at `/hermes/` behind the token gate, HTTP and WebSocket, with the prefix stripped and
+  `X-Forwarded-Prefix: /hermes`. Updates are `hermes update` (Terminal, or the Update Hermes
+  button, which runs `hermes update --yes` as the agent user); the version comes from
+  `hermes --version`.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

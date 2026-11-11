@@ -292,6 +292,46 @@ describe("AgentSoftwarePanel", () => {
   });
 });
 
+describe("AgentSoftwarePanel for Hermes (Hivra pins no version)", () => {
+  const hermesState = (view: AgentSoftwareView) =>
+    ({ ...stateOf(view), cli: null, app: "hermes", tested: null, autoUpdate: null });
+  const renderHermes = () => renderPanel({ agent: agentOf({ type: "hermes" }), name: "Hermes" });
+
+  it("shows the installed version, no tested version, and an Update Hermes button with the Terminal hint", async () => {
+    mockGet.mockResolvedValue(hermesState({ kind: "current", installed: "0.23.1" }));
+    renderHermes();
+    expect(await screen.findByText("Hermes installed")).toBeInTheDocument();
+    expect(screen.getByText("Hermes installed").nextSibling).toHaveTextContent("0.23.1");
+    expect(screen.queryByText("Hivra's tested version")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/vetted|tested version/i);
+    expect(screen.getByRole("button", { name: "Update Hermes" })).toBeEnabled();
+    // The same update, by hand.
+    expect(screen.getAllByText("hermes update").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Update automatically/)).not.toBeInTheDocument();
+  });
+
+  it("runs the update when the button is pressed", async () => {
+    mockGet.mockResolvedValue(hermesState({ kind: "current", installed: "0.23.1" }));
+    const { onUpdate } = renderHermes();
+    fireEvent.click(await screen.findByRole("button", { name: "Update Hermes" }));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it("explains an update stopped by the owner's own changes, pointing at Terminal", async () => {
+    mockGet.mockResolvedValue(hermesState({ kind: "update_failed", reason: "local_changes", target: "latest", installed: "0.23.1" }));
+    renderHermes();
+    expect(await stateText()).toMatch(/changes of your own.*Run hermes update in Terminal/);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  });
+
+  it("shows an update in progress with no button", async () => {
+    mockGet.mockResolvedValue(hermesState({ kind: "updating", phase: "installing", target: "latest", installed: "0.23.1" }));
+    renderHermes();
+    expect(await stateText()).toMatch(/Updating Hermes with its own updater/);
+    expect(screen.queryByRole("button", { name: "Update Hermes" })).not.toBeInTheDocument();
+  });
+});
+
 describe("AgentSoftwareChip", () => {
   it.each<[AgentSoftwareView, string, RegExp]>([
     [{ kind: "behind", installed: "0.140.0" }, "Update available", /^Update available: Codex 0\.140\.0 is installed and Hivra has tested 0\.149\.1\. Open Updates\.$/],

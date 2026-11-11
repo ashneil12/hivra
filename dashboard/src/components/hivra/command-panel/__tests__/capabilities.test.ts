@@ -14,7 +14,7 @@ describe("commandPanelCapabilities", () => {
       const caps = commandPanelCapabilities(agent, tabsFor(agent));
       expect(caps !== null).toBe(def.surface === "dashboard");
     }
-    for (const type of ["hermes", "claude-code", "codex", "linux-desktop"]) expect(ids(type)).toBeNull();
+    for (const type of ["claude-code", "codex", "linux-desktop"]) expect(ids(type)).toBeNull();
   });
 
   it("gives OpenClaw every action it supports, with the chat apps tile hidden by default", () => {
@@ -38,6 +38,16 @@ describe("commandPanelCapabilities", () => {
     const caps = commandPanelCapabilities(agent, tabsFor(agent))!;
     expect(caps.actions.find((a) => a.id === "update")?.label).toBe("Update Aeon dashboard");
     expect(caps.actions.map((a) => a.id)).not.toContain("model");
+  });
+
+  it("gives Hermes an Update that runs its own `hermes update`, and no Browser (it is installed without one)", () => {
+    const agent = agentRow("hermes");
+    const caps = commandPanelCapabilities(agent, tabsFor(agent))!;
+    expect(caps.actions.map((a) => a.id)).toEqual(["update", "restart", "terminal", "files", "model", "size"]);
+    const update = caps.actions.find((a) => a.id === "update")!;
+    expect(update.label).toBe("Update Hermes");
+    expect(update.description).toBe("Runs hermes update for the newest release");
+    expect(update.target).toEqual({ kind: "update" });
   });
 
   it("gives DeepSeek Harness no Update or Model: Hivra has neither flow for it today", () => {
