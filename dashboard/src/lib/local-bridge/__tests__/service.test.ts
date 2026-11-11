@@ -47,7 +47,16 @@ jest.mock("../store", () => {
       state.allowances.set(`${agent}|${computer}`, { user_id: user, agent_id: agent, computer_id: computer, granted_at: granted, expires_at: expires });
     },
     deleteAllowance: async (_user: string, agent: string, computer: string) => { state.allowances.delete(`${agent}|${computer}`); },
-    bumpGeneration: async (_user: string, computer: any, key: string) => { computer.generation += 1; computer.revoked_at = "now"; computer.bridge_key_encrypted = key; return computer.generation; },
+    bumpGeneration: async (_user: string, computer: any, key: string, revoked: boolean) => {
+      computer.generation += 1; computer.revoked_at = revoked ? "now" : null; computer.bridge_key_encrypted = key; return computer.generation;
+    },
+    deleteAllowancesForComputer: async (_user: string, computer: string) => {
+      for (const key of [...state.allowances.keys()]) if (state.allowances.get(key).computer_id === computer) state.allowances.delete(key);
+    },
+    expireOpenRequests: async (_user: string, computer: string) => {
+      for (const row of state.requests.values()) if (row.computer_id === computer && ["pending", "approved"].includes(row.status)) row.status = "expired";
+    },
+    purgeOldResults: async () => undefined,
     markComputerEnrolled: async (_user: string, id: string, key: string) => { const row = state.computers.get(id); row.revoked_at = null; row.bridge_key_encrypted = key; },
     insertComputer: async (user: string, label: string, key: string) => {
       const row = { id: "11111111-1111-4111-8111-111111111111", user_id: user, label, generation: 1, revoked_at: null, created_at: "x", bridge_key_encrypted: key };
@@ -61,7 +70,7 @@ import { createHmac } from "node:crypto";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { execViaRelay, hostRelayStatus, revokeRelayConnector } from "@/lib/infrastructure/host-relay";
 import {
-  BRIDGE_OFF_MESSAGE, ALLOWANCE_MS, allowanceActive, decideRequest, dispatchRequest, enrollComputer, readRequestForAgent, revokeComputer, submitRequest, withoutOldResult,
+  BRIDGE_OFF_MESSAGE, ALLOWANCE_MS, allowanceActive, decideRequest, dispatchRequest, enrollComputer, readRequestForAgent, revokeComputer, submitRequest, withoutOldResult, expireStale, publicRequest,
 } from "../service";
 import * as storeModule from "../store";
 
@@ -224,7 +233,69 @@ describe("local bridge service", () => {
 
   it("enrolling issues a config for this owner and computer", async () => {
     const enrolled = await enrollComputer(OWNER, "Mac", COMPUTER);
-    expect(enrolled.ok && enrolled.value.config).toMatchObject({ connectionId: COMPUTER, computerId: COMPUTER, ownerId: OWNER, generation: 1 });
+    expect(enrolled.ok && enrolled.value.config).toMatchObject({ connectionId: COMPUTER, computerId: COMPUTER, ownerId: OWNER, generation: 2 });
+  });
+
+  it("revoke removes the computer's allowances and expires its waiting and approved requests", async () => {
+    const now = Date.now();
+    const waiting = (await submit(now) as any).value.request.id;
+    const approved = (await submit(now) as any).value.request.id;
+    await decideRequest(OWNER, approved, "allow_hour", now);
+    expect(state.allowances.size).toBe(1);
+    // The approved one has not been dispatched yet; revoke lands first.
+    await revokeComputer(OWNER, COMPUTER);
+    expect(state.allowances.size).toBe(0);
+    expect(state.requests.get(waiting).status).toBe("expired");
+    expect(state.requests.get(approved).status).toBe("expired");
+    await dispatchRequest(OWNER, approved);
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it("every enroll of an existing computer raises the generation, tells the relay and clears allowances", async () => {
+    const now = Date.now();
+    const id = (await submit(now) as any).value.request.id;
+    await decideRequest(OWNER, id, "allow_hour", now);
+    const enrolled = await enrollComputer(OWNER, "Mac", COMPUTER);
+    expect(enrolled.ok && enrolled.value.config).toMatchObject({ generation: 2 });
+    expect(revokeRelayConnector).toHaveBeenCalledWith(COMPUTER, 2);
+    expect(state.allowances.size).toBe(0);
+    await enrollComputer(OWNER, "Mac", COMPUTER);
+    expect(revokeRelayConnector).toHaveBeenLastCalledWith(COMPUTER, 3);
+    expect(state.computers.get(COMPUTER).revoked_at).toBeNull();
+  });
+
+  it("a brand-new computer needs no relay revoke", async () => {
+    state.computers.clear();
+    const enrolled = await enrollComputer(OWNER, "New");
+    expect(enrolled.ok && enrolled.value.config).toMatchObject({ generation: 1 });
+    expect(revokeRelayConnector).not.toHaveBeenCalled();
+  });
+
+  it("an allowance is granted only by the call that approved the request", async () => {
+    const now = Date.now();
+    const id = (await submit(now) as any).value.request.id;
+    await decideRequest(OWNER, id, "deny", now);
+    expect(await decideRequest(OWNER, id, "allow_hour", now)).toMatchObject({ ok: false, status: 409 });
+    expect(state.allowances.size).toBe(0);
+  });
+
+  it("the ticket also binds the time limit and the output cap", async () => {
+    const id = (await submit() as any).value.request.id;
+    await decideRequest(OWNER, id, "approve");
+    await dispatchRequest(OWNER, id);
+    const claims = JSON.parse(Buffer.from(mockExec.mock.calls[0][1].split(".")[0], "base64url").toString());
+    expect(claims).toMatchObject({ timeoutSeconds: 30, maxOutputBytes: 256 * 1024 });
+  });
+
+  it("stale pending requests are flipped to expired and the list carries no output", async () => {
+    const now = Date.now();
+    const id = (await submit(now) as any).value.request.id;
+    const rows = await expireStale([{ ...state.requests.get(id) }], now + 11 * 60_000);
+    expect(rows[0].status).toBe("expired");
+    expect(state.requests.get(id).status).toBe("expired");
+    const done = { ...state.requests.get(id), status: "done", result: { stdout: "secret" } };
+    expect(publicRequest(done, false)).not.toHaveProperty("result");
+    expect(publicRequest(done, false)).toMatchObject({ hasResult: true });
   });
 
   it("the bridge key is random, stored encrypted, rotated on re-enroll and on revoke, and never relay-derived", async () => {

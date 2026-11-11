@@ -164,7 +164,7 @@ export function bridgeArgvHash(argv: string[]): string {
   return createHash("sha256").update(argv.join("\0"), "utf8").digest("hex");
 }
 
-export type BridgeTicketClaims = { ownerId: string; agentId: string; computerId: string; argv: string[]; cwd: string | null };
+export type BridgeTicketClaims = { ownerId: string; agentId: string; computerId: string; argv: string[]; cwd: string | null; timeoutSeconds: number; maxOutputBytes: number };
 
 /** A single-use ticket for exactly this owner, agent, computer and command. Mint it only after the owner approved. */
 export function mintBridgeTicket(bridgeKeyHex: string, claims: BridgeTicketClaims, nowMs: number = Date.now()): string {
@@ -178,6 +178,8 @@ export function mintBridgeTicket(bridgeKeyHex: string, claims: BridgeTicketClaim
     computer: claims.computerId,
     argv: bridgeArgvHash(claims.argv),
     cwd: claims.cwd ?? "",
+    timeoutSeconds: claims.timeoutSeconds,
+    maxOutputBytes: claims.maxOutputBytes,
     jti: randomBytes(18).toString("base64url"),
     iat,
     exp: iat + BRIDGE_TICKET_LIFETIME_SECONDS,

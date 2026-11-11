@@ -25,10 +25,13 @@ import { loadComputers } from "@/lib/local-bridge/store";
 
 const ROUTE = "/api/agent-bridge";
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+/** No NUL and no lone surrogate (which is not valid UTF-8 and would hash differently on each side). */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const cleanText = (value: string) => !value.includes("\0") && !LONE_SURROGATE.test(value);
 const Body = z.object({
   computer: Uuid,
-  argv: z.array(z.string().max(LIMITS.argLength).refine((value) => !value.includes("\0"))).min(1).max(LIMITS.argvItems).refine((argv) => (argv[0] ?? "x").length > 0),
-  cwd: z.string().min(1).max(4096).refine((value) => !value.includes("\0")).optional(),
+  argv: z.array(z.string().max(LIMITS.argLength).refine(cleanText)).min(1).max(LIMITS.argvItems).refine((argv) => (argv[0] ?? "x").length > 0),
+  cwd: z.string().min(1).max(4096).refine(cleanText).optional(),
   timeoutSeconds: z.number().int().min(1).max(LIMITS.timeoutMax).optional(),
   maxOutputBytes: z.number().int().min(1).max(LIMITS.outputMax).optional(),
 }).strict();

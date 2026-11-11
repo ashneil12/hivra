@@ -50,10 +50,14 @@ export async function markComputerEnrolled(userId: string, id: string, bridgeKey
   check(await db().from("hivra_bridge_computers").update({ revoked_at: null, bridge_key_encrypted: bridgeKeyEncrypted }).eq("id", id).eq("user_id", userId));
 }
 
-/** Raises the generation by one and marks the computer revoked; returns the new generation. */
-export async function bumpGeneration(userId: string, computer: BridgeComputer, bridgeKeyEncrypted: string): Promise<number> {
+/**
+ * Raises the generation by one and stores the rotated key, only if the generation is still
+ * the one the caller read. `revoked` marks the computer revoked (a revoke) or live (an enroll).
+ * Returns the new generation.
+ */
+export async function bumpGeneration(userId: string, computer: BridgeComputer, bridgeKeyEncrypted: string, revoked: boolean): Promise<number> {
   const next = computer.generation + 1;
-  const row = check(await db().from("hivra_bridge_computers").update({ generation: next, revoked_at: new Date().toISOString(), bridge_key_encrypted: bridgeKeyEncrypted })
+  const row = check(await db().from("hivra_bridge_computers").update({ generation: next, revoked_at: revoked ? new Date().toISOString() : null, bridge_key_encrypted: bridgeKeyEncrypted })
     .eq("id", computer.id).eq("user_id", userId).eq("generation", computer.generation).select("generation").maybeSingle());
   if (!row) throw new Error("conflict");
   return next;
@@ -111,6 +115,28 @@ export async function upsertAllowance(userId: string, agentId: string, computerI
     { user_id: userId, agent_id: agentId, computer_id: computerId, granted_at: grantedAt, expires_at: expiresAt },
     { onConflict: "agent_id,computer_id" },
   ));
+}
+
+export async function deleteAllowancesForComputer(userId: string, computerId: string): Promise<void> {
+  check(await db().from("hivra_bridge_allowances").delete().eq("user_id", userId).eq("computer_id", computerId));
+}
+
+/** A revoked computer's waiting and approved-but-not-started requests can no longer run. */
+export async function expireOpenRequests(userId: string, computerId: string, now: number = Date.now()): Promise<void> {
+  check(await db().from("hivra_bridge_requests").update({ status: "expired", finished_at: new Date(now).toISOString() })
+    .eq("user_id", userId).eq("computer_id", computerId).in("status", ["pending", "approved"]));
+}
+
+/** Pending requests past their time become expired (all owners; the daily cleanup). */
+export async function expireStalePending(now: number = Date.now()): Promise<void> {
+  check(await db().from("hivra_bridge_requests").update({ status: "expired", finished_at: new Date(now).toISOString() })
+    .eq("status", "pending").lt("expires_at", new Date(now).toISOString()));
+}
+
+/** Nulls stored output older than 7 days for every owner (the daily cleanup). */
+export async function purgeAllOldResults(now: number = Date.now()): Promise<void> {
+  check(await db().from("hivra_bridge_requests").update({ result: null })
+    .not("result", "is", null).lt("finished_at", new Date(now - RESULT_RETENTION_MS).toISOString()));
 }
 
 export async function deleteAllowance(userId: string, agentId: string, computerId: string): Promise<void> {

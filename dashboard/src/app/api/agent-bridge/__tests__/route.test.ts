@@ -90,6 +90,8 @@ describe("/api/agent-bridge", () => {
       { computer: COMPUTER, argv: ["uname"], timeoutSeconds: 121 },
       { computer: COMPUTER, argv: ["uname"], maxOutputBytes: 1048577 },
       { computer: "not-a-uuid", argv: ["uname"] },
+      { computer: COMPUTER, argv: ["echo", "\ud800"] },
+      { computer: COMPUTER, argv: ["echo"], cwd: "/tmp/\udfff" },
     ]) {
       expect((await POST(request("POST", body))).status).toBe(400);
     }

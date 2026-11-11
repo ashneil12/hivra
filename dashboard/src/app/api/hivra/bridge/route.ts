@@ -15,7 +15,7 @@ import { runAfterResponse } from "@/lib/hivra/after-response";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { loadOwnedRows } from "@/lib/agent-links/store";
-import { allowanceActive, decideRequest, dispatchRequest, enrollComputer, publicRequest, revokeAllowance, revokeComputer, withoutOldResult } from "@/lib/local-bridge/service";
+import { allowanceActive, decideRequest, dispatchRequest, enrollComputer, expireStale, publicRequest, readResultForOwner, revokeAllowance, revokeComputer, withoutOldResult } from "@/lib/local-bridge/service";
 import { listAllowances, listRequests, loadComputers, purgeOldResults } from "@/lib/local-bridge/store";
 import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
@@ -35,14 +35,23 @@ export async function GET(req: NextRequest) {
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra:bridge:read", userId, limit: 120, windowMs: 60_000 });
     if (limited) return noStore(limited);
+    // One request's output, on demand (the list below never carries output).
+    const wanted = req.nextUrl.searchParams.get("request");
+    if (wanted !== null) {
+      if (!Uuid.safeParse(wanted).success) return noStore(apiError("Not found.", 404));
+      const read = await readResultForOwner(userId, wanted);
+      if (!read.ok) return noStore(apiError(read.message, read.status));
+      return noStore(apiSuccess(read.value));
+    }
     // Output older than 7 days is cleared from the table, and never shown.
     await purgeOldResults(userId).catch(() => undefined);
-    const [computers, requests, allowances, owned] = await Promise.all([loadComputers(userId), listRequests(userId), listAllowances(userId), loadOwnedRows(userId)]);
+    const [computers, listed, allowances, owned] = await Promise.all([loadComputers(userId), listRequests(userId), listAllowances(userId), loadOwnedRows(userId)]);
     const now = Date.now();
+    const requests = await expireStale(listed, now);
     return noStore(apiSuccess({
       computers: computers.map((row) => ({ id: row.id, name: row.label, revoked: Boolean(row.revoked_at) })),
       agents: owned.map((row) => ({ id: row.id, name: String(row.name ?? "Agent") })),
-      requests: requests.map((row) => publicRequest(withoutOldResult(row, now))),
+      requests: requests.map((row) => publicRequest(withoutOldResult(row, now), false)),
       allowances: allowances.filter((row) => allowanceActive(row, now))
         .map((row) => ({ agentId: row.agent_id, computerId: row.computer_id, expiresAt: row.expires_at })),
     }));

@@ -32,16 +32,23 @@ It is not the system connector: you start it, and stopping it is the off switch.
 
 - Dials out to the relay; nothing listens on this machine. One message type,
   `exec`: an argv list (never a shell string), a `cwd` inside a folder you list
-  in `allowedFolders` (your home folder alone is refused; with no `cwd` the
-  first folder is used), `timeoutSeconds` up to 120 and `maxOutputBytes` up to
-  1 MiB. No terminal, port forwarding or file transfer.
-- Every request carries a ticket (at most 120 s, single use) bound to you, one
-  agent, this computer and the exact argv and cwd, signed with `bridgeKey`,
+  in `allowedFolders` (with no `cwd` the first folder is used),
+  `timeoutSeconds` up to 120 and `maxOutputBytes` up to 1 MiB. No terminal,
+  port forwarding or file transfer. At the time limit, or when the command
+  ends, the whole process group is killed, so nothing is left running.
+- **Not a sandbox.** An approved command runs as you and can read and change
+  anything you can. `allowedFolders` only sets where it starts. The bridge
+  refuses a folder that is your home, a parent of it, `~/.ssh`, `~/.gnupg` or
+  `~/Library/Keychains`, but that is a guard against mistakes, not a boundary.
+- Every request carries a ticket (it lives 60 s, single use, and is refused if
+  issued before the bridge started) bound to you, one agent, this computer and
+  the exact argv, cwd, time limit and output cap, signed with `bridgeKey`,
   a random 32-byte key made when you enroll, shown to you once in the config and
   kept encrypted by Hivra's control plane. It is not derived from the relay
   secret, so the relay cannot mint tickets. Hivra mints a ticket only
   after you approve that exact command in the dashboard (Approve, Deny, or
-  Allow this agent for 1 hour; there is no allow-forever).
+  Allow any command from this agent for 1 hour; there is no allow-forever).
+  Revoking or re-enrolling a computer ends every allowance for it.
 - Every request, allowed or refused, is appended to `log.jsonl` beside the
   config (time, computer, agent, argv, cwd, exit code, approved or denied).
 - Revoke in the dashboard raises the connector generation; the bridge exits

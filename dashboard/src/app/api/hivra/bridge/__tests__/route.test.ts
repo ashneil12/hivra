@@ -19,6 +19,7 @@ jest.mock("@/lib/local-bridge/store", () => ({
 }));
 jest.mock("@/lib/local-bridge/service", () => ({
   allowanceActive: () => true, publicRequest: (row: unknown) => row, withoutOldResult: (row: unknown) => row,
+  expireStale: async (rows: unknown[]) => rows, readResultForOwner: jest.fn(),
   decideRequest: jest.fn(), dispatchRequest: jest.fn(), enrollComputer: jest.fn(), revokeAllowance: jest.fn(), revokeComputer: jest.fn(),
 }));
 jest.mock("@/lib/api-response", () => ({
@@ -30,7 +31,7 @@ import { auth } from "@clerk/nextjs/server";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
-import { decideRequest, revokeComputer } from "@/lib/local-bridge/service";
+import { decideRequest, readResultForOwner, revokeComputer } from "@/lib/local-bridge/service";
 import { purgeOldResults } from "@/lib/local-bridge/store";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { GET, POST } from "../route";
@@ -66,6 +67,16 @@ describe("/api/hivra/bridge", () => {
     const data = (await response.json()).data;
     expect(data.agents).toEqual([{ id: "a1", name: "Claude" }]);
     expect(purgeOldResults).toHaveBeenCalledWith("user_owner");
+  });
+
+  it("serves one request's output on demand, only to its owner", async () => {
+    jest.mocked(readResultForOwner).mockResolvedValue({ ok: false, status: 404, message: "That request was not found." });
+    const other = new NextRequest(`https://canary.hermesos.cloud/api/hivra/bridge?request=${REQUEST_ID}`, { headers: { host: "canary.hermesos.cloud" } });
+    expect((await GET(other)).status).toBe(404);
+    expect(readResultForOwner).toHaveBeenCalledWith("user_owner", REQUEST_ID);
+    jest.mocked(readResultForOwner).mockResolvedValue({ ok: true, value: { result: { stdout: "Darwin\n" } } });
+    const response = await GET(other);
+    expect((await response.json()).data.result.stdout).toBe("Darwin\n");
   });
 
   it("needs a signed-in owner and a same-origin request", async () => {

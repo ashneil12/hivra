@@ -36,9 +36,26 @@ export function withoutOldResult(row: BridgeRequest, now: number): BridgeRequest
   return row.result && Number.isFinite(finished) && now - finished > store.RESULT_RETENTION_MS ? { ...row, result: null } : row;
 }
 
+/** Pending requests past their time become expired, in the table and in what is returned. */
+export async function expireStale(rows: BridgeRequest[], now: number = Date.now()): Promise<BridgeRequest[]> {
+  return Promise.all(rows.map(async (row) => {
+    if (row.status !== "pending" || Date.parse(row.expires_at) > now) return row;
+    await store.transition(row.id, "pending", { status: "expired", finished_at: new Date(now).toISOString() });
+    return { ...row, status: "expired" as const };
+  }));
+}
+
+/** One request's output for its owner, on demand; gone after 7 days. */
+export async function readResultForOwner(userId: string, requestId: string, now: number = Date.now()): Promise<Result<{ result: Record<string, unknown> | null }>> {
+  const row = await store.loadRequest(userId, requestId);
+  if (!row) return fail(404, "That request was not found.");
+  return { ok: true, value: { result: withoutOldResult(row, now).result } };
+}
+
 /** What the agent and the owner see of a request. */
 export function publicRequest(row: BridgeRequest, includeResult = true) {
   return {
+    hasResult: Boolean(row.result),
     id: row.id, agentId: row.agent_id, computerId: row.computer_id, argv: row.argv, cwd: row.cwd, status: row.status,
     decision: row.decision, createdAt: row.created_at, expiresAt: row.expires_at, finishedAt: row.finished_at, errorCode: row.error_code,
     ...(includeResult && row.result ? { result: row.result } : {}),
@@ -69,6 +86,8 @@ export async function submitRequest(
   const computer = await store.loadComputer(userId, computerId);
   if (!computer) return fail(404, "That computer is not set up for the bridge.");
   if (!(await bridgeOnline(computer))) return fail(409, BRIDGE_OFF_MESSAGE);
+  // Old output is cleared whenever a new request comes in, as well as by the daily cleanup.
+  await store.purgeOldResults(userId, now).catch(() => undefined);
   if ((await store.countPending(agentId)) >= MAX_PENDING_PER_AGENT) return fail(429, "Too many requests are waiting for approval.");
   const request = await store.insertRequest({
     userId, agentId, computerId, argv: input.argv, argvSha256: bridgeArgvHash(input.argv), cwd: input.cwd ?? null,
@@ -98,10 +117,11 @@ export async function decideRequest(userId: string, requestId: string, decision:
     if (!(await store.transition(request.id, "pending", { status: "denied", decision: "deny", decided_at: decidedAt, finished_at: decidedAt }))) return fail(409, "That request was already decided.");
     return { ok: true, value: { request: { ...request, status: "denied", decision: "deny" }, dispatchNow: false } };
   }
+  // Approve first; the hour is granted only if this call is the one that approved it.
+  if (!(await store.transition(request.id, "pending", { status: "approved", decision, decided_at: decidedAt }))) return fail(409, "That request was already decided.");
   if (decision === "allow_hour") {
     await store.upsertAllowance(userId, request.agent_id, request.computer_id, decidedAt, new Date(now + ALLOWANCE_MS).toISOString());
   }
-  if (!(await store.transition(request.id, "pending", { status: "approved", decision, decided_at: decidedAt }))) return fail(409, "That request was already decided.");
   return { ok: true, value: { request: { ...request, status: "approved", decision }, dispatchNow: true } };
 }
 
@@ -120,7 +140,7 @@ export async function dispatchRequest(userId: string, requestId: string, now: nu
   try {
     const computer = await store.loadComputer(userId, request.computer_id);
     if (!computer?.bridge_key_encrypted || computer.revoked_at) throw new HostRelayError("host_offline", BRIDGE_OFF_MESSAGE);
-    const ticket = mintBridgeTicket(decryptSecret(computer.bridge_key_encrypted), { ownerId: userId, agentId: request.agent_id, computerId: request.computer_id, argv: request.argv, cwd: request.cwd }, now);
+    const ticket = mintBridgeTicket(decryptSecret(computer.bridge_key_encrypted), { ownerId: userId, agentId: request.agent_id, computerId: request.computer_id, argv: request.argv, cwd: request.cwd, timeoutSeconds: request.timeout_seconds, maxOutputBytes: request.max_output_bytes }, now);
     const reply = await execViaRelay(request.computer_id, ticket, {
       argv: request.argv, ...(request.cwd ? { cwd: request.cwd } : {}), timeoutSeconds: request.timeout_seconds, maxOutputBytes: request.max_output_bytes,
     });
@@ -149,17 +169,22 @@ export async function readRequestForAgent(userId: string, agentId: string, reque
 }
 
 export async function enrollComputer(userId: string, label: string, computerId?: string) {
-  // A new random key every time: re-enrolling rotates it, so an old config stops working.
+  // A new random key every time. Re-enrolling also raises the generation and tells the relay,
+  // so an old config (key and connector secret) stops working, and clears the old allowances.
   const key = generateBridgeKey();
   let computer: BridgeComputer | null;
+  let generation: number;
   if (computerId) {
     computer = await store.loadComputer(userId, computerId);
     if (!computer) return fail(404, "That computer was not found.");
-    await store.markComputerEnrolled(userId, computer.id, encryptSecret(key));
+    generation = await store.bumpGeneration(userId, computer, encryptSecret(key), false);
+    await store.deleteAllowancesForComputer(userId, computer.id);
+    await revokeRelayConnector(computer.id, generation);
   } else {
     computer = await store.insertComputer(userId, label, encryptSecret(key));
+    generation = computer.generation;
   }
-  return { ok: true as const, value: { computer, config: issueBridgeConfig(computer.id, computer.generation, userId, key) } };
+  return { ok: true as const, value: { computer, config: issueBridgeConfig(computer.id, generation, userId, key) } };
 }
 
 /** One action: raise the generation and tell the relay, which stops the bridge. */
@@ -167,7 +192,10 @@ export async function revokeComputer(userId: string, computerId: string): Promis
   const computer = await store.loadComputer(userId, computerId);
   if (!computer) return fail(404, "That computer was not found.");
   // The key rotates too: nothing the revoked bridge holds can sign a ticket again.
-  const next = await store.bumpGeneration(userId, computer, encryptSecret(generateBridgeKey()));
+  const next = await store.bumpGeneration(userId, computer, encryptSecret(generateBridgeKey()), true);
+  // Nothing already allowed or waiting may run on a revoked computer.
+  await store.deleteAllowancesForComputer(userId, computer.id);
+  await store.expireOpenRequests(userId, computer.id);
   await revokeRelayConnector(computer.id, next);
   return { ok: true, value: { generation: next } };
 }

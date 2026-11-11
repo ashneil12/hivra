@@ -26,8 +26,10 @@ import argparse
 import base64
 import hashlib
 import hmac
+import atexit
 import json
 import os
+import select
 import signal
 import stat
 import subprocess
@@ -49,7 +51,9 @@ MAX_ARG_LENGTH = 4096
 MAX_REPLY_BYTES = 900 * 1024  # the relay's socket messages top out at 1 MiB
 DEFAULT_CONFIG = os.path.join("~", ".config", "hivra-bridge", "config.json")
 LOG_NAME = "log.jsonl"
-CHILD_ENV_KEYS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL")
+SECRET_FOLDERS = (".ssh", ".gnupg", os.path.join("Library", "Keychains"))
+DRAIN_GRACE_SECONDS = 0.3
+CHILD_ENV_KEYS =("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL")
 
 
 class BridgeError(Exception):
@@ -90,10 +94,13 @@ def load_bridge_config(path):
         if not os.path.isabs(folder) or not os.path.isdir(folder):
             raise hc.ConnectorError("allowed folder is not an existing absolute folder: %s" % folder)
         real = os.path.realpath(folder)
-        if real == os.path.sep:
-            raise hc.ConnectorError("the root folder cannot be allowed")
-        if real == os.path.realpath(os.path.expanduser("~")):
-            raise hc.ConnectorError("your whole home folder cannot be allowed; list the folders you mean")
+        home = os.path.realpath(os.path.expanduser("~"))
+        if real == os.path.sep or home == real or home.startswith(real.rstrip(os.path.sep) + os.path.sep):
+            raise hc.ConnectorError("your home folder, or a folder that contains it, cannot be allowed; list the folders you mean")
+        for secret in SECRET_FOLDERS:
+            blocked = os.path.realpath(os.path.join(home, secret))
+            if real == blocked or real.startswith(blocked + os.path.sep):
+                raise hc.ConnectorError("%s cannot be allowed" % os.path.join("~", secret))
         allowed.append(real)
     base.update({
         "bridgeKey": bridge_key,
@@ -113,6 +120,15 @@ def argv_hash(argv):
     return hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest()
 
 
+def encodable(text):
+    """False for text with lone surrogates, which cannot be UTF-8 (and would hash differently on each side)."""
+    try:
+        text.encode("utf-8")
+        return True
+    except UnicodeError:
+        return False
+
+
 def validate_request(request):
     if not isinstance(request, dict):
         raise BridgeError("invalid_request", "The request is not an object.")
@@ -120,12 +136,12 @@ def validate_request(request):
     if not isinstance(argv, list) or not 1 <= len(argv) <= MAX_ARGV_ITEMS:
         raise BridgeError("invalid_request", "argv must be a list of 1 to %d strings." % MAX_ARGV_ITEMS)
     for item in argv:
-        if not isinstance(item, str) or len(item) > MAX_ARG_LENGTH or "\0" in item:
-            raise BridgeError("invalid_request", "Every argv item must be a string without NUL, at most %d characters." % MAX_ARG_LENGTH)
+        if not isinstance(item, str) or len(item) > MAX_ARG_LENGTH or "\0" in item or not encodable(item):
+            raise BridgeError("invalid_request", "Every argv item must be a string without NUL or lone surrogates, at most %d characters." % MAX_ARG_LENGTH)
     if not argv[0]:
         raise BridgeError("invalid_request", "argv[0] is empty.")
     cwd = request.get("cwd")
-    if cwd is not None and (not isinstance(cwd, str) or not cwd or "\0" in cwd or len(cwd) > 4096):
+    if cwd is not None and (not isinstance(cwd, str) or not cwd or "\0" in cwd or len(cwd) > 4096 or not encodable(cwd)):
         raise BridgeError("invalid_request", "cwd must be a folder path.")
     timeout = request.get("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS)
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
@@ -164,6 +180,8 @@ class TicketVerifier:
         self.clock = clock
         self.seen = {}
         self.lock = threading.Lock()
+        # Replay memory is lost on restart, so a ticket minted before this process started is refused.
+        self.started = int(clock())
 
     def verify(self, ticket, request):
         now = int(self.clock())
@@ -184,6 +202,8 @@ class TicketVerifier:
             raise BridgeError("ticket_expired", "The ticket has expired.")
         if exp > now + TICKET_MAX_LIFETIME_SECONDS or exp - iat > TICKET_MAX_LIFETIME_SECONDS or exp <= iat:
             raise BridgeError("ticket_invalid", "The ticket lives too long.")
+        if iat < self.started:
+            raise BridgeError("ticket_invalid", "The ticket was issued before this bridge started.")
         agent = claims.get("agent")
         if not isinstance(agent, str) or not agent:
             raise BridgeError("ticket_invalid", "The ticket names no agent.")
@@ -201,6 +221,8 @@ class TicketVerifier:
             raise BridgeError("ticket_argv_mismatch", "The ticket was not issued for this command.")
         if (claims.get("cwd") or "") != (request["cwd"] or ""):
             raise BridgeError("ticket_argv_mismatch", "The ticket was not issued for this folder.")
+        if claims.get("timeoutSeconds") != request["timeoutSeconds"] or claims.get("maxOutputBytes") != request["maxOutputBytes"]:
+            raise BridgeError("ticket_argv_mismatch", "The ticket was not issued for these limits.")
         return {"agent": agent, "jti": jti}
 
 
@@ -211,15 +233,34 @@ def child_env():
     return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
 
 
+def limit_child(timeout_seconds):
+    """Runs in the child before exec: a CPU ceiling (RLIMIT_NPROC is skipped on purpose: it counts all of the owner's processes)."""
+    def apply():
+        try:
+            import resource
+            cpu = timeout_seconds + 5
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+        except (ImportError, ValueError, OSError):
+            pass
+    return apply
+
+
 def run_command(request, cwd, on_start=None):
-    """Run argv without a shell and no stdin. Returns the reply fields for the request."""
+    """Run argv without a shell and no stdin. Returns the reply fields for the request.
+
+    The whole call, including draining output, stays inside the request's wall
+    clock. Output is read from the raw pipes by this thread with select, so a
+    child that left a background process holding a pipe cannot block it, and the
+    whole process group is killed as soon as the main process ends.
+    """
     started = time.monotonic()
+    deadline = started + request["timeoutSeconds"]
     cap = request["maxOutputBytes"]
     try:
         process = subprocess.Popen(
             request["argv"], cwd=cwd, env=child_env(), shell=False,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            start_new_session=True, close_fds=True,
+            start_new_session=True, close_fds=True, preexec_fn=limit_child(request["timeoutSeconds"]) if os.name == "posix" else None,
         )
     except FileNotFoundError:
         return {"stdout": "", "stderr": "command not found: %s\n" % request["argv"][0], "exitCode": 127, "truncated": False, "durationMs": 0}
@@ -227,48 +268,91 @@ def run_command(request, cwd, on_start=None):
         return {"stdout": "", "stderr": "could not start: %s\n" % error, "exitCode": 126, "truncated": False, "durationMs": 0}
     if on_start:
         on_start(process)
-    state = {"used": 0, "truncated": False}
-    lock = threading.Lock()
+    names = {process.stdout.fileno(): "out", process.stderr.fileno(): "err"}
+    for fd in names:
+        os.set_blocking(fd, False)
     chunks = {"out": [], "err": []}
+    used = 0
+    truncated = False
 
-    def drain(stream, key):
-        while True:
-            data = stream.read1(65536) if hasattr(stream, "read1") else stream.read(65536)
+    def pump(timeout):
+        """Read what is ready; returns False once both pipes are closed."""
+        nonlocal used, truncated
+        if not names:
+            time.sleep(max(timeout, 0))
+            return False
+        ready, _, _ = select.select(list(names), [], [], max(timeout, 0))
+        for fd in ready:
+            try:
+                data = os.read(fd, 65536)
+            except (BlockingIOError, InterruptedError):
+                continue
+            except OSError:
+                data = b""
             if not data:
-                return
-            with lock:
-                room = cap - state["used"]
-                if len(data) > room:
-                    state["truncated"] = True
-                    data = data[: max(room, 0)]
-                state["used"] += len(data)
-                if data:
-                    chunks[key].append(data)
+                del names[fd]
+                continue
+            room = cap - used
+            if len(data) > room:
+                truncated = True
+                data = data[: max(room, 0)]
+            used += len(data)
+            if data:
+                chunks[names[fd]].append(data)
+        return True
 
-    readers = [threading.Thread(target=drain, args=(process.stdout, "out"), daemon=True),
-               threading.Thread(target=drain, args=(process.stderr, "err"), daemon=True)]
-    for reader in readers:
-        reader.start()
     timed_out = False
-    try:
-        process.wait(timeout=request["timeoutSeconds"])
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    code = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
+        pump(min(0.1, remaining))
+        code = process.poll()
+        if code is not None:
+            break
+    if timed_out:
         kill_group(process)
-        process.wait()
-    for reader in readers:
-        reader.join(timeout=5)
-    process.stdout.close()
-    process.stderr.close()
+    else:
+        # The main process ended. Take what is already in the pipes (briefly), then end any
+        # background process it left behind, which would otherwise hold the pipes open.
+        grace = min(time.monotonic() + DRAIN_GRACE_SECONDS, deadline)
+        while time.monotonic() < grace and names:
+            before = used
+            pump(0.02)
+            if used == before and not select.select(list(names), [], [], 0)[0]:
+                break
+        kill_group(process)
+    if code is None:
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        code = process.returncode
+    for fd in list(names):
+        # Whatever the killed group wrote last, without waiting for more.
+        try:
+            data = os.read(fd, 65536)
+            if data and used < cap:
+                chunks[names[fd]].append(data[: cap - used])
+                used += min(len(data), cap - used)
+                truncated = truncated or len(data) > cap - used
+        except OSError:
+            pass
+    for stream in (process.stdout, process.stderr):
+        try:
+            stream.close()
+        except OSError:
+            pass
     stdout = b"".join(chunks["out"]).decode("utf-8", errors="replace")
     stderr = b"".join(chunks["err"]).decode("utf-8", errors="replace")
-    code = process.returncode
     if timed_out:
         stderr += "\nhivra-bridge: stopped after %d seconds\n" % request["timeoutSeconds"]
         code = 124
     elif code is not None and code < 0:
         code = 128 + (-code)
-    return {"stdout": stdout, "stderr": stderr, "exitCode": code, "truncated": state["truncated"],
+    return {"stdout": stdout, "stderr": stderr, "exitCode": code, "truncated": truncated,
             "durationMs": int((time.monotonic() - started) * 1000)}
 
 
@@ -330,7 +414,9 @@ class Bridge:
             claims = self.verifier.verify(message.get("ticket"), request)
             agent = claims["agent"]
             cwd = resolve_cwd(self.config, request["cwd"])
-        except BridgeError as error:
+        except (BridgeError, UnicodeError) as error:
+            if isinstance(error, UnicodeError):
+                error = BridgeError("invalid_request", "The request has text that is not valid UTF-8.")
             raw = message.get("request") if isinstance(message.get("request"), dict) else {}
             self.log_request(agent, raw, raw.get("cwd"), None, "denied", error.code)
             reply.update({"ok": False, "error": error.code, "message": str(error)})
@@ -434,6 +520,15 @@ def main(argv=None):
         if args.command == "check":
             hc.WebSocket(bridge.url("agent"), hc.connector_headers(bridge.config, "agent")).close()
             return 0
+        # Quitting the bridge (Ctrl-C, kill, or any exit) ends a command it is running.
+        atexit.register(bridge.stop_running)
+
+        def stop(signum, _frame):
+            bridge.stop_running()
+            raise SystemExit(128 + signum)
+
+        signal.signal(signal.SIGINT, stop)
+        signal.signal(signal.SIGTERM, stop)
         return bridge.run()
     except (OSError, ValueError, hc.ConnectorError) as error:
         hc.log(str(error))

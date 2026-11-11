@@ -30,10 +30,10 @@ def b64url(data):
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
 
-def make_ticket(argv, cwd=None, key=BRIDGE_KEY, now=None, ttl=60, jti=None, **overrides):
+def make_ticket(argv, cwd=None, key=BRIDGE_KEY, now=None, ttl=60, jti=None, timeout=30, cap=262144, **overrides):
     now = int(now if now is not None else time.time())
     claims = {"v": 1, "aud": CONNECTION, "owner": OWNER, "agent": AGENT, "computer": CONNECTION,
-              "argv": hb.argv_hash(argv), "cwd": cwd or "", "jti": jti or b64url(os.urandom(18)), "iat": now, "exp": now + ttl}
+              "argv": hb.argv_hash(argv), "cwd": cwd or "", "timeoutSeconds": timeout, "maxOutputBytes": cap, "jti": jti or b64url(os.urandom(18)), "iat": now, "exp": now + ttl}
     claims.update(overrides)
     body = b64url(json.dumps(claims).encode())
     return "%s.%s" % (body, b64url(hmac.new(key.encode(), body.encode(), hashlib.sha256).digest()))
@@ -57,7 +57,7 @@ class BridgeCase(unittest.TestCase):
 
     def exec(self, argv, cwd=None, ticket=None, **extra):
         request = {"argv": argv, **({"cwd": cwd} if cwd else {}), **extra}
-        message = {"type": "exec", "id": "req1", "ticket": ticket or make_ticket(argv, cwd), "request": request}
+        message = {"type": "exec", "id": "req1", "ticket": ticket or make_ticket(argv, cwd, timeout=extra.get("timeoutSeconds", 30), cap=extra.get("maxOutputBytes", 262144)), "request": request}
         return self.bridge.handle_exec(message)
 
     def log_lines(self):
@@ -114,6 +114,56 @@ class ExecTests(BridgeCase):
             message = {"type": "exec", "id": "r", "ticket": "x.y", "request": {"argv": argv}}
             self.assertEqual(self.bridge.handle_exec(message)["error"], "invalid_request")
 
+    @staticmethod
+    def alive(pid):
+        try:
+            with open("/proc/%d/stat" % pid) as handle:
+                return handle.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except (OSError, IndexError):
+            return False
+
+    def test_a_backgrounded_child_cannot_hold_the_reply_or_survive(self):
+        started = time.monotonic()
+        reply = self.exec(["sh", "-c", "sleep 20 & echo $!; echo hi"], timeoutSeconds=3)
+        self.assertLess(time.monotonic() - started, 3.5)
+        pid = int(reply["stdout"].split()[0])
+        self.assertEqual((reply["exitCode"], reply["stdout"].split()[1]), (0, "hi"))
+        time.sleep(0.3)
+        if os.path.isdir("/proc"):
+            self.assertFalse(self.alive(pid), "the background process should have been killed with its group")
+        # The bridge is not wedged: the next command runs at once.
+        self.assertTrue(self.exec(["true"])["ok"])
+
+    def test_a_background_child_that_keeps_writing_is_stopped_at_the_wall_clock(self):
+        started = time.monotonic()
+        reply = self.exec(["sh", "-c", "yes > /dev/null & while true; do echo x; sleep 0.05; done"], timeoutSeconds=2)
+        self.assertLess(time.monotonic() - started, 3.5)
+        self.assertEqual(reply["exitCode"], 124)
+
+    def test_lone_surrogates_are_refused_without_crashing(self):
+        for request in ({"argv": ["echo", "\ud800"]}, {"argv": ["echo"], "cwd": "/tmp/\udfff"}):
+            message = {"type": "exec", "id": "r", "ticket": "x.y", "request": request}
+            self.assertEqual(self.bridge.handle_exec(message)["error"], "invalid_request")
+        self.assertEqual(self.log_lines()[-1]["decision"], "denied")
+
+    def test_a_ticket_for_other_limits_is_refused(self):
+        argv = ["true"]
+        message = {"type": "exec", "id": "r", "ticket": make_ticket(argv, timeout=5), "request": {"argv": argv, "timeoutSeconds": 120}}
+        self.assertEqual(self.bridge.handle_exec(message)["error"], "ticket_argv_mismatch")
+        message = {"type": "exec", "id": "r", "ticket": make_ticket(argv, cap=10), "request": {"argv": argv}}
+        self.assertEqual(self.bridge.handle_exec(message)["error"], "ticket_argv_mismatch")
+
+    def test_a_ticket_from_before_this_bridge_started_is_refused(self):
+        argv = ["true"]
+        old = make_ticket(argv, now=time.time() - 30, ttl=60)
+        self.assertEqual(self.bridge.handle_exec({"type": "exec", "id": "r", "ticket": old, "request": {"argv": argv}})["error"], "ticket_invalid")
+
+    def test_stop_running_kills_the_group(self):
+        process = subprocess.Popen(["sh", "-c", "sleep 30 & wait"], start_new_session=True)
+        self.bridge.current = process
+        self.bridge.stop_running()
+        process.wait(timeout=5)
+
     def test_only_one_command_at_a_time(self):
         self.assertTrue(self.bridge.running.acquire(blocking=False))
         try:
@@ -149,7 +199,7 @@ class CwdTests(BridgeCase):
 
 class TicketTests(BridgeCase):
     def verify(self, ticket, argv=("uname", "-s"), cwd=None):
-        return self.bridge.verifier.verify(ticket, {"argv": list(argv), "cwd": cwd})
+        return self.bridge.verifier.verify(ticket, {"argv": list(argv), "cwd": cwd, "timeoutSeconds": 30, "maxOutputBytes": 262144})
 
     def assertRefused(self, code, ticket, **kwargs):
         with self.assertRaises(hb.BridgeError) as raised:
@@ -241,6 +291,27 @@ class ConfigTests(unittest.TestCase):
         for folders in ([], None, [os.path.expanduser("~")], ["/"], ["relative/dir"]):
             with self.assertRaises(hc.ConnectorError, msg=str(folders)):
                 hb.load_bridge_config(self.write(allowedFolders=folders))
+
+    def test_parents_of_home_and_secret_folders_are_refused(self):
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        real_home = os.path.realpath(home.name)
+        for name in (".ssh", ".gnupg", os.path.join("Library", "Keychains"), os.path.join(".ssh", "sub")):
+            os.makedirs(os.path.join(real_home, name), exist_ok=True)
+        os.makedirs(os.path.join(real_home, "projects"), exist_ok=True)
+        old = os.environ.get("HOME")
+        os.environ["HOME"] = real_home
+        try:
+            for folder in (os.path.dirname(real_home), os.path.join(real_home, ".ssh"), os.path.join(real_home, ".ssh", "sub"),
+                           os.path.join(real_home, ".gnupg"), os.path.join(real_home, "Library", "Keychains")):
+                with self.assertRaises(hc.ConnectorError, msg=folder):
+                    hb.load_bridge_config(self.write(allowedFolders=[folder]))
+            hb.load_bridge_config(self.write(allowedFolders=[os.path.join(real_home, "projects")]))
+        finally:
+            if old is None:
+                del os.environ["HOME"]
+            else:
+                os.environ["HOME"] = old
 
     def test_a_config_others_can_read_is_refused(self):
         with self.assertRaises(hc.ConnectorError):

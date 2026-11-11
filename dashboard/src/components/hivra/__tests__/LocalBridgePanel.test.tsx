@@ -5,7 +5,7 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { LocalBridgePanel, commandLine } from "../LocalBridgePanel";
+import { LocalBridgePanel, commandLine, escapeUnusual, hasUnusual } from "../LocalBridgePanel";
 
 const AGENT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const MAC = "11111111-1111-4111-8111-111111111111";
@@ -17,7 +17,7 @@ function bridgeView(overrides: Record<string, unknown> = {}) {
   return {
     computers: [{ id: MAC, name: "Ash's Mac", revoked: false }],
     agents: [{ id: AGENT, name: "Claude" }],
-    requests: [{ id: "r1", agentId: AGENT, computerId: MAC, argv: ["ls", "-la", "my folder"], cwd: "/Users/ash/work", status: "pending", createdAt: "2026-11-12T10:00:00Z" }],
+    requests: [{ id: "r1", agentId: AGENT, computerId: MAC, argv: ["ls", "-la", "my folder"], cwd: "/Users/ash/work", status: "pending", createdAt: "2026-11-12T10:00:00Z", expiresAt: "2999-01-01T00:00:00Z" }],
     allowances: [{ agentId: AGENT, computerId: MAC, expiresAt: "2026-11-12T11:00:00Z" }],
     ...overrides,
   };
@@ -62,14 +62,56 @@ describe("LocalBridgePanel", () => {
     expect(commandLine(["echo", "a; rm -rf ~"])).toBe('echo "a; rm -rf ~"');
   });
 
-  it("Approve, Deny and Allow this agent for 1 hour send those decisions, and there is no forever", async () => {
+  it("says the command can read and change anything, and that folders are not a sandbox", async () => {
+    render(<LocalBridgePanel />);
+    expect(await screen.findByText(/read and change anything you can/)).toHaveTextContent(/not a sandbox/);
+    expect(screen.getByText(/can run any command on/)).toHaveTextContent(/anything you can read or change/);
+  });
+
+  it("makes invisible and look-alike characters visible and warns", async () => {
+    expect(escapeUnusual("a‮b​c d\u0007 e")).toBe("a\\u202eb\\u200bc\\u00a0d\\u0007 e");
+    expect(escapeUnusual("\u{E0001}")).toBe("\\u{e0001}");
+    expect(hasUnusual("plain text", "x y")).toBe(false);
+    view = bridgeView({ requests: [{ id: "r2", agentId: AGENT, computerId: MAC, argv: ["echo", "hi‮there"], cwd: "/tmp/​", status: "pending", createdAt: "x", expiresAt: "2999-01-01T00:00:00Z" }] });
+    render(<LocalBridgePanel />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("unusual characters");
+    expect(screen.getByText(/hi\\u202ethere/)).toBeInTheDocument();
+    expect(screen.getByText(/\/tmp\/\\u200b/)).toBeInTheDocument();
+  });
+
+  it("does not offer approval for a request past its time", async () => {
+    view = bridgeView({ requests: [{ id: "r3", agentId: AGENT, computerId: MAC, argv: ["ls"], cwd: null, status: "pending", createdAt: "x", expiresAt: "2000-01-01T00:00:00Z" }] });
+    render(<LocalBridgePanel />);
+    expect(await screen.findByText("No commands are waiting for your OK.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
+  it("fetches output only when asked", async () => {
+    view = bridgeView({ requests: [{ id: "r4", agentId: AGENT, computerId: MAC, argv: ["uname"], cwd: null, status: "done", hasResult: true, createdAt: "x", expiresAt: "2999-01-01T00:00:00Z" }] });
+    const base = global.fetch;
+    global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("?request=")) {
+        calls.push({ url: String(url), init });
+        return { status: 200, ok: true, json: async () => ({ success: true, data: { result: { stdout: "Darwin\n", exitCode: 0 } } }) } as Response;
+      }
+      return base(url, init);
+    }) as typeof fetch;
+    render(<LocalBridgePanel />);
+    fireEvent.click(await screen.findByText("Recent commands"));
+    expect(calls.some((call) => call.url.includes("?request="))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Show output" }));
+    await waitFor(() => expect(screen.getByText(/Darwin/)).toBeInTheDocument());
+    expect(calls.filter((call) => call.url.includes("?request=r4"))).toHaveLength(1);
+  });
+
+  it("Approve, Deny and Allow any command from this agent for 1 hour send those decisions, and there is no forever", async () => {
     render(<LocalBridgePanel />);
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
     await waitFor(() => expect(posted()).toContainEqual({ action: "decide", requestId: "r1", decision: "approve" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Allow this agent for 1 hour" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Allow this agent for 1 hour" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Allow any command from this agent for 1 hour" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Allow any command from this agent for 1 hour" }));
     await waitFor(() => expect(posted()).toHaveLength(3));
     expect(posted().map((body) => body.decision)).toEqual(["approve", "deny", "allow_hour"]);
     expect(screen.queryByText(/forever/i)).toBeNull();
