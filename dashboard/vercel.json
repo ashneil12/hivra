@@ -253,10 +253,6 @@
       "schedule": "20 * * * *"
     },
     {
-      "path": "/api/cron/aeon-tick",
-      "schedule": "*/15 * * * *"
-    },
-    {
       "path": "/api/cron/park-idle-hivra-agents",
       "schedule": "15 5 * * *"
     },
@@ -271,6 +267,10 @@
     {
       "path": "/api/cron/venice-promo-expiry",
       "schedule": "35 * * * *"
+    },
+    {
+      "path": "/api/cron/purge-bridge-results",
+      "schedule": "17 3 * * *"
     },
     {
       "path": "/api/cron/venice-promo-weekly-report",

@@ -475,7 +475,7 @@ export async function prepareSimpleProxmoxConnection(
 
   let destination;
   try {
-    destination = await deps.resolveDestination(connection.endpoint.sshHost);
+    destination = await deps.resolveDestination(connection.endpoint.sshHost, { userId });
   } catch (error) {
     if (error instanceof InfrastructureNetworkError) {
       return failure(
