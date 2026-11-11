@@ -116,6 +116,35 @@ describe("secrets and sizes", () => {
   it("status dir", () => expect(MOVE_STATUS_DIR(MOVE)).toBe(`/var/lib/hivra-move/${MOVE}`));
 });
 
+describe("old agent's compose project", () => {
+  // Runs the old-guest preamble with a fake docker and prints the label the jobs filter on.
+  function projectLabel(fakeDocker: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "gj-proj-"));
+    try {
+      writeFileSync(join(dir, "docker"), `#!/bin/sh\n${fakeDocker}\n`, { mode: 0o755 });
+      const body = jobBody(allScripts().restart);
+      const head = `${body.slice(0, body.indexOf("\nPAUSE="))}\necho "$PROJECT_LABEL"\n`;
+      const res = spawnSync("bash", ["-c", head], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } });
+      return res.stdout.trim();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  it("reads the project from the agent's gateway container", () => {
+    expect(projectLabel(`[ "$6" = "agent-${INST}-gateway" ] && echo "custom-project" || exit 1`))
+      .toBe("com.docker.compose.project=custom-project");
+  });
+  it("finds the project on any of the agent's containers", () => {
+    const fake = [
+      `if [ "$1" = ps ]; then printf 'other-box\\nagent-${INST}-web\\n'; exit 0; fi`,
+      `[ "$6" = "agent-${INST}-web" ] && echo "from-web" || exit 1`,
+    ].join("\n");
+    expect(projectLabel(fake)).toBe(`com.docker.compose.project=from-web`);
+  });
+  it("falls back to the bare instance id (compose's directory name), never the container prefix", () => {
+    expect(projectLabel("exit 1")).toBe(`com.docker.compose.project=${INST}`);
+    expect(projectLabel('echo "<no value>"')).toBe(`com.docker.compose.project=${INST}`);
+  });
+});
+
 describe("syntax", () => {
   it("bash -n on every launcher and decoded job script, py_compile on embedded python", () => {
     const dir = mkdtempSync(join(tmpdir(), "gj-"));
