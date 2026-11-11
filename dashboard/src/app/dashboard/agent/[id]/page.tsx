@@ -42,6 +42,8 @@ import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
+import { CommandPanelDock } from "@/components/hivra/command-panel/CommandPanel";
+import type { ManageSectionId } from "@/lib/hivra/manage-sections";
 import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
 import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
 import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
@@ -1076,13 +1078,22 @@ export default function AgentPage() {
 
   // "Update available" beside the agent's name opens Manage › Updates: the
   // link a newly mounted Manage reads, and a request an open one follows.
-  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: "updates"; id: number } | null>(null);
+  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: ManageSectionId; id: number } | null>(null);
   const openManageUpdates = useCallback(() => {
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("section", "updates");
     nextURL.hash = "agent-software";
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
     setManageSectionRequest((current) => ({ section: "updates", id: (current?.id ?? 0) + 1 }));
+    selectTab("manage");
+  }, [selectTab]);
+  // The command panel's Model and Computer size open their Manage section.
+  const openManageSection = useCallback((section: ManageSectionId) => {
+    const nextURL = new URL(window.location.href);
+    nextURL.searchParams.set("section", section);
+    nextURL.hash = "";
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+    setManageSectionRequest((current) => ({ section, id: (current?.id ?? 0) + 1 }));
     selectTab("manage");
   }, [selectTab]);
 
@@ -1315,6 +1326,15 @@ export default function AgentPage() {
         />
       ) : null}
 
+      <CommandPanelDock
+        agent={agent}
+        surfaces={tabs.map((t) => t.id)}
+        activeSurface={effectiveTab}
+        onOpenSurface={selectTab}
+        onOpenManageSection={openManageSection}
+        onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+        onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
+      >
       <div id={WORK_PANE_ID} className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
@@ -1553,6 +1573,7 @@ export default function AgentPage() {
           )
         ) : null}
       </div>
+      </CommandPanelDock>
     </>
   );
 
