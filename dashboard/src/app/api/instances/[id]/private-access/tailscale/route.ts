@@ -10,6 +10,7 @@ import {
   buildTailscaleConfigPatch,
   getPublicTailscaleConfig,
 } from "@/lib/private-access/tailscale";
+import { HIVRA_TAILNET_TAG } from "@/lib/hivra/private-network";
 import {
   getHermesGuestSshTarget,
   getProxmoxHostRoutingConfigFromInfrastructure,
@@ -25,17 +26,24 @@ import {
   parseTailscaleStatusJson,
 } from "@/lib/services/tailscale-private-access";
 
+// Hardening: Tailscale SSH is never turned on from here, and the only tag
+// Hivra accepts is tag:hivra. (Funnel, exit nodes and subnet routes are not
+// reachable from this route at all.)
+const NO_TAILSCALE_SSH = "Tailscale SSH isn't available. Use normal SSH over your private network.";
+const ONLY_HIVRA_TAG = `Only the ${HIVRA_TAILNET_TAG} tag is allowed.`;
+const noSsh = z.boolean().optional().refine((value) => value !== true, NO_TAILSCALE_SSH);
+
 const TailscaleSetupSchema = z.object({
   authKey: z.string().min(1),
   machineName: z.string().trim().min(1).optional(),
-  tags: z.array(z.string().trim().min(1)).optional(),
-  enableSsh: z.boolean().optional(),
+  tags: z.array(z.string().trim().refine((value) => value === HIVRA_TAILNET_TAG, ONLY_HIVRA_TAG)).optional(),
+  enableSsh: noSsh,
 });
 
 const TailscaleUpdateSchema = z
   .object({
     machineName: z.string().trim().min(1).optional(),
-    enableSsh: z.boolean().optional(),
+    enableSsh: noSsh,
   })
   .refine((value) => value.machineName !== undefined || value.enableSsh !== undefined, {
     message: "No Tailscale settings were provided.",

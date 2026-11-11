@@ -15,6 +15,16 @@ import {
   buildTailscaleInstallScript,
   parseTailscaleStatusJson,
 } from "@/lib/services/tailscale-private-access";
+import {
+  buildOutboundBlockInstallScript,
+  buildOutboundBlockRemoveScript,
+  buildTailscaleVersionFloorScript,
+  DEFAULT_NETBIRD_MANAGEMENT_URL,
+  extractPrivateAccessFailureCode,
+  NETBIRD_INTERFACE,
+  normalizeNetbirdManagementUrl,
+  TAILSCALE_INTERFACE,
+} from "@/lib/hivra/private-network";
 import { privateNetworkReason, type PrivateNetworkReason } from "@/lib/hivra/lifecycle-support";
 
 export const DEFAULT_TAILSCALE_LOGIN_SERVER = "https://controlplane.tailscale.com";
@@ -41,6 +51,13 @@ export type HivraTailscaleReceipt = {
   ipv4?: string;
   ipv6?: string;
   sshEnabled: false;
+  /** Which client the computer is using, when the guest said. */
+  provider?: "tailscale" | "netbird";
+  /** What the computer's own view of the network shows. Not proof of what it could reach. */
+  visiblePeerCount?: number;
+  canSeeOtherDevices?: boolean;
+  /** Tailscale only: whether the computer joined with tag:hivra. */
+  taggedHivra?: boolean;
   loginServer: string;
   connectedAt?: string;
   observedAt: string;
@@ -64,6 +81,7 @@ const defaults: Dependencies = {
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const BINDING_TAG = /^hivra-bind-[a-f0-9]{32}$/;
 const MARKER = "HIVRA_TAILSCALE_STATUS ";
+const NETBIRD_MARKER = "HIVRA_NETBIRD_STATUS ";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -193,6 +211,10 @@ else:
         status["HivraPrefs"]={key:prefs.get(key) for key in ("RunSSH","ControlURL","RouteAll","AdvertiseRoutes","ExitNodeID","ExitNodeIP")}
     except Exception:
         status["HivraPrefs"]=None
+    peers=status.get("Peer") or {}
+    status["HivraVisiblePeers"]=len(peers)
+    status["HivraTagged"]="tag:hivra" in ((status.get("Self") or {}).get("Tags") or [])
+    status.pop("Peer",None)
     print('${MARKER}'+json.dumps(status, separators=(',',':')))
 PY`;
 
@@ -208,6 +230,8 @@ IFS= read -r AUTH_KEY
 printf '%s' "$AUTH_KEY" > "$AUTH_FILE"
 unset AUTH_KEY
 ${install}
+${buildTailscaleVersionFloorScript()}
+${buildOutboundBlockInstallScript(TAILSCALE_INTERFACE)}
 tailscale up --reset --auth-key="file:$AUTH_FILE" --login-server=${shellQuote(loginServer)} --ssh=false --accept-routes=false --advertise-exit-node=false
 rm -f -- "$AUTH_FILE"
 ${STATUS_PROGRAM}`;
@@ -218,6 +242,8 @@ function disconnectProgram(): string {
 if command -v tailscale >/dev/null 2>&1; then
   tailscale logout
 fi
+${NETBIRD_DOWN}
+${buildOutboundBlockRemoveScript()}
 printf '${MARKER}{"BackendState":"NeedsLogin"}\n'`;
 }
 
@@ -235,6 +261,8 @@ function parseConnectionPresence(stdout: string): boolean | null {
 }
 
 function resultFailureCode(result: HostScriptResult): string {
+  const printed = extractPrivateAccessFailureCode(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+  if (printed) return printed;
   const message = result.error ?? "";
   if (/timed out/i.test(message)) return "host_timeout";
   if (/output exceeded/i.test(message)) return "host_output_limit";
@@ -253,6 +281,8 @@ export function parseHivraTailscaleReceipt(
     const raw = JSON.parse(lines[0].slice(MARKER.length)) as {
       BackendState?: unknown;
       Self?: { Online?: unknown };
+      HivraVisiblePeers?: unknown;
+      HivraTagged?: unknown;
       HivraPrefs?: { RunSSH?: unknown; ControlURL?: unknown; RouteAll?: unknown;
         AdvertiseRoutes?: unknown; ExitNodeID?: unknown; ExitNodeIP?: unknown };
     };
@@ -288,6 +318,10 @@ export function parseHivraTailscaleReceipt(
       ipv4,
       ...(ipv6 ? { ipv6 } : {}),
       sshEnabled: false,
+      provider: "tailscale",
+      ...(typeof raw.HivraVisiblePeers === "number" && raw.HivraVisiblePeers >= 0
+        ? { visiblePeerCount: raw.HivraVisiblePeers, canSeeOtherDevices: raw.HivraVisiblePeers > 0 } : {}),
+      ...(typeof raw.HivraTagged === "boolean" ? { taggedHivra: raw.HivraTagged } : {}),
       loginServer,
       connectedAt: observedAt,
       observedAt,
@@ -444,5 +478,190 @@ export async function disconnectHivraTailscale(
   if (receipt?.state === "disconnected") return { ok: true, receipt };
   const observed = await observeHivraTailscale(agent, loginServer, deps);
   if (observed.receipt.state === "disconnected") return { ok: true, receipt: observed.receipt };
+  return { ok: false, receipt: { ...observed.receipt, failureCode: resultFailureCode(result) } };
+}
+
+// ---------------------------------------------------------------------------
+// NetBird (behind NEXT_PUBLIC_HIVRA_PRIVATE_NETWORK_V2; the route enforces it)
+// ---------------------------------------------------------------------------
+
+/** Stops NetBird if it is there. Harmless when it is not. */
+const NETBIRD_DOWN = `if command -v netbird >/dev/null 2>&1; then
+  netbird down >/dev/null 2>&1 || true
+fi`;
+
+function buildNetbirdInstallScript(): string {
+  return [
+    "if ! command -v netbird >/dev/null 2>&1; then",
+    "  if ! command -v curl >/dev/null 2>&1; then",
+    "    if command -v apt-get >/dev/null 2>&1; then apt-get update -y && apt-get install -y curl; fi",
+    "  fi",
+    "  command -v curl >/dev/null 2>&1 || { echo 'curl is required to install NetBird' >&2; exit 1; }",
+    "  nb_installer=$(mktemp)",
+    "  if ! curl -fsSL https://pkgs.netbird.io/install.sh -o \"$nb_installer\"; then",
+    "    rm -f \"$nb_installer\"; echo 'Failed to download the NetBird installer' >&2; exit 1",
+    "  fi",
+    "  if ! SKIP_UI_APP=true sh \"$nb_installer\"; then",
+    "    rm -f \"$nb_installer\"; echo 'NetBird installation failed' >&2; exit 1",
+    "  fi",
+    "  rm -f \"$nb_installer\"",
+    "fi",
+    "command -v netbird >/dev/null 2>&1 || { echo 'netbird was not installed by the NetBird installer' >&2; exit 1; }",
+    "if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then",
+    "  systemctl enable --now netbird >/dev/null 2>&1 || { netbird service install >/dev/null 2>&1 || true; netbird service start >/dev/null 2>&1 || true; }",
+    "fi",
+    "for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do",
+    "  if netbird status >/dev/null 2>&1; then break; fi",
+    "  sleep 1",
+    "done",
+  ].join("\n");
+}
+
+const NETBIRD_STATUS_PROGRAM = `set -euo pipefail
+if ! command -v netbird >/dev/null 2>&1; then
+  printf '${NETBIRD_MARKER}{"Connected":false}\\n'
+  exit 0
+fi
+python3 - <<'PY'
+import json, subprocess
+try:
+    s=json.loads(subprocess.check_output(["netbird","status","--json"], text=True, stderr=subprocess.DEVNULL))
+except Exception:
+    print('${NETBIRD_MARKER}{"Unknown":true}')
+else:
+    mgmt=s.get("management") or {}
+    peers=s.get("peers") or {}
+    total=peers.get("total")
+    if not isinstance(total,int):
+        total=len(peers.get("details") or [])
+    out={"Connected":bool(mgmt.get("connected")),"Ip":s.get("netbirdIp"),"Fqdn":s.get("fqdn"),
+         "PeerCount":total,"SshServer":(s.get("sshServer") or {}).get("enabled")}
+    print('${NETBIRD_MARKER}'+json.dumps(out, separators=(',',':')))
+PY`;
+
+/**
+ * Joins NetBird with the owner's setup key (read from stdin, handed to NetBird
+ * through its environment, never put on a command line or stored). NetBird's
+ * own SSH server and route sharing are switched off where this client names
+ * them; on a client that has no such flag they are off by default, so nothing
+ * that could switch them on is passed.
+ */
+export function buildHivraNetbirdConnectProgram(managementUrl: string): string {
+  const normalized = normalizeNetbirdManagementUrl(managementUrl);
+  if (!normalized) throw new Error("Invalid NetBird management URL");
+  return `set -euo pipefail
+umask 077
+IFS= read -r NB_KEY
+[ -n "$NB_KEY" ] && [ "\${#NB_KEY}" -le 1024 ]
+${buildNetbirdInstallScript()}
+${buildOutboundBlockInstallScript(NETBIRD_INTERFACE)}
+NB_HELP="$(netbird up --help 2>&1 || true)"
+NB_FLAGS=()
+for flag in --allow-server-ssh=false --disable-client-routes --disable-server-routes; do
+  if printf '%s' "$NB_HELP" | grep -q -- "\${flag%%=*}"; then NB_FLAGS+=("$flag"); fi
+done
+NB_SETUP_KEY="$NB_KEY" netbird up --management-url ${shellQuote(normalized)} "\${NB_FLAGS[@]}"
+unset NB_KEY NB_SETUP_KEY
+${NETBIRD_STATUS_PROGRAM}`;
+}
+
+export function parseHivraNetbirdReceipt(
+  stdout: string,
+  managementUrl: string,
+  now = new Date(),
+): HivraTailscaleReceipt | null {
+  const lines = stdout.split("\n").filter(line => line.startsWith(NETBIRD_MARKER));
+  if (lines.length !== 1) return null;
+  try {
+    const raw = JSON.parse(lines[0].slice(NETBIRD_MARKER.length)) as {
+      Connected?: unknown; Unknown?: unknown; Ip?: unknown; Fqdn?: unknown; PeerCount?: unknown; SshServer?: unknown;
+    };
+    const observedAt = now.toISOString();
+    if (raw.Unknown === true) {
+      return { state: "unknown", sshEnabled: false, provider: "netbird", loginServer: managementUrl,
+        observedAt, failureCode: "status_unknown" };
+    }
+    if (raw.Connected !== true) {
+      return { state: "disconnected", sshEnabled: false, provider: "netbird", loginServer: managementUrl, observedAt };
+    }
+    if (raw.SshServer === true) return null; // NetBird's own SSH server must stay off
+    const ipv4 = bounded(typeof raw.Ip === "string" ? raw.Ip.split("/")[0] : undefined, 45);
+    if (!ipv4 || !IPV4.test(ipv4)) return null;
+    const peers = typeof raw.PeerCount === "number" && raw.PeerCount >= 0 ? raw.PeerCount : undefined;
+    return {
+      state: "connected",
+      provider: "netbird",
+      magicDnsName: bounded(typeof raw.Fqdn === "string" ? raw.Fqdn.replace(/\.$/, "") : undefined),
+      ipv4,
+      sshEnabled: false,
+      ...(peers !== undefined ? { visiblePeerCount: peers, canSeeOtherDevices: peers > 0 } : {}),
+      loginServer: managementUrl,
+      connectedAt: observedAt,
+      observedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseNetbirdPresence(stdout: string): boolean | null {
+  const lines = stdout.split("\n").filter(line => line.startsWith(NETBIRD_MARKER));
+  if (lines.length !== 1) return null;
+  try {
+    const raw = JSON.parse(lines[0].slice(NETBIRD_MARKER.length)) as { Connected?: unknown; Unknown?: unknown };
+    if (raw.Unknown === true) return null;
+    return raw.Connected === true;
+  } catch {
+    return null;
+  }
+}
+
+export async function observeHivraNetbird(
+  agent: HivraPrivateAccessAgentRow,
+  managementUrl = DEFAULT_NETBIRD_MANAGEMENT_URL,
+  dependencies: Partial<Dependencies> = {},
+): Promise<{ ok: boolean; receipt: HivraTailscaleReceipt; connectionPresent: boolean | null }> {
+  const deps = { ...defaults, ...dependencies };
+  try {
+    const target = await execution(agent, deps, true);
+    const result = await deps.runHostScript(buildHostScript({
+      vmid: target.vmid, guestIp: target.guestIp, vmKeyPath: target.context.paths.vmSshKeyPath!,
+      bindingTag: target.context.infrastructureBindingTag, guestProgram: NETBIRD_STATUS_PROGRAM, secretStdin: false,
+    }), target.context.env, { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
+    const receipt = result.ok ? parseHivraNetbirdReceipt(result.stdout, managementUrl, deps.now()) : null;
+    const connectionPresent = result.ok ? parseNetbirdPresence(result.stdout) : null;
+    if (receipt) return { ok: true, receipt, connectionPresent };
+    return { ok: false, connectionPresent, receipt: { state: "unknown", sshEnabled: false, provider: "netbird",
+      loginServer: managementUrl, observedAt: deps.now().toISOString(),
+      failureCode: connectionPresent === true ? "unmanaged_connection" : resultFailureCode(result) } };
+  } catch {
+    return { ok: false, connectionPresent: null, receipt: { state: "unknown", sshEnabled: false, provider: "netbird",
+      loginServer: managementUrl, observedAt: deps.now().toISOString(), failureCode: "authority_unavailable" } };
+  }
+}
+
+export async function connectHivraNetbird(
+  agent: HivraPrivateAccessAgentRow,
+  setupKey: string,
+  managementUrl: string,
+  dependencies: Partial<Dependencies> = {},
+): Promise<{ ok: boolean; receipt: HivraTailscaleReceipt }> {
+  const deps = { ...defaults, ...dependencies };
+  const target = await execution(agent, deps);
+  // Same rule as Tailscale: never replace a connection that Hivra did not make.
+  const tailscaleBefore = await observeHivraTailscale(agent, DEFAULT_TAILSCALE_LOGIN_SERVER, deps);
+  const netbirdBefore = await observeHivraNetbird(agent, managementUrl, deps);
+  if (tailscaleBefore.connectionPresent !== false || netbirdBefore.connectionPresent !== false) {
+    throw new Error("existing_connection");
+  }
+  const result = await deps.runHostScriptWithStdin(buildHostScript({
+    vmid: target.vmid, guestIp: target.guestIp, vmKeyPath: target.context.paths.vmSshKeyPath!,
+    bindingTag: target.context.infrastructureBindingTag, guestProgram: buildHivraNetbirdConnectProgram(managementUrl),
+    secretStdin: true,
+  }), `${setupKey}\n`, target.context.env, { timeoutMs: 180_000, maxOutputBytes: 32 * 1024 });
+  const receipt = result.ok ? parseHivraNetbirdReceipt(result.stdout, managementUrl, deps.now()) : null;
+  if (receipt?.state === "connected") return { ok: true, receipt };
+  const observed = await observeHivraNetbird(agent, managementUrl, deps);
+  if (observed.receipt.state === "connected") return { ok: true, receipt: observed.receipt };
   return { ok: false, receipt: { ...observed.receipt, failureCode: resultFailureCode(result) } };
 }

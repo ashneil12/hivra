@@ -135,7 +135,7 @@ describe("instance tailscale private access route", () => {
             HostName: "atlas-agent",
             DNSName: "atlas-agent.customer.ts.net.",
             TailscaleIPs: ["100.64.0.4", "fd7a:115c:a1e0::4"],
-            SSHEnabled: true,
+            SSHEnabled: false,
           },
           CurrentTailnet: {
             Name: "customer.ts.net",
@@ -150,8 +150,8 @@ describe("instance tailscale private access route", () => {
         body: JSON.stringify({
           authKey: "tskey-auth-123",
           machineName: "atlas-agent",
-          tags: ["tag:prod"],
-          enableSsh: true,
+          tags: ["tag:hivra"],
+          enableSsh: false,
         }),
       }),
       { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
@@ -173,12 +173,38 @@ describe("instance tailscale private access route", () => {
       tailnetName: "customer.ts.net",
       ipv4: "100.64.0.4",
       ipv6: "fd7a:115c:a1e0::4",
-      sshEnabled: true,
-      tags: ["tag:prod"],
+      sshEnabled: false,
+      tags: ["tag:hivra"],
       connectedAt: expect.any(String),
       lastError: null,
     });
     expect(json.data.tailscale).not.toHaveProperty("authKey");
+  });
+
+  it.each([
+  ["Tailscale SSH", { authKey: "tskey-auth-123", enableSsh: true }],
+  ["a tag other than tag:hivra", { authKey: "tskey-auth-123", tags: ["tag:prod"] }],
+  ["a mix of tags", { authKey: "tskey-auth-123", tags: ["tag:hivra", "tag:admin"] }],
+])("refuses setup that asks for %s, without touching SSH", async (_name, body) => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
+        method: "POST", body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
+    );
+    expect(response.status).toBe(400);
+    expect(sshExec).not.toHaveBeenCalled();
+  });
+
+  it("refuses an update that turns on Tailscale SSH, without touching SSH", async () => {
+    const response = await PATCH(
+      new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-e5a233ff63bf/private-access/tailscale", {
+        method: "PATCH", body: JSON.stringify({ enableSsh: true }),
+      }),
+      { params: Promise.resolve({ id: "00000000-0000-4000-8000-e5a233ff63bf" }) }
+    );
+    expect(response.status).toBe(400);
+    expect(sshExec).not.toHaveBeenCalled();
   });
 
   it("routes proxmox-backed tailscale setup through the instance owning host", async () => {

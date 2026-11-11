@@ -15,6 +15,7 @@ import {
 } from "@/app/api/infrastructure/connections/request-security";
 import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
+  connectHivraNetbird,
   connectHivraTailscale,
   DEFAULT_TAILSCALE_LOGIN_SERVER,
   disconnectHivraTailscale,
@@ -22,11 +23,17 @@ import {
   hivraPrivateAccessReason,
   isCompatibleHivraPrivateAccessAgent,
   normalizeTailscaleLoginServer,
+  observeHivraNetbird,
   observeHivraTailscale,
   sameHivraPrivateAccessAuthority,
   type HivraPrivateAccessAgentRow,
   type HivraTailscaleReceipt,
 } from "@/lib/hivra/tailscale-private-access";
+import {
+  isPrivateNetworkV2Enabled,
+  normalizeNetbirdManagementUrl,
+  privateAccessFailureMessage,
+} from "@/lib/hivra/private-network";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -36,6 +43,7 @@ const inputSchema = z.discriminatedUnion("action", [
     action: z.literal("connect"),
     authKey: z.string().min(1).max(1024).refine(value => !/[\r\n\0]/.test(value)),
     loginServer: z.string().max(500).optional(),
+    provider: z.enum(["tailscale", "headscale", "netbird"]).optional(),
   }).strict(),
   z.object({ action: z.literal("refresh") }).strict(),
   z.object({ action: z.literal("disconnect") }).strict(),
@@ -120,6 +128,64 @@ async function rpcBoolean(name: string, args: Record<string, unknown>): Promise<
   return true;
 }
 
+type Receipt = HivraTailscaleReceipt;
+type OperationOutcome =
+  | { response: Response }
+  | { result: { ok: boolean; receipt: Receipt } };
+
+/**
+ * One leased guest change: reserve, dispatch, run, and save the exact result.
+ * Used once for connect or disconnect, and twice when the owner switches network.
+ */
+async function runLeasedOperation(input: {
+  userId: string;
+  agentId: string;
+  authority: Record<string, unknown>;
+  action: "connect" | "disconnect";
+  loginServer: string;
+  run: () => Promise<{ ok: boolean; receipt: Receipt }>;
+}): Promise<OperationOutcome> {
+  const operationId = randomUUID();
+  const claimed = await rpcBoolean("begin_hivra_private_access_operation", {
+    p_user_id: input.userId, p_agent_id: input.agentId, p_operation_id: operationId,
+    p_action: input.action, p_login_server: input.loginServer, p_expected_authority: input.authority,
+  });
+  if (!claimed) return { response: response({ success: false, code: "operation_conflict", error: "The computer changed or another operation started. Refresh Manage and retry." }, 409) };
+  const dispatched = await rpcBoolean("dispatch_hivra_private_access_operation", {
+    p_user_id: input.userId, p_operation_id: operationId,
+  });
+  if (!dispatched) {
+    const cancelled = await rpcBoolean("cancel_undispatched_hivra_private_access_operation", {
+      p_user_id: input.userId, p_operation_id: operationId,
+    });
+    return { response: response({ success: false, code: cancelled ? "operation_conflict" : "operation_pending",
+      error: cancelled
+        ? "The computer changed before private access started. Refresh Manage and retry."
+        : "Private access was reserved but could not be cancelled safely. Retry after its status is reconciled." }, 409) };
+  }
+  let result: { ok: boolean; receipt: Receipt };
+  try {
+    result = await input.run();
+  } catch {
+    result = { ok: false, receipt: { state: "unknown", sshEnabled: false, loginServer: input.loginServer,
+      observedAt: new Date().toISOString(), failureCode: "guest_command_failed" } };
+  }
+  const completed = await rpcBoolean("complete_hivra_private_access_operation", {
+    p_user_id: input.userId, p_operation_id: operationId, p_success: result.ok, p_receipt: result.receipt,
+  });
+  if (!completed) return { response: response({ success: false, code: "completion_unconfirmed",
+    error: "The guest command finished, but Hivra could not save its exact result. Refresh before retrying." }, 503) };
+  return { result };
+}
+
+/** Tailscale first; NetBird too only when the v2 flag is on and Tailscale shows nothing. */
+async function observeAnyNetwork(agent: HivraPrivateAccessAgentRow, loginServer: string) {
+  const observed = await observeHivraTailscale(agent, loginServer);
+  if (!isPrivateNetworkV2Enabled() || observed.connectionPresent !== false) return observed;
+  const netbird = await observeHivraNetbird(agent, loginServer);
+  return netbird.ok && netbird.connectionPresent === true ? netbird : observed;
+}
+
 type AuthenticationResult =
   | { failure: Response }
   | { userId: string; agent: HivraPrivateAccessAgentRow };
@@ -193,7 +259,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         error: cancelled ? "The private-access change had not reached the guest and was cancelled. Retry when ready."
           : "The private-access change is still pending." }, cancelled ? 409 : 202);
     }
-    const observed = await observeHivraTailscale(owner.agent, pending.login_server);
+    const observed = await observeAnyNetwork(owner.agent, pending.login_server);
     if (observed.receipt.state === "unknown") {
       return response({ success: false, code: "operation_pending", data: { supported: false, pending: true,
         connection: observed.receipt }, error: "The guest result is still uncertain. Refresh again after the computer is reachable." }, 202);
@@ -224,7 +290,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   if (parsed.data.action === "refresh") {
     const loginServer = stored?.login_server ?? DEFAULT_TAILSCALE_LOGIN_SERVER;
-    const observed = await observeHivraTailscale(owner.agent, loginServer);
+    const observed = await observeAnyNetwork(owner.agent, loginServer);
     if (!stored && observed.connectionPresent === true) {
       return response({ success: false, code: "unmanaged_connection",
         error: "This computer is already connected outside Hivra. Disconnect it in the guest before connecting here." }, 409);
@@ -243,16 +309,39 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(!observed.ok ? { error: "The computer's private-network state could not be confirmed." } : {}) }, observed.ok ? 200 : 202);
   }
 
-  if (parsed.data.action === "connect" && stored) {
+  const v2 = isPrivateNetworkV2Enabled();
+  const provider = parsed.data.action === "connect" ? (parsed.data.provider ?? "tailscale") : "tailscale";
+  if (provider === "netbird" && !v2) {
+    return response({ success: false, code: "provider_unavailable", error: "That private network isn't available yet." }, 400);
+  }
+  const switching = parsed.data.action === "connect" && stored !== null;
+  if (switching && !v2) {
     return response({ success: false, code: "already_managed", error: "Disconnect the saved private connection before enrolling again." }, 409);
   }
   if (parsed.data.action === "disconnect" && !stored) {
     return response({ success: false, code: "not_managed", error: "Hivra has no owner-bound private connection to disconnect." }, 409);
   }
   const loginServer = parsed.data.action === "connect"
-    ? normalizeTailscaleLoginServer(parsed.data.loginServer)
+    ? (provider === "netbird" ? normalizeNetbirdManagementUrl(parsed.data.loginServer)
+      : normalizeTailscaleLoginServer(parsed.data.loginServer))
     : stored!.login_server;
   if (!loginServer) return response({ success: false, error: "Use an HTTPS coordination URL without credentials, query, path, or fragment." }, 400);
+
+  const connectFor = () => provider === "netbird"
+    ? connectHivraNetbird(owner.agent, (parsed.data as { authKey: string }).authKey, loginServer)
+    : connectHivraTailscale(owner.agent, (parsed.data as { authKey: string }).authKey, loginServer);
+
+  // Switching: leave the old network first, in the same request, then join the new one.
+  if (switching) {
+    const left = await runLeasedOperation({ userId: owner.userId, agentId: id, authority, action: "disconnect",
+      loginServer: stored!.login_server, run: () => disconnectHivraTailscale(owner.agent, stored!.login_server) });
+    if ("response" in left) return left.response;
+    if (!left.result.ok || left.result.receipt.state !== "disconnected") {
+      return response({ success: false, data: { supported: true,
+        connection: left.result.receipt.state === "disconnected" ? null : left.result.receipt },
+      error: "Hivra could not leave your current network, so it did not join the new one. Refresh status and try again." }, 202);
+    }
+  }
 
   if (parsed.data.action === "connect") {
     const before = await observeHivraTailscale(owner.agent, loginServer);
@@ -262,40 +351,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
   }
 
-  const operationId = randomUUID();
-  const claimed = await rpcBoolean("begin_hivra_private_access_operation", {
-    p_user_id: owner.userId, p_agent_id: id, p_operation_id: operationId,
-    p_action: parsed.data.action, p_login_server: loginServer, p_expected_authority: authority,
-  });
-  if (!claimed) return response({ success: false, code: "operation_conflict", error: "The computer changed or another operation started. Refresh Manage and retry." }, 409);
-  const dispatched = await rpcBoolean("dispatch_hivra_private_access_operation", {
-    p_user_id: owner.userId, p_operation_id: operationId,
-  });
-  if (!dispatched) {
-    const cancelled = await rpcBoolean("cancel_undispatched_hivra_private_access_operation", {
-      p_user_id: owner.userId, p_operation_id: operationId,
-    });
-    return response({ success: false, code: cancelled ? "operation_conflict" : "operation_pending",
-      error: cancelled
-        ? "The computer changed before private access started. Refresh Manage and retry."
-        : "Private access was reserved but could not be cancelled safely. Retry after its status is reconciled." }, 409);
-  }
-
-  let result: { ok: boolean; receipt: HivraTailscaleReceipt };
-  try {
-    result = parsed.data.action === "connect"
-      ? await connectHivraTailscale(owner.agent, parsed.data.authKey, loginServer)
-      : await disconnectHivraTailscale(owner.agent, loginServer);
-  } catch {
-    result = { ok: false, receipt: { state: "unknown", sshEnabled: false, loginServer,
-      observedAt: new Date().toISOString(), failureCode: "guest_command_failed" } };
-  }
-  const completed = await rpcBoolean("complete_hivra_private_access_operation", {
-    p_user_id: owner.userId, p_operation_id: operationId, p_success: result.ok, p_receipt: result.receipt,
-  });
-  if (!completed) return response({ success: false, code: "completion_unconfirmed",
-    error: "The guest command finished, but Hivra could not save its exact result. Refresh before retrying." }, 503);
+  const outcome = await runLeasedOperation({ userId: owner.userId, agentId: id, authority,
+    action: parsed.data.action, loginServer,
+    run: () => parsed.data.action === "connect" ? connectFor() : disconnectHivraTailscale(owner.agent, loginServer) });
+  if ("response" in outcome) return outcome.response;
+  const result = outcome.result;
+  const failureCode = result.receipt.failureCode;
   return response({ success: result.ok, data: { supported: true,
     connection: result.receipt.state === "disconnected" ? null : result.receipt },
-    ...(!result.ok ? { error: "The guest result is uncertain. Refresh status before retrying or changing the computer." } : {}) }, result.ok ? 200 : 202);
+    ...(!result.ok ? { ...(failureCode ? { failureCode } : {}),
+      error: privateAccessFailureMessage(failureCode)
+        ?? "The guest result is uncertain. Refresh status before retrying or changing the computer." } : {}) }, result.ok ? 200 : 202);
 }
