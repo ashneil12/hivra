@@ -12,6 +12,7 @@ import { useWorkspaceViewport } from '../useWorkspaceViewport';
 import { FleetControlPane } from '@/components/hivra/FleetControlPane';
 import { resetResourceInventory, resourceInventory } from '@/lib/workspace/resource-inventory';
 import { recordVisit } from '@/lib/workspace/recents';
+import { useAppShell } from '../AppShellContext';
 
 jest.mock('../ClientLayoutWrapper.module.css', () => ({
   __esModule: true,
@@ -215,7 +216,9 @@ describe('ClientLayoutWrapper', () => {
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
     const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
     const expectSelected = (name: string | null) => {
-      for (const label of ['Primary', 'App navigation']) {
+      // The agent view draws its own sidebar, so the global rail ("Primary") is only there on other pages.
+      const onAgentPage = /^\/dashboard\/agent\//.test((usePathname as jest.Mock)() ?? '');
+      for (const label of onAgentPage ? ['App navigation'] : ['Primary', 'App navigation']) {
         const nav = within(screen.getByRole('navigation', { name: label }));
         if (name) expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name })]);
         else expect(nav.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
@@ -490,6 +493,49 @@ describe('ClientLayoutWrapper', () => {
       resetResourceInventory();
       window.localStorage.clear();
     }
+  });
+
+  describe('on the agent view, which draws its own sidebar', () => {
+    function OpenSearch() {
+      const shell = useAppShell();
+      return <button type="button" onClick={shell?.openSwitcher}>Agent page search</button>;
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
+      Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
+    });
+
+    it('draws no global rail and no spacer, but keeps the bottom navigation', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123');
+      const { container } = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.queryByRole('complementary', { name: 'Workspace navigation' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument();
+      expect(container.querySelector('[class*="spacer"], .spacer')).not.toBeInTheDocument();
+      expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeInTheDocument();
+    });
+
+    it('leaves other pages with their rail', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toBeInTheDocument();
+      // Sub-paths of the agent route are not the agent view.
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123/other');
+      view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toBeInTheDocument();
+    });
+
+    it('still opens the switcher with ⌘K, and for the page through AppShellContext', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123');
+      render(<ClientLayoutWrapper {...mockProps}><OpenSearch /></ClientLayoutWrapper>);
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Close switcher' }));
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Agent page search' }));
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+    });
   });
 
   it('leaves no pending timers after unmount', () => {
