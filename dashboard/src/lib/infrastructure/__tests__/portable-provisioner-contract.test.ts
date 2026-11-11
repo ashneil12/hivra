@@ -906,8 +906,8 @@ wait_for_browser_ready '${envFile}' 9333
       "8b8d719715ec9bb68fb858a1e334d23209047d82",
       "2026.8.2",
       "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2",
-      "152.0.7977.64-1",
-      "4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7",
+      "157.0.8103.50-1",
+      "92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79",
       "2.98.0",
       "f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6",
       "@anthropic-ai/claude-code@2.1.292",
@@ -950,7 +950,7 @@ describe("deepseek-harness provisioner minimum", () => {
   });
 
   it("skips an older managed host in placement and leaves other runtimes' lists alone", () => {
-    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("claude-code")).toEqual(compatibleProxmoxVersionsForRuntime(null));
     expect(compatibleProxmoxVersionsForRuntime("codex")).toEqual(compatibleProxmoxVersionsForRuntime(null));
   });
@@ -981,7 +981,7 @@ describe("linux-server provisioner minimum", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
       .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
-    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1"]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2"]);
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
     // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));

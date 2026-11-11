@@ -456,14 +456,158 @@ agent_app_report || true
 # Google's apt source and holding the package. The browser restarts only when
 # nobody is attached to its debugging port; otherwise the new keeper and policy
 # apply at its next start. A browser that does not come back is put back on the
-# keeper it had. Nothing here can fail the committed update above.
+# keeper it had. Chrome is held on its pin, so moving the pin is deliberate: a computer
+# whose google-chrome-stable differs from chrome-pin.json is moved to it, under the same
+# rule (nobody attached) plus a recovery copy of the build it had, which is put back if
+# the new browser does not answer (chrome_upgrade below). Nothing here can fail the
+# committed update above.
 BROWSER_KEEPER=/opt/bux/local-browser-keeper.py
 BROWSER_UNIT=/etc/systemd/system/bux-local-browser.service
 CHROME_POLICY_DIR=/etc/opt/chrome/policies/managed
 CHROME_POLICY_FILE="$CHROME_POLICY_DIR/hivra-browser.json"
 CHROME_POLICY_JSON='{"DefaultBrowserSettingEnabled":false,"PromotionsEnabled":false,"BrowserSignin":0,"SuppressUnsupportedOSWarning":true}'
+# Chrome moves only when the browser can be restarted right then, because replacing the
+# binary under a running Chrome makes it show "Finish update", which the managed policy
+# above exists to avoid. The pinned build is chrome-pin.json (the file the installer reads).
+CHROME_POOL=https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable
+# Prints "<version> <sha256>" of the pin, or, given a version, the sha256 of that build's
+# entry in the pin's "previous" list. Fails on anything malformed.
+chrome_pin() {
+  python3 -I -B -c 'import json, re, sys
+pin = json.load(open(sys.argv[1], encoding="utf-8"))
+def good(entry):
+    return (isinstance(entry, dict) and isinstance(entry.get("version"), str) and isinstance(entry.get("sha256"), str)
+            and re.fullmatch(r"[0-9]+(\.[0-9]+){3}-1", entry["version"]) and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]))
+if not good(pin): sys.exit(1)
+if len(sys.argv) > 2:
+    for entry in pin.get("previous") or []:
+        if good(entry) and entry["version"] == sys.argv[2]:
+            print(entry["sha256"]); sys.exit(0)
+    sys.exit(1)
+print(pin["version"], pin["sha256"])' "$WORK/chrome-pin.json" "$@"
+}
+# Google's apt source is dropped and the package held, as the installer does, so an apt
+# upgrade never replaces the binary under the running browser.
+chrome_freeze() {
+  rm -f /etc/apt/sources.list.d/google-chrome.sources /etc/apt/sources.list.d/google-chrome.list
+  apt-mark hold google-chrome-stable >/dev/null 2>&1 || true
+}
+# Succeeds when something is established on the debugging port, or when that cannot be told.
+chrome_busy() {
+  local out
+  if ! out="$(ss -Htn state established "( sport = :$1 )" 2>/dev/null)" || [ -n "$out" ]; then return 0; fi
+  return 1
+}
+# $1 version, $2 sha256, $3 destination: the versioned .deb from Google's pool, checked.
+chrome_fetch() {
+  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
+    --max-time 150 --retry-max-time 150 \
+    "$CHROME_POOL/google-chrome-stable_${1}_amd64.deb" -o "$3" || return 1
+  printf '%s  %s\n' "$2" "$3" | sha256sum -c - >/dev/null || return 1
+}
+# $1 .deb: installs it with apt (dependencies included), then freezes Chrome again. A
+# downgrade is allowed because this is also the way back.
+chrome_install() {
+  local result=0
+  apt-mark unhold google-chrome-stable >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive timeout -k 10 120 apt-get -o DPkg::Lock::Timeout=60 install -y --allow-downgrades "$1" >/dev/null || result=1
+  chrome_freeze
+  return "$result"
+}
+# $1 debugging port, $2 the major version the browser must report ("" accepts any answer).
+chrome_wait_cdp() {
+  local i body
+  for i in $(seq 1 30); do
+    if body="$(curl -fsS --max-time 3 "http://127.0.0.1:${1}/json/version" 2>/dev/null)"; then
+      [ -z "$2" ] && return 0
+      printf '%s' "$body" | python3 -I -B -c 'import json, sys
+sys.exit(0 if json.load(sys.stdin).get("Browser", "").removeprefix("Headless").startswith("Chrome/" + sys.argv[1] + ".") else 1)' "$2" 2>/dev/null && return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+# $1 the installed version, $2 where to put a .deb of it. dpkg-repack when present; else the
+# build's own .deb when the pin lists it with its SHA-256; else nothing, and no upgrade.
+chrome_recovery_copy() {
+  local made sha
+  if command -v dpkg-repack >/dev/null 2>&1; then
+    install -d -m 0700 "$WORK/repack"
+    if (cd "$WORK/repack" && timeout -k 5 90 dpkg-repack google-chrome-stable >/dev/null 2>&1); then
+      made="$(find "$WORK/repack" -maxdepth 1 -name 'google-chrome-stable_*.deb' -print -quit)"
+      if [ -n "$made" ] && [ "$(dpkg-deb -f "$made" Version 2>/dev/null)" = "$1" ]; then
+        mv -f -- "$made" "$2"
+        return 0
+      fi
+    fi
+  fi
+  if sha="$(chrome_pin "$1" 2>/dev/null)" && chrome_fetch "$1" "$sha" "$2"; then return 0; fi
+  return 1
+}
+# $1 installed version, $2 pinned version, $3 its sha256, $4 debugging port, $5 1 when the
+# browser unit is running (and is idle: the caller checked). Prints this step's state line.
+# upgraded: the pinned build is installed and answers. restored: it did not, and the build
+# that was installed is back. deferred: nothing was touched (no time, space, download or
+# recovery copy). failed: neither build could be confirmed (never expected).
+chrome_upgrade() {
+  local installed="$1" want="$2" sha="$3" port="$4" active="$5" major="${2%%.*}" left avail ok=0 now
+  local new="$WORK/chrome-pinned.deb" old="$WORK/chrome-previous.deb"
+  # The update unit is killed at its budget (HIVRA_RUNTIME_UPDATE_SECONDS); never start
+  # one that cannot finish, restore included.
+  left=$(( ${HIVRA_RUNTIME_UPDATE_SECONDS:-900} - SECONDS ))
+  if [ "$left" -lt 600 ]; then
+    printf 'agent browser: %s seconds left, Chrome is not replaced now\n' "$left" >&2
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'; return 0
+  fi
+  avail="$(df -Pk "$WORK" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if ! [ "${avail:-0}" -ge 1048576 ] 2>/dev/null; then
+    printf 'agent browser: not enough free space to keep a recovery copy\n' >&2
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'; return 0
+  fi
+  if ! command -v dpkg-repack >/dev/null 2>&1 && ! chrome_pin "$installed" >/dev/null 2>&1; then
+    printf 'agent browser: no way to put %s back, Chrome is not replaced\n' "$installed" >&2
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'; return 0
+  fi
+  if ! chrome_fetch "$want" "$sha" "$new"; then
+    printf 'agent browser: the pinned Chrome could not be downloaded and verified\n' >&2
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'; return 0
+  fi
+  if ! chrome_recovery_copy "$installed" "$old"; then
+    printf 'agent browser: no recovery copy of %s could be made, Chrome is not replaced\n' "$installed" >&2
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'; return 0
+  fi
+  # The downloads took a while: someone may have attached since the caller looked.
+  if [ "$active" = 1 ] && chrome_busy "$port"; then
+    printf 'HIVRA_AGENT_BROWSER state=deferred\n'; return 0
+  fi
+  if chrome_install "$new" && [ "$(dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null || true)" = "$want" ]; then
+    if [ "$active" = 1 ]; then
+      systemctl restart bux-local-browser.service || true
+      if chrome_wait_cdp "$port" "$major"; then ok=1; fi
+    elif timeout -k 5 20 google-chrome-stable --version 2>/dev/null | grep -Eq "[^0-9]${major}\.[0-9]"; then
+      ok=1
+    fi
+  fi
+  if [ "$ok" = 1 ]; then
+    printf 'HIVRA_AGENT_BROWSER state=upgraded\n'
+    return 0
+  fi
+  # The pinned build did not take: put back the Chrome (and keeper) that worked.
+  DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
+  now="$(dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null || true)"
+  if [ "$now" != "$installed" ]; then chrome_install "$old" || true; fi
+  chrome_freeze
+  install -o bux -g bux -m 0755 "$WORK/keeper.previous" "$BROWSER_KEEPER"
+  if [ "$active" = 1 ]; then
+    systemctl restart bux-local-browser.service || true
+    chrome_wait_cdp "$port" "" || true
+  fi
+  now="$(dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null || true)"
+  if [ "$now" = "$installed" ]; then printf 'HIVRA_AGENT_BROWSER state=restored\n'
+  else printf 'HIVRA_AGENT_BROWSER state=failed\n'; fi
+}
 agent_browser_refresh() {
-  local port out changed=0 legacy=0 state=current i
+  local port out changed=0 legacy=0 state=current i active=0 upgrade=0 pin installed want="" want_sha=""
   [ -f "$BROWSER_UNIT" ] && [ ! -L "$BROWSER_UNIT" ] && [ -f "$BROWSER_KEEPER" ] && [ ! -L "$BROWSER_KEEPER" ] || return 0
   dpkg-query -W -f='${Status}' google-chrome-stable 2>/dev/null | grep -Fq 'install ok installed' || return 0
   port="$(sed -n 's/^Environment=BUX_LOCAL_CDP_PORT=\([0-9]\{1,5\}\)$/\1/p' "$BROWSER_UNIT" | head -n 1)"
@@ -471,8 +615,7 @@ agent_browser_refresh() {
   # Keep Chrome on its pinned build (Google's documented switch, then the source and a hold).
   printf '%s\n' 'repo_add_once="false"' 'repo_reenable_on_distupgrade="false"' > /etc/default/google-chrome
   chmod 0644 /etc/default/google-chrome
-  rm -f /etc/apt/sources.list.d/google-chrome.sources /etc/apt/sources.list.d/google-chrome.list
-  apt-mark hold google-chrome-stable >/dev/null 2>&1 || true
+  chrome_freeze
   install -d -o root -g root -m 0755 /etc/opt/chrome /etc/opt/chrome/policies "$CHROME_POLICY_DIR"
   printf '%s\n' "$CHROME_POLICY_JSON" > "$CHROME_POLICY_FILE.next"
   chmod 0644 "$CHROME_POLICY_FILE.next"
@@ -486,17 +629,31 @@ agent_browser_refresh() {
   fi
   # A browser still running with --no-sandbox needs its restart even when the files already match.
   if pgrep -u bux -f -- 'google/chrome/chrome .*--no-sandbox' >/dev/null 2>&1; then legacy=1; fi
-  if [ "$changed" = 0 ] && [ "$legacy" = 0 ]; then
+  # The pinned Chrome (chrome-pin.json, the installer's file). A pin that cannot be read
+  # leaves the installed build alone.
+  if pin="$(chrome_pin 2>/dev/null)"; then
+    want="${pin% *}"; want_sha="${pin#* }"
+    installed="$(dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null || true)"
+    [ "$installed" = "$want" ] || upgrade=1
+  else
+    printf 'agent browser: chrome-pin.json is missing or invalid; Chrome stays as installed\n' >&2
+  fi
+  if [ "$changed" = 0 ] && [ "$legacy" = 0 ] && [ "$upgrade" = 0 ]; then
     printf 'HIVRA_AGENT_BROWSER state=current\n'
     return 0
   fi
-  if ! systemctl is-active --quiet bux-local-browser.service; then
+  if systemctl is-active --quiet bux-local-browser.service; then active=1; fi
+  if [ "$active" = 0 ] && [ "$upgrade" = 0 ]; then
     printf 'HIVRA_AGENT_BROWSER state=installed\n'
     return 0
   fi
   # A check that cannot run counts as busy, as for the terminals.
-  if ! out="$(ss -Htn state established "( sport = :$port )" 2>/dev/null)" || [ -n "$out" ]; then
+  if [ "$active" = 1 ] && chrome_busy "$port"; then
     printf 'HIVRA_AGENT_BROWSER state=deferred\n'
+    return 0
+  fi
+  if [ "$upgrade" = 1 ]; then
+    chrome_upgrade "$installed" "$want" "$want_sha" "$port" "$active"
     return 0
   fi
   systemctl restart bux-local-browser.service || true

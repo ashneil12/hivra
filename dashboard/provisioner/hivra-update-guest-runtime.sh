@@ -130,7 +130,7 @@ done
 TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service
   agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply
   hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json
-  agent-app-versions.json hivra-agent-app-update.sh local-browser-keeper.py)
+  agent-app-versions.json hivra-agent-app-update.sh local-browser-keeper.py chrome-pin.json)
 for asset in "${TERMINAL_ASSETS[@]}"; do
   [ -f "$PROVISIONER_DIR/$asset" ] && [ ! -L "$PROVISIONER_DIR/$asset" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
