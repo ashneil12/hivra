@@ -49,3 +49,6 @@
   .iconButton { width: 44px; height: 44px; }
   .search kbd { display: none; }
 }
+
+/* Touch: sidebar rows are full 44px targets. */
+@media (pointer: coarse) { .row, .search { height: 44px; } }

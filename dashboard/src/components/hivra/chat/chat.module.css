@@ -661,3 +661,6 @@
   .rowDelete { width: 40px; height: 40px; margin-right: 0; }
   .rowConfirm { min-height: 40px; }
 }
+
+/* Touch: chat rows and their delete are full 44px targets. */
+@media (pointer: coarse) { .newRow, .rowMain { min-height: 44px; } .rowDelete { width: 44px; height: 44px; margin-right: 0; } }
