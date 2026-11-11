@@ -58,7 +58,7 @@ describe("LocalBridgePanel", () => {
     expect(screen.getAllByText("Claude").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Ash's Mac").length).toBeGreaterThan(0);
     expect(screen.getByText('ls -la "my folder"')).toBeInTheDocument();
-    expect(screen.getByText(/\/Users\/ash\/work/)).toBeInTheDocument();
+    expect(screen.getByText(/\/Users\/example\/work/)).toBeInTheDocument();
     expect(commandLine(["echo", "a; rm -rf ~"])).toBe('echo "a; rm -rf ~"');
   });
 
