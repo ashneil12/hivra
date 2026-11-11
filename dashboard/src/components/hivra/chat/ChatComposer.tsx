@@ -139,7 +139,7 @@ export function ChatComposer({
               <button
                 type="button"
                 aria-label="Attach a file"
-                title="Attach an image or text file (the agent reads it on the box)"
+                title="Attach an image or text file (the agent reads it on its computer)"
                 disabled={busy || uploading || attachments.length >= MAX_ATTACHMENTS}
                 onClick={() => fileInputRef.current?.click()}
                 className={styles.toolButton}

@@ -14,6 +14,7 @@ import "@testing-library/jest-dom";
 import posthog from "posthog-js";
 
 import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
+import { AgentChatListSlotContext } from "../agent-shell/AgentChatListSlot";
 import { listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
 import { startAgentWelcomeRun } from "@/lib/hivra/agent-welcome";
 import { clientLog } from "@/lib/client/logger";
@@ -1959,4 +1960,66 @@ describe("HivraChat", () => {
     expect(screen.queryByLabelText("Finished while you were away")).not.toBeInTheDocument();
   });
 
+  describe("in the agent sidebar's chat list slot", () => {
+    function renderWithSlot(slot: HTMLElement | null, onChatOpened: () => void, storageKey: string) {
+      return render(
+        <AgentChatListSlotContext.Provider value={{ element: slot, onChatOpened }}>
+          <HivraChat boxUrl="https://box.example.com" storageKey={storageKey} token="box-token" agentName="Atlas" agentKind="claude" />
+        </AgentChatListSlotContext.Provider>,
+      );
+    }
+
+    it("portals the chat list into the slot, drops the inline list, and tells the owner of the view when a chat opens", async () => {
+      window.localStorage.setItem("hivra:first-welcome:slotchat", "1");
+      (listBoxSessions as jest.Mock).mockResolvedValue([
+        { id: "remote-1", title: "Deploy notes", updatedAt: Date.now() + 1000 },
+      ]);
+      const slot = document.createElement("div");
+      document.body.appendChild(slot);
+      const onChatOpened = jest.fn();
+      const { container } = renderWithSlot(slot, onChatOpened, "slot-chat");
+      try {
+        // The list is in the slot: a New chat row, then the chats.
+        const row = await within(slot).findByRole("button", { name: /Deploy notes/ });
+        // (An untitled chat is itself called "New chat", so the row is the first of them.)
+        const newChatRow = within(slot).getAllByRole("button", { name: "New chat" })[0];
+        expect(newChatRow.querySelector("svg")).not.toBeNull();
+        // The chat itself carries no list, no toggle and no "others working" pill.
+        expect(container.querySelector("[aria-current]")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Show chats" })).not.toBeInTheDocument();
+        expect(within(container).queryByRole("button", { name: "New chat" })).not.toBeInTheDocument();
+
+        fireEvent.click(row);
+        expect(onChatOpened).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(readBoxSession).toHaveBeenCalledWith("https://box.example.com", "remote-1", "box-token"));
+
+        const untitledBefore = within(slot).getAllByRole("button", { name: "New chat" }).length;
+        fireEvent.click(newChatRow);
+        expect(onChatOpened).toHaveBeenCalledTimes(2);
+        expect(within(slot).getAllByRole("button", { name: "New chat" }).length).toBe(untitledBefore + 1);
+      } finally {
+        slot.remove();
+      }
+    });
+
+    it("keeps its own inline list until the slot's element has mounted", async () => {
+      window.localStorage.setItem("hivra:first-welcome:slotlate", "1");
+      const onChatOpened = jest.fn();
+      const { rerender } = renderWithSlot(null, onChatOpened, "slot-late");
+      expect(await screen.findByRole("button", { name: "Show chats" })).toBeInTheDocument();
+      const slot = document.createElement("div");
+      document.body.appendChild(slot);
+      try {
+        rerender(
+          <AgentChatListSlotContext.Provider value={{ element: slot, onChatOpened }}>
+            <HivraChat boxUrl="https://box.example.com" storageKey="slot-late" token="box-token" agentName="Atlas" agentKind="claude" />
+          </AgentChatListSlotContext.Provider>,
+        );
+        expect(screen.queryByRole("button", { name: "Show chats" })).not.toBeInTheDocument();
+        expect(within(slot).getAllByRole("button", { name: "New chat" }).length).toBeGreaterThan(0);
+      } finally {
+        slot.remove();
+      }
+    });
+  });
 });
