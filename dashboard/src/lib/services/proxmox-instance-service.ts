@@ -3,6 +3,8 @@ import { spawn } from "child_process";
 
 // SCRIPTURE_ANCHOR: proxmox-foundation | Luke 14:28 | Verse: Which of you, desiring to build a tower, doesn't first sit down and count the cost?
 import { Client as Ssh2Client, type ConnectConfig } from "ssh2";
+
+import { parseConnectorHostname } from "@/lib/infrastructure/home-connector-host";
 import type { CodexVaultBundle } from "@/lib/codex-oauth";
 import type { NousVaultBundle } from "@/lib/nous-oauth";
 import type { InstanceBankrAgentConfig } from "@/lib/billing/bankr-instance-wallets";
@@ -1627,8 +1629,23 @@ async function runProxmoxHostInvocation(
   if (!host) {
     return { ok: false, stdout: "", stderr: "", error: "PROXMOX_SSH_HOST is not configured." };
   }
+  // A machine behind a home router: the socket is a relay session, not a
+  // direct connection. Host key pinning below is unchanged.
+  let relaySock: import("node:stream").Duplex | null = null;
+  if (userInfrastructureConnection && envValue(env, "PROXMOX_SSH_TRANSPORT") === "connector") {
+    const connectorId = envValue(env, "PROXMOX_SSH_CONNECTOR_ID");
+    if (!connectorId || parseConnectorHostname(host) !== connectorId.toLowerCase()) {
+      return { ok: false, stdout: "", stderr: "", error: "This machine's connector is not set up correctly." };
+    }
+    try {
+      relaySock = await (await import("@/lib/infrastructure/host-relay")).openRelaySocket(connectorId);
+    } catch (err) {
+      return { ok: false, stdout: "", stderr: "", error: err instanceof Error ? err.message : "Hivra's relay did not open a session to this machine." };
+    }
+  }
   const privateKeyEnv = envPrivateKey(env);
   if (!keyPath && !privateKeyEnv && envValue(env, "PROXMOX_ALLOW_SSH_AGENT") !== "true") {
+    relaySock?.destroy();
     return {
       ok: false,
       stdout: "",
@@ -1650,6 +1667,7 @@ async function runProxmoxHostInvocation(
       const { readFile } = await import("fs/promises");
       privateKeyBuf = await readFile(/*turbopackIgnore: true*/ keyPath);
     } catch (err) {
+      relaySock?.destroy();
       return {
         ok: false,
         stdout: "",
@@ -1685,6 +1703,11 @@ async function runProxmoxHostInvocation(
         clearTimeout(timer);
         try {
           conn.end();
+        } catch {
+          // ignore
+        }
+        try {
+          relaySock?.destroy();
         } catch {
           // ignore
         }
@@ -1726,6 +1749,7 @@ async function runProxmoxHostInvocation(
       const connectConfig: ConnectConfig = {
         host,
         port: Number(port) || 22,
+        ...(relaySock ? { sock: relaySock } : {}),
         username: user,
         // ssh2 accepts undefined privateKey — falls through to ssh-agent
         // if PROXMOX_ALLOW_SSH_AGENT=true is configured at runtime.

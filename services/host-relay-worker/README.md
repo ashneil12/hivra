@@ -8,8 +8,13 @@ Object per connection copies bytes between the two. SSH, and the host key Hivra
 pinned when the owner confirmed "Is this your server?", stay end to end: the
 relay can drop traffic but cannot read or change a session.
 
-**Status:** built and tested locally. Not deployed, and Hivra's control plane
-does not use it yet (that wiring lands with the one-command enrollment).
+**Status:** built and tested locally. Not deployed. Hivra's control plane is
+now wired to it, behind `HIVRA_HOME_CONNECTOR_ENABLED`, which is **off by
+default**: with it on (and `HOST_RELAY_URL` / `HOST_RELAY_SECRET` set) the
+dashboard issues a one-time enrolment command for a machine, dials this relay
+with a 60-second single-use ticket for SSH (host key pinning unchanged), and
+calls `/revoke` with a bumped generation when the connection is removed or the
+machine is disconnected. Nothing is turned on or deployed by that wiring.
 
 ## Protocol
 
