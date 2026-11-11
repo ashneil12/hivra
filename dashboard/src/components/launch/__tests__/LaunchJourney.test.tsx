@@ -224,31 +224,43 @@ describe("LaunchJourney", () => {
     const settings = within(screen.getByRole("group", { name: "Launch settings" }));
     for (const label of ["Where it runs", "Size", "Model access", "Memory"]) expect(settings.getByText(label)).toBeInTheDocument();
     expect(settings.getByText("Hivra Cloud")).toBeInTheDocument();
-    // Every control is collapsed until its own Change is pressed.
+    // Size stays collapsed until its own Change is pressed; Model access choices are one click.
     expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Model access" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Change model access/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Hide advanced" })).not.toBeInTheDocument();
 
-    // Size opens on its own and leaves Model access closed.
+    // Size opens on its own.
     const size = screen.getByRole("button", { name: "Change size" });
     expect(size).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(size);
     expect(size).toHaveAttribute("aria-expanded", "true");
     expect(size).toHaveTextContent("Done");
     expect(screen.getByRole("group", { name: "Size" })).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Model access" })).not.toBeInTheDocument();
 
-    // Model access opens with its choices visible, and both can stay open.
-    fireEvent.click(screen.getByRole("button", { name: "Change model access" }));
+    // Model access choices are always visible in their row, with no Change step.
     expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Size" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Done with size" }));
     expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
     // Where it runs was never opened.
     expect(screen.getByRole("button", { name: "Change where it runs" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("switches model access to your own key in one click, and back to credits", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+    await screen.findByRole("heading", { name: "Review and launch Codex 1" });
+
+    const group = within(screen.getByRole("group", { name: "Model access" }));
+    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+    fireEvent.click(group.getByRole("button", { name: /^Use my/ }));
+    expect(await screen.findByLabelText(/API key$/)).toBeInTheDocument();
+    fireEvent.click(group.getByRole("button", { name: /^Hivra credits/ }));
+    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
   });
 
   it("turns the browser on or off with one click, and Memory has no browser switch", async () => {
@@ -264,8 +276,6 @@ describe("LaunchJourney", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Browser for Codex" }));
     expect(screen.getByRole("switch", { name: "Browser for Codex" })).toHaveAttribute("aria-checked", before);
     expect(screen.queryByRole("switch", { name: /Honcho/ })).not.toBeInTheDocument();
-    // No Change step for it, and no other row opened.
-    expect(screen.queryByRole("group", { name: "Model access" })).not.toBeInTheDocument();
   });
 
   it("fills the name in and lets it be edited inline in Review", async () => {
@@ -317,7 +327,6 @@ describe("LaunchJourney", () => {
     expect(screen.queryByRole("link", { name: /Browse every agent/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${tile}`) }));
     expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change model access" }));
     expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
   });
 

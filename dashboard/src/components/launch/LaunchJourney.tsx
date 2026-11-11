@@ -727,7 +727,6 @@ export function LaunchJourney(
   const [customizeOpen, setCustomizeOpen] = useState(false);
   // Each setting on Review has its own Change button; several can be open.
   const [sizeExpanded, setSizeExpanded] = useState(false);
-  const [modelExpanded, setModelExpanded] = useState(false);
   const [windowsImages, setWindowsImages] = useState<Array<{ volume: string; name: string; sizeBytes: number; modifiedAtSeconds: number; fileIdentitySha256: string; source: "unknown" | "windows-11" | "windows-server-evaluation" }>>([]);
   const [windowsIsoStorages, setWindowsIsoStorages] = useState<Array<{ id: string; label: string }>>([]);
   const [windowsImagesLoading, setWindowsImagesLoading] = useState(false);
@@ -1663,7 +1662,6 @@ export function LaunchJourney(
     setWhereExpanded(false);
     setCustomizeOpen(false);
     setSizeExpanded(false);
-    setModelExpanded(false);
     // A DigitalOcean team stays chosen across agents it runs, and the team a
     // DigitalOcean card handed over is chosen for the first one.
     const keptTeam = digitalOceanTeamFor(profileId, draft.capacity.mode === "digitalocean"
@@ -1812,7 +1810,6 @@ export function LaunchJourney(
     writeLaunchDraft(next, storageOwner);
     setRestoredDestinationFor(null);
     setSizeExpanded(false);
-    setModelExpanded(false);
     destination.setMode("hivra-managed");
     setDraft(next);
     writeStageHistory(next.stage, "replace");
@@ -2206,7 +2203,6 @@ export function LaunchJourney(
   const advancedForced = draft.profileId === "windows" || digitalOceanLane || whereForcedOpen;
   const sizeChangeable = !wholeProviderComputer && presetOptions.length > 0;
   const sizeOpen = sizeChangeable && sizeExpanded;
-  const modelOpen = modelExpanded;
   const digitalOceanSize = digitalOceanLane && digitalOceanTarget ? digitalOceanSizeFor(digitalOceanTarget, draft.digitalOcean) : null;
   const summarySize = digitalOceanLane
     ? digitalOceanSize ? `${digitalOceanSizeLabel(digitalOceanSize)} DigitalOcean sandbox` : "No size available"
@@ -2667,40 +2663,24 @@ export function LaunchJourney(
 
               {modelAccessShown && draft.profileId ? (
                 <div className={styles.planRow}>
-                  <span className={styles.planLabel}>Model access</span>
+                  <span className={styles.planLabel} aria-hidden>Model access</span>
                   <span className={styles.planValue}>
-                    <span className={styles.planSummary}>
-                      <strong>{modelSummary}</strong>
-                    </span>
-                    <button
-                      type="button"
-                      className={styles.inlineAction}
-                      aria-expanded={modelOpen}
-                      aria-controls="launch-model-access"
-                      aria-label={modelOpen ? "Done with model access" : "Change model access"}
-                      onClick={() => setModelExpanded(open => !open)}
-                    >
-                      {modelOpen ? "Done" : "Change"}
-                    </button>
+                    {modelSummary ? <span className={styles.planSummary}><strong>{modelSummary}</strong></span> : null}
+                    <ModelAccessControl
+                      profileId={draft.profileId}
+                      agentName={draft.name}
+                      access={draft.modelAccess}
+                      options={modelOptions}
+                      onChange={updateModelAccess}
+                      pastedKey={currentPastedKey}
+                      onPastedKeyChange={setCurrentPastedKey}
+                      savedKeys={savedKeys}
+                      providers={keyProviders}
+                      balance={creditsBalance}
+                      onAddCredit={() => setDepositOpen(true)}
+                      problem={modelProblem}
+                    />
                   </span>
-                </div>
-              ) : null}
-              {modelAccessShown && draft.profileId && modelOpen ? (
-                <div id="launch-model-access" className={styles.planPanel}>
-                  <ModelAccessControl
-                    profileId={draft.profileId}
-                    agentName={draft.name}
-                    access={draft.modelAccess}
-                    options={modelOptions}
-                    onChange={updateModelAccess}
-                    pastedKey={currentPastedKey}
-                    onPastedKeyChange={setCurrentPastedKey}
-                    savedKeys={savedKeys}
-                    providers={keyProviders}
-                    balance={creditsBalance}
-                    onAddCredit={() => setDepositOpen(true)}
-                    problem={modelProblem}
-                  />
                 </div>
               ) : null}
               {hermes ? (
@@ -2779,9 +2759,6 @@ export function LaunchJourney(
               {paywallMoments}
             </div>
           ) : null}
-          {modelProblem && !capacityBlocker && !advancedForced && !modelOpen ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><span><strong>{modelProblem}</strong>
-            <span className={styles.blockerActions}><button type="button" onClick={() => setModelExpanded(true)}>Change model access</button></span>
-          </span></div> : null}
           {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{draft.error}</strong>
             {draft.errorAction ? <span className={styles.blockerActions}>
               <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>

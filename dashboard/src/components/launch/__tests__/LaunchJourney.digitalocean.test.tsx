@@ -147,9 +147,6 @@ async function chooseAgent(name: string) {
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
   expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
-  // Each setting has its own Change button; open Model access when it shows.
-  const change = screen.queryByRole("button", { name: "Change model access" });
-  if (change) fireEvent.click(change);
 }
 
 async function chooseTeam() {

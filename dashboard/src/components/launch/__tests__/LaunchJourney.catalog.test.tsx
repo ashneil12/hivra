@@ -105,7 +105,6 @@ async function chooseAgent(name: string) {
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
   expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
   // Each setting has its own Change button; open Model access.
-  fireEvent.click(screen.getByRole("button", { name: "Change model access" }));
 }
 
 const modelChoice = (name: RegExp) => within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name });
@@ -297,7 +296,6 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.");
     fireEvent.click(tile);
     expect(screen.getByRole("heading", { name: "Review and launch DeepSeek Harness 1" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change model access" }));
 
     // It gets its model at launch: credits are the default, a Venice key the alternative.
     await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
