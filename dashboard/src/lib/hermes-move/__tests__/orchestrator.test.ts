@@ -279,6 +279,18 @@ describe("happy path", () => {
     expect(m.lease_until).toBeNull();
   });
 
+  it("gives a move queued without a key (an operator's table insert) its key before launching", async () => {
+    const { w, deps } = makeWorld();
+    const { id } = await begin(deps);
+    w.moves.set(id, { ...w.moves.get(id)!, key_encrypted: null, initiated_by: "operator" });
+    let m = (await advanceMove(id, deps))!;
+    expect(m).toMatchObject({ state: "launching", step: "starting" });
+    expect(w.moves.get(id)!.key_encrypted).toBe(`enc(${"k".repeat(64)})`);
+    m = (await advanceMove(id, deps))!;
+    expect(m.state).toBe("packing");
+    expect(w.calls).toContain("old:start:pack:64");
+  });
+
   it("uses the default model and the Hermes floor for a small old agent without a valid model", async () => {
     const { w, deps } = makeWorld({ instance: { cpu_limit: 0.5, ram_limit: 1024, config: { infrastructure: { provider: "proxmox", vmid: 1 }, model: "not a model!" } } });
     const { id } = await begin(deps);
