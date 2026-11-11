@@ -2,6 +2,7 @@ import type { MoveCounts } from "../guest-jobs";
 import {
   advanceMove,
   moveOffer,
+  redactSetupLog,
   startMove,
   sweepMoves,
   toMoveView,
@@ -62,6 +63,7 @@ function makeWorld(opts: { instance?: Partial<InstanceRow> } = {}) {
     oldStartOk: {} as Record<string, boolean>,
     newStartOk: true,
     deleteOk: true,
+    setupLog: null as string | null,
     nextId: 1,
   };
   const store: MoveStore = {
@@ -153,6 +155,10 @@ function makeWorld(opts: { instance?: Partial<InstanceRow> } = {}) {
     },
     async shutdownOldVm() { w.calls.push("shutdown-old-vm"); return ok(""); },
     async startOldVm() { w.calls.push("start-old-vm"); return ok(""); },
+    async readNewSetupLog(_u, agent) {
+      w.calls.push(`read-setup-log:${agent.id}`);
+      return w.setupLog;
+    },
     async deleteNewComputer(_u, agent) {
       w.calls.push("delete-new");
       if (!w.deleteOk) return { ok: false, message: "cannot" };
@@ -359,6 +365,30 @@ describe("failure paths", () => {
     expect(m.state).toBe("failed");
     expect(w.deleted).toEqual(["agent-1"]);
     expect(w.instance.status).toBe("running");
+  });
+
+  it("keeps the new computer's setup log on the failed move, read before the computer is removed", async () => {
+    const { w, deps } = makeWorld();
+    w.observe = (a) => ({ ...a, status: "error", error: "provisioning failed" });
+    w.setupLog = "==> 5e/7 Hermes Agent\n ! the Hermes installer failed\n";
+    const { id } = await begin(deps);
+    await advanceMove(id, deps);
+    const m = (await advanceMove(id, deps))!;
+    expect(m.state).toBe("failed");
+    expect(m.failure?.setupLog).toBe("==> 5e/7 Hermes Agent\n ! the Hermes installer failed");
+    expect(w.calls.indexOf("read-setup-log:agent-1")).toBeLessThan(w.calls.indexOf("delete-new"));
+  });
+
+  it("still removes the new computer when its setup log cannot be read", async () => {
+    const { w, deps } = makeWorld();
+    w.observe = (a) => ({ ...a, status: "error", error: "provisioning failed" });
+    deps.readNewSetupLog = async () => { throw new Error("host unreachable"); };
+    const { id } = await begin(deps);
+    await advanceMove(id, deps);
+    const m = (await advanceMove(id, deps))!;
+    expect(m.state).toBe("failed");
+    expect(m.failure?.setupLog).toBeUndefined();
+    expect(w.deleted).toEqual(["agent-1"]);
   });
 
   it("pack failed: it restarted the old containers itself, so restore the row, delete the new computer, failed", async () => {
@@ -587,5 +617,27 @@ describe("sweepMoves", () => {
     const result = await sweepMoves(1, deps);
     expect(result.started).toBe(0);
     expect(w.moves.get("extra")!.state).toBe("queued");
+  });
+});
+
+describe("redactSetupLog", () => {
+  it("drops colour codes and control characters and keeps the last part", () => {
+    expect(redactSetupLog("\u001b[1m==>\u001b[0m step\r\n\u0007 ok done\n\n")).toBe("==> step\n ok done");
+    const long = redactSetupLog(`${"step ok\n".repeat(1000)}last line`);
+    expect(long.length).toBe(4000);
+    expect(long.endsWith("last line")).toBe(true);
+  });
+
+  it("replaces anything that looks like a key or a token, and keeps paths", () => {
+    const token = ["sk", "live", "0123456789abcdefghijklmnopqrstuv"].join("_");
+    const out = redactSetupLog([
+      `HIVRA_MODEL_KEY=${token} set`,
+      `Authorization: Bearer ${token}`,
+      `curl failed for ${token}`,
+      "die: /home/bux/.hermes/hermes-agent/web/dist missing",
+    ].join("\n"));
+    expect(out).not.toContain(token);
+    expect(out).toContain("HIVRA_MODEL_KEY=[redacted]");
+    expect(out).toContain("/home/bux/.hermes/hermes-agent/web/dist missing");
   });
 });
