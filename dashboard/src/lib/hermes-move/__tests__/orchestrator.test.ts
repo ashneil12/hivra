@@ -126,7 +126,7 @@ function makeWorld(opts: { instance?: Partial<InstanceRow> } = {}) {
       w.launchBodies.push(body);
       w.launchOptions.push(options);
       const res = w.launchResponse();
-      if (res.ok) w.agents.set("agent-1", { id: "agent-1", user_id: USER, status: "provisioning", ip: "10.0.0.5", vmid: 200 });
+      if (res.ok) w.agents.set("agent-1", { id: "agent-1", user_id: USER, status: "provisioning", ip: "10.240.0.5", vmid: 200 });
       return res;
     },
     async observeLaunch(_u, agent) {

@@ -11,8 +11,8 @@ import {
   type MoveCounts,
 } from "../guest-jobs";
 
-const MOVE = "11111111-2222-4333-8444-555555555555";
-const INST = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const MOVE = "00000000-0000-4000-8000-000000000001";
+const INST = "00000000-0000-4000-8000-0000000000a1";
 const SAMPLE_HEX = "0123456789abcdef".repeat(4);
 const KEY = SAMPLE_HEX;
 // A sample signed URL. The query is built at run time so secret scanners do not read it as a credential.
@@ -167,7 +167,8 @@ describe("parseMoveJobStatus", () => {
 });
 
 describe("simulation: pack zipper, upstream acceptance, unpack fixup", () => {
-  const UP = "/tmp/claude-0/-home-user/4404bf8d-b26b-57d5-a5b9-a466bce8b483/scratchpad/upstream/src";
+  // Point HERMES_UPSTREAM_SRC at a Hermes checkout to check against its own importer; otherwise the same rules are re-checked.
+  const UP = process.env.HERMES_UPSTREAM_SRC ?? "";
   it("packs a fake Hermes home, upstream accepts it, fixup + verify work", () => {
     const root = mkdtempSync(join(tmpdir(), "sim-"));
     try {
@@ -200,7 +201,7 @@ describe("simulation: pack zipper, upstream acceptance, unpack fixup", () => {
       // upstream acceptance: the real functions if they import, else the same rules
       const check = py(["-c", `
 import sys, zipfile
-sys.path.insert(0, ${JSON.stringify(UP)})
+if ${JSON.stringify(UP)}: sys.path.insert(0, ${JSON.stringify(UP)})
 zf = zipfile.ZipFile(sys.argv[1])
 try:
     from hermes_cli.backup_restore import _validate_backup_zip, _detect_prefix
