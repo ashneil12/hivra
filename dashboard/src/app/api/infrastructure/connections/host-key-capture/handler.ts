@@ -52,7 +52,7 @@ export async function handleHostKeyCapture(request: NextRequest, dependencies: P
   const parsed = body.ok ? CaptureRequestSchema.safeParse(body.body) : null;
   if (!parsed?.success) return noStore(apiError("Enter a hostname or IP address and a port.", 400));
   const { sshHost, sshPort } = parsed.data;
-  const key = await deps.capture({ sshHost, sshPort });
+  const key = await deps.capture({ sshHost, sshPort, userId });
   if (key) return noStore(apiSuccess({ hostKey: { publicKey: key.publicKey, fingerprintSha256: key.fingerprintSha256 } }));
   // One text and one delay for every kind of failure.
   const remaining = startedAt + HOST_KEY_CAPTURE_FAILURE_DELAY_MS - deps.now();

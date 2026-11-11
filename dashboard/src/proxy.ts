@@ -132,6 +132,11 @@ export const config = {
      * - exactly /api/infrastructure/server-enrollments/report: the server
      *   setup script's one-time code is authenticated by the receiver, not as
      *   a Clerk token. The owner routes beside it stay covered by Clerk.
+     * - exactly /api/infrastructure/home-connector/install and
+     *   /api/infrastructure/home-connector/enrol: a machine with no session
+     *   fetches the installer and redeems its one-time code. Both are public
+     *   by design and answer 404 unless the home connector flag is on; the
+     *   owner routes beside them stay covered.
      * - exactly /enroll, /enroll/uninstall, /enroll/script and
      *   /enroll/script.sha256 (page matcher only): `curl … | sudo bash`
      *   downloads the setup script with no session. Siblings stay covered.
@@ -166,8 +171,8 @@ export const config = {
      * the box's own dashboard in a cross-origin iframe (WebuiIframe). No SSE
      * route needs a bypass, so there is no SSE bypass list.
      */
-    "/((?!_next|api/instances/[^/]+/aeon-gate$|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/activity/ingest$|api/activity/collector/renew$|api/agent-link$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/api/((?!instances/[^/]+/aeon-gate$|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|activity/ingest$|activity/collector/renew$|agent-link$).*)",
+    "/((?!_next|api/instances/[^/]+/aeon-gate$|api/infrastructure/first-boot/enroll$|api/infrastructure/server-enrollments/report$|api/infrastructure/home-connector/install$|api/infrastructure/home-connector/enrol$|api/activity/ingest$|api/activity/collector/renew$|api/agent-link$|enroll$|enroll/uninstall$|enroll/script$|enroll/script\\.sha256$|apple-icon|pwa-icon-192|pwa-icon-512|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/api/((?!instances/[^/]+/aeon-gate$|infrastructure/first-boot/enroll$|infrastructure/server-enrollments/report$|infrastructure/home-connector/install$|infrastructure/home-connector/enrol$|activity/ingest$|activity/collector/renew$|agent-link$).*)",
     "/trpc/(.*)",
     "/((?!_next/).*%[0-9A-Fa-f]{2}.*)",
   ],
