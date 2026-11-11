@@ -90,7 +90,7 @@ describe("LaunchJourney", () => {
 
     await screen.findByRole("heading", { name: "Review and launch Ubuntu Desktop 1" });
     expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change size" }));
     const customize = screen.getByRole("button", { name: "Customize" });
     expect(customize).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(customize);
@@ -110,7 +110,7 @@ describe("LaunchJourney", () => {
     renderAtCapacity();
 
     await screen.findByRole("heading", { name: "Review and launch Ubuntu Desktop 1" });
-    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change size" }));
     expect(screen.getByText(/Reserved memory is always kept for this computer/)).toBeInTheDocument();
     expect(screen.queryByText(/balloon floor/)).not.toBeInTheDocument();
   });
@@ -211,32 +211,71 @@ describe("LaunchJourney", () => {
     expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "review");
   });
 
-  it("shows Hivra's recommended settings first and opens the full controls behind one Change button", async () => {
+  it("lists each setting with its own Change button, and opens only that one", async () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
     await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
 
-    expect(screen.getByRole("heading", { name: "Recommended settings" })).toBeInTheDocument();
-    const settings = screen.getByLabelText("Recommended settings", { selector: "dl" });
-    expect(within(settings).getByText("Where it runs")).toBeInTheDocument();
-    expect(within(settings).getByText("Hivra Cloud")).toBeInTheDocument();
-    expect(within(settings).getByText("Size")).toBeInTheDocument();
-    expect(within(settings).getByText("Model access")).toBeInTheDocument();
-    expect(within(settings).getByText("Memory")).toBeInTheDocument();
-    // Advanced is collapsed: no size presets, no model pickers.
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByText("Recommended settings")).not.toBeInTheDocument();
+    expect(screen.queryByText("When you launch")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Cost", { selector: "dl" })).toBeInTheDocument();
+    const settings = within(screen.getByRole("group", { name: "Launch settings" }));
+    for (const label of ["Where it runs", "Size", "Model access", "Memory"]) expect(settings.getByText(label)).toBeInTheDocument();
+    expect(settings.getByText("Hivra Cloud")).toBeInTheDocument();
+    // Size stays collapsed until its own Change is pressed; Model access choices are one click.
     expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Model access" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Change" })).toHaveLength(1);
-
-    const change = screen.getByRole("button", { name: "Change" });
-    expect(change).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(change);
-    expect(screen.getByRole("heading", { name: "Advanced" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Size" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Hide advanced" }));
-    expect(screen.getByRole("heading", { name: "Recommended settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Change model access/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hide advanced" })).not.toBeInTheDocument();
+
+    // Size opens on its own.
+    const size = screen.getByRole("button", { name: "Change size" });
+    expect(size).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(size);
+    expect(size).toHaveAttribute("aria-expanded", "true");
+    expect(size).toHaveTextContent("Done");
+    expect(screen.getByRole("group", { name: "Size" })).toBeInTheDocument();
+
+    // Model access choices are always visible in their row, with no Change step.
+    expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Size" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reserved CPU")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Done with size" }));
+    expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
+    // Where it runs was never opened.
+    expect(screen.getByRole("button", { name: "Change where it runs" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("switches model access to your own key in one click, and back to credits", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+    await screen.findByRole("heading", { name: "Review and launch Codex 1" });
+
+    const group = within(screen.getByRole("group", { name: "Model access" }));
+    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+    fireEvent.click(group.getByRole("button", { name: /^Use my/ }));
+    expect(await screen.findByLabelText(/API key$/)).toBeInTheDocument();
+    fireEvent.click(group.getByRole("button", { name: /^Hivra credits/ }));
+    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+  });
+
+  it("turns the browser on or off with one click, and Memory has no browser switch", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+    await screen.findByRole("heading", { name: "Review and launch Codex 1" });
+
+    const browser = await screen.findByRole("switch", { name: "Browser for Codex" });
+    const before = browser.getAttribute("aria-checked");
+    fireEvent.click(browser);
+    expect(screen.getByRole("switch", { name: "Browser for Codex" })).toHaveAttribute("aria-checked", before === "true" ? "false" : "true");
+    fireEvent.click(screen.getByRole("switch", { name: "Browser for Codex" }));
+    expect(screen.getByRole("switch", { name: "Browser for Codex" })).toHaveAttribute("aria-checked", before);
+    expect(screen.queryByRole("switch", { name: /Honcho/ })).not.toBeInTheDocument();
   });
 
   it("fills the name in and lets it be edited inline in Review", async () => {
@@ -288,7 +327,6 @@ describe("LaunchJourney", () => {
     expect(screen.queryByRole("link", { name: /Browse every agent/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${tile}`) }));
     expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change" }));
     expect(screen.getByRole("group", { name: "Model access" })).toBeInTheDocument();
   });
 
@@ -313,6 +351,20 @@ describe("LaunchJourney", () => {
     expect(screen.queryByRole("button", { name: /^Omarchy/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Windows/ })).toBeInTheDocument();
+  });
+
+  it("keeps the choices a Windows setup must make open, with no Change for where it runs", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Windows/ }));
+    await screen.findByRole("heading", { name: /^Review and launch Windows/ });
+
+    expect(screen.getByRole("heading", { name: "Your launch" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Windows hosting destination" })).toBeInTheDocument();
+    expect(screen.getByText("Installation media")).toBeInTheDocument();
+    expect(screen.getByText("Rights")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change where it runs" })).not.toBeInTheDocument();
+    expect(screen.queryByText("When you launch")).not.toBeInTheDocument();
   });
 
   it("offers the prepared desktop computer where this deployment holds a slot", async () => {

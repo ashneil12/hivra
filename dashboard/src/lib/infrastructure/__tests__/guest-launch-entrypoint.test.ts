@@ -228,7 +228,7 @@ it("forwards the guest installer's reporter marker into the host provisioning lo
   const hostSource = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
   const statement = hostSource.match(/^guest_launch_document \| timeout [^\n]*"\$\{GSSH\[@\]\}" \\\n[^\n]*"ubuntu@\$\{IP\}" \\\n[^\n]*hivra-install-agent\.py" >&2 \\\n\s*\|\| fail "[^"\n]*"$/m)?.[0];
   expect(statement).toBeDefined();
-  const pollSource = readFileSync(path.join(process.cwd(), "src/app/api/hivra/agents/[id]/route.ts"), "utf8");
+  const pollSource = readFileSync(path.join(process.cwd(), "src/lib/hivra/proxmox-provision-poll.ts"), "utf8");
   const pattern = pollSource.match(/const ACTIVITY_COLLECTOR_MARKER_PATTERN = "([^"]+)";/)?.[1];
   expect(pattern).toBe("^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$");
   const installer = path.join(process.cwd(), "provisioner/hivra-install-agent.py");

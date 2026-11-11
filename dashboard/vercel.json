@@ -279,6 +279,10 @@
     {
       "path": "/api/cron/venice-promo-weekly-report",
       "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/cron/advance-hermes-moves",
+      "schedule": "*/2 * * * *"
     }
   ]
 }

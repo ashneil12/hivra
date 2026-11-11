@@ -400,6 +400,11 @@ const recipes = Object.freeze({
     workerSha256: "5468a8903917bd64c57f065dba5b89fd1c5ca131ecfd9015507dde33180075b6",
     workerSize: 45195,
   }),
+  "2026.11.11.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release runs the Hermes gateway (scheduled tasks and chat channels) on Hermes computers, at launch and through the runtime update. The worker only advances its release labels.
+    workerSha256: "a0c9fee41a68a6a73b3282c882673fe34fd3902da6cedb90febb3adfaa58d242",
+    workerSize: 45195,
+  }),
 });
 
 type Version = keyof typeof recipes;

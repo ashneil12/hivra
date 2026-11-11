@@ -125,7 +125,6 @@ import {
   formatLaunchSize,
   isolationDetail,
   isPaidPlan,
-  launchChangesSummary,
   launchFit,
   launchNameProblem,
   launchProfileFitSubject,
@@ -726,8 +725,8 @@ export function LaunchJourney(
   const [existingNames, setExistingNames] = useState<string[] | null>(null);
   const [whereExpanded, setWhereExpanded] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
-  // "Change" on Review opens the full settings (Advanced) inline.
-  const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  // Each setting on Review has its own Change button; several can be open.
+  const [sizeExpanded, setSizeExpanded] = useState(false);
   const [windowsImages, setWindowsImages] = useState<Array<{ volume: string; name: string; sizeBytes: number; modifiedAtSeconds: number; fileIdentitySha256: string; source: "unknown" | "windows-11" | "windows-server-evaluation" }>>([]);
   const [windowsIsoStorages, setWindowsIsoStorages] = useState<Array<{ id: string; label: string }>>([]);
   const [windowsImagesLoading, setWindowsImagesLoading] = useState(false);
@@ -1662,7 +1661,7 @@ export function LaunchJourney(
     autoNameRef.current = existingNames ? null : { launchRequestId: fresh.launchRequestId, name };
     setWhereExpanded(false);
     setCustomizeOpen(false);
-    setAdvancedExpanded(false);
+    setSizeExpanded(false);
     // A DigitalOcean team stays chosen across agents it runs, and the team a
     // DigitalOcean card handed over is chosen for the first one.
     const keptTeam = digitalOceanTeamFor(profileId, draft.capacity.mode === "digitalocean"
@@ -1810,7 +1809,7 @@ export function LaunchJourney(
     clearLaunchDraft(storageOwner);
     writeLaunchDraft(next, storageOwner);
     setRestoredDestinationFor(null);
-    setAdvancedExpanded(false);
+    setSizeExpanded(false);
     destination.setMode("hivra-managed");
     setDraft(next);
     writeStageHistory(next.stage, "replace");
@@ -2197,12 +2196,13 @@ export function LaunchJourney(
     : digitalOceanLane ? "Launch and start billing"
     : `Launch ${currentProfile?.name ?? ""}`.trim();
 
-  // Review shows Hivra's recommended settings as a short summary. "Change"
-  // opens the full controls (Advanced). Some launches have a choice only the
+  // Review lists each setting with its current value and its own Change
+  // button (on/off settings are switches). Some launches have a choice only the
   // owner can make (the Windows ISO, a DigitalOcean team, a server to run on),
-  // so those open it and keep it open.
+  // so those keep their controls open.
   const advancedForced = draft.profileId === "windows" || digitalOceanLane || whereForcedOpen;
-  const advancedOpen = advancedForced || advancedExpanded;
+  const sizeChangeable = !wholeProviderComputer && presetOptions.length > 0;
+  const sizeOpen = sizeChangeable && sizeExpanded;
   const digitalOceanSize = digitalOceanLane && digitalOceanTarget ? digitalOceanSizeFor(digitalOceanTarget, draft.digitalOcean) : null;
   const summarySize = digitalOceanLane
     ? digitalOceanSize ? `${digitalOceanSizeLabel(digitalOceanSize)} DigitalOcean sandbox` : "No size available"
@@ -2447,21 +2447,9 @@ export function LaunchJourney(
           </div>
           <section className={styles.settings} aria-labelledby="launch-settings-heading">
             <div className={styles.settingsHeader}>
-              <h2 id="launch-settings-heading">{advancedForced ? "Your launch" : advancedOpen ? "Advanced" : "Recommended settings"}</h2>
-              {!advancedForced ? (
-                <button
-                  type="button"
-                  className={styles.inlineAction}
-                  aria-expanded={advancedOpen}
-                  aria-controls="launch-advanced-settings"
-                  onClick={() => setAdvancedExpanded(open => !open)}
-                >
-                  {advancedOpen ? "Hide advanced" : "Change"}
-                </button>
-              ) : null}
+              <h2 id="launch-settings-heading">{advancedForced ? "Your launch" : "Settings"}</h2>
             </div>
-            {advancedOpen ? (
-              <div id="launch-advanced-settings" className={styles.planCard} role="group" aria-label="Launch plan">
+            <div id="launch-settings" className={styles.planCard} role="group" aria-label="Launch settings">
               {draft.profileId !== "windows" ? (
                 <div className={styles.planRow}>
                   <span className={styles.planLabel}>Where it runs</span>
@@ -2476,6 +2464,7 @@ export function LaunchJourney(
                         className={styles.inlineAction}
                         aria-expanded={whereOpen}
                         aria-controls="launch-where-it-runs"
+                        aria-label={whereOpen ? "Done with where it runs" : "Change where it runs"}
                         onClick={() => setWhereExpanded(open => !open)}
                       >
                         {whereOpen ? "Done" : "Change"}
@@ -2509,7 +2498,23 @@ export function LaunchJourney(
                 </div>
               ) : null}
 
-              {digitalOceanLane ? (digitalOceanTarget && digitalOceanHarness ? (
+              {draft.profileId === "windows" ? <>
+                <div className={styles.planRow}>
+                  <span className={styles.planLabel}>Installation media</span>
+                  <span className={styles.planSummary}>
+                    <strong>{draft.windowsIsoVolume ?? "No ISO selected"}</strong>
+                    <small>{draft.windowsIsoSource === "windows-server-evaluation" ? "Windows Server Evaluation — evaluation only. " : ""}Already stored on your Proxmox host; Hivra does not upload or redistribute it.</small>
+                  </span>
+                </div>
+                <div className={styles.planRow}>
+                  <span className={styles.planLabel}>Rights</span>
+                  <span className={styles.planSummary}>
+                    <strong>{draft.windowsRightsAttested ? "Attestation will be stamped to your account at launch." : "Not confirmed"}</strong>
+                  </span>
+                </div>
+              </> : null}
+
+              {digitalOceanLane ? (digitalOceanTarget && digitalOceanHarness ? (<>
                 <DigitalOceanLaunchPlan
                   target={digitalOceanTarget}
                   harness={digitalOceanHarness}
@@ -2522,61 +2527,82 @@ export function LaunchJourney(
                   problem={modelProblem}
                   balance={digitalOceanBalance}
                 />
-              ) : null) : (<>
+                <div className={styles.planRow}>
+                  <span className={styles.planLabel}>Size</span>
+                  <span className={styles.planSummary}><strong>{summarySize}</strong></span>
+                </div>
+                {modelSummary ? (
+                  <div className={styles.planRow}>
+                    <span className={styles.planLabel}>Model access</span>
+                    <span className={styles.planSummary}><strong>{modelSummary}</strong></span>
+                  </div>
+                ) : null}
+              </>) : null) : (<>
               <div className={styles.planRow}>
                 <span className={styles.planLabel}>Size</span>
                 <span className={styles.planValue}>
-                  {wholeProviderComputer ? (
-                    <span className={styles.planSummary}>
-                      <strong>The whole server</strong>
-                      <small>Launch uses this server&apos;s CPU and memory as they are. It doesn&apos;t resize the server or reserve a smaller slice.</small>
-                    </span>
-                  ) : presetOptions.length === 0 ? (
-                    <span className={styles.planSummary}><strong>{sizeSummary}</strong></span>
-                  ) : (
-                    <span className={styles.sizeChooser}>
-                      <span className={styles.presets} role="group" aria-label="Size">
-                        {presetOptions.map(preset => {
-                          const fits = preset.fits;
-                          const selected = currentPreset?.id === preset.id;
-                          return (
-                            <button
-                              key={preset.id}
-                              type="button"
-                              aria-pressed={selected}
-                              // The chosen size is never shown pressed but
-                              // disabled; the blocker below says what to change.
-                              disabled={!fits && !selected}
-                              onClick={() => choosePreset(preset)}
-                            >
-                              <strong>{preset.label}</strong>
-                              <small>{formatLaunchSize(preset.resources.cpu, preset.resources.ram)}</small>
-                              {!fits ? <small>{destination.mode === "hivra-managed" ? "Over your plan" : "Too big for this server"}</small> : null}
-                            </button>
-                          );
-                        })}
-                      </span>
-                      <strong className={styles.sizeSummary}>{sizeSummary}</strong>
-                      {cappedNote ? <small>{cappedNote}</small> : null}
-                      <small>{gvisorComputer
-                        ? "The sandbox always keeps its full CPU and memory, and never uses more."
-                        : pinnedSize
-                          ? `${currentProfile.name} always keeps this CPU and memory, and never uses more.`
-                          : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>
-                      <button
-                        type="button"
-                        className={styles.inlineAction}
-                        aria-expanded={customizeOpen}
-                        aria-controls="launch-customize-size"
-                        onClick={() => setCustomizeOpen(open => !open)}
-                      >
-                        {customizeOpen ? "Hide custom size" : "Customize"}
-                      </button>
-                    </span>
-                  )}
+                  <span className={styles.planSummary}>
+                    <strong>{summarySize}</strong>
+                    {wholeProviderComputer ? <small>Launch uses this server&apos;s CPU and memory as they are. It doesn&apos;t resize the server or reserve a smaller slice.</small> : null}
+                  </span>
+                  {sizeChangeable ? (
+                    <button
+                      type="button"
+                      className={styles.inlineAction}
+                      aria-expanded={sizeOpen}
+                      aria-controls="launch-size-choices"
+                      aria-label={sizeOpen ? "Done with size" : "Change size"}
+                      onClick={() => setSizeExpanded(open => !open)}
+                    >
+                      {sizeOpen ? "Done" : "Change"}
+                    </button>
+                  ) : null}
                 </span>
               </div>
-              {customizeOpen && !wholeProviderComputer && presetOptions.length > 0 ? (
+              {sizeOpen ? (
+                <div id="launch-size-choices" className={styles.planPanel}>
+                  <span className={styles.sizeChooser}>
+                    <span className={styles.presets} role="group" aria-label="Size">
+                      {presetOptions.map(preset => {
+                        const fits = preset.fits;
+                        const selected = currentPreset?.id === preset.id;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            aria-pressed={selected}
+                            // The chosen size is never shown pressed but
+                            // disabled; the blocker below says what to change.
+                            disabled={!fits && !selected}
+                            onClick={() => choosePreset(preset)}
+                          >
+                            <strong>{preset.label}</strong>
+                            <small>{formatLaunchSize(preset.resources.cpu, preset.resources.ram)}</small>
+                            {!fits ? <small>{destination.mode === "hivra-managed" ? "Over your plan" : "Too big for this server"}</small> : null}
+                          </button>
+                        );
+                      })}
+                    </span>
+                    <strong className={styles.sizeSummary}>{sizeSummary}</strong>
+                    {cappedNote ? <small>{cappedNote}</small> : null}
+                    <small>{gvisorComputer
+                      ? "The sandbox always keeps its full CPU and memory, and never uses more."
+                      : pinnedSize
+                        ? `${currentProfile.name} always keeps this CPU and memory, and never uses more.`
+                        : "Reserved memory is always kept for this computer. It can use more, up to the maximum, only while the host has spare room."}</small>
+                    <button
+                      type="button"
+                      className={styles.inlineAction}
+                      aria-expanded={customizeOpen}
+                      aria-controls="launch-customize-size"
+                      onClick={() => setCustomizeOpen(open => !open)}
+                    >
+                      {customizeOpen ? "Hide custom size" : "Customize"}
+                    </button>
+                  </span>
+                </div>
+              ) : null}
+              {sizeOpen && customizeOpen ? (
                 <div id="launch-customize-size" className={`${styles.planPanel} ${styles.advanced}`}>
                   <p className={styles.customizeNote}>{destination.mode === "hivra-managed"
                     ? "Reserved CPU and memory count against your plan's pool. Cores are shared, so speed isn't guaranteed."
@@ -2611,28 +2637,35 @@ export function LaunchJourney(
               ) : null}
 
               {hasBrowser && draft.profileId ? (
-                <label className={`${styles.planRow} ${styles.browserToggle}`}>
+                <div className={styles.planRow}>
                   <span className={styles.planLabel}>Browser</span>
                   <span className={styles.planValue}>
-                    <span className={styles.browserChoice}>
-                      <input type="checkbox" checked={draft.browser} onChange={event => chooseBrowser(event.target.checked)} />
-                      <span>
-                        <strong>Browser for {currentProfile.name}</strong>
-                        <small>
-                          {browserCopy(draft.profileId)} Needs at least {formatLaunchSize(browserFloorFor(draft.profileId).cpu, browserFloorFor(draft.profileId).ram)} with
-                          the browser, or {formatLaunchSize(baseFloorFor(draft.profileId).cpu, baseFloorFor(draft.profileId).ram)} without it.
-                          {destination.mode === "hivra-managed" && plan && !isPaidPlan(plan) ? " On Hivra Cloud, the browser needs a paid plan." : null}
-                        </small>
-                      </span>
+                    <span className={styles.planSummary}>
+                      <strong>{draft.browser ? "On" : "Off"}</strong>
+                      <small id="launch-browser-help">
+                        {browserCopy(draft.profileId)} Needs at least {formatLaunchSize(browserFloorFor(draft.profileId).cpu, browserFloorFor(draft.profileId).ram)} with
+                        the browser, or {formatLaunchSize(baseFloorFor(draft.profileId).cpu, baseFloorFor(draft.profileId).ram)} without it.
+                        {destination.mode === "hivra-managed" && plan && !isPaidPlan(plan) ? " On Hivra Cloud, the browser needs a paid plan." : null}
+                      </small>
                     </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      className={styles.switch}
+                      aria-checked={draft.browser}
+                      aria-label={`Browser for ${currentProfile.name}`}
+                      aria-describedby="launch-browser-help"
+                      onClick={() => chooseBrowser(!draft.browser)}
+                    />
                   </span>
-                </label>
+                </div>
               ) : null}
 
               {modelAccessShown && draft.profileId ? (
                 <div className={styles.planRow}>
                   <span className={styles.planLabel} aria-hidden>Model access</span>
                   <span className={styles.planValue}>
+                    {modelSummary ? <span className={styles.planSummary}><strong>{modelSummary}</strong></span> : null}
                     <ModelAccessControl
                       profileId={draft.profileId}
                       agentName={draft.name}
@@ -2650,55 +2683,38 @@ export function LaunchJourney(
                   </span>
                 </div>
               ) : null}
-              {hermesMemoryKey ? (
-                <label className={`${styles.planRow} ${styles.browserToggle}`}>
+              {hermes ? (
+                <div className={styles.planRow}>
                   <span className={styles.planLabel}>Memory</span>
                   <span className={styles.planValue}>
-                    <span className={styles.browserChoice}>
-                      <input
-                        type="checkbox"
-                        checked={draft.sendMemoryKey}
-                        onChange={event => updateDraft({ sendMemoryKey: event.target.checked })}
-                      />
-                      <span>
-                        <strong>Send my saved Honcho key {savedKeyHint(hermesMemoryKey)} to {draft.name.trim() || "Hermes"}&apos;s computer</strong>
-                        <small>It gives Hermes long-term memory in your Honcho account, for this launch only. Leave it off to launch without it.</small>
-                      </span>
+                    <span className={styles.planSummary}>
+                      <strong>{hermesMemoryKey && draft.sendMemoryKey
+                        ? `Honcho, with your saved key ${savedKeyHint(hermesMemoryKey)}, sent to ${draft.name.trim() || "Hermes"}'s computer`
+                        : "Kept on its own computer"}</strong>
+                      {hermesMemoryKey ? <small id="launch-memory-help">It gives Hermes long-term memory in your Honcho account, for this launch only. Leave it off to launch without it.</small> : null}
                     </span>
+                    {hermesMemoryKey ? (
+                      <button
+                        type="button"
+                        role="switch"
+                        className={styles.switch}
+                        aria-checked={draft.sendMemoryKey}
+                        aria-label={`Send my saved Honcho key ${savedKeyHint(hermesMemoryKey)} to ${draft.name.trim() || "Hermes"}'s computer`}
+                        aria-describedby="launch-memory-help"
+                        onClick={() => updateDraft({ sendMemoryKey: !draft.sendMemoryKey })}
+                      />
+                    ) : null}
                   </span>
-                </label>
+                </div>
               ) : null}
               </>)}
-              </div>
-            ) : null}
-            {!advancedOpen || advancedForced ? (
-              <dl className={styles.review} aria-label="Recommended settings">
-                <div><dt>Where it runs</dt><dd>{whereTitle}{whereDetail ? <small>{whereDetail}</small> : null}</dd></div>
-                <div><dt>Size</dt><dd>{summarySize}</dd></div>
-                {modelAccessShown && modelSummary ? <div><dt>Model access</dt><dd>{modelSummary}</dd></div> : null}
-                {hasBrowser ? <div><dt>Browser</dt><dd>{browserOn ? "On" : "Off"}</dd></div> : null}
-                {draft.profileId === "windows" ? <>
-                  <div><dt>Installation media</dt><dd>{draft.windowsIsoVolume ?? "No ISO selected"}<small>{draft.windowsIsoSource === "windows-server-evaluation" ? "Windows Server Evaluation — evaluation only. " : ""}Already stored on your Proxmox host; Hivra does not upload or redistribute it.</small></dd></div>
-                  <div><dt>Rights</dt><dd>{draft.windowsRightsAttested ? "Attestation will be stamped to your account at launch." : "Not confirmed"}</dd></div>
-                </> : null}
-                {hermes ? <div><dt>Memory</dt><dd>{hermesMemoryKey && draft.sendMemoryKey
-                  ? `Honcho, with your saved key ${savedKeyHint(hermesMemoryKey)}, sent to ${draft.name.trim()}'s computer`
-                  : "Kept on its own computer"}</dd></div> : null}
-              </dl>
-            ) : null}
+            </div>
           </section>
-          <dl className={styles.review} aria-label="Cost and changes">
+          <dl className={styles.review} aria-label="Cost">
             <div><dt>Cost</dt><dd>{digitalOceanLane
               ? <>DigitalOcean bills this sandbox per second while it runs, to your team.{digitalOceanBalance.balance && digitalOceanBalance.balance.state !== "unreadable"
                 ? <small>Prepaid balance {formatDigitalOceanBalance(digitalOceanBalance.balance.balance)}</small> : null}</>
               : cost}</dd></div>
-            <div><dt>When you launch</dt><dd>{digitalOceanLane
-              ? `Creates one DigitalOcean sandbox on ${digitalOceanTarget?.displayName ?? "your team"} and starts it. DigitalOcean bills from now. Hivra sends it a short setup note as the first chat message. Nothing is bought from Hivra.`
-              : launchChangesSummary({
-              profileId: draft.profileId,
-              substrate,
-              targetName: destination.selectedTarget?.displayName ?? null,
-            })}</dd></div>
           </dl>
           <details className={styles.technical}>
             <summary>More details</summary>
@@ -2743,9 +2759,6 @@ export function LaunchJourney(
               {paywallMoments}
             </div>
           ) : null}
-          {modelProblem && !capacityBlocker && !advancedOpen ? <div className={styles.blocker} role="status"><AlertTriangle size={16} aria-hidden /><span><strong>{modelProblem}</strong>
-            <span className={styles.blockerActions}><button type="button" onClick={() => setAdvancedExpanded(true)}>Change model access</button></span>
-          </span></div> : null}
           {draft.error ? <div className={styles.blocker} role="alert"><AlertTriangle size={16} aria-hidden /><span><strong>{draft.error}</strong>
             {draft.errorAction ? <span className={styles.blockerActions}>
               <Link href={draft.errorAction.href}>{draft.errorAction.label}</Link>
