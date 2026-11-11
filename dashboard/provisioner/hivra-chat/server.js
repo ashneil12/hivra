@@ -61,7 +61,7 @@ function readAgentKind() {
   // Root-owned native/computer services bind this gateway to their profile. A
   // writable HOME selector must not switch their authentication/routes back to
   // an agent runtime with chat or account-login surfaces.
-  if (["deepseek-harness", "linux-desktop"].includes(process.env.HIVRA_AGENT_KIND)) {
+  if (["deepseek-harness", "linux-desktop", "linux-server"].includes(process.env.HIVRA_AGENT_KIND)) {
     return process.env.HIVRA_AGENT_KIND;
   }
   try {
@@ -78,8 +78,9 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
+  : _agentKindRaw === "linux-server" ? "linux-server"
   : "claude";
-const COMPUTER_PROFILE = AGENT_KIND === "linux-desktop";
+const COMPUTER_PROFILE = AGENT_KIND === "linux-desktop" || AGENT_KIND === "linux-server";
 const configuredWorkspace = process.env.HIVRA_WORKSPACE_ROOT
   || (COMPUTER_PROFILE ? path.join(HOME, "Hivra") : HOME);
 const WORKSPACE_ROOT = path.resolve(configuredWorkspace);
@@ -985,6 +986,72 @@ function handleClaudeAppRemove(res, body) {
   claudeAppHelper(["remove"], 60000, (error, result) => {
     if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The Claude app could not be removed." });
     jsonRes(res, 200, { ok: true });
+  });
+}
+
+// The owner's clipboard switch for the desktop (off by default). Selkies' own
+// clipboard stays off; text moves only when the owner presses Paste in or Copy
+// out, one request each, through the same helper and its exact sudoers verbs.
+const CLIPBOARD_MAX_BYTES = 256 * 1024;
+const CLIPBOARD_ERRORS = {
+  clipboard_off: [409, "The clipboard is off for this computer. Turn it on first."],
+  desktop_not_running: [409, "The desktop is not running."],
+  too_large: [413, "That is more than 256 KB of text."],
+  not_text: [400, "Only text can be pasted into the desktop."],
+};
+function clipboardFailure(res, result, fallback) {
+  const known = result && result.ok === false && CLIPBOARD_ERRORS[result.error];
+  if (known) return jsonRes(res, known[0], { error: known[1] });
+  return jsonRes(res, 502, { error: fallback });
+}
+function handleClipboardSwitch(res, body) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the desktop clipboard is not available on this computer" });
+  let enabled = null;
+  try { const requested = JSON.parse(body || "{}").enabled; enabled = typeof requested === "boolean" ? requested : null; } catch {}
+  if (enabled === null) return jsonRes(res, 400, { error: "enabled must be true or false" });
+  claudeAppHelper(["clipboard", enabled ? "on" : "off"], 15000, (error, result) => {
+    if (error || !result || result.ok !== true) return jsonRes(res, 502, { error: "The clipboard could not be switched." });
+    jsonRes(res, 200, { ok: true, clipboard: result.clipboard === true });
+  });
+}
+function handleClipboardPaste(req, res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the desktop clipboard is not available on this computer" });
+  let body = "";
+  let tooLarge = false;
+  req.setEncoding("utf8");
+  req.on("data", (chunk) => { if (tooLarge) return; body += chunk; if (body.length > CLIPBOARD_MAX_BYTES * 8) { tooLarge = true; body = ""; } });
+  req.on("end", () => {
+    if (tooLarge) return jsonRes(res, 413, { error: CLIPBOARD_ERRORS.too_large[1] });
+    let text = null;
+    try { const requested = JSON.parse(body || "{}").text; text = typeof requested === "string" ? requested : null; } catch {}
+    if (text === null) return jsonRes(res, 400, { error: "text is required" });
+    const bytes = Buffer.from(text, "utf8");
+    if (bytes.length > CLIPBOARD_MAX_BYTES) return jsonRes(res, 413, { error: CLIPBOARD_ERRORS.too_large[1] });
+    const child = spawn("sudo", ["-n", CLAUDE_APP_HELPER, "clipboard-put"], { env: AGENT_ENV, stdio: ["pipe", "pipe", "ignore"] });
+    let out = "";
+    let answered = false;
+    const answer = (fn) => { if (!answered) { answered = true; clearTimeout(timer); fn(); } };
+    const timer = setTimeout(() => { child.kill("SIGKILL"); answer(() => jsonRes(res, 504, { error: "The desktop did not take the text in time." })); }, 20000);
+    child.stdout.on("data", (chunk) => { if (out.length < 4096) out += chunk; });
+    child.on("error", () => answer(() => jsonRes(res, 502, { error: "The text could not be pasted into the desktop." })));
+    child.on("close", () => answer(() => {
+      let result = null;
+      try { result = JSON.parse(out.trim().split("\n").pop() || "null"); } catch {}
+      if (!result || result.ok !== true) return clipboardFailure(res, result, "The text could not be pasted into the desktop.");
+      jsonRes(res, 200, { ok: true, bytes: result.bytes });
+    }));
+    child.stdin.on("error", () => {});
+    child.stdin.end(bytes);
+  });
+}
+function handleClipboardCopy(res) {
+  if (!claudeAppAvailable()) return jsonRes(res, 404, { error: "the desktop clipboard is not available on this computer" });
+  res.setHeader("Cache-Control", "no-store");
+  execFile("sudo", ["-n", CLAUDE_APP_HELPER, "clipboard-get"], { env: AGENT_ENV, timeout: 20000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    let result = null;
+    try { result = JSON.parse(String(stdout || "").trim().split("\n").pop() || "null"); } catch {}
+    if (!result || result.ok !== true || typeof result.text !== "string") return clipboardFailure(res, result, "The desktop clipboard could not be read.");
+    jsonRes(res, 200, { ok: true, text: result.text });
   });
 }
 
@@ -2443,7 +2510,9 @@ function handleLoginStatus(res) {
       const out = String(stdout || "") + String(stderr || "");
       const loggedIn = /logged in/i.test(out) && !/not logged in/i.test(out);
       const m = out.match(/([\w.+-]+@[\w.-]+\.\w+)/);
-      jsonRes(res, 200, { loggedIn, email: m ? m[1] : null, sub: null });
+      // `fresh` is false while a re-sign-in is still waiting, so the dashboard
+      // does not report success on the old credential.
+      jsonRes(res, 200, { loggedIn, email: m ? m[1] : null, sub: null, fresh: codexSignInFresh() });
     });
     return;
   }
@@ -2507,11 +2576,30 @@ function handleLoginComplete(res, body) {
 // There is no code to paste back — /start returns {url, code}; the dashboard
 // polls /status until loggedIn. The box's own codex does the login; Hivra never
 // sees the token.
+// ---- BEGIN codex-sign-in-freshness ----
+// `codex login status` says "logged in" for the OLD credential too, so a
+// re-sign-in cannot be told from the previous one by status alone. Before a
+// login starts we remember a fingerprint (never the contents) of the auth file;
+// a sign-in counts as fresh only once the CLI itself reports success or the file
+// has changed since.
+function codexAuthFingerprint() {
+  const home = String((AGENT_ENV && AGENT_ENV.CODEX_HOME) || process.env.CODEX_HOME || path.join(HOME, ".codex"));
+  try { return crypto.createHash("sha256").update(fs.readFileSync(path.join(home, "auth.json"))).digest("hex"); } catch { return null; }
+}
+// null: no sign-in attempted; true: new sign-in confirmed; false: still waiting
+// for (or never got) a new one.
+function codexSignInFresh() {
+  if (!loginState || loginState.baseline === undefined) return null;
+  if (loginState.ok || (loginState.done && loginState.exit === 0)) return true;
+  return codexAuthFingerprint() !== loginState.baseline;
+}
+// ---- END codex-sign-in-freshness ----
+
 function handleLoginStartCodex(res) {
   const fresh = !(loginState && loginState.proc && loginState.proc.exitCode === null && !loginState.done);
   if (fresh) {
     const child = spawn(CODEX, ["login", "--device-auth"], { env: AGENT_ENV, cwd: HOME, stdio: ["pipe", "pipe", "pipe"] });
-    loginState = { proc: child, url: null, code: null, out: "", done: false, ok: false, exit: null };
+    loginState = { proc: child, url: null, code: null, out: "", done: false, ok: false, exit: null, baseline: codexAuthFingerprint() };
     const onData = (d) => {
       loginState.out += d.toString();
       // codex colorizes its output (\x1b[..m); strip ANSI so the \b-anchored code
@@ -2543,8 +2631,9 @@ function handleLoginCompleteCodex(res) {
   if (loginState && (loginState.ok || (loginState.done && loginState.exit === 0))) return jsonRes(res, 200, { ok: true });
   execFile(CODEX, ["login", "status"], { env: AGENT_ENV, cwd: HOME, timeout: 8000 }, (e, so, se) => {
     const out = String(so || "") + String(se || "");
-    const ok = /logged in/i.test(out) && !/not logged in/i.test(out);
-    jsonRes(res, ok ? 200 : 202, { ok });
+    // Still signed in on the previous credential is not a finished sign-in.
+    const ok = /logged in/i.test(out) && !/not logged in/i.test(out) && codexSignInFresh() !== false;
+    jsonRes(res, ok ? 200 : 202, ok ? { ok } : { ok, error: "The new sign-in hasn't finished yet. Finish it on the sign-in page, then try again." });
   });
 }
 
@@ -3688,6 +3777,9 @@ const server = http.createServer((req, res) => {
   if (u === "/api/claude-app/install" && req.method === "POST") return authed(req) ? handleClaudeAppInstall(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (u === "/api/claude-app/mode" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppMode(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (u === "/api/claude-app/remove" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClaudeAppRemove(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/clipboard" && req.method === "POST") return authed(req) ? readBody(req, (b) => handleClipboardSwitch(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/clipboard/paste" && req.method === "POST") return authed(req) ? handleClipboardPaste(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (u === "/api/claude-app/clipboard/copy" && req.method === "POST") return authed(req) ? handleClipboardCopy(res) : jsonRes(res, 401, { error: "unauthorized" });
   // Proxied surfaces — token-gated (was: open to anyone with the URL = a free shell).
   // The dedicated remote-desktop broker performs its own one-time PKCE exchange,
   // continuous session introspection and input lifecycle fencing. Preserve the

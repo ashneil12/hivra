@@ -120,6 +120,20 @@ describe("GET", () => {
     expect(mockReadBox).not.toHaveBeenCalled();
   });
 
+  it("covers a My cloud agent like a Proxmox one, with no automatic updates", async () => {
+    process.env.HIVRA_AGENT_CLI_AUTO_UPDATE = "on";
+    mockAgentRow = { ...mockAgentRow, computer_substrate: "provider-vm", deployment_mode: "self-managed" };
+    const body = await (await get("?live=1")).json();
+    expect(body.data).toMatchObject({ supported: true, cli: "codex", tested: TESTED, view: { kind: "behind", installed: "0.140.0" }, autoUpdate: null });
+    expect(mockReadBox).toHaveBeenCalled();
+  });
+
+  it("says nothing for a My cloud desktop", async () => {
+    mockAgentRow = { ...mockAgentRow, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "provider-vm" };
+    expect((await (await get("?live=1")).json()).data).toEqual({ supported: false });
+    expect(mockReadBox).not.toHaveBeenCalled();
+  });
+
   it("reports the rollout switch and the owner's choice", async () => {
     process.env.HIVRA_AGENT_CLI_AUTO_UPDATE = "on";
     mockAgentRow = { ...mockAgentRow, deployment_mode: "self-managed" };
@@ -173,6 +187,12 @@ describe("PATCH", () => {
     expect((await patch({ autoUpdate: true })).status).toBe(400);
     mockAuth.mockResolvedValue({ userId: "someone-else" });
     expect((await patch({ autoUpdate: true })).status).toBe(404);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("refuses an automatic-update choice for a My cloud agent", async () => {
+    mockAgentRow = { ...mockAgentRow, computer_substrate: "provider-vm" };
+    expect((await patch({ autoUpdate: true })).status).toBe(400);
     expect(writes).toHaveLength(0);
   });
 

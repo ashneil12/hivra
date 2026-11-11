@@ -9,14 +9,11 @@ import {
   HivraAgentsPanel,
   type HermesInstanceLite,
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
-import { AGENTS, getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
+import { AGENTS } from "@/lib/hivra/agent-catalog";
 import { buildLaunchHref, launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
-import { getHivraPreview } from "@/lib/hivra/preview-catalog";
 import { AttachedAgentsList } from "./AttachedAgentsList";
 import styles from "./AgentsPage.module.css";
 
-const deepSeekHarness = getCatalogAgent("deepseek-harness");
-const deepSeekPreview = getHivraPreview("deepseek-harness");
 /** Every agent Launch can start, each opening its own plan there. */
 const LAUNCHABLE_AGENTS = AGENTS.flatMap((agent) => {
   const profile = agent.available && agent.resourceKind !== "computer"
@@ -162,14 +159,6 @@ export function AgentsPage() {
               </li>
             ))}
           </ul>
-          <article id="deepseek-harness" className={styles.previewRuntime}>
-            <span className={styles.kicker}>Private preview</span>
-            <h2>{deepSeekHarness?.name || "DeepSeek Harness"}</h2>
-            <p>{deepSeekPreview?.summary}</p>
-            <Link href="/dashboard/runtimes/deepseek-harness">
-              Learn more <ArrowRight size={13} aria-hidden />
-            </Link>
-          </article>
         </div>
       </details>
     </main>

@@ -1,77 +1,80 @@
-.spacer { flex-shrink: 0; height: 100%; transition: width 180ms ease, min-width 180ms ease; }
+.spacer { flex-shrink: 0; height: 100%; transition: width var(--hg-medium) var(--hg-ease), min-width var(--hg-medium) var(--hg-ease); }
 /* z-index sits above page content, including the sticky environment banner
    (z 70), because <main> is not a stacking context; page modals use >= 1000. */
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 90; height: var(--workspace-viewport-height, 100dvh); display: flex; flex-direction: column; width: 248px; padding: max(14px, env(safe-area-inset-top)) 12px 12px; color: var(--ink-black); background: var(--vellum-bg); border-right: 1px solid var(--etched-border); font-family: var(--font-outfit), Outfit, sans-serif; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 90; height: var(--workspace-viewport-height, 100dvh); display: flex; flex-direction: column; width: 248px; padding: max(14px, env(safe-area-inset-top)) 12px 12px; color: var(--ink-black); background: var(--hg-glass); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); border-right: 1px solid var(--hg-stroke); font-family: var(--font-sans); }
 .expanded { width: 248px; }
 .collapsed { width: 72px; }
 .header { flex-shrink: 0; display: flex; min-height: 42px; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 0 7px; }
 .brand { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; }
-.brandMark { font-family: var(--font-grotesk), 'Space Grotesk', sans-serif; font-size: 25px; font-weight: 700; font-style: italic; letter-spacing: -2px; }
-.brandName { font-family: var(--font-mono), 'Space Mono', monospace; font-size: 12px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
-.collapseButton { display: flex; align-items: center; justify-content: center; flex: 0 0 32px; width: 32px; height: 32px; cursor: pointer; }
-.collapsed .collapseButton { position: absolute; right: -16px; top: 20px; }
+.brandMark { font-family: var(--font-display); font-size: 22px; font-weight: 700; letter-spacing: -1.5px; }
+.brandName { font-family: var(--font-sans); font-size: 13px; font-weight: 600; letter-spacing: normal; text-transform: none; }
+.collapseButton { border: 0 !important; background: transparent !important; border-radius: var(--hg-radius-sm); transition: background var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease); display: flex; align-items: center; justify-content: center; flex: 0 0 32px; width: 32px; height: 32px; cursor: pointer; }
+.collapseButton:hover { background: var(--hg-fill-hover) !important; color: var(--hg-text) !important; }
+.collapsed .collapseButton { position: absolute; right: -16px; top: 20px; background: var(--hg-glass-strong) !important; border: 1px solid var(--hg-stroke) !important; border-radius: 999px; }
 /* The scroller spans the rail's padding so focus rings are not clipped. */
 .body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; margin: -6px -12px; padding: 6px 12px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 /* Row metrics: 38px rows at 13.5px, square corners. Hivra chrome is boxy —
    rounding on nav rows, cards and buttons is off-identity, so rounds are
    reserved for genuinely circular things (status dots, avatars). */
-.navItem, .launch, .searchButton { display: flex; align-items: center; gap: 10px; min-height: 38px; width: 100%; padding: 0 10px; color: var(--text-secondary); text-decoration: none; font-size: 13.5px; text-align: left; border: 1px solid transparent; transition: background 120ms ease, color 120ms ease; }
+.navItem, .launch, .searchButton { display: flex; align-items: center; gap: 10px; min-height: 34px; width: 100%; padding: 0 10px; color: var(--hg-text-2); text-decoration: none; font-size: 13px; text-align: left; border: 1px solid transparent; border-radius: var(--hg-radius-sm); transition: background var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease); }
 .navigation { display: grid; gap: 1px; }
 .navItem svg, .launch svg, .searchButton svg { flex-shrink: 0; }
-.navItem:hover, .searchButton:hover { color: var(--ink-black); background: var(--hover-bg, rgba(128,128,128,.08)); }
-.active { color: var(--ink-black); background: var(--hivra-red-soft, rgba(255,58,59,.16)); border-color: transparent; font-weight: 500; }
-.searchButton { cursor: pointer; color: var(--text-muted); border-color: var(--etched-border); margin-bottom: 8px; }
+.navItem:hover, .searchButton:hover { color: var(--hg-text); background: var(--hg-fill-hover); }
+.active, .active:hover { color: var(--hg-text); background: var(--hg-fill-2); border-color: transparent; font-weight: 500; }
+.searchButton { cursor: pointer; color: var(--hg-text-3); border-color: var(--hg-stroke); border-radius: var(--hg-radius-md); background: var(--hg-fill-1); margin-bottom: 8px; }
 .searchButton span { flex: 1; }
-.searchButton kbd { font-family: var(--font-mono), monospace; font-size: 10px; white-space: nowrap; }
-.launch { color: var(--ink-black); background: var(--hivra-red-soft, rgba(255,58,59,.08)); border-color: rgba(255,58,59,.4); margin-bottom: 12px; font-weight: 600; }
-.launch:hover { background: rgba(255,58,59,.16); }
+.searchButton kbd { font-family: var(--font-sans); font-size: 10.5px; white-space: nowrap; padding: 1px 6px; border-radius: 999px; background: var(--hg-fill-2); color: var(--hg-text-3); }
+.launch { color: var(--hg-on-accent); background: var(--hg-accent); border-color: transparent; border-radius: var(--hg-radius-sm); margin-bottom: 12px; font-weight: 600; box-shadow: var(--hg-shadow-sm); }
+.launch:hover { color: var(--hg-on-accent); background: var(--ink-hover); }
 .collapsed .navItem, .collapsed .launch, .collapsed .searchButton { justify-content: center; padding: 9px; }
-.groupHeading { margin: 0 0 7px; padding: 0 10px; color: var(--text-muted); font-family: var(--font-mono), monospace; font-size: 10px; font-weight: 400; letter-spacing: .025em; text-transform: capitalize; }
+.groupHeading { margin: 0 0 7px; padding: 0 10px; color: var(--text-muted); font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: none; }
 .resourceCopy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
 .resourceCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
 .resourceCopy small { color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .statusDot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--text-muted); }
-.statusDot[data-state='running'] { background: #53b57b; }
-.statusDot[data-state='provisioning'], .statusDot[data-state='updating'], .statusDot[data-state='redeploying'] { background: #c89c55; }
-.statusDot[data-state='error'], .statusDot[data-state='failed'] { background: #e05d5e; }
+.statusDot[data-state='running'] { background: var(--hg-ok); }
+.statusDot[data-state='provisioning'], .statusDot[data-state='updating'], .statusDot[data-state='redeploying'] { background: var(--hg-warn); }
+.statusDot[data-state='error'], .statusDot[data-state='failed'] { background: var(--hg-bad); }
 .switcherNotice button, .switcherFooter button { color: var(--ink-black); text-decoration: underline; text-underline-offset: 3px; padding: 3px 0; }
 /* The manage/utility groups and the account block ride the bottom edge. The rail
    is a flex column whose only grow child (the resource list) was removed, so
    without this the content packs under the header and the rest of the sidebar
    goes blank at any window taller than the content. */
-.footer { flex-shrink: 0; margin-top: auto; border-top: 1px solid var(--etched-border); padding-top: 8px; }
+.footer { flex-shrink: 0; margin-top: auto; border-top: 1px solid var(--hg-stroke); padding-top: 8px; }
 /* Keep the infrequent destinations a tier apart from day-to-day management. The
    approved prototype divides them; without it all four rows read as one block. */
-.footer > .navigation + .navigation { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--etched-border); }
-.footer .navItem { min-height: 31px; padding-block: 6px; font-size: 12px; }
-.account { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--etched-border); margin-top: 8px; padding: 12px 4px 0; }
+.footer > .navigation + .navigation { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hg-stroke); }
+.footer .navItem { min-height: 32px; padding-block: 6px; font-size: 13px; }
+.account { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--hg-stroke); margin-top: 8px; padding: 12px 4px 0; }
 .accountName { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .accountName strong, .accountName small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .accountName strong { font-size: 12px; font-weight: 500; }
 .accountName small { font-size: 10px; color: var(--text-muted); }
 .collapsed .account { flex-direction: column; padding-top: 8px; }
-.userPlaceholder { width: 28px; height: 28px; border-radius: 50%; background: var(--etched-border); }
-.sidebar :is(a, button, [tabindex]):focus-visible, .switcher :is(button, input):focus-visible { outline: 2px solid var(--hivra-red, #e34647); outline-offset: 3px; }
+.userPlaceholder { width: 28px; height: 28px; border-radius: 50%; background: var(--hg-fill-2); }
+.sidebar :is(a, button, [tabindex]):focus-visible, .switcher button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 .iconButton { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; color: var(--text-muted); }
-.switcher { width: min(660px, calc(100vw - 32px)); --switcher-margin: clamp(12px, 8dvh, 64px); max-height: min(640px, calc(var(--workspace-viewport-height, 100dvh) - var(--switcher-margin) - var(--switcher-margin) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); margin: calc(var(--switcher-margin) + env(safe-area-inset-top, 0px)) auto auto; padding: 0; color: var(--ink-black); background: var(--bg-surface, var(--vellum-bg)); border: 1px solid var(--etched-border); box-shadow: 0 24px 80px #0006; overflow: hidden; font-family: var(--font-outfit), Outfit, sans-serif; }
+.switcher { width: min(660px, calc(100vw - 32px)); --switcher-margin: clamp(12px, 8dvh, 64px); max-height: min(640px, calc(var(--workspace-viewport-height, 100dvh) - var(--switcher-margin) - var(--switcher-margin) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))); margin: calc(var(--switcher-margin) + env(safe-area-inset-top, 0px)) auto auto; padding: 0; color: var(--ink-black); background: var(--hg-glass-strong); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); border: 1px solid var(--hg-stroke); border-radius: var(--hg-radius-xl); box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg); overflow: hidden; font-family: var(--font-sans); }
 .switcher[open] { display: flex; flex-direction: column; }
-.switcher::backdrop { background: #0008; backdrop-filter: blur(3px); }
-.switcherSearch { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--etched-border); }
+.switcher::backdrop { background: color-mix(in srgb, var(--hg-bg) 40%, transparent); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.switcherSearch { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--hg-stroke); }
 .switcherSearch input { min-width: 0; flex: 1; border: 0; background: transparent; color: var(--ink-black); font-family: inherit; font-size: 16px; padding: 5px 0; }
 .switcherSearch input::placeholder { color: var(--text-muted); }
+/* Spotlight-style: the field is the whole bar, so it carries no ring of its own. */
+.switcherSearch input:focus, .switcherSearch input:focus-visible { outline: none; }
 .switcherResults { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 8px 0; overscroll-behavior: contain; }
 .switcherResults .groupHeading { margin-top: 5px; }
-.switcherResult { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 10px; color: var(--ink-black); text-align: left; margin-bottom: 2px; }
-.switcherResult[aria-selected='true'], .switcherResult:hover { background: var(--hivra-red-soft, rgba(255,58,59,.08)); }
+.switcherResult { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px; color: var(--hg-text); text-align: left; margin-bottom: 2px; border-radius: var(--hg-radius-md); transition: background var(--hg-fast) var(--hg-ease); }
+.switcherResult[aria-selected='true'], .switcherResult:hover { background: var(--hg-fill-2); }
 .switcherResult svg { flex-shrink: 0; }
 .switcherResult .resourceCopy small { font-size: 11px; }
 .resultStatus { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .resultDot { display: none; }
 .railLabel { display: none; }
-.switcherNotice { border-bottom: 1px solid var(--etched-border); padding: 10px 18px; font-size: 12px; color: var(--text-secondary); }
+.switcherNotice { border-bottom: 1px solid var(--hg-stroke); padding: 10px 18px; font-size: 12px; color: var(--text-secondary); }
 .switcherNotice p { margin: 3px 0; }
 .switcherEmpty { margin: 0; padding: 16px 18px; color: var(--text-muted); font-size: 13px; }
-.switcherFooter { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--etched-border); padding: 10px 18px; color: var(--text-muted); font-size: 11px; }
+.switcherFooter { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--hg-stroke); padding: 10px 18px; color: var(--text-muted); font-size: 11px; }
 .srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 /* Phones navigate with the bottom bar and More sheet; the sidebar never shows. */
 @media (max-width: 767px) {
@@ -91,7 +94,7 @@
 
 @media (min-width: 768px) and (max-width: 1023px) {
   .spacer { width: 72px !important; min-width: 72px !important; }
-  .compactOpen { box-shadow: 16px 0 40px #0005; }
+  .compactOpen { box-shadow: var(--hg-shadow-lg); }
 }
 @media (pointer: coarse) {
   .collapseButton { min-width: 44px; min-height: 44px; }
@@ -101,14 +104,19 @@
 /* Touch tablets: title tooltips never show, so the icon rail labels itself. */
 @media (min-width: 768px) and (max-width: 1023px) and (pointer: coarse) {
   .collapsed .navItem, .collapsed .launch, .collapsed .searchButton { flex-direction: column; justify-content: center; gap: 3px; min-height: 48px; padding: 5px 0; }
-  .collapsed .railLabel { display: block; max-width: calc(100% + 20px); margin-inline: -10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono), monospace; font-size: 11px; line-height: 1.1; letter-spacing: 0; text-align: center; }
+  .collapsed .railLabel { display: block; max-width: calc(100% + 20px); margin-inline: -10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-size: 11px; line-height: 1.1; letter-spacing: 0; text-align: center; }
 }
 
 .switcherFooter a { color: var(--ink-black); text-decoration: underline; text-underline-offset: 3px; }
 
 .attention { color: var(--yellow); margin-top: 12px; }
 .attentionCount { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Continue: the last agent or computer, under Home. 44px for touch. */
+.continueItem { min-height: 44px; }
+.continueCopy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 1px; }
+.continueCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; color: var(--ink-black); }
+.continueCopy small { color: var(--hg-text-3, var(--text-muted)); font-size: 11px; font-weight: 600; letter-spacing: .05em; }
 /* ⌘K: the resource on screen, and the digit that opens a Recent entry. */
-.resultCurrent { flex-shrink: 0; font-size: 11px; color: var(--hivra-red, #e34647); }
-.resultKey { flex-shrink: 0; min-width: 20px; padding: 1px 5px; border: 1px solid var(--etched-border); color: var(--text-muted); font: 10px var(--font-mono), monospace; text-align: center; }
+.resultCurrent { flex-shrink: 0; font-size: 11px; color: var(--hg-text-2); }
+.resultKey { flex-shrink: 0; min-width: 20px; padding: 1px 5px; border: 1px solid var(--hg-stroke); border-radius: 5px; color: var(--hg-text-3); font: 10px var(--font-mono); text-align: center; }
 @media (pointer: coarse) { .resultKey { display: none; } }

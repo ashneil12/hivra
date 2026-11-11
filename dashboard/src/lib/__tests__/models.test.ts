@@ -175,12 +175,12 @@ describe('models.ts', () => {
       expect(modelValues).not.toContain('google/gemma-4-26b-it');
     });
 
-    it('venice should remain visible as the default provider with DeepSeek V4 Flash as the recommended default', () => {
+    it('venice should remain visible as the default provider with DeepSeek V4.1 Flash as the recommended default', () => {
       const venice = PROVIDERS.find((provider) => provider.id === 'venice');
       expect(venice).toBeDefined();
       expect(venice!.hidden).toBeUndefined();
       expect(VISIBLE_PROVIDERS.map((provider) => provider.id)).toContain('venice');
-      expect(venice!.models[0]?.value).toBe('deepseek-v4-flash');
+      expect(venice!.models[0]?.value).toBe('deepseek-v4-1-flash');
       expect(venice!.models.map((m) => m.value)).toEqual(
         expect.arrayContaining([
           'deepseek-v4-flash',

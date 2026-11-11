@@ -148,6 +148,7 @@ describe("useWorkspaceAgents", () => {
           computer("windows", "windows"),
           computer("omarchy", "omarchy"),
           computer("ubuntu", "ubuntu-desktop"),
+          computer("server", "ubuntu-server"),
           { ...computer("sandbox", "linux-terminal"), type: "linux-terminal" },
           computer("odd", "beos"),
         ]),
@@ -159,6 +160,8 @@ describe("useWorkspaceAgents", () => {
       windows: ["Windows", "windows"],
       omarchy: ["Omarchy", "omarchy"],
       ubuntu: ["Ubuntu Desktop", "ubuntu-desktop"],
+      // Kept as it is: dropping it would read as the original desktop image.
+      server: ["Linux computer", "ubuntu-server"],
       sandbox: ["Linux Sandbox", "linux-terminal"],
       // An unknown profile is dropped, not passed on as a label.
       odd: ["Ubuntu Desktop", null],

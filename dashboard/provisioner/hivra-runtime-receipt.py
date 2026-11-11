@@ -702,7 +702,7 @@ def refresh_direct_access_evidence(*, provisioner_version: str, agent_kind: str,
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--provisioner-version", required=True)
-    parser.add_argument("--agent-kind", choices=("claude", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"), required=True)
+    parser.add_argument("--agent-kind", choices=("claude", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop", "linux-server"), required=True)
     parser.add_argument("--substrate", choices=("proxmox-kvm", "provider-vm"), required=True)
     parser.add_argument("--browser-enabled", choices=("0", "1"))
     parser.add_argument("--agent-zero-image")

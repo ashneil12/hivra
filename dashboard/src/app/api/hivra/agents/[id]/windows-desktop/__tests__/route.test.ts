@@ -143,14 +143,24 @@ it("requires normal preparation for a confirmed competing boot account, without 
   expect(mockFetch).not.toHaveBeenCalled();
 });
 
-it.each(["guest_console_autologon_invalid", "host_timeout", "host_ssh", "guest_remote_exit", "guest_inspection_failed", "guest_rdp_firewall_filter_association_unverified", "capability_marker_absent", "qga_dispatch", "qga_guest_exit_1", "host_phase_guest_exec", "host_remote_exit_255"])(
-  "does not authorize preparation after an unconfirmed %s inspection", async failure => {
+it.each([
+  ["guest_console_autologon_invalid", "rdp_unavailable"], ["host_timeout", "host_unreachable"], ["host_ssh", "host_unreachable"],
+  ["guest_remote_exit", "guest_not_ready"], ["guest_inspection_failed", "guest_not_ready"],
+  ["guest_rdp_firewall_filter_association_unverified", "rdp_unavailable"], ["capability_marker_absent", "guest_not_ready"],
+  ["qga_dispatch", "guest_not_ready"], ["qga_guest_exit_1", "guest_not_ready"], ["host_phase_guest_exec", "guest_not_ready"],
+  ["host_remote_exit_255", "host_unreachable"],
+])(
+  "does not authorize preparation after an unconfirmed %s inspection, and says why in one coarse reason (%s)", async (failure, reason) => {
     mockInspect.mockResolvedValueOnce({ ok: false,
       error: `Remote desktop capability could not be verified (${failure}).` });
     const response = await POST(request(), params);
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ success: false,
+    const body = await response.json();
+    expect(body).toEqual({ success: false, reason,
       error: "Windows RDP inspection could not be confirmed. Try opening it again." });
+    // Only the coarse code: never the diagnostic, a host name, an address or a credential.
+    expect(JSON.stringify(body)).not.toContain(failure);
+    expect(JSON.stringify(body)).not.toContain(config.rdpPassword);
     expect(mockBuildToken).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockWarn).toHaveBeenCalledWith("Windows desktop inspection unconfirmed", {
@@ -171,6 +181,10 @@ it.each([
   mockInspect.mockResolvedValueOnce({ ok: false, error });
   const response = await POST(request(), params);
   expect(response.status).toBe(503);
+  // An unrecognised failure is only "unknown"; none of its text reaches the page.
+  const sent = await response.clone().json();
+  expect(sent.reason).toBe("unknown");
+  expect(JSON.stringify(sent)).not.toContain(error);
   expect(mockWarn).toHaveBeenCalledWith("Windows desktop inspection unconfirmed", expect.objectContaining({
     reason: "inspection_unknown", failureType: "inspection_unconfirmed", phase: "capability_inspection",
   }));
@@ -195,7 +209,9 @@ it("does not authorize preparation when a successful inspection has no Windows d
   mockInspect.mockResolvedValueOnce({ ok: true });
   const response = await POST(request(), params);
   expect(response.status).toBe(503);
-  expect((await response.json()).code).toBeUndefined();
+  const body = await response.json();
+  expect(body.code).toBeUndefined();
+  expect(body.reason).toBe("not_prepared");
   expect(mockBuildToken).not.toHaveBeenCalled();
   expect(mockWarn).toHaveBeenCalledWith("Windows desktop inspection unconfirmed", expect.objectContaining({
     reason: "windows_descriptor_missing",
@@ -224,7 +240,9 @@ it.each([
   loadAgent(overrides);
   const response = await POST(request(), params);
   expect(response.status).toBe(409);
-  expect((await response.json()).code).toBeUndefined();
+  const refusal = await response.json();
+  expect(refusal.code).toBeUndefined();
+  expect(refusal.reason).toBe("not_prepared");
   expect(mockInspect).not.toHaveBeenCalled();
   expect(mockBuildToken).not.toHaveBeenCalled();
   expect(mockFetch).not.toHaveBeenCalled();

@@ -257,7 +257,10 @@ NAMED="$("${GSSH[@]}" "ubuntu@${IP}" 'test -f /etc/hivra-cf-token.env && echo ye
 if [ "$NAMED" = "yes" ] && [ -n "${HIVRA_TUNNEL_URL:-}" ]; then
   "${GSSH[@]}" "ubuntu@${IP}" 'sudo systemctl restart hivra-cf-tunnel 2>/dev/null || true' 2>/dev/null || true
   NAMED_READY=0
-  for _ in $(seq 1 24); do
+  # Same 5-minute budget as provisioning: after a cold boot on a busy host the
+  # tunnel and gateway can take longer than 2 minutes, and failing early marks
+  # a healthy computer as broken.
+  for _ in $(seq 1 60); do
     if curl -fsS -m 8 "${HIVRA_TUNNEL_URL%/}/healthz" >/dev/null 2>&1; then NAMED_READY=1; break; fi
     sleep 5
   done

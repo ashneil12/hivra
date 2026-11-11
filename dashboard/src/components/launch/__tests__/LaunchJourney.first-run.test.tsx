@@ -94,7 +94,7 @@ beforeEach(() => {
   sharedTemplate = null;
   fetchPlanStrictMock.mockResolvedValue(NO_PLAN);
   summaryMock.mockResolvedValue({ ok: true, summary: { wallets: {
-    card: { balanceMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
+    card: { balanceMicroUsd: 5_000_000, availableMicroUsd: 5_000_000, reservedMicroUsd: 0 },
     hermesos: { tokenDisplay: "0", lockedValueMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
   } } });
   checkoutMock.mockResolvedValue({ ok: true, activated: true });
@@ -120,7 +120,7 @@ describe("a new account in Launch", () => {
     render(<LaunchJourney />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
-    expect(await screen.findByText("Hivra is free to use with your own computer. Connect a computer or server to launch on it, or choose a plan to run on Hivra Cloud.")).toBeInTheDocument();
+    expect(await screen.findByText("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.")).toBeInTheDocument();
     expect(screen.queryByText(/The Free plan runs one agent/)).not.toBeInTheDocument();
     expect(screen.queryByText(/turn it on/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn.t check your plan/i)).not.toBeInTheDocument();
@@ -128,6 +128,14 @@ describe("a new account in Launch", () => {
     await waitFor(() => expect(codex).toHaveTextContent("Needs Pro or your own server"));
     expect(screen.getByRole("button", { name: /^Claude Code/ })).toHaveTextContent("Needs Pro or your own server");
     expect(screen.queryByText(/Fits Free/)).not.toBeInTheDocument();
+  });
+
+  it("offers See plans and Use my own computer in the Free notice", async () => {
+    render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    const notice = await screen.findByTestId("launch-free-notice");
+    expect(within(notice).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(within(notice).getByRole("button", { name: "Use my own computer" })).toBeInTheDocument();
   });
 
   it("blocks a Hivra Cloud launch for a free account, offers a plan or its own capacity, and activates nothing", async () => {
@@ -165,7 +173,8 @@ describe("a new account in Launch", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Hivra is free to use with your own computer/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Hivra Cloud is part of a paid plan/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("launch-free-notice")).not.toBeInTheDocument();
   });
 });
 
@@ -189,7 +198,7 @@ describe("a paying customer whose plan is on hold", () => {
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
     expect(screen.queryByText(/not turned on yet/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No charge\. It runs on the Free plan/)).not.toBeInTheDocument();
-    expect(screen.getByText("Uses your Pro plan allowance once the plan is active again.")).toBeInTheDocument();
+    expect(screen.getByText(/^Uses your Pro plan allowance once the plan is active again\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
     expect(checkoutMock).not.toHaveBeenCalled();
@@ -233,7 +242,6 @@ describe("the first-run funnel", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
-    fireEvent.click(reviewButton());
     fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
     await waitFor(() => expect(routerPushMock).toHaveBeenCalled());
 
@@ -258,7 +266,6 @@ describe("the first-run funnel", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
-    fireEvent.click(reviewButton());
     fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
     await waitFor(() => expect(events("activation_failed")).toHaveLength(1));
 
@@ -285,7 +292,6 @@ describe("the first-run funnel", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
-    fireEvent.click(reviewButton());
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
     await waitFor(() => expect(events("paywall_viewed")).toHaveLength(1));
 
@@ -328,13 +334,12 @@ describe("starting from a template", () => {
     searchParams = { template: TEMPLATE_ID, start: "1" };
     render(<LaunchJourney />);
 
-    expect(await screen.findByRole("heading", { name: "Claude Code — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review and launch Research Bot" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Research Bot");
     expect(screen.getByText("Starting from the template “Research Bot”. Its focus, personality and skills come with it.")).toBeInTheDocument();
 
     await waitFor(() => expect(reviewButton()).toBeEnabled());
-    fireEvent.click(reviewButton());
-    const review = within(screen.getByLabelText("Launch review"));
+    const review = within(screen.getByTestId("launch-journey"));
     expect(review.getByText("Research Bot", { selector: "dd" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
 
@@ -348,7 +353,7 @@ describe("starting from a template", () => {
     searchParams = { template: TEMPLATE_ID, templateToken: "share_abc123", start: "1" };
     render(<LaunchJourney />);
 
-    expect(await screen.findByRole("heading", { name: "OpenClaw — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review and launch Ops Helper" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Ops Helper");
     expect(global.fetch).toHaveBeenCalledWith("/api/hivra/templates/shared/share_abc123", expect.anything());
   });
@@ -368,11 +373,11 @@ describe("starting from a template", () => {
     templates = [{ id: TEMPLATE_ID, name: "Research Bot", type: "claude-code" }];
     searchParams = { template: TEMPLATE_ID, start: "1" };
     render(<LaunchJourney />);
-    await screen.findByRole("heading", { name: "Claude Code — here's the plan" });
+    await screen.findByRole("heading", { name: "Review and launch Research Bot" });
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Codex/ }));
-    expect(await screen.findByRole("heading", { name: "Codex — here's the plan" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
     expect(screen.queryByText(/Starting from the template/)).not.toBeInTheDocument();
   });
 

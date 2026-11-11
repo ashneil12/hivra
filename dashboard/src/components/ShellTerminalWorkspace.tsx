@@ -126,6 +126,8 @@ export function ShellTerminalWorkspace({
         minHeight: 0,
         background: "#050711",
         color: "#e5e7eb",
+        borderRadius: 14,
+        overflow: "hidden",
       }}
     >
       <style>{SHELL_TABS_TOUCH_CSS}</style>
@@ -135,8 +137,9 @@ export function ShellTerminalWorkspace({
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
-          padding: "8px 10px",
-          borderBottom: "1px solid rgba(150, 166, 190, 0.12)",
+          padding: "4px 8px",
+          minHeight: 36,
+          borderBottom: "1px solid var(--hg-stroke-subtle)",
           background: "rgba(9, 12, 22, 0.94)",
         }}
       >
@@ -166,11 +169,9 @@ export function ShellTerminalWorkspace({
                   gap: 2,
                   minWidth: 0,
                   maxWidth: 220,
-                  borderRadius: 6,
-                  border: isTabActive
-                    ? "1px solid rgba(45, 212, 191, 0.28)"
-                    : "1px solid rgba(148, 163, 184, 0.12)",
-                  background: isTabActive ? "rgba(45, 212, 191, 0.08)" : "rgba(13, 18, 30, 0.74)",
+                  borderRadius: 7,
+                  border: "1px solid transparent",
+                  background: isTabActive ? "rgba(255, 255, 255, 0.10)" : "transparent",
                 }}
               >
                 <button
@@ -188,12 +189,12 @@ export function ShellTerminalWorkspace({
                     color: isTabActive ? "#f8fafc" : "rgba(203, 213, 225, 0.76)",
                     cursor: "pointer",
                     padding: "7px 8px",
-                    fontFamily: '"JetBrains Mono", monospace',
-                    fontSize: 11,
+                    fontFamily: "var(--font-sans)",
+                    fontSize: 12,
                     fontWeight: isTabActive ? 700 : 500,
                   }}
                 >
-                  <TerminalIcon size={13} aria-hidden="true" style={{ color: tab.status === "active" ? "#2dd4bf" : "rgba(148, 163, 184, 0.62)", flexShrink: 0 }} />
+                  <TerminalIcon size={13} aria-hidden="true" style={{ color: tab.status === "active" ? "#e5e7eb" : "rgba(148, 163, 184, 0.62)", flexShrink: 0 }} />
                   <span
                     style={{
                       minWidth: 0,
@@ -248,10 +249,10 @@ export function ShellTerminalWorkspace({
             justifyContent: "center",
             width: 32,
             height: 32,
-            borderRadius: 6,
-            border: "1px solid rgba(45, 212, 191, 0.22)",
-            background: "rgba(45, 212, 191, 0.08)",
-            color: "#99f6e4",
+            borderRadius: 7,
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            background: "rgba(255, 255, 255, 0.06)",
+            color: "#e5e7eb",
             cursor: "pointer",
             flexShrink: 0,
           }}

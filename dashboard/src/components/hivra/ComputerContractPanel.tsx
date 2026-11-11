@@ -17,6 +17,7 @@ import { agentComputerPairLabel } from "@/lib/agent-computers/agent-surfaces";
 import type { ComputerContractStatus } from "@/lib/agent-computers/computer-contract-status";
 import { fetchComputerContract, runComputerContractAction, type ComputerContractAction } from "@/lib/hivra/computer-contract-client";
 
+import { UNREACHABLE_CARD_LINE, useReportUnreachable } from "./manage/ManageReachability";
 import styles from "./ComputerContractPanel.module.css";
 
 export interface ComputerContractPanelAgent {
@@ -45,7 +46,7 @@ export const CONTRACT_PENDING_POLL_MS = 8_000;
 export const CONTRACT_PENDING_POLL_LIMIT = 8;
 
 const ERROR_COPY: Record<string, string> = {
-  unreachable: "Hivra couldn't reach the computer.",
+  unreachable: `${UNREACHABLE_CARD_LINE}.`,
   unsafe_file: "The instructions file on the computer isn't a plain file Hivra can safely update.",
   no_instruction_file: "The computer has no instructions file for Hivra to update.",
   readback_mismatch: "The computer's copy didn't match after writing, so Hivra didn't count it.",
@@ -85,6 +86,9 @@ export function ComputerContractPanel({
   // A DigitalOcean session takes a message while running or stopped (a
   // message wakes it), never while it is starting or in an error state.
   const doSendable = running || agent.status === "stopped";
+  // Hivra's last try to reach the computer failed: Manage's one banner says
+  // so, and this card says only that it is unavailable.
+  useReportUnreachable("contract", running && status !== null && "lastError" in status && status.lastError === "unreachable");
   const onStatusRef = useRef(onStatus);
   useEffect(() => { onStatusRef.current = onStatus; }, [onStatus]);
 

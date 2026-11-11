@@ -133,7 +133,8 @@ extension HivraWorkspaceRouteGrammar {
         static let resourceID = Value.matching("^[A-Za-z0-9_-]{1,256}$")
         /// LaunchProfileId (launch/contracts.ts).
         static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
-                                                "ubuntu-desktop", "linux-terminal", "omarchy", "windows"])
+                                                "deepseek-harness", "ubuntu-desktop", "ubuntu-server",
+                                                "linux-terminal", "omarchy", "windows"])
         /// Launch history stages, including the names used before Choose merged its steps (LaunchJourney).
         static let launchStage = Value.mapped(["choose": "choose", "plan": "plan", "review": "review",
                                                "type": "choose", "profile": "choose", "capacity": "plan"])

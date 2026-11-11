@@ -51,7 +51,7 @@ export function ManagedVeniceCreditsPocket({
       data-testid="managed-venice-credits-pocket"
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         display: "grid",
         gap: 14,
@@ -104,7 +104,7 @@ export function ManagedVeniceCreditsPocket({
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
-        <div style={{ border: "1px solid rgba(255, 44, 45,0.36)", padding: "12px" }}>
+        <div style={{ border: "1px solid color-mix(in srgb, var(--hg-bad) 36%, transparent)", padding: "12px" }}>
           <div className="mono" style={{ fontSize: 10, opacity: 0.62, textTransform: "uppercase", marginBottom: 8 }}>LLM Credits</div>
           <strong style={{ display: "block", marginBottom: 8 }}>{formatMicroUsd(totalAvailable, 4)}</strong>
           <span style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.5 }}>
@@ -126,7 +126,7 @@ export function ManagedVeniceCreditsPocket({
         {summary?.discount && tokenPromotionsShown ? (
           <div
             style={{
-              border: "1px solid rgba(255, 44, 45,0.4)",
+              border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)",
               padding: "9px 10px",
               display: "flex",
               justifyContent: "space-between",

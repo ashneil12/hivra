@@ -13,6 +13,16 @@ jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
   useWorkspaceAgents: jest.fn(),
 }));
 
+jest.mock("@/components/dashboard/OnboardingChecklist", () => ({
+  OnboardingChecklist: () => <div data-testid="onboarding-checklist-stub" />,
+}));
+
+const fetchPlanStrictMock = jest.fn(async () => null as unknown);
+jest.mock("@/lib/hivra/agent-api", () => ({
+  ...jest.requireActual("@/lib/hivra/agent-api"),
+  fetchPlanStrict: () => fetchPlanStrictMock(),
+}));
+
 const replace = jest.fn();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push: jest.fn(), prefetch: jest.fn() }),
@@ -150,7 +160,7 @@ describe("FleetControlPane", () => {
 
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    expect(screen.getByRole("link", { name: /Start with an agent/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument();
   });
 
   it("says loading rather than 'none' while the fleet is in flight", () => {
@@ -310,11 +320,42 @@ describe("FleetControlPane", () => {
     expect(replace).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Where will you work?" })).toBeInTheDocument();
   });
-  it("shows two explicit starting choices for an empty account", () => {
+  it("offers three one-tap agents and a browse link to an empty account", async () => {
+    fetchPlanStrictMock.mockResolvedValue(null);
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    expect(screen.getByRole("link", { name: /Start with an agent/ })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
-    expect(screen.getByRole("link", { name: /Start with a computer/ })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1");
+    expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument();
+    expect(screen.getByText("Pick one and you'll be chatting in a couple of minutes.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Hermes/ })).toHaveAttribute("href", "/dashboard/launch?profile=hermes");
+    expect(screen.getByRole("link", { name: /Claude Code/ })).toHaveAttribute("href", "/dashboard/launch?profile=claude-code");
+    expect(screen.getByRole("link", { name: /Codex/ })).toHaveAttribute("href", "/dashboard/launch?profile=codex");
+    expect(screen.getByRole("link", { name: "Browse every agent and computer" })).toHaveAttribute("href", "/dashboard/launch");
+    expect(screen.queryByTestId("first-run-plan")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-checklist-stub")).not.toBeInTheDocument();
+  });
+
+  it("says what Free includes, with a link to the plans, once the plan is known", async () => {
+    fetchPlanStrictMock.mockResolvedValue({ subscribed: false, name: "Free", key: "free" });
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
+    render(<FleetControlPane />);
+    const line = await screen.findByTestId("first-run-plan");
+    expect(line).toHaveTextContent("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.");
+    expect(within(line).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
+  });
+
+  it("leaves the plan line out for a paid account", async () => {
+    fetchPlanStrictMock.mockResolvedValue({ subscribed: true, name: "Operator", key: "operator" });
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
+    render(<FleetControlPane />);
+    await screen.findByRole("heading", { name: "Launch your first agent" });
+    await Promise.resolve();
+    expect(screen.queryByTestId("first-run-plan")).not.toBeInTheDocument();
+  });
+
+  it("shows the first-steps checklist on Home once there are agents", () => {
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex] }));
+    render(<FleetControlPane />);
+    expect(screen.getByTestId("onboarding-checklist-stub")).toBeInTheDocument();
   });
 
   it("opens attention without redirecting and includes approvals, not healthy resources", () => {

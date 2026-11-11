@@ -7,6 +7,7 @@
 // agent's next command; nothing is installed on the computer itself.
 
 import { useCallback, useEffect, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { Bot, Link2, Loader2, Monitor, RefreshCw, Trash2 } from "lucide-react";
 
 import { addLink, fetchLinks, removeLink, resendKit, type KitState, type LinksLoad, type LinksViewData } from "@/lib/agent-links/client";
@@ -72,7 +73,7 @@ export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string;
 
   if (load.state === "not_offered") return null;
   if (load.state === "loading") {
-    return <section className={styles.section} aria-busy="true"><p className={styles.note}><Loader2 size={13} className={styles.spinner} aria-hidden /> Loading links…</p></section>;
+    return <section className={styles.section} aria-busy="true"><p className={styles.note}><ThinkingOrb size={20} state="searching" /> Loading links…</p></section>;
   }
   if (load.state === "unavailable") {
     return <section className={styles.section}><p className={styles.note} role="status">{load.message}</p>

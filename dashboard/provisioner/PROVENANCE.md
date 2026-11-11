@@ -544,6 +544,125 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.10.5` builds on `2026.11.10.4` and gives DeepSeek Harness its model
+at launch. The upstream web UI only allows settings writes from a local browser, so a
+remote owner could not choose one, and the guest refused launch-time model settings.
+The strict version 2 launch document (`hivra-install-agent.py`) now carries the model
+key, the HTTPS base URL and the model name as a complete set or not at all, with typed
+validation that never echoes an input; `hivra-provision-on-host.sh` forwards the set
+and refuses a partial one. On a fresh install only, `deepseek-harness/install-guest.py`
+runs a child with dropped privileges as the `bux` account (no supplementary groups,
+umask 077, minimal environment, the secret on its stdin alone) that creates the
+runtime's private home directories with mode 0700 and writes `settings.yaml` (one
+hand-declared OpenAI-compatible route plus the default model) and `.credentials.yaml`
+(mode 0600, the key by reference) exclusively and without following links. A replay or
+restart never rewrites them, so later owner edits survive, and the shared base
+installer no longer receives the model variables for this kind. The Linux computer
+documents still refuse a model. The service unit, broker, gateway policy, native
+package pins and remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. `hivra-provider-worker.py` only
+advances its native and desktop release labels. This source release does not deploy,
+install, or update any existing computer.
+
+Release `2026.11.10.4` builds on `2026.11.10.3` and adds the `linux-server` kind:
+the Ubuntu computer without a desktop (Files and the two terminals only). It reuses
+the whole `linux-desktop` guest base and skips only the desktop capability install
+and the Claude app helper. `hivra-provision-on-host.sh`, `hivra-install-agent.py`,
+`hivra-runtime-receipt.py`, `hivra-agent-shell`, `hivra-chat/server.js`,
+`hivra-guest-runtime-update.sh` and `provision-claude-code-box.sh` accept the new
+kind; the strict launch-document parser takes a version 3 document for it (computer
+id, control origin and named tunnel, exactly as `linux-desktop`) on Proxmox only and
+still refuses every document it refused before. The kind reports `linux-server` from
+`/api/meta`, so a control plane that expects it can tell it from a desktop. Every
+`linux-desktop` line is unchanged. `hivra-provider-worker.py` only advances its
+native and desktop release labels. Not touched: `hivra-start-on-host.sh` (no kind
+logic), `prepare-proxmox-host.sh` and the remote-desktop assets, so the
+remote-desktop bundle revision and every session revision are preserved. An older
+host that has not synced this release rejects the kind and stays out of placement.
+This source release does not deploy, install, or update any existing computer.
+
+Release `2026.11.10.3` builds on `2026.11.10.2` and ships the Codex sign-in
+freshness fix. `hivra-chat/server.js` reports a repeat Codex sign-in as fresh only
+when the credential actually changed, and says why a repeat sign-in is not finished
+yet. `hivra-provider-worker.py` only advances its native and desktop release labels.
+No installer, sudoers rule, service or credential path changes, and the
+remote-desktop assets are unchanged, so the remote-desktop bundle revision and every
+session revision are preserved. This source release does not deploy, install, or
+update any existing computer.
+
+Release `2026.11.10.2` builds on `2026.11.10.1` and lets Claude Code run on
+Hivra credits. `provision-claude-code-box.sh` gains
+`configure_claude_managed_model`: for a Claude Code computer launched with a
+managed model key, it validates the key's format, the Hivra Anthropic Messages
+base URL (`https://<host>/api/managed-venice/anthropic`) and the model name, then
+merges them into the agent user's `~/.claude/settings.json` `env` block
+(`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and every model tier mapped to the
+chosen model, with non-essential traffic disabled) through a mode-0600 atomic
+write, keeping the owner's other settings. With no managed key the computer keeps
+native `claude auth login` sign-in, and every other agent is untouched.
+`hivra-provider-worker.py` only advances its native and desktop release labels.
+No sudoers rule, service or credential path outside that settings file changes,
+and the remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. This source release does not
+deploy, install, or update any existing computer.
+
+Release `2026.11.10.1` builds on `2026.11.03.1` and hardens first launch and
+start against slow or flaky networks, and tells the agent how to look after its
+own computer. `provision-claude-code-box.sh` waits for the dpkg lock (a fresh
+cloud image runs apt-daily right after first boot) and retries `apt-get` up to
+four times through one `apt_get` helper, retries the bux checkout, the pinned
+Claude Code and Codex npm installs through `with_retries`, and adds
+`--retry-connrefused --retry-delay 3` to every pinned download, whose size and
+SHA-256 checks are unchanged. `qemu-guest-agent` is still installed and enabled
+on Proxmox computers and its failure still stops the launch. The Codex CLI is
+installed under `~/.npm-global` and the installer now requires it at exactly
+that path, where chat, the terminal and the CLI updater run it. Agent Zero's
+model name and base URL are validated before they are written to its env file,
+the default port in messages matches the unit's (50080), and its readiness wait
+is five minutes. `hivra-provision-on-host.sh` bounds the provisioner copy (600
+seconds) and the in-guest install (45 minutes) with `timeout` and SSH
+keepalives, still through the VMID-attested key (`GSCP`/`GSSH`), and fails the
+launch with a reason instead of hanging in "provisioning"; the existing EXIT
+trap still reports `ready:false` and cleans up. `hivra-start-on-host.sh` waits
+up to five minutes, matching provisioning, for the named tunnel after a start.
+`system-prompt.md` and `system-prompt-codex.md` gain a "Looking after this
+computer" section that points the owner to Manage for updates, restarts and
+restore points, tells the agent not to upgrade its own CLI or touch the Hivra
+connection services, and asks it to confirm before deleting anything of the
+owner's. No runtime behaviour, sudoers rule, service or credential path
+changes, and the remote-desktop assets are unchanged, so the remote-desktop
+bundle revision and every session revision are preserved. This source release
+does not deploy, install, or update any existing computer.
+
+Release `2026.11.03.1` builds on `2026.10.20.2` and makes the optional Claude
+app easier to work in. `hivra-claude-app` gains the owner's clipboard switch for
+the desktop: `clipboard on|off` sets a root-only flag in
+`/var/lib/hivra/desktop-clipboard` (off by default, kept apart from the app's own
+state so removing the app never changes it), and `clipboard-put` /
+`clipboard-get` move UTF-8 text, at most 256 KB, between the gateway and the
+desktop's X clipboard through `xclip` run as the desktop user inside the
+container. They refuse while the switch is off. Selkies' own clipboard stays
+disabled, as do files, audio, microphone, camera, gamepad and upstream
+commands: text moves only when the owner presses Paste in or Copy out on the
+Desktop strip (`/api/claude-app/clipboard`, `/clipboard/paste`,
+`/clipboard/copy`, behind the box token), and the gateway passes pasted text to
+the helper on stdin, never as an argument. The sudoers rule written by the
+installer and by the runtime updater's guest half grows by exactly those four
+verbs. The app's launcher now starts in `~/Hivra`, the desktop's one persistent
+folder, and is rewritten before every launch. Claude Code's own data from the
+app's Code tab (`~/.claude`, `~/.claude.json`) is saved in a second root-only
+archive with its own 512 MB cap and restored only into an empty home, so a
+desktop restart keeps Code tab sessions; `remove` deletes it. The agent's own
+browser (`local-browser-keeper.py`) no longer passes `--no-sandbox`: the pinned
+Google Chrome runs as `bux` with its setuid sandbox, and Chrome's errors reach
+the keeper's log. The runtime updater does not reinstall the keeper, so that
+change reaches computers provisioned from this release. The Claude app itself
+still runs with `--no-sandbox`, because the contained desktop keeps Docker's
+default seccomp profile and no-new-privileges; the remote-desktop assets are
+unchanged, so the remote-desktop bundle revision and every session revision are
+preserved. This source release does not deploy, install, or update any
+existing computer.
+
 Release `2026.10.20.2` builds on `2026.10.20.1` and lets owners update the
 hosted app of an Aeon, OpenClaw or Agent Zero computer the way Claude Code and
 Codex computers already update their CLI. The tested Aeon dashboard commit,

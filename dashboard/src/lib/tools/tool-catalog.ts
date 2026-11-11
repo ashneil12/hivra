@@ -183,7 +183,7 @@ export const TOOLS_CLOSING = {
   staysOn: `A paid ${PLAN_DISPLAY.entry} computer stays on and is not paused for inactivity.`,
   aiUsage:
     "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
-  claudeCodeSignIn: "Claude Code uses your own Anthropic sign-in, not Hivra credits.",
+  claudeCodeSignIn: "Claude Code can use your own Anthropic sign-in or Hivra credits.",
   guaranteeLead: "There is a",
   guarantee: MONEY_BACK_GUARANTEE,
   guaranteeHref: "/terms",

@@ -267,6 +267,14 @@
     {
       "path": "/api/cron/update-hivra-agent-clis",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/venice-promo-expiry",
+      "schedule": "35 * * * *"
+    },
+    {
+      "path": "/api/cron/venice-promo-weekly-report",
+      "schedule": "0 8 * * 1"
     }
   ]
 }

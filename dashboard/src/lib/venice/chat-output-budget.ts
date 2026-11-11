@@ -29,8 +29,9 @@
 //      only because requests still running hold the money, the 402 says so
 //      (ManagedVeniceBalanceHeldError): it frees up as they settle.
 //   4. The model maximum is only trusted when Venice published it (the live
-//      /v1/models refresh). While that refresh is down the proxy prices from
-//      the static catalog, whose maximum can lag Venice's (it listed
+//      /v1/models refresh, live-pricing.ts). If that refresh fails the proxy keeps
+//      its last live prices, or prices from the static catalog when it never
+//      had any. The catalog's maximum can lag Venice's (it listed
 //      zai-org-glm-5-1 at 24,000 while Venice allowed 80,000). So when the
 //      maximum came from the catalog, the cap the hold covers is always written
 //      into the forwarded request, even when it equals that maximum.

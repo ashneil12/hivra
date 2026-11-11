@@ -1729,7 +1729,7 @@ export function HivraRemoteDesktop({
           <div style={{ maxWidth: 520 }}>
             <div role="status">
               <Monitor size={24} style={{ margin: "0 auto 14px" }} />
-              <h2 className="serif" style={{ color: "var(--ink-black)", fontWeight: 400, fontSize: 24, marginBottom: 8 }}>
+              <h2 className="serif" style={{ color: "var(--ink-black)", fontWeight: 600, fontSize: 24, marginBottom: 8 }}>
                 {state === "disconnected" || state === "reconnecting" ? "Stream disconnected"
                     : state === "prepare-paused" ? "Desktop couldn’t open right now"
                       : state === "prepare-pending" ? "Desktop is still opening"

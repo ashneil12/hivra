@@ -32,3 +32,10 @@ it("does not raise the keyboard over step 1 on touch", () => {
   expect(screen.getByLabelText("GitHub personal access token")).not.toHaveFocus();
   expect(screen.getByRole("link", { name: "Create a fine-grained token" })).toBeVisible();
 });
+
+it("changing the token says so and offers no second billing key", () => {
+  setPointer(false);
+  render(<HivraGitHubConnect boxUrl="https://box.test" onDone={jest.fn()} reconnect defaultManagedCredits />);
+  expect(screen.getByRole("heading", { name: "Change Aeon's GitHub token." })).toBeInTheDocument();
+  expect(screen.queryByText(/managed Venice credits/)).not.toBeInTheDocument();
+});

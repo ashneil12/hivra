@@ -2,6 +2,8 @@ import { chromium, type FullConfig } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import { launchOptions } from '../scripts/lib/playwright-launch.cjs';
+
 /**
  * Mints a short-lived Clerk sign-in ticket for the dedicated QA user and saves
  * an authenticated storage state for the `authed` project.
@@ -54,7 +56,7 @@ export default async function globalSetup(config: FullConfig) {
 
   // 2) Redeem the ticket in a real browser to obtain a Clerk session, then
   //    persist the resulting cookies/storage as the authed state.
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(launchOptions());
   const page = await browser.newPage({ baseURL });
   try {
     await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });

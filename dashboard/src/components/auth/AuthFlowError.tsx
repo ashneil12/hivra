@@ -63,15 +63,15 @@ export default function AuthFlowError({
   return (
     <div
       className="min-h-[100dvh] w-full flex items-center justify-center px-6 py-10"
-      style={{ background: 'var(--vellum-bg)' }}
+      style={{ background: 'transparent' }}
     >
       <div
         className="w-full max-w-2xl"
         style={{
-          border: '1px solid var(--etched-border)',
-          background: 'var(--bg-surface)',
+          border: '1px solid var(--hg-stroke)', borderRadius: 'var(--hg-radius-lg)',
+          background: 'var(--hg-glass)',
           padding: '2rem',
-          boxShadow: '0 12px 30px rgba(0,0,0,0.06)',
+          boxShadow: 'var(--hg-glass-edge), var(--hg-shadow-md)',
         }}
       >
         <p

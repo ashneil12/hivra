@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const source=readFileSync(join(process.cwd(),"provisioner/provision-claude-code-box.sh"),"utf8");
 const selection=source.slice(source.indexOf('AGENT_KIND="'),source.indexOf("# Browser stack:"));
-const base=source.slice(source.indexOf("apt-get install -y curl"),source.indexOf('ok "base packages present"'));
+const base=source.slice(source.indexOf("apt_get() {"),source.indexOf('ok "base packages present"'));
 
 function run(selectionEnv:Record<string,string>={},packages=false){
   return spawnSync("bash",["--noprofile","--norc","-s"],{encoding:"utf8",timeout:3_000,
@@ -12,6 +12,7 @@ function run(selectionEnv:Record<string,string>={},packages=false){
 uname() { printf '%s\\n' "\${FIXTURE_ARCH:-x86_64}"; }
 apt-get() { printf 'PACKAGE %s\\n' "$*"; }
 systemctl() { printf 'SERVICE %s\\n' "$*"; }
+warn() { printf '%s\\n' "$*" >&2; }
 die() { printf '%s\\n' "$*" >&2; exit 1; }
 ${selection}
 ${packages?base:'printf "RUNTIME %s\\n" "$AGENT_KIND"'}
@@ -38,11 +39,11 @@ it.each(["aarch64","arm64","unknown"])("rejects %s before installing amd64 artif
   const result=run({FIXTURE_ARCH:architecture},true);expect(result.status).not.toBe(0);expect(result.stdout).not.toContain("PACKAGE");
 });
 it("retains the default Proxmox guest-agent requirement",()=>{
-  const result=run({},true);expect(result.status).toBe(0);expect(result.stdout).toContain("qemu-guest-agent");
+  const result=run({},true);expect(result.status).toBe(0);expect(result.stdout).toContain("install -y qemu-guest-agent");
   expect(result.stdout).toContain("SERVICE enable --now qemu-guest-agent");
 });
 it("does not require Proxmox guest hardware for an explicitly selected provider VM",()=>{
   const result=run({HIVRA_COMPUTER_SUBSTRATE:"provider-vm"},true);expect(result.status).toBe(0);
-  expect(result.stdout).toContain("PACKAGE install -y curl ca-certificates git wget gnupg tmux");
+  expect(result.stdout).toContain("PACKAGE -o DPkg::Lock::Timeout=300 install -y curl ca-certificates git wget gnupg tmux");
   expect(result.stdout).not.toContain("qemu-guest-agent");expect(result.stdout).not.toContain("SERVICE");
 });

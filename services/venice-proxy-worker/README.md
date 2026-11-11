@@ -33,9 +33,10 @@ box → Worker /v1/embeddings (and all other /v1/*)  →  reverse-proxied to Ver
 Output cap (`bodyPatch`): the wallet hold covers the request only as patched.
 When a wallet cannot cover the model's maximum output, authorize lowers
 `max_completion_tokens` / `max_tokens` to what it can cover, and the Worker must
-forward that. While Vercel prices from the static catalog (the live Venice
-pricing refresh is down), the model maximum is not confirmed by Venice, so the
-held cap is written even when the wallet covers it. A Worker that does not send
+forward that. Vercel prices from Venice's live model list (refreshed every 5
+minutes). If that list cannot be fetched and no earlier copy exists, it prices
+from the static catalog; the model maximum is then not confirmed by Venice, so
+the held cap is written even when the wallet covers it. A Worker that does not send
 `acceptsBodyPatch: true` (an older deploy) is never given a patch: its requests
 hold the full worst case (the model's context window when the maximum is the
 catalog's) or get a 402.

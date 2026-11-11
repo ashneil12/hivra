@@ -11,7 +11,7 @@
 #   LAST_OCTET  guest IP last octet on the prepared Hivra /24
 #   CORES       vCPUs (default 4)        <- the dashboard "Advanced" CPU choice
 #   MEM_MB      RAM in MB (default 8192) <- the dashboard "Advanced" RAM choice
-#   AGENT_KIND  claude | codex | aeon | openclaw | agent-zero | deepseek-harness | linux-desktop (default claude) <- which runtime the box runs
+#   AGENT_KIND  claude | codex | aeon | openclaw | agent-zero | deepseek-harness | linux-desktop | linux-server (default claude) <- which runtime the box runs
 #               (aeon + openclaw + agent-zero host a web dashboard/Control UI instead of a chat CLI)
 #
 # Result (stdout, last line):
@@ -27,7 +27,7 @@ CORES="${3:-4}"
 MEM_MB="${4:-8192}"
 AGENT_KIND="${5:-claude}"
 CPU_LIMIT="${6:-$CORES}"
-case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|deepseek-harness|linux-desktop) ;; *)
+case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|deepseek-harness|linux-desktop|linux-server) ;; *)
   echo "[hivra-prov] unsupported agent kind" >&2
   exit 1
 ;; esac
@@ -217,7 +217,9 @@ validate_named_tunnel_input() {
 }
 validate_named_tunnel_input
 validate_linux_desktop_input() {
-  [ "$AGENT_KIND" = "linux-desktop" ] || return 0
+  # linux-server is the same computer shape without the desktop: it keeps the
+  # named tunnel, computer UUID and control origin of the Linux Desktop launch.
+  [ "$AGENT_KIND" = "linux-desktop" ] || [ "$AGENT_KIND" = "linux-server" ] || return 0
   [ -n "${HIVRA_TUNNEL_TOKEN:-}" ] && [ -n "${HIVRA_TUNNEL_URL:-}" ] \
     || fail "Linux Desktop requires pre-journaled named HTTPS access"
   [ -z "${HIVRA_WANT_BROWSER:-}" ] \
@@ -453,7 +455,9 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   tar -C "$PROV_DIR" -cf - . | "${GSSH[@]}" "ubuntu@${IP}" \
     'sudo -n /bin/sh -c '\''set -eu; umask 077; /bin/tar --no-same-owner --no-same-permissions -xf - -C /opt/hivra/provider-bundle'\'''
 else
-  "${GSCP[@]}" -r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}" >/dev/null
+  timeout --kill-after=15s 600s "${GSCP[@]}" -o ServerAliveInterval=15 -o ServerAliveCountMax=8 \
+    -r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}" >/dev/null \
+    || fail "copying the provisioner into the guest failed or timed out"
 fi
 # Model and tunnel credentials travel only through stdin. The shared guest
 # entrypoint owns runtime selection, strict decoding and named-tunnel setup;
@@ -500,8 +504,10 @@ try:
     if len(values) != 11 or values[-1] != "" or values[1] not in ("", "0", "1"):
         raise ValueError()
     native = values[0] == "deepseek-harness"
-    desktop = values[0] == "linux-desktop"
-    if native and (values[2] or values[3] or values[4] or not values[5] or not values[6]):
+    desktop = values[0] in ("linux-desktop", "linux-server")
+    # DeepSeek Harness takes its model at install time: key, base URL and model
+    # together, or none of them. The guest parser owns the typed checks.
+    if native and (bool(values[2]) != bool(values[3]) or bool(values[3]) != bool(values[4]) or not values[5] or not values[6]):
         raise ValueError()
     if desktop and (values[1] or values[2] or values[3] or values[4] or not values[5] or not values[6] or not values[7] or not values[8]):
         raise ValueError()
@@ -526,8 +532,14 @@ except Exception:
     sys.exit(1)
 '
 }
-guest_launch_document | "${GSSH[@]}" "ubuntu@${IP}" \
-  "sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py" >&2
+# The install runs for minutes (packages, CLIs, images). Keepalives detect a
+# dead host-to-guest path, and the outer bound stops a half-open session from
+# holding the launch in "provisioning" forever; either way the EXIT trap
+# reports ready:false and cleans up instead.
+guest_launch_document | timeout --kill-after=30s 2700s "${GSSH[@]}" \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "ubuntu@${IP}" \
+  "sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py" >&2 \
+  || fail "guest runtime installation failed, lost its connection, or ran past 45 minutes"
 
 TUNNEL=""
 # The shared guest entrypoint has configured the reboot-safe named tunnel.

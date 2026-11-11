@@ -114,8 +114,8 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
     display: "inline-flex", alignItems: "center", gap: 7, opacity: busy ? 0.55 : 1,
   };
   const inputStyle: React.CSSProperties = {
-    width: "100%", boxSizing: "border-box", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)",
-    color: "var(--ink-black)", padding: "9px 11px", fontFamily: "var(--font-mono), monospace", fontSize: 12,
+    width: "100%", boxSizing: "border-box", border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)",
+    color: "var(--ink-black)", padding: "9px 11px", fontFamily: "var(--font-mono)", fontSize: 12,
   };
 
   return (
@@ -124,9 +124,9 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
       <div id="private-access-title" className="mono" style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--text-muted)", marginBottom: 10 }}>
         Private access
       </div>
-      <div style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.035)", padding: 18, display: "grid", gap: 14, gridTemplateColumns: "minmax(0, 1fr)" }}>
+      <div style={{ border: "1px solid var(--hg-stroke)", borderRadius: 14, background: "var(--hg-glass)", backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", boxShadow: "var(--hg-glass-edge), var(--hg-shadow-sm)", padding: 18, display: "grid", gap: 14, gridTemplateColumns: "minmax(0, 1fr)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 11 }}>
-          <Network size={17} aria-hidden="true" style={{ marginTop: 2, color: connected ? "#22c55e" : "var(--text-muted)" }} />
+          <Network size={17} aria-hidden="true" style={{ marginTop: 2, color: connected ? "var(--hg-ok)" : "var(--text-muted)" }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, color: "var(--ink-black)", fontWeight: 650 }}>Tailscale or Headscale</div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55, marginTop: 4 }}>
@@ -193,11 +193,11 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
               {action === "disconnect" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Unplug size={14} />} Disconnect
             </button> : null}
         </div> : null}
-        {confirmDisconnect && connection && !pending ? <div style={{ border: "1px solid rgba(192,57,43,0.4)", background: "rgba(192,57,43,0.04)", padding: 12, display: "grid", gap: 10 }}>
+        {confirmDisconnect && connection && !pending ? <div style={{ border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 4%, transparent)", padding: 12, display: "grid", gap: 10 }}>
           <div style={{ fontSize: 12, color: "var(--ink-black)", lineHeight: 1.5 }}>Disconnect this computer? Reconnecting needs a new one-time enrollment key.</div>
           <div className="private-access-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" disabled={busy || !supported} onClick={() => { setConfirmDisconnect(false); void mutate("disconnect"); }}
-              style={{ ...buttonStyle, color: "#e06c5a", borderColor: "rgba(192,57,43,0.5)" }}>
+              style={{ ...buttonStyle, color: "var(--hg-bad)", borderColor: "color-mix(in srgb, var(--hg-bad) 50%, transparent)" }}>
               <Unplug size={14} /> Disconnect computer
             </button>
           </div>
@@ -205,7 +205,7 @@ export function HivraPrivateAccessPanel({ agentId, observedStatus, onFeedbackCha
         {connection ? <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
           Disconnect logs this computer out while leaving the local service available for a verified refresh or later reconnect. Your Tailscale or Headscale admin page may retain an offline device record for its own retention period.
         </div> : null}
-        {error ? <div role="alert" style={{ fontSize: 12, color: "#e06c5a", lineHeight: 1.5 }}>{error}</div> : null}
+        {error ? <div role="alert" style={{ fontSize: 12, color: "var(--hg-bad)", lineHeight: 1.5 }}>{error}</div> : null}
       </div>
     </section>
   );

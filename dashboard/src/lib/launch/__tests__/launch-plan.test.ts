@@ -134,13 +134,15 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("codex"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("claude-code"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("hermes"), free)).toEqual({ label: "Needs Pro", tone: "needs" });
+    // DeepSeek Harness has no own-server option, so a Free account is not pointed at one.
+    expect(launchFit(launchProfileFitSubject("deepseek-harness"), free)).toEqual({ label: "Needs Pro", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("aeon"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("openclaw"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("agent-zero"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("ubuntu-desktop"), free)).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("linux-terminal"), free)).toEqual({ label: "Needs your own server", tone: "needs" });
     expect(launchFit(launchProfileFitSubject("windows"), free)).toEqual({ label: "Needs your own server", tone: "needs" });
-    expect(launchFit(launchProfileFitSubject("omarchy"), free)).toEqual({ label: "Prepared computer", tone: "neutral" });
+    expect(launchFit(launchProfileFitSubject("omarchy"), free)).toEqual({ label: "Ready to launch", tone: "neutral" });
   });
 
   it("includes the browser on a paid plan that holds it", () => {
@@ -233,6 +235,19 @@ describe("size presets", () => {
     }
   });
 
+  it("offers the Linux computer 0.5 / 1, 1 / 2 and 2 / 4, and recommends the Medium one", () => {
+    const options = sizePresets("ubuntu-server");
+    expect(options.map(option => [option.label, option.resources.cpu, option.resources.ram])).toEqual([
+      ["Small", 0.5, 1], ["Medium", 1, 2], ["Large", 2, 4],
+    ]);
+    for (const option of options) {
+      expect(validateResourceEnvelope("ubuntu-server", option.resources, { maximumCpu: 8, maximumRam: 16 })).toEqual({ ok: true, envelope: option.resources });
+      expect(PROFILE_DETAILS["ubuntu-server"].cpuOptions).toContain(option.resources.cpu);
+      expect(PROFILE_DETAILS["ubuntu-server"].ramOptions).toContain(option.resources.ram);
+    }
+    expect(sizeLabel({ ...PROFILE_DETAILS["ubuntu-server"].recommended }, options)).toBe("Medium");
+  });
+
   it("has no presets for fixed-size computers", () => {
     expect(sizePresets("omarchy")).toEqual([]);
     expect(sizePresets("windows")).toEqual([]);
@@ -313,6 +328,22 @@ describe("fitting a size to where it runs", () => {
     expect(recommendedLaunchSize("agent-zero", destinationSizeLimits("hivra-managed", null, { ...PRO, usage: { agentCount: 1, usedCpu: 1, usedRam: 2 } }), { browser: false }))
       .toEqual(pinned(1, 2));
     expect(recommendedLaunchSize("aeon", pro, { browser: false })).toEqual(pinned(0.5, 1));
+    // DeepSeek Harness keeps the 2 CPU / 4 GB its live acceptance ran at.
+    expect(recommendedLaunchSize("deepseek-harness", pro, { browser: false })).toEqual(pinned(2, 4));
+  });
+
+  it("describes DeepSeek Harness as Hivra Cloud only, at its catalog floor, with Small at its accepted size", () => {
+    expect(launchProfileFitSubject("deepseek-harness")).toMatchObject({
+      placementRuntimeId: "deepseek-harness", hivraCloud: "plan", minPlan: "pro", floor: { cpu: 2, ram: 3 },
+      browserFloor: null, poolExempt: false, ownServer: false,
+    });
+    expect(launchFit(launchProfileFitSubject("deepseek-harness"), { ...evidence(PRO), selfHosted: true }))
+      .toEqual({ label: "Runs on Hivra Cloud only", tone: "needs" });
+    expect(sizePresets("deepseek-harness").map(preset => [preset.resources.cpu, preset.resources.ram, preset.resources.maximumCpu, preset.resources.maximumRam]))
+      .toEqual([[2, 4, 2, 4], [4, 8, 4, 8], [8, 16, 8, 16]]);
+    expect(capabilitySummary("deepseek-harness", { browser: false })).toBe("DeepSeek's own interface on its own computer.");
+    expect(launchChangesSummary({ profileId: "deepseek-harness", substrate: "hivra-cloud", targetName: null }))
+      .toBe("Creates one computer and installs DeepSeek Harness. Nothing is bought.");
   });
 
   it("offers the upgrade the Choose badge named for Hivra's own size, and an exact fit for the owner's", () => {
@@ -360,6 +391,22 @@ describe("plan rows", () => {
       .toBe("Creates one computer with Ubuntu Desktop. Nothing is bought.");
     expect(launchChangesSummary({ profileId: "codex", substrate: "provider-vm", targetName: "hetzner-1" }))
       .toBe("Installs Codex on hetzner-1 and uses the whole server. It doesn't buy or create another server.");
+  });
+
+  it("describes the Linux computer as a terminal and files with no desktop, on the same plan as Ubuntu Desktop", () => {
+    expect(PROFILE_DETAILS["ubuntu-server"]).toMatchObject({
+      name: "Linux computer", resourceKind: "computer", runtimeId: "linux-desktop", placementRuntimeId: "linux-server",
+      managedCapacity: "plan", sizing: "burst", browser: "none",
+    });
+    expect(capabilitySummary("ubuntu-server", { browser: false })).toBe("A terminal and files on this computer. No desktop.");
+    expect(launchChangesSummary({ profileId: "ubuntu-server", substrate: "hivra-cloud", targetName: null }))
+      .toBe("Creates one Linux computer with a terminal and files. It has no desktop. Nothing is bought.");
+    const subject = launchProfileFitSubject("ubuntu-server");
+    expect(subject).toMatchObject({
+      placementRuntimeId: "linux-server", floor: { cpu: 0.5, ram: 1 }, hivraCloud: "plan", ownServer: true, poolExempt: false,
+      minPlan: launchProfileFitSubject("ubuntu-desktop").minPlan,
+    });
+    expect(launchProfileFitSubject("ubuntu-desktop")).toMatchObject({ placementRuntimeId: "linux-desktop", floor: { cpu: 2, ram: 4 } });
   });
 
   it("describes a Windows setup without claiming an Ubuntu install or a purchase", () => {

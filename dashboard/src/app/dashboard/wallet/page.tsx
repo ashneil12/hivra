@@ -176,6 +176,7 @@ const walletLinkButtonStyle: React.CSSProperties = {
   minHeight: 44,
   padding: '10px 14px',
   border: '1px solid var(--ink-black)',
+  borderRadius: 10,
   background: 'var(--ink-black)',
   color: 'var(--bg-surface)',
   textDecoration: 'none',
@@ -242,6 +243,7 @@ function WalletEnvironmentNotice({
         gap: 6,
         padding: '6px 10px',
         border: '1px solid var(--ink-black)',
+        borderRadius: 7,
         background: 'transparent',
         color: 'var(--ink-black)',
         cursor: 'pointer',
@@ -264,6 +266,7 @@ function WalletEnvironmentNotice({
           role="status"
           style={{
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
+            borderRadius: 10,
             background: 'color-mix(in srgb, var(--gold-leaf) 6%, transparent)',
             padding: '12px 16px',
             display: 'flex',
@@ -312,23 +315,24 @@ function WalletEnvironmentNotice({
         <div
           role="alert"
           style={{
-            border: '1px solid #dc2626',
-            background: 'color-mix(in srgb, #dc2626 5%, transparent)',
+            border: '1px solid var(--hg-bad)',
+            borderRadius: 10,
+            background: 'color-mix(in srgb, var(--hg-bad) 5%, transparent)',
             padding: '12px 16px',
             display: 'flex',
             alignItems: 'flex-start',
             gap: 10,
           }}
         >
-          <AlertTriangle size={15} style={{ color: '#dc2626', flexShrink: 0, marginTop: 2 }} />
+          <AlertTriangle size={15} style={{ color: 'var(--hg-bad)', flexShrink: 0, marginTop: 2 }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: '#dc2626' }}>{connectError}</p>
+            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--hg-bad)' }}>{connectError}</p>
             {!hasProvider && copyButton}
           </div>
         </div>
       )}
       {showSuccess && (
-        <p role="status" style={{ fontSize: 12.5, color: '#16a34a', margin: 0, lineHeight: 1.5 }}>
+        <p role="status" style={{ fontSize: 12.5, color: 'var(--hg-ok)', margin: 0, lineHeight: 1.5 }}>
           {connectSuccess}
         </p>
       )}
@@ -927,7 +931,7 @@ export default function WalletPage() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.4 }}
+      transition={{ duration: 0.2 }}
       style={{
         maxWidth: 'min(960px, 100%)',
         margin: '1rem auto 5rem',
@@ -944,6 +948,7 @@ export default function WalletPage() {
             gap: 8,
             padding: '5px 12px',
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 30%, transparent)',
+            borderRadius: 7,
             background: 'color-mix(in srgb, var(--gold-leaf) 5%, transparent)',
             fontSize: 9,
             textTransform: 'uppercase',
@@ -1002,6 +1007,7 @@ export default function WalletPage() {
         <div
           style={{
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
+            borderRadius: 10,
             background: 'color-mix(in srgb, var(--gold-leaf) 5%, transparent)',
             padding: '12px 16px',
             marginBottom: '1.5rem',
@@ -1076,7 +1082,7 @@ export default function WalletPage() {
       )}
 
       {tokenPanels && quoteError && (
-        <p style={{ fontSize: 12, color: '#dc2626', marginTop: '-0.5rem', marginBottom: '1rem' }}>
+        <p style={{ fontSize: 12, color: 'var(--hg-bad)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
           {quoteError}
         </p>
       )}
@@ -1086,8 +1092,9 @@ export default function WalletPage() {
           role="status"
           aria-live="polite"
           style={{
-            border: '1px solid var(--etched-border)',
-            background: 'var(--bg-surface)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
+            background: 'var(--hg-glass)',
             padding: '1rem 1.25rem',
             marginBottom: '1.5rem',
             display: 'flex',
@@ -1107,8 +1114,9 @@ export default function WalletPage() {
           role="status"
           aria-live="polite"
           style={{
-            border: '1px solid var(--etched-border)',
-            background: 'var(--bg-surface)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
+            background: 'var(--hg-glass)',
             padding: '1rem 1.25rem',
             marginBottom: '1.5rem',
             display: 'flex',
@@ -1162,7 +1170,7 @@ export default function WalletPage() {
       />
 
       {error && (
-        <p style={{ fontSize: 12, color: '#dc2626', margin: '0 0 1rem' }}>{error}</p>
+        <p style={{ fontSize: 12, color: 'var(--hg-bad)', margin: '0 0 1rem' }}>{error}</p>
       )}
 
       {showLockWalletActions && (

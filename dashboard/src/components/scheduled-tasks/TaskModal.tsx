@@ -184,7 +184,7 @@ function TaskDialogFrame({ onClose, closeOnEscape, children }: { onClose: () => 
 
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 'var(--workspace-viewport-height, 100dvh)', boxSizing: 'border-box', background: 'var(--overlay-bg)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: OVERLAY_PADDING }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="task-modal-title" tabIndex={-1} className="interrogation-box" style={{ background: "var(--vellum-bg)", width: '100%', maxWidth: 700, padding: 0, boxShadow: '0 20px 40px rgba(0,0,0,0.1)', maxHeight: MODAL_MAX_HEIGHT, overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none' }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="task-modal-title" tabIndex={-1} className="interrogation-box" style={{ background: "var(--vellum-bg)", width: '100%', maxWidth: 700, padding: 0, boxShadow: 'var(--hg-shadow-lg)', borderRadius: 20, maxHeight: MODAL_MAX_HEIGHT, overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none' }}>
         {children}
       </div>
     </div>
@@ -423,7 +423,7 @@ export function TaskModal({
           <form onSubmit={handleSubmit} style={{ padding: `${FORM_GUTTER} ${FORM_GUTTER} 0` }}>
              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 {!editingJobInitial && (
-                  <div style={{ border: '1px solid var(--etched-border)', background: 'rgba(0,0,0,0.025)', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ border: '1px solid var(--etched-border)', background: 'var(--hg-fill-1)', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div className="mono" style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.6 }}>
                       Quick Start
                     </div>
@@ -622,7 +622,7 @@ export function TaskModal({
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: '1.5rem' }}>
                    {agents.length > 1 && (
                      <div>
-                       <label className="mono" style={{ fontSize: 10, display: 'block', marginBottom: 8, opacity: 0.6, fontWeight: 700, textTransform: 'uppercase' }}>Target Agent <span style={{ color: '#ef4444' }}>*</span></label>
+                       <label className="mono" style={{ fontSize: 10, display: 'block', marginBottom: 8, opacity: 0.6, fontWeight: 700, textTransform: 'uppercase' }}>Target Agent <span style={{ color: 'var(--hg-bad)' }}>*</span></label>
                        <StyledDropdown disabled={!!editingJobInitial} value={formAgentId} onChange={setFormAgentId} options={agentDropdownOptions} />
                      </div>
                    )}

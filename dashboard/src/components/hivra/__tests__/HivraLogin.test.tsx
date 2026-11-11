@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { HivraLogin } from "../HivraLogin";
-import { boxLoginStartRaw, boxLoginStatus } from "@/lib/hivra/agent-api";
+import { boxLoginComplete, boxLoginStartRaw, boxLoginStatus } from "@/lib/hivra/agent-api";
 
 jest.mock("@/lib/hivra/agent-api", () => ({
   boxLoginStartRaw: jest.fn(),
@@ -16,7 +16,13 @@ function setPointer(coarse: boolean) {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
-    value: (query: string) => ({ matches: coarse && query.includes("coarse"), media: query }) as MediaQueryList,
+    value: (query: string) => ({
+      matches: coarse && query.includes("coarse"),
+      media: query,
+      // The thinking orb listens for theme and motion changes.
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }) as unknown as MediaQueryList,
   });
 }
 
@@ -139,4 +145,43 @@ describe("a sign-in link from an agent added to a computer (T28)", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Sign in with ChatGPT/ })); });
     expect(window.open).toHaveBeenCalled();
   });
+});
+
+it("signing in again to Codex does not treat the old sign-in as finished, and waits for the person", async () => {
+  start.mockResolvedValue({ url: "https://auth.openai.test/device", code: "ABCD-1234", deviceAuth: true });
+  (boxLoginStatus as jest.Mock).mockResolvedValue({ loggedIn: true });
+  (boxLoginComplete as jest.Mock).mockResolvedValue({ venice: null });
+  jest.useFakeTimers();
+  const onDone = jest.fn();
+  render(<HivraLogin boxUrl="https://box.test" onDone={onDone} agentKind="codex" reauth />);
+  expect(screen.getByRole("heading", { name: "Sign in to Codex again." })).toBeInTheDocument();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Sign in with ChatGPT/ })); });
+  await act(async () => { jest.advanceTimersByTime(10_000); });
+  expect(boxLoginStatus).not.toHaveBeenCalled();
+  expect(onDone).not.toHaveBeenCalled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /I've entered the code/ })); });
+  expect(boxLoginComplete).toHaveBeenCalledWith("https://box.test", "", undefined);
+  expect(onDone).toHaveBeenCalledTimes(1);
+  jest.useRealTimers();
+});
+
+it("does not report a Codex sign-in as done while the computer still holds the old one", async () => {
+  jest.useFakeTimers();
+  try {
+    start.mockResolvedValue({ url: "https://auth.openai.test/device", code: "ABCD-1234", deviceAuth: true });
+    const status = jest.mocked(boxLoginStatus);
+    status.mockResolvedValue({ loggedIn: true, fresh: false });
+    const onDone = jest.fn();
+    render(<HivraLogin boxUrl="https://box.test" onDone={onDone} agentKind="codex" />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Sign in with ChatGPT/ })); });
+    await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+    expect(status).toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    status.mockResolvedValue({ loggedIn: true, fresh: true });
+    await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+    jest.mocked(boxLoginStatus).mockResolvedValue({ loggedIn: false });
+  }
 });

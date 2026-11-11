@@ -44,7 +44,7 @@ it("creates only a fresh public checkout with public modes while retaining the p
   const creation=source.slice(start,source.indexOf("  BUX_CHECKOUT_CREATED=1",start))+"\nfi\n";
   try {
     const result=spawnSync("/bin/bash",["--noprofile","--norc","-s"],{
-      input:`set -euo pipefail\numask 077\ngit() { if [ "$3" = init ]; then mkdir "$BUX_DIR/.git"; elif [ "$3" = checkout ]; then : > "$BUX_DIR/install.sh"; chmod +x "$BUX_DIR/install.sh"; fi; }\n${creation}\nprintf '%s\\n' "$(umask)"\n`,
+      input:`set -euo pipefail\numask 077\nwith_retries() { "$@"; }\ngit() { if [ "$3" = init ]; then mkdir "$BUX_DIR/.git"; elif [ "$3" = checkout ]; then : > "$BUX_DIR/install.sh"; chmod +x "$BUX_DIR/install.sh"; fi; }\n${creation}\nprintf '%s\\n' "$(umask)"\n`,
       env:{PATH:"/usr/bin:/bin",NODE_ENV:"test",BUX_DIR:checkout,BUX_REF:"fixture-pin"},encoding:"utf8",timeout:3000,
     });
     expect(result).toMatchObject({status:0,stdout:"0077\n"});

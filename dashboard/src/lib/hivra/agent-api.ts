@@ -333,6 +333,8 @@ export async function getAgent(id: string): Promise<HivraAgent | null> {
 
 export async function deleteAgent(id: string, options: {
   signal?: AbortSignal; onProgress?: (message: string) => void;
+  /** Remove only Hivra's record of a computer its host reports gone. */
+  recordOnly?: boolean;
 } = {}): Promise<void> {
   const stages: Record<string, string> = {
     installer_stopping: "Stopping the original installer before removal…",
@@ -349,7 +351,7 @@ export async function deleteAgent(id: string, options: {
     const timeout = setTimeout(abort, Math.min(110_000, deadline - Date.now()));
     let r: Response, j: Record<string, unknown> | null;
     try {
-      r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}`, { method: "DELETE", signal: controller.signal, redirect: "error" });
+      r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}${options.recordOnly ? "?recordOnly=1" : ""}`, { method: "DELETE", signal: controller.signal, redirect: "error" });
       j = await readJson(r);
     } catch {
       // An uncertain delivery stops the loop. No inferred failure, completed
@@ -700,7 +702,7 @@ export async function confirmProviderResize(input: {
 
 /** Why a usage read failed, with the HTTP status and any Retry-After. */
 export class ComputerUsageError extends Error {
-  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null) {
+  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null, readonly code: string | null = null) {
     super(message);
     this.name = "ComputerUsageError";
   }
@@ -720,6 +722,7 @@ export async function getComputerUsage(id: string, options: { cached?: boolean; 
       r.status === 429 ? "Usage was refreshed a lot just now." : (j?.error as string) || "Hivra couldn't read this computer's usage.",
       r.status,
       Number.isFinite(retry) && retry > 0 ? retry : null,
+      typeof j?.code === "string" ? j.code : null,
     );
   }
   const parsed = ComputerUsageViewSchema.safeParse(j.data);
@@ -813,11 +816,11 @@ export interface AeonConnectStatus {
   at: string;
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null; fresh?: boolean | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null; fresh?: boolean | null };
   } catch {
     return { loggedIn: false };
   }
@@ -1107,6 +1110,9 @@ export type ClaudeAppStatus = {
   profileSaved: boolean;
   installing: boolean;
   lastError: string | null;
+  /** The owner's clipboard switch for the desktop, off unless they turned it on.
+   * null: this computer's software predates the switch (an update brings it). */
+  clipboard: boolean | null;
 };
 const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
 function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
@@ -1124,6 +1130,7 @@ function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
     profileSaved: v.profileSaved === true,
     installing: v.installing === true,
     lastError: typeof v.lastError === "string" && v.lastError ? v.lastError.slice(0, 200) : null,
+    clipboard: typeof v.clipboard === "boolean" ? v.clipboard : null,
   };
 }
 /** `available: false` means this computer does not offer the Claude app at all
@@ -1160,6 +1167,33 @@ export async function claudeAppRemove(boxUrl: string, token?: string | null): Pr
     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
     return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// The desktop clipboard: an owner switch, then one request per Paste in / Copy out.
+// Selkies' own clipboard stays off; nothing moves unless the owner presses a button.
+export async function desktopClipboardSet(boxUrl: string, enabled: boolean, token?: string | null): Promise<{ ok: boolean; clipboard?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ enabled }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; clipboard?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, clipboard: j.clipboard === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function desktopClipboardPaste(boxUrl: string, text: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard/paste`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ text }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function desktopClipboardCopy(boxUrl: string, token?: string | null): Promise<{ ok: boolean; text?: string; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard/copy`, { method: "POST", cache: "no-store", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; text?: unknown; error?: string };
+    if (!r.ok || !j.ok || typeof j.text !== "string") return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, text: j.text, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 

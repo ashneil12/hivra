@@ -9,6 +9,7 @@ import {
   type AgentComputerOperation,
   type AgentComputerSurface,
 } from "./contracts";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 
 export interface HermesLegacyComputerRecord {
   id: string;
@@ -42,7 +43,7 @@ const HIVRA_CLI_TYPES = new Set([
   "openclaw",
   "agent-zero",
 ]);
-const HIVRA_DASHBOARD_TYPES = new Set(["aeon"]);
+const HIVRA_DASHBOARD_TYPES = new Set(["aeon", "deepseek-harness"]);
 const HIVRA_COMPUTER_TYPES = new Set(["linux-desktop"]);
 
 function normalizedLabel(value: string | null | undefined): string | undefined {
@@ -178,7 +179,7 @@ function hivraCapabilities(
     // of the shared capability contract until a Windows adapter proves them.
     if (isComputer) {
       if (!isWindowsComputer) surfaces.push("files", "terminal");
-      surfaces.push("desktop");
+      if (computerHasDesktop(computerProfile)) surfaces.push("desktop");
     }
   }
 

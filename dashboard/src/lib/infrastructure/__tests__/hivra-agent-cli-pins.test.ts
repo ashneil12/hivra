@@ -88,7 +88,7 @@ describe("Codex startup update check", () => {
   it("runs from the guest installer as the owner, only for Codex computers", () => {
     const installer = fs.readFileSync(path.join(bundle, "provision-claude-code-box.sh"), "utf8");
     expect(installer).toContain('sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py"');
-    const codexBlock = installer.slice(installer.indexOf('if [ "$AGENT_KIND" = "codex" ]; then\n  if sudo -iu'));
+    const codexBlock = installer.slice(installer.indexOf('if [ "$AGENT_KIND" = "codex" ]; then\n  if [ -x'));
     expect(codexBlock.slice(0, codexBlock.indexOf("\nfi\n"))).toContain("hivra-codex-config-pin.py");
   });
 });

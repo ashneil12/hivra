@@ -148,7 +148,7 @@ export function SurfaceControls({
   }
 
   return (
-    <div className="shrink-0 border-b border-[var(--etched-border)] bg-[var(--bg-surface)]">
+    <div className="shrink-0 border-b border-[var(--hg-stroke-subtle)] bg-[var(--hg-glass)] backdrop-blur-xl backdrop-saturate-[1.3]">
       <div
         role="tablist"
         aria-label="Agent surfaces"
@@ -178,14 +178,14 @@ export function SurfaceControls({
               onBlur={() => setFocusedReason(null)}
               onKeyDown={(event) => handleKeyDown(event, descriptor, index)}
               className={[
-                "mono relative inline-flex min-h-[43px] shrink-0 items-center gap-1.5 border-b-2 px-3 pb-0.5 pt-0.5 text-[13px] font-semibold outline-none",
+                "relative inline-flex min-h-[28px] shrink-0 items-center gap-1.5 rounded-[7px] px-3 text-[13px] font-semibold outline-none pointer-coarse:min-h-[44px]",
                 "motion-safe:transition-colors motion-safe:duration-150 motion-reduce:transition-none",
-                "focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2",
+                "focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2",
                 selected && usable
-                  ? "border-b-[var(--hivra-red)] bg-[var(--bg-elevated)] text-[var(--ink-black)]"
-                  : "border-b-transparent text-[var(--text-muted)]",
+                  ? "bg-[var(--hg-fill-2)] text-[var(--ink-black)]"
+                  : "text-[var(--text-muted)]",
                 usable
-                  ? "hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)]"
+                  ? "hover:bg-[var(--hg-fill-hover)] hover:text-[var(--ink-black)]"
                   : "cursor-not-allowed opacity-70",
               ].join(" ")}
             >
@@ -204,7 +204,7 @@ export function SurfaceControls({
       {focusedReason ? (
         <p
           role="status"
-          className="border-t border-[var(--etched-border)] px-4 py-2 text-[12px] leading-[1.3] text-[var(--text-muted)] sm:px-6"
+          className="border-t border-[var(--hg-stroke-subtle)] px-4 py-2 text-[12px] leading-[1.3] text-[var(--text-muted)] sm:px-6"
         >
           {focusedReason}
         </p>

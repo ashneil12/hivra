@@ -1,0 +1,18 @@
+.hero { padding-bottom: 48px; }
+.hero .scope { font-size: 15px; margin: 24px 0; }
+.hero .note, .enquiry .note { font-size: 13px; line-height: 1.7; margin: 20px 0 0; max-width: 66ch; color: var(--text-muted); }
+.section { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr); gap: 64px; padding: 0 0 56px; margin: 0 0 56px; border-bottom: 1px solid var(--etched-border); }
+.section h2 { margin-top: 20px; }
+.section .firstHeading { margin-top: 0; }
+.section .steps { list-style: decimal-leading-zero; padding-left: 30px; margin: 0; }
+.steps li { padding: 0 0 20px 16px; border-bottom: 1px solid var(--etched-border); margin: 0 0 24px; }
+.steps li:last-child { border: 0; margin-bottom: 0; padding-bottom: 0; }
+.steps li::marker { color: var(--gold-leaf); font: 12px var(--font-sans); }
+.steps li h3 { margin: 0 0 12px; }
+.steps li p { margin: 0; }
+.enquiry { max-width: 820px; padding: 0; }
+.enquiry h2 { margin-top: 20px; }
+@media (max-width: 760px) {
+  .section { grid-template-columns: minmax(0, 1fr); gap: 24px; margin-bottom: 40px; padding-bottom: 40px; }
+  .steps li { padding-left: 8px; }
+}

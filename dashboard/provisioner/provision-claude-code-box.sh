@@ -11,6 +11,9 @@
 #            installer pre-installs codex; the cdp skill is shared via ~/.agents/skills).
 #   linux-desktop — the shared Ubuntu/bux base without an agent CLI or persona;
 #                   authenticated Files and terminals share ~/Hivra.
+#   linux-server  — the same base and workspace as linux-desktop with no desktop:
+#                   Files and the two terminals only (no desktop capability and
+#                   no Claude app helper).
 #
 # What it sets up, end to end:
 #   1. Stock browser-use/bux (Claude Code + Codex CLIs, Node 24, ttyd, the
@@ -64,14 +67,19 @@ CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging 
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
-AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or linux-desktop computer profile
+AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|linux-desktop) ;;
+  claude|codex|aeon|openclaw|agent-zero|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
   *) printf '%s\n' 'unsupported HIVRA_AGENT_KIND' >&2; exit 1 ;;
 esac
+# Both Linux computer kinds share the access base, workspace and terminals;
+# only linux-desktop installs the desktop capability and the Claude app helper.
+is_linux_computer() {
+  [ "${AGENT_KIND:-}" = "linux-desktop" ] || [ "${AGENT_KIND:-}" = "linux-server" ]
+}
 # Explicit substrate, not a best-effort fallback when required hardware fails.
 # The managed/Proxmox default retains its required QEMU guest agent. A provider
 # VM is already the isolation boundary and need not expose that guest channel.
@@ -111,6 +119,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "agent-zero" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
+# The desktop-free Linux server has no browser stack either.
+[ "$AGENT_KIND" = "linux-server" ] && WANT_BROWSER=0
 # OpenClaw CAN drive the box's CDP Chrome (browser.cdpUrl → :${CDP_PORT}); it just
 # honors the launch toggle like the coding agents (default off, opt in for the
 # live "log into your accounts" browser). The block below wires cdpUrl when on.
@@ -228,10 +238,35 @@ fi
 say "1/7  base packages"
 # ===========================================================================
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils
+# A fresh cloud image runs apt-daily/unattended-upgrades right after first boot
+# and holds the dpkg lock. Wait for the lock, and retry a flaky mirror a few
+# times, instead of failing the whole launch on the first transient error.
+apt_get() {
+  local attempt
+  for attempt in 1 2 3 4; do
+    apt-get -o DPkg::Lock::Timeout=300 "$@" && return 0
+    [ "$attempt" -lt 4 ] || break
+    warn "apt-get $1 failed (attempt ${attempt}/4); retrying in $((attempt * 10))s"
+    sleep $((attempt * 10))
+  done
+  return 1
+}
+# Retry a network step (git fetch, npm install) that a brief outage can break.
+with_retries() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return 0
+    [ "$attempt" -lt 3 ] || break
+    warn "network step failed (attempt ${attempt}/3); retrying in $((attempt * 15))s"
+    sleep $((attempt * 15))
+  done
+  return 1
+}
+apt_get update -y || die "apt-get update failed after retries"
+apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
+  || die "base package installation failed after retries"
 if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
-  apt-get install -y qemu-guest-agent
+  apt_get install -y qemu-guest-agent || die "qemu-guest-agent installation failed after retries"
   systemctl enable --now qemu-guest-agent \
     || die "qemu-guest-agent failed to start"
 fi
@@ -241,7 +276,7 @@ if [ -z "$ACCESS_HOSTNAME" ] && { ! command -v cloudflared >/dev/null 2>&1 || ! 
   say "installing verified cloudflared ${CLOUDFLARED_VERSION}"
   CLOUDFLARED_TMP="$(mktemp /tmp/cloudflared.XXXXXX)"
   trap 'rm -f -- "${CLOUDFLARED_TMP:-}"' EXIT
-  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
     "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
     -o "$CLOUDFLARED_TMP"
   printf '%s  %s\n' "$CLOUDFLARED_LINUX_AMD64_SHA256" "$CLOUDFLARED_TMP" | sha256sum -c - >/dev/null \
@@ -265,7 +300,7 @@ if [ -n "$ACCESS_HOSTNAME" ]; then
     say "installing verified Caddy ${CADDY_VERSION} for standalone HTTPS"
     CADDY_TMP_DIR="$(mktemp -d /tmp/hivra-caddy.XXXXXX)"
     trap 'rm -rf -- "${CADDY_TMP_DIR:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" \
       -o "$CADDY_TMP_DIR/caddy.tar.gz"
     printf '%s  %s\n' "$CADDY_LINUX_AMD64_SHA256" "$CADDY_TMP_DIR/caddy.tar.gz" | sha256sum -c - >/dev/null \
@@ -290,7 +325,7 @@ fi
 # ===========================================================================
 say "2/7  install stock bux into ${BUX_DIR} (dummy BU key, WITH_ZTK=0)"
 # ===========================================================================
-if [ "$AGENT_KIND" = "linux-desktop" ]; then
+if is_linux_computer; then
   # A plain computer must not depend on an agent distribution. Install only
   # the small host-side access base used by Files and the two terminals; the
   # contained desktop itself is installed later by remote-desktop/install-guest.py.
@@ -306,7 +341,7 @@ if [ "$AGENT_KIND" = "linux-desktop" ]; then
     [ ! -e "${NODE_ROOT}" ] || die "existing Node.js runtime differs from the pinned desktop runtime"
     NODE_TMP_DIR="$(mktemp -d /tmp/hivra-node.XXXXXX)"
     trap 'rm -rf -- "${NODE_TMP_DIR:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
       -o "${NODE_TMP_DIR}/node.tar.xz"
     printf '%s  %s\n' "$NODE_LINUX_X64_SHA256" "${NODE_TMP_DIR}/node.tar.xz" | sha256sum -c - >/dev/null \
@@ -329,7 +364,7 @@ if [ "$AGENT_KIND" = "linux-desktop" ]; then
   if [ ! -x /usr/local/bin/ttyd ] || ! /usr/local/bin/ttyd --version 2>&1 | grep -Fq "$TTYD_VERSION"; then
     TTYD_TMP="$(mktemp /tmp/hivra-ttyd.XXXXXX)"
     trap 'rm -f -- "${TTYD_TMP:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
       -o "$TTYD_TMP"
     printf '%s  %s\n' "$TTYD_LINUX_X64_SHA256" "$TTYD_TMP" | sha256sum -c - >/dev/null \
@@ -390,7 +425,7 @@ if [ ! -e "${BUX_DIR}" ] && [ ! -L "${BUX_DIR}" ]; then
     mkdir "${BUX_DIR}"
     git -C "${BUX_DIR}" init -q
     git -C "${BUX_DIR}" remote add origin https://github.com/browser-use/bux
-    git -C "${BUX_DIR}" fetch --depth 1 origin "${BUX_REF}"
+    with_retries git -C "${BUX_DIR}" fetch --depth 1 origin "${BUX_REF}"
     git -C "${BUX_DIR}" checkout -q --detach FETCH_HEAD
   )
   BUX_CHECKOUT_CREATED=1
@@ -449,7 +484,7 @@ fi
 ensure_bux_installed
 
 if ! claude --version 2>/dev/null | grep -Fq "$CLAUDE_CODE_VERSION"; then
-  run_public_bootstrap npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+  with_retries run_public_bootstrap npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     || die "failed to install pinned Claude Code ${CLAUDE_CODE_VERSION}"
 fi
 
@@ -460,7 +495,7 @@ id "${AGENT_USER}" >/dev/null 2>&1 || die "agent user ${AGENT_USER} not created 
 fi
 
 prepare_linux_desktop_workspace() {
-  [ "${AGENT_KIND:-}" = "linux-desktop" ] || return 0
+  is_linux_computer || return 0
   local workspace="${AGENT_HOME}/Hivra" owner expected_owner mode
   expected_owner="$(id -u "${AGENT_USER}"):$(id -g "${AGENT_USER}")"
   if [ ! -e "$workspace" ] && [ ! -L "$workspace" ]; then
@@ -482,15 +517,20 @@ prepare_linux_desktop_workspace() {
 prepare_linux_desktop_workspace
 # For codex boxes, make sure the installer's codex pre-install actually landed.
 if [ "$AGENT_KIND" = "codex" ]; then
-  if sudo -iu "${AGENT_USER}" command -v codex >/dev/null 2>&1; then
-    ok "codex CLI present ($(sudo -iu "${AGENT_USER}" bash -lc 'codex --version' 2>/dev/null || echo present))"
+  if [ -x "${AGENT_HOME}/.npm-global/bin/codex" ]; then
+    ok "codex CLI present ($(sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" "${AGENT_HOME}/.npm-global/bin/codex" --version 2>/dev/null || echo present))"
   else
     say "codex CLI absent — installing @openai/codex for ${AGENT_USER}"
-    sudo -iu "${AGENT_USER}" bash -lc "npm i -g @openai/codex@${CODEX_CLI_VERSION}" \
+    with_retries sudo -iu "${AGENT_USER}" bash -lc "npm i -g --prefix \"\$HOME/.npm-global\" @openai/codex@${CODEX_CLI_VERSION}" \
       || die "failed to install @openai/codex for ${AGENT_USER}"
     ok "codex CLI installed"
   fi
-  sudo -iu "${AGENT_USER}" bash -lc 'codex --version' 2>/dev/null | grep -Fq "$CODEX_CLI_VERSION" \
+  # The gateway, terminal shell and CLI updater all run this exact path, so a
+  # codex found elsewhere on the login PATH is not good enough.
+  CODEX_BIN_PATH="${AGENT_HOME}/.npm-global/bin/codex"
+  [ -x "$CODEX_BIN_PATH" ] \
+    || die "codex CLI is not at ${CODEX_BIN_PATH}, where chat, terminal and updates expect it"
+  sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" "$CODEX_BIN_PATH" --version 2>/dev/null | grep -Fq "$CODEX_CLI_VERSION" \
     || die "Codex CLI version does not match ${CODEX_CLI_VERSION}"
   sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py" >/dev/null \
     || die "could not turn off the Codex startup update check"
@@ -507,12 +547,12 @@ if [ "$WANT_BROWSER" = 1 ]; then
   else
     CHROME_TMP="$(mktemp /tmp/google-chrome.XXXXXX.deb)"
     trap 'rm -f -- "${CHROME_TMP:-}"' EXIT
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
       "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}_amd64.deb" \
       -o "$CHROME_TMP"
     printf '%s  %s\n' "$CHROME_LINUX_AMD64_SHA256" "$CHROME_TMP" | sha256sum -c - >/dev/null \
       || die "Chrome checksum verification failed"
-    apt-get install -y "$CHROME_TMP"
+    apt_get install -y "$CHROME_TMP"
     rm -f -- "$CHROME_TMP"
     trap - EXIT
     dpkg-query -W -f='${Version}' google-chrome-stable 2>/dev/null | grep -Fxq "$CHROME_VERSION" \
@@ -521,7 +561,7 @@ if [ "$WANT_BROWSER" = 1 ]; then
   fi
   # Live-view stack: Xvfb (virtual display) + x11vnc + noVNC/websockify so the
   # agent's headful Chrome can be streamed into the dashboard Browser tab.
-  apt-get install -y xvfb x11vnc novnc websockify
+  apt_get install -y xvfb x11vnc novnc websockify
   ok "installed browser-view stack (xvfb x11vnc novnc websockify)"
 else
   ok "browser off — skipping Chrome"
@@ -651,6 +691,62 @@ printf '%s\n' "${AGENT_KIND}" > "${AGENT_HOME}/.hivra/agent-kind"
 chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}/.hivra/agent-kind"
 ok "agent kind recorded: ${AGENT_HOME}/.hivra/agent-kind = ${AGENT_KIND}"
 
+# Claude Code on Hivra credits: point the vanilla CLI at Hivra's Anthropic
+# Messages route (which reaches Venice and bills the user's credits) through
+# its own documented settings.json env. Every model tier maps to the chosen
+# model so side requests never ask for a model the route cannot serve. With
+# no managed key the box keeps native `claude auth login` sign-in.
+configure_claude_managed_model() {
+  [ "$AGENT_KIND" = "claude" ] || return 0
+  [ -n "${HIVRA_MODEL_KEY:-}" ] || return 0
+  printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
+    || die "managed model key has an invalid format"
+  local base="${HIVRA_MODEL_BASE_URL:-}" model="${HIVRA_HERMES_MODEL:-claude-sonnet-4-6}"
+  [[ "$base" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/api/managed-venice/anthropic$ ]] \
+    || die "Claude Code managed model base URL is invalid"
+  [[ "$model" =~ ^[A-Za-z0-9._:-]{1,120}$ ]] \
+    || die "Claude Code managed model name is invalid"
+  install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 "${AGENT_HOME}/.claude"
+  local settings="${AGENT_HOME}/.claude/settings.json"
+  HIVRA_CC_SETTINGS="$settings" HIVRA_CC_BASE="$base" HIVRA_CC_MODEL="$model" \
+    HIVRA_CC_KEY="${HIVRA_MODEL_KEY}" python3 -I -B - <<'PY' || die "could not write Claude Code model settings"
+import json, os
+path = os.environ["HIVRA_CC_SETTINGS"]
+try:
+    with open(path) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        data = {}
+except (OSError, ValueError):
+    data = {}
+env = data.get("env") if isinstance(data.get("env"), dict) else {}
+model = os.environ["HIVRA_CC_MODEL"]
+env.update({
+    "ANTHROPIC_BASE_URL": os.environ["HIVRA_CC_BASE"],
+    "ANTHROPIC_AUTH_TOKEN": os.environ["HIVRA_CC_KEY"],
+    "ANTHROPIC_MODEL": model,
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
+    "ANTHROPIC_SMALL_FAST_MODEL": model,
+    "CLAUDE_CODE_SUBAGENT_MODEL": model,
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+})
+data["env"] = env
+tmp = path + ".tmp"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+  chown "${AGENT_USER}:${AGENT_USER}" "$settings"
+  chmod 600 "$settings"
+  ok "Claude Code set to Hivra credits (model ${model})"
+}
+configure_claude_managed_model
+
 # Codex discovers skills from ~/.agents/skills (per OpenAI's skills spec); bux
 # only installs the cdp (browser-harness-js) skill into ~/.claude/skills. Same
 # SKILL.md format — symlink it across so codex can drive the box browser too.
@@ -691,7 +787,7 @@ else
   sed -i "/^Environment=HIVRA_CHAT_PORT=/a Environment=HIVRA_AGENT_KIND=${AGENT_KIND}" \
     /etc/systemd/system/bux-hivra-chat.service
 fi
-if [ "$AGENT_KIND" = "linux-desktop" ]; then
+if is_linux_computer; then
   sed -i "/^Environment=HIVRA_AGENT_KIND=/a Environment=HIVRA_WORKSPACE_ROOT=${AGENT_HOME}/Hivra" \
     /etc/systemd/system/bux-hivra-chat.service
 fi
@@ -744,7 +840,7 @@ if [ "$AGENT_KIND" = "linux-desktop" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 
   install -d -o root -g root -m 0755 /usr/local/share/hivra
   install -o root -g root -m 0644 "$SRC_DIR/claude-desktop-pin.json" /usr/local/share/hivra/claude-desktop-pin.json
   printf '%s\n' \
-    "${AGENT_USER} ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove" \
+    "${AGENT_USER} ALL=(root) NOPASSWD: /usr/local/bin/hivra-claude-app status, /usr/local/bin/hivra-claude-app install, /usr/local/bin/hivra-claude-app mode app, /usr/local/bin/hivra-claude-app mode desktop, /usr/local/bin/hivra-claude-app remove, /usr/local/bin/hivra-claude-app clipboard on, /usr/local/bin/hivra-claude-app clipboard off, /usr/local/bin/hivra-claude-app clipboard-put, /usr/local/bin/hivra-claude-app clipboard-get" \
     > /etc/sudoers.d/hivra-claude-app
   chmod 0440 /etc/sudoers.d/hivra-claude-app
   if ! visudo -cf /etc/sudoers.d/hivra-claude-app >/dev/null 2>&1; then warn "hivra-claude-app sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-claude-app; fi
@@ -760,12 +856,12 @@ say "5b/7  Aeon dashboard (hosted Next.js; tasks run on the user's own GitHub Ac
 if ! dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION"; then
   GH_TMP="$(mktemp /tmp/github-cli.XXXXXX.deb)"
   trap 'rm -f -- "${GH_TMP:-}"' EXIT
-  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+  curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
     "https://cli.github.com/packages/pool/main/g/gh/gh_${GH_VERSION}_amd64.deb" \
     -o "$GH_TMP"
   printf '%s  %s\n' "$GH_LINUX_AMD64_SHA256" "$GH_TMP" | sha256sum -c - >/dev/null \
     || die "GitHub CLI checksum verification failed"
-  apt-get install -y "$GH_TMP"
+  apt_get install -y "$GH_TMP"
   rm -f -- "$GH_TMP"
   trap - EXIT
 fi
@@ -1060,7 +1156,7 @@ A0_IMAGE="agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}"
 # --- Docker engine (boxes are full VMs — no LXC-nesting problem here) ---
 if ! command -v docker >/dev/null 2>&1; then
   say "installing Docker from Ubuntu's signed package repository"
-  apt-get install -y docker.io || die "docker.io package installation failed"
+  apt_get install -y docker.io || die "docker.io package installation failed"
 fi
 systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
 systemctl is-active --quiet docker || die "Docker service is not active"
@@ -1090,6 +1186,11 @@ fi
   if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
     A0_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
     A0_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+    # These land verbatim in an env file: never let a stray newline or space in
+    # either value add or rewrite another setting.
+    printf '%s' "$A0_MODEL" | grep -qE '^[A-Za-z0-9_.:/-]+$' || A0_MODEL="deepseek-v4-pro"
+    printf '%s' "$A0_BASEURL" | grep -qE '^https://[A-Za-z0-9.:/_-]+$' \
+      || A0_BASEURL="https://hivra.cloud/api/managed-venice/v1"
     # Managed Venice is OpenAI-compatible: Agent Zero models it as provider "openai"
     # with a custom api_base. A0_SET_<setting> seeds Agent Zero's settings.json
     # defaults (exact lowercase field names from its model-config schema —
@@ -1168,7 +1269,7 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "linux-desktop" ]; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1206,7 +1307,7 @@ rm -rf "${AGENT_HOME}/.codex" 2>/dev/null || true
 sudo -iu "${AGENT_USER}" bash -lc 'npm uninstall -g @openai/codex >/dev/null 2>&1' || true
 npm uninstall -g @anthropic-ai/claude-code >/dev/null 2>&1 || true
 rm -rf /usr/lib/node_modules/@anthropic-ai/claude-code /usr/bin/claude 2>/dev/null || true
-if [ "$AGENT_KIND" = "linux-desktop" ]; then
+if is_linux_computer; then
   # No browser automation or agent skill contract survives on a plain computer.
   rm -rf "${AGENT_HOME}/.claude" "${AGENT_HOME}/.agents" 2>/dev/null || true
   ok "${AGENT_KIND} box — stripped claude/codex CLIs, agent state and persona docs"
@@ -1223,7 +1324,7 @@ install_native_terminals() {
   install -d -o root -g root -m 0755 /etc/systemd/system/bux-ttyd.service.d
   install -o root -g root -m 0644 "$SRC_DIR/bux-ttyd-base-path.conf" /etc/systemd/system/bux-ttyd.service.d/base-path.conf
   install -o root -g root -m 0644 "$SRC_DIR/bux-box-ttyd.service" /etc/systemd/system/bux-box-ttyd.service
-  if [ "${AGENT_KIND:-}" = "linux-desktop" ]; then
+  if [ "${AGENT_KIND:-}" = "linux-desktop" ] || [ "${AGENT_KIND:-}" = "linux-server" ]; then
     sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#' \
       /etc/systemd/system/bux-ttyd.service.d/base-path.conf \
       /etc/systemd/system/bux-box-ttyd.service
@@ -1266,15 +1367,15 @@ fi
 if [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl enable --now hivra-agent-zero.service >/dev/null 2>&1 \
     || die "Agent Zero service did not start"
-  ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-8080}, mounted at /agent-zero)"
+  ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-50080}, mounted at /agent-zero)"
 fi
 
 # --- post-flight ------------------------------------------------------------
 echo
 say "post-flight checks"
 wait_for_http() {
-  local url="$1" code
-  for _ in $(seq 1 60); do
+  local url="$1" tries="${2:-60}" code
+  for _ in $(seq 1 "$tries"); do
     code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
     case "$code" in 2??|3??|401|403) return 0 ;; esac
     sleep 2
@@ -1415,7 +1516,9 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
   ok "OpenClaw passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl is-active --quiet hivra-agent-zero.service || die "Agent Zero service is not active"
-  wait_for_http "http://127.0.0.1:${A0_PORT}/" || die "Agent Zero dashboard did not become ready"
+  # The Agent Zero image is several GB and initialises on first start; allow
+  # up to 5 minutes instead of failing a healthy cold start at 2.
+  wait_for_http "http://127.0.0.1:${A0_PORT}/" 150 || die "Agent Zero dashboard did not become ready within 5 minutes"
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
   ok "Agent Zero passed runtime-specific readiness"
@@ -1453,9 +1556,12 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
   STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
-  STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-8080}/ -o /dev/null -w '%{http_code}\n'"
+  STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "linux-desktop" ]; then
   LOGIN_HINT="none — Linux Desktop has no agent account login"
+  STATUS_HINT="systemctl status bux-hivra-chat bux-ttyd bux-box-ttyd --no-pager"
+elif [ "$AGENT_KIND" = "linux-server" ]; then
+  LOGIN_HINT="none — a Linux computer has no agent account login"
   STATUS_HINT="systemctl status bux-hivra-chat bux-ttyd bux-box-ttyd --no-pager"
 elif [ "$AGENT_KIND" = "codex" ]; then
   LOGIN_HINT="sudo -iu ${AGENT_USER} codex login --device-auth"
@@ -1478,7 +1584,7 @@ ${c_green}${c_bold}Provisioning complete (${AGENT_KIND}).${c_reset}
       ${STATUS_HINT}
 
   The Hivra gateway at :${HIVRA_CHAT_PORT} exposes only the authenticated
-  surfaces supported by ${AGENT_KIND}.$([ "$AGENT_KIND" = "linux-desktop" ] && echo " Agent chat and agent login are disabled." || echo "")
+  surfaces supported by ${AGENT_KIND}.$(is_linux_computer && echo " Agent chat and agent login are disabled." || echo "")
 
   ${c_dim}Exposure (chat) is intentionally NOT configured here — see README
   for the cloudflared --protocol http2 / named-tunnel / Caddy options.${c_reset}

@@ -397,4 +397,12 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261020150000", name: "gvisor_sandbox_update" },
   { version: "20261028200000", name: "remove_token_base_tier" },
   { version: "20261103010000", name: "prepared_omarchy_refresh" },
+  { version: "20261103120000", name: "provider_release_admission_2026_11_03_1" },
+  { version: "20261110120000", name: "provider_release_admission_2026_11_10_1" },
+  { version: "20261110180000", name: "provider_release_admission_2026_11_10_2" },
+  { version: "20261110200000", name: "provider_release_admission_2026_11_10_3" },
+  { version: "20261110220000", name: "provider_release_admission_2026_11_10_4" },
+  { version: "20261111090000", name: "hivra_ubuntu_server_profile" },
+  { version: "20261111143017", name: "venice_promo_campaigns" },
+  { version: "20261111160000", name: "provider_release_admission_2026_11_10_5" },
 ];

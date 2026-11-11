@@ -19,9 +19,9 @@ import { unifiedStateLabel } from "@/lib/hivra/unified-agent";
 import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
 import type { RecentVisit } from "@/lib/workspace/recents";
 
-const MENU_MIN_WIDTH = 320;
+const MENU_MIN_WIDTH = 360;
 const MENU_VIEWPORT_MARGIN = 8;
-const MENU_OFFSET = 4;
+const MENU_OFFSET = 6;
 const MENU_MAX_HEIGHT = 420;
 const MENU_MIN_HEIGHT = 180;
 const LISTBOX_ID = "agent-switcher-listbox";
@@ -326,10 +326,10 @@ function AgentSwitcherPanel({
         tabIndex={-1}
         onKeyDown={handleKeyDown}
         style={{ position: "fixed", zIndex: 10050, maxHeight: "var(--agent-menu-max-height, 420px)", outline: "none" }}
-        className="flex max-w-[calc(100vw-16px)] flex-col overflow-hidden border border-[var(--etched-border)] bg-[var(--bg-surface)] shadow-[0_12px_32px_rgba(0,0,0,0.16)]"
+        className="flex max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass-strong)] p-1 backdrop-blur-xl backdrop-saturate-[1.3] shadow-[var(--hg-shadow-lg)]"
       >
         {/* A label, so a tap anywhere on the row focuses the field. */}
-        <label className="flex shrink-0 cursor-text items-center gap-2 border-b border-[var(--etched-border)] px-2.5 py-2 pointer-coarse:py-0">
+        <label className="m-1 flex shrink-0 cursor-text items-center gap-2 rounded-[10px] border border-transparent bg-[var(--hg-fill-1)] px-3 py-2 transition-colors focus-within:border-[var(--hg-stroke-strong)] focus-within:bg-[var(--hg-fill-2)] pointer-coarse:py-0">
           <Search
             aria-hidden="true"
             size={14}
@@ -351,12 +351,12 @@ function AgentSwitcherPanel({
             spellCheck={false}
             enterKeyHint="search"
             onChange={(event) => setQuery(event.target.value)}
-            className="mono min-w-0 flex-1 bg-transparent text-[13px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)] pointer-coarse:min-h-[44px] max-md:text-[16px]"
+            className="min-w-0 flex-1 bg-transparent text-[13.5px] text-[var(--hg-text)] outline-none placeholder:text-[var(--text-muted)] pointer-coarse:min-h-[44px] max-md:text-[16px]"
           />
         </label>
 
         {activeAgent && recent.includes(activeAgent) && !normalizedQuery ? (
-          <p aria-hidden="true" className="mono shrink-0 border-b border-[var(--etched-border)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)] pointer-coarse:hidden">
+          <p aria-hidden="true" className="shrink-0 px-3 pb-1 pt-0.5 text-[11.5px] text-[var(--text-muted)] pointer-coarse:hidden">
             ↵ back to {activeAgent.name}{shortcuts ? ` · 1–${Math.min(recent.length, 9)} recent` : ""}
           </p>
         ) : null}
@@ -387,7 +387,7 @@ function AgentSwitcherPanel({
           ) : (
             sections.map((section) => (
               <div key={section.key} role="group" aria-label={section.label}>
-                <p className="mono px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] max-md:text-[11px] pointer-coarse:text-[11px]">
+                <p className="px-2.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">
                   {section.label}
                 </p>
                 {section.items.map((agent, position) => {
@@ -412,23 +412,19 @@ function AgentSwitcherPanel({
                       onFocus={() => setActiveIndex(index)}
                       onClick={(event) => onSelect(agent, event.detail === 0)}
                       className={[
-                        "flex min-h-[44px] w-full min-w-0 items-center gap-2 border-l-2 px-2.5 py-2 text-left outline-none",
+                        "flex min-h-[44px] w-full min-w-0 items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left outline-none transition-colors duration-100",
                         "motion-reduce:transition-none",
-                        selected
-                          ? "border-l-[var(--hivra-red)] bg-[var(--bg-elevated)]"
-                          : active
-                            ? "border-l-transparent bg-[var(--bg-elevated)]"
-                            : "border-l-transparent",
-                        "focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2",
+                        active ? "bg-[var(--hg-fill-2)]" : "bg-transparent",
+                        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--hg-focus)]",
                       ].join(" ")}
                     >
                       <span
                         aria-hidden="true"
-                        className="h-2 w-2 shrink-0"
+                        className="h-2 w-2 shrink-0 rounded-full"
                         style={{ backgroundColor: agent.dot }}
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13.5px] font-medium leading-[1.45]">
+                        <span className={`block truncate text-[13.5px] leading-[1.45] ${selected ? "font-semibold" : "font-medium"}`}>
                           {agent.emoji ? `${agent.emoji} ` : ""}
                           {agent.name}
                           {duplicateNames.has(agent.name) ? (
@@ -437,7 +433,7 @@ function AgentSwitcherPanel({
                             </span>
                           ) : null}
                         </span>
-                        <span className="mono block truncate text-[11.5px] font-normal leading-[1.35] text-[var(--text-muted)]">
+                        <span className="block truncate text-[12px] font-normal leading-[1.35] text-[var(--text-muted)]">
                           {agentMeta(agent)}
                         </span>
                       </span>
@@ -445,11 +441,11 @@ function AgentSwitcherPanel({
                         <Check
                           aria-hidden="true"
                           size={14}
-                          className="shrink-0 text-[var(--hivra-red)]"
+                          className="shrink-0 text-[var(--hg-text)]"
                         />
                       ) : null}
                       {shortcut ? (
-                        <kbd aria-hidden="true" className="mono shrink-0 border border-[var(--etched-border)] px-1.5 text-[10px] text-[var(--text-muted)] pointer-coarse:hidden">
+                        <kbd aria-hidden="true" className="shrink-0 rounded-[5px] border border-[var(--hg-stroke)] px-1.5 text-[10.5px] text-[var(--text-muted)] pointer-coarse:hidden">
                           {shortcut}
                         </kbd>
                       ) : null}
@@ -461,14 +457,14 @@ function AgentSwitcherPanel({
           )}
         </div>
 
-        <a href="/dashboard?runtimes=1" className="mono flex min-h-[40px] items-center border-t border-[var(--etched-border)] px-2.5 text-[12px] text-[var(--text-secondary)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)]">
+        <a href="/dashboard?runtimes=1" className="mt-1 flex min-h-[40px] items-center rounded-[10px] border-t border-[var(--hg-stroke-subtle)] px-2.5 text-[12.5px] text-[var(--text-secondary)] outline-none hover:bg-[var(--hg-fill-1)] hover:text-[var(--hg-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--hg-focus)]">
           All agents and computers
         </a>
 
-        <div className="flex shrink-0 items-center gap-1 border-t border-[var(--etched-border)]">
+        <div className="flex shrink-0 items-center gap-1">
           <a
             href="/dashboard/launch"
-            className="mono flex min-h-[40px] min-w-0 flex-1 items-center gap-2 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+            className="flex min-h-[40px] min-w-0 flex-1 items-center gap-2 rounded-[10px] px-2.5 text-[12.5px] font-semibold text-[var(--hg-text)] outline-none hover:bg-[var(--hg-fill-1)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--hg-focus)]"
           >
             <Plus aria-hidden="true" size={14} />
             Launch an agent or computer
@@ -479,7 +475,7 @@ function AgentSwitcherPanel({
           {onOpenTestGuide && <button
             type="button"
             onClick={onOpenTestGuide}
-            className="mono flex min-h-[40px] shrink-0 items-center gap-1.5 px-2.5 text-[12px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+            className="flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-[10px] px-2.5 text-[12.5px] font-medium text-[var(--text-muted)] outline-none hover:bg-[var(--hg-fill-1)] hover:text-[var(--hg-text)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--hg-focus)]"
           >
             <BookOpenCheck aria-hidden="true" size={13} />
             Test guide
@@ -492,14 +488,14 @@ function AgentSwitcherPanel({
 
 function SourceFailure({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="shrink-0 border-b border-[var(--etched-border)] px-2.5 py-2">
+    <div className="shrink-0 px-3 py-2">
       <p className="text-[11.5px] leading-[1.4] text-[var(--yellow)]">
         Some agents and computers couldn&apos;t be loaded. The rest are listed.
       </p>
       <button
         type="button"
         onClick={onRetry}
-        className="mono mt-1 inline-flex min-h-[32px] items-center gap-1.5 text-[11.5px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+        className="mt-1 inline-flex min-h-[32px] items-center gap-1.5 rounded-[7px] text-[12px] font-semibold text-[var(--yellow)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)]"
       >
         <RotateCcw aria-hidden="true" size={13} />
         Retry

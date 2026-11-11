@@ -435,13 +435,48 @@ update them yet.
   app's profile from a root-only snapshot, launches it, keeps it running and
   applies the saved view: `app` is the app full screen, `desktop` is the app in a
   window on the desktop. The gateway reaches the helper through an exact-argument
-  sudoers rule for `status`, `install`, `mode app`, `mode desktop` and `remove`
-  (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
+  sudoers rule for `status`, `install`, `mode app`, `mode desktop`, `remove` and
+  the clipboard verbs below (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
   helper never handles a Claude credential. The container's home is discarded on every
   desktop restart, so the app's own data is backed up (size-capped, root-only, one
   copy) on the same VM and restored before the app starts; that data includes the
-  app's sign-in session, no Hivra service reads it, and `remove` deletes it. Managed
-  Proxmox computers only.
+  app's sign-in session, no Hivra service reads it, and `remove` deletes it. The
+  Code tab's own data (`~/.claude`, `~/.claude.json`) is backed up the same way in a
+  second archive with its own cap, and the app starts in `~/Hivra`, the desktop's
+  one persistent folder, so projects opened from the Code tab survive restarts.
+  Managed Proxmox computers only.
+- **Desktop clipboard switch (optional, off by default).** Selkies' clipboard stays
+  off. The owner can turn on a clipboard switch on the Desktop strip; while it is on,
+  Paste in puts their clipboard's text on the desktop's clipboard and Copy out brings
+  the desktop's back, one request per press. The gateway reaches
+  `hivra-claude-app clipboard on|off`, `clipboard-put` (text on stdin, at most
+  256 KB) and `clipboard-get` through the same exact-argument sudoers rule; both
+  transfers refuse while the switch is off.
+- **Claude Code on Hivra credits.** When a Claude Code computer is launched with a
+  managed model key, the installer writes the CLI's own `~/.claude/settings.json`
+  `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
+  model tier set to the chosen model) with mode 0600; without a key the computer
+  keeps native `claude auth login` sign-in.
+- **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
+  model as a complete set. On a fresh install the guest writes the runtime's
+  `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
+  account, before the service first starts; a restart or replay leaves them alone. With
+  none of the three, the computer starts without a model, as before.
+- **Linux server computer.** The `linux-server` kind is the Ubuntu computer without a
+  desktop: the same access base, `~/Hivra` workspace, Files and two terminals as Linux
+  Desktop, with no desktop capability and no Claude app helper. It takes the same
+  version 3 launch document on Proxmox and reports `linux-server` from `/api/meta`.
+- **Codex sign-in freshness.** The computer's chat page reports a repeat Codex
+  sign-in as fresh only when the credential changed, and says why one is not finished
+  yet.
+- **Launch and start hardening.** The installer waits for the dpkg lock and
+  retries `apt-get`, the pinned downloads and the npm/git fetches a bounded number
+  of times; the host launch script bounds the provisioner copy and the in-guest
+  install with `timeout` and SSH keepalives (still over the VMID-attested key) and
+  fails with a reason instead of staying in "provisioning"; the host start script
+  waits up to five minutes for the named tunnel. `system-prompt.md` and
+  `system-prompt-codex.md` tell the agent to send owners to **Manage** for updates,
+  restarts and restore points and not to upgrade or restart Hivra's own services.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops

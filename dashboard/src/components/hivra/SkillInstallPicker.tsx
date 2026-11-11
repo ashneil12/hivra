@@ -8,6 +8,7 @@
 // its installed list.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { Loader2, Check, Plus, X, Sparkles } from "lucide-react";
 
 import { listBoxSkills } from "@/lib/hivra/agent-api";
@@ -31,7 +32,7 @@ const PICKER_CSS = `
 `;
 
 const mono: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 10,
   textTransform: "uppercase",
   letterSpacing: "0.16em",
@@ -153,15 +154,19 @@ export function SkillInstallPicker({
             maxHeight: MODAL_MAX_HEIGHT,
             display: "flex",
             flexDirection: "column",
-            background: "var(--bg-surface, #fff)",
-            border: "1px solid var(--etched-border)",
-            boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
+            background: "var(--hg-glass-strong)",
+            backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+            WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+            border: "1px solid var(--hg-stroke)",
+            borderRadius: 20,
+            overflow: "hidden",
+            boxShadow: 'var(--hg-shadow-lg)',
           }}
         >
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "20px 22px 14px", borderBottom: "1px solid var(--etched-border)" }}>
             <div>
               <div className="mono" style={{ ...mono, marginBottom: 6 }}>Add skills</div>
-              <h3 className="serif" style={{ fontSize: "clamp(1.2rem, 3vw, 1.6rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
+              <h3 className="serif" style={{ fontSize: "clamp(1.2rem, 3vw, 1.6rem)", fontWeight: 600, margin: 0, color: "var(--ink-black)" }}>
                 Curated catalog
               </h3>
               <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "6px 0 0", lineHeight: 1.5, maxWidth: 460 }}>
@@ -180,9 +185,9 @@ export function SkillInstallPicker({
 
           <div style={{ overflowY: "auto", overscrollBehavior: "contain", padding: "16px 22px", flex: 1, minHeight: 0 }}>
             {catalog === null ? (
-              <div style={{ padding: 48, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>
+              <div style={{ padding: 48, textAlign: "center" }}><ThinkingOrb size={32} state="searching" label="Loading" /></div>
             ) : loadError ? (
-              <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "#e06c5a", fontSize: 13.5 }}>
+              <div style={{ border: "1px dashed var(--etched-border)", padding: "24px 20px", textAlign: "center", color: "var(--hg-bad)", fontSize: 13.5 }}>
                 {loadError}
                 <div style={{ marginTop: 12 }}>
                   <button type="button" onClick={() => void load()} style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)", padding: "6px 14px", minHeight: 40, cursor: "pointer", fontSize: 12.5 }}>Retry</button>
@@ -206,7 +211,7 @@ export function SkillInstallPicker({
                       style={{
                         textAlign: "left",
                         border: `1px solid ${checked ? "var(--gold-leaf)" : "var(--etched-border)"}`,
-                        background: checked ? "rgba(197,160,89,0.08)" : "rgba(255,255,255,0.03)",
+                        background: checked ? "var(--hg-fill-2)" : "var(--hg-fill-1)",
                         padding: "12px 14px",
                         display: "flex",
                         alignItems: "flex-start",
@@ -221,7 +226,7 @@ export function SkillInstallPicker({
                       </span>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <strong className="serif" style={{ fontSize: 15.5, fontWeight: 400, color: "var(--ink-black)" }}>{s.name}</strong>
+                          <strong className="serif" style={{ fontSize: 15.5, fontWeight: 600, color: "var(--ink-black)" }}>{s.name}</strong>
                           <span className="mono" style={{ ...mono, fontSize: 9, opacity: 0.85, color: s.installed ? "var(--text-muted)" : "var(--gold-leaf)" }}>
                             {s.installed ? "Installed" : "Available"}
                           </span>
@@ -240,7 +245,7 @@ export function SkillInstallPicker({
 
           <div className="skill-picker-footer" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 22px", borderTop: "1px solid var(--etched-border)", flexWrap: "wrap" }}>
             <div className="mono" style={{ ...mono, opacity: 0.7 }}>
-              {installError ? <span style={{ color: "#e06c5a", textTransform: "none", letterSpacing: 0, fontSize: 12 }}>{installError}</span>
+              {installError ? <span style={{ color: "var(--hg-bad)", textTransform: "none", letterSpacing: 0, fontSize: 12 }}>{installError}</span>
                 : catalog && !loadError ? `${selected.size} selected · ${availableCount} available` : ""}
             </div>
             <div className="skill-picker-actions" style={{ display: "flex", gap: 8 }}>
@@ -254,7 +259,7 @@ export function SkillInstallPicker({
                 style={{
                   border: "1px solid var(--gold-leaf)",
                   background: selected.size === 0 || installing ? "transparent" : "var(--gold-leaf)",
-                  color: selected.size === 0 || installing ? "var(--text-muted)" : "var(--ink-black)",
+                  color: selected.size === 0 || installing ? "var(--text-muted)" : "var(--hg-on-accent)",
                   padding: "8px 18px",
                   minHeight: 44,
                   cursor: installing || selected.size === 0 ? "default" : "pointer",
@@ -294,7 +299,7 @@ function PickerDialog({ onClose, closeOnEscape, children }: { onClose: () => voi
         right: 0,
         height: "var(--workspace-viewport-height, 100dvh)",
         zIndex: OVERLAY_Z,
-        background: "rgba(0,0,0,0.55)",
+        background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

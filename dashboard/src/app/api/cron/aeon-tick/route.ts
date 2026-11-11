@@ -10,7 +10,7 @@ const SOURCE = "aeon-tick";
 
 // Drive the Aeon scheduler's cadence.
 //
-// The Aeon framework (ashneil12/aeon `messages.yml`) only evaluates its
+// The Aeon framework (aaronjmars/aeon `messages.yml`) only evaluates its
 // per-skill crons (in aeon.yml) when it receives a `repository_dispatch` of
 // type `cron-tick`; its own native GitHub `schedule:` triggers are unreliable
 // because the repo is a FORK (of aaronjmars/aeon) and GitHub throttles/disables
@@ -23,6 +23,11 @@ const SOURCE = "aeon-tick";
 // route must NOT replicate that gating — it would double-gate and could mask a
 // real outage. One dispatch per cron tick; the scheduler + its 90m dedup handle
 // which skills (if any) are due.
+// This ticks Hivra's own Aeon instance, which runs from a fork: a dispatch can
+// only go to a repo the token may write to, never to upstream aaronjmars/aeon
+// (that would be refused, and would run someone else's workflows if it were
+// not). Customer Aeon installs run on each customer's own fork and token and
+// are not ticked here. Set AEON_DISPATCH_REPO to point at a different fork.
 const DEFAULT_AEON_REPO = "ashneil12/aeon";
 const DISPATCH_TIMEOUT_MS = 8_000;
 

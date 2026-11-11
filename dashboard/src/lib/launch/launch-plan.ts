@@ -68,6 +68,11 @@ export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSu
   const profile = PROFILE_DETAILS[profileId];
   const floor = launchResourcePolicy(profileId, { browser: false }).floor;
   if (profileId === "ubuntu-desktop") return catalogSubject("linux-desktop", { floor });
+  if (profileId === "ubuntu-server") {
+    // The same plan and pool as Ubuntu Desktop at its own size. Hosts need the
+    // linux-server release to take it.
+    return catalogSubject("linux-desktop", { floor, placementRuntimeId: "linux-server" });
+  }
   if (profileId === "linux-terminal") {
     return catalogSubject("linux-terminal", { hivraCloud: "unavailable", floor, targetKind: "gvisor" });
   }
@@ -230,7 +235,7 @@ export function ownServerHolds(subject: LaunchFitSubject, targets: readonly Depl
  * so instead of reading as an answer, and the badge never promises more than
  * the launch gates allow. */
 export function launchFit(subject: LaunchFitSubject, evidence: LaunchFitEvidence): LaunchFit | null {
-  if (subject.hivraCloud === "prepared") return { label: "Prepared computer", tone: "neutral" };
+  if (subject.hivraCloud === "prepared") return { label: "Ready to launch", tone: "neutral" };
   if (evidence.selfHosted && !subject.ownServer) return { label: "Runs on Hivra Cloud only", tone: "needs" };
   if (evidence.selfHosted) {
     if (evidence.targetsLoading) return null;
@@ -322,11 +327,22 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
   if (profileId === "hermes") {
     return presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
   }
+  if (profileId === "deepseek-harness") {
+    // Small is the size its acceptance ran at; every preset holds the floor.
+    return presets(pinned(2, 4), pinned(4, 8), pinned(8, 16));
+  }
   if (profileId === "ubuntu-desktop") {
     return presets(
       { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
       { cpu: 4, ram: 8, maximumCpu: 8, maximumRam: 16 },
       { cpu: 8, ram: 16, maximumCpu: 8, maximumRam: 16 },
+    );
+  }
+  if (profileId === "ubuntu-server") {
+    return presets(
+      { cpu: 0.5, ram: 1, maximumCpu: 1, maximumRam: 2 },
+      { cpu: 1, ram: 2, maximumCpu: 2, maximumRam: 4 },
+      { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
     );
   }
   if (profileId === "linux-terminal") {
@@ -527,9 +543,11 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "openclaw") return `OpenClaw's Control UI, a terminal and files on its own computer.${browserNote}`;
   if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
+  if (profileId === "deepseek-harness") return "DeepSeek's own interface on its own computer.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
+  if (profileId === "ubuntu-server") return "A terminal and files on this computer. No desktop.";
   if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";
-  if (profileId === "omarchy") return "The prepared Omarchy desktop, with a setup console in your browser.";
+  if (profileId === "omarchy") return "A ready-made Omarchy desktop you open in your browser, with a setup console.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
 }
 
@@ -549,7 +567,7 @@ export function costSummary({
   planOnHold?: string | null;
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
-  if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already prepared.";
+  if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already set up.";
   if (substrate === "hivra-cloud" && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
   }
@@ -573,7 +591,7 @@ export function launchChangesSummary({
 }): string {
   const profile = PROFILE_DETAILS[profileId];
   const host = targetName ?? "your server";
-  if (profileId === "omarchy") return "Claims the prepared Omarchy computer. Nothing is bought.";
+  if (profileId === "omarchy") return "Gives you a ready-made Omarchy computer. Nothing is bought.";
   if (profileId === "windows") {
     return `Creates one Windows setup computer on ${host}, attaches the ISO you chose and starts the installer. Nothing is bought or uploaded, and Hivra Cloud isn't used.`;
   }
@@ -585,6 +603,7 @@ export function launchChangesSummary({
   }
   const where = substrate === "hivra-cloud" ? "" : ` on ${host}`;
   if (profileId === "aeon") return `Creates one small computer${where} for Aeon's dashboard. Nothing is bought.`;
+  if (profileId === "ubuntu-server") return `Creates one Linux computer${where} with a terminal and files. It has no desktop. Nothing is bought.`;
   return profile.resourceKind === "computer"
     ? `Creates one computer${where} with ${profile.name}. Nothing is bought.`
     : `Creates one computer${where} and installs ${profile.name}. Nothing is bought.`;

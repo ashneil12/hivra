@@ -14,7 +14,8 @@ import { buildWelcomeAgentSettings } from "@/lib/welcome-deploy";
 
 type Wallet = "card" | "hermesos";
 
-/** Claude Code and native Codex: the runtime's own sign-in after it opens.
+/** Claude Code and native Codex: the runtime's own sign-in after it opens, or
+ * for Claude Code, Hivra credits through Hivra's Anthropic-to-Venice route.
  * Native Codex carries its stable receipt ID; Claude Code has none. */
 export function nativeCliAgentRequest(input: {
   type: "claude-code" | "codex";
@@ -24,24 +25,35 @@ export function nativeCliAgentRequest(input: {
   browser: boolean;
   deployment: AgentDeploymentDestination;
   launchRequestId?: string | null;
+  /** Claude Code on Hivra credits: the wallet that pays and the Claude model
+   * Venice serves. Null or absent keeps the runtime's own sign-in. */
+  credits?: { walletType: Wallet; model: string } | null;
 }): CreateAgentInput {
+  const credits = input.type === "claude-code" ? input.credits ?? null : null;
   return {
     type: input.type,
     name: input.name.trim(),
     cpu: input.cpu,
     ram: input.ram,
     browser: input.browser,
+    ...(credits
+      ? {
+          managedVenice: true,
+          llm: { provider: "venice", mode: "managed", model: credits.model, walletType: credits.walletType },
+        }
+      : {}),
     deployment: input.deployment,
     ...(input.launchRequestId ? { launchRequestId: input.launchRequestId } : {}),
   };
 }
 
-/** OpenClaw, Agent Zero and Aeon. Hivra credits set `managedVenice`; OpenClaw
+/** OpenClaw, Agent Zero, Aeon and DeepSeek Harness. Hivra credits set `managedVenice`; OpenClaw
  * and Agent Zero have no connect step, so their credit key is minted at launch
  * from a managed Venice selection. Aeon sets its credits up when GitHub is
- * connected. */
+ * connected. DeepSeek Harness always gets a model at launch, so it sends the
+ * `llm` block it is given (credits or the owner's Venice key). */
 export function dashboardAgentRequest(input: {
-  type: "openclaw" | "agent-zero" | "aeon";
+  type: "openclaw" | "agent-zero" | "aeon" | "deepseek-harness";
   name: string;
   cpu: number;
   ram: number;
@@ -49,10 +61,14 @@ export function dashboardAgentRequest(input: {
   /** The wallet Hivra credits bill, or null to set up a model inside the agent. */
   credits: { walletType: Wallet } | null;
   deployment: AgentDeploymentDestination;
+  /** DeepSeek Harness only: its model access, always sent. */
+  llm?: AgentLlmInput;
 }): CreateAgentInput {
-  const llm: AgentLlmInput | undefined = (input.type === "openclaw" || input.type === "agent-zero") && input.credits
-    ? { provider: "venice", mode: "managed", walletType: input.credits.walletType }
-    : undefined;
+  const llm: AgentLlmInput | undefined = input.type === "deepseek-harness"
+    ? input.llm
+    : (input.type === "openclaw" || input.type === "agent-zero") && input.credits
+      ? { provider: "venice", mode: "managed", walletType: input.credits.walletType }
+      : undefined;
   return {
     type: input.type,
     name: input.name.trim(),

@@ -85,6 +85,7 @@ import {
 } from "@/lib/hivra/prepared-canary-computers";
 import {
   doSessionActionFor,
+  errorKeepsComputer,
   isForcePowerAction,
   isGvisorAction,
   isPreparedAction,
@@ -99,6 +100,7 @@ import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-co
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
+import { lifecycleBusyResponse, lifecycleFailureResponse } from "@/lib/hivra/lifecycle-failure-reason";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
@@ -441,7 +443,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         desiredState,
         operationPayload: null,
       });
-      if (!claimed) return apiError(forced ? FORCE_BUSY : "Another lifecycle operation is already in progress.", 409);
+      if (!claimed) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(forced ? FORCE_BUSY : busy.message, 409, undefined, busy.extra);
+      }
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const result = await runProxmoxHostScript(
         preparedCanaryLifecycleScript(preparedComputer.profile, preparedComputer.slot, action),
@@ -858,7 +863,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
 
     if (action === "stop") {
       const operationId = await claimProviderOperation("stop", "stopped");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(busy.message, 409, undefined, busy.extra);
+      }
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         verifiedStopVmScript(vmid, 50, lifecycleBindingTag),
@@ -866,7 +874,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       );
       if (!r.ok) {
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Stop outcome is unknown"));
-        return apiError("Stop failed", 502);
+        const failure = lifecycleFailureResponse("Stop", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       const completed = await completeHivraAgentOperation({
         userId,
@@ -931,6 +940,35 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
     }
 
     if (action === "start") {
+      // Try again on a computer in error. It must still have its computer: a
+      // launch that never finished is launched again, not started. Error rows
+      // are not counted in the plan's slots or pool, so bringing one back is
+      // admitted like a new launch of the same size before anything is sent.
+      if (agent.status === "error") {
+        if (!errorKeepsComputer(agent)) {
+          return apiError("This computer never finished setting up, so there is nothing to start. Delete it, then launch it again.", 409);
+        }
+        if (executionContext.kind === "managed") {
+          const agentDef = getAgent(String(agent.type));
+          const cpu = Number(agent.cpu) || 0;
+          const ram = Number(agent.ram) || 0;
+          const gate = await validateAgentResources({
+            userId,
+            type: String(agent.type),
+            cpu,
+            ram,
+            maximumCpu: Math.max(cpu, Number(agent.cpu_max) || cpu),
+            maximumRam: Math.max(ram, Number(agent.ram_max) || ram),
+            browser: false,
+            mode: "launch",
+            poolExempt: Boolean(agentDef?.poolExempt),
+            // The computer already exists at this size; the launch floor must not refuse it.
+            floor: { cpu, ram },
+            agentLabel: agentDef?.name,
+          });
+          if (!gate.ok) return apiError(gate.message, gate.status);
+        }
+      }
       // Wake-admission: don't wake onto a host without headroom (OOM guard).
       const cap = await checkHostWakeCapacity(Number(agent.ram) * 1024, env);
       if (!cap.ok) return apiError("Host is at capacity — try again shortly", 503);
@@ -941,7 +979,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         );
       }
       const operationId = await claimProviderOperation("start", "running");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(busy.message, 409, undefined, busy.extra);
+      }
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         `${startLifecyclePrelude}\n${startKickoff(operationId)}`,
@@ -949,7 +990,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       );
       if (!r.ok) {
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Start outcome is unknown"));
-        return apiError("Start failed", 502);
+        const failure = lifecycleFailureResponse("Start", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
@@ -976,7 +1018,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
 
     if (action === "restart") {
       const operationId = await claimProviderOperation("restart", "running");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(busy.message, 409, undefined, busy.extra);
+      }
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         `${lifecyclePrelude}\n${verifiedStopVmBody(vmid, 40)}\nsleep 2\n${startKickoff(operationId)}`,
@@ -984,7 +1029,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       );
       if (!r.ok) {
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Restart outcome is unknown"));
-        return apiError("Restart failed", 502);
+        const failure = lifecycleFailureResponse("Restart", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
@@ -1063,7 +1109,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
           (agent.chat_url as string | null) ?? null,
           (agent.api_token as string | null) ?? null,
         ));
-      const floor = resizeFloor(String(agent.type), browserOn);
+      const floor = resizeFloor(String(agent.type), browserOn, agent.computer_profile as string | null | undefined);
       const cpu = clampCpu(body.cpu, agent.cpu, floor.cpu, MAX_CPU);
       const ram = clampInt(body.ram, agent.ram, floor.ram, MAX_RAM);
       const maximumCpu = body.maximumCpu === undefined
@@ -1118,7 +1164,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         : { data: null };
       const cpuunits = priorityToCpuUnits((pool as { priority?: number } | null)?.priority);
       const operationId = await claimProviderOperation("resize", "running", { cpu, ram, maximumCpu, maximumRam });
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(busy.message, 409, undefined, busy.extra);
+      }
       const reductionOnly = Number.isFinite(currentRam)
         && ram <= currentRam
         && maximumRam <= currentMaximumRam
@@ -1232,7 +1281,8 @@ ${startKickoff(operationId)}`,
         } else {
           await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Resize outcome is unknown"));
         }
-        return apiError("Resize failed", 502);
+        const failure = lifecycleFailureResponse("Resize", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentResizeOperation({

@@ -7,12 +7,15 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import { isSandboxComputer } from "@/lib/hivra/fleet-sections";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 
 /** The fields of a listed resource that decide how its surfaces are named. */
 export type RecentSubject = Pick<UnifiedAgent, "kind" | "resourceKind" | "agentType" | "computerProfile" | "surfaceKind">;
 
 const COMPUTER_SURFACES: readonly AgentSurfaceId[] = ["desktop", "box", "files", "manage"];
+/** A computer with no desktop (a Linux computer) never names one. */
+const DESKTOPLESS_COMPUTER_SURFACES: readonly AgentSurfaceId[] = ["box", "files", "manage"];
 const DASHBOARD_SURFACES: readonly AgentSurfaceId[] = ["aeon", "box", "files", "browser", "manage"];
 const CHAT_SURFACES: readonly AgentSurfaceId[] = AGENT_SURFACE_IDS.filter((id) => id !== "aeon" && id !== "desktop");
 
@@ -29,7 +32,11 @@ export function recentSurfaceLabel(tab: AgentSurfaceId, resource: RecentSubject)
   const def = resource.agentType ? catalogAgent(resource.agentType) : undefined;
   if (resource.resourceKind === "computer") {
     // A computer's surfaces are one flat list, named without a group.
-    const surfaces = isSandboxComputer(resource) ? ["manage" as const] : COMPUTER_SURFACES;
+    const surfaces = isSandboxComputer(resource)
+      ? ["manage" as const]
+      : computerHasDesktop(resource.computerProfile)
+        ? COMPUTER_SURFACES
+        : DESKTOPLESS_COMPUTER_SURFACES;
     return agentSurfaceLabel(surfaces.includes(tab) ? tab : surfaces[0], def);
   }
   const dashboard = resource.surfaceKind === "dashboard";

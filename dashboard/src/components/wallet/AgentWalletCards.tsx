@@ -60,7 +60,7 @@ export function BankrTrustFooter({ withdrawable = false, note }: { withdrawable?
         gap: 8,
         marginTop: 8,
         paddingTop: 10,
-        borderTop: '1px solid var(--etched-border)',
+        borderTop: '1px solid var(--hg-stroke)',
       }}
     >
       <ShieldCheck size={11} style={{ opacity: 0.55, color: 'var(--ink-black)' }} />
@@ -162,8 +162,9 @@ export function AgentDepositModal({
       </p>
       <div
         style={{
-          border: '1px solid color-mix(in srgb, var(--gold-leaf) 44%, var(--etched-border))',
-          background: 'color-mix(in srgb, var(--gold-leaf) 8%, var(--bg-surface))',
+          border: '1px solid color-mix(in srgb, var(--hg-warn) 36%, var(--hg-stroke))',
+          borderRadius: 10,
+          background: 'color-mix(in srgb, var(--hg-warn) 8%, var(--bg-surface))',
           padding: '0.85rem',
           display: 'flex',
           gap: 10,
@@ -171,7 +172,7 @@ export function AgentDepositModal({
           color: 'var(--ink-black)',
         }}
       >
-        <AlertTriangle size={17} style={{ color: 'var(--gold-leaf)', flex: '0 0 auto', marginTop: 1 }} />
+        <AlertTriangle size={17} style={{ color: 'var(--hg-warn)', flex: '0 0 auto', marginTop: 1 }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 900 }}>
             Base network only
@@ -302,8 +303,9 @@ export function WithdrawalDestinationModal({
           placeholder="0x..."
           className="mono"
           style={{
-            border: `1px solid ${invalid ? 'var(--gold-leaf)' : 'var(--etched-border)'}`,
-            background: 'var(--bg-surface)',
+            border: `1px solid ${invalid ? 'var(--hg-bad)' : 'var(--hg-stroke)'}`,
+            borderRadius: 10,
+            background: 'var(--hg-glass)',
             color: 'var(--ink-black)',
             padding: '10px 12px',
             fontSize: 12,
@@ -312,12 +314,12 @@ export function WithdrawalDestinationModal({
         />
       </label>
       {invalid && (
-        <span style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+        <span style={{ fontSize: 12, color: 'var(--hg-bad)' }}>
           Enter a valid 0x-prefixed 40-character EVM address.
         </span>
       )}
       {error && (
-        <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+        <span role="alert" style={{ fontSize: 12, color: 'var(--hg-bad)' }}>
           {error}
         </span>
       )}
@@ -468,7 +470,7 @@ export function AgentWalletWithdrawModal({
       footer={
         <>
           {error && (
-            <span role="alert" style={{ flex: '1 1 100%', fontSize: 12, lineHeight: 1.5, color: 'var(--gold-leaf)' }}>
+            <span role="alert" style={{ flex: '1 1 100%', fontSize: 12, lineHeight: 1.5, color: 'var(--hg-bad)' }}>
               {error}
             </span>
           )}
@@ -497,8 +499,9 @@ export function AgentWalletWithdrawModal({
       </p>
       <div
         style={{
-          border: '1px solid var(--etched-border)',
-          background: 'var(--bg-surface)',
+          border: '1px solid var(--hg-stroke)',
+          borderRadius: 10,
+          background: 'var(--hg-glass)',
           padding: '0.85rem',
           display: 'flex',
           flexDirection: 'column',
@@ -520,7 +523,8 @@ export function AgentWalletWithdrawModal({
             style={{
               width: '100%',
               boxSizing: 'border-box',
-              border: '1px solid var(--etched-border)',
+              border: '1px solid var(--hg-stroke)',
+              borderRadius: 10,
               background: 'var(--bg-canvas)',
               color: 'var(--ink-black)',
               padding: '10px 11px',
@@ -550,7 +554,8 @@ export function AgentWalletWithdrawModal({
             style={{
               width: '100%',
               boxSizing: 'border-box',
-              border: '1px solid var(--etched-border)',
+              border: '1px solid var(--hg-stroke)',
+              borderRadius: 10,
               background: 'var(--bg-canvas)',
               color: 'var(--ink-black)',
               padding: '10px 11px',
@@ -586,8 +591,9 @@ export function AgentWalletWithdrawModal({
       </div>
       <div
         style={{
-          border: '1px solid color-mix(in srgb, var(--gold-leaf) 44%, var(--etched-border))',
-          background: 'color-mix(in srgb, var(--gold-leaf) 8%, var(--bg-surface))',
+          border: '1px solid color-mix(in srgb, var(--hg-warn) 36%, var(--hg-stroke))',
+          borderRadius: 10,
+          background: 'color-mix(in srgb, var(--hg-warn) 8%, var(--bg-surface))',
           padding: '0.85rem',
           display: 'flex',
           gap: 10,
@@ -595,7 +601,7 @@ export function AgentWalletWithdrawModal({
           color: 'var(--ink-black)',
         }}
       >
-        <AlertTriangle size={17} style={{ color: 'var(--gold-leaf)', flex: '0 0 auto', marginTop: 1 }} />
+        <AlertTriangle size={17} style={{ color: 'var(--hg-warn)', flex: '0 0 auto', marginTop: 1 }} />
         <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--text-muted)' }}>
           {AGENT_WITHDRAWAL_GAS_NOTICE} This wallet is Base-only right now; do not send to another network.
         </span>
@@ -622,7 +628,8 @@ const modalEyebrow = {
 } as const;
 const externalLink = { color: 'var(--gold-leaf)', textDecoration: 'underline' } as const;
 const secondaryActionStyle = {
-  border: '1px solid var(--etched-border)',
+  border: '1px solid var(--hg-stroke)',
+  borderRadius: 10,
   background: 'transparent',
   color: 'var(--ink-black)',
   padding: '9px 13px',
@@ -701,9 +708,9 @@ function NoticeBox({ children, warn = false }: { children: React.ReactNode; warn
     <div
       style={{
         border: warn
-          ? '1px solid color-mix(in srgb, var(--gold-leaf) 44%, var(--etched-border))'
-          : '1px solid var(--etched-border)',
-        background: warn ? 'color-mix(in srgb, var(--gold-leaf) 8%, var(--bg-surface))' : 'var(--bg-surface)',
+          ? '1px solid color-mix(in srgb, var(--hg-warn) 44%, var(--hg-stroke))'
+          : '1px solid var(--hg-stroke)',
+        background: warn ? 'color-mix(in srgb, var(--hg-warn) 8%, var(--bg-surface))' : 'var(--bg-surface)',
         padding: '0.85rem',
         display: 'flex',
         flexDirection: 'column',
@@ -987,8 +994,9 @@ export function ConnectBankrModal({
           spellCheck={false}
           className="mono"
           style={{
-            border: '1px solid var(--etched-border)',
-            background: 'var(--bg-surface)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
+            background: 'var(--hg-glass)',
             color: 'var(--ink-black)',
             padding: '10px 12px',
             fontSize: 12,
@@ -1011,7 +1019,7 @@ export function ConnectBankrModal({
       </label>
       {hermesLane && <RestartAgentCheckbox checked={restartAgent} onChange={setRestartAgent} disabled={submitting} />}
       {error && (
-        <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+        <span role="alert" style={{ fontSize: 12, color: 'var(--hg-bad)' }}>
           {error}
         </span>
       )}
@@ -1129,7 +1137,7 @@ export function DisconnectBankrModal({
         </span>
       </NoticeBox>
       {error && (
-        <span role="alert" style={{ fontSize: 12, color: 'var(--gold-leaf)' }}>
+        <span role="alert" style={{ fontSize: 12, color: 'var(--hg-bad)' }}>
           {error}
         </span>
       )}
@@ -1183,8 +1191,9 @@ export function AgentWalletCard({
   return (
     <article
       style={{
-        border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: '1rem',
         display: 'flex',
         flexDirection: 'column',
@@ -1207,6 +1216,7 @@ export function AgentWalletCard({
               alignItems: 'center',
               gap: 6,
               border: '1px solid color-mix(in srgb, var(--gold-leaf) 34%, transparent)',
+              borderRadius: 7,
               color: 'var(--gold-leaf)',
               padding: '4px 7px',
               fontSize: 9,
@@ -1228,6 +1238,7 @@ export function AgentWalletCard({
             className="mono"
             style={{
               border: '1px solid color-mix(in srgb, var(--gold-leaf) 34%, transparent)',
+              borderRadius: 7,
               color: 'var(--gold-leaf)',
               padding: '4px 7px',
               fontSize: 9,
@@ -1244,7 +1255,8 @@ export function AgentWalletCard({
             className="mono"
             data-testid="agent-wallet-custody"
             style={{
-              border: '1px solid var(--etched-border)',
+              border: '1px solid var(--hg-stroke)',
+              borderRadius: 7,
               color: 'var(--text-muted)',
               padding: '4px 7px',
               fontSize: 9,
@@ -1378,7 +1390,8 @@ export function AgentWalletCard({
               <div
                 key={`${balance.tokenSymbol}-${balance.tokenAddress ?? 'native'}`}
                 style={{
-                  border: '1px solid var(--etched-border)',
+                  border: '1px solid var(--hg-stroke)',
+                  borderRadius: 7,
                   background: 'color-mix(in srgb, var(--bg-surface) 82%, transparent)',
                   padding: '8px 9px',
                   display: 'flex',
@@ -1406,7 +1419,7 @@ export function AgentWalletCard({
       {payoutsSupported && (
       <div
         style={{
-          borderTop: '1px solid var(--etched-border)',
+          borderTop: '1px solid var(--hg-stroke)',
           paddingTop: 12,
           display: 'flex',
           justifyContent: 'space-between',
@@ -1446,7 +1459,8 @@ export function AgentWalletCard({
           disabled={!address}
           className={touchStyles.touchTarget}
           style={{
-            border: '1px solid var(--etched-border)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 7,
             background: 'transparent',
             color: 'var(--ink-black)',
             padding: '7px 10px',
@@ -1472,6 +1486,7 @@ export function AgentWalletCard({
             className={touchStyles.touchTarget}
             style={{
               border: '1px solid var(--ink-black)',
+              borderRadius: 10,
               background: 'var(--ink-black)',
               color: 'var(--bg-surface)',
               padding: '9px 13px',
@@ -1492,6 +1507,7 @@ export function AgentWalletCard({
             className={touchStyles.touchTarget}
             style={{
               border: '1px solid var(--ink-black)',
+              borderRadius: 10,
               background: 'var(--ink-black)',
               color: 'var(--bg-surface)',
               padding: '9px 13px',
@@ -1514,7 +1530,8 @@ export function AgentWalletCard({
             aria-describedby={!canWithdraw ? withdrawReasonId : undefined}
             className={touchStyles.touchTarget}
             style={{
-              border: '1px solid var(--etched-border)',
+              border: '1px solid var(--hg-stroke)',
+              borderRadius: 10,
               background: 'transparent',
               color: 'var(--ink-black)',
               padding: '9px 13px',
@@ -1539,7 +1556,8 @@ export function AgentWalletCard({
           onClick={() => onManage(card)}
           className={touchStyles.touchTarget}
           style={{
-            border: '1px solid var(--etched-border)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
             background: 'transparent',
             color: 'var(--ink-black)',
             padding: '9px 13px',
@@ -1631,7 +1649,8 @@ export function AgentWalletsSection({
       {state.totalAgents === 0 ? (
         <div
           style={{
-            border: '1px solid var(--etched-border)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
             background: 'var(--bg-elevated)',
             padding: '1rem 1.25rem',
             display: 'flex',
@@ -1648,6 +1667,7 @@ export function AgentWalletsSection({
             href="/dashboard"
             style={{
               border: '1px solid var(--ink-black)',
+              borderRadius: 10,
               background: 'var(--ink-black)',
               color: 'var(--bg-surface)',
               padding: '9px 13px',
@@ -1665,7 +1685,8 @@ export function AgentWalletsSection({
       ) : state.cards.length === 0 ? (
         <div
           style={{
-            border: '1px solid var(--etched-border)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
             background: 'var(--bg-elevated)',
             padding: '1rem 1.25rem',
             color: 'var(--text-muted)',

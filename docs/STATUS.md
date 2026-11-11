@@ -16,29 +16,45 @@ must match it.
 | --- | --- |
 | Agents that can be launched | `dashboard/src/lib/hivra/agent-catalog.ts` (`available`) |
 | Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`) and the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx` |
-| Previews that are shown but not launchable | `dashboard/src/lib/hivra/preview-catalog.ts` |
+| Previews that are shown but not launchable (Buzz only) | `dashboard/src/lib/hivra/preview-catalog.ts` |
 | Public wording for crawlers and the homepage | `dashboard/src/lib/llms-txt.ts` and `dashboard/src/components/landing/home/content.ts` |
 
 ## Agents
 
-All six launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
+All seven launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
 a free account works with a server the person connects.
 
 | Agent | Status | Where it runs |
 | --- | --- | --- |
-| Claude Code | Available | Hivra Cloud or a server you connected |
-| Codex | Available | Hivra Cloud or a server you connected |
+| Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
+| Codex | Available | Hivra Cloud or a Proxmox server you connected |
 | Hermes | Available | Hivra Cloud only |
-| OpenClaw | Available | Hivra Cloud or a server you connected |
-| Agent Zero | Available | Hivra Cloud or a server you connected |
-| Aeon | Available | Hivra Cloud or a server you connected |
-| DeepSeek Harness | Preview, not launchable | Shown on Agents only |
+| OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
+| Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
+| Aeon | Available | Hivra Cloud or a Proxmox server you connected |
+| DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.4 or later |
+
+Claude Code can sign in with the person's own Claude account, or run on Hivra
+credits: Hivra translates its requests for Venice's Claude models and bills the
+credits. Credits need a host on provisioner release 2026.11.10.2 or later.
+
+DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
+through Hivra's authenticated gateway. It launches with no browser and gets its
+model at launch, because DeepSeek's own settings refuse a key from a remote
+browser: it runs DeepSeek V4.1 Flash on Hivra credits by default, or on the
+person's own Venice API key. It is labelled alpha because the upstream version it runs is pinned
+at an alpha release. It has no public agent page yet, and a connected server or
+a computer in the owner's own cloud cannot run it. Its Launch tile is not on
+the first-run card, which stays at three choices.
+
+The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 
 ## Computers
 
 | Computer | Status | Condition |
 | --- | --- | --- |
-| Ubuntu Desktop | Available | Hivra Cloud or a server you connected |
+| Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
+| Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
 | Linux Sandbox | Available | A gVisor-ready server you connected |
 | Omarchy | Available, with a condition | A prepared computer on Hivra Cloud. A launch claims the one prepared Omarchy computer the site holds, so the tile appears only where that computer is configured. Hivra does not yet build a fresh Omarchy computer per customer. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |

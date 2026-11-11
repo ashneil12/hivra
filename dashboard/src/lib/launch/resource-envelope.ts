@@ -1,4 +1,4 @@
-import { resizeFloor } from "@/lib/hivra/agent-catalog";
+import { resizeFloor, UBUNTU_SERVER_FLOOR } from "@/lib/hivra/agent-catalog";
 import type { LaunchProfileId } from "./contracts";
 
 export type ResourceEnvelope = {
@@ -39,7 +39,7 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     floor: resizeFloor("codex", true),
     recommended: { cpu: 1.5, ram: 3, maximumCpu: 2, maximumRam: 4 },
   },
-  // Claude Code, OpenClaw, Agent Zero, Aeon and Hermes keep the size they
+  // Claude Code, OpenClaw, Agent Zero, Aeon, DeepSeek Harness and Hermes keep the size they
   // launch with as their hard limit; their setup forms never sent maxima.
   "claude-code": {
     // With the browser: the welcome form's 2 CPU / 4 GB recommendation.
@@ -57,6 +57,12 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     recommended: pinned(2, 4),
     candidates: [pinned(2, 4), pinned(1, 2)],
   },
+  "deepseek-harness": {
+    // The catalog floor; the recommendation is the 2 CPU / 4 GB its live
+    // acceptance ran at, and it keeps that size as its hard limit.
+    floor: resizeFloor("deepseek-harness", false),
+    recommended: pinned(2, 4),
+  },
   aeon: {
     // Only its dashboard runs here; Hivra Cloud pins it to the catalog floor.
     floor: resizeFloor("aeon", false),
@@ -73,6 +79,11 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
   "ubuntu-desktop": {
     floor: { cpu: 2, ram: 4 },
     recommended: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
+  },
+  // A small Linux computer without a desktop: it may burst past its reservation.
+  "ubuntu-server": {
+    floor: { ...UBUNTU_SERVER_FLOOR },
+    recommended: { cpu: 1, ram: 2, maximumCpu: 2, maximumRam: 4 },
   },
   "linux-terminal": {
     floor: { cpu: 0.5, ram: 1 },

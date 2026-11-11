@@ -95,7 +95,7 @@ export function AgentMemoryCard() {
       data-testid="agent-memory-card"
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         display: "grid",
         gap: 14,

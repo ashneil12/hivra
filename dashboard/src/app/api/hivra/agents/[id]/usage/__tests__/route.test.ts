@@ -14,6 +14,7 @@ const mockRun = jest.fn();
 const mockRateLimit = jest.fn();
 const mockMatchPrepared = jest.fn();
 const mockLogError = jest.fn();
+const mockRecordMissing = jest.fn();
 let mockHivraAllowed = true;
 let mockRow: Record<string, unknown> | null;
 let mockCache: Record<string, unknown> | null;
@@ -54,6 +55,7 @@ jest.mock("@/lib/infrastructure/proxmox-execution-context", () => {
 });
 jest.mock("@/lib/hivra/prepared-canary-computers", () => ({ matchPreparedCanaryComputer: (...args: unknown[]) => mockMatchPrepared(...args) }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args) }));
+jest.mock("@/lib/hivra/computer-missing", () => ({ recordComputerMissingOnHost: (...args: unknown[]) => mockRecordMissing(...args) }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: (...args: unknown[]) => mockLogError(...args) } }));
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -274,6 +276,47 @@ describe("GET /api/hivra/agents/[id]/usage", () => {
       const body = await (await get()).json();
       expect(body.data).toMatchObject({ power: { observed: "missing", matches: true }, notes: ["vm_missing"] });
       expect(rpcArgs("record_hivra_computer_usage")).toMatchObject({ p_sample: { v: 1, result: "missing", recordedStatus: "stopped" } });
+    });
+
+    it("writes a computer the host definitely reports missing back to its row, as an error", async () => {
+      mockRecordMissing.mockResolvedValue(true);
+      mockRun.mockResolvedValue({ ok: true, stdout: "HIVRA_USAGE_VM_MISSING\n", stderr: "" });
+      const body = await (await get()).json();
+      expect(mockRecordMissing).toHaveBeenCalledWith({ userId: "owner", agentId: ID, agentType: "linux-desktop" });
+      // The answer and the stored read agree with the row's new status.
+      expect(body.data).toMatchObject({ power: { observed: "missing", recorded: "error" }, notes: ["vm_missing"] });
+      expect(rpcArgs("record_hivra_computer_usage")).toMatchObject({ p_sample: { v: 1, result: "missing", recordedStatus: "error" } });
+    });
+
+    it.each(["running", "stopped"])("asks for the write-back only for a %s row, never one in another state", async (status) => {
+      mockRow = { ...running, status, desired_state: status };
+      mockRun.mockResolvedValue({ ok: true, stdout: "HIVRA_USAGE_VM_MISSING\n", stderr: "" });
+      await get();
+      expect(mockRecordMissing).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not touch the row when the computer is already an error", async () => {
+      mockRow = { ...running, status: "error" };
+      mockRun.mockResolvedValue({ ok: true, stdout: "HIVRA_USAGE_VM_MISSING\n", stderr: "" });
+      await get();
+      expect(mockRecordMissing).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a timeout", { ok: false, stdout: "", stderr: "", error: "Proxmox SSH operation timed out after 20000ms" }],
+      ["a refused connection", { ok: false, stdout: "", stderr: "", error: "connect ECONNREFUSED" }],
+      ["output it can't read", { ok: true, stdout: "some other output\n", stderr: "" }],
+      ["a binding mismatch", { ok: false, stdout: "HIVRA_USAGE_BINDING_MISMATCH\n", stderr: "", error: "exit 3" }],
+      ["a sample", { ok: true, stdout: `${USAGE_LINE_1113}\n`, stderr: "" }],
+    ])("never writes the row after %s", async (_name, result) => {
+      mockRun.mockResolvedValue(result);
+      await get();
+      expect(mockRecordMissing).not.toHaveBeenCalled();
+    });
+
+    it("sends a code the page can use when the host can't be reached and nothing was read before", async () => {
+      mockRun.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "connect ECONNREFUSED" });
+      expect((await (await get()).json()).code).toBe("host_unreachable");
     });
 
     it("treats output it doesn't recognise as a failed read, never as usage", async () => {

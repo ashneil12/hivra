@@ -104,6 +104,17 @@ const STUCK_AGENT_COLUMNS = "id, user_id, type, computer_profile, computer_subst
  */
 export const STUCK_PROVISIONING_THRESHOLD_MS = 10 * 60 * 1000;
 
+/**
+ * Hard deadline for a first launch. The guest installer is bounded at 45
+ * minutes and the copy step has its own bound, so a launch still without a
+ * terminal result 75 minutes after the row was created will not finish on its
+ * own. Past this, a VM that exists with no completion marker and no healthy
+ * tunnel is cleaned up and the row is marked `error`. Applies only to the
+ * first-launch lease (`provision`): running computers carry no lease, and a
+ * runtime update or power change is a different operation kind.
+ */
+export const PROVISION_HARD_DEADLINE_MS = 75 * 60 * 1000;
+
 /** Per-run cap: each candidate costs an SSH round-trip (and maybe an HTTPS probe). */
 const MAX_CANDIDATES_PER_RUN = 12;
 
@@ -1514,6 +1525,18 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
     );
   }
   if (row.operation_kind === "provision" && !nMinusOneCompatibility) {
+    const createdAtMs = Date.parse(String(row.created_at));
+    if (Number.isFinite(createdAtMs) && now.getTime() - createdAtMs >= PROVISION_HARD_DEADLINE_MS) {
+      // Same exact-ownership cleanup as a reported failure: the VM is removed
+      // only with matching provider tags, then the row is marked error and the
+      // tunnel released. Without ownership evidence it is left for an operator.
+      return compensateFailedOwnedProvision(
+        row,
+        context,
+        "provision_hard_deadline",
+        "This computer did not finish setting up in time, so Hivra stopped the attempt and cleaned it up. You can launch it again.",
+      );
+    }
     // The observation threshold is not an installation deadline. A cold desktop
     // image can still be building with no public tunnel or completion marker.
     // Ownership proves which VM this is, not that its installer has failed.

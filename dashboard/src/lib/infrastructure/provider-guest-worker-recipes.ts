@@ -350,6 +350,36 @@ const recipes = Object.freeze({
     workerSha256: "459b4bebc712be048d5c250ac6ea8a98a355d2c0b3c0dfe3209fe659c5f14c9e",
     workerSize: 45185,
   }),
+  "2026.11.03.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the desktop clipboard switch and Code tab backup to the Claude app helper and turns the agent browser's sandbox back on.
+    workerSha256: "5f30e02197d1daca7530ccd12610cdeea568aa0399a37ce1ff4a7a332ee89919",
+    workerSize: 45185,
+  }),
+  "2026.11.10.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens first launch and start against slow networks (apt lock, retries, bounded SSH steps) and adds the "Looking after this computer" guidance to the agent system prompts.
+    workerSha256: "1d07dd4c82c14bf566837c9c87a3b7389881cba49342557f41222a8dc78590d7",
+    workerSize: 45185,
+  }),
+  "2026.11.10.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release has the installer point Claude Code at Hivra credits through its own settings.json env (configure_claude_managed_model).
+    workerSha256: "edfebf2b849a397c9f26a27e3020e855c7b5ba974f08e5b7e144c8ca6cfc75ad",
+    workerSize: 45185,
+  }),
+  "2026.11.10.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release carries the Codex sign-in freshness fix in the computer's chat page (hivra-chat/server.js).
+    workerSha256: "a8459abda395b12e2113fc7fbb4347a5ef050e8f141a3a8f1910f34ad42690c1",
+    workerSize: 45185,
+  }),
+  "2026.11.10.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the desktop-free linux-server kind to the guest and host scripts. The worker only advances its release labels.
+    workerSha256: "bf584e9d5eb7eea01ba5542d83722f245d527de4d6a1a21177af4eea33256c69",
+    workerSize: 45185,
+  }),
+  "2026.11.10.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release gives DeepSeek Harness its launch-time model in the guest and host scripts. The worker only advances its release labels.
+    workerSha256: "8fe3d90ebcae733730bf094f7c062ba99557b6c7b3c1ea8d5604dfac1c55a35d",
+    workerSize: 45185,
+  }),
 });
 
 type Version = keyof typeof recipes;

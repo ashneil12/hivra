@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.10.20.2.json";
+import release from "../../../../provisioner-releases/2026.11.10.5.json";
+import linuxServerRelease from "../../../../provisioner-releases/2026.11.10.4.json";
+import freshnessRelease from "../../../../provisioner-releases/2026.11.10.3.json";
+import creditsRelease from "../../../../provisioner-releases/2026.11.10.2.json";
+import hardeningRelease from "../../../../provisioner-releases/2026.11.10.1.json";
+import clipboardRelease from "../../../../provisioner-releases/2026.11.03.1.json";
+import appUpdateRelease from "../../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../../provisioner-releases/2026.10.20.1.json";
 import claudeAppRelease from "../../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../../provisioner-releases/2026.09.24.4.json";
@@ -227,9 +233,10 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
   const sql = ["20260922201510_provider_release_admission_2026_09_22.sql", "20260924180000_provider_release_admission_2026_09_24.sql",
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
-    "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql"]
+    "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -242,8 +249,8 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
 });
 
 it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 admitted and desktop assets unchanged", () => {
-  expect(release.version).toBe("2026.10.20.2");
-  const paths = release.files.map(file => file.path);
+  expect(appUpdateRelease.version).toBe("2026.10.20.2");
+  const paths = appUpdateRelease.files.map(file => file.path);
   for (const file of ["agent-app-versions.json", "hivra-agent-app-update.sh"]) {
     expect(paths).toContain(file);
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
@@ -253,12 +260,12 @@ it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 a
   for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs",
     "deepseek-harness/install-guest.py", "deepseek-harness/install-native.py", "deepseek-harness/update-guest.py",
     "deepseek-harness/package.json", "deepseek-harness/package-lock.json", "agent-cli-versions.json", "hivra-agent-cli-update.sh"]) {
-    const current = release.files.find(entry => entry.path === file)!;
+    const current = appUpdateRelease.files.find(entry => entry.path === file)!;
     const prior = ownedUpdateRelease.files.find(entry => entry.path === file)!;
     expect(current.sha256).toBe(prior.sha256);
   }
   for (const file of ["hivra-chat/server.js", "hivra-update-guest-runtime.sh", "hivra-guest-runtime-update.sh", "provision-claude-code-box.sh"]) {
-    expect(release.files.find(entry => entry.path === file)!.sha256)
+    expect(appUpdateRelease.files.find(entry => entry.path === file)!.sha256)
       .not.toBe(ownedUpdateRelease.files.find(entry => entry.path === file)!.sha256);
   }
   expect(isCompatibleProxmoxProvisionerVersion("2026.10.20.1")).toBe(true);
@@ -266,4 +273,134 @@ it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 a
   expect(provisionerSupportsActivityTelemetry("2026.10.20.1")).toBe(true);
   expect(supportsModelSettingsProvisionerVersion("2026.10.20.1")).toBe(true);
   expect(provisionerSupportsWindowsInstaller("2026.10.20.1")).toBe(true);
+});
+
+it("ships the clipboard switch, the Code tab backup and the agent browser sandbox in 2026.11.03.1, keeping 2026.10.20.2 admitted and desktop assets unchanged", () => {
+  expect(clipboardRelease.version).toBe("2026.11.03.1");
+  expect(clipboardRelease.files.map(file => file.path)).toEqual(appUpdateRelease.files.map(file => file.path));
+  // The isolation proof, the remote-desktop bundle revision and every other runtime are preserved.
+  for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs",
+    "remote-desktop/provider-service-plan.py", "remote-desktop/provider-service-owner.py",
+    "deepseek-harness/install-guest.py", "deepseek-harness/install-native.py", "deepseek-harness/update-guest.py",
+    "agent-cli-versions.json", "agent-app-versions.json", "claude-desktop-pin.json", "hivra-claude-app.service",
+    "hivra-update-guest-runtime.sh", "bux-local-browser.service"]) {
+    const current = clipboardRelease.files.find(entry => entry.path === file)!;
+    const prior = appUpdateRelease.files.find(entry => entry.path === file)!;
+    expect({ file, sha256: current.sha256 }).toEqual({ file, sha256: prior.sha256 });
+  }
+  for (const file of ["hivra-claude-app.py", "hivra-chat/server.js", "hivra-guest-runtime-update.sh", "provision-claude-code-box.sh", "local-browser-keeper.py"]) {
+    expect(clipboardRelease.files.find(entry => entry.path === file)!.sha256)
+      .not.toBe(appUpdateRelease.files.find(entry => entry.path === file)!.sha256);
+  }
+  // The installer and the runtime updater grant the same, exact helper verbs.
+  const grant = (file: string) => {
+    const text = readFileSync(path.join(process.cwd(), "provisioner", file), "utf8");
+    return [...text.matchAll(/NOPASSWD: (\/usr\/local\/bin\/hivra-claude-app [^'"\n]+)/g)].map(match => match[1]);
+  };
+  expect(grant("hivra-guest-runtime-update.sh")).toEqual(grant("provision-claude-code-box.sh"));
+  expect(grant("provision-claude-code-box.sh")[0]).toContain("hivra-claude-app clipboard-put");
+  expect(isCompatibleProxmoxProvisionerVersion("2026.10.20.2")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.10.20.2")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.10.20.2")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.10.20.2")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.10.20.2")).toBe(true);
+});
+
+it("ships the launch and start hardening and the agent self-care guidance in 2026.11.10.1, keeping 2026.11.03.1 admitted and desktop assets unchanged", () => {
+  expect(hardeningRelease.version).toBe("2026.11.10.1");
+  expect(hardeningRelease.files.map(file => file.path)).toEqual(clipboardRelease.files.map(file => file.path));
+  const changed = hardeningRelease.files.filter(file => file.sha256 !== clipboardRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the hardened scripts, the two prompts and the release documents change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "hivra-provision-on-host.sh",
+    "hivra-start-on-host.sh", "provision-claude-code-box.sh", "system-prompt-codex.md", "system-prompt.md"]);
+  expect(isCompatibleProxmoxProvisionerVersion("2026.11.03.1")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.11.03.1")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.11.03.1")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.11.03.1")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.11.03.1")).toBe(true);
+});
+
+it("ships Claude Code on Hivra credits in 2026.11.10.2, keeping 2026.11.10.1 admitted and desktop assets unchanged", () => {
+  expect(creditsRelease.version).toBe("2026.11.10.2");
+  expect(creditsRelease.files.map(file => file.path)).toEqual(hardeningRelease.files.map(file => file.path));
+  const changed = creditsRelease.files.filter(file => file.sha256 !== hardeningRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the installer and the release documents/labels change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "provision-claude-code-box.sh"]);
+  expect(isCompatibleProxmoxProvisionerVersion("2026.11.10.1")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.11.10.1")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.11.10.1")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.11.10.1")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.11.10.1")).toBe(true);
+});
+
+
+it("ships the Codex sign-in freshness fix in 2026.11.10.3, keeping 2026.11.10.2 admitted and desktop assets unchanged", () => {
+  expect(freshnessRelease.version).toBe("2026.11.10.3");
+  expect(freshnessRelease.files.map(file => file.path)).toEqual(creditsRelease.files.map(file => file.path));
+  const changed = freshnessRelease.files.filter(file => file.sha256 !== creditsRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the chat server and the release documents/labels change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-chat/server.js", "hivra-provider-worker.py"]);
+  expect(isCompatibleProxmoxProvisionerVersion("2026.11.10.2")).toBe(true);
+  expect(isCompatibleProviderVmProvisionerVersion("2026.11.10.2")).toBe(true);
+  expect(provisionerSupportsActivityTelemetry("2026.11.10.2")).toBe(true);
+  expect(supportsModelSettingsProvisionerVersion("2026.11.10.2")).toBe(true);
+  expect(provisionerSupportsWindowsInstaller("2026.11.10.2")).toBe(true);
+});
+
+it("ships the linux-server kind in 2026.11.10.4, keeping 2026.11.10.3 admitted and desktop assets unchanged", () => {
+  expect(linuxServerRelease.version).toBe("2026.11.10.4");
+  expect(linuxServerRelease.files.map(file => file.path)).toEqual(freshnessRelease.files.map(file => file.path));
+  const changed = linuxServerRelease.files.filter(file => file.sha256 !== freshnessRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the scripts that accept the new kind and the release documents/labels change.
+  // No remote-desktop asset changes, so the desktop bundle revision is preserved.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-agent-shell", "hivra-chat/server.js", "hivra-guest-runtime-update.sh",
+    "hivra-install-agent.py", "hivra-provider-worker.py", "hivra-provision-on-host.sh", "hivra-runtime-receipt.py", "provision-claude-code-box.sh"]);
+  expect(changed.filter(file => file.startsWith("remote-desktop/"))).toEqual([]);
+  for (const version of ["2026.11.10.1", "2026.11.10.2", "2026.11.10.3"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsWindowsInstaller(version)).toBe(true);
+  }
+  expect(provisionerSupportsActivityTelemetry("2026.11.10.4")).toBe(true);
+});
+
+it("ships the DeepSeek launch-time model in 2026.11.10.5, keeping 2026.11.10.4 admitted and desktop assets unchanged", () => {
+  expect(release.version).toBe("2026.11.10.5");
+  expect(release.files.map(file => file.path)).toEqual(linuxServerRelease.files.map(file => file.path));
+  const changed = release.files.filter(file => file.sha256 !== linuxServerRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the host script that forwards the model, the launch parser, the guest
+  // composition that seeds it, and the release documents/labels change. The
+  // service unit, broker, package pins and remote-desktop assets do not.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "deepseek-harness/install-guest.py", "hivra-install-agent.py",
+    "hivra-provider-worker.py", "hivra-provision-on-host.sh"]);
+  expect(changed.filter(file => file.startsWith("remote-desktop/"))).toEqual([]);
+  for (const version of ["2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsWindowsInstaller(version)).toBe(true);
+  }
+  expect(provisionerSupportsActivityTelemetry("2026.11.10.5")).toBe(true);
+});
+
+it("admits DeepSeek Harness only from the release that seeds its model, and keeps the Linux server on both", () => {
+  expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.3", "2026.11.10.2", "2026.11.03.1", "unknown", undefined])
+    expect(portableProvisionerSupportsCatalogRuntime(version, "deepseek-harness")).toBe(false);
+  for (const version of ["2026.11.10.4", "2026.11.10.5"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+});
+
+it("admits the Linux server only on 2026.11.10.4 and later and never on the provider-VM lane", () => {
+  expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.09.04.2", "unknown", undefined])
+    expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(false);
+  expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-server")).toBe(false);
 });

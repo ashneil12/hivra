@@ -112,9 +112,9 @@ describe("the closing block is the same on every page and follows the repo's wor
     `If you want the computer to stay on after you leave your desk, Hivra offers a managed computer starting at ${formatPlanSize("entry")}.`,
     `A paid ${PLAN_DISPLAY.entry} computer stays on and is not paused for inactivity.`,
     "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
-    // Claude Code takes only the owner's own sign-in (lib/launch/model-access.ts), and every page can end in a Run Claude
-    // Code on Hivra button, so the "or pay with Hivra credits" above is followed by the one case where it does not hold.
-    "Claude Code uses your own Anthropic sign-in, not Hivra credits.",
+    // Every page can end in a Run Claude Code on Hivra button, so the block names both ways Claude Code reaches a
+    // model: the owner's own sign-in, or Hivra credits (lib/launch/model-access.ts).
+    "Claude Code can use your own Anthropic sign-in or Hivra credits.",
   ];
 
   it("builds the price and size from the plan facts and keeps the owner's approved sentences", () => {
@@ -128,9 +128,9 @@ describe("the closing block is the same on every page and follows the repo's wor
     expect(TOOLS_CLOSING.guarantee).toBe(MONEY_BACK_GUARANTEE);
   });
 
-  // The extra sentence is true only while the launch offers Claude Code no credits; this fails if that changes.
-  it("says Claude Code takes no Hivra credits only because its launch offers none", () => {
-    expect(modelAccessModes("claude-code")).toEqual(["native"]);
+  // The extra sentence is true only while the launch offers Claude Code both choices; this fails if that changes.
+  it("says Claude Code takes its own sign-in or Hivra credits because its launch offers both", () => {
+    expect(modelAccessModes("claude-code")).toEqual(["native", "credits"]);
     for (const profile of ["codex", "hermes"] as const) expect(modelAccessModes(profile)).toContain("credits");
   });
 

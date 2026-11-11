@@ -106,9 +106,10 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
     <div
       style={{
         border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: '1.25rem 1.2rem',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.04)',
+        boxShadow: 'var(--hg-shadow-sm)',
       }}
     >
       <p
@@ -149,9 +150,10 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
     <div
       style={{
         border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: '1.25rem',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.04)',
+        boxShadow: 'var(--hg-shadow-sm)',
       }}
     >
       <p
@@ -192,7 +194,7 @@ function BarList({ items, format }: { items: BarItem[]; format: (n: number) => s
               {item.hint ? <span style={{ color: 'var(--text-muted)' }}> · {item.hint}</span> : null}
             </span>
           </div>
-          <div style={{ height: 6, background: 'rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+          <div style={{ height: 6, background: 'var(--hg-fill-2)', overflow: 'hidden' }}>
             <div
               style={{
                 width: `${(item.value / max) * 100}%`,
@@ -213,7 +215,8 @@ function BarList({ items, format }: { items: BarItem[]; format: (n: number) => s
 const controlStyle: React.CSSProperties = {
   padding: '7px 10px',
   border: '1px solid var(--etched-border)',
-  background: 'var(--bg-surface)',
+  borderRadius: 7,
+  background: 'var(--hg-glass)',
   color: 'var(--ink-black)',
   fontSize: 12,
   letterSpacing: '0.04em',
@@ -828,6 +831,7 @@ export function AdminInsightsContent({ stats, funnel, activation, telegram, rang
               style={{
                 padding: '8px 14px',
                 border: '1px solid var(--etched-border)',
+                borderRadius: 7,
                 background: isActive ? 'var(--ink-black)' : 'var(--bg-surface)',
                 color: isActive ? 'var(--vellum-bg)' : 'var(--ink-black)',
                 textDecoration: 'none',
@@ -846,12 +850,13 @@ export function AdminInsightsContent({ stats, funnel, activation, telegram, rang
       {!hasData && (
         <div
           style={{
-            border: '1px solid rgba(245,158,11,0.45)',
-            background: 'rgba(245,158,11,0.08)',
+            border: '1px solid color-mix(in srgb, var(--hg-warn) 45%, transparent)',
+            borderRadius: 10,
+            background: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)',
             padding: '0.75rem 1rem',
             marginBottom: '1.5rem',
             fontSize: 13,
-            color: '#92400e',
+            color: 'var(--hg-warn)',
           }}
         >
           No daily snapshots yet. The rollup cron writes one row per day at 23:50 UTC — headline

@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 // unsettled (security review 2026-09).
 export const maxDuration = 300;
 
+import { tryGrantLaunchCredit } from "@/lib/venice/promo/service";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 
@@ -146,6 +147,9 @@ export async function POST(req: NextRequest) {
   }
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
+  if (walletType === "card") {
+    await tryGrantLaunchCredit({ userId: verifiedKey.userId });
+  }
 
   // The hold covers the translated request's worst case. Claude Code sends a
   // large max_tokens; above the model maximum it is written down to it, and

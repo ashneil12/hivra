@@ -3,10 +3,11 @@
 import { useState, type ReactNode } from "react";
 import { Check, Loader2, Pencil, X } from "lucide-react";
 import { manageButtonGhost, manageLabel, manageSpin } from "./manage-styles";
+import { StatusText } from "@/components/ui/StatusText";
 
 const STATUS_COLOR: Record<string, string> = {
-  running: "#22c55e", ready: "#22c55e", provisioning: "var(--yellow)", stopped: "var(--text-muted)", paused: "var(--text-muted)",
-  error: "#e06c5a", deleted: "#e06c5a",
+  running: "var(--hg-ok)", ready: "var(--hg-ok)", provisioning: "var(--yellow)", stopped: "var(--text-muted)", paused: "var(--text-muted)",
+  error: "var(--hg-bad)", deleted: "var(--hg-bad)",
 };
 
 export const MANAGE_NAME_MAX = 60;
@@ -70,18 +71,18 @@ export function ManageHeader({
                 if (event.key === "Enter") { event.preventDefault(); save(); }
                 if (event.key === "Escape") cancel();
               }}
-              style={{ flex: "1 1 200px", minWidth: 0, padding: "7px 10px", minHeight: 40, boxSizing: "border-box", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 18, fontFamily: "var(--font-serif), serif", outline: "none" }}
+              style={{ flex: "1 1 200px", minWidth: 0, padding: "7px 10px", minHeight: 40, boxSizing: "border-box", border: "1px solid var(--etched-border)", background: "var(--hg-fill-1)", color: "var(--ink-black)", fontSize: 18, fontFamily: "var(--font-display)", borderRadius: "var(--hg-radius-md)" }}
             />
             <span style={{ display: "inline-flex", gap: 6 }}>
-              <button type="button" disabled={!valid || disabled} onClick={save} title="Save" aria-label="Save name" style={{ ...manageButtonGhost, padding: "7px 11px", color: "#22a06b" }}><Check size={14} /></button>
+              <button type="button" disabled={!valid || disabled} onClick={save} title="Save" aria-label="Save name" style={{ ...manageButtonGhost, padding: "7px 11px", color: "var(--hg-ok)" }}><Check size={14} /></button>
               <button type="button" onClick={cancel} title="Cancel" aria-label="Cancel renaming" style={{ ...manageButtonGhost, padding: "7px 11px" }}><X size={14} /></button>
             </span>
           </>
         ) : (
           <>
-            <h1 className="serif" style={{ margin: 0, fontSize: 26, fontWeight: 400, lineHeight: 1.2, color: "var(--ink-black)", flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</h1>
+            <h1 className="serif" style={{ margin: 0, fontSize: 26, fontWeight: 600, lineHeight: 1.2, color: "var(--ink-black)", flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</h1>
             {renaming ? <Loader2 size={14} aria-label="Renaming" style={{ ...manageSpin, color: "var(--text-muted)" }} /> : null}
-            <button type="button" onClick={() => { setDraft(name); setEditing(true); }} title="Rename" className="mono" style={{ ...manageLabel, border: "1px solid var(--etched-border)", background: "transparent", padding: "6px 10px", minHeight: 40, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text-secondary)", flexShrink: 0 }}>
+            <button type="button" onClick={() => { setDraft(name); setEditing(true); }} title="Rename" style={{ ...manageButtonGhost, padding: "6px 12px", minHeight: 36, cursor: "pointer", color: "var(--text-secondary)", flexShrink: 0 }}>
               <Pencil size={12} /> Rename
             </button>
           </>
@@ -89,9 +90,9 @@ export function ManageHeader({
       </div>
       {error}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12.5, color: "var(--text-secondary)" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "1px solid var(--etched-border)", padding: "4px 9px" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, border: "1px solid var(--hg-stroke)", borderRadius: 999, background: "var(--hg-fill-1)", padding: "3px 10px 3px 9px" }}>
           <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLOR[status] || "var(--text-muted)", display: "inline-block" }} />
-          <span style={{ textTransform: "capitalize" }}>{statusLabel}</span>
+          <span style={{ textTransform: "capitalize" }}><StatusText value={statusLabel} /></span>
         </span>
         <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{subtitle}</span>
         {chips}

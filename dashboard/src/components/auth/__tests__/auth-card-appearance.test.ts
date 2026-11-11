@@ -17,18 +17,18 @@ describe("Clerk auth card appearance", () => {
   it("binds the card, its text, inputs and primary button to theme tokens, so dark mode stays legible", () => {
     const { variables } = authCardAppearance();
     expect(variables).toMatchObject({
-      colorBackground: "var(--bg-surface)",
-      colorForeground: "var(--ink-black)",
-      colorPrimary: "var(--ink-black)",
+      colorBackground: "var(--hg-glass-strong)",
+      colorForeground: "var(--hg-text)",
+      colorPrimary: "var(--hg-accent)",
       // Text on the primary fill is the page colour: dark on light ink, light on dark ink.
-      colorPrimaryForeground: "var(--vellum-bg)",
-      colorInputForeground: "var(--ink-black)",
-      colorNeutral: "var(--ink-black)",
+      colorPrimaryForeground: "var(--hg-on-accent)",
+      colorInputForeground: "var(--hg-text)",
+      colorNeutral: "var(--hg-fg)",
     });
     // Every colour is a token or transparent, never a fixed light-theme colour.
     for (const key of CLERK_UI_COLOR_VARIABLES) {
       const value = (variables as Record<string, unknown>)[key];
-      if (value !== undefined) expect(value).toMatch(/^(?:var\(--[a-z-]+\)|transparent)$/);
+      if (value !== undefined) expect(value).toMatch(/^(?:var\(--[a-z0-9-]+\)|transparent)$/);
     }
   });
 
@@ -37,8 +37,8 @@ describe("Clerk auth card appearance", () => {
     for (const [element, classes] of Object.entries(elements)) {
       expect({ element, classes }).toEqual({ element, classes: expect.not.stringMatching(/(?:^|\s|:)(?:bg|text)-(?:white|black)(?:\/\d+)?(?:\s|$)/) });
     }
-    expect(AUTH_CARD_ELEMENTS.card).toContain("bg-[var(--bg-surface)]");
-    expect(AUTH_CARD_ELEMENTS.formButtonPrimary).toContain("text-[var(--vellum-bg)]");
+    expect(AUTH_CARD_ELEMENTS.card).toContain("bg-[var(--hg-glass-strong)]");
+    expect(AUTH_CARD_ELEMENTS.formButtonPrimary).toContain("text-[var(--hg-on-accent)]");
   });
 
   it("lets a page restyle its own elements without dropping the shared card", () => {

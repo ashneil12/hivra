@@ -6,6 +6,7 @@
 // Add new skills from the Terminal.
 
 import { useCallback, useEffect, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useParams } from "next/navigation";
 import { Loader2, Sparkles, Boxes, Trash2, Plus } from "lucide-react";
 
@@ -13,7 +14,7 @@ import { listBoxSkills, deleteBoxSkill, type BoxSkill } from "@/lib/hivra/agent-
 import { SkillInstallPicker } from "@/components/hivra/SkillInstallPicker";
 
 const mono: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 10,
   textTransform: "uppercase",
   letterSpacing: "0.16em",
@@ -61,7 +62,7 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 6, flexWrap: "wrap" }}>
         <div>
           <div className="mono" style={{ ...mono, marginBottom: 6 }}>Skills</div>
-          <h2 className="serif" style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
+          <h2 className="serif" style={{ fontSize: "clamp(1.6rem, 4vw, 2.2rem)", fontWeight: 600, margin: 0, color: "var(--ink-black)" }}>
             {skills === null ? "Skills" : `${skills.length} installed`}
           </h2>
         </div>
@@ -80,7 +81,7 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
       </p>
 
       {skills === null ? (
-        <div style={{ padding: 40, textAlign: "center" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} /></div>
+        <div style={{ padding: 40, textAlign: "center" }}><ThinkingOrb size={32} state="searching" label="Loading" /></div>
       ) : skills.length === 0 ? (
         <div style={{ border: "1px dashed var(--etched-border)", padding: "28px 20px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
           No skills installed yet.
@@ -88,10 +89,10 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))", gap: 12 }}>
           {skills.map((s) => (
-            <div key={s.id} style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.035)", padding: 16, display: "grid", gap: 8, minWidth: 0 }}>
+            <div key={s.id} style={{ border: "1px solid var(--hg-stroke)", borderRadius: 14, background: "var(--hg-glass)", backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", boxShadow: "var(--hg-glass-edge), var(--hg-shadow-sm)", padding: 16, display: "grid", gap: 8, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
                 <Sparkles size={14} style={{ color: "var(--gold-leaf)", flexShrink: 0 }} />
-                <strong className="serif" style={{ fontSize: 17, fontWeight: 400, color: "var(--ink-black)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</strong>
+                <strong className="serif" style={{ fontSize: 17, fontWeight: 600, color: "var(--ink-black)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</strong>
                 <button
                   type="button"
                   onClick={() => void remove(s)}
@@ -99,7 +100,7 @@ export function HivraSkills({ boxUrl, token }: { boxUrl: string; token?: string 
                   aria-label="Remove skill"
                   title="Remove skill"
                   className="skill-remove"
-                  style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", padding: "4px 6px", cursor: removing === s.id ? "default" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                  style={{ border: "1px solid var(--etched-border)", background: "transparent", color: "var(--hg-bad)", padding: "4px 6px", cursor: removing === s.id ? "default" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                 >
                   {removing === s.id ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
                 </button>

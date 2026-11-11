@@ -10,6 +10,7 @@ import { readAgentSoftwareFromBox } from "./agent-cli-meta";
 import { saveAgentSoftwareObservation, type StoredAgentSoftware } from "./agent-cli-store";
 import {
   agentCliAutoUpdateMode,
+  agentSoftwareAutoUpdates,
   agentSoftwareSubject,
   deriveAgentSoftware,
   effectiveAgentCliAutoUpdate,
@@ -143,7 +144,7 @@ export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: Agen
     lastRequest: record?.requested_at && isVersion(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
       ? { by: record.requested_by, at: record.requested_at, target: record.requested_target, result: (record.request_result ?? null) as AgentCliRequestResult | null }
       : null,
-    autoUpdate: subject.cli
+    autoUpdate: subject.cli && agentSoftwareAutoUpdates(agent)
       ? {
           mode,
           enabled: auto.enabled,

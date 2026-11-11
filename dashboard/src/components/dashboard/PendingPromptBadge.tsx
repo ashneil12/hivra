@@ -50,9 +50,9 @@ export function PendingPromptBadge({
         fontSize: "11px",
         fontWeight: 600,
         lineHeight: 1.4,
-        color: "#92400e",
-        background: "rgba(245, 158, 11, 0.12)",
-        border: "1px solid rgba(180, 83, 9, 0.4)",
+        color: "var(--hg-warn)",
+        background: "color-mix(in srgb, var(--hg-warn) 12%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--hg-warn) 40%, transparent)",
         whiteSpace: "nowrap",
       }}
     >

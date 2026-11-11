@@ -462,9 +462,9 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
       onClick: () => void handleOpenAutoUpdate(),
       disabled: autoUpdateLoading,
       tone: {
-        background: autoUpdateConfig.enabled ? 'rgba(22, 163, 74, 0.08)' : 'rgba(59, 130, 246, 0.08)',
-        color: autoUpdateConfig.enabled ? '#166534' : '#1d4ed8',
-        border: autoUpdateConfig.enabled ? '1px solid rgba(22, 163, 74, 0.24)' : '1px solid rgba(59, 130, 246, 0.24)',
+        background: autoUpdateConfig.enabled ? 'color-mix(in srgb, var(--hg-ok) 8%, transparent)' : 'color-mix(in srgb, var(--hg-text) 8%, transparent)',
+        color: autoUpdateConfig.enabled ? 'var(--hg-ok)' : 'var(--hg-text-2)',
+        border: autoUpdateConfig.enabled ? '1px solid color-mix(in srgb, var(--hg-ok) 24%, transparent)' : '1px solid color-mix(in srgb, var(--hg-text) 24%, transparent)',
         cursor: autoUpdateLoading ? 'not-allowed' : 'pointer',
         opacity: autoUpdateLoading ? 0.7 : 1,
       },
@@ -473,19 +473,19 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
       label: ACTION_CONFIG.restart_gateway.buttonLabel,
       icon: <RotateCcw size={14} />,
       onClick: () => handleAction('restart_gateway'),
-      tone: { background: 'rgba(125, 106, 247, 0.08)', color: '#5b4bc4', border: '1px solid rgba(125, 106, 247, 0.24)' },
+      tone: { background: 'color-mix(in srgb, var(--hg-text) 8%, transparent)', color: 'var(--hg-text-2)', border: '1px solid color-mix(in srgb, var(--hg-text) 24%, transparent)' },
     },
     update: {
       label: ACTION_CONFIG.update.buttonLabel,
       icon: <DownloadCloud size={14} />,
       onClick: () => handleAction('update'),
-      tone: { background: 'rgba(59, 130, 246, 0.08)', color: '#1d4ed8', border: '1px solid rgba(59, 130, 246, 0.24)' },
+      tone: { background: 'color-mix(in srgb, var(--hg-text) 8%, transparent)', color: 'var(--hg-text-2)', border: '1px solid color-mix(in srgb, var(--hg-text) 24%, transparent)' },
     },
     repair_runtime: {
       label: ACTION_CONFIG.repair_runtime.buttonLabel,
       icon: <Wrench size={14} />,
       onClick: () => handleAction('repair_runtime'),
-      tone: { background: 'rgba(217, 119, 6, 0.08)', color: '#92400e', border: '1px solid rgba(217, 119, 6, 0.24)' },
+      tone: { background: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)', color: 'var(--hg-warn)', border: '1px solid color-mix(in srgb, var(--hg-warn) 24%, transparent)' },
     },
     rebuild_runtime: {
       label: ACTION_CONFIG.rebuild_runtime.buttonLabel,
@@ -570,7 +570,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
         <button
           type="button"
           onClick={() => router.push(`/dashboard/instances/${id}`)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono), monospace', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '10px 12px 10px 0', marginBottom: '1.125rem' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '10px 12px 10px 0', marginBottom: '1.125rem' }}
         >
           <ArrowLeft size={14} /> Back to chat
         </button>
@@ -578,7 +578,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '2rem', flexWrap: 'wrap' }}>
             <div>
-              <h1 className="serif" style={{ fontSize: 'clamp(2.5rem, 8vw, 3.5rem)', fontWeight: 400, lineHeight: 1, margin: 0, color: 'var(--ink-black)', wordBreak: 'break-word' }}>Console.</h1>
+              <h1 className="serif" style={{ fontSize: 'clamp(2.5rem, 8vw, 3.5rem)', fontWeight: 600, lineHeight: 1, margin: 0, color: 'var(--ink-black)', wordBreak: 'break-word' }}>Console.</h1>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', marginTop: '1rem' }}>
                 <p className="mono" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5, margin: 0, color: 'var(--ink-black)' }}>
                   Agent Settings & Operations
@@ -592,7 +592,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                       fontSize: 11,
                       letterSpacing: '0.08em',
                       border: '1px solid var(--etched-border)',
-                      background: 'rgba(0,0,0,0.03)',
+                      background: 'var(--hg-fill-1)',
                       color: 'var(--ink-black)',
                     }}
                   >
@@ -622,10 +622,10 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
           style={{
             marginBottom: '1.5rem',
             padding: '12px 16px',
-            border: `1px solid ${actionFeedback.tone === 'success' ? 'var(--ink-black)' : '#b91c1c'}`,
-            background: actionFeedback.tone === 'success' ? 'var(--vellum-bg)' : '#fef2f2',
-            color: actionFeedback.tone === 'success' ? 'var(--ink-black)' : '#991b1b',
-            fontFamily: 'var(--font-mono), monospace',
+            border: `1px solid ${actionFeedback.tone === 'success' ? 'var(--ink-black)' : 'var(--hg-bad)'}`,
+            background: actionFeedback.tone === 'success' ? 'var(--vellum-bg)' : 'color-mix(in srgb, var(--hg-bad) 8%, transparent)',
+            color: actionFeedback.tone === 'success' ? 'var(--ink-black)' : 'var(--hg-bad)',
+            fontFamily: 'var(--font-mono)',
             fontSize: 11,
             letterSpacing: '0.03em',
           }}
@@ -640,8 +640,8 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
           style={{
             marginBottom: '1.5rem',
             padding: '16px 18px',
-            border: '1px solid rgba(185, 28, 28, 0.24)',
-            background: 'rgba(254, 242, 242, 0.78)',
+            border: '1px solid color-mix(in srgb, var(--hg-bad) 24%, transparent)',
+            background: 'color-mix(in srgb, var(--hg-bad) 78%, transparent)',
             color: 'var(--ink-black)',
             display: 'grid',
             gap: 12,
@@ -649,7 +649,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
         >
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-              <p className="mono" style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: '#b91c1c', fontWeight: 700 }}>
+              <p className="mono" style={{ margin: 0, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--hg-bad)', fontWeight: 700 }}>
                 Active failure ownership
               </p>
               <h2 className="serif" style={{ margin: 0, fontSize: '1.45rem', color: 'var(--ink-black)' }}>
@@ -664,9 +664,9 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                 type="button"
                 onClick={() => handleAction(failureConsoleAction)}
                 style={{
-                  border: '1px solid rgba(185, 28, 28, 0.24)',
-                  background: 'rgba(255,255,255,0.78)',
-                  color: '#b91c1c',
+                  border: '1px solid color-mix(in srgb, var(--hg-bad) 24%, transparent)',
+                  background: 'var(--hg-fill-1)',
+                  color: 'var(--hg-bad)',
                   padding: '8px 14px',
                   fontSize: 11,
                   fontWeight: 700,
@@ -717,7 +717,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                 background: isActive ? 'var(--ink-black)' : 'transparent',
                 color: isActive ? 'var(--bg-surface)' : 'var(--text-secondary)',
                 border: isActive ? '1px solid var(--ink-black)' : '1px solid transparent',
-                fontFamily: 'var(--font-mono), monospace',
+                fontFamily: 'var(--font-mono)',
                 fontWeight: isActive ? 700 : 400,
                 textTransform: 'uppercase',
                 letterSpacing: '0.05em',
@@ -784,7 +784,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
             style={{
               position: 'fixed',
               inset: 0,
-              background: 'rgba(7, 10, 20, 0.58)',
+              background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
               display: 'flex',
               overflowY: 'auto',
               padding: 'max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))',
@@ -813,7 +813,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                 background: 'var(--vellum-bg)',
                 border: '1px solid var(--ink-black)',
                 padding: 'clamp(16px, 4.2vw, 24px)',
-                boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+                boxShadow: 'var(--hg-shadow-lg)',
               }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -822,7 +822,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                   <h2
                     id="console-action-confirm-title"
                     className="serif"
-                    style={{ margin: 0, fontSize: 'clamp(1.5rem, 7vw, 2rem)', fontWeight: 400, color: 'var(--ink-black)' }}
+                    style={{ margin: 0, fontSize: 'clamp(1.5rem, 7vw, 2rem)', fontWeight: 600, color: 'var(--ink-black)' }}
                   >
                     {ACTION_CONFIG[pendingAction].confirmTitle}
                   </h2>
@@ -847,7 +847,7 @@ export default function AdvancedConsolePage({ params }: { params: Promise<{ id: 
                     color: 'var(--text-muted)',
                     padding: '10px 12px',
                     border: '1px solid var(--etched-border)',
-                    background: 'rgba(255,255,255,0.45)',
+                    background: 'var(--hg-fill-1)',
                   }}
                 >
                   {ACTION_CONFIG[pendingAction].expectation}

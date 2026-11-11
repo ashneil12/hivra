@@ -53,6 +53,18 @@ jest.mock("@/lib/hivra/launch-operation-store", () => ({
     fail: (...args: unknown[]) => mockOperationFail(...args),
   }),
 }));
+// Wraps the real readiness check so a launch's placement runtime can be asserted.
+const mockCheckManagedReadiness = jest.fn();
+jest.mock("@/lib/hivra/managed-provisioner-readiness", () => {
+  const actual = jest.requireActual("@/lib/hivra/managed-provisioner-readiness");
+  return {
+    ...actual,
+    checkManagedHivraHostReadiness: (...args: unknown[]) => {
+      mockCheckManagedReadiness(...args);
+      return actual.checkManagedHivraHostReadiness(...args);
+    },
+  };
+});
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   ...jest.requireActual("@/lib/authenticated-rate-limit"),
   enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockLaunchRateLimit(...args),
@@ -1523,7 +1535,7 @@ describe("POST /api/hivra/agents", () => {
     }) as never);
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual(expect.objectContaining({
-      error: expect.stringMatching(/only for Codex and Ubuntu Desktop/i),
+      error: expect.stringMatching(/only for Codex, Ubuntu Desktop and Linux computer/i),
     }));
     expect(mockAgentInsert).not.toHaveBeenCalled();
   });
@@ -1697,6 +1709,18 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  it("tells the owner a server needs an update before it can run Agent Zero", async () => {
+    mockResolveSelfManagedProxmoxExecutionContext.mockResolvedValueOnce(
+      selfManagedExecutionContext({ provisionerVersion: "2026.10.20.1" }),
+    );
+    const response = await POST(makeRequest({
+      type: "agent-zero", name: "AGENT_ZERO_OLD_HOST", cpu: 1, ram: 2, deployment: SELF_MANAGED_DEPLOYMENT,
+    }) as never);
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/needs an update before it can run Agent Zero/);
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
   it("refuses a self-managed launch on a bundle without capacity admission before touching the host", async () => {
     // A compatible 2026.09.08.3 bundle can still run its computers, but the
     // launch kickoff calls hivra-host-capacity-admission, which it lacks: the
@@ -1706,8 +1730,8 @@ describe("POST /api/hivra/agents", () => {
     );
 
     const response = await POST(makeRequest({
-      type: "agent-zero",
-      name: "AGENT_ZERO_OLD_BUNDLE",
+      type: "claude-code",
+      name: "CLAUDE_OLD_BUNDLE",
       cpu: 1,
       ram: 2,
       deployment: SELF_MANAGED_DEPLOYMENT,
@@ -2238,6 +2262,305 @@ describe("POST /api/hivra/agents", () => {
     expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("HIVRA_WANT_BROWSER=''");
   });
 
+  describe("Linux computer without a desktop (ubuntu-server)", () => {
+    const paidPlan = () => {
+      mockSubscriptionRow = {
+        plan: "fleet", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+      };
+      process.env.NEXT_PUBLIC_APP_URL = "https://canary.hermesos.cloud";
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({
+        token: "synthetic-tunnel", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test",
+      });
+    };
+
+    it("provisions the linux-server kind with an empty browser setting, as a linux-desktop row with its own profile", async () => {
+      paidPlan();
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_RESOURCE_MAXIMUM_FITS 16 65536\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+        .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "LIGHT COMPUTER", cpu: 1, ram: 2,
+        maximumCpu: 2, maximumRam: 4, browser: false,
+      }) as never);
+
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+        type: "linux-desktop", computer_profile: "ubuntu-server", cpu: 1, ram: 2,
+      }));
+      expect(mockOperationPrepare).toHaveBeenCalledWith("user-free", LAUNCH_REQUEST_ID, expect.anything(), expect.objectContaining({
+        resourceKind: "computer", runtimeId: "linux-desktop", computerProfile: "ubuntu-server",
+        desktopControlOrigin: "https://canary.hermesos.cloud", browser: false,
+      }));
+      const script = mockRunProxmoxHostScript.mock.calls[1][0] as string;
+      expect(script).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "linux-server"');
+      expect(script).not.toContain('"linux-desktop"');
+      expect(script).toContain("HIVRA_WANT_BROWSER=''");
+      expect(script).toContain("HIVRA_COMPUTER_ID='agent-1'");
+      expect(script).toContain("HIVRA_CONTROL_ORIGIN='https://canary.hermesos.cloud'");
+    });
+
+    it("starts at its recommended size when the request names none", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "DEFAULT SIZE", browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 1, ram: 2 }));
+    });
+
+    it("may be launched at its own floor, below the desktop floor", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "SMALL", cpu: 0.5, ram: 1, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 0.5, ram: 1 }));
+    });
+
+    it("lifts a size below its floor to the floor", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "TINY", cpu: 0.1, ram: 0, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 0.5, ram: 1 }));
+    });
+
+    it("never routes the profile to a provider (My cloud) launch", async () => {
+      paidPlan();
+      mockGetInfrastructureTarget.mockResolvedValue(providerVmTarget());
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-server", name: "PROVIDER LIGHT", cpu: 1, ram: 2, browser: false,
+        deployment: SELF_MANAGED_DEPLOYMENT,
+      }) as never);
+      expect(response.status).toBe(409);
+      expect(mockLaunchProviderAgent).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["ubuntu-desktop", "linux-desktop", "Ubuntu Desktop"],
+      ["ubuntu-server", "linux-server", "Linux computer"],
+    ])("asks managed placement for %s hosts that can run %s", async (profile, runtimeId, label) => {
+      paidPlan();
+      mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: false, stdout: "", stderr: "version mismatch" });
+      mockSelectAvailableProxmoxProvisionTarget.mockImplementationOnce(async (options: ManagedPlacementOptions) => {
+        const readiness = await options.readinessCheck!({ targetId: "fixturenode7", env: { NODE_ENV: "test", PROXMOX_NODE: "fixturenode7" } });
+        return readiness.ok ? { ok: true, targetId: "fixturenode7" } : { ok: false, status: readiness.status, message: readiness.message };
+      });
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: profile, name: "PLACEMENT", cpu: 2, ram: 4, browser: false,
+      }) as never);
+      expect(response.status).toBe(503);
+      expect(mockCheckManagedReadiness).toHaveBeenCalledWith(expect.objectContaining({ runtimeId, runtimeLabel: label }));
+    });
+
+    it("keeps Ubuntu Desktop on the linux-desktop kind (regression)", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-desktop", name: "DESKTOP", cpu: 2, ram: 4, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(script).toContain('"linux-desktop"');
+      expect(script).not.toContain("linux-server");
+      expect(script).toContain("HIVRA_WANT_BROWSER=''");
+    });
+
+    it("still holds Ubuntu Desktop to its own 2 CPU / 4 GB floor", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "linux-desktop", computerProfile: "ubuntu-desktop", name: "DESKTOP", cpu: 1, ram: 2, browser: false,
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenLastCalledWith(expect.objectContaining({ cpu: 2, ram: 4 }));
+    });
+  });
+
+  describe("DeepSeek Harness", () => {
+    const paidPlan = () => {
+      mockSubscriptionRow = {
+        plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+      };
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({
+        token: "synthetic-tunnel", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test",
+      });
+    };
+
+    it("is accepted on Hivra Cloud on credits and provisions the deepseek-harness kind with named access and its model", async () => {
+      paidPlan();
+      mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
+      const response = await POST(makeRequest({
+        type: "deepseek-harness", name: "DEEPSEEK", cpu: 2, ram: 4, managedVenice: true,
+        llm: { provider: "venice", mode: "managed", walletType: "hermesos" },
+      }) as never);
+
+      expect(response.status).toBe(201);
+      expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+        type: "deepseek-harness", cpu: 2, ram: 4, deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm",
+        managed_venice: true,
+      }));
+      // The arguments its acceptance harness passes the host provisioner: the
+      // kind, no browser, the named tunnel it requires, and all three model values.
+      const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(script).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "deepseek-harness"');
+      expect(script).toContain("HIVRA_WANT_BROWSER='0'");
+      expect(script).toContain("HIVRA_TUNNEL_URL_B64=");
+      expect(script).toContain("printf 'HIVRA_MODEL_KEY_B64='; write_secret_b64 'hven_live_TESTKEY123'");
+      expect(script).toContain("printf 'HIVRA_MODEL_BASE_URL_B64='; write_secret_b64 'https://hivra.cloud/api/managed-venice/v1'");
+      expect(script).toContain("printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 'deepseek-v4-1-flash'");
+      expect(mockCreateManagedVeniceProxyKey).toHaveBeenCalledTimes(1);
+      expect(mockCreateBoxTunnel).toHaveBeenCalledTimes(1);
+    });
+
+    it("mints managed credits for a managedVenice launch that names no llm block", async () => {
+      paidPlan();
+      mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "AUTO", cpu: 2, ram: 4, managedVenice: true }) as never);
+      expect(response.status).toBe(201);
+      const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(script).toContain("printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 'deepseek-v4-1-flash'");
+    });
+
+    it("sends the owner's Venice key, Venice's public base URL and the default model on bring-your-own-key", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "deepseek-harness", name: "BYOK", cpu: 2, ram: 4,
+        llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key" },
+      }) as never);
+      expect(response.status).toBe(201);
+      const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(script).toContain("printf 'HIVRA_MODEL_KEY_B64='; write_secret_b64 'synthetic-venice-key'");
+      expect(script).toContain("printf 'HIVRA_MODEL_BASE_URL_B64='; write_secret_b64 'https://api.venice.ai/api/v1'");
+      expect(script).toContain("printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 'deepseek-v4-1-flash'");
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+    });
+
+    it("revokes the minted credits key when the launch fails", async () => {
+      paidPlan();
+      mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
+      mockCreateBoxTunnel.mockReset().mockRejectedValue(new BoxTunnelProvisionError(true));
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "FAILS", cpu: 2, ram: 4, managedVenice: true }) as never);
+      expect(response.status).toBe(502);
+      expect(mockRevokeManagedVeniceProxyKey).toHaveBeenCalledWith({ userId: "user-free", keyId: "key-ds" });
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("keeps a model the owner chose", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "deepseek-harness", name: "CHOSEN", cpu: 2, ram: 4,
+        llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key", model: "deepseek-v4-pro" },
+      }) as never);
+      expect(response.status).toBe(201);
+      expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 'deepseek-v4-pro'");
+    });
+
+    it("refuses a launch with no model access before any row, key or tunnel", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "NO MODEL", cpu: 2, ram: 4 }) as never);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual(expect.objectContaining({ code: "deepseek_model_required" }));
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+      expect(mockCreateBoxTunnel).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("asks managed placement for hosts on the release it was accepted on", async () => {
+      paidPlan();
+      mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: false, stdout: "", stderr: "version mismatch" });
+      mockSelectAvailableProxmoxProvisionTarget.mockImplementationOnce(async (options: ManagedPlacementOptions) => {
+        const readiness = await options.readinessCheck!({ targetId: "fixturenode7", env: { NODE_ENV: "test", PROXMOX_NODE: "fixturenode7" } });
+        return readiness.ok ? { ok: true, targetId: "fixturenode7" } : { ok: false, status: readiness.status, message: readiness.message };
+      });
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "PLACEMENT", cpu: 2, ram: 4, managedVenice: true }) as never);
+      expect(response.status).toBe(503);
+      expect(mockCheckManagedReadiness).toHaveBeenCalledWith(expect.objectContaining({
+        runtimeId: "deepseek-harness", runtimeLabel: "DeepSeek Harness",
+      }));
+      // A predecessor host is skipped: only the accepted release and later are listed.
+      const readinessScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+      expect(readinessScript).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
+      expect(readinessScript).not.toContain("'2026.11.10.3'");
+    });
+
+    it("holds the catalog floor on Hivra Cloud", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "SMALL", cpu: 1, ram: 2, managedVenice: true }) as never);
+      expect(response.status).toBe(403);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("refuses a Free account before any allocation, like every Hivra-hosted computer", async () => {
+      mockTunnelConfigured = true;
+      mockEnforceFreeAccountRefusal = true;
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "FREE", cpu: 2, ram: 4, managedVenice: true }) as never);
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toMatch(/paid plan/i);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockCreateBoxTunnel).not.toHaveBeenCalled();
+    });
+
+    it("requires named HTTPS access before any target work, row or tunnel", async () => {
+      paidPlan();
+      mockTunnelConfigured = false;
+      const response = await POST(makeRequest({ type: "deepseek-harness", name: "NO ACCESS", cpu: 2, ram: 4, managedVenice: true }) as never);
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toMatch(/named HTTPS access/);
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("is refused on a server the owner connected before any host is read", async () => {
+      paidPlan();
+      const response = await POST(makeRequest({
+        type: "deepseek-harness", name: "OWN SERVER", cpu: 2, ram: 4, deployment: SELF_MANAGED_DEPLOYMENT,
+      }) as never);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual(expect.objectContaining({ code: "deepseek_managed_only" }));
+      expect(mockResolveSelfManagedProxmoxExecutionContext).not.toHaveBeenCalled();
+      expect(mockGetInfrastructureTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("never reaches the private provider adapter for a computer in the owner's own cloud", async () => {
+      paidPlan();
+      mockGetInfrastructureTarget.mockResolvedValue(providerVmTarget());
+      const request = makeRequest({ type: "deepseek-harness", name: "MY CLOUD", cpu: 2, ram: 4, deployment: SELF_MANAGED_DEPLOYMENT });
+      request.headers.set("Origin", "https://hivra.cloud");
+      const response = await POST(request as never);
+      expect(response.status).toBe(409);
+      expect(mockLaunchProviderAgent).not.toHaveBeenCalled();
+      expect(mockGetInfrastructureTarget).not.toHaveBeenCalled();
+    });
+
+    it("takes no browser or launch receipt", async () => {
+      paidPlan();
+      const receipt = await POST(makeRequest({
+        type: "deepseek-harness", name: "RECEIPT", cpu: 2, ram: 4, managedVenice: true, launchRequestId: LAUNCH_REQUEST_ID,
+      }) as never);
+      expect(receipt.status).toBe(400);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+      // A browser request is ignored: the harness never provisions one.
+      const browser = await POST(makeRequest({
+        type: "deepseek-harness", name: "BROWSER", cpu: 2, ram: 4, browser: true,
+        llm: { provider: "venice", mode: "byok", apiKey: "synthetic-venice-key" },
+      }) as never);
+      expect(browser.status).toBe(201);
+      expect(mockRunProxmoxHostScript.mock.calls[0][0]).toContain("HIVRA_WANT_BROWSER='0'");
+    });
+  });
+
   it("rejects a staged computer profile before allocating capacity", async () => {
     mockSubscriptionRow = {
       plan: "operator",
@@ -2535,7 +2858,8 @@ describe("POST /api/hivra/agents", () => {
     );
   });
 
-  it("ignores the managed-Venice opt-in for an agent type without box wiring (Claude Code)", async () => {
+  it("launches Claude Code on Hivra credits through the Anthropic route with a Claude model", async () => {
+    mockCreateManagedVeniceProxyKey.mockResolvedValueOnce({ id: "key-cc-1", keyPrefix: "hven_live_CC", plaintextKey: "hven_live_TESTKEY123" });
     mockSubscriptionRow = {
       plan: "operator",
       status: "active",
@@ -2551,12 +2875,65 @@ describe("POST /api/hivra/agents", () => {
       cpu: 0.5,
       ram: 1,
       managedVenice: true,
+      llm: { provider: "venice", mode: "managed", walletType: "card" },
     }) as never);
 
     expect(response.status).toBe(201);
+    expect(mockCreateManagedVeniceProxyKey).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultWalletType: "card" }),
+    );
+    const provisionScript = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+    expect(provisionScript).toContain("write_secret_b64 'hven_live_TESTKEY123'");
+    expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/anthropic'");
+    expect(provisionScript).toContain("write_secret_b64 'claude-sonnet-4-6'");
+    expect(provisionScript).not.toContain("deepseek-v4-pro");
+    expect(mockAgentInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "claude-code", managed_venice: true }),
+    );
+  });
+
+  it("keeps Claude Code on native sign-in when no credits are chosen", async () => {
+    mockSubscriptionRow = {
+      plan: "operator",
+      status: "active",
+      instance_limit: 2,
+      total_cpu_budget: 2,
+      total_ram_budget: 4096,
+      current_period_end: null,
+    };
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+    }) as never);
+
+    expect(response.status).toBe(201);
+    expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
     expect(mockAgentInsert).toHaveBeenCalledWith(
       expect.objectContaining({ type: "claude-code", managed_venice: false }),
     );
+  });
+
+  it("refuses a Venice API key or a non-Claude model for Claude Code", async () => {
+    const byok = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      llm: { provider: "venice", mode: "byok", apiKey: "synthetic-launch-key" },
+    }) as never);
+    expect(byok.status).toBe(400);
+    const wrongModel = await POST(makeRequest({
+      type: "claude-code",
+      name: "CLAUDE_CODE_AGENT",
+      cpu: 0.5,
+      ram: 1,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-pro", walletType: "card" },
+    }) as never);
+    expect(wrongModel.status).toBe(400);
+    expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
   });
 
   it("does not count an existing Aeon box against the CPU/RAM pool", async () => {
@@ -3601,33 +3978,35 @@ describe("GET /api/hivra/agents", () => {
     });
   });
 
-  it("hides failed deployments from the active agent list", async () => {
+  it("lists a recent failed launch with its reason, and drops one older than 7 days", async () => {
+    const now = Date.now();
+    const iso = (daysAgo: number) => new Date(now - daysAgo * 86_400_000).toISOString();
     mockExistingAgents = [
-      {
-        id: "agent-failed",
-        type: "claude-code",
-        name: "FAILED_AGENT",
-        status: "error",
-        cpu: 2,
-        ram: 4,
-      },
-      {
-        id: "agent-running",
-        type: "claude-code",
-        name: "RUNNING_AGENT",
-        status: "running",
-        cpu: 2,
-        ram: 4,
-      },
+      { id: "agent-failed", type: "claude-code", name: "FAILED_AGENT", status: "error", error: "VM allocation failed", created_at: iso(2), cpu: 2, ram: 4 },
+      { id: "agent-old-failed", type: "claude-code", name: "OLD_FAILED", status: "error", error: "old", created_at: iso(8), cpu: 2, ram: 4 },
+      { id: "agent-undated-failed", type: "claude-code", name: "UNDATED_FAILED", status: "error", cpu: 2, ram: 4 },
+      { id: "agent-running", type: "claude-code", name: "RUNNING_AGENT", status: "running", cpu: 2, ram: 4 },
     ];
 
     const response = await GET(makeGetRequest() as never);
     expect(response.status).toBe(200);
     const body = await response.json();
 
-    expect(body.data.agents).toEqual([
-      expect.objectContaining({ id: "agent-running", status: "running" }),
+    expect(body.data.agents.map((agent: { id: string }) => agent.id)).toEqual([
+      "agent-failed",
+      "agent-running",
     ]);
+    expect(body.data.agents[0]).toEqual(expect.objectContaining({ status: "error", error: "VM allocation failed" }));
+  });
+
+  it("keeps a computer its host reported gone listed whatever its age, so it can be removed", async () => {
+    const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    mockExistingAgents = [
+      { id: "gone", type: "linux-desktop", name: "GONE", status: "error", error: "This computer no longer exists on its host.", created_at: old, cpu: 2, ram: 4 },
+      { id: "old-failed", type: "linux-desktop", name: "OLD_FAILED", status: "error", error: "Setup failed", created_at: old, cpu: 2, ram: 4 },
+    ];
+    const body = await (await GET(makeGetRequest() as never)).json();
+    expect(body.data.agents.map((agent: { id: string }) => agent.id)).toEqual(["gone"]);
   });
 
   it("tags Claude Code / Codex agents from one read of their stored software observations, never their computers", async () => {

@@ -169,7 +169,7 @@ describe("homepage FAQ and offers structured data", () => {
   it("publishes the same questions and answers the page shows", async () => {
     process.env.HIVRA_NEW_TOKEN_SURFACES = "true";
     const faq = faqOf(findSchema(await LandingPage({})));
-    expect(faq.mainEntity).toHaveLength(7);
+    expect(faq.mainEntity).toHaveLength(6);
     expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(true).map(({ q, a }) => [q, a]));
   });
 

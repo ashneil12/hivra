@@ -19,6 +19,8 @@ import { deleteAuditUser, listAuditUsers, mintSignInTicket, type ClerkUser } fro
 import { destroyAllHivraAgents, destroyAllInstances } from './instances';
 import { establishAuditSession } from './session';
 
+import { launchOptions } from '../../scripts/lib/playwright-launch.cjs';
+
 export interface ReapOptions {
   clerkSecretKey: string;
   baseUrl: string;
@@ -77,7 +79,7 @@ export async function reapAuditAccounts(opts: ReapOptions): Promise<ReapReport> 
 
   if (targets.length === 0 || opts.dryRun) return report;
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(launchOptions());
   try {
     for (const user of targets) {
       const entry: ReapedAccount = {
