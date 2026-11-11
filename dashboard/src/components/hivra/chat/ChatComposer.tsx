@@ -182,6 +182,7 @@ export function ChatComposer({
             <div className={styles.pills}>
               {controls && pickerShown ? (
                 <ModelPicker
+                  cliKind={controls.agentKind}
                   modelName={controls.modelName}
                   model={controls.model}
                   models={controls.models}
@@ -189,6 +190,10 @@ export function ChatComposer({
                   effortLevels={controls.effortLevels}
                   effort={controls.effort}
                   onEffortChange={controls.changeEffort}
+                  effortReady={controls.effortReady}
+                  effortUpdate={controls.effortUpdate}
+                  onEffortUpdate={controls.startEffortUpdate}
+                  hotkeys
                   pending={controls.pending}
                   busy={busy}
                   onClose={focusInput}

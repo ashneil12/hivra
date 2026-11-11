@@ -95,12 +95,30 @@ export function transcriptWordRanges(
   return { matches, current };
 }
 
+// The match colours. They live here, not in chat.module.css, because the CSS
+// parser behind CSS modules doesn't know ::highlight() and drops the rule (and
+// its warning once crashed the production build's code frame). The chat root
+// carries `hivra-chat-root`; highlighted text inherits its colour.
+const HIGHLIGHT_STYLE_ID = "hivra-chat-find-highlight-style";
+const HIGHLIGHT_CSS =
+  `.hivra-chat-root::highlight(${MATCH_HIGHLIGHT}) { background-color: color-mix(in srgb, var(--hg-warn) 30%, transparent); color: inherit; }\n` +
+  `.hivra-chat-root::highlight(${CURRENT_HIGHLIGHT}) { background-color: color-mix(in srgb, var(--hg-warn) 62%, transparent); color: inherit; }`;
+
+function ensureHighlightStyle(): void {
+  if (typeof document === "undefined" || document.getElementById(HIGHLIGHT_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = HIGHLIGHT_STYLE_ID;
+  style.textContent = HIGHLIGHT_CSS;
+  document.head.appendChild(style);
+}
+
 export function paintTranscriptHighlights(
   owner: symbol,
   ranges: Range[],
   current: Range | null,
 ): void {
   if (typeof CSS === "undefined" || !("highlights" in CSS)) return;
+  ensureHighlightStyle();
   if (highlightOwner !== owner) {
     CSS.highlights.delete(MATCH_HIGHLIGHT);
     CSS.highlights.delete(CURRENT_HIGHLIGHT);

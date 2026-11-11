@@ -147,6 +147,11 @@ export interface HivraChatProps {
  /** Current model id this box runs (e.g. the agent's llm_config.model). When
  * unset, the composer shows the agent's native-CLI default label. Display only. */
  modelLabel?: string | null;
+ /** The computer this chat talks to, for the effort update the model picker offers (the same
+ * in-place connection-service update as Manage's). Without it the picker points to Manage. */
+ computerId?: string;
+ /** The effort update restarted the computer's connection service. */
+ onConnectionServiceRestarted?: () => void;
 }
 
 // Map a box session message (from the VM's own session store) to a ChatMessage.
@@ -374,11 +379,11 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
-export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
+export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel, computerId, onConnectionServiceRestarted }: HivraChatProps) {
  const skey = storageKey || boxUrl;
  // What the composer's pickers change on the computer: its model, its effort
  // levels and its access. The effort picked is sent with each turn.
- const controls = useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked: Boolean((modelLabel || "").trim()), lockedModelName: (modelLabel || "").trim() });
+ const controls = useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked: Boolean((modelLabel || "").trim()), lockedModelName: (modelLabel || "").trim(), computerId, onConnectionServiceRestarted });
  const effortRef = useRef<string | null>(null);
  useEffect(() => { effortRef.current = controls.effort; }, [controls.effort]);
  // The model name to surface in the composer. Falls back to the agent's CLI
@@ -1669,7 +1674,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  );
 
  return (
- <div ref={rootRef} className={`hivra-chat-root ${styles.root} ${chatStyles.findHost}`}>
+ <div ref={rootRef} className={`hivra-chat-root ${styles.root}`}>
  {/* The chat list lives in the agent sidebar when it provides a place for it. */}
  {slotElement ? createPortal(list(), slotElement) : null}
  {/* Anywhere else: an overlay drawer below md, an inline column from md up. */}

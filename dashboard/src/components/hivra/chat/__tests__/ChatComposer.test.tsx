@@ -131,8 +131,11 @@ describe("ChatComposer", () => {
         modelName: "Default",
         changeModel: jest.fn(),
         effortLevels: ["low", "medium", "high"],
+        effortReady: true,
         effort: null,
         changeEffort: jest.fn(),
+        effortUpdate: { state: "idle", message: null, available: true },
+        startEffortUpdate: jest.fn(),
         restrict: "",
         changeRestrict: jest.fn(),
         pending: false,
@@ -141,41 +144,55 @@ describe("ChatComposer", () => {
       };
     }
 
-    it("lists the models and only the effort levels the computer takes, and applies a pick", () => {
+    // Opens the picker and one of its two rows (a click does what a hover does).
+    const openRow = (row: RegExp) => {
+      fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+      fireEvent.click(screen.getByRole("menuitem", { name: row }));
+    };
+
+    it("has an Effort row first and a Model row, each naming its current value", () => {
+      composer({ controls: controls({ effort: "medium", model: "opus", modelName: "Opus" }) });
+      fireEvent.click(screen.getByRole("button", { name: "Model: Opus, Medium effort" }));
+      const rows = within(screen.getByRole("menu", { name: "Model and effort" })).getAllByRole("menuitem");
+      expect(rows.map((row) => row.textContent)).toEqual(["EffortMedium", "ModelOpus"]);
+    });
+
+    it("lists only the effort levels the computer takes, and applies a pick", () => {
       const c = controls();
       composer({ controls: c });
-      fireEvent.click(screen.getByRole("button", { name: "Model: Default" }));
-      const menu = screen.getByRole("menu", { name: "Model and effort" });
-      expect(within(menu).getAllByRole("menuitemradio").map((el) => el.textContent)).toEqual(["Default", "Opus", "Sonnet", "Default", "Low", "Medium", "High"]);
-      expect(within(menu).queryByText("Max")).not.toBeInTheDocument();
-      fireEvent.click(within(menu).getByRole("menuitemradio", { name: "High" }));
+      openRow(/^Effort/);
+      const submenu = screen.getByRole("menu", { name: "Effort" });
+      expect(within(submenu).getAllByRole("menuitemradio").map((el) => el.textContent)).toEqual(["Default", "Low", "Medium", "High"]);
+      expect(within(submenu).queryByText("Max")).not.toBeInTheDocument();
+      fireEvent.click(within(submenu).getByRole("menuitemradio", { name: "High" }));
       expect(c.changeEffort).toHaveBeenCalledWith("high");
       expect(screen.queryByRole("menu", { name: "Model and effort" })).not.toBeInTheDocument();
     });
 
-    it("changes the model from the menu and shows the effort picked on the pill", () => {
+    it("changes the model from the flyout and shows the effort picked on the pill", () => {
       const c = controls({ effort: "medium", model: "opus", modelName: "Opus" });
       composer({ controls: c });
       expect(screen.getByRole("button", { name: "Model: Opus, Medium effort" })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Model: Opus, Medium effort" }));
-      fireEvent.click(screen.getByRole("menuitemradio", { name: "Sonnet" }));
+      openRow(/^Model/);
+      const flyout = screen.getByRole("dialog", { name: "Models" });
+      expect(within(flyout).getAllByRole("option").map((el) => el.getAttribute("aria-label"))).toEqual(["Default, Claude Code", "Opus, Claude Code", "Sonnet, Claude Code"]);
+      fireEvent.click(within(flyout).getByRole("option", { name: /^Sonnet/ }));
       expect(c.changeModel).toHaveBeenCalledWith("sonnet");
     });
 
     it("clears the effort with Default, back to the agent's own", () => {
       const c = controls({ effort: "high" });
       composer({ controls: c });
-      fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
-      const items = screen.getAllByRole("menuitemradio", { name: "Default" });
-      fireEvent.click(items[1]);
+      openRow(/^Effort/);
+      fireEvent.click(within(screen.getByRole("menu", { name: "Effort" })).getByRole("menuitemradio", { name: "Default" }));
       expect(c.changeEffort).toHaveBeenCalledWith(null);
     });
 
-    it("has no effort section when the computer offers no levels", () => {
-      composer({ controls: controls({ effortLevels: [] }) });
-      fireEvent.click(screen.getByRole("button", { name: "Model: Default" }));
-      expect(screen.queryByText("Effort")).not.toBeInTheDocument();
-      expect(screen.getAllByRole("menuitemradio")).toHaveLength(3);
+    it("still lists effort, with only the Model row gone, when the model cannot be changed", () => {
+      composer({ controls: controls({ models: [] }) });
+      fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+      expect(screen.getByRole("menuitem", { name: /^Effort/ })).toBeInTheDocument();
+      expect(screen.queryByRole("menuitem", { name: /^Model/ })).not.toBeInTheDocument();
     });
 
     it("shows the model as a quiet label when there is nothing to change", () => {

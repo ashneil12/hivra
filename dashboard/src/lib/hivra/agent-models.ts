@@ -50,6 +50,37 @@ export function effortLabel(level: string): string {
 }
 
 /**
+ * The levels the chat shows for a CLI, whether or not the computer has said it
+ * takes them yet: Claude Code takes all five, Codex takes low to xhigh (the
+ * computer maps max to xhigh). Other agents take none. A computer whose chat
+ * service predates `chatEffort` still gets these listed, so the choice is
+ * always visible and the chat can say what that computer needs.
+ */
+export function defaultEffortLevels(cliKind: string): EffortLevel[] {
+  if (cliKind === "claude") return [...EFFORT_LEVELS];
+  if (cliKind === "codex") return EFFORT_LEVELS.filter((level) => level !== "max");
+  return [];
+}
+
+const EFFORT_HINTS: Record<EffortLevel, string> = {
+  low: "Quickest answers, the least thinking",
+  medium: "A balance of speed and thinking",
+  high: "More thinking for harder work",
+  xhigh: "Extra thinking for the hardest tasks",
+  max: "The most thinking, and the slowest",
+};
+
+/** One line on what a level trades, for a row's tooltip. */
+export function effortHint(level: string): string | undefined {
+  return isEffortLevel(level) ? EFFORT_HINTS[level] : undefined;
+}
+
+/** The name of a CLI where the chat words it ("Claude Code"). */
+export function cliTitle(cliKind: string): string {
+  return cliKind === "codex" ? "Codex" : cliKind === "claude" ? "Claude Code" : cliKind;
+}
+
+/**
  * The levels a computer's `GET /api/meta` offers as `chatEffort`: only the
  * levels the chat knows, once each, in the chat's order. Anything else (no
  * field, a non-list, unknown words) is "this computer takes no effort".
