@@ -208,8 +208,9 @@ describe('ConfigurationTab Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /advanced options/i }));
 
     expect(screen.getByLabelText(/machine name override/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/tags/i)).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: /enable tailscale ssh/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/tags/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /tailscale ssh/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Tailscale SSH is off for security; use normal SSH over your tailnet/)).toBeInTheDocument();
   });
 
   it('shows connected status details and action buttons when tailscale is already enabled', async () => {
@@ -326,10 +327,9 @@ describe('ConfigurationTab Component', () => {
 
     expect(screen.queryByLabelText(/tailscale auth key/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/machine name override/i)).toHaveValue('atlas-agent');
-    expect(screen.getByLabelText(/tags/i)).toHaveValue('tag:prod');
-    expect(screen.getByLabelText(/tags/i)).toBeDisabled();
-    expect(screen.getByRole('switch', { name: /enable tailscale ssh/i })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByRole('switch', { name: /enable tailscale ssh/i })).toHaveTextContent('SSH: On');
+    expect(screen.queryByLabelText(/tags/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /tailscale ssh/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Tailscale SSH is off for security/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /save settings/i })).toBeInTheDocument();
   });
 
@@ -404,6 +404,14 @@ describe('ConfigurationTab Component', () => {
       );
     });
 
+    const postCall = (global.fetch as jest.Mock).mock.calls.find(
+      ([url, options]) =>
+        url === '/api/instances/test-inst-123/private-access/tailscale' && options?.method === 'POST'
+    );
+    const sent = JSON.parse(String(postCall?.[1]?.body));
+    expect(sent.tags).toEqual(['tag:hivra']);
+    expect(sent.enableSsh).toBe(false);
+
     expect(await screen.findByText(/tailscale is connected/i)).toBeInTheDocument();
     expect(screen.getByDisplayValue('atlas-agent.tail.ts.net')).toBeInTheDocument();
   });
@@ -422,7 +430,7 @@ describe('ConfigurationTab Component', () => {
                 state: 'connected',
                 machineName: 'atlas-agent-updated',
                 magicDnsName: 'atlas-agent-updated.tail.ts.net',
-                sshEnabled: true,
+                sshEnabled: false,
               },
             },
           }),
@@ -481,7 +489,6 @@ describe('ConfigurationTab Component', () => {
     fireEvent.change(screen.getByLabelText(/machine name override/i), {
       target: { value: 'atlas-agent-updated' },
     });
-    fireEvent.click(screen.getByRole('switch', { name: /enable tailscale ssh/i }));
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
@@ -505,12 +512,12 @@ describe('ConfigurationTab Component', () => {
     expect(patchCall).toBeDefined();
     expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
       machineName: 'atlas-agent-updated',
-      enableSsh: true,
+      enableSsh: false,
     });
 
     expect(await screen.findByText(/tailscale settings were updated/i)).toBeInTheDocument();
     expect(screen.getByDisplayValue('atlas-agent-updated.tail.ts.net')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Enabled')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Disabled')).toBeInTheDocument();
   });
 
   it('disconnects tailscale from the same panel without leaving the configuration screen', async () => {

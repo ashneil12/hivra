@@ -75,13 +75,6 @@ function formatStateLabel(state: TailscaleConfig['state'] | 'unknown') {
   return 'Checking';
 }
 
-function formatTags(tags: string | undefined) {
-  return (tags || '')
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-}
-
 function FeedbackBanner({ tone, message }: { tone: FeedbackTone; message: string }) {
   const palette =
     tone === 'success'
@@ -163,8 +156,6 @@ export function ConfigurationTailscalePanel({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [authKey, setAuthKey] = useState('');
   const [machineName, setMachineName] = useState(initialConfig?.machineName || '');
-  const [tags, setTags] = useState(initialConfig?.tags?.join(', ') || '');
-  const [enableSsh, setEnableSsh] = useState(Boolean(initialConfig?.sshEnabled));
   const [feedback, setFeedback] = useState<{ tone: FeedbackTone; message: string } | null>(null);
   const [activeAction, setActiveAction] = useState<ActionState>(null);
   const [forceClearAvailable, setForceClearAvailable] = useState(false);
@@ -190,8 +181,6 @@ export function ConfigurationTailscalePanel({
 
   function syncFormFromConfig(nextConfig?: TailscaleConfig) {
     setMachineName(nextConfig?.machineName || '');
-    setTags(nextConfig?.tags?.join(', ') || '');
-    setEnableSsh(Boolean(nextConfig?.sshEnabled));
   }
 
   async function refreshTailscaleStatus(showSpinner = false) {
@@ -257,7 +246,8 @@ export function ConfigurationTailscalePanel({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             machineName: machineName.trim() || undefined,
-            enableSsh,
+            // Tailscale SSH is never turned on from Hivra.
+            enableSsh: false,
           }),
         });
         const json = await response.json();
@@ -308,8 +298,9 @@ export function ConfigurationTailscalePanel({
         body: JSON.stringify({
           authKey: trimmedAuthKey,
           machineName: machineName.trim() || undefined,
-          tags: formatTags(tags),
-          enableSsh,
+          // Hivra accepts only this tag, and never Tailscale SSH.
+          tags: ['tag:hivra'],
+          enableSsh: false,
         }),
       });
       const json = await response.json();
@@ -543,7 +534,7 @@ export function ConfigurationTailscalePanel({
                 }}
               >
                 This host is already connected to your tailnet. You can update the machine name
-                and Tailscale SSH here without pasting a new auth key.
+                here without pasting a new auth key.
               </div>
             ) : (
               <>
@@ -651,98 +642,9 @@ export function ConfigurationTailscalePanel({
                   />
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="tailscale-tags"
-                    className={`mono ${styles.microLabel}`}
-                    style={{
-                      fontSize: 9,
-                      display: 'block',
-                      marginBottom: 8,
-                      opacity: 0.5,
-                      fontWeight: 700,
-                    }}
-                  >
-                    TAGS
-                  </label>
-                  <input
-                    id="tailscale-tags"
-                    type="text"
-                    {...RAW_TEXT_INPUT_PROPS}
-                    value={tags}
-                    onChange={(event) => setTags(event.target.value)}
-                    placeholder="tag:prod, tag:ops"
-                    disabled={isEditingConnectedHost}
-                    style={{
-                      width: '100%',
-                      border: '1px solid var(--etched-border)',
-                      padding: '10px 14px',
-                      fontSize: 13,
-                      fontFamily: 'var(--font-mono)',
-                      background: isEditingConnectedHost ? 'var(--bg-surface)' : 'var(--bg-elevated)',
-                      outline: 'none',
-                      color: isEditingConnectedHost ? 'var(--text-muted)' : 'var(--ink-black)',
-                    }}
-                  />
-                  {isEditingConnectedHost ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-                      Tags are set during the initial connection flow. Reconnect Tailscale if you
-                      need to apply a different tag set.
-                    </div>
-                  ) : null}
-                </div>
-
-                <div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '1rem',
-                    }}
-                  >
-                    <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-                      <span
-                        id="tailscale-ssh-label"
-                        className={`mono ${styles.microLabel}`}
-                        style={{
-                          fontSize: 9,
-                          display: 'block',
-                          opacity: 0.5,
-                          fontWeight: 700,
-                        }}
-                      >
-                        ENABLE TAILSCALE SSH
-                      </span>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                        Lets approved Tailscale users open SSH sessions without exposing another
-                        public path.
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={enableSsh}
-                      aria-labelledby="tailscale-ssh-label"
-                      onClick={() => setEnableSsh((value) => !value)}
-                      className={`${styles.touchTarget} ${styles.microLabel}`}
-                      style={{
-                        border: '1px solid var(--etched-border)',
-                        background: enableSsh ? 'var(--ink-black)' : 'var(--bg-surface)',
-                        color: enableSsh ? 'var(--bg-surface)' : 'var(--ink-black)',
-                        padding: '6px 10px',
-                        fontSize: 10,
-                        fontFamily: 'var(--font-mono)',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.12em',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {enableSsh ? 'SSH: On' : 'SSH: Off'}
-                    </button>
-                  </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  This host joins with the tag tag:hivra. Tailscale SSH is off for security; use
+                  normal SSH over your tailnet.
                 </div>
               </div>
             )}
