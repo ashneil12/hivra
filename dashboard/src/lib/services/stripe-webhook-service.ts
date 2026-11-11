@@ -1456,6 +1456,8 @@ export class StripeWebhookService {
       .select("id, name, host_id, hetzner_server_id, status, scheduled_deletion_at")
       .eq("user_id", userId)
       .eq("status", "scheduled_for_deletion")
+      // A computer kept only as the undo for a Hermes move stays scheduled.
+      .is("config->movedTo", null)
       .is("deleted_at", null);
 
     if (!pendingInstances || pendingInstances.length === 0) return;

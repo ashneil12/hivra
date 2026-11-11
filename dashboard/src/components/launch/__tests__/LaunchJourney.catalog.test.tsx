@@ -104,17 +104,14 @@ async function chooseAgent(name: string) {
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
   expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
-  // Hivra's recommended settings are summarised; Change opens the full controls.
-  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  // Each setting has its own Change button; open Model access.
 }
 
 const modelChoice = (name: RegExp) => within(screen.getByRole("group", { name: "Model access" })).getByRole("button", { name });
 
-/** Closes Advanced so the recommended settings summary shows what will launch. */
+/** Waits for Launch to be ready and returns the review step. */
 async function reviewLaunch() {
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-  const hide = screen.queryByRole("button", { name: "Hide advanced" });
-  if (hide) fireEvent.click(hide);
   return within(screen.getByTestId("launch-journey"));
 }
 
@@ -212,13 +209,13 @@ describe("every catalog agent launches in the Launch journey", () => {
   it("sends the saved Honcho memory key only when the owner ticks it for this launch", async () => {
     savedKeys = [HONCHO_KEY];
     await chooseAgent("Hermes");
-    const memory = await screen.findByRole("checkbox", { name: /Send my saved Honcho key ••9d1c to Hermes 1's computer/ });
-    expect(memory).not.toBeChecked();
+    const memory = await screen.findByRole("switch", { name: /Send my saved Honcho key ••9d1c to Hermes 1's computer/ });
+    expect(memory).toHaveAttribute("aria-checked", "false");
 
     let review = await reviewLaunch();
-    expect(review.queryByText(/Honcho/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /Send my saved Honcho key/ }));
+    expect(review.getByText("Kept on its own computer")).toBeInTheDocument();
+    fireEvent.click(memory);
+    expect(memory).toHaveAttribute("aria-checked", "true");
     review = await reviewLaunch();
     expect(review.getByText("Honcho, with your saved key ••9d1c, sent to Hermes 1's computer")).toBeInTheDocument();
 
@@ -299,7 +296,6 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.");
     fireEvent.click(tile);
     expect(screen.getByRole("heading", { name: "Review and launch DeepSeek Harness 1" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change" }));
 
     // It gets its model at launch: credits are the default, a Venice key the alternative.
     await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
