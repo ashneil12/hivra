@@ -1033,7 +1033,7 @@ export function LaunchJourney(
         initial = stored;
       } else if (isUnfinishedLaunchDraft(stored)) {
         setDraft(null);
-        setResumeChoice({ stored, fresh: withHermesLane(freshFromIntent(), hermesLaunchProfile({ enabled: hermesComputer, plan: null, planChecked: false })) });
+        setResumeChoice({ stored, fresh: withHermesLane(freshFromIntent(), hermesLaunchProfile(hermesComputer)) });
         return;
       } else {
         initial = freshFromIntent();
@@ -1048,7 +1048,7 @@ export function LaunchJourney(
     // Hermes goes to the lane that applies: a link or draft that names plain
     // Hermes opens the computer lane where it is on, and a computer-lane draft
     // restored where it is off goes back to the instances lane.
-    const hermesProfile = hermesLaunchProfile({ enabled: hermesComputer, plan: null, planChecked: false });
+    const hermesProfile = hermesLaunchProfile(hermesComputer);
     initial = withHermesLane(withCurrentStage(initial), hermesProfile);
     setResumeChoice(null);
     writeLaunchDraft(initial, ownerId);
@@ -1142,18 +1142,6 @@ export function LaunchJourney(
       });
     return () => { active = false; };
   }, [planCheckRevision]);
-
-  // An account without a paid plan holds no Hivra Cloud computer: an unsent
-  // Hermes draft goes to the instances lane Hermes has always launched on.
-  // Keyed on the draft's profile so it also runs for a draft restored after
-  // the plan was read, and does nothing once the draft is on the right lane.
-  const draftLaneProfileId = draft?.profileId ?? null;
-  useEffect(() => {
-    if (!planChecked || (draftLaneProfileId !== "hermes" && draftLaneProfileId !== "hermes-computer")) return;
-    setDraft(current => current
-      ? withHermesLane(current, hermesLaunchProfile({ enabled: hermesComputer, plan, planChecked }))
-      : current);
-  }, [draftLaneProfileId, hermesComputer, plan, planChecked]);
 
   // Hivra credits pay for models; the balance decides whether Hermes starts on
   // them and whether the credits choice can be picked at all.
@@ -2137,7 +2125,7 @@ export function LaunchJourney(
   };
   // A self-hosted installation has no Hivra Cloud, so an agent that runs only
   // there isn't offered.
-  const hermesTile = hermesLaunchProfile({ enabled: hermesComputer, plan, planChecked });
+  const hermesTile = hermesLaunchProfile(hermesComputer);
   const agentTiles = AGENT_TILES
     .filter(tile => (tile.id !== "hermes" && tile.id !== "hermes-computer") || tile.id === hermesTile)
     .filter(tile => !selfHosted || PROFILE_DETAILS[tile.id].ownServer);

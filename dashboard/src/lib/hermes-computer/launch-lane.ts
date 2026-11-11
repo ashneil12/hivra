@@ -1,5 +1,3 @@
-import type { PlanInfo } from "@/lib/hivra/agent-api";
-import { isPaidPlan } from "@/lib/launch/launch-plan";
 import { PROFILE_DETAILS, type LaunchDraft, type LaunchProfileId } from "@/lib/launch/contracts";
 import { freshModelAccess } from "@/lib/launch/model-access";
 
@@ -8,18 +6,13 @@ import { freshModelAccess } from "@/lib/launch/model-access";
  *
  * "hermes-computer" is Hermes as a Hivra computer (the official Hermes, its own
  * web UI); "hermes" is the Hermes instances lane every Hermes agent used
- * before. The computer lane is used only where it is on for this deployment
- * (isHermesComputerEnabled) and the owner's plan holds a Hivra Cloud computer:
- * Hivra Cloud computers need a paid plan, so an account without one keeps the
- * instances lane it has always launched Hermes on. A plan that could not be
- * read keeps the computer lane; the launch itself re-checks the plan.
+ * before. Where the computer lane is on for this deployment
+ * (isHermesComputerEnabled) every new Hermes agent uses it. Running it needs a
+ * plan, the same as every Hivra-run computer, and the launch says so the same
+ * way it does for any other agent.
  */
-export function hermesLaunchProfile(
-  { enabled, plan, planChecked }: { enabled: boolean; plan: PlanInfo | null; planChecked: boolean },
-): Extract<LaunchProfileId, "hermes" | "hermes-computer"> {
-  if (!enabled) return "hermes";
-  if (planChecked && plan !== null && !isPaidPlan(plan)) return "hermes";
-  return "hermes-computer";
+export function hermesLaunchProfile(enabled: boolean): Extract<LaunchProfileId, "hermes" | "hermes-computer"> {
+  return enabled ? "hermes-computer" : "hermes";
 }
 
 /**

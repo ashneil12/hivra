@@ -44,9 +44,8 @@ creates the computer, runs Hermes's own installer, points it at Venice inference
 Hermes's own web UI behind the Hivra sign-in at `/hermes/`. There is no
 Hivra-built image, fork or patch. Owners update it with `hermes update` in
 Terminal or the Update Hermes button on the agent's Manage tab. It needs
-provisioner release 2026.11.11.4 or later, at least 1 CPU and 2 GB, and a paid
-plan (the Free plan's 0.5 CPU / 1 GB is below the floor and Free accounts
-cannot run Hivra-hosted compute). The flag is `isHermesComputerEnabled()` in
+provisioner release 2026.11.11.4 or later and at least 1 CPU and 2 GB, on a paid
+plan like every Hivra-run computer (there is no free compute). The flag is `isHermesComputerEnabled()` in
 `dashboard/src/lib/hermes-computer/flag.ts`, on for Canary deployments only.
 
 DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
