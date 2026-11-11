@@ -87,7 +87,7 @@ describe("Omarchy Proxmox lab", () => {
       mode: "full_disk",
       defer_provisioning: true,
       target_mount: "/mnt",
-      storage: { kernel: "linux" },
+      storage: { kernel: "linux-omarchy" },
     });
     expect(configuration.disk_config.device_modifications[0]).toMatchObject({ device: "/dev/sda", wipe: true });
     expect(configuration.disk_config.device_modifications[0].partitions).toHaveLength(2);
@@ -96,6 +96,19 @@ describe("Omarchy Proxmox lab", () => {
     expect(configuration.packages).toEqual(expect.arrayContaining(["omarchy-keyring", "omarchy-settings", "omarchy"]));
     expect(configuration.packages).toContain("qemu-guest-agent");
     expect(configuration.services).toContain("qemu-guest-agent");
+  });
+
+  it("selects the bundled Omarchy kernel and its exact header package for ISO boot validation", () => {
+    // Fresh 4.0.6 ISO install failed at _validate_kernel_headers: generic
+    // linux 7.2.11 had only a T2 provider's headers. The ISO carries the paired
+    // linux-omarchy / linux-omarchy-headers packages used by its own VM tests.
+    const configuration = JSON.parse(buildOmarchyFullDiskConfiguration({
+      deferProvisioning: false, diskDevice: "/dev/sda", diskGb: 40,
+    }));
+    expect(configuration.kernels).toEqual(["linux-omarchy"]);
+    expect(configuration.omarchy_install.storage.kernel).toBe("linux-omarchy");
+    expect(configuration.packages).toContain("linux-omarchy-headers");
+    expect(configuration.packages).not.toContain("linux-headers");
   });
 
   it("prepares the pinned Sunshine unit without opening an implicit network route", () => {
