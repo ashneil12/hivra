@@ -91,8 +91,9 @@ export function buildProxmoxGuestBootstrapScript(): string {
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-# Block until cloud-init's first-boot work is done. The template ships
-# with \`package_upgrade: true\`, so cloud-init runs apt-get on first boot
+# Block until cloud-init's first-boot work is done. The clone turns
+# cloud-init's \`package_upgrade\` off (ciupgrade 0), but a host older than
+# Proxmox VE 8.1 can't, and there cloud-init runs apt-get on first boot
 # and holds /var/lib/apt/lists/lock for a few minutes. SSH frequently
 # comes up before that finishes, and DPkg::Lock::Timeout below covers
 # the dpkg lock but NOT the apt-lists lock — so apt-get update would die
@@ -945,6 +946,13 @@ if [ -n "$SCSI0_DISK" ]; then
 fi
 qm set "$VMID" --cores "$CORES" --cpulimit "$CPU_LIMIT" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"
 qm set "$VMID" --ipconfig0 "ip=\${PRIVATE_IP}/\${PRIVATE_CIDR},gw=\${PRIVATE_GATEWAY}" --nameserver "$NAMESERVER" --onboot 1
+# Skip cloud-init's first-boot package upgrade (Proxmox's ciupgrade defaults to
+# on). It ran a full apt upgrade before the agent could start, which was most
+# of a fresh launch's wait. The guest still takes Ubuntu's security updates
+# from its own daily unattended-upgrades run, which bootstrap pauses only while
+# it works. Hosts older than Proxmox VE 8.1 have no ciupgrade option, so a
+# refusal there is ignored and the clone behaves as before.
+qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
 # Phase 2 attests this VM's SSH host key through the QEMU Guest Agent before
 # the deploy (which carries the box's secrets) goes over SSH. The agent's
 # virtio channel only exists if it is configured before boot, so set it here
