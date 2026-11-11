@@ -38,7 +38,6 @@ function load(file) {
 const { authorizeNetworkRequest } = load(path.join(dashboard, "src/lib/agent-network/authorize.ts"));
 
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const ON = { HERMES_DEPLOY_CHANNEL: "canary" };
 const OWNER = "user_owner";
 const MEMBER = "user_member";
 
@@ -94,7 +93,7 @@ async function main() {
     };
     const write = (org, principal) => ({ orgId: org, principalId: principal, action: "brain.write", source: "org" });
     const send = (org, from, to) => ({ orgId: org, principalId: from, action: "a2a.send", peerPrincipalId: to });
-    const ask = (request, env = ON) => authorizeNetworkRequest(store, request, env);
+    const ask = (request) => authorizeNetworkRequest(store, request);
     const transition = (org, principal, to, actor) =>
       call("public.hivra_net_transition_principal($1,$2,$3,$4)", [org, principal, to, actor]);
 
@@ -175,17 +174,6 @@ async function main() {
       assert.equal(lagged.revision, next - 1, "evaluated against the older revision it asked for");
       assert.deepEqual(pick(await ask({ ...write(org, sender), revision: 0 })), { allow: false, reason: "malformed_request" });
       assert.deepEqual(pick(await ask(write(uuid(4040), sender))), { allow: false, reason: "no_policy" });
-    }
-
-    // ---- the deployment flag ----------------------------------------------
-    {
-      const { org, sender } = await scenario();
-      let reads = 0;
-      const counting = { getContext: (input) => (reads++, store.getContext(input)) };
-      for (const env of [{}, { HERMES_DEPLOY_CHANNEL: "production" }]) {
-        assert.deepEqual(pick(await authorizeNetworkRequest(counting, write(org, sender), env)), { allow: false, reason: "network_disabled_on_deployment" });
-      }
-      assert.equal(reads, 0, "a deployment with the network off never reads the database");
     }
 
     console.log("PASS agent network revoke-then-request over the real policy tables");
