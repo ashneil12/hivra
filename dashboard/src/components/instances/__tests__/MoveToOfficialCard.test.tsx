@@ -128,6 +128,15 @@ describe("MoveToOfficialCard", () => {
     expect(replace).toHaveBeenCalledWith("/dashboard/agent/a_7");
     expect(screen.queryByTestId("move-card")).toBeNull();
   });
+
+  it("stays on the old agent while the move is being undone", async () => {
+    mockFetch(() => get(mv("undoing", { agentId: "a_7", message: "Starting your old computer again." }), false, { agentId: "a_7" }));
+    await renderCard();
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByText("Moving your agent back")).toBeInTheDocument();
+    expect(screen.getByTestId("move-message")).toHaveTextContent("Starting your old computer again.");
+    expect(screen.queryByTestId("move-steps")).toBeNull();
+  });
 });
 
 describe("MovedFromNotice", () => {

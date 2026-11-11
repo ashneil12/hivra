@@ -8,7 +8,7 @@ import styles from './UpdateAvailableBanner.module.css';
 
 export type MoveState =
   | 'queued' | 'launching' | 'packing' | 'uploading' | 'unpacking' | 'finishing'
-  | 'done' | 'failed' | 'needs_attention' | 'undone';
+  | 'undoing' | 'done' | 'failed' | 'needs_attention' | 'undone';
 
 export interface MoveView {
   id: string;
@@ -109,7 +109,9 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
     return () => clearTimeout(t);
   }, [running, data, load]);
 
-  const movedTo = data?.movedTo?.agentId ?? null;
+  // While a move is being undone the old row still points at the new computer; stay here and show it.
+  const undoing = move?.state === 'undoing';
+  const movedTo = undoing ? null : data?.movedTo?.agentId ?? null;
   useEffect(() => {
     if (movedTo) router.replace(`/dashboard/agent/${movedTo}`);
   }, [movedTo, router]);
@@ -155,7 +157,9 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
       ? 'Not moved, and nothing was lost.'
       : attention
         ? 'The move needs our attention.'
-        : running
+        : undoing
+          ? 'Moving your agent back'
+          : running
           ? 'Moving your agent'
           : 'Move to the official Hermes';
 
@@ -200,7 +204,7 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
         ) : null}
       </div>
 
-      {running ? (
+      {running && !undoing ? (
         <ol data-testid="move-steps" style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: 6 }}>
           {STEPS.map((step, index) => {
             const state = index < stepIndex ? 'done' : index === stepIndex ? 'active' : 'todo';
