@@ -6,6 +6,10 @@ export interface ToolChip {
   detail: string;
   status: ToolStatus | "unknown";
   result?: string;
+  /** The tool's input JSON (trimmed), for the rich rows: tasks, a diff, a plan. */
+  input?: unknown;
+  /** "thinking": the agent's reasoning, shown as its own muted row. */
+  kind?: "thinking";
 }
 
 export interface ChatMessage {
@@ -35,6 +39,8 @@ export interface ChatMessage {
   /** Why a reply that has not started yet is waiting (the computer is moving
    * its agent CLI to a new version); cleared once the computer takes it. */
   pending?: string;
+  /** The model's context as this reply's stream last reported it. */
+  usage?: { used: number; window?: number };
 }
 
 export interface Session {

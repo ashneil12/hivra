@@ -91,7 +91,7 @@ export function agentSurfaceLabel(id: AgentSurfaceId, def?: Pick<AgentDef, "name
   }
 }
 
-export type AgentSurfaceGroupId = "work" | "computer" | "manage";
+export type AgentSurfaceGroupId = "work" | "browser" | "computer" | "manage";
 export interface AgentSurfaceGroup {
   id: AgentSurfaceGroupId;
   label: string;
@@ -100,30 +100,33 @@ export interface AgentSurfaceGroup {
 
 const GROUP_OF: Record<AgentSurfaceId, AgentSurfaceGroupId> = {
   chat: "work", terminal: "work", aeon: "work",
-  desktop: "computer", box: "computer", files: "computer", browser: "computer", git: "computer",
+  browser: "browser",
+  desktop: "computer", box: "computer", files: "computer", git: "computer",
   manage: "manage", skills: "manage", tasks: "manage", telegram: "manage",
 };
 // Inside a group the order is the one the owner reads, not the storage order.
-// The agent's own session sits next to Chat. The computer lists what you would
-// look at on it: its screen, browser, files, then a plain shell. Git has no
-// place of its own: its changes are a view inside Files (see HivraFiles).
+// The agent's own session sits next to Chat. The browser the agent drives is
+// its own place, so it is quick to check on. The computer lists what you would
+// look at on the box: its screen, files, then a plain shell. Git has no place
+// of its own: its changes are a view inside Files (see HivraFiles).
 const GROUP_ORDER: Record<AgentSurfaceGroupId, readonly AgentSurfaceId[]> = {
   work: ["chat", "terminal", "aeon"],
-  computer: ["desktop", "browser", "files", "box"],
+  browser: ["browser"],
+  computer: ["desktop", "files", "box"],
   manage: ["manage", "skills", "tasks", "telegram"],
 };
 
 /**
- * Agent pages group their surfaces as the agent, its computer, and Manage:
- * Agent (Chat, its own session) · Computer (Desktop, Browser, Files, Terminal)
- * · Manage. Git is not a tab: its changes are a view inside Files. Groups with
+ * Agent pages group their surfaces as the agent, its browser, its computer, and
+ * Manage: Agent (Chat, its own session) · Browser · Computer (Desktop, Files,
+ * Terminal) · Manage. Git is not a tab: its changes are a view inside Files. Groups with
  * no surface are dropped. Computers keep their short flat list and never call this.
  */
 export function agentSurfaceGroups(surfaces: readonly AgentSurfaceId[], def?: Pick<AgentDef, "surface"> | null): AgentSurfaceGroup[] {
   const present = new Set(surfaces);
-  const groups: AgentSurfaceGroup[] = (["work", "computer", "manage"] as const).map((id) => ({
+  const groups: AgentSurfaceGroup[] = (["work", "browser", "computer", "manage"] as const).map((id) => ({
     id,
-    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "computer" ? "Computer" : "Manage",
+    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "browser" ? "Browser" : id === "computer" ? "Computer" : "Manage",
     surfaces: GROUP_ORDER[id].filter((surface) => present.has(surface)),
   }));
   return groups.filter((group) => group.surfaces.length > 0);

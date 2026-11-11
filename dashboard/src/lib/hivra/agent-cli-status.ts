@@ -11,10 +11,14 @@
 //
 // "Behind" always means behind Hivra's tested version (AGENT_CLI_VERSIONS and
 // AGENT_APP_VERSIONS in the release), never behind the vendor's newest release.
+// The exception is Hermes: it is the official Hermes Agent, installed by its own
+// installer and updated by its own `hermes update`, so Hivra pins no version for
+// it. Its owner updates it (the button runs `hermes update --yes`); there is no
+// tested version, no "behind", and no automatic update.
 
 export const AGENT_CLI_NAMES = ["claude-code", "codex"] as const;
 export type AgentCliName = (typeof AGENT_CLI_NAMES)[number];
-export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero"] as const;
+export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes"] as const;
 export type AgentAppName = (typeof AGENT_APP_NAMES)[number];
 /** What Hivra updates on the agent: its CLI or its hosted app. */
 export type AgentSoftwareName = AgentCliName | AgentAppName;
@@ -31,7 +35,21 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   openclaw: CLI_VERSION,
   aeon: /^[0-9a-f]{40}$/,
   "agent-zero": /^sha256:[0-9a-f]{64}$/,
+  // Hermes Agent's release, as `hermes --version` prints it (vX.Y.Z).
+  hermes: CLI_VERSION,
 };
+
+/**
+ * What an update of Hermes aims at: Hivra pins no Hermes version, so its updater
+ * (`hermes update`) reports the literal target `latest`: the newest stable
+ * release Hermes itself finds.
+ */
+export const HERMES_UPDATE_TARGET = "latest";
+
+/** A version in this software's own form; for Hermes only the literal update target `latest`, since Hivra pins no Hermes version. */
+export function isAgentSoftwareTarget(name: AgentSoftwareName, value: unknown): value is string {
+  return name === "hermes" ? value === HERMES_UPDATE_TARGET : isAgentSoftwareVersion(name, value);
+}
 
 /** A version in the form this software names its versions. */
 export function isAgentSoftwareVersion(name: AgentSoftwareName, value: unknown): value is string {
@@ -103,7 +121,7 @@ export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null
   return null;
 }
 
-export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
+export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
 
 /** The runtime updater's host-validated agent app line, each version in its app's own form. */
 export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null {
@@ -113,7 +131,7 @@ export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null
     const name = match[1] as AgentAppName;
     const version = match[2] === "unknown" ? null : match[2];
     if (version !== null && !isAgentSoftwareVersion(name, version)) return null;
-    if (!isAgentSoftwareVersion(name, match[3])) return null;
+    if (!isAgentSoftwareTarget(name, match[3])) return null;
     return { name, version, target: match[3], state: match[4] as AgentAppUpdateReport["state"] };
   }
   return null;
@@ -164,7 +182,7 @@ export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): 
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
     const progress = candidate as Record<string, unknown>;
     if (!(AGENT_CLI_UPDATE_STATES as readonly string[]).includes(String(progress.state))) return null;
-    if (!isAgentSoftwareVersion(expected, progress.target)) return null;
+    if (!isAgentSoftwareTarget(expected, progress.target)) return null;
     if (progress.reason !== undefined && !(typeof progress.reason === "string" && REASON.test(progress.reason))) return null;
     update = {
       state: progress.state as AgentCliUpdateState,
@@ -185,7 +203,7 @@ export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): 
  * update is refused), computers and every other kind of computer are not
  * covered.
  */
-export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero"] as const;
+export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes"] as const;
 export type AgentSoftwareType = (typeof AGENT_SOFTWARE_TYPES)[number];
 
 /** The agentKind each covered agent's connection service reports on /api/meta. */
@@ -195,6 +213,7 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
   aeon: "aeon",
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
+  hermes: "hermes",
 };
 
 /**
@@ -210,7 +229,7 @@ export interface AgentSoftwareSubject {
   type: AgentSoftwareType;
   /** Claude Code or Codex; null for the app agents. */
   cli: AgentCliName | null;
-  /** The Aeon dashboard, OpenClaw or Agent Zero; null for the CLI agents. */
+  /** The Aeon dashboard, OpenClaw, Agent Zero or Hermes; null for the CLI agents. */
   app: AgentAppName | null;
   /** Whichever of the two this agent runs. */
   software: AgentSoftwareName;
@@ -231,7 +250,7 @@ export function agentSoftwareSubject(row: {
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
   const cli = type === "claude-code" || type === "codex" ? type : null;
-  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" ? type : null;
+  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" ? type : null;
   return {
     type,
     cli,
@@ -290,7 +309,9 @@ export interface AgentSoftwareRecord {
 // ── The view ───────────────────────────────────────────────────────────────
 
 export type AgentSoftwareUpdatePhase = "starting" | "downloading" | "waiting" | "installing" | "finishing";
-export type AgentSoftwareFailure = "download_failed" | "install_failed" | "could_not_start" | "no_space";
+export type AgentSoftwareFailure = "download_failed" | "install_failed" | "could_not_start" | "no_space"
+  /** Hermes: `hermes update` stopped because its install has changes of the owner's own. */
+  | "local_changes";
 
 export type AgentSoftwareView =
   | { kind: "not_running" }
@@ -373,8 +394,80 @@ function versionView(installed: string | null, tested: string, hivraInstalled: s
   return installed === hivraInstalled ? { kind: "ahead_hivra", installed } : { kind: "ahead_custom", installed };
 }
 
+/** A Hermes update that failed is shown this long, unless a newer one replaces it. */
+export const HERMES_FAILURE_SHOWN_MS = 24 * 60 * 60_000;
+
+/**
+ * What the owner should see about Hermes. Hivra pins no Hermes version (the
+ * owner updates it with `hermes update`, or the button that runs it), so there
+ * is no tested version to be behind: it is the installed version, an update in
+ * progress, or what the last update did.
+ */
+function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
+  const { subject, status, record, now } = input;
+  if (status !== "running") return { kind: "not_running" };
+  const observation = record?.observation ?? null;
+  if (!observation) return { kind: "checking" };
+  if (observation === "unreachable") return { kind: "unreachable" };
+  if (observation === "older_connection_service") return { kind: "older_connection_service" };
+  if (observation === "not_reported") return { kind: "not_reported" };
+  if (observation !== "reported" && observation !== "version_unreadable") return { kind: "checking" };
+  const installed = observation === "reported" && isAgentSoftwareVersion(subject.software, record?.installed_version)
+    ? record.installed_version : null;
+  const updateAt = time(record?.update_updated_at);
+  const state = (AGENT_CLI_UPDATE_STATES as readonly string[]).includes(String(record?.update_state))
+    ? record?.update_state as AgentCliUpdateState : null;
+  const target = isAgentSoftwareTarget(subject.software, record?.update_target) ? record.update_target : HERMES_UPDATE_TARGET;
+  const requestedAt = time(record?.requested_at);
+  const observedAt = time(record?.observed_at);
+  const hasUpdate = state !== null && (updateAt === null || requestedAt === null || updateAt >= requestedAt - CLOCK_SKEW_MS);
+
+  // An update the owner asked for that the computer hasn't started reporting yet.
+  if (requestedAt !== null && record?.requested_target === HERMES_UPDATE_TARGET
+    && now - requestedAt >= -CLOCK_SKEW_MS && now - requestedAt < AGENT_CLI_PENDING_REQUEST_MS && !hasUpdate) {
+    if (record.request_result === "failed") return { kind: "update_failed", reason: "could_not_start", target, installed };
+    if (record.request_result == null || record.request_result === "scheduled" || record.request_result === "running") {
+      return { kind: "updating", phase: "starting", target, installed };
+    }
+  }
+  if (state !== null && hasUpdate) {
+    switch (state) {
+      case "downloading":
+      case "waiting":
+      case "installing": {
+        const limit = AGENT_APP_PHASE_LIMIT_MS[state] + CLOCK_SKEW_MS;
+        const since = updateAt ?? observedAt;
+        if (since === null || now - since <= limit) return { kind: "updating", phase: state, target, installed };
+        break;
+      }
+      case "done":
+        if (installed !== null && updateAt !== null && now - updateAt < AGENT_CLI_DONE_RECENT_MS) {
+          return { kind: "update_done", target: installed, installed };
+        }
+        break;
+      case "deferred":
+        if (updateAt !== null && now - updateAt < HERMES_FAILURE_SHOWN_MS) return { kind: "update_deferred", target, installed };
+        break;
+      case "failed":
+        if (updateAt !== null && now - updateAt < HERMES_FAILURE_SHOWN_MS) {
+          const reason: AgentSoftwareFailure = record?.update_reason === "local_changes" ? "local_changes"
+            : record?.update_reason === "no_space" ? "no_space"
+            : record?.update_reason === "download_failed" ? "download_failed"
+            : record?.update_reason === "not_installed" ? "could_not_start"
+            : "install_failed";
+          return { kind: "update_failed", reason, target, installed };
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  return installed === null ? { kind: "version_unreadable" } : { kind: "current", installed };
+}
+
 /** What the owner should see about this agent's software right now. */
 export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
+  if (input.subject.app === "hermes") return deriveHermesSoftware(input);
   const { subject, status, tested, record, now } = input;
   const previous = input.previous ?? [];
   if (status !== "running") return { kind: "not_running" };

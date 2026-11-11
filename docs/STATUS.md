@@ -28,7 +28,7 @@ a free account works with a server the person connects.
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
-| Hermes | Available | Hivra Cloud only |
+| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`) where the flag is on (Canary only for now) and the plan is paid; otherwise they use the current lane |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
@@ -37,6 +37,16 @@ a free account works with a server the person connects.
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
 credits. Credits need a host on provisioner release 2026.11.10.2 or later.
+
+Hermes on a Hivra computer is the official Hermes Agent, unmodified: Hivra
+creates the computer, runs Hermes's own installer, points it at Venice inference
+(default model `deepseek-v4-1-flash`, or the person's own Venice key), and opens
+Hermes's own web UI behind the Hivra sign-in at `/hermes/`. There is no
+Hivra-built image, fork or patch. Owners update it with `hermes update` in
+Terminal or the Update Hermes button on the agent's Manage tab. It needs
+provisioner release 2026.11.11.4 or later and at least 1 CPU and 2 GB, on a paid
+plan like every Hivra-run computer (there is no free compute). The flag is `isHermesComputerEnabled()` in
+`dashboard/src/lib/hermes-computer/flag.ts`, on for Canary deployments only.
 
 DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
 through Hivra's authenticated gateway. It launches with no browser and gets its

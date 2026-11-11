@@ -426,7 +426,7 @@ copyright, source-offer and exact image-layer review remain open.
 | OpenClaw | Download npm package into the guest | `openclaw@2026.6.10` |
 | Agent Zero | Pull an OCI image by digest | `sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0` |
 | cloudflared | Download and SHA-256 verify Linux executable | `2026.8.2` |
-| Google Chrome | Download and SHA-256 verify Debian package | `152.0.7977.64-1` |
+| Google Chrome | Download and SHA-256 verify Debian package | `157.0.8103.50-1` |
 | GitHub CLI | Download and SHA-256 verify Debian package | `2.98.0` |
 | Proxmox guest base | Download and SHA-256 verify dated Ubuntu image | Jammy `release-20260807` |
 | Guest system packages | Install from Ubuntu package repositories | Installed package/version receipt still required |

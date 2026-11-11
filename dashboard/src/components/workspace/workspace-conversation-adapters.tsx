@@ -142,6 +142,7 @@ function resolveHivraConversation(
         firstTask={source.agent.first_task}
         emoji={source.agent.emoji}
         modelLabel={source.agent.llm_config?.model}
+        computerId={source.agent.id}
       />
     ),
   };

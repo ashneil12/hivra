@@ -22,7 +22,8 @@ describe("agentSurfacesFor", () => {
     expect(agentSurfacesFor({ type: "codex", ...RUNNING })).toEqual(full);
     // Browser stays discoverable while it is toggled off; the tab says so.
     expect(agentSurfacesFor({ type: "codex", status: "stopped" })).toEqual(full);
-    expect(agentSurfacesFor({ type: "hermes" })).toEqual(full.filter((id) => id !== "browser"));
+    // Hermes on a Hivra computer shows Hermes's own web UI, not Hivra's chat.
+    expect(agentSurfacesFor({ type: "hermes", ...RUNNING })).toEqual(["aeon", "box", "files", "manage"]);
   });
 
   it("never gives an agent a Desktop, and gives dashboard runtimes their dashboard", () => {
@@ -83,11 +84,13 @@ describe("agent page tabs", () => {
 });
 
 describe("agent page groups", () => {
-  it("groups a chat agent as Agent (Chat, its session) · Computer (Desktop, Browser, Files, Terminal) · Manage, with no Git tab", () => {
+  it("groups a chat agent as Agent (Chat, its session) · Browser · Computer (Desktop, Files, Terminal) · Manage, with no Git tab", () => {
+    // The browser is its own place, not a view inside the computer (owner feedback).
     const def = getAgent("codex");
     expect(agentSurfaceGroups(agentPageSurfacesFor({ type: "codex" }), def)).toEqual([
       { id: "work", label: "Agent", surfaces: ["chat", "terminal"] },
-      { id: "computer", label: "Computer", surfaces: ["desktop", "browser", "files", "box"] },
+      { id: "browser", label: "Browser", surfaces: ["browser"] },
+      { id: "computer", label: "Computer", surfaces: ["desktop", "files", "box"] },
       { id: "manage", label: "Manage", surfaces: ["manage", "skills", "telegram"] },
     ]);
   });
@@ -98,6 +101,7 @@ describe("agent page groups", () => {
       const def = getAgent(type);
       for (const group of agentSurfaceGroups(agentSurfacesFor({ type }), def)) {
         if (group.id === "manage") continue; // Its own tab reads "Settings" inside the group.
+        if (group.surfaces.length === 1) continue; // A one-view group draws no second row to repeat it.
         expect(group.surfaces.map((id) => agentSurfaceLabel(id, def))).not.toContain(group.label);
       }
     }
@@ -119,6 +123,7 @@ describe("agent page groups", () => {
     expect(agentSurfaceLabel("terminal", getAgent("claude-code"))).toBe("Claude Code session");
     expect(agentSurfaceGroupOf("git")).toBe("computer");
     expect(agentSurfaceGroupOf("desktop")).toBe("computer");
+    expect(agentSurfaceGroupOf("browser")).toBe("browser");
     expect(agentSurfaceGroupOf("telegram")).toBe("manage");
   });
 });

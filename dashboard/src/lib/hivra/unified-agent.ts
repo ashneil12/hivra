@@ -11,6 +11,7 @@ import { resourceAttention, type ResourceAttention } from "./resource-attention"
 import type { HivraAgent } from "./agent-api";
 import { getAgent as catalogAgent } from "./agent-catalog";
 import { getComputerTemplate } from "./computer-catalog";
+import { isComputerMissingOnHostRow } from "./computer-usage-contract";
 import { errorKeepsComputer, isPreparedProfile } from "./lifecycle-support";
 import { agentComputerPair, type AgentComputerPair } from "@/lib/agent-computers/agent-surfaces";
 import type { AgentSoftwareSummary } from "./agent-cli-status";
@@ -77,6 +78,8 @@ export interface UnifiedAgent {
   href?: string;
   /** The stored failure message of a failed launch (status `error`). */
   failureReason?: string;
+  /** The host reports this computer gone. Only removing its record resolves it. */
+  missingOnHost?: boolean;
   /** An errored Hivra Cloud computer that still has its machine: Start can
    *  bring it back ("Try again"). Absent when the launch must be launched again. */
   canTryAgain?: boolean;
@@ -143,6 +146,7 @@ const HERMES_DOT: Record<UnifiedState, string> = { running: "#22c55e", updating:
 
 /** Same rule as Manage's Start for a computer in error (errorKeepsComputer). */
 function canTryAgain(a: HivraAgent): boolean {
+  if (isComputerMissingOnHostRow(a)) return false;
   if (a.computer_substrate && a.computer_substrate !== "proxmox-kvm") return false;
   if (a.deployment_mode && a.deployment_mode !== "hivra-managed") return false;
   if (isPreparedProfile({ computer_profile: a.computer_profile })) return false;
@@ -171,6 +175,7 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
     computerPair: resourceKind === "agent" ? agentComputerPair(a) : null,
     software: resourceKind === "agent" && a.agent_software?.badge ? a.agent_software : null,
     ...(a.status === "error" && a.error?.trim() ? { failureReason: a.error.trim() } : {}),
+    ...(isComputerMissingOnHostRow(a) ? { missingOnHost: true } : {}),
     ...(a.status === "error" && canTryAgain(a) ? { canTryAgain: true } : {}),
   };
 }

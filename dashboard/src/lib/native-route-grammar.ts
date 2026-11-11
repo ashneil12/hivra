@@ -52,7 +52,7 @@ const TEMPLATE_REFERENCE = matching(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
 const RESOURCE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
 export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
-  "claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon", "deepseek-harness",
+  "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "aeon", "deepseek-harness",
   "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
 ]);
 /** Launch history stages, and the names used before Choose merged its steps

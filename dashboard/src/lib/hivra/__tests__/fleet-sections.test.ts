@@ -112,6 +112,11 @@ describe("fleet entry destination", () => {
     expect(fleetEntryHref(ubuntu)).toBe("/dashboard/agent/ubuntu?tab=desktop");
   });
 
+  it("opens an errored computer on Manage, where the reason and the fix are, not on a blank desktop", () => {
+    expect(fleetEntryHref({ ...ubuntu, state: "error", missingOnHost: true })).toBe("/dashboard/agent/ubuntu?tab=manage");
+    expect(fleetEntryHref({ ...ubuntu, state: "error" })).toBe("/dashboard/agent/ubuntu?tab=manage");
+  });
+
   it("opens a Linux Sandbox on Manage and never promises it a desktop", () => {
     // A sandbox is terminal-only; the agent page lands it on Manage.
     const sandbox = agent("x-sandbox", "MY_LINUX_SANDBOX", {

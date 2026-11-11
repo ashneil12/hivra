@@ -456,6 +456,46 @@ describe("DeepSeek Harness launches as its acceptance did", () => {
   });
 });
 
+describe("Hermes on a Hivra computer launches the generic agent type `hermes`", () => {
+  it("sends Hivra credits with the default model on Hivra Cloud, with no browser", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("hermes"));
+    const draft = draftFor("hermes-computer", {}, { mode: "credits" });
+
+    await expect(submitLaunchDraft(draft, MANAGED, { balance: FUNDED })).resolves.toMatchObject({ id: AGENT_ID });
+
+    expect(wire(jest.mocked(createAgent).mock.calls[0][0])).toEqual({
+      type: "hermes", name: "Hermes 1", cpu: 2, ram: 4,
+      browser: false, managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-1-flash", walletType: "card" },
+      deployment: { mode: "hivra-managed" },
+    });
+    // It never touches the old lane's instance API.
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("sends the owner's pasted Venice key with the chosen model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("hermes"));
+    await submitLaunchDraft(draftFor("hermes-computer", {}, { mode: "api-key", model: "deepseek-v4-pro" }), MANAGED, { apiKey: "synthetic-venice-key" });
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({
+      type: "hermes", managedVenice: false, browser: false,
+      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-pro", apiKey: "synthetic-venice-key" },
+    });
+  });
+
+  it("can be left to Hermes's own setup, sending no model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("hermes"));
+    await submitLaunchDraft(draftFor("hermes-computer", {}, { mode: "native" }), MANAGED);
+    const sent = jest.mocked(createAgent).mock.calls[0][0];
+    expect(sent).toMatchObject({ type: "hermes", managedVenice: false });
+    expect(sent).not.toHaveProperty("llm");
+  });
+
+  it("never sends it to a server the owner connected", async () => {
+    await expect(submitLaunchDraft(draftFor("hermes-computer", {}, { mode: "credits" }), SELF_MANAGED)).rejects.toMatchObject({ code: "hermes_managed_only" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+});
+
 describe("a launch started from a saved template", () => {
   const TEMPLATE = { id: "77777777-7777-4777-8777-777777777777", name: "Research Bot" };
 

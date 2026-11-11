@@ -1,6 +1,6 @@
 "use client";
 
-import { isLaunchProfileId } from "@/lib/launch/contracts";
+import { relaunchHref } from "@/lib/hivra/fleet-sections";
 import { LoadingState } from "@/components/ui/LoadingState";
 
 import Link from "next/link";
@@ -371,14 +371,7 @@ function TryAgainButton({ agentId, onStarted }: { agentId: string; onStarted: ()
   );
 }
 
-/** Launch page link for a failed launch: same agent type or computer profile preselected. */
-export function relaunchHref(agent: UnifiedAgent): string {
-  const query = new URLSearchParams({ start: "1" });
-  const profile = agent.resourceKind === "computer" ? agent.computerProfile : agent.agentType;
-  if (isLaunchProfileId(profile)) query.set("profile", profile);
-  else if (agent.resourceKind) query.set("kind", agent.resourceKind);
-  return `/dashboard/launch?${query.toString()}`;
-}
+export { relaunchHref };
 
 function noticeForComputer(computer: AgentComputer): WorkspaceNoticeState | null {
   const { observed, operation } = computer.state;

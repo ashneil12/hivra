@@ -343,6 +343,13 @@ describe("manageCapabilitiesFor", () => {
       expect(myCloudDeepSeek.agentApp).toBeNull();
     });
 
+    it("names Hermes as app software with no version Hivra vetted", () => {
+      const hermes = manageCapabilitiesFor({ ...rows.codex, type: "hermes" }, { preparedMatch: true });
+      expect(hermes.agentApp).toEqual({ name: "hermes", vetted: null });
+      expect(hermes.agentCli).toBeNull();
+      expect(JSON.stringify(hermes)).not.toContain("never-sent");
+    });
+
     it("needs a running computer to update the connection service", () => {
       expect(map("codex").connectionServiceUpdate).toEqual({ state: "available" });
       const stopped = manageCapabilitiesFor({ ...rows.codex, status: "stopped", desired_state: "stopped" }, { preparedMatch: true });

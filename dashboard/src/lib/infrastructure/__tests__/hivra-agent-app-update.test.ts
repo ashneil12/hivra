@@ -75,6 +75,7 @@ case "$1" in
         [ "$running" = "$FAKE_OLD" ] || echo migrated > "$FAKE_DATA/migrated-by-new"
         ;;
       openclaw) running=$("$FAKE_HOME/.npm-global/bin/openclaw" --version 2>/dev/null) ;;
+      hermes) running=$(cat "$FAKE_HOME/.hermes-version" 2>/dev/null) ;;
       aeon) running=$(sed -n 's#^WorkingDirectory=.*/\\([0-9a-f]\\{40\\}\\)/apps/dashboard$#\\1#p' "$FAKE_DROPIN" 2>/dev/null) ;;
     esac
     touch "$FAKE_DIR/active"
@@ -128,7 +129,7 @@ exit 0
 `,
 };
 
-type App = "openclaw" | "agent-zero" | "aeon";
+type App = "openclaw" | "agent-zero" | "aeon" | "hermes";
 interface Fixture {
   root: string; home: string; state: string; systemd: string; a0: string; fakes: string; lock: string; log: string;
   unit: string; dropin: string; env: NodeJS.ProcessEnv;
@@ -144,7 +145,7 @@ function fixture(app: App): Fixture {
   for (const dir of [path.join(home, ".hivra"), state, systemd, fakes]) fs.mkdirSync(dir, { recursive: true });
   for (const [name, body] of Object.entries(FAKES)) fs.writeFileSync(path.join(fakes, name), body, { mode: 0o755 });
   fs.writeFileSync(path.join(home, ".hivra", "api-token"), "a".repeat(64));
-  const unitName = app === "aeon" ? "bux-aeon.service" : app === "openclaw" ? "bux-openclaw.service" : "hivra-agent-zero.service";
+  const unitName = app === "aeon" ? "bux-aeon.service" : app === "openclaw" ? "bux-openclaw.service" : app === "hermes" ? "bux-hermes.service" : "hivra-agent-zero.service";
   const unit = path.join(systemd, unitName);
   const dropin = path.join(systemd, "bux-aeon.service.d", "20-hivra-dashboard.conf");
   if (app === "agent-zero") {
@@ -156,6 +157,24 @@ function fixture(app: App): Fixture {
     const old = Date.now() / 1000 - 3600;
     fs.utimesSync(path.join(a0, "usr", "settings.json"), old, old);
     fs.writeFileSync(path.join(fakes, "container"), `agent0ai/agent-zero@${OLD_DIGEST}\n`);
+  } else if (app === "hermes") {
+    fs.writeFileSync(unit, "[Service]\nExecStart=/home/bux/.local/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open\n");
+    fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".hermes-version"), "0.23.1");
+    // The real `hermes update --yes` is Hermes's own; this one only records
+    // that it ran (and whether the surface lock was held) and moves the version.
+    fs.writeFileSync(path.join(home, ".local", "bin", "hermes"), `#!/bin/sh
+home="\${HOME}"
+case "$1" in
+  --version) echo "Hermes Agent v$(cat "$home/.hermes-version") (2026.11.1)"; echo "Install directory: $home/.hermes/hermes-agent" ;;
+  update)
+    echo "hermes $* lock=$([ -e "$home/../agent-app-update.lock" ] && echo held || echo free)" >> "$home/hermes-calls"
+    code=$(cat "$home/.hermes-update-exit" 2>/dev/null || echo 0)
+    [ "$code" = 0 ] && echo 0.24.0 > "$home/.hermes-version"
+    exit "$code" ;;
+esac
+`, { mode: 0o755 });
+    fs.mkdirSync(path.join(home, ".hermes", "sessions"), { recursive: true });
   } else if (app === "openclaw") {
     fs.writeFileSync(unit, "[Service]\nExecStart=/home/bux/.npm-global/bin/openclaw gateway --port 18789\n");
     const dir = path.join(home, ".npm-global", "lib", "node_modules", "openclaw");
@@ -212,6 +231,80 @@ describe("hivra-agent-app-update.sh", () => {
     expect(run(f, "openclaw", "latest").status).toBe(64);
     expect(run(f, "agent-zero" as App, "v2.14").status).toBe(64);
     expect(run(f, "aeon" as App, "main").status).toBe(64);
+  });
+
+  describe("Hermes", () => {
+    const calls = (f: Fixture) => fs.existsSync(path.join(f.home, "hermes-calls"))
+      ? fs.readFileSync(path.join(f.home, "hermes-calls"), "utf8").trim().split("\n") : [];
+
+    it("accepts only latest as a target", () => {
+      const f = make("hermes");
+      expect(run(f, "hermes", "0.24.0").status).toBe(64);
+      expect(run(f, "hermes", NEW_DIGEST).status).toBe(64);
+    });
+
+    it("runs Hermes's own updater as the agent's user under the lock, then reports the new version", () => {
+      const f = make("hermes");
+      const result = run(f, "hermes", "latest");
+      expect(result.status).toBe(0);
+      expect(calls(f)).toEqual(["hermes update --yes lock=held"]);
+      expect(result.log.filter((line) => line.startsWith("runuser ")).every((line) => line.startsWith("runuser bux "))).toBe(true);
+      expect(result.log).toContain("systemctl restart bux-hermes.service lock=held");
+      expect(result.doc).toMatchObject({ name: "hermes", state: "done", from: "0.23.1", to: "latest" });
+      expect(result.record).toMatchObject({ name: "hermes", version: "0.24.0" });
+      expect(fs.existsSync(f.lock)).toBe(false);
+      expect(fs.existsSync(path.join(f.state, "agent-app-swap"))).toBe(false);
+    });
+
+    it("waits while the owner is using Hermes through Hivra and never forces the update", () => {
+      const f = make("hermes");
+      const result = run(f, "hermes", "latest", { FAKE_OPEN_CONNECTIONS: "1" });
+      expect(result.doc).toMatchObject({ state: "deferred", reason: "app_in_use" });
+      expect(calls(f)).toEqual([]);
+    });
+
+    it("waits while a Hermes session was written to recently", () => {
+      const f = make("hermes");
+      fs.writeFileSync(path.join(f.home, ".hermes", "sessions", "turn.json"), "{}");
+      expect(run(f, "hermes", "latest").doc).toMatchObject({ state: "deferred", reason: "app_in_use" });
+      expect(calls(f)).toEqual([]);
+    });
+
+    it("says local changes block the update when Hermes exits 2, and keeps the dashboard running", () => {
+      const f = make("hermes");
+      fs.writeFileSync(path.join(f.home, ".hermes-update-exit"), "2");
+      const result = run(f, "hermes", "latest");
+      expect(result.status).toBe(1);
+      expect(result.doc).toMatchObject({ state: "failed", reason: "local_changes" });
+      expect(result.record).toMatchObject({ version: "0.23.1" });
+      expect(fs.existsSync(f.lock)).toBe(false);
+    });
+
+    it("reports any other updater failure as an install failure", () => {
+      const f = make("hermes");
+      fs.writeFileSync(path.join(f.home, ".hermes-update-exit"), "1");
+      expect(run(f, "hermes", "latest").doc).toMatchObject({ state: "failed", reason: "install_failed" });
+    });
+
+    it("fails and says so when the dashboard does not answer after the update", () => {
+      const f = make("hermes");
+      const result = run(f, "hermes", "latest", { FAKE_BAD_VERSION: "0.24.0" });
+      expect(result.status).toBe(1);
+      expect(result.doc).toMatchObject({ state: "failed", reason: "install_failed" });
+      expect(fs.existsSync(f.lock)).toBe(false);
+    });
+
+    it("stops when the disk can't hold the update", () => {
+      const f = make("hermes");
+      expect(run(f, "hermes", "latest", { FAKE_FREE_MB: "1000" }).doc).toMatchObject({ state: "failed", reason: "no_space" });
+      expect(calls(f)).toEqual([]);
+    });
+
+    it("says so when the Hermes service isn't on the computer", () => {
+      const f = make("hermes");
+      fs.rmSync(f.unit);
+      expect(run(f, "hermes", "latest").doc).toMatchObject({ state: "failed", reason: "not_installed" });
+    });
   });
 
   it("moves an idle OpenClaw computer to the tested version as its owner, restarting only under the lock", () => {

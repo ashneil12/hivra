@@ -23,6 +23,7 @@ import {
 } from '@/lib/dashboard-navigation';
 import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
 import { listRecents, recentHref, visitHref } from '@/lib/workspace/recents';
+import { needsOwnerAttention } from '@/lib/hivra/resource-attention';
 import { StatusText } from '@/components/ui/StatusText';
 import { DashboardResourceSwitcher } from './DashboardResourceSwitcher';
 import { resourceMatchesPath, type DashboardResource } from './dashboard-resources';
@@ -43,11 +44,11 @@ interface DashboardSidebarProps {
   onSwitcherOpenChange?: (open: boolean) => void;
   showOpsLink?: boolean;
   /**
-   * A page that draws its own navigation (the agent view) hides the rail and its
-   * spacer. The switcher dialog and the ⌘K handler stay, so the page can open
-   * them through AppShellContext.
+   * A page that draws its own sidebar next to the rail (the agent view) keeps
+   * the rail as icons only. Its toggle opens the full rail over the page, as it
+   * does on tablet widths, so two wide sidebars never sit side by side.
    */
-  hideRail?: boolean;
+  compact?: boolean;
 }
 
 const SIDEBAR_EXPANDED_STORAGE_KEY = 'hivra:dashboard:sidebar-expanded';
@@ -64,7 +65,7 @@ const COMPACT_RAIL_QUERY = '(min-width: 768px) and (max-width: 1023px)';
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
   userName, userEmail, accountCode, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
-  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, hideRail = false,
+  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, compact = false,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
   const pathname = usePathname();
@@ -72,7 +73,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const { copy } = useLocale();
   const dashboard = copy.dashboard;
   const [isExpanded, setIsExpanded] = useState(true);
-  const compactRail = useMediaQuery(COMPACT_RAIL_QUERY);
+  const compactRail = useMediaQuery(COMPACT_RAIL_QUERY) || compact;
   const [compactExpanded, setCompactExpanded] = useState(false);
   const toggleButton = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -84,7 +85,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   }, [onSwitcherOpenChange]);
   const aside = useRef<HTMLElement>(null);
   const { resources, loading, errors, refresh } = useDashboardResources(owner, pathname);
-  const attentionCount = resources.filter(item => !loading && !errors[item.source] && (item.attention || item.status === "error")).length;
+  const attentionCount = resources.filter(item => !loading && !errors[item.source] && needsOwnerAttention(item)).length;
   const currentResource = resources.find((item) => resourceMatchesPath(item, pathname));
   const effectivelyExpanded = compactRail ? compactExpanded : isExpanded;
   const currentResourceKind = currentResource?.kind ?? null;
@@ -211,7 +212,6 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const launchLabel = localizedLabel(DASHBOARD_LAUNCH_NAVIGATION);
 
   return <>
-    {hideRail ? null : <>
     <div className={styles.spacer} style={{ width: !compactRail && isExpanded ? 248 : 72, minWidth: !compactRail && isExpanded ? 248 : 72 }} />
     <aside ref={aside} id="dashboard-navigation" aria-label="Workspace navigation" className={`${styles.sidebar} ${effectivelyExpanded ? styles.expanded : styles.collapsed} ${compactRail && compactExpanded ? styles.compactOpen : ''}`}
       onKeyDown={(event) => {
@@ -258,7 +258,6 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         </div>
       </div>
     </aside>
-    </>}
     {switcherOpen && <DashboardResourceSwitcher resources={resources} currentUid={currentResource?.uid ?? null} loading={loading} errors={errors}
       onSelect={openResource} onClose={closeSwitcher} onBrowse={() => { closeSwitcher(); closeNavigation(); }} onRefresh={refresh} />}
   </>;

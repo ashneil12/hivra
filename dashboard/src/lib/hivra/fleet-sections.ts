@@ -1,4 +1,5 @@
 import type { UnifiedAgent } from "./unified-agent";
+import { isLaunchProfileId } from "@/lib/launch/contracts";
 import { computerHasDesktop } from "./resource-landing";
 
 /**
@@ -84,6 +85,11 @@ export function fleetEntryHref(agent: UnifiedAgent): string {
   if (agent.kind === "hermes") {
     return `/dashboard/instances/${encodeURIComponent(agent.id)}`;
   }
+  // A computer that errored (or whose host lost it) has no desktop to show;
+  // Manage says what happened and offers the way forward.
+  if (agent.state === "error" && (agent.missingOnHost || agent.resourceKind === "computer")) {
+    return `/dashboard/agent/${encodeURIComponent(agent.id)}?tab=manage`;
+  }
   const tab = agent.resourceKind === "computer"
     ? (isSandboxComputer(agent) ? "manage" : isDesktoplessComputer(agent) ? "files" : "desktop")
     : "chat";
@@ -107,4 +113,13 @@ export function fleetEntryOpenLabel(agent: Pick<UnifiedAgent, "resourceKind" | "
   if (agent.resourceKind !== "computer") return "Open agent";
   if (isSandboxComputer(agent)) return "Open sandbox";
   return isDesktoplessComputer(agent) ? "Open computer" : "Open desktop";
+}
+
+/** Launch page link for a failed launch: same agent type or computer profile preselected. */
+export function relaunchHref(agent: UnifiedAgent): string {
+  const query = new URLSearchParams({ start: "1" });
+  const profile = agent.resourceKind === "computer" ? agent.computerProfile : agent.agentType;
+  if (isLaunchProfileId(profile)) query.set("profile", profile);
+  else if (agent.resourceKind) query.set("kind", agent.resourceKind);
+  return `/dashboard/launch?${query.toString()}`;
 }

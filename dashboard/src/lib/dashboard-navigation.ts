@@ -59,13 +59,6 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     routePrefixes: ["/dashboard/command", "/dashboard/ops", "/dashboard/insights"],
   },
   {
-    id: "computers",
-    label: "Computers",
-    href: "/dashboard/computers",
-    icon: MonitorUp,
-    routePrefixes: ["/dashboard/computers", "/dashboard/computer"],
-  },
-  {
     id: "agents",
     label: "Agents",
     href: "/dashboard/agents",
@@ -77,6 +70,13 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
       "/dashboard/chat",
       "/dashboard/runtimes",
     ],
+  },
+  {
+    id: "computers",
+    label: "Computers",
+    href: "/dashboard/computers",
+    icon: MonitorUp,
+    routePrefixes: ["/dashboard/computers", "/dashboard/computer"],
   },
   {
     id: "activity",

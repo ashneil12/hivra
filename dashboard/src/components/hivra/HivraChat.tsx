@@ -24,10 +24,17 @@ import { captureClient } from "@/lib/telemetry/posthog-client";
 import { MemoryUsageBanner } from "@/components/memory/MemoryUsageBanner";
 import { useAgentChatListSlot } from "@/components/hivra/agent-shell/AgentChatListSlot";
 import { AgentTurn } from "./chat/AgentTurn";
-import { ChatComposer } from "./chat/ChatComposer";
+import { ChatComposer, MAX_ATTACHMENTS, type ComposerAttachment } from "./chat/ChatComposer";
 import { ChatEmpty } from "./chat/ChatEmpty";
 import { ChatList } from "./chat/ChatList";
 import { JumpToLatest } from "./chat/JumpToLatest";
+import type { QueuedMessage } from "./chat/MessageQueue";
+import { PromptOutline } from "./chat/PromptOutline";
+import { TranscriptFind } from "./chat/TranscriptFind";
+import { contextUsageOf, mergeContextUsage } from "./chat/contextUsage";
+import { useBottomChatMotion, type MotionBlock } from "./chat/useBottomChatMotion";
+import { useBoxChatControls } from "./chat/useBoxChatControls";
+import { useFileDrop } from "./chat/useFileDrop";
 import type { ChatMessage, Session, ToolChip } from "./chat/types";
 import chatStyles from "./chat/chat.module.css";
 import styles from "./HivraChat.module.css";
@@ -140,6 +147,11 @@ export interface HivraChatProps {
  /** Current model id this box runs (e.g. the agent's llm_config.model). When
  * unset, the composer shows the agent's native-CLI default label. Display only. */
  modelLabel?: string | null;
+ /** The computer this chat talks to, for the effort update the model picker offers (the same
+ * in-place connection-service update as Manage's). Without it the picker points to Manage. */
+ computerId?: string;
+ /** The effort update restarted the computer's connection service. */
+ onConnectionServiceRestarted?: () => void;
 }
 
 // Map a box session message (from the VM's own session store) to a ChatMessage.
@@ -220,6 +232,7 @@ function promptFromRunTitle(title: string): string | null {
 }
 
 const MAX_SESSIONS = 30;
+const NO_MESSAGES: ChatMessage[] = [];
 // Autoscroll: within this many px of the bottom counts as at the bottom; this far
 // above it, with no scroll-up observed, counts as not following.
 const AT_BOTTOM_PX = 2;
@@ -366,23 +379,13 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
-export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
+export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel, computerId, onConnectionServiceRestarted }: HivraChatProps) {
  const skey = storageKey || boxUrl;
- // "Think" — extended-reasoning toggle, mirroring paioclaw's reasoning on/off.
- // Persisted per box so the preference survives reloads.
- const [think, setThink] = useState(false);
- useEffect(() => {
- try { setThink(window.localStorage.getItem("hivra_think_" + skey.replace(/[^a-z0-9]/gi, "").slice(-32)) === "1"); } catch { /* storage disabled */ }
- }, [skey]);
- const toggleThink = useCallback(() => {
- setThink((v) => {
- const next = !v;
- try { window.localStorage.setItem("hivra_think_" + skey.replace(/[^a-z0-9]/gi, "").slice(-32), next ? "1" : "0"); } catch { /* storage disabled */ }
- return next;
- });
- }, [skey]);
- const thinkRef = useRef(false);
- useEffect(() => { thinkRef.current = think; }, [think]);
+ // What the composer's pickers change on the computer: its model, its effort
+ // levels and its access. The effort picked is sent with each turn.
+ const controls = useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked: Boolean((modelLabel || "").trim()), lockedModelName: (modelLabel || "").trim(), computerId, onConnectionServiceRestarted });
+ const effortRef = useRef<string | null>(null);
+ useEffect(() => { effortRef.current = controls.effort; }, [controls.effort]);
  // The model name to surface in the composer. Falls back to the agent's CLI
  // default when no explicit override is wired (e.g. native Claude Code).
  const shownModel = (modelLabel || "").trim() || (agentKind === "claude" ? "Claude Code (default)" : `${agentName} (default)`);
@@ -402,6 +405,20 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  return next;
  });
  }, []);
+ // What was sent while a conversation's agent was still working. Each goes out,
+ // in order, once the reply ends; Stop pauses the conversation's queue.
+ const [queues, setQueues] = useState<Record<string, QueuedMessage[]>>({});
+ const [pausedQueues, setPausedQueues] = useState<ReadonlySet<string>>(() => new Set());
+ const queuesRef = useRef(queues);
+ useEffect(() => { queuesRef.current = queues; }, [queues]);
+ const setQueuePaused = useCallback((sessionId: string, paused: boolean) => {
+ setPausedQueues((prev) => {
+ if (prev.has(sessionId) === paused) return prev;
+ const next = new Set(prev);
+ if (paused) next.add(sessionId); else next.delete(sessionId);
+ return next;
+ });
+ }, []);
  const [boxHistoryChecked, setBoxHistoryChecked] = useState(false);
  const [hasBoxHistory, setHasBoxHistory] = useState(false);
  const hasBoxHistoryRef = useRef(false);
@@ -411,6 +428,12 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  const [welcomeOnBox, setWelcomeOnBox] = useState<"pending" | "none" | "seen">("pending");
  const activeIdRef = useRef<string>("");
  const scrollRef = useRef<HTMLDivElement>(null);
+ // The transcript scroller as an element too, which the bottom motion follows.
+ const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+ const scrollerRef = useCallback((el: HTMLDivElement | null) => {
+ scrollRef.current = el;
+ setScroller(el);
+ }, []);
  const autoWelcomeAttemptedRef = useRef(false);
  // Per-turn scratch state for each session's parser (e.g. codex's id→text
  // segment map). Reset at the start of each send() for that session.
@@ -447,10 +470,22 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // The same ratings, read by rateMessage outside the state updater (rateMessage is the only writer).
  const feedbackRef = useRef<Record<string, "up" | "down">>({});
  // Pending attachments (already uploaded to the box; sent with the next message).
- const [attachments, setAttachments] = useState<{ name: string; path: string }[]>([]);
- const attachmentsRef = useRef<{ name: string; path: string }[]>([]);
- useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+ const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+ const attachmentsRef = useRef<ComposerAttachment[]>([]);
+ // Written with the state, so an upload that finishes before the next render still counts.
+ const changeAttachments = useCallback((fn: (prev: ComposerAttachment[]) => ComposerAttachment[]) => {
+ const next = fn(attachmentsRef.current);
+ attachmentsRef.current = next;
+ setAttachments(next);
+ }, []);
+ // An image attached shows as a small picture from an object URL; it is let go once the file leaves the composer.
+ const releasePreviews = useCallback((list: readonly ComposerAttachment[]) => {
+ for (const a of list) if (a.preview) { try { URL.revokeObjectURL(a.preview); } catch { /* nothing to release */ } }
+ }, []);
+ useEffect(() => () => releasePreviews(attachmentsRef.current), [releasePreviews]);
  const [uploading, setUploading] = useState(false);
+ const uploadCountRef = useRef(0);
+ const uploadChainRef = useRef<Promise<void>>(Promise.resolve());
  const [attachError, setAttachError] = useState<string | null>(null);
  const composerRef = useRef<HTMLTextAreaElement>(null);
  const composerDockRef = useRef<HTMLDivElement>(null);
@@ -520,14 +555,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  setWelcomeOnBox("pending");
  setBusyIds(new Set());
  setFailedBySession({});
+ setQueues({});
+ setPausedQueues(new Set());
 
  return abortAll;
  }, [boxUrl, skey]);
 
- const uploadAttachment = useCallback(async (file: File) => {
- if (!token || uploading || attachmentsRef.current.length >= 5) return;
+ const uploadOne = useCallback(async (file: File) => {
+ if (!token) return;
+ if (attachmentsRef.current.length >= MAX_ATTACHMENTS) {
+ setAttachError(`You can attach up to ${MAX_ATTACHMENTS} files to a message`);
+ return;
+ }
  setAttachError(null);
- setUploading(true);
  try {
  const prepared = await prepareImageAttachment(file).catch(() => null);
  const blob: Blob = prepared?.blob ?? file;
@@ -539,7 +579,11 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  const dataBase64 = await readBase64(blob);
  const r = await uploadBoxFile(boxUrl, name, dataBase64, token);
  if (r.ok && r.path) {
- setAttachments((prev) => [...prev, { name, path: r.path! }]);
+ let preview: string | undefined;
+ if (blob.type.startsWith("image/") && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+ try { preview = URL.createObjectURL(blob); } catch { preview = undefined; }
+ }
+ changeAttachments((prev) => [...prev, { name, path: r.path!, ...(preview ? { preview } : {}) }]);
  } else {
  clientLog.warn("chat attachment upload rejected", { source: "hivra-chat", failureType: "hivra_chat_attachment_upload_failed", agentKind, reason: r.error });
  setAttachError("Upload failed — try again");
@@ -547,10 +591,29 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  } catch (err) {
  clientLog.warn("chat attachment upload failed", { source: "hivra-chat", failureType: "hivra_chat_attachment_upload_failed", agentKind }, err);
  setAttachError("Upload failed — try again");
- } finally {
- setUploading(false);
  }
- }, [agentKind, boxUrl, token, uploading]);
+ }, [agentKind, boxUrl, changeAttachments, token]);
+ // Files come one after another (a multi-file pick or a drop), each in turn.
+ const uploadAttachment = useCallback((file: File) => {
+ if (!token) return;
+ uploadCountRef.current += 1;
+ setUploading(true);
+ uploadChainRef.current = uploadChainRef.current
+ .then(() => uploadOne(file))
+ .catch(() => undefined)
+ .then(() => {
+ uploadCountRef.current -= 1;
+ if (uploadCountRef.current === 0) setUploading(false);
+ });
+ }, [token, uploadOne]);
+ const removeAttachment = useCallback((path: string) => {
+ releasePreviews(attachmentsRef.current.filter((x) => x.path === path));
+ changeAttachments((prev) => prev.filter((x) => x.path !== path));
+ }, [changeAttachments, releasePreviews]);
+ // Files dropped anywhere on the chat attach to the composer.
+ const columnRef = useRef<HTMLDivElement>(null);
+ const rootRef = useRef<HTMLDivElement>(null);
+ const fileDrag = useFileDrop({ root: columnRef, enabled: Boolean(token), onFiles: (files) => files.forEach(uploadAttachment) });
 
  // Load persisted sessions for this box (or start fresh), and re-open whichever
  // chat was active last time (falls back to the newest).
@@ -824,6 +887,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  upsertTool: (id, patch) => upsertTool(sessionId, runId, id, patch),
  appendWarning: (t) => updateRunMessage(sessionId, runId, (m) => ({ ...m, warnings: [...(m.warnings || []), t] })),
  reportOutcome: (outcome) => updateRunMessage(sessionId, runId, (m) => ({ ...m, reported: outcome })),
+ reportUsage: (usage) => updateRunMessage(sessionId, runId, (m) => ({ ...m, usage: mergeContextUsage(m.usage, usage) })),
  }),
  [updateRunMessage, upsertTool],
  );
@@ -908,7 +972,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  if (resp.status === 404) return { kind: "missing" };
  if (!resp.ok || !resp.body) continue;
  turnStateRef.current.set(sessionId, getAdapter(agentKind).createTurnState());
- updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], warnings: undefined, reported: undefined, outcome: undefined, streaming: true, started: true }));
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: "", tools: [], warnings: undefined, reported: undefined, usage: undefined, outcome: undefined, streaming: true, started: true }));
  const result = await readRunStream(resp.body, sessionId, runId, isCurrent);
  if (result.kind === "done" || result.kind === "superseded") return result;
  }
@@ -1019,19 +1083,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  [agentKind, finalizeRun, followRun, readRunStream, updateRunMessage],
  );
 
+ // `from` names a queued message going out: it goes to its own conversation with
+ // its own files, and leaves what is being typed now alone.
  const send = useCallback(
- async (raw: string) => {
- const sessionId = activeIdRef.current;
+ async (raw: string, from?: { sessionId: string; images: string[] }) => {
+ const sessionId = from?.sessionId ?? activeIdRef.current;
  if (!sessionId || abortRef.current.has(sessionId)) return;
  const text = raw.trim();
  if (!text) return;
- const session = sessions.find((s) => s.id === sessionId);
+ const session = sessionsRef.current.find((s) => s.id === sessionId);
  const resumeId = session?.claudeSessionId || null;
- const images = attachmentsRef.current.map((a) => a.path);
+ const images = from ? from.images : attachmentsRef.current.map((a) => a.path);
+ if (!from) {
  setInput("");
- setAttachments([]);
+ releasePreviews(attachmentsRef.current);
+ changeAttachments(() => []);
  setAttachError(null);
  try { window.localStorage.removeItem(draftKey(skey, sessionId)); } catch { /* ignore */ }
+ }
  setLastFailed(sessionId, null);
  const runId = newRunId();
  const turn = beginTurn(sessionId, runId);
@@ -1054,18 +1123,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  const post = (signal: AbortSignal) => fetch(`${boxUrl.replace(/\/$/, "")}/api/chat`, {
  method: "POST",
  headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
- // `reasoning` carries the composer's "Think" toggle. The box's /api/chat
- // server lives in the hivra-provisioner repo (not here), and this repo
- // can't confirm it reads this field — but an extra JSON key is ignored
- // by a server that doesn't, so sending it is regression-safe and wires
- // the toggle the moment the box supports it.
- // TODO(paioclaw-riplist): confirm the box chat server's reasoning param
- // name/shape (does it accept `reasoning: boolean`, or a thinking-level
- // string like the cron path's, or `--model`-style flags?) and align this
- // key + the TaskModal cron path so chat and scheduled tasks match.
- // `detach` asks the box to keep the run going when this page goes away
+ // `effort` is the level picked in the composer (only one the computer
+ // offers); without one the agent keeps its own default. `detach` asks the box to keep the run going when this page goes away
  // (closed tab, sleeping laptop, dropped network). Only Stop ends it.
- body: JSON.stringify({ message: text, sessionId: resumeId, detach: true, runId, clientRef: sessionId, ...(images.length ? { images } : {}), ...(thinkRef.current ? { reasoning: true } : {}) }),
+ body: JSON.stringify({ message: text, sessionId: resumeId, detach: true, runId, clientRef: sessionId, ...(images.length ? { images } : {}), ...(effortRef.current ? { effort: effortRef.current } : {}) }),
  signal,
  });
  // agent_first_message_sent — the funnel's Hivra-lane activation event.
@@ -1099,10 +1160,12 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note, streaming: false, outcome: "error" }));
  setLastFailed(sessionId, text);
  }
+ // A turn that could not start holds back what was queued behind it.
+ if (end.kind !== "settled" && (queuesRef.current[sessionId]?.length ?? 0) > 0) setQueuePaused(sessionId, true);
  turn.finish();
  if (end.kind === "settled") followIfOpen();
  },
- [agentKind, beginTurn, boxUrl, driveTurn, scrollDown, sessions, setLastFailed, updateSession, updateRunMessage, token, skey],
+ [agentKind, beginTurn, boxUrl, changeAttachments, driveTurn, releasePreviews, scrollDown, setLastFailed, setQueuePaused, updateSession, updateRunMessage, token, skey],
  );
 
  // Take back a welcome reply that never got going: the chat falls back to the
@@ -1230,8 +1293,10 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  ...s,
  messages: s.messages.map((m) => (m.streaming ? { ...m, streaming: false, outcome: "stopped" } : m)),
  }));
+ // Stopping a reply must not start the next queued message on its own.
+ if ((queuesRef.current[sessionId]?.length ?? 0) > 0) setQueuePaused(sessionId, true);
  setSessionBusy(sessionId, false);
- }, [agentKind, boxUrl, setSessionBusy, token, updateSession]);
+ }, [agentKind, boxUrl, setQueuePaused, setSessionBusy, token, updateSession]);
 
  // A reply whose run the computer has no log of. A welcome with no sign it
  // ever started never reached the computer (a reload while the computer was
@@ -1412,6 +1477,46 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  }, [loadedKey, resumeDetachedRuns, skey]);
  const stop = useCallback(() => stopSession(activeIdRef.current), [stopSession]);
 
+ // Send what was typed: now, or, while the agent is working, into the queue.
+ const submit = useCallback((raw: string) => {
+ const sessionId = activeIdRef.current;
+ const text = raw.trim();
+ if (!sessionId || !text) return;
+ if (!abortRef.current.has(sessionId)) {
+ void send(text);
+ return;
+ }
+ const item: QueuedMessage = { id: newId(), text, attachments: attachmentsRef.current.map(({ name, path }) => ({ name, path })) };
+ setQueues((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), item] }));
+ setInput("");
+ releasePreviews(attachmentsRef.current);
+ changeAttachments(() => []);
+ setAttachError(null);
+ try { window.localStorage.removeItem(draftKey(skey, sessionId)); } catch { /* ignore */ }
+ }, [changeAttachments, releasePreviews, send, skey]);
+ const deleteQueued = useCallback((id: string) => {
+ const sessionId = activeIdRef.current;
+ const rest = (queuesRef.current[sessionId] ?? []).filter((q) => q.id !== id);
+ setQueues((prev) => ({ ...prev, [sessionId]: rest }));
+ if (rest.length === 0) setQueuePaused(sessionId, false);
+ }, [setQueuePaused]);
+ const editQueued = useCallback((id: string, text: string) => {
+ const sessionId = activeIdRef.current;
+ setQueues((prev) => ({ ...prev, [sessionId]: (prev[sessionId] ?? []).map((q) => (q.id === id ? { ...q, text: text.trim() } : q)) }));
+ }, []);
+ const resumeQueue = useCallback(() => setQueuePaused(activeIdRef.current, false), [setQueuePaused]);
+ // The next queued message goes out once its conversation's reply is over.
+ useEffect(() => {
+ if (loadedKey !== skey) return;
+ for (const [sessionId, items] of Object.entries(queues)) {
+ if (items.length === 0 || pausedQueues.has(sessionId) || busyIds.has(sessionId) || abortRef.current.has(sessionId)) continue;
+ const [next, ...rest] = items;
+ setQueues((prev) => ({ ...prev, [sessionId]: rest }));
+ void send(next.text, { sessionId, images: next.attachments.map((a) => a.path) });
+ }
+ }, [busyIds, loadedKey, pausedQueues, queues, send, skey]);
+ const openQueue = queues[activeId] ?? [];
+
  // Record a thumbs up/down on an assistant message and fire the funnel event.
  // Toggling the same thumb clears it (and emits rating "none"); the capture goes
  // through the init-safe helper so analytics can never break the chat.
@@ -1470,6 +1575,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  if (m.role === "assistant" && !m.streaming && (m.outcome === undefined || m.outcome === "disconnected")) void stopBoxChatRun(boxUrl, m.runId, token);
  }
  setLastFailed(id, null);
+ setQueues((prev) => {
+ if (!(id in prev)) return prev;
+ const next = { ...prev };
+ delete next[id];
+ return next;
+ });
+ setQueuePaused(id, false);
  // The chat that opens next is worked out here, from the sessions as they are, so
  // the state updater below has no side effects (React may run it more than once).
  const remaining = sessionsRef.current.filter((s) => s.id !== id);
@@ -1480,7 +1592,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  return next.length ? next : [fallback];
  });
  },
- [boxUrl, setLastFailed, stopSession, token],
+ [boxUrl, setLastFailed, setQueuePaused, stopSession, token],
  );
 
  // Deleting has no undo, so it takes two taps: the first arms a red
@@ -1511,7 +1623,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  scrollDown();
  }, [active?.messages, scrollDown]);
 
- const messages = active?.messages || [];
+ const messages = active?.messages ?? NO_MESSAGES;
  // A first-contact welcome that failed: its prompt is hidden, so Retry on its
  // reply is the only way to ask again. It lasts across reloads.
  const lastMessage = messages[messages.length - 1];
@@ -1523,6 +1635,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // sends it as the first message — the seeded agent answers in character.
  const goalDef = goal ? getGoal(goal) : null;
  const starters = (goalDef ?? getGoal(undefined)).starters;
+
+ // How full the model's context is, once the stream has said.
+ const contextUsage = useMemo(() => contextUsageOf(messages), [messages]);
+
+ // The transcript's motion: new rows ease in and the view follows the stream.
+ // It starts only once a chat's turns are in place, so opening a chat never
+ // animates its history. Without ResizeObserver the plain autoscroll stays.
+ const [motionSessionId, setMotionSessionId] = useState("");
+ useEffect(() => { setMotionSessionId(activeId); }, [activeId]);
+ const motionBlocks = useMemo<MotionBlock[]>(() => messages.map((m, i) => ({ id: String(i), role: m.role })), [messages]);
+ const settleScrollTop = useCallback((el: HTMLDivElement) => { lastScrollTopRef.current = el.scrollTop; }, []);
+ const rejoinMotion = useBottomChatMotion(
+ scroller,
+ typeof ResizeObserver === "function" && loadedKey === skey && motionSessionId === activeId && messages.length > 0,
+ stickToBottomRef,
+ motionBlocks,
+ false,
+ busy,
+ undefined,
+ busy,
+ undefined,
+ false,
+ settleScrollTop,
+ );
 
  const list = (extra?: { onClose?: () => void }) => (
  <ChatList
@@ -1538,7 +1674,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  );
 
  return (
- <div className={`hivra-chat-root ${styles.root}`}>
+ <div ref={rootRef} className={`hivra-chat-root ${styles.root}`}>
  {/* The chat list lives in the agent sidebar when it provides a place for it. */}
  {slotElement ? createPortal(list(), slotElement) : null}
  {/* Anywhere else: an overlay drawer below md, an inline column from md up. */}
@@ -1566,7 +1702,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  ) : null}
 
  {/* Chat column */}
- <div inert={drawerOpen} className={styles.column}>
+ <div ref={columnRef} inert={drawerOpen} className={styles.column}>
  {instanceId ? <MemoryUsageBanner instanceId={instanceId} /> : null}
  {!slotElement ? (
  <div className={styles.listBar}>
@@ -1589,8 +1725,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  ) : null}
  </div>
  ) : null}
- <div ref={scrollRef} role="region" aria-label="Conversation" tabIndex={0} data-empty={messages.length === 0 ? "true" : undefined} onScroll={onScrollPane} className={styles.scroll}>
- <div className={styles.transcript}>
+ <div ref={scrollerRef} role="region" aria-label="Conversation" tabIndex={0} data-empty={messages.length === 0 ? "true" : undefined} onScroll={onScrollPane} className={styles.scroll}>
+ <div className={styles.clip}>
+ <div className={styles.transcript} data-transcript-content>
  {messages.length === 0 ? (
  <ChatEmpty
  agentName={agentName}
@@ -1603,26 +1740,36 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  ) : null}
  {messages.map((m, i) => (
  <AgentTurn key={i} m={m} index={i} agentName={agentName} emoji={emoji} historySessionId={historySessionId}
- rating={feedback[activeId + ":" + i]} onRate={rateMessage} onOpenHistory={showBoxHistory} />
+ rating={feedback[activeId + ":" + i]} onRate={rateMessage} onOpenHistory={showBoxHistory}
+ busy={busy} onBuildPlan={(message) => void send(message)} />
  ))}
  </div>
  </div>
+ </div>
+ <TranscriptFind messages={messages} scrollRef={scrollRef} rootRef={rootRef} />
+ <PromptOutline messages={messages} scrollRef={scrollRef} onJump={() => { stickToBottomRef.current = false; }} />
 
  <ChatComposer
  agentName={agentName}
  input={input}
  onInputChange={setInput}
- onSend={(text) => void send(text)}
+ onSend={submit}
  onStop={stop}
  busy={busy}
  coarsePointer={coarsePointer}
  composerCap={composerCap}
  modelLabel={shownModel}
- think={think}
- onToggleThink={toggleThink}
+ controls={controls}
+ context={contextUsage}
+ queued={openQueue}
+ queuePaused={pausedQueues.has(activeId)}
+ onQueueDelete={deleteQueued}
+ onQueueEdit={editQueued}
+ onQueueResume={resumeQueue}
+ fileDrag={fileDrag}
  canUpload={Boolean(token)}
  attachments={attachments}
- onRemoveAttachment={(path) => setAttachments((prev) => prev.filter((x) => x.path !== path))}
+ onRemoveAttachment={removeAttachment}
  uploading={uploading}
  attachError={attachError}
  onUploadFile={(file) => void uploadAttachment(file)}
@@ -1633,6 +1780,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  <JumpToLatest
  onJump={() => {
  scrollDown(true);
+ rejoinMotion();
  // This button unmounts on activation; keep focus in the chat, on the
  // conversation the user asked to see.
  scrollRef.current?.focus({ preventScroll: true });

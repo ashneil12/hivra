@@ -33,7 +33,7 @@
       "id": "google-chrome",
       "decision": "operator-opt-in-download",
       "evidencePath": "dashboard/provisioner/PROVENANCE.md",
-      "identity": "4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7"
+      "identity": "92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79"
     },
     {
       "id": "github-cli",

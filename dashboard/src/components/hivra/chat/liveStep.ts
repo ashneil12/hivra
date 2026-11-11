@@ -8,6 +8,7 @@
 // guess.
 
 import type { ToolChip } from "./types";
+import { isPlanTool, isTaskListTool } from "./toolInput";
 
 const MAX_COMMAND = 48;
 const CHECK = /\b(?:test|tests|vitest|jest|playwright|pytest|tsc|typecheck|lint|eslint|clippy|check|cargo\s+(?:test|check|fmt))\b/i;
@@ -70,7 +71,8 @@ export function toolStep(tool: Pick<ToolChip, "name" | "detail">): string {
  * none running the agent is either writing the reply or still thinking.
  */
 export function liveStepLabel(tools: readonly ToolChip[], hasText: boolean): string {
-  const running = tools.filter((tool) => tool.status === "running");
+  // Reasoning is not a step of its own: while it streams the line says Thinking.
+  const running = tools.filter((tool) => tool.status === "running" && tool.kind !== "thinking");
   const latest = running[running.length - 1];
   if (latest) {
     const step = toolStep(latest);
@@ -79,11 +81,22 @@ export function liveStepLabel(tools: readonly ToolChip[], hasText: boolean): str
   return hasText ? "Writing" : "Thinking";
 }
 
-/** "Used 3 tools", with "· 1 failed" when some did. */
+/** A tool shown as its own card in the reply (the task list, the plan), not as a row of the trail. */
+export function isCardTool(tool: Pick<ToolChip, "name">): boolean {
+  return isTaskListTool(tool.name) || isPlanTool(tool.name);
+}
+
+/** The rows the folded trail opens onto: every tool and the agent's reasoning, but not the cards the reply shows itself. */
+export function trailRows(tools: readonly ToolChip[]): ToolChip[] {
+  return tools.filter((tool) => !isCardTool(tool));
+}
+
+/** "Used 3 tools", with "· 1 failed" when some did. A trail of reasoning alone is "Thinking". */
 export function usedToolsLabel(tools: readonly ToolChip[]): { used: string; failed: string | null } {
-  const failed = tools.filter((tool) => tool.status === "error").length;
+  const used = trailRows(tools).filter((tool) => tool.kind !== "thinking");
+  const failed = used.filter((tool) => tool.status === "error").length;
   return {
-    used: `Used ${tools.length} tool${tools.length === 1 ? "" : "s"}`,
+    used: used.length === 0 ? "Thinking" : `Used ${used.length} tool${used.length === 1 ? "" : "s"}`,
     failed: failed ? `${failed} failed` : null,
   };
 }

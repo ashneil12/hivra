@@ -11,8 +11,10 @@ import {
   fleetEntryHref,
   fleetEntryOpenLabel,
   fleetSections,
+  relaunchHref,
 } from "@/lib/hivra/fleet-sections";
-import { attentionLabel } from "@/lib/hivra/resource-attention";
+import { attentionFallbackReason, attentionLabel, needsOwnerAttention } from "@/lib/hivra/resource-attention";
+import { deleteAgent, startAgent } from "@/lib/hivra/agent-api";
 import styles from "./HomeWorkspace.module.css";
 import { HomeContinue } from "./HomeContinue";
 import { FirstRunCard } from "./FirstRunCard";
@@ -67,7 +69,9 @@ export function FleetControlPane({ requested = false, attentionRequested = false
     [agents, staleSource],
   );
   const attention = useMemo(
-    () => currentAgents.filter((agent) => (agent.attention || agent.state === "error")),
+    // An agent added to a computer is not counted on its own: its computer is
+    // listed, and the sidebar badge counts the same rows.
+    () => currentAgents.filter((agent) => !agent.attachment && needsOwnerAttention(agent)),
     [currentAgents],
   );
   const visible = useMemo(
@@ -123,7 +127,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
             <p className={styles.eyebrow}>Your workspace</p>
             <h1 className={styles.title}>{attentionOnly ? "Needs your attention" : "Where will you work?"}</h1>
             <p className="mt-1 text-[13px] leading-[1.5] text-[var(--text-muted)]">
-              {attentionOnly ? "Open an item to respond or check what went wrong." : "Open an agent to start working, or go straight to your desktop."}
+              {attentionOnly ? "Each one says what is wrong and what to do about it." : "Open an agent to start working, or go straight to your desktop."}
             </p>
           </div>
           <label className="flex min-h-[44px] min-w-[200px] flex-1 items-center gap-2 rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] px-3 transition-colors focus-within:border-[var(--hg-stroke-strong)] focus-within:bg-[var(--hg-fill-1)] sm:max-w-[280px]">
@@ -210,7 +214,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
           {searching
             ? "Nothing matches that search."
             : attentionOnly
-              ? hermesError || hivraError ? "Attention could not be checked for every resource. Retry the unavailable source above." : "Nothing needs attention."
+              ? hermesError || hivraError ? "Attention could not be checked for every resource. Retry the unavailable source above." : "Nothing needs you right now. Everything is running as it should."
               : hermesError || hivraError ? "Your workspace could not be loaded. Retry the unavailable source above." : "No agents or computers yet. Launch one to get started."}
         </p>
       ) : (
@@ -223,7 +227,8 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {section.items.map((agent) => (
                   <li key={agent.uid} className="min-w-0">
-                    <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(staleSource(agent))} />
+                    <FleetEntry agent={agent} duplicate={duplicates.has(agent.name)} stale={Boolean(staleSource(agent))}
+                      showResolution={attentionOnly && !agent.attachment && needsOwnerAttention(agent)} onResolved={() => void retryHivra()} />
                   </li>
                 ))}
               </ul>
@@ -249,12 +254,16 @@ function FleetEntry({
   agent,
   duplicate,
   stale,
+  showResolution = false,
+  onResolved,
 }: {
   agent: UnifiedAgent;
   duplicate: boolean;
   stale: boolean;
+  showResolution?: boolean;
+  onResolved?: () => void;
 }) {
-  return (
+  const card = (
     <Link
       href={fleetEntryHref(agent)}
       className="group flex min-h-[96px] min-w-0 items-center gap-3 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 py-4 outline-none transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
@@ -288,6 +297,64 @@ function FleetEntry({
         </span>
       </span>
     </Link>
+  );
+  if (!showResolution || stale) return card;
+  return (
+    <div className="flex min-w-0 flex-col">
+      {card}
+      <AttentionResolution agent={agent} onResolved={onResolved} />
+    </div>
+  );
+}
+
+/** What is wrong with a row that needs the owner, and the one action that fixes it. */
+function AttentionResolution({ agent, onResolved }: { agent: UnifiedAgent; onResolved?: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState<"remove" | "retry" | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const reason = agent.failureReason || attentionFallbackReason(agent.attention);
+  const failed = async (kind: "remove" | "retry", action: () => Promise<void>, fallback: string) => {
+    setBusy(kind);
+    setMessage(null);
+    try {
+      await action();
+      onResolved?.();
+    } catch (error) {
+      setMessage(error instanceof Error && error.message ? error.message : fallback);
+      setBusy(null);
+    }
+  };
+  const button = "mono inline-flex min-h-[32px] pointer-coarse:min-h-[44px] items-center border border-[var(--etched-border)] px-3 text-[12px] font-semibold text-[var(--ink-black)] outline-none hover:border-[var(--hivra-red-line)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] disabled:opacity-60";
+  return (
+    <div data-testid="attention-resolution" className="flex flex-col gap-2 border border-t-0 border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 py-3">
+      <p className="text-[12.5px] leading-[1.45] text-[var(--text-secondary)]">{reason}</p>
+      {agent.attention === "approval" || agent.attention === "clarify" ? null : agent.missingOnHost ? (
+        confirming ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[12px] text-[var(--text-muted)]">This removes it from Hivra. It can&apos;t be undone.</span>
+            <button type="button" className={button} disabled={busy !== null} onClick={() => setConfirming(false)}>Cancel</button>
+            <button type="button" className={button} disabled={busy !== null}
+              onClick={() => void failed("remove", () => deleteAgent(agent.id, { recordOnly: true }), "Hivra could not remove it. Nothing was changed.")}>
+              {busy === "remove" ? "Removing…" : "Remove from Hivra"}
+            </button>
+          </div>
+        ) : (
+          <div><button type="button" className={button} onClick={() => setConfirming(true)}>Remove</button></div>
+        )
+      ) : agent.kind === "hivra" ? (
+        <div>
+          {agent.canTryAgain ? (
+            <button type="button" className={button} disabled={busy !== null}
+              onClick={() => void failed("retry", () => startAgent(agent.id).then(() => undefined), "Hivra could not try again. Nothing was changed.")}>
+              {busy === "retry" ? "Trying again…" : "Try again"}
+            </button>
+          ) : (
+            <Link href={relaunchHref(agent)} className={button}>Launch again</Link>
+          )}
+        </div>
+      ) : null}
+      {message ? <p role="alert" className="text-[12px] text-[var(--hg-bad)]">{message}</p> : null}
+    </div>
   );
 }
 

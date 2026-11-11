@@ -4,7 +4,7 @@ public enum HivraWorkspaceDestination: String, CaseIterable, Codable, Sendable {
     case overview, agents, computers, activity, infrastructure, launch, settings
 
     /// The dashboard's primary navigation, in its order (apps/shared/native-contract/primary-navigation.v1.json).
-    public static let primaryNavigation: [Self] = [.overview, .computers, .agents, .activity]
+    public static let primaryNavigation: [Self] = [.overview, .agents, .computers, .activity]
 
     public var path: String { self == .overview ? "/dashboard" : "/dashboard/\(rawValue)" }
     public var label: String {

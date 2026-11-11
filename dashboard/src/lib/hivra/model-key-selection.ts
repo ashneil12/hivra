@@ -25,3 +25,5 @@ export const MANAGED_CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6";
 
 /** Model DeepSeek Harness runs on, on Hivra credits or the owner's Venice key. */
 export const DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-1-flash";
+/** The model a Hermes computer starts on (Hermes itself lets the owner change it). */
+export const HERMES_DEFAULT_MODEL = "deepseek-v4-1-flash";

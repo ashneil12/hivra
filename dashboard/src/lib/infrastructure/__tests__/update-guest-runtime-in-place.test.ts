@@ -128,7 +128,7 @@ function runHelper(options: {
     for (const asset of RUNTIME_ASSETS) copyFileSync(path.join(bundleRoot, "hivra-chat", asset), path.join(bundle, "hivra-chat", asset));
     for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
       "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json",
-      "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "hivra-agent-trace.py", "hivra-agent-trace.service", "hivra-guest-runtime-update.sh"]) {
+      "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json", "hivra-agent-trace.py", "hivra-agent-trace.service", "hivra-guest-runtime-update.sh"]) {
       copyFileSync(path.join(bundleRoot, file), path.join(bundle, file));
     }
     cpSync(path.join(bundleRoot, "deepseek-harness"), path.join(bundle, "deepseek-harness"), { recursive: true });
@@ -323,6 +323,8 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
       `HIVRA_AGENT_APP name=agent-zero version=unknown target=${digest("b")} state=scheduled`,
       `HIVRA_AGENT_APP name=aeon version=${"8".repeat(40)} target=${"e".repeat(40)} state=running`,
       "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=2026.9.33 state=current",
+      "HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled",
+      "HIVRA_AGENT_APP name=hermes version=unknown target=latest state=running",
     ]) {
       const run = runHelper({ guestStdout: `${valid}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
       expect(run.status).toBe(0);
@@ -333,6 +335,9 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
       "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled",
       `HIVRA_AGENT_APP name=agent-zero version=${digest("d")} target=${digest("b")} state=scheduled; reboot`,
       `HIVRA_AGENT_APP name=hermes version=1.0.0 target=1.0.1 state=scheduled`,
+      "HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled; reboot",
+      "HIVRA_AGENT_APP name=hermes version=latest target=latest state=current",
+      "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled",
     ]) {
       const other = runHelper({ guestStdout: `${forged}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
       expect(other.stdout).toBe("HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
@@ -359,7 +364,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     expect(guest.indexOf("agent_cli_report || true")).toBeLessThan(guest.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
     // Every terminal unit must keep the vendor self-updater off, or the update rolls back.
     expect(guest).toContain("grep -Fxq DISABLE_AUTOUPDATER=1");
-    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\n\s+hivra-claude-app\.py hivra-claude-app\.service claude-desktop-pin\.json\n\s+agent-app-versions\.json hivra-agent-app-update\.sh local-browser-keeper\.py\)/);
+    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\n\s+hivra-claude-app\.py hivra-claude-app\.service claude-desktop-pin\.json\n\s+agent-app-versions\.json hivra-agent-app-update\.sh local-browser-keeper\.py chrome-pin\.json\)/);
   });
 
   // The idle check decides whether a terminal restart could end someone's

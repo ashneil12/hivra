@@ -131,8 +131,9 @@ with the cloud browser swapped for a **self-hosted Chrome on the box** and a
 ## Prerequisites
 
 - A **fresh Ubuntu 22.04** box (amd64) reachable over SSH, with `sudo`/root.
-- Outbound internet (the script pulls bux from GitHub, Chrome from Google's apt
-  repo, and Node/skills via the bux installer).
+- Outbound internet (the script pulls bux from GitHub, the pinned Chrome `.deb` from
+  Google's download pool (checked against its SHA-256), and Node/skills via the bux
+  installer).
 - ~4 GB RAM minimum (Chrome pushes the box well past bux's 2 GB baseline). The
   reference box is 4 vCPU / 6 GB / 40 GB.
 
@@ -153,6 +154,7 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `AGENT_USER` | `bux` | **Pinned** — the bux installer + keeper hardcode `bux`; the script hard-fails on any other value. |
 | `BUX_DIR` | `/opt/bux` | **Pinned** — bux's unit `ExecStart` paths hardcode `/opt/bux`; the script hard-fails on any other value. |
 | `BUX_REF` | `f17c1b31d6688dd92e745ade650e00d46b4dc4da` | Reviewed bux commit. |
+| `CHROME_VERSION` / `CHROME_LINUX_AMD64_SHA256` | from `chrome-pin.json` | The pinned Google Chrome `.deb` and its SHA-256. Leave unset on managed computers so the installer and the runtime updater read the same pin; set both to override. |
 | `CDP_PORT` | `9222` | Local Chrome remote-debugging port. |
 | `PROFILE_DIR` | `/home/bux/.browser-profile` | **Must be non-default** (see gotcha #1). |
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
@@ -470,6 +472,38 @@ update them yet.
   The update restarts the browser only when nobody is attached to its debugging port,
   and puts the previous keeper back if the browser does not return. The window opens at
   the origin at the Xvfb screen's size, so it fills the tab.
+- **Chrome moves with the pin.** The pinned Chrome build ships as `chrome-pin.json`
+  (version, SHA-256 and the build it replaced), read by the installer and by the runtime
+  update. Because Chrome is held, the pin only moves when a release moves it. The update
+  installs the pin on an existing computer whose Chrome differs, only when the browser
+  can be restarted right then (the unit is off, or nothing is attached to its debugging
+  port), after checking the `.deb`'s SHA-256 and keeping a recovery copy of the installed
+  build (`dpkg-repack`, else the pin's `previous` build). It confirms the browser answers
+  on the pin's major version and otherwise puts the previous build back. A busy browser
+  keeps its current Chrome until a later update (`HIVRA_AGENT_BROWSER state=deferred`).
+- **Chat effort.** `POST /api/chat` takes an optional `effort`, exactly one of `low`,
+  `medium`, `high`, `xhigh` or `max`; any other value, or none, runs the turn with no
+  flag. Claude Code gets `--effort <level>` (checked in the pinned 2.1.292 package, and
+  accepted with all five levels from 2.1.117). Codex gets
+  `-c model_reasoning_effort="<level>"` on fresh and resumed turns, next to any provider
+  overrides (the pinned 0.149.1 parses minimal through ultra; the gateway stops at
+  `xhigh` and passes `max` as `xhigh`, because whether a model takes a higher level is
+  the model's decision). Other agent kinds ignore it. `GET /api/meta` lists the levels
+  the gateway will pass as `chatEffort`, only for Claude Code 2.1.117 or later and Codex
+  0.149.1 or later (a CLI that is older, or whose version could not be read, gets no
+  flag and no `chatEffort`), so a client shows the picker exactly when it has an effect.
+  `server.js` is a runtime update asset, so existing computers receive this with the
+  update.
+- **Hermes Agent.** `--agent-kind hermes` installs the official Hermes Agent with its own
+  installer (no Hivra image, fork or patch), points it at the launch model settings, and
+  runs Hermes's own web UI as `bux-hermes.service` on `127.0.0.1:9119`. The gateway proxies
+  it at `/hermes/` behind the token gate, HTTP and WebSocket, with the prefix stripped and
+  `X-Forwarded-Prefix: /hermes`. Updates are `hermes update` (Terminal, or the Update Hermes
+  button, which runs `hermes update --yes` as the agent user); the version comes from
+  `hermes --version`.
+  The Hermes gateway (scheduled tasks and chat channels) runs as a user service of the
+  agent user with linger, installed by `hermes gateway install`, at launch and by the
+  runtime update on existing Hermes computers.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

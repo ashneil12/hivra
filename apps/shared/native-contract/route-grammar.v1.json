@@ -183,6 +183,7 @@
     { "family": "value-set", "input": "/dashboard/launch?profile=claude-code&stage=choose", "expect": "/dashboard/launch?profile=claude-code&stage=choose" },
     { "family": "value-set", "input": "/dashboard/launch?profile=codex&stage=choose", "expect": "/dashboard/launch?profile=codex&stage=choose" },
     { "family": "value-set", "input": "/dashboard/launch?profile=hermes&stage=choose", "expect": "/dashboard/launch?profile=hermes&stage=choose" },
+    { "family": "value-set", "input": "/dashboard/launch?profile=hermes-computer&stage=choose", "expect": "/dashboard/launch?profile=hermes-computer&stage=choose" },
     { "family": "value-set", "input": "/dashboard/launch?profile=openclaw&stage=choose", "expect": "/dashboard/launch?profile=openclaw&stage=choose" },
     { "family": "value-set", "input": "/dashboard/launch?profile=agent-zero&stage=choose", "expect": "/dashboard/launch?profile=agent-zero&stage=choose" },
     { "family": "value-set", "input": "/dashboard/launch?profile=aeon&stage=choose", "expect": "/dashboard/launch?profile=aeon&stage=choose" },

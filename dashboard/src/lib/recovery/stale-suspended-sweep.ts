@@ -405,7 +405,7 @@ export async function runFinalReminderSweep(): Promise<FinalReminderSweepSummary
   // status='scheduled_for_deletion' AND scheduled_deletion_at in (now, now+24h]
   const { data, error } = await db
     .from("hermes_instances")
-    .select("id, user_id, scheduled_deletion_at")
+    .select("id, user_id, scheduled_deletion_at, config")
     .eq("status", "scheduled_for_deletion")
     .gt("scheduled_deletion_at", nowIso)
     .lte("scheduled_deletion_at", windowEnd)
@@ -415,7 +415,8 @@ export async function runFinalReminderSweep(): Promise<FinalReminderSweepSummary
     throw new Error(error.message || "Failed to query rows for final reminder");
   }
 
-  const rows = (data ?? []) as FinalReminderRow[];
+  // A computer kept only as the undo for a Hermes move is deleted on purpose, with no lapse to warn about.
+  const rows = ((data ?? []) as Array<FinalReminderRow & { config?: { movedTo?: unknown } | null }>).filter((row) => !row.config?.movedTo);
   let reminded = 0;
   let skippedNoEmail = 0;
   let emailFailed = 0;

@@ -398,22 +398,10 @@
 @media (min-width: 768px) {
   .dock { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
 }
-.composer { width: 100%; max-width: 720px; margin: 0 auto; }
-
-.modelRow { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; min-height: 18px; }
-.modelRule { flex: 1; height: 1px; background: var(--hg-stroke-subtle); }
-.modelName {
-  min-width: 0;
-  max-width: 70%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--hg-text-3);
-  font-size: 12px;
-  line-height: 18px;
-}
+.composer { position: relative; width: 100%; max-width: 720px; margin: 0 auto; }
 
 .box {
+  position: relative;
   border: 1px solid var(--hg-stroke-strong);
   border-radius: 12px;
   background: var(--hg-glass-strong);
@@ -426,12 +414,24 @@
   border-color: color-mix(in srgb, var(--hg-fg) 28%, transparent);
   box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
 }
-.field { position: relative; }
+.boxDrop, .boxDrop:focus-within { border-color: color-mix(in srgb, var(--hg-focus) 60%, transparent); }
+.dropHint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--hg-focus) 8%, transparent);
+  color: var(--hg-text-2);
+  font-size: 12px;
+  pointer-events: none;
+}
 .textarea {
   display: block;
   width: 100%;
   min-height: 44px;
-  padding: 11px 48px 11px 14px;
+  padding: 12px 14px 6px;
   border: 0;
   border-radius: inherit;
   outline: none;
@@ -446,17 +446,48 @@
 .textarea::placeholder { color: var(--hg-text-3); }
 @media (min-width: 768px) { .textarea { font-size: 14px; } }
 
-.send {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  display: grid;
+/* One toolbar row inside the box: attach, the pickers, the context ring, send. */
+.toolbar { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 0 8px 8px; }
+.pills { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.toolbarSpacer { flex: 1; min-width: 4px; }
+.toolButton {
+  display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  flex: none;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text-3);
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.toolButton:hover:not(:disabled) { background: var(--hg-fill-3); color: var(--hg-text); }
+.toolButton:disabled { opacity: 0.4; cursor: default; }
+.modelStatic {
+  min-width: 0;
+  max-width: 200px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hg-text-3);
+  font-size: 12px;
+  line-height: 26px;
+}
+
+.send {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
   background: var(--hg-accent);
   color: var(--hg-on-accent);
   cursor: pointer;
@@ -470,10 +501,9 @@
 }
 .sendStop { background: var(--hg-accent); }
 @media (pointer: coarse) {
-  .send { right: 4px; bottom: 4px; width: 36px; height: 36px; }
-  /* The 44px touch target is bigger than the 36px button it wraps. */
-  .send::before { content: ""; position: absolute; inset: -4px; }
-  .textarea { padding-right: 52px; }
+  .toolbar { gap: 8px; padding-bottom: 6px; }
+  .toolButton, .send { width: 44px; height: 44px; border-radius: 8px; }
+  .pill { height: 44px; }
 }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
@@ -483,15 +513,15 @@
   gap: 6px;
   min-width: 0;
   max-width: 100%;
-  padding: 3px 4px 3px 9px;
-  border-radius: 999px;
+  padding: 3px 4px 3px 7px;
+  border-radius: 6px;
   background: var(--hg-fill-2);
   color: var(--hg-text-2);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 18px;
 }
 .chipIcon { flex: none; }
-.chipLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chipLabel { min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A 40px target inside a 24px chip: the margins keep the chip its size. */
 .chipRemove {
   display: inline-flex;
@@ -508,30 +538,188 @@
   cursor: pointer;
 }
 .chipRemove:hover { color: var(--hg-text); }
-
-.tools { display: flex; align-items: center; gap: 2px; margin: 6px 0 0 2px; min-height: 28px; }
-.toolButton {
-  display: inline-grid;
+/* A picture attachment: a small thumbnail with its remove badge. */
+.thumb { position: relative; display: inline-flex; flex: none; }
+.thumbImage { display: block; width: 36px; height: 36px; border-radius: 8px; object-fit: cover; }
+.thumbRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--hg-text-3);
+  border-radius: 50%;
+  background: var(--hg-fill-3);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: var(--hg-text-2);
   cursor: pointer;
-  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
 }
-.toolButton:hover:not(:disabled) { background: var(--hg-fill-hover); color: var(--hg-text); }
-.toolButton:disabled { opacity: 0.4; cursor: default; }
-.toolOn { background: var(--hg-fill-2); color: var(--hg-text); }
-@media (pointer: coarse) { .toolButton { width: 44px; height: 44px; } }
-/* Hidden below md until the box confirms it reads the reasoning flag. */
-@media (max-width: 767px) { .thinkButton { display: none; } }
+.thumbRemove:hover { color: var(--hg-text); }
+@media (pointer: coarse) {
+  .thumbRemove { width: 24px; height: 24px; top: -8px; right: -8px; }
+}
 .attachError { margin: 6px 2px 0; color: var(--hg-bad); font-size: 12px; }
 
 .retryRow { max-width: 720px; margin: 0 auto 8px; }
+
+/* ── Pickers: the model and access pills and their menus ───────────────── */
+.pickerRoot { position: relative; min-width: 0; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 208px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--hg-fast) ease;
+}
+.pill:hover:not(:disabled), .pillOpen { background: var(--hg-fill-3); }
+.pill:disabled { opacity: 0.6; cursor: default; }
+.pillLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pillEffort { flex: none; color: var(--hg-text-3); }
+.pillChevron { flex: none; color: var(--hg-text-3); transition: transform var(--hg-fast) ease; }
+.pillChevronOpen { transform: rotate(180deg); }
+.pillWarn { flex: none; color: var(--hg-warn); }
+
+.popoverFrame {
+  z-index: 90;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--hg-stroke-strong);
+  border-radius: 12px;
+  background: var(--hg-glass-strong);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg);
+  color: var(--hg-text);
+}
+.popoverSurface { position: relative; z-index: 1; overflow-y: auto; outline: none; font-family: inherit; }
+.popoverOpen { animation: popoverIn 170ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.popoverOpen[data-popover-side="bottom"] { --popover-lift: -8px; }
+.popoverOpen[data-popover-side="top"] { --popover-lift: 8px; }
+.popoverOpen[data-popover-side="right"] { --popover-shift: -8px; }
+.popoverOpen[data-popover-side="left"] { --popover-shift: 8px; }
+@keyframes popoverIn {
+  from { opacity: 0; transform: translate(var(--popover-shift, 0), var(--popover-lift, 0)) scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .popoverOpen { animation: none; } }
+
+.menu { padding: 4px; }
+.menuItem {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hg-text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.menuItemTall { align-items: flex-start; padding: 8px; }
+.menuItemOn { background: var(--hg-fill-2); }
+.menuLabel { flex: 1; min-width: 0; }
+.menuCheck { flex: none; color: var(--hg-text-2); }
+.menuIcon { flex: none; margin-top: 2px; color: var(--hg-text-2); }
+.menuItemTall .pillWarn { margin-top: 2px; }
+.menuText { min-width: 0; }
+.menuTitle { display: block; font-size: 13px; font-weight: 500; line-height: 20px; }
+.menuHint { display: block; margin-top: 2px; color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
+.menuNote { margin: 0; padding: 6px 8px; color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
+@media (pointer: coarse) { .menuItem { min-height: 44px; } }
+
+/* ── Context ring ──────────────────────────────────────────────────────── */
+.meter { display: inline-grid; flex: none; place-items: center; margin: 0 4px; border-radius: 4px; outline: none; }
+.meter:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--hg-focus) 60%, transparent); }
+.ringCalm { color: var(--hg-text-3); }
+.ringWarn { color: var(--hg-warn); }
+.ringBad { color: var(--hg-bad); }
+.meterTip { width: max-content; padding: 6px 10px; pointer-events: none; }
+.meterHeadline { color: var(--hg-text); font-size: 12px; line-height: 16px; }
+.meterDetail { color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
+
+/* ── Message queue ─────────────────────────────────────────────────────── */
+.queue { padding: 0 8px; color: var(--hg-text-3); }
+.queueCard {
+  position: relative;
+  padding: 2px 10px;
+  border: 1px solid var(--hg-stroke);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--hg-fill-1);
+}
+.queuePaused { display: flex; align-items: center; gap: 8px; height: 28px; border-bottom: 1px solid var(--hg-stroke); font-size: 12px; }
+.queuePausedText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queueButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.queueButton:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.queueRow { display: flex; align-items: center; gap: 10px; min-height: 32px; font-size: 12px; }
+.queueRowRule { border-top: 1px solid var(--hg-stroke-subtle); }
+.queueLead { flex: none; color: var(--hg-text-3); }
+.queueText { flex: 1; min-width: 0; padding: 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hg-text-2); }
+.queueEdit {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid var(--hg-stroke-strong);
+  border-radius: 6px;
+  background: var(--hg-fill-1);
+  color: var(--hg-text);
+  font: inherit;
+  resize: none;
+  outline: none;
+}
+.queueEdit:focus { border-color: color-mix(in srgb, var(--hg-fg) 30%, transparent); }
+.queueIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+}
+.queueIcon:hover:not(:disabled) { background: var(--hg-fill-hover); color: var(--hg-text); }
+.queueIcon:disabled { opacity: 0.3; cursor: default; }
+@media (pointer: coarse) { .queueIcon, .queueButton { min-width: 44px; min-height: 44px; } .queueRow { min-height: 44px; } }
 
 /* ── Return to latest ──────────────────────────────────────────────────── */
 .jumpWrap {
@@ -664,3 +852,155 @@
 
 /* Touch: chat rows and their delete are full 44px targets. */
 @media (pointer: coarse) { .newRow, .rowMain { min-height: 44px; } .rowDelete { width: 44px; height: 44px; margin-right: 0; } }
+
+/* ── Rich rows: reasoning, a file's change, the task list, the plan ────── */
+.thinkingRow { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; padding: 0 8px; color: var(--hg-text-3); font-size: 13px; }
+.thinkingButton {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--hg-fast) ease, color var(--hg-fast) ease;
+}
+.thinkingButton:hover { background: var(--hg-fill-1); color: var(--hg-text-2); }
+.thinkingText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thinkingBody { margin: 0 8px 6px 29px; color: var(--hg-text-2); font-size: 13px; }
+.thinkingBody :global(.hivra-md), .thinkingBody > div { font-size: 13px; color: var(--hg-text-3); }
+@media (pointer: coarse) { .thinkingRow { min-height: 44px; } }
+
+.toolMore { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--hg-text-3); cursor: pointer; }
+.toolMore:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+
+.fileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text-2);
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--hg-fast) ease, color var(--hg-fast) ease;
+}
+.fileChip:hover, .fileChip[aria-expanded="true"] { background: var(--hg-fill-3); color: var(--hg-text); }
+.fileChipIcon { flex: none; color: var(--hg-text-3); }
+.fileChipName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fileChipStat { display: inline-flex; gap: 4px; flex: none; font-size: 10.5px; }
+.statAdd { color: var(--hg-ok); }
+.statRemove { color: var(--hg-bad); }
+@media (pointer: coarse) { .fileChip { min-height: 36px; } }
+
+.diffPop { overflow: auto; overscroll-behavior: contain; }
+.diffHead { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--hg-stroke); color: var(--hg-text-3); font-size: 11px; }
+.diffHeadText { flex: 1; min-width: 0; }
+.diffClose { display: grid; place-items: center; flex: none; padding: 2px; border: 0; border-radius: 4px; background: transparent; color: var(--hg-text-3); cursor: pointer; }
+.diffClose:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.diff { padding: 4px 0; font-family: var(--font-mono), monospace; font-size: 11.5px; line-height: 18px; }
+.diffLine { display: flex; gap: 8px; padding: 0 10px; color: var(--hg-text-2); }
+.diffMark { flex: none; width: 10px; color: var(--hg-text-3); text-align: center; user-select: none; }
+.diffText { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diffAdd { background: color-mix(in srgb, var(--hg-ok) 13%, transparent); color: var(--hg-text); }
+.diffAdd .diffMark { color: var(--hg-ok); }
+.diffRemove { background: color-mix(in srgb, var(--hg-bad) 12%, transparent); color: var(--hg-text); }
+.diffRemove .diffMark { color: var(--hg-bad); }
+.diffMore { padding: 4px 10px; color: var(--hg-text-3); font-family: inherit; font-size: 11px; }
+
+/* The agent's task list, as MonoCode's task card. */
+.tasks { margin: 0 0 8px; overflow: hidden; border: 1px solid var(--hg-stroke); border-radius: 10px; background: var(--hg-fill-1); }
+.tasksHead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--hg-stroke); }
+.tasksIcon { flex: none; color: var(--hg-text-3); }
+.tasksTitle { flex: 1; margin: 0; color: var(--hg-text-2); font-family: var(--font-mono), monospace; font-size: 12px; font-weight: 500; }
+.tasksCount { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--hg-fill-2); color: var(--hg-text-3); font-family: var(--font-mono), monospace; font-size: 10px; }
+.tasksList { margin: 0; padding: 4px 0; list-style: none; }
+.taskRow { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 6px 10px; }
+.taskState { display: grid; place-items: center; flex: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; }
+.taskDone { background: color-mix(in srgb, var(--hg-ok) 20%, transparent); color: var(--hg-ok); }
+.taskActive { color: var(--hg-focus); }
+.taskCancelled { background: var(--hg-fill-2); color: var(--hg-text-3); }
+.taskPending { border: 1px solid var(--hg-stroke-strong); background: var(--hg-fill-1); }
+.taskSpin { animation: taskSpin 1.1s linear infinite; }
+@keyframes taskSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .taskSpin { animation: none; } }
+.taskText { flex: 1; min-width: 0; color: var(--hg-text-2); font-size: 12.5px; line-height: 18px; }
+.taskTextActive { color: var(--hg-text); }
+.taskTextDone { color: var(--hg-text-3); text-decoration: line-through; text-decoration-color: var(--hg-stroke-strong); }
+.taskTextCancelled { color: var(--hg-text-3); text-decoration: line-through; opacity: 0.8; }
+
+/* The agent's plan, as MonoCode's plan card. */
+.plan { margin: 8px 0; overflow: hidden; border: 1px solid var(--hg-stroke); border-radius: 12px; background: var(--hg-fill-2); }
+.planHead { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+.planIcon { flex: none; margin-top: 2px; color: var(--hg-text-3); }
+.planMain { flex: 1; min-width: 0; }
+.planTitle { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hg-text); font-size: 13px; font-weight: 500; }
+.planSummary { margin: 2px 0 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--hg-text-3); font-size: 12px; line-height: 18px; }
+.planActions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.planButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text-2);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.planButton:hover:not(:disabled) { background: var(--hg-fill-3); color: var(--hg-text); }
+.planButton:disabled { opacity: 0.4; cursor: default; }
+.planBuild { background: var(--hg-accent); color: var(--hg-on-accent); }
+.planBuild:hover:not(:disabled) { background: var(--hg-accent); opacity: 0.88; color: var(--hg-on-accent); }
+.planChevronOpen { transform: rotate(180deg); }
+.planBody { padding: 4px 14px 12px; border-top: 1px solid var(--hg-stroke); }
+@media (pointer: coarse) { .planButton { min-height: 44px; padding: 0 12px; } }
+
+/* ── Find in the conversation ──────────────────────────────────────────── */
+.find { position: absolute; top: 8px; right: 12px; z-index: 40; pointer-events: none; }
+.findBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(360px, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--hg-stroke-strong);
+  border-radius: 10px;
+  background: var(--hg-glass-strong);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--hg-shadow-md);
+  pointer-events: auto;
+}
+.findIcon { flex: none; margin-left: 4px; color: var(--hg-text-3); }
+.findInput { flex: 1; width: 11rem; min-width: 0; border: 0; outline: none; background: transparent; color: var(--hg-text); font-family: inherit; font-size: 16px; }
+@media (min-width: 768px) { .findInput { font-size: 12px; } }
+.findInput::placeholder { color: var(--hg-text-3); }
+.findCount { flex: none; min-width: 10ch; text-align: right; color: var(--hg-text-3); font-family: var(--font-mono), monospace; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.findButton { display: grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--hg-text-3); cursor: pointer; }
+.findButton:hover:not(:disabled) { background: var(--hg-fill-hover); color: var(--hg-text); }
+.findButton:disabled { opacity: 0.3; cursor: default; }
+@media (pointer: coarse) { .findButton { width: 44px; height: 44px; } }
+/* The find highlights (::highlight) are styled in transcriptHighlights.ts: the CSS
+   parser behind CSS modules can't read that pseudo-element and drops the rule. */
+
+/* ── Prompt outline ────────────────────────────────────────────────────── */
+.outline { position: absolute; inset: 0; z-index: 30; pointer-events: none; container-type: inline-size; }
+.outlineRail { position: absolute; top: 50%; right: 16px; display: flex; flex-direction: column; align-items: flex-end; transform: translateY(-50%); pointer-events: auto; }
+@container (max-width: 58rem) { .outlineRail { display: none; } }
+.outlineBarButton { display: flex; align-items: center; justify-content: flex-end; flex: none; width: 100%; padding: 0; border: 0; background: transparent; outline: none; cursor: pointer; }
+.outlineBar { display: block; border-radius: 999px; background: var(--hg-fg); transition: width 200ms ease-out, opacity 200ms ease-out; }
+.outlineBarButton:focus-visible .outlineBar { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+.outlineCard { display: flex; flex-direction: column; gap: 6px; padding: 12px; pointer-events: none; }
+.outlineTitle { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--hg-text); font-size: 14px; line-height: 1.35; }
+.outlineReply { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--hg-text-3); font-size: 14px; line-height: 1.35; }

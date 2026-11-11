@@ -74,8 +74,9 @@ export interface AgentDef {
    * translation shim before any provider can be listed). `providers` is which
    * alternatives the user may pick (Venice via BYOK or the managed gateway);
    * empty = native vendor auth only, no picker. Drives the box-side inference
-   * routing (~/.hivra/llm-provider.json + per-spawn model_providers). Hermes is
-   * configured through its own lane (/api/instances) and omits this.
+   * routing (~/.hivra/llm-provider.json + per-spawn model_providers). On a Hivra
+   * computer Hermes writes the same managed or Venice settings into its own
+   * config at install; the older Hermes lane (/api/instances) is separate.
    */
   llm?: { wire: "openai" | "anthropic"; providers: "venice"[] };
 }
@@ -102,7 +103,18 @@ const ALL_AGENTS: AgentDef[] = [
     badge: "Default",
     accent: "var(--gold-leaf)",
     available: true,
-    cliKind: "claude",
+    // On a Hivra computer, Hermes is the official Hermes Agent, installed by its
+    // own installer and updated by `hermes update`. Hivra hosts its own web UI
+    // (`hermes dashboard`, loopback :9119) behind the token gate under /hermes,
+    // and points it at Venice inference through its own config. Nothing about
+    // Hermes is built, forked or patched by Hivra. (The older Hermes lane,
+    // /api/instances, does not read this entry's surface.)
+    surface: "dashboard",
+    dashboardPort: 9119,
+    // The official installer builds Hermes's web UI, which needs about 2 GB.
+    floor: { cpu: 1, ram: 2 },
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
   },
   {
     id: "claude-code",
@@ -342,7 +354,9 @@ interface PlanDef {
 }
 
 export const PLANS: Record<PlanTier, PlanDef> = {
-  free: { id: "free", name: "Free", maxAgents: AGENT_SLOTS.free, cpu: 0.5, ramGb: 1, blurb: "One lean agent, within limits. No browser automation." },
+  // A free account is sign-up only: the owner connects their own computer.
+  // It holds no Hivra-run computer, so it has no CPU or memory here.
+  free: { id: "free", name: "Free", maxAgents: AGENT_SLOTS.free, cpu: 0, ramGb: 0, blurb: "Connect your own computer. Hivra-run computers need a paid plan." },
   pro: { id: "pro", name: "Pro", maxAgents: AGENT_SLOTS.operator, cpu: 2, ramGb: 4, blurb: "Up to 3 agents. Full capability." },
   power: { id: "power", name: "Power", maxAgents: AGENT_SLOTS.fleet, cpu: 4, ramGb: 8, blurb: "Up to 5 agents. No capability caps." },
 };
@@ -382,7 +396,7 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
     return `This creates an isolated Linux VM with Hivra's contained authenticated desktop plus shared terminal, files, lifecycle, and recovery surfaces. ${credentialNotice}`;
   }
   if (def.id === "hermes") {
-    return `This runs Hermes (${def.vendor}) on the agent's private virtual machine, with Hivra's chat, terminal, files and skills interfaces. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
+    return `This installs the official Hermes Agent from ${def.vendor} on the agent's private virtual machine, with Hermes's own installer, and opens Hermes's own web UI through Hivra's authenticated gateway. Hivra adds no modifications to Hermes. You update it with \`hermes update\` in the terminal, or with the Update button. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
   }
   if (def.id === "aeon") {
     return `This hosts the Aeon dashboard on the agent's private virtual machine. Aeon's automated tasks run on your own GitHub Actions using the GitHub credentials you connect. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Aeon project.`;

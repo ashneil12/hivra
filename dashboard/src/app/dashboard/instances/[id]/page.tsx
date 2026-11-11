@@ -52,6 +52,7 @@ import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hiv
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
 import { UpdateAvailableBanner } from "@/components/instances/UpdateAvailableBanner";
 import { NoForkMigrationCard } from "@/components/instances/NoForkMigrationCard";
+import { MoveToOfficialCard } from "@/components/instances/MoveToOfficialCard";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { hermesRuntimeUid } from "@/lib/workspace/runtime-selection";
 import { resourceInventory } from "@/lib/workspace/resource-inventory";
@@ -1667,8 +1668,10 @@ export default function InstanceDetailPage() {
           </div>
         ) : null}
         <div style={{ padding: "0 16px" }}>
-          <UpdateAvailableBanner instanceId={instance.id} selfConfirm />
-          <NoForkMigrationCard instanceId={instance.id} />
+          <MoveToOfficialCard instanceId={instance.id}>
+            <UpdateAvailableBanner instanceId={instance.id} selfConfirm />
+            <NoForkMigrationCard instanceId={instance.id} />
+          </MoveToOfficialCard>
         </div>
         {instance.updateAlert ? (
           <div

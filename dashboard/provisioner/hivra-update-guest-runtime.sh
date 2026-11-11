@@ -130,7 +130,7 @@ done
 TERMINAL_ASSETS=(hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service
   agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply
   hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json
-  agent-app-versions.json hivra-agent-app-update.sh local-browser-keeper.py)
+  agent-app-versions.json hivra-agent-app-update.sh local-browser-keeper.py chrome-pin.json)
 for asset in "${TERMINAL_ASSETS[@]}"; do
   [ -f "$PROVISIONER_DIR/$asset" ] && [ ! -L "$PROVISIONER_DIR/$asset" ] \
     || { echo "runtime source asset is missing or unsafe: $asset" >&2; exit 1; }
@@ -176,7 +176,7 @@ grep -Fxq HIVRA_GUEST_RUNTIME_UPDATED "$GUEST_RESULT" \
 # The guest's agent CLI report reaches stdout only in this exact shape.
 AGENT_CLI_LINE="$(grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6} state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
 # The agent app report likewise, each version in its app's own form.
-AGENT_APP_LINE="$(grep -m1 -xE 'HIVRA_AGENT_APP (name=aeon version=([0-9a-f]{40}|unknown) target=[0-9a-f]{40}|name=openclaw version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|name=agent-zero version=(sha256:[0-9a-f]{64}|unknown) target=sha256:[0-9a-f]{64}) state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
+AGENT_APP_LINE="$(grep -m1 -xE 'HIVRA_AGENT_APP (name=aeon version=([0-9a-f]{40}|unknown) target=[0-9a-f]{40}|name=openclaw version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|name=agent-zero version=(sha256:[0-9a-f]{64}|unknown) target=sha256:[0-9a-f]{64}|name=hermes version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=latest) state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
 
 # (Re)install the agent-run reporter with the fresh credential, as the start
 # helper does after a boot. The gateway update above is already committed; every

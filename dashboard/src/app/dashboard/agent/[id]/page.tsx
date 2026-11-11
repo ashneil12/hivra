@@ -31,6 +31,7 @@ import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
+import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
 import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
@@ -42,6 +43,8 @@ import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
+import { CommandPanelDock } from "@/components/hivra/command-panel/CommandPanel";
+import type { ManageSectionId } from "@/lib/hivra/manage-sections";
 import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
 import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
 import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
@@ -213,6 +216,7 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
 const TABS: { id: Tab }[] = AGENT_SURFACE_IDS.map((id) => ({ id }));
 const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
   work: <MessageSquareText size={14} />,
+  browser: <Globe size={14} />,
   computer: <Computer size={14} />,
   manage: <Settings2 size={14} />,
 };
@@ -1075,13 +1079,22 @@ export default function AgentPage() {
 
   // "Update available" beside the agent's name opens Manage › Updates: the
   // link a newly mounted Manage reads, and a request an open one follows.
-  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: "updates"; id: number } | null>(null);
+  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: ManageSectionId; id: number } | null>(null);
   const openManageUpdates = useCallback(() => {
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("section", "updates");
     nextURL.hash = "agent-software";
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
     setManageSectionRequest((current) => ({ section: "updates", id: (current?.id ?? 0) + 1 }));
+    selectTab("manage");
+  }, [selectTab]);
+  // The command panel's Model and Computer size open their Manage section.
+  const openManageSection = useCallback((section: ManageSectionId) => {
+    const nextURL = new URL(window.location.href);
+    nextURL.searchParams.set("section", section);
+    nextURL.hash = "";
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+    setManageSectionRequest((current) => ({ section, id: (current?.id ?? 0) + 1 }));
     selectTab("manage");
   }, [selectTab]);
 
@@ -1207,8 +1220,8 @@ export default function AgentPage() {
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
-  // Computer (Desktop, Browser, Files, Terminal) · Manage. Computers keep
+  // Agent pages group their surfaces: Agent (Chat, <Agent> session) · Browser
+  // · Computer (Desktop, Files, Terminal) · Manage. Computers keep
   // their short flat list. Agent and Manage always open their first view (Chat
   // or the dashboard, Settings); Computer reopens the view last used in it,
   // Files the first time (the Desktop entry there is a choice, not a place to land).
@@ -1299,6 +1312,7 @@ export default function AgentPage() {
   // pane that holds every surface (mounted and retained exactly as before).
   const content = (
     <>
+      <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputer} />
       {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
           connected get a one-line pointer to the Telegram tab (the component
           gates itself on this visit's welcome + probe + per-box dismiss).
@@ -1314,6 +1328,15 @@ export default function AgentPage() {
         />
       ) : null}
 
+      <CommandPanelDock
+        agent={agent}
+        surfaces={tabs.map((t) => t.id)}
+        activeSurface={effectiveTab}
+        onOpenSurface={selectTab}
+        onOpenManageSection={openManageSection}
+        onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+        onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
+      >
       <div id={WORK_PANE_ID} className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
@@ -1351,7 +1374,7 @@ export default function AgentPage() {
         </DesktopTabOpen.Provider>
         {chatOpened && chatSurfaceReady && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
-            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
           </div>
         ) : null}
         {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
@@ -1458,7 +1481,7 @@ export default function AgentPage() {
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : "aeon"}/`}
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
@@ -1552,6 +1575,7 @@ export default function AgentPage() {
           )
         ) : null}
       </div>
+      </CommandPanelDock>
     </>
   );
 

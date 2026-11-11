@@ -40,7 +40,7 @@
 #       sudo HIVRA_AGENT_KIND=codex ./provision-claude-code-box.sh
 #
 # It expects the sibling artifacts to live next to it:
-#   local-browser-keeper.py  bux-local-browser.service
+#   local-browser-keeper.py  bux-local-browser.service  chrome-pin.json
 #   bux-hivra-chat.service   hivra-chat/{server.js,index.html,app.js}
 #   system-prompt.md
 #
@@ -54,8 +54,10 @@ CLOUDFLARED_VERSION="${CLOUDFLARED_VERSION:-2026.8.2}"
 CLOUDFLARED_LINUX_AMD64_SHA256="${CLOUDFLARED_LINUX_AMD64_SHA256:-fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2}"
 CADDY_VERSION="${CADDY_VERSION:-2.11.4}"
 CADDY_LINUX_AMD64_SHA256="${CADDY_LINUX_AMD64_SHA256:-527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9}"
-CHROME_VERSION="${CHROME_VERSION:-152.0.7977.64-1}"
-CHROME_LINUX_AMD64_SHA256="${CHROME_LINUX_AMD64_SHA256:-4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7}"
+# Google Chrome: the build and its SHA-256 come from chrome-pin.json (read below), the
+# one file the runtime updater reads too, unless both are set here.
+CHROME_VERSION="${CHROME_VERSION:-}"
+CHROME_LINUX_AMD64_SHA256="${CHROME_LINUX_AMD64_SHA256:-}"
 GH_VERSION="${GH_VERSION:-2.98.0}"
 GH_LINUX_AMD64_SHA256="${GH_LINUX_AMD64_SHA256:-f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6}"
 NODE_VERSION="${NODE_VERSION:-22.23.2}"
@@ -69,7 +71,7 @@ HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
 AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|linux-desktop|linux-server) ;;
+  claude|codex|aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
@@ -117,6 +119,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "aeon" ] && WANT_BROWSER=0
 # Agent Zero ships its OWN browser inside its container — never the box CDP stack.
 [ "$AGENT_KIND" = "agent-zero" ] && WANT_BROWSER=0
+# Hermes is installed with --skip-browser; it never gets the box CDP stack.
+[ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
 # The desktop-free Linux server has no browser stack either.
@@ -170,6 +174,22 @@ esac
 if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
   AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)" || die "agent-app-versions.json has no valid agent-zero pin"
 fi
+# The pinned Google Chrome build ships as data too (chrome-pin.json), so this
+# installer and the runtime updater (hivra-guest-runtime-update.sh), which moves
+# an existing computer to the pin, read the same file.
+read_chrome_pin() {
+  python3 -I -c 'import json, re, sys
+entry = json.load(open(sys.argv[1]))
+version, digest = entry.get("version"), entry.get("sha256")
+if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(\.[0-9]+){3}-1", version): sys.exit(1)
+if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest): sys.exit(1)
+print(version + " " + digest)' "$SRC_DIR/chrome-pin.json" 2>/dev/null
+}
+if [ "$WANT_BROWSER" = 1 ] && [ -z "$CHROME_VERSION" ] && [ -z "$CHROME_LINUX_AMD64_SHA256" ]; then
+  CHROME_PIN="$(read_chrome_pin)" || die "chrome-pin.json has no valid Chrome pin"
+  CHROME_VERSION="${CHROME_PIN% *}"
+  CHROME_LINUX_AMD64_SHA256="${CHROME_PIN#* }"
+fi
 # Records the app version this installer put on the computer (root-owned; the
 # gateway reports it) and installs the root-only app updater.
 record_agent_app() {
@@ -188,7 +208,10 @@ record_agent_app() {
 # local-browser unit's ExecStart hardcodes /opt/bux/venv/bin/python.
 [ "${AGENT_USER}" = "bux" ] || die "AGENT_USER must be 'bux' (bux installer + keeper hardcode it)"
 [ "${BUX_DIR}" = "/opt/bux" ] || die "BUX_DIR must be '/opt/bux' (bux unit ExecStart paths hardcode it)"
-[[ "$CHROME_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Chrome checksum"
+if [ "$WANT_BROWSER" = 1 ]; then
+  [[ "$CHROME_VERSION" =~ ^[0-9]+(\.[0-9]+){3}-1$ ]] || die "invalid Chrome version"
+  [[ "$CHROME_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Chrome checksum"
+fi
 [[ "$CADDY_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Caddy checksum"
 [[ "$GH_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid GitHub CLI checksum"
 [[ "$NODE_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Node.js checksum"
@@ -229,7 +252,7 @@ if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" = 1 ]; then
   done
 fi
 if [ "$WANT_BROWSER" = 1 ]; then
-  for f in local-browser-keeper.py bux-local-browser.service; do
+  for f in local-browser-keeper.py bux-local-browser.service chrome-pin.json; do
     [ -f "$SRC_DIR/$f" ] || die "missing browser artifact next to script: $f"
   done
 fi
@@ -542,7 +565,7 @@ install -d -o root -g root -m 0755 /var/log/bux
 say "3/7  Google Chrome stable (.deb, NOT snap) — browser-enabled boxes"
 # ===========================================================================
 if [ "$WANT_BROWSER" = 1 ]; then
-  # Chrome stays on CHROME_VERSION until Hivra moves the pin: the .deb's postinst
+  # Chrome stays on CHROME_VERSION (chrome-pin.json) until Hivra moves the pin: the .deb's postinst
   # adds Google's apt repository unless /etc/default/google-chrome already says not
   # to (Google's documented switch), and an apt upgrade then replaces the binary
   # under the running browser, which Chrome reports as "Finish update". A hold on an
@@ -1287,11 +1310,158 @@ ok "Agent Zero service + restart helper installed (container :80 -> 127.0.0.1:${
 fi
 
 # ===========================================================================
+if [ "$AGENT_KIND" = "hermes" ]; then
+say "5e/7  Hermes Agent (official installer + Hermes's own web UI)"
+# ===========================================================================
+# Hermes Agent is installed with ITS OWN installer, unmodified: no fork, no
+# overlay, no patches, no version pin. Hivra only creates the computer, points
+# Hermes at managed inference, and fronts its dashboard (loopback :9119) with
+# the box token gate under /hermes. The owner updates it with `hermes update`
+# (Terminal) or the Update button, which runs exactly that.
+HERMES_PORT=9119
+HERMES_DIR="${AGENT_HOME}/.hermes"
+HERMES_BIN="${AGENT_HOME}/.local/bin/hermes"
+HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
+
+# The first install builds a Python environment and a web UI; ensure swap so a
+# small box does not run out of memory half way through.
+if ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
+  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile; mkswap /swapfile >/dev/null 2>&1 || true; swapon /swapfile 2>/dev/null || true
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  ok "2G swapfile enabled (install headroom for small boxes)"
+fi
+
+# Download the installer to a file over HTTPS only (never piped into a shell,
+# never run as root), then run it as the agent user. Its stable channel is the
+# latest published release; --non-interactive/--skip-browser keep it unattended
+# and leave the browser stack off (this computer has no desktop).
+HERMES_TMP="$(sudo -u "${AGENT_USER}" -H mktemp -d /tmp/hivra-hermes.XXXXXX)" \
+  || die "could not create a Hermes install directory"
+sudo -u "${AGENT_USER}" -H curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 \
+  "${HERMES_INSTALL_URL}" -o "${HERMES_TMP}/install.sh" \
+  || die "could not download the Hermes installer"
+head -c 2 "${HERMES_TMP}/install.sh" | grep -q '^#!' || die "the Hermes installer download is not a script"
+say "running the official Hermes installer for ${AGENT_USER} (stable channel)"
+sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+  bash "${HERMES_TMP}/install.sh" --non-interactive --skip-browser --channel stable \
+  || die "the Hermes installer failed"
+[ -x "${HERMES_BIN}" ] || die "hermes binary not found after install"
+HERMES_VERSION="$(timeout 60 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" "${HERMES_BIN}" --version 2>/dev/null \
+  | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+[[ "$HERMES_VERSION" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] \
+  || die "could not read the installed Hermes version"
+ok "hermes installed (${HERMES_VERSION})"
+record_agent_app hermes "$HERMES_VERSION"
+
+# Managed inference: Venice through the Hivra gateway, as a custom
+# OpenAI-compatible endpoint. Non-secret model settings go through Hermes's
+# own `hermes config set`; the key goes into ~/.hermes/.env (mode 600) over
+# stdin so it never appears in a process list. Hermes only uses OPENAI_API_KEY
+# for an endpoint whose OPENAI_BASE_URL matches model.base_url, so both are set.
+HERMES_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-1-flash}"
+HERMES_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+if [ -n "${HIVRA_MODEL_KEY:-}" ] \
+   && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
+   && printf '%s' "${HERMES_MODEL}" | grep -qE '^[A-Za-z0-9_.:/-]+$' \
+   && printf '%s' "${HERMES_BASEURL}" | grep -qE '^https://[A-Za-z0-9.:/_-]+$'; then
+  hermes_cfg() {
+    sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+      "${HERMES_BIN}" config set "$1" "$2" >/dev/null
+  }
+  hermes_cfg model.provider custom       || die "could not set the Hermes model provider"
+  hermes_cfg model.base_url "${HERMES_BASEURL}" || die "could not set the Hermes model endpoint"
+  hermes_cfg model.default "${HERMES_MODEL}"   || die "could not set the Hermes model"
+  cat > "${HERMES_TMP}/seed-env.py" <<'PY'
+import os, sys
+base = sys.argv[1]
+key = sys.stdin.read().strip()
+path = os.path.join(os.environ["HERMES_HOME"], ".env")
+keep = []
+if os.path.exists(path):
+    with open(path) as fh:
+        keep = [ln for ln in fh.read().splitlines()
+                if not ln.startswith(("OPENAI_API_KEY=", "OPENAI_BASE_URL="))]
+keep += ["OPENAI_BASE_URL=" + base, "OPENAI_API_KEY=" + key]
+tmp = path + ".next"
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as fh:
+    fh.write("\n".join(keep) + "\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+  chown "${AGENT_USER}:${AGENT_USER}" "${HERMES_TMP}/seed-env.py"
+  printf '%s' "${HIVRA_MODEL_KEY}" \
+    | sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+        python3 -I "${HERMES_TMP}/seed-env.py" "${HERMES_BASEURL}" \
+    || die "could not write the Hermes model key"
+  chmod 700 "${HERMES_DIR}"
+  ok "managed-Venice wired into Hermes (model ${HERMES_MODEL})"
+elif [ -n "${HIVRA_MODEL_KEY:-}" ]; then
+  warn "managed-Venice key/model has unexpected characters — skipping model wiring (Hermes starts unconfigured)"
+else
+  warn "no managed-Venice key at launch — Hermes starts unconfigured; set a model in its own settings"
+fi
+rm -rf -- "${HERMES_TMP}"
+
+# Hermes's own web UI on loopback. The box gateway is the only public path.
+cat > /etc/systemd/system/bux-hermes.service <<UNIT
+[Unit]
+Description=Hivra Hermes Agent dashboard (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=${AGENT_USER}
+Group=${AGENT_USER}
+WorkingDirectory=${AGENT_HOME}
+Environment=HOME=${AGENT_HOME}
+Environment=HERMES_HOME=${HERMES_DIR}
+Environment=PATH=${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=${HERMES_BIN} dashboard --host 127.0.0.1 --port ${HERMES_PORT} --no-open
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 /etc/systemd/system/bux-hermes.service
+ok "Hermes dashboard service installed (127.0.0.1:${HERMES_PORT})"
+
+# Scheduled tasks and chat channels (Telegram, Discord, Slack) run inside
+# Hermes's gateway, a separate process from its dashboard. Upstream's advice
+# for a headless VM is a USER service plus linger, installed by Hermes's own
+# `hermes gateway install`, so `hermes update` can restart it without root.
+# We write no gateway unit of our own. Any failure here is a warning: the
+# dashboard must still come up.
+HERMES_GATEWAY_UNIT="hermes-gateway.service"
+HERMES_GATEWAY_NOTE="${AGENT_HOME}/.hivra/hermes-gateway-warning"
+hermes_as_agent() {
+  local uid; uid="$(id -u "${AGENT_USER}")" || return 1
+  timeout -k 10 240 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+    XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+    PATH="${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"
+}
+hermes_gateway_setup() {
+  local uid i; uid="$(id -u "${AGENT_USER}")" || return 1
+  loginctl enable-linger "${AGENT_USER}" || return 1
+  systemctl start "user@${uid}.service" || return 1
+  for i in $(seq 1 30); do [ -S "/run/user/${uid}/bus" ] && break; sleep 1; done
+  [ -S "/run/user/${uid}/bus" ] || return 1
+  # Explicit flags keep it non-interactive; an installed, current unit is left
+  # alone and only enabled.
+  # The stable channel can be older than the flags and reject them, so retry
+  # once with the bare command. stdin is /dev/null so it can never prompt.
+  hermes_as_agent "${HERMES_BIN}" gateway install --start-now --start-on-login </dev/null \
+    || hermes_as_agent "${HERMES_BIN}" gateway install </dev/null || return 1
+  hermes_as_agent "${HERMES_BIN}" gateway start </dev/null || return 1
+}
+fi
+
+# ===========================================================================
 if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && ! is_linux_computer; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1390,6 +1560,20 @@ if [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl enable --now hivra-agent-zero.service >/dev/null 2>&1 \
     || die "Agent Zero service did not start"
   ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-50080}, mounted at /agent-zero)"
+fi
+
+if [ "$AGENT_KIND" = "hermes" ]; then
+  systemctl enable --now bux-hermes.service >/dev/null 2>&1 \
+    || die "Hermes service did not start"
+  ok "bux-hermes enabled + started (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)"
+  if hermes_gateway_setup; then
+    rm -f -- "${HERMES_GATEWAY_NOTE}"
+    ok "Hermes gateway installed as a user service with linger (scheduled tasks and chat channels)"
+  else
+    warn "Hermes gateway could not be installed or started; the dashboard works but scheduled tasks and chat channels will not run until you run: hermes gateway install"
+    printf 'hermes gateway install failed at launch\n' > "${HERMES_GATEWAY_NOTE}" 2>/dev/null \
+      && chown "${AGENT_USER}:${AGENT_USER}" "${HERMES_GATEWAY_NOTE}" 2>/dev/null || true
+  fi
 fi
 
 # --- post-flight ------------------------------------------------------------
@@ -1544,6 +1728,16 @@ elif [ "$AGENT_KIND" = "agent-zero" ]; then
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
   ok "Agent Zero passed runtime-specific readiness"
+elif [ "$AGENT_KIND" = "hermes" ]; then
+  systemctl is-active --quiet bux-hermes.service || die "Hermes service is not active"
+  # The first start loads Hermes's Python environment; allow up to 3 minutes.
+  wait_for_http "http://127.0.0.1:${HERMES_PORT}/" 90 || die "Hermes web UI did not become ready within 3 minutes"
+  ok "Hermes passed runtime-specific readiness"
+  if hermes_as_agent systemctl --user is-active --quiet "${HERMES_GATEWAY_UNIT}"; then
+    ok "Hermes gateway is active (scheduled tasks and chat channels can run)"
+  else
+    warn "Hermes gateway is not active; scheduled tasks and chat channels will not run (dashboard is unaffected)"
+  fi
 fi
 
 # Record the exact installed state after every runtime-specific readiness gate.
@@ -1576,6 +1770,9 @@ if [ "$AGENT_KIND" = "aeon" ]; then
 elif [ "$AGENT_KIND" = "openclaw" ]; then
   LOGIN_HINT="open the Control UI (/openclaw) and configure model providers + channels there"
   STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "hermes" ]; then
+  LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Scheduled tasks and chat channels run in the Hermes gateway (user service). Update with: sudo -iu ${AGENT_USER} hermes update"
+  STATUS_HINT="systemctl status bux-hermes --no-pager; sudo -iu ${AGENT_USER} hermes gateway status; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"
