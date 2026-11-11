@@ -82,7 +82,8 @@ export function commandPanelCapabilities(agent: HivraAgent, surfaces: readonly s
     actions.push({
       id: "update",
       label: `Update ${agentSoftwareDisplayName(subject.app, name)}`,
-      description: "Move it to the version Hivra has tested",
+      // Hermes has no Hivra-tested version: the button runs its own `hermes update`.
+      description: subject.app === "hermes" ? "Runs hermes update for the newest release" : "Move it to the version Hivra has tested",
       defaultShown: true,
       target: { kind: "update" },
     });

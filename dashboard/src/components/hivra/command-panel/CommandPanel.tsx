@@ -65,8 +65,20 @@ function updateLine(view: AgentSoftwareView | null | undefined, name: string): {
   }
 }
 
-/** What the Update tile says under its label. */
-function updateNote(view: AgentSoftwareView | null | undefined, fallback: string): string {
+/**
+ * What the Update tile says under its label. `unpinned` is an agent Hivra pins
+ * no version for (Hermes): it shows the version it has, never "available".
+ */
+function updateNote(view: AgentSoftwareView | null | undefined, fallback: string, unpinned = false): string {
+  if (unpinned) {
+    switch (view?.kind) {
+      case "updating": return "Updating…";
+      case "current": return `Version ${view.installed}`;
+      case "update_done": return "Up to date";
+      case "update_failed": return view.reason === "local_changes" ? "Not updated: it has changes of your own" : "The last update didn't finish";
+      default: return fallback;
+    }
+  }
   switch (view?.kind) {
     case "updating": return "Updating…";
     case "behind": case "ahead_hivra": case "other_version": case "version_unreadable": return "An update is available";
@@ -246,7 +258,7 @@ export function AgentCommandPanel({ agent, caps, onOpenSurface, onOpenManageSect
   const tile = (action: PanelAction): ReactNode => {
     const Icon = action.id === "update" && softwareBusy ? Loader2 : ICONS[action.id];
     const busy = (action.id === "update" && softwareBusy) || (action.id === "restart" && restarting);
-    const note = action.id === "update" ? updateNote(softwareView, action.description) : action.description;
+    const note = action.id === "update" ? updateNote(softwareView, action.description, agent.type === "hermes") : action.description;
     return (
       <button key={action.id} type="button" className={styles.tile} aria-busy={busy || undefined} onClick={() => press(action)} data-action={action.id}>
         <span className={styles.tileHead}>
