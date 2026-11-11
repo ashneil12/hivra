@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { ArrowLeft, PanelLeftClose, Search, X } from "lucide-react";
+import { House, PanelLeftClose, Search, X } from "lucide-react";
 import Link from "@/components/ui/NavigationLink";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAppShell } from "@/components/layout/AppShellContext";
@@ -42,9 +42,10 @@ export interface AgentSidebarProps<T extends string> {
 
 /**
  * The agent view's sidebar: the agent's name and switcher, search, one row per
- * group of surfaces, the chat list (a slot the chat fills), and the way back to
- * all agents with the account at the foot. It replaces the global icon rail on
- * this page.
+ * group of surfaces and the chat list (a slot the chat fills). On a wide screen
+ * it sits beside the global icon rail, which carries Home, computers and the
+ * account. As a phone drawer, where there is no rail, it adds the Hivra mark,
+ * the way back home and the account.
  *
  * It owns no navigation state. The page decides which surface is open; this
  * only draws the rows and reports the choice.
@@ -118,7 +119,7 @@ export function AgentSidebar<T extends string>({
         onKeyDown={onKeyDown}
       >
         <div className={styles.top}>
-          <Link href="/dashboard" aria-label="Hivra home" className={styles.brand}>H.</Link>
+          {drawer ? <Link href="/dashboard" aria-label="Hivra home" className={styles.brand}>H.</Link> : null}
           <div className={styles.switcher}>{switcher}</div>
           <button type="button" className={styles.iconButton} onClick={onClose}
             aria-label={drawer ? "Close navigation" : "Hide sidebar"} title={drawer ? "Close" : "Hide sidebar"}>
@@ -162,16 +163,18 @@ export function AgentSidebar<T extends string>({
           ) : null}
         </div>
 
-        <div className={styles.footer}>
-          <Link href="/dashboard" className={styles.row}>
-            <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" /><span>All agents</span>
-          </Link>
-          <div className={styles.account}>
-            {mounted ? <UserButton /> : <span className={styles.avatarPlaceholder} />}
-            <span className={styles.accountName}>{shell?.userName ?? ""}</span>
-            <ThemeToggle />
+        {drawer ? (
+          <div className={styles.footer}>
+            <Link href="/dashboard" className={styles.row} onClick={afterChoice}>
+              <House size={16} strokeWidth={1.75} aria-hidden="true" /><span>Home</span>
+            </Link>
+            <div className={styles.account}>
+              {mounted ? <UserButton /> : <span className={styles.avatarPlaceholder} />}
+              <span className={styles.accountName}>{shell?.userName ?? ""}</span>
+              <ThemeToggle />
+            </div>
           </div>
-        </div>
+        ) : null}
       </aside>
     </>
   );

@@ -89,10 +89,10 @@ export function ClientLayoutWrapper({
   const appShell = useMemo(() => ({ openSwitcher, userName }), [openSwitcher, userName]);
   const isInstancePage = pathname?.startsWith('/dashboard/instances/');
   const isWorkspacePage = pathname === '/dashboard/workspace' || /^\/dashboard\/agent\/[^/]+$/.test(pathname ?? '');
-  // The agent view draws its own sidebar, so the global rail steps aside there.
-  // The switcher and its ⌘K handler stay (the page opens them through
-  // AppShellContext). A native client's page keeps the global chrome it has today.
-  const hideRail = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '') && !nativeWorkspace;
+  // The agent view draws its own sidebar beside the global rail, so the rail
+  // stays as icons there: Home, computers and settings are always one click
+  // away. A native client's page keeps the global chrome it has today.
+  const compactRail = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '') && !nativeWorkspace;
   // Runtime pages carry identity and back in their own resource bar.
   const showMobileHeader = !desktopShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
   const showPwaBottomNavigation = !desktopShell && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
@@ -155,7 +155,7 @@ export function ClientLayoutWrapper({
             switcherOpen={switcherOpen}
             onSwitcherOpenChange={setSwitcherOpen}
             showOpsLink={showOpsLink}
-            hideRail={hideRail}
+            compact={compactRail}
           />
         </div>}
 

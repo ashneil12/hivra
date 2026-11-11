@@ -495,7 +495,7 @@ describe('ClientLayoutWrapper', () => {
     }
   });
 
-  describe('on the agent view, which draws its own sidebar', () => {
+  describe('on the agent view, which draws its own sidebar beside the rail', () => {
     function OpenSearch() {
       const shell = useAppShell();
       return <button type="button" onClick={shell?.openSwitcher}>Agent page search</button>;
@@ -506,23 +506,26 @@ describe('ClientLayoutWrapper', () => {
       Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
     });
 
-    it('draws no global rail and no spacer, but keeps the bottom navigation', () => {
+    it('keeps the global rail as icons beside it, so Home is one click away, and keeps the bottom navigation', () => {
+      // Without the rail there was no way back from an agent (owner feedback).
       (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123');
       const { container } = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-      expect(screen.queryByRole('complementary', { name: 'Workspace navigation' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument();
-      expect(container.querySelector('[class*="spacer"], .spacer')).not.toBeInTheDocument();
+      const rail = screen.getByRole('complementary', { name: 'Workspace navigation' });
+      expect(rail.className).toMatch(/collapsed/);
+      expect(rail.className).not.toMatch(/expanded/);
+      expect(container.querySelector<HTMLElement>('[class*="spacer"]')?.style.width).toBe('72px');
+      expect(screen.getAllByRole('link', { name: 'Hivra home' })[0]).toHaveAttribute('href');
       expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeInTheDocument();
     });
 
-    it('leaves other pages with their rail', () => {
+    it('leaves other pages with their full rail', () => {
       (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
       const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toBeInTheDocument();
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' }).className).toMatch(/expanded/);
       // Sub-paths of the agent route are not the agent view.
       (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123/other');
       view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-      expect(screen.getByRole('complementary', { name: 'Workspace navigation' })).toBeInTheDocument();
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' }).className).toMatch(/expanded/);
     });
 
     it('still opens the switcher with ⌘K, and for the page through AppShellContext', () => {

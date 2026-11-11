@@ -213,6 +213,7 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
 const TABS: { id: Tab }[] = AGENT_SURFACE_IDS.map((id) => ({ id }));
 const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
   work: <MessageSquareText size={14} />,
+  browser: <Globe size={14} />,
   computer: <Computer size={14} />,
   manage: <Settings2 size={14} />,
 };
@@ -1207,8 +1208,8 @@ export default function AgentPage() {
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
-  // Computer (Desktop, Browser, Files, Terminal) · Manage. Computers keep
+  // Agent pages group their surfaces: Agent (Chat, <Agent> session) · Browser
+  // · Computer (Desktop, Files, Terminal) · Manage. Computers keep
   // their short flat list. Agent and Manage always open their first view (Chat
   // or the dashboard, Settings); Computer reopens the view last used in it,
   // Files the first time (the Desktop entry there is a choice, not a place to land).

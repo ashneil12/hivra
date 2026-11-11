@@ -85,15 +85,26 @@ describe("AgentSidebar", () => {
     expect(screen.queryByRole("button", { name: /new chat/i })).not.toBeInTheDocument();
   });
 
-  it("opens the layout's switcher from Search, links home, and shows the account", () => {
+  it("opens the layout's switcher from Search and leaves home and the account to the rail beside it", () => {
     const openSwitcher = jest.fn();
     render(withShell(<AgentSidebar {...sidebarProps()} />, openSwitcher));
     fireEvent.click(screen.getByRole("button", { name: "Search agents and computers" }));
     expect(openSwitcher).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("link", { name: "All agents" })).toHaveAttribute("href", "/dashboard");
+    expect(screen.queryByRole("link", { name: "Hivra home" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Home" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mock-user-button")).not.toBeInTheDocument();
+  });
+
+  it("as a phone drawer, where there is no rail, links home and shows the account", () => {
+    const onClose = jest.fn();
+    render(withShell(<AgentSidebar {...sidebarProps()} mode="drawer" open onClose={onClose} />, jest.fn()));
     expect(screen.getByRole("link", { name: "Hivra home" })).toHaveAttribute("href", "/dashboard");
+    const home = screen.getByRole("link", { name: "Home" });
+    expect(home).toHaveAttribute("href", "/dashboard");
     expect(screen.getByText("Ash")).toBeInTheDocument();
     expect(screen.getByTestId("mock-user-button")).toBeInTheDocument();
+    fireEvent.click(home);
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("leaves Search out where there is no layout to open", () => {
