@@ -55,7 +55,7 @@ jest.mock("remark-gfm", () => ({
 
 // CodeBlock pulls react-syntax-highlighter (ESM) which jest can't parse — and
 // its rendering isn't what this suite exercises.
-jest.mock("@/components/markdown/CodeBlock", () => ({
+jest.mock("@/components/hivra/chat/CodeBlock", () => ({
   CodeBlock: ({ value }: { value: string }) => <pre>{value}</pre>,
 }));
 
@@ -150,11 +150,13 @@ describe("HivraChat", () => {
     );
 
     expect(await screen.findByText("Atlas here, ready to grow the SaaS.")).toBeInTheDocument();
-    expect(screen.getByText(/Runs the official agent CLI on this computer/)).toBeInTheDocument();
+    // The footer hint and the words on the send button are gone: the composer is one line and icon buttons.
+    expect(screen.queryByText(/Runs the official agent CLI on this computer/)).not.toBeInTheDocument();
     expect(screen.queryByText(/on your own login/)).not.toBeInTheDocument();
     const sendButton = screen.getByRole("button", { name: "Send message" });
     expect(sendButton).toBeInTheDocument();
-    expect(sendButton).toHaveTextContent("Send message");
+    expect(sendButton).not.toHaveTextContent(/send/i);
+
     expect(screen.queryByText(/hidden Hivra first-contact/i)).not.toBeInTheDocument();
     expect(startAgentWelcomeRun).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -231,7 +233,7 @@ describe("HivraChat", () => {
   }
 
   async function sendMessage(text: string) {
-    const textarea = await screen.findByPlaceholderText("Message Atlas…");
+    const textarea = await screen.findByPlaceholderText("Message Atlas");
     fireEvent.change(textarea, { target: { value: text } });
     fireEvent.click(screen.getByLabelText("Send message"));
   }
@@ -419,7 +421,7 @@ describe("HivraChat", () => {
       />,
     );
 
-    const agentAInput = await screen.findByPlaceholderText("Message Agent A…");
+    const agentAInput = await screen.findByPlaceholderText("Message Agent A");
     fireEvent.change(agentAInput, { target: { value: "message for A" } });
     fireEvent.click(screen.getByLabelText("Send message"));
     await waitFor(() => expect(readAgentA).toHaveBeenCalledTimes(1));
@@ -437,7 +439,7 @@ describe("HivraChat", () => {
       />,
     );
 
-    const agentBInput = await screen.findByPlaceholderText("Message Agent B…");
+    const agentBInput = await screen.findByPlaceholderText("Message Agent B");
     await waitFor(() => expect(onAgentAAbort).toHaveBeenCalledTimes(1));
 
     fireEvent.change(agentBInput, { target: { value: "message for B" } });
@@ -472,7 +474,7 @@ describe("HivraChat", () => {
       />,
     );
 
-    const agentAInput = await screen.findByPlaceholderText("Message Agent A…");
+    const agentAInput = await screen.findByPlaceholderText("Message Agent A");
     fireEvent.change(agentAInput, { target: { value: "message for A" } });
     fireEvent.click(screen.getByLabelText("Send message"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -485,7 +487,7 @@ describe("HivraChat", () => {
         agentKind="generic"
       />,
     );
-    await screen.findByPlaceholderText("Message Agent B…");
+    await screen.findByPlaceholderText("Message Agent B");
 
     await act(async () => {
       lateAgentAResponse.resolve({ ok: false, status: 503, body: null } as Response);
@@ -514,7 +516,7 @@ describe("HivraChat", () => {
       />,
     );
 
-    const agentAInput = await screen.findByPlaceholderText("Message Agent A…");
+    const agentAInput = await screen.findByPlaceholderText("Message Agent A");
     fireEvent.change(agentAInput, { target: { value: "message for A" } });
     fireEvent.click(screen.getByLabelText("Send message"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -546,9 +548,8 @@ describe("HivraChat", () => {
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("inspect the files");
 
-    expect(await screen.findByText("Completed")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 action" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+    expect(await screen.findByRole("button", { name: "Used 1 tool" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Used 1 tool" }));
     const toolButton = await screen.findByRole("button", { name: /Bash.*ls -la/ });
     expect(toolButton).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toolButton);
@@ -570,10 +571,10 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" storageKey="activity-stop" agentName="Atlas" agentKind="claude" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("run the command");
-    expect(await screen.findByText("Working")).toBeInTheDocument();
+    expect(await screen.findByText("Running sleep 10")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
-    expect(await screen.findByText("Activity stopped")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+    expect(screen.queryByText("Running sleep 10")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Used 1 tool" }));
     expect(screen.getByText("Stopped")).toBeInTheDocument();
     expect(screen.getByText("Bash")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Bash.*Interrupted/ })).toBeDisabled();
@@ -613,7 +614,7 @@ describe("HivraChat", () => {
     expect(await screen.findByLabelText("Response failed")).toHaveTextContent("Could not complete response");
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
     expect(screen.queryByLabelText("Response stopped")).not.toBeInTheDocument();
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.queryByText("Running ls")).not.toBeInTheDocument();
   });
 
   it("does not infer tool completion when the stream closes without a tool result", async () => {
@@ -622,10 +623,9 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("begin");
-    expect(await screen.findByText("Completion unconfirmed")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Used 1 tool" }));
     expect(screen.getByRole("button", { name: /Bash.*Unconfirmed/ })).toBeDisabled();
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.queryByText("Running ls")).not.toBeInTheDocument();
   });
 
   it("keeps a past tool failure in history while the agent continues responding", async () => {
@@ -635,10 +635,12 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("begin");
-    expect(await screen.findByText("Responding")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 action" })).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByText("Writing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show activity" })).toHaveAttribute("aria-expanded", "false");
     await act(async () => pending.resolve({ done: true }));
-    expect(screen.getByText("Actions include failures")).toBeInTheDocument();
+    // A failure is a muted count on the disclosure, never a headline.
+    expect(screen.getByRole("button", { name: "Used 1 tool · 1 failed" })).toBeInTheDocument();
+    expect(screen.queryByText("Actions include failures")).not.toBeInTheDocument();
   });
 
   it("retains an agent-reported error after a normal stream close", async () => {
@@ -825,15 +827,14 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("inspect");
-    await screen.findByText(/2 actions running/);
-    fireEvent.click(screen.getByRole("button", { name: "2 actions" }));
+    await screen.findByText("Running pwd · 2 running");
+    fireEvent.click(screen.getByRole("button", { name: "Show activity" }));
     expect(screen.getByRole("button", { name: "Bash · ls — Running" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Bash · pwd — Running" })).toBeVisible();
-    expect(screen.getByText(/2 actions running/)).toBeInTheDocument();
     expect(screen.queryByText(/previous action/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Thinking")).not.toBeInTheDocument();
     await act(async () => { pending.resolve({ done: true }); });
-    expect(screen.getByText("Completion unconfirmed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Used 2 tools" })).toBeInTheDocument();
     expect(screen.queryByText("Completed")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Unconfirmed/ })).toHaveLength(2);
   });
@@ -846,8 +847,8 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("run");
-    expect(await screen.findByText("Actions include failures")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 action" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Used 1 tool · 1 failed" }));
+    expect(screen.queryByText("Actions include failures")).not.toBeInTheDocument();
     const tool = screen.getByRole("button", { name: /bad-command — Failed/ });
     tool.focus();
     expect(tool).toHaveFocus();
@@ -900,16 +901,16 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("begin");
-    expect(await screen.findByText("Waiting for response")).toBeVisible();
+    expect(await screen.findByText("Thinking")).toBeVisible();
     expect(screen.queryByLabelText("Thinking")).not.toBeInTheDocument();
     await act(async () => first.resolve(eventChunk(partialText)));
-    expect(screen.getByText("Responding")).toBeVisible();
+    expect(screen.getByText("Writing")).toBeVisible();
     await act(async () => last.resolve({ done: true }));
-    expect(screen.queryByText("Responding")).not.toBeInTheDocument();
+    expect(screen.queryByText("Writing")).not.toBeInTheDocument();
     expect(screen.getByText("Partial answer")).toBeVisible();
   });
 
-  it("keeps disclosure targets mounted and hidden until opened below the response", async () => {
+  it("keeps disclosure targets mounted and hidden until opened above the response", async () => {
     const read = jest.fn().mockResolvedValueOnce(eventChunk(partialText, pendingToolEvent, {
       type: "user", message: { content: [{ type: "tool_result", tool_use_id: "action", content: "file.txt" }] },
     })).mockResolvedValueOnce({ done: true });
@@ -917,11 +918,11 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" />);
     await screen.findByText("Atlas here, ready to grow the SaaS.");
     await sendMessage("inspect");
-    await screen.findByText("Completed");
-    const history = screen.getByRole("button", { name: "1 action" });
+    const history = await screen.findByRole("button", { name: "Used 1 tool" });
     const target = document.getElementById(history.getAttribute("aria-controls")!);
     expect(target).not.toBeVisible();
-    expect(screen.getByText("Partial answer").compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The work trail is one quiet line above the reply, not a footer under it.
+    expect(screen.getByText("Partial answer").compareDocumentPosition(history) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     history.focus();
     expect(history).toHaveFocus();
     fireEvent.click(history);
@@ -1353,7 +1354,9 @@ describe("HivraChat", () => {
     expect(await screen.findByText("B is working")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(signalA.aborted).toBe(false);
-    expect(screen.getByRole("button", { name: /1 other working/i })).toBeInTheDocument();
+    // The orbs in the chat list show which chats are working, in place of an "others working" pill.
+    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    expect(screen.getAllByRole("img", { name: "Working" })).toHaveLength(2);
 
     // A's output arrives while B is open: it must land in A, not in B.
     await act(async () => {
@@ -1368,7 +1371,7 @@ describe("HivraChat", () => {
     expect(signalB.aborted).toBe(true);
     expect(signalA.aborted).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show chats" }));
+    expect(screen.queryAllByRole("img", { name: "Working" })).toHaveLength(0);
     fireEvent.click(screen.getByText("task A", { selector: "span" }));
     expect(await screen.findByText("A finished the job")).toBeInTheDocument();
     expect(screen.queryByText("B is working")).not.toBeInTheDocument();
@@ -1533,7 +1536,7 @@ describe("HivraChat", () => {
       "agent first message generation failed",
       expect.objectContaining({ reason: "refused", status: 502 }),
     ));
-    expect(await screen.findByText("…or just type below.")).toBeInTheDocument();
+    expect(await screen.findByText("Hi, I'm Atlas.")).toBeInTheDocument();
     expect(window.localStorage.getItem("hivra:first-welcome:welcomerefused")).toBeNull();
     expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
   });
@@ -1639,7 +1642,7 @@ describe("HivraChat", () => {
     await waitFor(() => expect(window.localStorage.getItem("hivra:first-welcome:welcomeran")).toBe("1"));
     await act(async () => { await Promise.resolve(); });
     expect(startAgentWelcomeRun).not.toHaveBeenCalled();
-    expect(screen.getByText("…or just type below.")).toBeInTheDocument();
+    expect(screen.getByText("Hi, I'm Atlas.")).toBeInTheDocument();
   });
 
   it("shares the welcome between the agent page and the workspace view of the same computer", async () => {
@@ -1653,7 +1656,7 @@ describe("HivraChat", () => {
     render(<HivraChat boxUrl="https://box.example.com" storageKey={`x-${agentId}`} token="box-token" agentName="Atlas" agentKind="claude" />);
     await waitFor(() => expect(listBoxChatRuns).toHaveBeenCalledTimes(2));
     await act(async () => { await Promise.resolve(); });
-    expect(await screen.findByText("…or just type below.")).toBeInTheDocument();
+    expect(await screen.findByText("Hi, I'm Atlas.")).toBeInTheDocument();
     expect(startAgentWelcomeRun).toHaveBeenCalledTimes(1);
   });
 

@@ -23,8 +23,8 @@ describe("Hivra chat motion accessibility", () => {
   const css = postcss.parse(fs.readFileSync(path.join(__dirname, "..", "globals.css"), "utf8"));
 
   it.each([
-    ".hivra-chat-message", ".hivra-chat-activity-wrap", ".hivra-chat-tool-history-list",
-    ".hivra-chat-activity-dot.is-running", ".hivra-chat-spinner", ".hivra-chat-message .animate-bounce",
+    ".hivra-chat-message", ".hivra-chat-trail", ".hivra-chat-trail-rows",
+    ".hivra-chat-spinner", ".hivra-chat-message .animate-bounce",
   ])("disables animation for %s inside the reduced-motion query", (selector) => {
     let disabled = false;
     css.walkAtRules("media", (media) => {
