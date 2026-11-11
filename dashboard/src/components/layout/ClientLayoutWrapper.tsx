@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import { Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
@@ -15,6 +15,7 @@ import { NativeWorkspaceProvider, useNativeWorkspace, useNativeWorkspaceEnabled 
 import { accountCode } from '@/lib/account-code';
 import { WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
 import { useDesktopShell } from './useDesktopShell';
+import { AppShellContext } from './AppShellContext';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -24,6 +25,7 @@ interface ClientLayoutWrapperProps {
   showOpsLink?: boolean;
 }
 
+const AGENT_VIEW_ROUTE_PATTERN = /^\/dashboard\/agent\/[^/]+\/?$/;
 const FULLSCREEN_TUI_ROUTE_PATTERN = /^\/dashboard\/instances\/[^/]+\/tui(?:\/|$)/;
 
 function NativeAccountHeader({ userName }: { userName: string }) {
@@ -84,8 +86,13 @@ export function ClientLayoutWrapper({
   }, [owner]);
   const attentionCount = attention?.owner === owner ? attention.count : 0;
   const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+  const appShell = useMemo(() => ({ openSwitcher, userName }), [openSwitcher, userName]);
   const isInstancePage = pathname?.startsWith('/dashboard/instances/');
   const isWorkspacePage = pathname === '/dashboard/workspace' || /^\/dashboard\/agent\/[^/]+$/.test(pathname ?? '');
+  // The agent view draws its own sidebar, so the global rail steps aside there.
+  // The switcher and its ⌘K handler stay (the page opens them through
+  // AppShellContext). A native client's page keeps the global chrome it has today.
+  const hideRail = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '') && !nativeWorkspace;
   // Runtime pages carry identity and back in their own resource bar.
   const showMobileHeader = !desktopShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
   const showPwaBottomNavigation = !desktopShell && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
@@ -101,6 +108,7 @@ export function ClientLayoutWrapper({
         the sidebar does with the same key. */}
     <WorkspaceOwnerContext.Provider value={owner}>
     <WorkspaceModalLayerProvider onActiveChange={setWorkspaceModalOpen}>
+    <AppShellContext.Provider value={appShell}>
       <div data-testid="dashboard-viewport" data-keyboard-open={keyboardOpen} className={`flex flex-col md:flex-row w-full overflow-hidden relative ${styles.viewport}`}>
       {/* ServiceWorkerRegistration now mounts in the root layout so the offline
           shell registers on public routes too — see src/app/layout.tsx. */}
@@ -147,6 +155,7 @@ export function ClientLayoutWrapper({
             switcherOpen={switcherOpen}
             onSwitcherOpenChange={setSwitcherOpen}
             showOpsLink={showOpsLink}
+            hideRail={hideRail}
           />
         </div>}
 
@@ -186,6 +195,7 @@ export function ClientLayoutWrapper({
         )}
       </div>
       </div>
+    </AppShellContext.Provider>
     </WorkspaceModalLayerProvider>
     </WorkspaceOwnerContext.Provider>
     </NativeWorkspaceProvider>

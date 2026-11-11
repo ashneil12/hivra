@@ -1,0 +1,666 @@
+/* The chat's transcript, trail, composer and list, after MonoCode's transcript
+   and composer rules (MIT; see THIRD_PARTY_LICENSES/monocode.txt), written in
+   the Hivra Glass tokens. Light and dark both come from the --hg-* tokens;
+   the only raw colours are the syntax palette on .code. */
+
+/* ── Turns ─────────────────────────────────────────────────────────────── */
+.turn { margin-bottom: 20px; min-width: 0; }
+.turnUser { display: flex; justify-content: flex-end; }
+.userBubble {
+  max-width: min(100%, 36rem);
+  min-width: 0;
+  padding: 9px 14px;
+  border-radius: 14px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The agent's chip: its mark and name, once, at the top of its turn. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-bottom: 10px;
+  padding: 2px 12px 2px 6px;
+  border-radius: 999px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text-2);
+  font-size: 13px;
+  line-height: 20px;
+}
+.chipMark {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--hg-fill-3);
+  color: var(--hg-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+.chipName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+
+/* Calm outcome lines under a reply. */
+.turnState { margin-top: 6px; color: var(--hg-text-3); font-size: 12px; line-height: 1.5; }
+
+/* Copy and feedback: icon-only, shown on hover or focus of the turn, always
+   on touch. They keep their space so showing them shifts nothing. */
+.actions { display: flex; align-items: center; gap: 2px; min-height: 28px; margin: 4px 0 0 -6px; }
+.ghostButton {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.ghostButton:hover { background: var(--hg-fill-hover); color: var(--hg-text-2); }
+.ghostOn { color: var(--hg-text); }
+.ghostOk { color: var(--hg-ok); }
+@media (hover: hover) and (pointer: fine) {
+  .actions { opacity: 0; transition: opacity 120ms ease; }
+  .turnAssistant:hover .actions,
+  .turnAssistant:focus-within .actions { opacity: 1; }
+}
+@media (pointer: coarse) {
+  .ghostButton { width: 44px; height: 44px; }
+  .actions { margin-left: -12px; }
+}
+
+.softButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--hg-stroke);
+  border-radius: 8px;
+  background: var(--hg-fill-1);
+  color: var(--hg-text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease, border-color var(--hg-fast) ease;
+}
+.softButton:hover { background: var(--hg-fill-hover); border-color: var(--hg-stroke-strong); color: var(--hg-text); }
+@media (pointer: coarse) { .softButton { min-height: 44px; min-width: 44px; justify-content: center; } }
+
+/* ── Work trail ────────────────────────────────────────────────────────── */
+.trail { margin: 0 0 6px; color: var(--hg-text-3); font-size: 12.5px; line-height: 20px; }
+.trailLine { display: flex; align-items: center; gap: 2px; min-height: 24px; }
+.trailLive { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.trailOrb { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; }
+.trailStep { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trailToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hg-text-3);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.trail > .trailToggle { margin-left: -6px; }
+.trailToggle:hover { color: var(--hg-text-2); background: var(--hg-fill-1); }
+.trailFailed { color: var(--hg-text-3); }
+.trailChevron { flex: none; transition: transform var(--hg-fast) ease; }
+.trailChevronOpen { transform: rotate(90deg); }
+@media (pointer: coarse) { .trailToggle { min-height: 44px; min-width: 44px; } }
+
+.trailRows { display: flex; flex-direction: column; gap: 1px; margin: 4px 0 8px; }
+.toolRow { min-width: 0; border-radius: 8px; }
+.toolRowButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hg-text-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--hg-fast) ease;
+}
+.toolRowButton:disabled { cursor: default; }
+.toolRowButton:not(:disabled):hover { background: var(--hg-fill-1); }
+@media (pointer: coarse) { .toolRowButton { min-height: 44px; } }
+.toolIcon { flex: none; color: var(--hg-text-3); }
+.toolName { flex: none; font-weight: 500; color: var(--hg-text-2); }
+.toolDetail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hg-text-3);
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+}
+.toolSpacer { flex: 1; }
+.toolStatus { display: inline-flex; flex: none; align-items: center; }
+.toolStatusText { color: var(--hg-text-3); font-size: 11.5px; }
+.toolRunning { animation: trailPulse 1.4s ease-in-out infinite; }
+.toolDone { color: var(--hg-text-3); }
+.toolFailed { color: var(--hg-bad); }
+.toolOutput {
+  max-height: 220px;
+  margin: 0 8px 6px 29px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--hg-fill-1);
+  color: var(--hg-text-2);
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.toolOutputError { color: var(--hg-bad); }
+@keyframes trailPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+
+/* ── Shimmer: the live step ────────────────────────────────────────────── */
+.shimmer {
+  position: relative;
+  display: inline-block;
+  background-image:
+    linear-gradient(90deg, transparent calc(50% - var(--spread)), var(--hg-text) calc(50%), transparent calc(50% + var(--spread))),
+    linear-gradient(var(--hg-text-3), var(--hg-text-3));
+  background-size: 250% 100%, auto;
+  background-repeat: no-repeat, padding-box;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmerText var(--shimmer-duration, 2s) linear infinite;
+}
+@keyframes shimmerText {
+  from { background-position: 100% center; }
+  to { background-position: 0% center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer { animation: none; background: none; color: var(--hg-text-2); }
+  .toolRunning { animation: none; }
+}
+
+/* ── Markdown ──────────────────────────────────────────────────────────── */
+.markdown {
+  min-width: 0;
+  color: color-mix(in srgb, var(--hg-text) 88%, transparent);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 0 0 12px; }
+.markdown > p:last-child { margin-bottom: 0; }
+.markdown strong, .markdown b { color: var(--hg-text); font-weight: 600; }
+.markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 20px 0 6px;
+  color: var(--hg-text);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+}
+.markdown h1 { font-size: 1.28em; }
+.markdown h2 { font-size: 1.16em; }
+.markdown h3 { font-size: 1.06em; }
+.markdown :is(h4, h5, h6) { font-size: 1em; }
+.markdown ul { margin: 0 0 12px; padding-left: 1.45em; list-style: disc; }
+.markdown ol { margin: 0 0 12px; padding-left: 1.6em; list-style: decimal; }
+.markdown li { margin: 6px 0; padding-left: 2px; }
+.markdown li::marker { color: var(--hg-text-3); }
+.markdown li > :is(ul, ol) { margin: 6px 0 0; }
+.markdown li > p { margin-bottom: 6px; }
+.markdown blockquote {
+  margin: 0 0 12px;
+  padding-left: 14px;
+  border-left: 2px solid var(--hg-stroke-strong);
+  color: var(--hg-text-2);
+}
+.markdown hr { margin: 16px 0; border: 0; border-top: 1px solid var(--hg-stroke); }
+.markdown img { max-width: 100%; border-radius: 8px; }
+.markdown .link {
+  color: var(--hg-focus);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.markdown .link:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+.inlineCode {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.markdown .tableWrap {
+  margin: 0 0 12px;
+  overflow-x: auto;
+  border: 1px solid var(--hg-stroke);
+  border-radius: 10px;
+  background: var(--hg-fill-1);
+}
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+/* The reply container breaks long words; table cells scroll instead. */
+.table :is(th, td) {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hg-stroke-subtle);
+  text-align: left;
+  vertical-align: top;
+  min-width: 8ch;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.table th { color: var(--hg-text-2); font-weight: 600; }
+.table tr:last-child :is(th, td) { border-bottom: 0; }
+
+/* Each word fades in as it is added; finished replies carry no spans. */
+.wordFading [data-word-fade]:not([data-word-settled]) {
+  animation: wordFadeIn var(--word-fade-ms, 320ms) var(--word-fade-ease, ease-out) both;
+}
+@keyframes wordFadeIn { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .wordFading [data-word-fade] { animation: none; }
+}
+
+/* ── Code block ────────────────────────────────────────────────────────── */
+.code {
+  --hg-syn-keyword: hsl(330 52% 42%);
+  --hg-syn-string: hsl(152 48% 28%);
+  --hg-syn-number: hsl(24 70% 38%);
+  --hg-syn-function: hsl(214 62% 42%);
+  --hg-syn-type: hsl(188 56% 30%);
+  min-width: 0;
+  max-width: 100%;
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid var(--hg-stroke-strong);
+  border-radius: 10px;
+  background: var(--hg-fill-2);
+}
+:global(.dark) .code {
+  --hg-syn-keyword: hsl(330 62% 74%);
+  --hg-syn-string: hsl(152 42% 68%);
+  --hg-syn-number: hsl(30 72% 70%);
+  --hg-syn-function: hsl(212 78% 74%);
+  --hg-syn-type: hsl(186 48% 68%);
+}
+.codeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 4px 6px 4px 10px;
+  color: var(--hg-text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.codeLang { display: inline-flex; align-items: center; gap: 7px; min-width: 0; color: var(--hg-text-2); }
+.codeCopy {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.codeCopy:hover { background: var(--hg-fill-3); color: var(--hg-text); }
+.codeCopied { color: var(--hg-ok); }
+@media (pointer: coarse) {
+  .codeHeader { min-height: 44px; }
+  .codeCopy { width: 44px; height: 44px; }
+}
+.codeBody {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-top: 1px solid var(--hg-stroke);
+  background: transparent;
+}
+
+/* ── Empty chat ────────────────────────────────────────────────────────── */
+.empty { display: flex; min-height: 100%; align-items: center; justify-content: center; padding: 0 16px; }
+.emptyInner { width: 100%; max-width: 440px; padding-bottom: 6vh; text-align: center; }
+.emptyMark {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  background: var(--hg-fill-2);
+  color: var(--hg-text);
+  font-size: 18px;
+  line-height: 1;
+}
+.emptyTitle { color: var(--hg-text); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.emptyIntro { max-width: 400px; margin: 6px auto 18px; color: var(--hg-text-3); font-size: 13.5px; line-height: 1.55; }
+.starters { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.starter {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hg-text-2);
+  font-size: 13.5px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.starter:hover:not(:disabled) { background: var(--hg-fill-hover); color: var(--hg-text); }
+.starter:disabled { opacity: 0.5; cursor: default; }
+.starterArrow { flex: none; margin-top: 3px; color: var(--hg-text-3); }
+@media (pointer: coarse) { .starter { min-height: 44px; } }
+
+/* ── Composer ──────────────────────────────────────────────────────────── */
+/* Below 768px the bottom bar owns the home-indicator inset. */
+.dock {
+  position: relative;
+  padding: 8px max(16px, env(safe-area-inset-left, 0px)) 12px max(16px, env(safe-area-inset-right, 0px));
+}
+@media (min-width: 768px) {
+  .dock { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+}
+.composer { width: 100%; max-width: 720px; margin: 0 auto; }
+
+.modelRow { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; min-height: 18px; }
+.modelRule { flex: 1; height: 1px; background: var(--hg-stroke-subtle); }
+.modelName {
+  min-width: 0;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hg-text-3);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.box {
+  border: 1px solid var(--hg-stroke-strong);
+  border-radius: 12px;
+  background: var(--hg-glass-strong);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+  backdrop-filter: blur(24px) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  transition: border-color var(--hg-fast) ease, box-shadow var(--hg-fast) ease;
+}
+.box:focus-within {
+  border-color: color-mix(in srgb, var(--hg-fg) 28%, transparent);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+}
+.field { position: relative; }
+.textarea {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 48px 11px 14px;
+  border: 0;
+  border-radius: inherit;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--hg-text);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 22px;
+}
+.textarea:focus-visible { outline: none; }
+.textarea::placeholder { color: var(--hg-text-3); }
+@media (min-width: 768px) { .textarea { font-size: 14px; } }
+
+.send {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--hg-accent);
+  color: var(--hg-on-accent);
+  cursor: pointer;
+  transition: background-color var(--hg-fast) ease, opacity var(--hg-fast) ease;
+}
+.send:hover:not(:disabled) { opacity: 0.88; }
+.send:disabled {
+  background: color-mix(in srgb, var(--hg-fg) 22%, transparent);
+  color: color-mix(in srgb, var(--hg-bg) 75%, transparent);
+  cursor: default;
+}
+.sendStop { background: var(--hg-accent); }
+@media (pointer: coarse) {
+  .send { right: 4px; bottom: 4px; width: 36px; height: 36px; }
+  /* The 44px touch target is bigger than the 36px button it wraps. */
+  .send::before { content: ""; position: absolute; inset: -4px; }
+  .textarea { padding-right: 52px; }
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+.chip2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 4px 3px 9px;
+  border-radius: 999px;
+  background: var(--hg-fill-2);
+  color: var(--hg-text-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+.chipIcon { flex: none; }
+.chipLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A 40px target inside a 24px chip: the margins keep the chip its size. */
+.chipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin: -11px -8px -11px -10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+}
+.chipRemove:hover { color: var(--hg-text); }
+
+.tools { display: flex; align-items: center; gap: 2px; margin: 6px 0 0 2px; min-height: 28px; }
+.toolButton {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.toolButton:hover:not(:disabled) { background: var(--hg-fill-hover); color: var(--hg-text); }
+.toolButton:disabled { opacity: 0.4; cursor: default; }
+.toolOn { background: var(--hg-fill-2); color: var(--hg-text); }
+@media (pointer: coarse) { .toolButton { width: 44px; height: 44px; } }
+/* Hidden below md until the box confirms it reads the reasoning flag. */
+@media (max-width: 767px) { .thinkButton { display: none; } }
+.attachError { margin: 6px 2px 0; color: var(--hg-bad); font-size: 12px; }
+
+.retryRow { max-width: 720px; margin: 0 auto 8px; }
+
+/* ── Return to latest ──────────────────────────────────────────────────── */
+.jumpWrap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.jump {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--hg-stroke-strong);
+  border-radius: 50%;
+  background: var(--hg-glass-strong);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  color: var(--hg-text);
+  box-shadow: var(--hg-shadow-md);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.jump:hover { background: var(--hg-fill-3); }
+@media (pointer: coarse) { .jump { width: 44px; height: 44px; } }
+
+/* ── Chat list (sidebar slot and inline fallback) ──────────────────────── */
+.list { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.listHead { display: flex; align-items: center; gap: 4px; }
+.rows { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.newRow {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hg-text-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--hg-fast) ease, background-color var(--hg-fast) ease;
+}
+.newRow:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.rowIcon { flex: none; margin: 0 2px; color: var(--hg-text-3); }
+.row { display: flex; align-items: center; min-width: 0; border-radius: 7px; transition: background-color var(--hg-fast) ease; }
+.row:hover { background: var(--hg-fill-hover); }
+.rowActive, .rowActive:hover { background: var(--hg-fill-2); }
+.rowMain {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hg-text-2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rowActive .rowMain { color: var(--hg-text); }
+.rowLead { display: inline-grid; place-items: center; flex: 0 0 20px; width: 20px; height: 20px; }
+.rowDot { width: 4px; height: 4px; border-radius: 50%; background: var(--hg-text-3); opacity: 0; }
+.rowActive .rowDot { opacity: 0.7; }
+.rowTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowDelete {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hg-text-3);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--hg-fast) ease, color var(--hg-fast) ease;
+}
+.row:hover .rowDelete, .rowDelete:focus-visible { opacity: 1; }
+.rowDelete:hover { color: var(--hg-text); }
+.rowConfirm {
+  flex: none;
+  min-height: 24px;
+  margin-right: 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hg-bad);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.closeButton {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+}
+.closeButton:hover { color: var(--hg-text); background: var(--hg-fill-hover); }
+@media (hover: none) { .rowDelete { opacity: 1; } }
+@media (pointer: coarse) {
+  .newRow, .rowMain { min-height: 44px; }
+  .rowDelete { width: 40px; height: 40px; margin-right: 0; }
+  .rowConfirm { min-height: 40px; }
+}
+
+/* Touch: chat rows and their delete are full 44px targets. */
+@media (pointer: coarse) { .newRow, .rowMain { min-height: 44px; } .rowDelete { width: 44px; height: 44px; margin-right: 0; } }

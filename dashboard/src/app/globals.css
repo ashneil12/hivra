@@ -404,85 +404,17 @@ select,
 .animate-spin-slow { animation: spin-slow 2s linear infinite; }
 .animate-kaomoji { animation: kaomoji-wiggle 3s ease-in-out infinite; }
 
-/* Shared agent-chat activity: quiet motion keeps the eye on the current action. */
+/* Shared agent-chat motion: a turn and its work trail arrive with a quiet
+   fade. The turn's look is in components/hivra/chat/chat.module.css. */
 .hivra-chat-message,
-.hivra-chat-activity-wrap,
-.hivra-chat-tool-history-list {
+.hivra-chat-trail,
+.hivra-chat-trail-rows {
   animation: hivra-chat-activity-in 160ms ease-out both;
 }
-.hivra-chat-activity-wrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-.hivra-chat-activity {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 20px;
-  margin-bottom: 8px;
-  padding: 2px 0;
-  color: var(--text-secondary);
-  font-family: var(--font-sans);
-  font-size: 12px;
-  letter-spacing: 0;
-}
-.hivra-chat-activity-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--hg-text-2); }
-.hivra-chat-activity-dot.is-running { animation: hivra-chat-activity-pulse 1.4s ease-in-out infinite; }
-.hivra-chat-activity-dot.is-error { background: var(--hg-bad); }
-.hivra-chat-activity-dot.is-muted { background: var(--text-muted); }
-.hivra-chat-activity-dot.is-done { background: var(--hg-text-3); }
-.hivra-chat-activity-label { color: var(--ink-black); font-weight: 550; }
-.hivra-chat-activity-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hivra-chat-spinner { animation: spin 1s linear infinite; }
-.hivra-chat-latest {
-  position: absolute;
-  bottom: calc(100% + 12px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  padding: 8px 12px;
-  border: 1px solid var(--hg-stroke);
-  border-radius: 999px;
-  background: var(--hg-glass-strong);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  color: var(--ink-black);
-  box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
-  font-size: 12px;
-  cursor: pointer;
-}
-.hivra-chat-latest:hover { border-color: var(--hg-stroke-strong); }
-.hivra-chat-latest:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
-.hivra-chat-composer:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
-.hivra-chat-tool-toggle:focus-visible, .hivra-chat-tool-history > button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
-.hivra-chat-tool-history { margin-top: 8px; border-top: 1px solid var(--etched-border); }
-.hivra-chat-tool-history > button {
-  display: flex; align-items: center; gap: 5px; border: 0; background: transparent;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 10.5px;
-  padding: 5px 0;
-  transition: color 160ms ease, transform 160ms ease;
-}
-.hivra-chat-tool-history > button:hover,
-.hivra-chat-tool-history > button:focus-visible { color: var(--ink-black); }
-.hivra-chat-tool-history-list { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
-.hivra-chat-turn-state { color: var(--text-muted); font-family: var(--font-sans); font-size: 12px; letter-spacing: 0; }
-@media (max-width: 767px) {
-  .hivra-chat-activity { font-size: 12px; }
-  .hivra-chat-tool-history > button { font-size: 11px; }
-}
-@media (pointer: coarse) {
-  .hivra-chat-tool-history > button { min-height: 40px; }
-}
 @keyframes hivra-chat-activity-in {
   from { opacity: 0; transform: translate3d(0, 3px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-@keyframes hivra-chat-activity-pulse {
-  0%, 100% { opacity: 0.45; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1); }
 }
 
 /* Wallet compute-boost card — entrance + ambient "alive" loops. */
@@ -522,9 +454,8 @@ select,
   .boost-card, .boost-glow, .boost-iconwrap, .boost-zap, .boost-shine { animation: none; }
   .boost-card { opacity: 1; transform: none; }
   .boost-shine { display: none; }
-  .hivra-chat-message, .hivra-chat-activity-wrap, .hivra-chat-tool-history-list, .hivra-chat-activity-dot.is-running { animation: none; }
-  .hivra-chat-message, .hivra-chat-activity-wrap, .hivra-chat-tool-history-list { transform: none; opacity: 1; }
-  .hivra-chat-tool-history > button { transition: none; }
+  .hivra-chat-message, .hivra-chat-trail, .hivra-chat-trail-rows { animation: none; }
+  .hivra-chat-message, .hivra-chat-trail, .hivra-chat-trail-rows { transform: none; opacity: 1; }
   .hivra-chat-spinner, .hivra-chat-message .animate-bounce { animation: none; }
 }
 

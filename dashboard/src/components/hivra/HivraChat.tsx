@@ -1,73 +1,44 @@
 "use client";
 
-// Hivra agent chat — HermesOS-styled streaming chat with a sessions sidebar
-// (history). Talks to a deployed runtime (a box running the official `claude`
-// CLI) over its NDJSON stream-json, directly browser->box. Sessions persist per
-// box in localStorage; each session resumes its own Claude session_id.
+// Hivra agent chat: a streaming chat with a list of conversations. Talks to a
+// deployed runtime (a box running the official `claude` CLI) over its NDJSON
+// stream-json, directly browser->box. Sessions persist per box in
+// localStorage; each session resumes its own Claude session_id.
+//
+// This file is the chat's state and wiring: sessions, streaming, runs, storage,
+// retry and the welcome. How the chat looks lives in ./chat (the turn, the
+// work trail, the composer, the chat list), after MonoCode's transcript.
 
-import { Children, isValidElement, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { matchesMedia, useMediaQuery } from "@/lib/client/media-query";
 import posthog from "posthog-js";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
-import { Send, Check, X, Plus, MessageSquare, Trash2, ChevronRight, ChevronDown, Square, RotateCcw, Copy, Paperclip, PanelLeft, Brain, Cpu, ThumbsUp, ThumbsDown } from "lucide-react";
+import { PanelLeft, Plus, RotateCcw } from "lucide-react";
 
 import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
 import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
-import { getAdapter, type AgentKind, type ChatSink, type ToolStatus, type TurnOutcome } from "@/lib/hivra/agent-adapters";
+import { getAdapter, type AgentKind, type ChatSink, type TurnOutcome } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
-import { CodeBlock } from "@/components/markdown/CodeBlock";
-import { AGENT_MARKDOWN_COMPONENTS } from "@/components/markdown/agent-markdown-image";
-import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { MemoryUsageBanner } from "@/components/memory/MemoryUsageBanner";
+import { useAgentChatListSlot } from "@/components/hivra/agent-shell/AgentChatListSlot";
+import { AgentTurn } from "./chat/AgentTurn";
+import { ChatComposer } from "./chat/ChatComposer";
+import { ChatEmpty } from "./chat/ChatEmpty";
+import { ChatList } from "./chat/ChatList";
+import { JumpToLatest } from "./chat/JumpToLatest";
+import type { ChatMessage, Session, ToolChip } from "./chat/types";
+import chatStyles from "./chat/chat.module.css";
 import styles from "./HivraChat.module.css";
 
-// Fenced code (any <pre>, including one-line blocks with no language) → the
-// shared syntax-highlighted CodeBlock, which scrolls inside its own box.
-// Inline code keeps a lightweight mono chip that wraps anywhere.
-const CHAT_REMARK_PLUGINS = [remarkGfm];
+export { CHAT_MARKDOWN_COMPONENTS } from "./chat/AgentMarkdown";
+
 
 // Session saves: wait this long after the last change while a reply streams,
 // but never longer than the max wait, so a long stream still saves as it goes.
 const CHAT_SAVE_IDLE_MS = 1000;
 const CHAT_SAVE_MAX_WAIT_MS = 2500;
-
-/** Markdown parse is the expensive part of a message row — memoize on the
- *  rendered text so a poll tick or keystroke doesn't re-parse history. */
-const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
-  return (
-    <ReactMarkdown remarkPlugins={CHAT_REMARK_PLUGINS} components={CHAT_MARKDOWN_COMPONENTS}>
-      {text}
-    </ReactMarkdown>
-  );
-});
-
-export const CHAT_MARKDOWN_COMPONENTS = {
- ...AGENT_MARKDOWN_COMPONENTS,
- pre(props: { children?: React.ReactNode }) {
- const child = Children.toArray(props.children)[0];
- if (isValidElement<{ className?: string; children?: React.ReactNode }>(child)) {
- const text = String(child.props.children ?? "").replace(/\n$/, "");
- const lang = /language-([\w-]+)/.exec(child.props.className || "")?.[1];
- return <CodeBlock language={lang || "text"} value={text} />;
- }
- return <CodeBlock language="text" value={String(props.children ?? "")} />;
- },
- code(props: { children?: React.ReactNode }) {
- return <code style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.9em", background: "var(--hg-fill-2)", borderRadius: 5, padding: "1px 5px", overflowWrap: "anywhere" }}>{props.children}</code>;
- },
- table({ children }: { children?: React.ReactNode }) {
- return <div className="chat-md-table-wrapper"><table className="chat-md-table">{children}</table></div>;
- },
- // Replies open links in a new tab so tapping one never navigates the
- // dashboard (or the installed PWA) away and aborts the running turn.
- a({ href, children }: { href?: string; children?: React.ReactNode }) {
- return <a href={href} target="_blank" rel="noopener noreferrer" className="chat-md-link" style={{ overflowWrap: "anywhere" }}>{children}</a>;
- },
-};
 
 const COARSE_POINTER_QUERY = "(hover: none) and (pointer: coarse)";
 const NARROW_QUERY = "(max-width: 767px)";
@@ -143,123 +114,10 @@ async function prepareImageAttachment(file: File): Promise<{ blob: Blob; name: s
  }
 }
 
-// Hover copy-the-whole-message affordance for assistant replies.
-function MessageCopy({ text }: { text: string }) {
- const [copied, setCopied] = useState(false);
- // The "Copied" flash clears on its own timer, and that timer is cleared on unmount.
- useEffect(() => {
- if (!copied) return;
- const timer = window.setTimeout(() => setCopied(false), 1600);
- return () => window.clearTimeout(timer);
- }, [copied]);
- return (
- <button
- type="button"
- aria-label="Copy message"
- onClick={() => {
- void copyTextToClipboard(text).then((ok) => {
- if (ok) setCopied(true);
- });
- }}
- className={`mono ${styles.msgAction}`}
- style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--hg-stroke)", borderRadius: 7, background: "transparent", color: copied ? "var(--hg-ok)" : "var(--text-muted)", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", padding: "3px 8px", cursor: "pointer", marginTop: 6 }}
- >
- {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? "Copied" : "Copy"}
- </button>
- );
-}
-
-// Thumbs up / down on an assistant reply. Subtle, mirrors the MessageCopy chip
-// styling; the selected thumb stays highlighted. Firing the analytics event is
-// the caller's job (so it can attach instance/message context).
-function MessageFeedback({ rating, onRate }: { rating?: "up" | "down"; onRate: (r: "up" | "down") => void }) {
- const base = {
- display: "inline-flex",
- alignItems: "center",
- justifyContent: "center",
- border: "1px solid var(--hg-stroke)",
- borderRadius: 7,
- background: "transparent",
- cursor: "pointer",
- padding: "3px 7px",
- marginTop: 6,
- } as const;
- return (
- <span className={styles.msgFeedback} style={{ display: "inline-flex", marginLeft: 8 }}>
- <button
- type="button"
- aria-label="Good response"
- aria-pressed={rating === "up"}
- onClick={() => onRate("up")}
- className={styles.msgAction}
- style={{ ...base, color: rating === "up" ? "var(--hg-ok)" : "var(--text-muted)" }}
- >
- <ThumbsUp size={11} />
- </button>
- <button
- type="button"
- aria-label="Bad response"
- aria-pressed={rating === "down"}
- onClick={() => onRate("down")}
- className={styles.msgAction}
- style={{ ...base, color: rating === "down" ? "var(--hg-bad)" : "var(--text-muted)" }}
- >
- <ThumbsDown size={11} />
- </button>
- </span>
- );
-}
-
-interface ToolChip {
- id?: string;
- name: string;
- detail: string;
- status: ToolStatus | "unknown";
- result?: string;
-}
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  text: string;
-  tools: ToolChip[];
-  streaming?: boolean;
-  /** "disconnected": this page lost the reply's stream, but the agent keeps
-   * working on its computer and the reply fills in once it is reachable.
-   * "unknown": the run finished while no page was watching and the computer
-   * no longer keeps its log, so only the text that arrived here is shown. */
-  outcome?: "complete" | "error" | "stopped" | "disconnected" | "unknown";
-  /** What the agent's own final event said about the turn (Claude's result,
-   * Codex's turn.completed / turn.failed). It decides `outcome` once the run
-   * ends; an agent that says nothing is judged by its exit. */
-  reported?: TurnOutcome;
-  /** Warnings the agent raised during the turn, shown under the reply. They
-   * never decide how the turn ended. */
-  warnings?: string[];
-  /** The box run producing this reply: the key for Stop and for re-attaching. */
-  runId?: string;
-  /** The computer confirmed it started the run (its `_run` line arrived). */
-  started?: boolean;
-  /** The first-contact welcome's reply, whose prompt never shows: a failed
-   * one offers Retry, one that never reached the computer starts again. */
-  welcome?: boolean;
-  /** Why a reply that has not started yet is waiting (the computer is moving
-   * its agent CLI to a new version); cleared once the computer takes it. */
-  pending?: string;
-}
-
-interface Session {
- id: string;
- title: string;
- claudeSessionId: string | null;
- messages: ChatMessage[];
- createdAt: number;
- /** Box-backed session whose messages have been fetched from the VM. */
- loaded?: boolean;
-}
-
 export interface HivraChatProps {
  boxUrl: string;
  agentName?: string;
+ /** Kept for callers; the chat is monochrome now and no longer tints itself. */
  accent?: string;
  /** Which CLI the box runs — selects the stream parser. Default "claude". */
  agentKind?: AgentKind;
@@ -320,10 +178,6 @@ function replyStarted(m: ChatMessage): boolean {
  return Boolean(m.started || m.text.trim() || m.tools.length || m.warnings?.length);
 }
 
-// A reply as it reads: the agent's text, then the warnings it raised.
-function replyMarkdown(m: ChatMessage): string {
- return [m.text, ...(m.warnings || []).map((w) => "⚠ " + w)].filter(Boolean).join("\n\n");
-}
 
 // How a run ended when its agent reported nothing of its own (a generic CLI,
 // or one that died before its final event): exit 0 is success; any other code,
@@ -512,188 +366,7 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
-function toolIcon(name: string): string {
- if (name === "Bash") return "⚙";
- if (/browser|cdp|harness|navigate|screenshot/i.test(name)) return "🌐";
- if (/write|edit|notebook/i.test(name)) return "✎";
- if (/read|grep|glob|search/i.test(name)) return "🔎";
- return "🔧";
-}
-// A single tool card. Collapsed by default — header shows ⚙ name + command +
-// status; click to expand the output (when there is one).
-function ToolCard({ tool, streaming = false, interrupted = false }: { tool: ToolChip; streaming?: boolean; interrupted?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const hasResult = Boolean(tool.result);
-  const disclosureId = `tool-result-${useId().replace(/:/g, "")}`;
-  const unconfirmed = tool.status === "unknown" || (!streaming && tool.status === "running");
-  const statusLabel = unconfirmed ? (interrupted ? "Interrupted" : "Unconfirmed") : tool.status === "running" ? "Running" : tool.status === "error" ? "Failed" : "Completed";
-  return (
-    <div style={{ background: "var(--hg-fill-1)", borderRadius: 10, overflow: "hidden", fontFamily: "var(--font-sans)", fontSize: 12 }}>
-      <button
-        type="button"
-        className={`hivra-chat-tool-toggle ${styles.msgAction}`}
-        aria-label={`${tool.name}${tool.detail ? ` · ${tool.detail}` : ""} — ${statusLabel}`}
-        disabled={!hasResult}
-        aria-expanded={hasResult ? open : undefined}
-        aria-controls={hasResult ? disclosureId : undefined}
-        onClick={() => hasResult && setOpen((o) => !o)}
-        style={{ display: "flex", width: "100%", alignItems: "center", gap: 7, minWidth: 0, padding: "5px 9px", border: 0, background: "transparent", color: "inherit", textAlign: "left", cursor: hasResult ? "pointer" : "default" }}
-      >
- {hasResult ? (
- open ? <ChevronDown size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} /> : <ChevronRight size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
- ) : (
- <span style={{ width: 12, flexShrink: 0 }} />
- )}
- <span aria-hidden>{toolIcon(tool.name)}</span>
- <b style={{ color: "var(--ink-black)" }}>{tool.name}</b>
- {tool.detail ? (
- <span style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{tool.detail}</span>
- ) : (
- <span style={{ flex: 1 }} />
- )}
-        {unconfirmed ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 11, letterSpacing: "0.02em", flexShrink: 0 }}>{statusLabel}</span>
-        ) : tool.status === "running" ? (
-          <ThinkingOrb size={20} state="working" label="Running" />
- ) : tool.status === "error" ? (
- <X size={13} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
- ) : (
- <Check size={13} style={{ color: "var(--hg-text-3)", flexShrink: 0 }} />
- )}
-      </button>
-      {hasResult ? (
-        <div id={disclosureId} hidden={!open} style={{ padding: "0 9px 7px 28px", color: tool.status === "error" ? "var(--hg-bad)" : "var(--text-secondary)", fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 220, overflow: "auto" }}>
-          {tool.result}
-        </div>
- ) : null}
- </div>
- );
-}
-
-function AssistantActivity({ tools, streaming, outcome, text }: { tools: ToolChip[]; streaming?: boolean; outcome?: ChatMessage["outcome"]; text: string }) {
-  if (!streaming && tools.length === 0) return null;
-  const runningTools = streaming ? tools.filter((tool) => tool.status === "running") : [];
-  const running = runningTools[runningTools.length - 1];
-  const failed = tools.some((tool) => tool.status === "error");
-  const unconfirmed = tools.some((tool) => tool.status === "running" || tool.status === "unknown");
-  const summary = streaming ? (running ? "Working" : text ? "Responding" : "Waiting for response")
-    : outcome === "disconnected" ? "Still working"
-    : outcome === "unknown" ? "Finished while you were away"
-    : outcome === "stopped" ? "Activity stopped"
-    : outcome === "error" ? "Response failed"
-    : unconfirmed ? "Completion unconfirmed" : failed ? "Actions include failures" : "Completed";
-  const detail = running ? `${runningTools.length > 1 ? `${runningTools.length} actions running · ` : ""}${running.name}${running.detail ? ` · ${running.detail}` : ""}` : tools.length ? `${tools.length} action${tools.length === 1 ? "" : "s"}` : "";
-  const dot = streaming ? "is-running" : outcome === "error" || failed ? "is-error" : unconfirmed || outcome === "stopped" || outcome === "disconnected" || outcome === "unknown" ? "is-muted" : "is-done";
-  return (
-    <div className="hivra-chat-activity" role="status" aria-live="polite" aria-atomic="true">
-      <span className={`hivra-chat-activity-dot ${dot}`} aria-hidden />
-      <span className="hivra-chat-activity-label">{summary}</span>
-      <span className="hivra-chat-activity-detail">{detail}</span>
-    </div>
-  );
-}
-
-function ToolHistory({ message }: { message: ChatMessage }) {
- const [open, setOpen] = useState(false);
- const id = useId();
- if (!message.tools.length) return null;
- return (
- <div className="hivra-chat-tool-history">
- <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)}>
- <ChevronRight size={12} aria-hidden style={{ transform: open ? "rotate(90deg)" : undefined }} />
- {message.tools.length} action{message.tools.length === 1 ? "" : "s"}
- </button>
- <div id={id} hidden={!open}>
- <div className="hivra-chat-tool-history-list">
- {message.tools.map((tool, i) => <ToolCard key={tool.id || i} tool={tool} streaming={message.streaming} interrupted={message.outcome === "stopped"} />)}
- </div>
- </div>
- </div>
- );
-}
-
-/** One message in the transcript. Memoized on its message object: a streamed token
- *  replaces only the streaming reply, so every other row skips re-rendering. */
-interface ChatMessageRowProps {
- m: ChatMessage;
- index: number;
- accent: string;
- agentName: string;
- historySessionId: string | null;
- rating?: "up" | "down";
- onRate: (index: number, rating: "up" | "down") => void;
- onOpenHistory: (sessionId: string) => void;
-}
-
-const ChatMessageRow = memo(function ChatMessageRow({ m, index: i, accent, agentName, historySessionId, rating, onRate, onOpenHistory }: ChatMessageRowProps) {
- const isUser = m.role === "user";
- return (
- <div className="hivra-chat-message" style={{ display: "flex", gap: 12, marginBottom: 22, flexDirection: isUser ? "row-reverse" : "row" }}>
- {/* The user bubble is already tinted, so its avatar is dropped below md. */}
- <div
- className={isUser ? "hidden md:flex" : "flex"}
- style={{
- width: 26,
- height: 26,
- flexShrink: 0,
- borderRadius: "50%",
- border: "1px solid var(--hg-stroke)",
- background: isUser ? "var(--hg-fill-2)" : accent,
- color: isUser ? "var(--ink-black)" : "#fff",
- alignItems: "center",
- justifyContent: "center",
- fontSize: 11,
- fontWeight: 700,
- fontFamily: "var(--font-sans)",
- }}
- >
- {isUser ? "YOU" : (agentName.trim().charAt(0).toUpperCase() || "A")}
- </div>
- <div style={{ flex: isUser ? "0 1 auto" : 1, minWidth: 0, maxWidth: isUser ? "80%" : undefined }}>
- {m.role === "assistant" ? <AssistantActivity tools={m.tools} streaming={m.streaming} outcome={m.outcome} text={m.text} /> : null}
- <div className={`hivra-md ${styles.markdown}`} style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink-black)", wordBreak: "break-word", ...(isUser ? { background: "var(--hg-fill-2)", borderRadius: 14, padding: "9px 14px" } : null) }}>
- {m.role === "assistant" ? (
- <AssistantMarkdown text={replyMarkdown(m)} />
- ) : (
- <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
- )}
- </div>
- {m.role === "assistant" ? <ToolHistory message={m} /> : null}
- {m.role === "assistant" && m.streaming && m.pending ? (
- <div className="hivra-chat-turn-state" role="status" aria-label="Waiting for the agent update">{m.pending}</div>
- ) : null}
- {m.role === "assistant" && !m.streaming && m.outcome === "unknown" ? (
- <div className="hivra-chat-turn-state" role="status" aria-label="Finished while you were away">
- {historySessionId ? "Finished while you were away — open the history to see the full reply" : "Finished while you were away"}
- </div>
- ) : null}
- {m.role === "assistant" && !m.streaming && m.outcome === "unknown" && historySessionId ? (
- <button
- type="button"
- onClick={() => onOpenHistory(historySessionId)}
- className={`mono ${styles.msgAction}`}
- style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, border: "1px solid var(--hg-stroke)", borderRadius: 7, background: "transparent", color: "var(--text-muted)", fontSize: 11, fontWeight: 600, letterSpacing: "0.03em", padding: "3px 8px", cursor: "pointer", marginTop: 6, marginRight: 8 }}
- >
- <MessageSquare size={11} /> Open the history
- </button>
- ) : null}
- {m.role === "assistant" && !m.streaming && (m.outcome === "stopped" || m.outcome === "error" || m.outcome === "disconnected") ? (
- <div className="hivra-chat-turn-state" role="status" aria-label={m.outcome === "stopped" ? "Response stopped" : m.outcome === "disconnected" ? "Reconnecting to the agent" : "Response failed"}>
- {m.outcome === "stopped" ? "Stopped" : m.outcome === "disconnected" ? "Connection lost. Your agent keeps working; this reply fills in when it reconnects." : "Could not complete response"}
- </div>
- ) : null}
- {m.role === "assistant" && m.text && !m.streaming ? (
- <span style={{ display: "inline-flex", alignItems: "center" }}>
- <MessageCopy text={m.text} />
- <MessageFeedback rating={rating} onRate={(r) => onRate(i, r)} />
- </span>
- ) : null}
- </div>
- </div>
- );
-});
-
-export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--gold-leaf)", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
+export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel }: HivraChatProps) {
  const skey = storageKey || boxUrl;
  // "Think" — extended-reasoning toggle, mirroring paioclaw's reasoning on/off.
  // Persisted per box so the preference survives reloads.
@@ -779,7 +452,6 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
  const [uploading, setUploading] = useState(false);
  const [attachError, setAttachError] = useState<string | null>(null);
- const fileInputRef = useRef<HTMLInputElement>(null);
  const composerRef = useRef<HTMLTextAreaElement>(null);
  const composerDockRef = useRef<HTMLDivElement>(null);
  // Touch keyboards have no Shift+Enter, so there Return inserts a newline and
@@ -787,15 +459,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const coarsePointer = useMediaQuery(COARSE_POINTER_QUERY);
  const narrow = useMediaQuery(NARROW_QUERY);
  const composerCap = narrow ? 120 : 160;
- useEffect(() => {
-   const textarea = composerRef.current;
-   if (!textarea) return;
-   textarea.style.height = "auto";
-   textarea.style.height = `${Math.max(44, Math.min(textarea.scrollHeight, composerCap))}px`;
-   textarea.style.overflowY = textarea.scrollHeight > composerCap ? "auto" : "hidden";
- }, [input, composerCap]);
- // Sessions rail visibility. Below md it is an overlay drawer, closed by default.
- const [showRail, setShowRail] = useState(false);
+ // Where the chat list lives. The agent view's sidebar provides an element for
+ // it (the list is portalled there); anywhere else the chat keeps its own
+ // inline list, which is an overlay drawer below md and closed by default.
+ const listSlot = useAgentChatListSlot();
+ const slotElement = listSlot?.element ?? null;
+ const onChatOpened = listSlot?.onChatOpened;
+ const [railRequested, setShowRail] = useState(false);
+ const showRail = railRequested && !slotElement;
  const drawerOpen = showRail && narrow;
  const railToggleRef = useRef<HTMLButtonElement>(null);
  const drawerRef = useRef<HTMLDivElement>(null);
@@ -1001,13 +672,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  (s: Session) => {
  setActiveId(s.id);
  if (matchesMedia(NARROW_QUERY)) setShowRail(false);
+ onChatOpened?.();
  if (s.claudeSessionId && !s.loaded && s.messages.length === 0) {
  void readBoxSession(boxUrl, s.claudeSessionId, token).then((msgs) => {
  setSessions((prev) => prev.map((x) => (x.id === s.id && !x.loaded ? { ...x, messages: boxHistoryToChat(msgs), loaded: true } : x)));
  });
  }
  },
- [boxUrl, token],
+ [boxUrl, onChatOpened, token],
  );
 
  // Smart autoscroll: follow the stream only while the user is at the bottom.
@@ -1782,7 +1454,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setActiveId(s.id);
  setInput("");
  if (matchesMedia(NARROW_QUERY)) setShowRail(false);
- }, []);
+ onChatOpened?.();
+ }, [onChatOpened]);
 
  const deleteChat = useCallback(
  (id: string) => {
@@ -1851,9 +1524,24 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  const goalDef = goal ? getGoal(goal) : null;
  const starters = (goalDef ?? getGoal(undefined)).starters;
 
+ const list = (extra?: { onClose?: () => void }) => (
+ <ChatList
+ sessions={sessions}
+ activeId={activeId}
+ busyIds={busyIds}
+ armedId={confirmDeleteId}
+ onSelect={selectSession}
+ onNewChat={newChat}
+ onDelete={requestDeleteChat}
+ onClose={extra?.onClose}
+ />
+ );
+
  return (
- <div className="hivra-chat-root" style={{ display: "flex", height: "100%", minHeight: 0, background: "transparent", position: "relative" }}>
- {/* Sessions sidebar: an overlay drawer below md, an inline column from md up. */}
+ <div className={`hivra-chat-root ${styles.root}`}>
+ {/* The chat list lives in the agent sidebar when it provides a place for it. */}
+ {slotElement ? createPortal(list(), slotElement) : null}
+ {/* Anywhere else: an overlay drawer below md, an inline column from md up. */}
  {showRail ? (
  <>
  <button
@@ -1861,7 +1549,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-hidden="true"
  tabIndex={-1}
  onClick={() => setShowRail(false)}
- className="absolute inset-0 z-10 bg-black/40 md:hidden"
+ className={styles.railBackdrop}
  />
  <div
  ref={drawerRef}
@@ -1870,90 +1558,18 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-modal={drawerOpen ? true : undefined}
  aria-label={drawerOpen ? "Chats" : undefined}
  onKeyDown={drawerOpen ? trapDrawerFocus : undefined}
- className="absolute inset-y-0 left-0 z-20 flex w-[min(85vw,300px)] shrink-0 flex-col border-r border-[var(--hg-stroke-subtle)] bg-[var(--hg-glass-strong)] backdrop-blur-xl md:static md:z-auto md:w-[232px]"
+ className={styles.rail}
  >
- <div className="mx-3 mt-3 flex gap-2">
- <button
- type="button"
- onClick={newChat}
- className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-[10px] border border-[var(--hg-stroke)] text-[13px] font-semibold text-[var(--ink-black)] transition-colors hover:border-[var(--hg-stroke-strong)] hover:bg-[var(--hg-fill-hover)] md:min-h-[40px]"
- >
- <Plus size={15} /> New chat
- </button>
- <button
- type="button"
- aria-label="Close chats"
- onClick={() => setShowRail(false)}
- className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[10px] border border-[var(--hg-stroke)] text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:hidden"
- >
- <X size={15} />
- </button>
- </div>
- <div className="flex-1 overflow-y-auto p-2">
- {sessions.map((s) => {
- const isActive = s.id === activeId;
- const armed = confirmDeleteId === s.id;
- const running = busyIds.has(s.id);
- return (
- <div
- key={s.id}
- className={[
- "group mb-0.5 flex items-center rounded-[7px]",
- isActive
- ? "bg-[var(--hg-fill-2)]"
- : "hover:bg-[var(--hg-fill-hover)]",
- ].join(" ")}
- >
- <button
- type="button"
- aria-current={isActive ? "true" : undefined}
- onClick={() => selectSession(s)}
- className="flex min-h-[44px] min-w-0 flex-1 cursor-pointer items-center gap-2 px-2.5 py-2 text-left md:min-h-0"
- >
- {running ? (
- <ThinkingOrb size={20} state="working" label="Working" className="shrink-0" />
- ) : (
- <MessageSquare size={13} className="shrink-0 text-[var(--text-muted)]" />
- )}
- <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ink-black)]">
- {s.title || "New chat"}
- </span>
- </button>
- {sessions.length > 1 ? (
- armed ? (
- <button
- type="button"
- aria-label="Confirm delete chat"
- onClick={() => requestDeleteChat(s.id)}
- className="mono mr-1.5 inline-flex min-h-[24px] shrink-0 items-center justify-center rounded-[7px] bg-[var(--hg-bad)] px-2 text-[11px] font-semibold tracking-[0.03em] text-white pointer-coarse:min-h-[40px]"
- >
- Delete?
- </button>
- ) : (
- <button
- type="button"
- aria-label={running ? "Stop and delete chat" : "Delete chat"}
- onClick={() => requestDeleteChat(s.id)}
- className="mr-2.5 inline-flex shrink-0 items-center justify-center p-0.5 text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:min-h-[40px] pointer-coarse:min-w-[40px] [@media(hover:none)]:opacity-100"
- >
- <Trash2 size={12} />
- </button>
- )
- ) : null}
- </div>
- );
- })}
- </div>
+ {list({ onClose: narrow ? () => setShowRail(false) : undefined })}
  </div>
  </>
  ) : null}
 
  {/* Chat column */}
- <div inert={drawerOpen} style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
+ <div inert={drawerOpen} className={styles.column}>
  {instanceId ? <MemoryUsageBanner instanceId={instanceId} /> : null}
- {/* Below md an in-flow row under the banner; from md up the floating pair.
- Pixel sizes: the 14px root makes rem spacing 3.5px a step. */}
- <div className="flex h-[48px] shrink-0 items-center gap-1 border-b border-[var(--hg-stroke-subtle)] px-2 md:absolute md:left-2 md:top-2 md:z-[5] md:h-auto md:gap-1.5 md:border-0 md:px-0">
+ {!slotElement ? (
+ <div className={styles.listBar}>
  <button
  ref={railToggleRef}
  type="button"
@@ -1962,87 +1578,69 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  aria-controls={showRail ? drawerId : undefined}
  title={showRail ? "Hide chats" : "Show chats"}
  onClick={() => setShowRail((v) => !v)}
- className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:w-auto md:p-1.5"
+ className={styles.listBarButton}
  >
- <PanelLeft size={13} />
+ <PanelLeft size={15} aria-hidden />
  </button>
  {!showRail ? (
- <button
- type="button"
- aria-label="New chat"
- title="New chat — runs alongside the others"
- onClick={newChat}
- className="inline-flex h-[44px] items-center justify-center gap-1.5 rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl px-3 text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)] md:h-auto md:gap-0 md:p-1.5"
- >
- <Plus size={13} />
- <span className="text-[11px] font-semibold tracking-[0.03em] md:hidden">New chat</span>
- </button>
- ) : null}
- {!showRail && busyIds.size > (busy ? 1 : 0) ? (
- <button
- type="button"
- onClick={() => setShowRail(true)}
- className="mono inline-flex h-[44px] items-center gap-1.5 rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl px-2 text-[11px] tracking-[0.03em] text-[var(--text-muted)] hover:text-[var(--ink-black)] md:h-auto md:py-1"
- >
- <ThinkingOrb size={20} state="working" /> {busyIds.size - (busy ? 1 : 0)} other{busyIds.size - (busy ? 1 : 0) === 1 ? "" : "s"} working
+ <button type="button" aria-label="New chat" title="New chat" onClick={newChat} className={styles.listBarButton}>
+ <Plus size={15} aria-hidden />
  </button>
  ) : null}
  </div>
- <div ref={scrollRef} role="region" aria-label="Conversation" tabIndex={0} data-empty={messages.length === 0 ? "true" : undefined} onScroll={onScrollPane} style={{ flex: 1, overflowY: "auto", padding: "28px 0" }}>
- <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 20px" }}>
+ ) : null}
+ <div ref={scrollRef} role="region" aria-label="Conversation" tabIndex={0} data-empty={messages.length === 0 ? "true" : undefined} onScroll={onScrollPane} className={styles.scroll}>
+ <div className={styles.transcript}>
  {messages.length === 0 ? (
- <div className="flex min-h-full items-center justify-center px-4">
- <div style={{ textAlign: "center", maxWidth: 470, paddingBottom: "6vh" }}>
- <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 52, height: 52, borderRadius: "50%", background: accent, color: accent === "var(--gold-leaf)" ? "var(--hg-on-accent)" : "#fff", fontSize: 22, fontFamily: "var(--font-sans)", marginBottom: 16 }}>
- {emoji || (agentName.trim().charAt(0).toUpperCase() || "A")}
- </div>
- <div style={{ fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--ink-black)", marginBottom: 6 }}>
- Hi, I&apos;m {agentName}.
- </div>
- <div style={{ fontSize: 13.5, color: "var(--text-secondary)", maxWidth: 440, margin: "0 auto 22px", lineHeight: 1.6 }}>
- {goalDef ? `I'm set up to help you ${goalDef.label.toLowerCase()}. Want to start with one of these?` : "Tell me what you need — or start with one of these."}
- </div>
- <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 470, margin: "0 auto" }}>
- {starters.map((s, i) => (
- <button
- key={i}
- type="button"
+ <ChatEmpty
+ agentName={agentName}
+ emoji={emoji}
+ intro={goalDef ? `I'm set up to help you ${goalDef.label.toLowerCase()}. Want to start with one of these?` : "Tell me what you need, or start with one of these."}
+ starters={starters}
  disabled={busy}
- onClick={() => void send(s)}
- className="flex items-center gap-2.5 rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl px-3.5 py-3 text-left text-[13.5px] leading-[1.45] text-[var(--ink-black)] transition-colors hover:border-[var(--hg-stroke-strong)] hover:bg-[var(--hg-fill-hover)] disabled:opacity-50"
- >
- <span style={{ color: "var(--hg-text-3)", flexShrink: 0 }} aria-hidden>→</span> {s}
- </button>
- ))}
- </div>
- <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 16 }}>…or just type below.</div>
- </div>
- </div>
+ onPick={(starter) => void send(starter)}
+ />
  ) : null}
  {messages.map((m, i) => (
- <ChatMessageRow key={i} m={m} index={i} accent={accent} agentName={agentName} historySessionId={historySessionId}
+ <AgentTurn key={i} m={m} index={i} agentName={agentName} emoji={emoji} historySessionId={historySessionId}
  rating={feedback[activeId + ":" + i]} onRate={rateMessage} onOpenHistory={showBoxHistory} />
  ))}
  </div>
  </div>
 
- <div ref={composerDockRef} className={`relative bg-transparent ${styles.composerDock}`}>
+ <ChatComposer
+ agentName={agentName}
+ input={input}
+ onInputChange={setInput}
+ onSend={(text) => void send(text)}
+ onStop={stop}
+ busy={busy}
+ coarsePointer={coarsePointer}
+ composerCap={composerCap}
+ modelLabel={shownModel}
+ think={think}
+ onToggleThink={toggleThink}
+ canUpload={Boolean(token)}
+ attachments={attachments}
+ onRemoveAttachment={(path) => setAttachments((prev) => prev.filter((x) => x.path !== path))}
+ uploading={uploading}
+ attachError={attachError}
+ onUploadFile={(file) => void uploadAttachment(file)}
+ textareaRef={composerRef}
+ dockRef={composerDockRef}
+ >
  {showLatest && messages.length > 0 ? (
- <button
- type="button"
- onClick={() => {
+ <JumpToLatest
+ onJump={() => {
  scrollDown(true);
  // This button unmounts on activation; keep focus in the chat, on the
  // conversation the user asked to see.
  scrollRef.current?.focus({ preventScroll: true });
  }}
- className="hivra-chat-latest"
- >
- <ChevronDown size={14} aria-hidden /> Return to latest
- </button>
+ />
  ) : null}
  {(lastFailed || welcomeFailed) && !busy ? (
- <div className="mx-auto mb-2 w-full max-w-[760px]">
+ <div className={chatStyles.retryRow}>
  <button
  type="button"
  onClick={() => {
@@ -2054,138 +1652,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", accent = "var(--g
  setLastFailed(activeId, null);
  void send(t);
  }}
- className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-[7px] border border-[var(--hg-stroke)] bg-[var(--hg-fill-1)] px-3 py-1.5 text-[12.5px] text-[var(--ink-black)] transition-colors hover:border-[var(--hg-stroke-strong)] md:min-h-[34px] md:min-w-0"
+ className={chatStyles.softButton}
  >
- <RotateCcw size={13} /> Retry
+ <RotateCcw size={13} aria-hidden /> Retry
  </button>
  </div>
  ) : null}
- <form
- onSubmit={(e) => {
- e.preventDefault();
- void send(input);
- }}
- className="mx-auto w-full max-w-[760px] rounded-[20px] border border-[var(--hg-stroke)] bg-[var(--hg-glass-strong)] backdrop-blur-xl backdrop-saturate-[1.3] shadow-[var(--hg-glass-edge),var(--hg-shadow-md)] transition-colors focus-within:border-[var(--hg-stroke-strong)]"
- >
- <textarea
- ref={composerRef}
- aria-label={`Message ${agentName}`}
- value={input}
- onChange={(e) => setInput(e.target.value)}
- onKeyDown={(e) => {
- if (coarsePointer) return;
- if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
- e.preventDefault();
- void send(input);
- }
- }}
- onPaste={(e) => {
- if (!token) return;
- const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith("image/"));
- const f = item?.getAsFile();
- if (f) { e.preventDefault(); void uploadAttachment(f); }
- }}
- rows={1}
- placeholder={`Message ${agentName}…`}
- enterKeyHint={coarsePointer ? "enter" : "send"}
- autoCapitalize="sentences"
- className="hivra-chat-composer block w-full resize-none bg-transparent px-3.5 pt-3 text-[16px] text-[var(--ink-black)] outline-none placeholder:text-[var(--text-muted)] md:text-[14px]"
- style={{ minHeight: 44, maxHeight: composerCap, fontFamily: "inherit" }}
- />
- <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2">
- {token ? (
- <>
- <input
- ref={fileInputRef}
- type="file"
- accept="image/*,.txt,.md,.csv,.json,.log"
- style={{ display: "none" }}
- onChange={(e) => {
- const f = e.target.files?.[0];
- if (f) void uploadAttachment(f);
- e.target.value = "";
- }}
- />
- <button
- type="button"
- aria-label="Attach a file"
- title="Attach an image or text file (the agent reads it on the box)"
- disabled={busy || uploading || attachments.length >= 5}
- onClick={() => fileInputRef.current?.click()}
- className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center px-2.5 text-[var(--text-muted)] transition-colors rounded-full hover:bg-[var(--hg-fill-hover)] hover:text-[var(--ink-black)] disabled:opacity-40 md:min-h-[34px] md:min-w-0"
- >
- {uploading ? <ThinkingOrb size={20} state="working" label="Uploading" /> : <Paperclip size={15} />}
- </button>
- </>
- ) : null}
- <span
- className="mono hidden min-w-0 max-w-full items-center gap-1.5 px-1 text-[11px] uppercase tracking-[0.06em] text-[var(--text-muted)] md:inline-flex"
- title="The model this agent is currently running"
- >
- <Cpu size={11} className="shrink-0" /> <span className="truncate">{shownModel}</span>
- </span>
- {/* Hidden below md until the box confirms it reads the reasoning flag. */}
- <button
- type="button"
- role="switch"
- aria-checked={think}
- aria-label="Toggle extended reasoning"
- title="Think — let the agent reason for longer before answering"
- onClick={toggleThink}
- className={[
- "hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-[0.03em] transition-colors md:inline-flex",
- think
- ? "border-transparent bg-[var(--hg-accent)] text-[var(--hg-on-accent)]"
- : "border-[var(--hg-stroke)] text-[var(--text-muted)] hover:text-[var(--ink-black)]",
- ].join(" ")}
- >
- <Brain size={11} /> Think{think ? " · On" : ""}
- </button>
- {busy ? (
- <button
- type="button"
- onClick={stop}
- aria-label="Stop response"
- title="Stop the agent"
- className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full border border-[var(--hg-stroke-strong)] px-3 text-[12.5px] font-semibold text-[var(--ink-black)] transition-colors hover:bg-[var(--hg-fill-hover)] md:min-h-[34px] md:min-w-0"
- >
- <Square size={13} fill="currentColor" /> Stop response
- </button>
- ) : (
- <button
- type="submit"
- disabled={!input.trim()}
- aria-label="Send message"
- className="ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full bg-[var(--hg-accent)] px-3 text-[12.5px] font-semibold text-[var(--hg-on-accent)] transition-opacity disabled:opacity-40 md:min-h-[34px] md:min-w-0"
- >
- <Send size={14} />
- <span className="hidden md:inline">Send message</span>
- </button>
- )}
- </div>
- </form>
- {attachError ? (
- <p role="alert" className="mono mx-auto mt-2 w-full max-w-[760px] text-[12px] text-[var(--hg-bad)]">
- {attachError}
- </p>
- ) : null}
- {attachments.length > 0 ? (
- <div className="mx-auto mt-2 flex w-full max-w-[760px] flex-wrap gap-1.5">
- {attachments.map((a) => (
- <span key={a.path} className="mono inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-[var(--hg-stroke)] bg-[var(--hg-fill-1)] py-1 pl-2.5 pr-2.5 text-[11px] text-[var(--text-secondary)]">
- <Paperclip size={10} className="shrink-0" />
- <span className="min-w-0 truncate">{a.name}</span>
- <button type="button" aria-label={`Remove ${a.name}`} onClick={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))} className="-my-[11px] -mr-[8px] inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center text-[var(--text-muted)] transition-colors hover:text-[var(--ink-black)]">
- <X size={11} />
- </button>
- </span>
- ))}
- </div>
- ) : null}
- <p className="mx-auto mt-2 hidden w-full max-w-[760px] text-center text-[11px] text-[var(--text-muted)] md:block">
- Runs the official agent CLI on this computer{coarsePointer ? "" : " · Enter to send, Shift+Enter for newline"}
- </p>
- </div>
+ </ChatComposer>
  </div>
  </div>
  );
