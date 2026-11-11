@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  EXAMPLE ONLY. Nothing installs this for you. Copy it to
+  ~/Library/LaunchAgents/cloud.hivra.bridge.plist yourself, edit the paths, and
+  run `launchctl bootstrap gui/$(id -u) <file>` to switch the bridge on.
+  `launchctl bootout gui/$(id -u)/cloud.hivra.bridge` switches it off again.
+  It runs as you (a LaunchAgent), never as root. RunAtLoad is off on purpose:
+  the bridge stays off until you start it.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>cloud.hivra.bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/example/hivra-bridge/hivra_bridge.py</string>
+    <string>run</string>
+    <string>--config</string>
+    <string>/Users/example/.config/hivra-bridge/config.json</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <!-- No KeepAlive on purpose: a bridge that stopped (or was revoked, exit status 3) stays stopped. -->
+  <key>StandardErrorPath</key><string>/Users/example/.config/hivra-bridge/bridge.err</string>
+</dict>
+</plist>

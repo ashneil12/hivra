@@ -269,6 +269,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/purge-bridge-results",
+      "schedule": "17 3 * * *"
+    },
+    {
       "path": "/api/cron/venice-promo-weekly-report",
       "schedule": "0 8 * * 1"
     },

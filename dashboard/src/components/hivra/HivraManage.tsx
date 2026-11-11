@@ -24,6 +24,7 @@ import { GvisorComputerManage } from "./GvisorComputerManage";
 import { ComputerContractPanel } from "./ComputerContractPanel";
 import { ComputerAgentsPanel } from "./ComputerAgentsPanel";
 import { AgentLinksPanel } from "./AgentLinksPanel";
+import { LocalBridgePanel } from "./LocalBridgePanel";
 import { ManageLayout, ManageNotice, ManagePanel, type ManageFeedback } from "./ManageLayout";
 import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
@@ -1081,6 +1082,9 @@ function HivraManageContent({
           {!isComputerOnly || !sections.includes("agents") ? (
             <AgentLinksPanel subjectId={agent.id} subjectName={agent.name} />
           ) : null}
+          {/* Commands this owner's agents ask to run on the owner's own computer.
+              Shows nothing unless the server's local-bridge flag is on (404). */}
+          {isComputerOnly ? null : <LocalBridgePanel />}
         </div>
       </ManagePanel>
 

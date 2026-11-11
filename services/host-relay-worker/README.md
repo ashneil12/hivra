@@ -59,3 +59,11 @@ to end test with the real connector and a stand-in SSH server.
 CLOUDFLARE_API_TOKEN=<workers-scoped-token> npx wrangler deploy
 npx wrangler secret put HOST_RELAY_SECRET
 ```
+
+## Local bridge route
+
+`POST /v1/hosts/<connectionId>/exec` (admin token) forwards `{ticket, request}`
+to the connected machine as one `exec` message and returns its `exec_result`.
+One command at a time (`429`), `503 host_offline` when no bridge is connected,
+`504` when it does not answer or is revoked. The relay never runs or reads the
+command; the bridge checks the ticket.
