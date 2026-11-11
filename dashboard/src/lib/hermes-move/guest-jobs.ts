@@ -18,6 +18,27 @@ export interface MoveJobStatus { state: "running" | "done" | "failed"; step: str
 
 export const MOVE_STATUS_DIR = (moveId: string) => `/var/lib/hivra-move/${moveId}`;
 
+/** .env keys the unpack fixup removes on purpose (old-container plumbing), shared by the guest check and the dashboard's. */
+export const MOVE_REMOVED_ENV_KEYS = ["HERMES_INSTANCE_ID", "HERMES_DASHBOARD_URL", "BROWSER_CDP_URL",
+  "HERMES_BROWSER_SIDECAR_AUTH_TOKEN", "TERMINAL_ENV", "TERMINAL_STRICT_BACKEND", "HERMES_HOME"] as const;
+export const MOVE_REMOVED_ENV_PREFIXES = ["API_SERVER_"] as const;
+/** Also removed when the old agent used managed inference: the new computer's own wiring replaces it. */
+export const MOVE_MANAGED_REMOVED_ENV_KEYS = ["HERMES_INFERENCE_PROVIDER"] as const;
+const COUNT_KEYS = ["sessions", "messages", "skills", "cronJobs", "profiles"] as const;
+
+/**
+ * Whether the new computer holds everything the old one had: at least as many chats, messages,
+ * skills, scheduled tasks and profiles (the official install adds its own bundled skills), and
+ * every old .env key except the ones the fixup removes on purpose. The guest's verify applies the
+ * same rules before it starts Hermes.
+ */
+export function moveCountsArrived(before: MoveCounts, after: MoveCounts, managed: boolean): boolean {
+  if (!COUNT_KEYS.every((k) => Number.isSafeInteger(after?.[k]) && after[k] >= before[k])) return false;
+  const have = new Set(after.envKeys ?? []);
+  const gone = new Set<string>([...MOVE_REMOVED_ENV_KEYS, ...(managed ? MOVE_MANAGED_REMOVED_ENV_KEYS : [])]);
+  return (before.envKeys ?? []).every((k) => have.has(k) || gone.has(k) || MOVE_REMOVED_ENV_PREFIXES.some((p) => k.startsWith(p)));
+}
+
 /** Parts are at most this many bytes (the project upload limit is 50 MB). */
 export const MOVE_PART_BYTES = 45_000_000;
 /** Refuse to move more than this (zip + workspace archive, before encryption). */
@@ -340,10 +361,9 @@ if __name__ == "__main__":
 /** Unpack side: wiring save, config/env fixup, count verification. */
 export const MOVE_UNPACK_PY = COMMON_PY + String.raw`
 
-REMOVE_ENV_EXACT = {"HERMES_INSTANCE_ID", "HERMES_DASHBOARD_URL", "BROWSER_CDP_URL",
-                    "HERMES_BROWSER_SIDECAR_AUTH_TOKEN", "TERMINAL_ENV", "TERMINAL_STRICT_BACKEND", "HERMES_HOME"}
-REMOVE_ENV_PREFIX = ("API_SERVER_",)
-MANAGED_EXTRA_REMOVE = {"HERMES_INFERENCE_PROVIDER"}
+REMOVE_ENV_EXACT = set(${JSON.stringify(MOVE_REMOVED_ENV_KEYS)})
+REMOVE_ENV_PREFIX = tuple(${JSON.stringify(MOVE_REMOVED_ENV_PREFIXES)})
+MANAGED_EXTRA_REMOVE = set(${JSON.stringify(MOVE_MANAGED_REMOVED_ENV_KEYS)})
 OLD_HOME = "/home/hermes/.hermes"
 NEW_HOME = "/home/bux/.hermes"
 # The old container's user home was /home/hermes; on the new computer it is /home/bux. The old .env
