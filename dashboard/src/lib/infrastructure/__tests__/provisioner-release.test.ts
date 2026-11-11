@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.11.4.json";
+import release from "../../../../provisioner-releases/2026.11.11.5.json";
+import hermesRelease from "../../../../provisioner-releases/2026.11.11.4.json";
 import chatEffortRelease from "../../../../provisioner-releases/2026.11.11.3.json";
 import chromePinRelease from "../../../../provisioner-releases/2026.11.11.2.json";
 import browserViewRelease from "../../../../provisioner-releases/2026.11.11.1.json";
@@ -238,9 +239,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -482,9 +483,9 @@ it("ships real chat effort in 2026.11.11.3, keeping 2026.11.11.2 admitted and ev
 });
 
 it("ships the official Hermes Agent in 2026.11.11.4, keeping 2026.11.11.3 admitted and no new asset", () => {
-  expect(release.version).toBe("2026.11.11.4");
-  expect(release.files.map(file => file.path)).toEqual(chatEffortRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== chatEffortRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(hermesRelease.version).toBe("2026.11.11.4");
+  expect(hermesRelease.files.map(file => file.path)).toEqual(chatEffortRelease.files.map(file => file.path));
+  const changed = hermesRelease.files.filter(file => file.sha256 !== chatEffortRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // Exactly the scripts that install, proxy, update and allow-list the kind, and the
   // release documents/labels change. No Hivra-built image, fork or patch ships: the
@@ -508,10 +509,28 @@ it("ships the official Hermes Agent in 2026.11.11.4, keeping 2026.11.11.3 admitt
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.11.4", "hermes")).toBe(true);
 });
 
+it("runs the Hermes gateway in 2026.11.11.5, keeping 2026.11.11.4 admitted and no new asset", () => {
+  expect(release.version).toBe("2026.11.11.5");
+  expect(release.files.map(file => file.path)).toEqual(hermesRelease.files.map(file => file.path));
+  const changed = release.files.filter(file => file.sha256 !== hermesRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Exactly the launch script, the guest half of the runtime update, the worker's release labels
+  // and the release documents change. server.js and the remote-desktop assets are untouched.
+  expect(changed).toEqual([
+    "PROVENANCE.md", "README.md", "VERSION", "hivra-guest-runtime-update.sh", "hivra-provider-worker.py", "provision-claude-code-box.sh",
+  ]);
+  for (const version of ["2026.11.11.4", "2026.11.11.5"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(version, "hermes")).toBe(true);
+  }
+});
+
 it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
   // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
-  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
 });
 
 it("keeps the current bundle inside the file count the provider worker accepts in a manifest", () => {

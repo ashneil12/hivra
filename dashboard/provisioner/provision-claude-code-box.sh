@@ -1425,6 +1425,35 @@ WantedBy=multi-user.target
 UNIT
 chmod 0644 /etc/systemd/system/bux-hermes.service
 ok "Hermes dashboard service installed (127.0.0.1:${HERMES_PORT})"
+
+# Scheduled tasks and chat channels (Telegram, Discord, Slack) run inside
+# Hermes's gateway, a separate process from its dashboard. Upstream's advice
+# for a headless VM is a USER service plus linger, installed by Hermes's own
+# `hermes gateway install`, so `hermes update` can restart it without root.
+# We write no gateway unit of our own. Any failure here is a warning: the
+# dashboard must still come up.
+HERMES_GATEWAY_UNIT="hermes-gateway.service"
+HERMES_GATEWAY_NOTE="${AGENT_HOME}/.hivra/hermes-gateway-warning"
+hermes_as_agent() {
+  local uid; uid="$(id -u "${AGENT_USER}")" || return 1
+  timeout -k 10 240 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+    XDG_RUNTIME_DIR="/run/user/${uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+    PATH="${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"
+}
+hermes_gateway_setup() {
+  local uid i; uid="$(id -u "${AGENT_USER}")" || return 1
+  loginctl enable-linger "${AGENT_USER}" || return 1
+  systemctl start "user@${uid}.service" || return 1
+  for i in $(seq 1 30); do [ -S "/run/user/${uid}/bus" ] && break; sleep 1; done
+  [ -S "/run/user/${uid}/bus" ] || return 1
+  # Explicit flags keep it non-interactive; an installed, current unit is left
+  # alone and only enabled.
+  # The stable channel can be older than the flags and reject them, so retry
+  # once with the bare command. stdin is /dev/null so it can never prompt.
+  hermes_as_agent "${HERMES_BIN}" gateway install --start-now --start-on-login </dev/null \
+    || hermes_as_agent "${HERMES_BIN}" gateway install </dev/null || return 1
+  hermes_as_agent "${HERMES_BIN}" gateway start </dev/null || return 1
+}
 fi
 
 # ===========================================================================
@@ -1537,6 +1566,14 @@ if [ "$AGENT_KIND" = "hermes" ]; then
   systemctl enable --now bux-hermes.service >/dev/null 2>&1 \
     || die "Hermes service did not start"
   ok "bux-hermes enabled + started (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)"
+  if hermes_gateway_setup; then
+    rm -f -- "${HERMES_GATEWAY_NOTE}"
+    ok "Hermes gateway installed as a user service with linger (scheduled tasks and chat channels)"
+  else
+    warn "Hermes gateway could not be installed or started; the dashboard works but scheduled tasks and chat channels will not run until you run: hermes gateway install"
+    printf 'hermes gateway install failed at launch\n' > "${HERMES_GATEWAY_NOTE}" 2>/dev/null \
+      && chown "${AGENT_USER}:${AGENT_USER}" "${HERMES_GATEWAY_NOTE}" 2>/dev/null || true
+  fi
 fi
 
 # --- post-flight ------------------------------------------------------------
@@ -1696,6 +1733,11 @@ elif [ "$AGENT_KIND" = "hermes" ]; then
   # The first start loads Hermes's Python environment; allow up to 3 minutes.
   wait_for_http "http://127.0.0.1:${HERMES_PORT}/" 90 || die "Hermes web UI did not become ready within 3 minutes"
   ok "Hermes passed runtime-specific readiness"
+  if hermes_as_agent systemctl --user is-active --quiet "${HERMES_GATEWAY_UNIT}"; then
+    ok "Hermes gateway is active (scheduled tasks and chat channels can run)"
+  else
+    warn "Hermes gateway is not active; scheduled tasks and chat channels will not run (dashboard is unaffected)"
+  fi
 fi
 
 # Record the exact installed state after every runtime-specific readiness gate.
@@ -1729,8 +1771,8 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
   LOGIN_HINT="open the Control UI (/openclaw) and configure model providers + channels there"
   STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "hermes" ]; then
-  LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Update with: sudo -iu ${AGENT_USER} hermes update"
-  STATUS_HINT="systemctl status bux-hermes --no-pager; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"
+  LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Scheduled tasks and chat channels run in the Hermes gateway (user service). Update with: sudo -iu ${AGENT_USER} hermes update"
+  STATUS_HINT="systemctl status bux-hermes --no-pager; sudo -iu ${AGENT_USER} hermes gateway status; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"
