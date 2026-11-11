@@ -30,8 +30,8 @@ describe("dashboard navigation", () => {
     // Servers (where your own agents and computers can run) is a Manage item.
     expect(DASHBOARD_PRIMARY_NAVIGATION.map((item) => item.id)).toEqual([
       "home",
-      "computers",
       "agents",
+      "computers",
       "activity",
     ]);
     expect(DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "infrastructure")).toMatchObject({
@@ -66,10 +66,10 @@ describe("dashboard navigation", () => {
     // The nav no longer gates anything on the shell flag.
     expect(
       filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION, false).map((item) => item.id),
-    ).toEqual(["home", "computers", "agents", "activity"]);
+    ).toEqual(["home", "agents", "computers", "activity"]);
     expect(
       filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION, true).map((item) => item.id),
-    ).toEqual(["home", "computers", "agents", "activity"]);
+    ).toEqual(["home", "agents", "computers", "activity"]);
   });
 
   it("builds the phone bar from the shared configuration with Launch centered between the inventories", () => {

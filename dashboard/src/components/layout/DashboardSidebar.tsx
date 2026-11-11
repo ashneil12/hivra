@@ -23,6 +23,7 @@ import {
 } from '@/lib/dashboard-navigation';
 import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
 import { listRecents, recentHref, visitHref } from '@/lib/workspace/recents';
+import { needsOwnerAttention } from '@/lib/hivra/resource-attention';
 import { StatusText } from '@/components/ui/StatusText';
 import { DashboardResourceSwitcher } from './DashboardResourceSwitcher';
 import { resourceMatchesPath, type DashboardResource } from './dashboard-resources';
@@ -84,7 +85,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   }, [onSwitcherOpenChange]);
   const aside = useRef<HTMLElement>(null);
   const { resources, loading, errors, refresh } = useDashboardResources(owner, pathname);
-  const attentionCount = resources.filter(item => !loading && !errors[item.source] && (item.attention || item.status === "error")).length;
+  const attentionCount = resources.filter(item => !loading && !errors[item.source] && needsOwnerAttention(item)).length;
   const currentResource = resources.find((item) => resourceMatchesPath(item, pathname));
   const effectivelyExpanded = compactRail ? compactExpanded : isExpanded;
   const currentResourceKind = currentResource?.kind ?? null;

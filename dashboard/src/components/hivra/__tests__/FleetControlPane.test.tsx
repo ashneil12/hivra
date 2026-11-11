@@ -7,6 +7,7 @@ import type { AgentSurfaceId } from "@/lib/agent-computers/agent-surfaces";
 import { recordVisit } from "@/lib/workspace/recents";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 
+import { deleteAgent } from "@/lib/hivra/agent-api";
 import { FleetControlPane } from "../FleetControlPane";
 
 jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
@@ -21,6 +22,8 @@ const fetchPlanStrictMock = jest.fn(async () => null as unknown);
 jest.mock("@/lib/hivra/agent-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-api"),
   fetchPlanStrict: () => fetchPlanStrictMock(),
+  deleteAgent: jest.fn(async () => undefined),
+  startAgent: jest.fn(async () => undefined),
 }));
 
 const replace = jest.fn();
@@ -356,6 +359,66 @@ describe("FleetControlPane", () => {
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex] }));
     render(<FleetControlPane />);
     expect(screen.getByTestId("onboarding-checklist-stub")).toBeInTheDocument();
+  });
+
+  describe("a computer that no longer exists on its host", () => {
+    const gone = {
+      ...ubuntu, state: "error", statusRaw: "error", attention: "error",
+      failureReason: "This computer no longer exists on its host.", missingOnHost: true,
+    } as UnifiedAgent;
+
+    it("says why and offers Remove, behind a confirmation, on the card", async () => {
+      const retryHivra = jest.fn(async () => undefined);
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, gone], retryHivra }));
+      render(<FleetControlPane attentionRequested />);
+      const resolution = screen.getByTestId("attention-resolution");
+      expect(within(resolution).getByText("This computer no longer exists on its host.")).toBeVisible();
+      expect(deleteAgent).not.toHaveBeenCalled();
+      fireEvent.click(within(resolution).getByRole("button", { name: "Remove" }));
+      expect(deleteAgent).not.toHaveBeenCalled();
+      expect(within(resolution).getByText(/can.t be undone/)).toBeVisible();
+      fireEvent.click(within(resolution).getByRole("button", { name: "Remove from Hivra" }));
+      await screen.findByTestId("attention-resolution");
+      expect(deleteAgent).toHaveBeenCalledWith("ubuntu", { recordOnly: true });
+      await Promise.resolve();
+      expect(retryHivra).toHaveBeenCalled();
+    });
+
+    it("opens View details on Manage, which shows the same reason and Remove", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [gone] }));
+      render(<FleetControlPane attentionRequested />);
+      expect(screen.getByRole("link", { name: /MY_UBUNTU_DESKTOP.*View details/ })).toHaveAttribute("href", "/dashboard/agent/ubuntu?tab=manage");
+    });
+
+    it("falls back to plain words when the row has no stored reason", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [{ ...gone, failureReason: undefined, missingOnHost: false }] }));
+      render(<FleetControlPane attentionRequested />);
+      expect(screen.getByText("Something went wrong and it stopped working.")).toBeVisible();
+      expect(screen.getByRole("link", { name: "Launch again" })).toBeVisible();
+    });
+
+    it("offers Try again when the machine still exists", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [{ ...gone, missingOnHost: false, canTryAgain: true }] }));
+      render(<FleetControlPane attentionRequested />);
+      expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    });
+  });
+
+  it("agrees with the sidebar: an agent added to an errored computer is not a second card", () => {
+    const added = agent("a-1", "Codex on MY_UBUNTU_DESKTOP", {
+      state: "error", attention: "error", attachment: { id: "1", computerId: "ubuntu", computerName: "MY_UBUNTU_DESKTOP", phase: "attached" },
+    });
+    const sick = { ...ubuntu, state: "error", attention: "error" } as UnifiedAgent;
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [sick, added] }));
+    render(<FleetControlPane attentionRequested />);
+    expect(screen.getAllByTestId("attention-resolution")).toHaveLength(1);
+  });
+
+  it("says plainly that nothing needs the owner, never an empty needs-you list", () => {
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, ubuntu] }));
+    render(<FleetControlPane attentionRequested />);
+    expect(screen.getByText("Nothing needs you right now. Everything is running as it should.")).toBeVisible();
+    expect(screen.queryByTestId("attention-resolution")).not.toBeInTheDocument();
   });
 
   it("opens attention without redirecting and includes approvals, not healthy resources", () => {

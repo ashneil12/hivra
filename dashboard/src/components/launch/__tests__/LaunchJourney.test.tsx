@@ -163,7 +163,43 @@ describe("LaunchJourney", () => {
     expect(historyStage()).toBe("review");
   });
 
+  it("opens a plain Launch link on Choose even when an earlier choice was saved", async () => {
+    window.localStorage.setItem("hivra.launch-draft.v1:user_123", JSON.stringify({
+      schemaVersion: 1, launchRequestId: "55555555-5555-4555-8555-555555555555", stage: "review", resourceKind: "agent", profileId: "openclaw",
+      name: "OpenClaw 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
+      capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
+    }));
+    render(<LaunchJourney />);
+    expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
+    expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "choose");
+    expect(screen.queryByRole("heading", { name: /Review and launch/ })).not.toBeInTheDocument();
+  });
+
+  it("still restores the saved step on a reload inside the journey", async () => {
+    window.history.replaceState(null, "", "/dashboard/launch?stage=review");
+    window.localStorage.setItem("hivra.launch-draft.v1:user_123", JSON.stringify({
+      schemaVersion: 1, launchRequestId: "55555555-5555-4555-8555-555555555555", stage: "review", resourceKind: "agent", profileId: "openclaw",
+      name: "OpenClaw 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
+      capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
+    }));
+    render(<LaunchJourney />);
+    expect(await screen.findByRole("heading", { name: "Review and launch OpenClaw 1" })).toBeInTheDocument();
+  });
+
+  it("opens Choose again when a plain Launch link is followed from inside the journey", async () => {
+    const view = render(<LaunchJourney />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^OpenClaw/ }));
+    await screen.findByRole("heading", { name: "Review and launch OpenClaw 1" });
+    searchParamsGetMock.mockImplementation((key: string) => (key === "stage" ? "review" : null));
+    view.rerender(<LaunchJourney />);
+    searchParamsGetMock.mockReturnValue(null);
+    view.rerender(<LaunchJourney />);
+    expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
+  });
+
   it("opens a draft saved at the old Plan step on Review", async () => {
+    window.history.replaceState(null, "", "/dashboard/launch?stage=plan");
     const draftId = "44444444-4444-4444-8444-444444444444";
     window.localStorage.setItem("hivra.launch-draft.v1:user_123", JSON.stringify({
       schemaVersion: 1, launchRequestId: draftId, stage: "plan", resourceKind: "agent", profileId: "codex",
