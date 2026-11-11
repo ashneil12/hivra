@@ -88,7 +88,7 @@ else:raise RuntimeError(args)
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 
-it("executes guest discovery and boot-selection patterns against native Omarchy fixtures", () => {
+it("executes guest discovery patterns against native Omarchy fixtures", () => {
   const harness = String.raw`import ast,re,sys
 source=sys.stdin.read();tree=ast.parse(source)
 strings=[n.value for n in ast.walk(tree) if isinstance(n,ast.Constant) and isinstance(n.value,str)]
@@ -97,15 +97,41 @@ assert re.search(uid,'Uid:\t1000\t1000\t1000\t1000',re.M).groups()==('1000',)*4
 channel=next(s for s in strings if s.startswith('https://pkgs'))
 assert re.fullmatch(channel,'https://pkgs.omarchy.org/stable/x86_64')
 assert not re.fullmatch(channel,'https://pkgs.omarchy.org/unstable/x86_64')
-config='default_entry: 2\n  //linux-omarchy\n    comment: Kernel version: 7.2.15-1-omarchy\n    path: boot():/EFI/Linux/omarchy.efi#abc123\n  //linux\n'
-default=next(s for s in strings if s.startswith('^default_entry:'))
-assert re.search(default,config,re.M)
-custom=next(s for s in strings if s.startswith('  //linux-omarchy'))
-standard=next(s for s in strings if s.startswith('  //linux') and 'omarchy' not in s)
-a=config.index(custom);assert a<config.index(standard)
-path=next(s for s in strings if s.startswith('path: boot'))
-assert re.search(path,config).groups()==('/EFI/Linux/omarchy.efi','abc123')
 `;
   const result=spawnSync("python3",["-c",harness],{encoding:"utf8",input:OMARCHY_REFRESH_GUEST_STAGE});
   expect({status:result.status,stderr:result.stderr}).toEqual({status:0,stderr:""});
+});
+
+it.each([
+  { name: "native-only install", entries: ["linux-omarchy"], valid: true },
+  { name: "native kernel selected before generic fallback", entries: ["linux-omarchy", "linux"], valid: true },
+  { name: "generic kernel selected first", entries: ["linux", "linux-omarchy"], valid: false },
+  { name: "wrong native kernel version", entries: ["linux-omarchy"], kernel: "7.2.8-9-omarchy", valid: false },
+  { name: "wrong default boot selection", entries: ["linux-omarchy"], defaultEntry: 1, valid: false },
+  { name: "damaged boot image", entries: ["linux-omarchy"], damaged: true, valid: false },
+  { name: "missing boot image", entries: ["linux-omarchy"], missing: true, valid: false },
+])("executes the emitted boot verifier for $name", fixture => {
+  const harness = String.raw`import hashlib,json,pathlib,sys,tempfile,textwrap,types
+payload=json.load(sys.stdin);source=payload['source'];fixture=payload['fixture']
+start=source.index(" config=pathlib.Path('/boot/limine.conf').read_text()")
+end=source.index(" publish('result.json'",start)
+code=textwrap.dedent(source[start:end])
+with tempfile.TemporaryDirectory() as directory:
+ boot=pathlib.Path(directory);uki=boot/'EFI/Linux/omarchy.efi';uki.parent.mkdir(parents=True)
+ image=b'verified native kernel fixture';digest=hashlib.blake2b(image).hexdigest()
+ if not fixture.get('missing'):uki.write_bytes(b'changed' if fixture.get('damaged') else image)
+ config='default_entry: '+str(fixture.get('defaultEntry',2))+'\n/+Omarchy\n'
+ for entry in fixture['entries']:
+  config+='  //'+entry+'\n    comment: Kernel version: '+fixture.get('kernel','7.2.15-1-omarchy')+'\n    path: boot():/EFI/Linux/omarchy.efi#'+digest+'\n'
+ (boot/'limine.conf').write_text(config)
+ def guest_path(value):
+  value=str(value)
+  return boot/value.removeprefix('/boot').lstrip('/') if value.startswith('/boot') else pathlib.Path(value)
+ exec(code,{'pathlib':types.SimpleNamespace(Path=guest_path),'selected':'7.2.15-1-omarchy','re':__import__('re'),'hashlib':hashlib})
+`;
+  const result = spawnSync("python3", ["-c", harness], {
+    encoding: "utf8", input: JSON.stringify({ source: OMARCHY_REFRESH_GUEST_STAGE, fixture }),
+  });
+  if (fixture.valid) expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+  else expect(result.status).not.toBe(0);
 });
