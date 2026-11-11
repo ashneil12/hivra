@@ -30,15 +30,9 @@ jest.mock("@/components/ui/ThinkingOrb", () => ({
 }));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: mockAgentId }),
-  usePathname: () => `/dashboard/agent/${mockAgentId}`,
   useRouter: () => ({ push: pushMock }),
   useSearchParams: () => ({ get: mockSearchGet }),
 }));
-// The shell's sidebar lists the owner's agents; this page's tests read one agent.
-jest.mock("@/components/layout/useDashboardResources", () => ({
-  useDashboardResources: () => ({ resources: [], loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() }),
-}));
-jest.mock("next-themes", () => ({ useTheme: () => ({ resolvedTheme: "dark", setTheme: jest.fn() }) }));
 
 jest.mock("@/lib/hivra/hivra-flag", () => ({
   isHivraEnabled: () => true,
@@ -179,22 +173,7 @@ jest.mock("@/components/hivra/AttachedAgentChat", () => ({
 // hostname-resolved hydration path as Canary, independent of the caller's env.
 const previousHivraEnv = process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
-const RealAgentPage = jest.requireActual("../page").default as typeof import("../page").default;
-const { AppShellProvider } = jest.requireActual("@/components/layout/AppShell") as typeof import("@/components/layout/AppShell");
-const { AppSidebar } = jest.requireActual("@/components/layout/AppSidebar") as typeof import("@/components/layout/AppSidebar");
-const { AppTitleBar } = jest.requireActual("@/components/layout/AppTitleBar") as typeof import("@/components/layout/AppTitleBar");
-/** The page inside the dashboard's web shell, as the layout draws it: its rows and title live in the shell's sidebar and title bar. */
-function AgentPage() {
-  return (
-    <AppShellProvider openSwitcher={jest.fn()} userName="Ash" chrome>
-      <AppSidebar owner="owner" />
-      <div>
-        <AppTitleBar owner="owner" />
-        <RealAgentPage />
-      </div>
-    </AppShellProvider>
-  );
-}
+const AgentPage = jest.requireActual("../page").default as typeof import("../page").default;
 const { FleetControlPane } = jest.requireActual("@/components/hivra/FleetControlPane") as typeof import("@/components/hivra/FleetControlPane");
 if (previousHivraEnv === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 else process.env.NEXT_PUBLIC_HIVRA_AGENTS = previousHivraEnv;
@@ -206,19 +185,17 @@ const CONNECTED_UBUNTU = {
   chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm",
 };
 
-// An open agent lists its views as sidebar rows: Chat (its own session is a
-// second view in the title bar), Browser, Computer (the desktop), Files, Terminal
-// and Settings (Skills and Telegram are views inside it). Reach a surface the way
-// an owner does: its row, then its view in the title bar.
-const ROW_OF_VIEW: Record<string, string> = {
+// Agent pages group their surfaces as Agent · Computer · Manage, each view a
+// tab in its group's row; computers keep one flat bar with a Tools menu.
+// Reach a surface the way an owner does: its tab, then its group, then Tools.
+const GROUP_OF_LABEL: Record<string, string> = {
+  Desktop: "Computer", Terminal: "Computer", Files: "Computer", Browser: "Computer",
   "Claude Code session": "Chat", "Codex session": "Chat",
   Skills: "Settings", Telegram: "Settings",
 };
-/** A row whose name differs from the surface it opens. */
-const ROW_NAMED: Record<string, string> = { Desktop: "Computer" };
-function rowFor(name: string | RegExp): string | null {
-  const label = Object.keys(ROW_OF_VIEW).find((candidate) => typeof name === "string" ? candidate === name : name.test(candidate));
-  return label ? ROW_OF_VIEW[label] : null;
+function groupFor(name: string | RegExp): string | null {
+  const label = Object.keys(GROUP_OF_LABEL).find((candidate) => typeof name === "string" ? candidate === name : name.test(candidate));
+  return label ? GROUP_OF_LABEL[label] : null;
 }
 /** Not hidden by any ancestor: what the owner can actually see. */
 function shownToOwner(element: Element): boolean {
@@ -231,19 +208,20 @@ function shownToOwner(element: Element): boolean {
 function getSurfaceButton(name: string | RegExp) {
   const tab = screen.queryByRole("tab", { name });
   if (tab) return tab;
-  const row = rowFor(name);
-  const rowButton = row ? screen.queryByRole("button", { name: row }) : null;
-  if (rowButton) {
-    // Opening the row shows its views in the title bar.
-    fireEvent.click(rowButton);
+  const visible = screen.queryByRole("button", { name });
+  if (visible) return visible;
+  const group = groupFor(name);
+  const groupButton = group ? screen.queryByRole("button", { name: group }) : null;
+  if (groupButton) {
+    fireEvent.click(groupButton);
     return screen.getByRole("tab", { name });
   }
-  const named = typeof name === "string" ? ROW_NAMED[name] : undefined;
-  return screen.getByRole("button", { name: named ?? name });
+  fireEvent.click(screen.getByRole("button", { name: /^Tools(?:$|:)/ }));
+  return screen.getByRole("button", { name });
 }
 
 async function findSurfaceButton(name: string | RegExp) {
-  await screen.findByRole("navigation", { name: "Views" });
+  await screen.findByRole("navigation", { name: "Resource surfaces" });
   return getSurfaceButton(name);
 }
 
@@ -650,7 +628,7 @@ describe("AgentPage", () => {
       expect(await screen.findByText("This computer needs a Chat update")).toBeInTheDocument();
       expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Back to agents" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("navigation", { name: "Views" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("navigation", { name: "Resource surfaces" })).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
       const select = (id: string) => act(() => { window.dispatchEvent(new CustomEvent("hivra:select-surface", { detail: { pathname: "/dashboard/agent/agent_123", id } })); });
       // A CLI agent has no desktop: the desktop service refuses agent resources.
@@ -700,7 +678,7 @@ describe("AgentPage", () => {
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
     render(<AgentPage />);
     expect(await screen.findByText(landing)).toBeInTheDocument();
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
     if (tools) fireEvent.click(tools);
     expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
@@ -723,7 +701,7 @@ describe("AgentPage", () => {
       mockGetAgent.mockResolvedValue(LINUX_COMPUTER);
       render(<AgentPage />);
       expect(await screen.findByText("Files panel")).toBeInTheDocument();
-      await screen.findByRole("navigation", { name: "Views" });
+      await screen.findByRole("navigation", { name: "Resource surfaces" });
       expect(screen.queryByRole("button", { name: "Desktop" })).not.toBeInTheDocument();
       expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
       expect(screen.queryByTestId("windows-desktop")).not.toBeInTheDocument();
@@ -817,10 +795,11 @@ describe("AgentPage", () => {
     expect(screen.queryByTestId("remote-desktop")).not.toBeInTheDocument();
   });
 
-  it("shows a Computer row for every agent that opens the Desktop entry, and Launch opens an Ubuntu Desktop", async () => {
+  it("shows a Desktop entry in the Computer group of every agent, and Launch opens an Ubuntu Desktop", async () => {
     linksFetch(AGENT_LINKS_VIEW, 404);
     render(<AgentPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Computer" }));
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Computer views" })).getByRole("tab", { name: "Desktop" }));
     expect(await screen.findByRole("heading", { name: "Give CLAUDE_CODE_AGENT a desktop" })).toBeVisible();
     // Linking isn't offered here: say so, and offer the launch.
     expect(await screen.findByText(/Connecting a desktop to an agent isn’t available here yet/)).toBeVisible();
@@ -859,7 +838,7 @@ describe("AgentPage", () => {
     expect(files).toHaveAttribute("data-view", "changes");
     // Git is no tab, and the link keeps pointing at Changes rather than being rewritten.
     expect(screen.queryByRole("tab", { name: "Git" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Files" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("tab", { name: "Files", selected: true })).toBeInTheDocument();
     expect(new URLSearchParams(window.location.search).get("tab")).toBe("git");
     // The Files view switch moves between the two.
     fireEvent.click(screen.getByRole("button", { name: "Switch Files view" }));
@@ -873,7 +852,7 @@ describe("AgentPage", () => {
       chat_url: "https://windows-box.example.com", api_token: "must-not-be-used",
       computer_substrate: "proxmox-kvm" });
     render(<AgentPage />);
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
     if (tools) fireEvent.click(tools);
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
@@ -905,7 +884,7 @@ describe("AgentPage", () => {
       chat_url: "https://stale-box.example.com", api_token: "stale-token", computer_substrate: "proxmox-kvm",
     });
     render(<AgentPage />);
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     const tools = screen.queryByRole("button", { name: /^Tools(?:$|:)/ });
     if (tools) fireEvent.click(tools);
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
@@ -1036,29 +1015,25 @@ describe("AgentPage", () => {
     requestSubmit.mockRestore();
   });
 
-  it("lists an agent's views as rows: Chat, Browser, Computer, Files, Terminal, Settings, and names its computer (ATT-11, ATT-12)", async () => {
+  it("groups an agent's surfaces as Chat · Computer · Settings and names its computer (ATT-11, ATT-12)", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
     render(<AgentPage />);
-    const nav = await screen.findByRole("navigation", { name: "Views" });
-    const rows = () => Array.from(nav.querySelectorAll("[data-view-row]"));
-    // The browser is its own row; Computer is the desktop alone.
-    expect(rows().map((button) => button.textContent)).toEqual(["Chat", "Browser", "Computer", "Files", "Terminal", "Settings"]);
-    expect(rows().map((button) => button.getAttribute("aria-current"))).toEqual(["page", null, null, null, null, null]);
-    // The agent's own session is a second view of Chat, in the title bar.
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Chat", "Computer", "Settings"]);
     expect(within(screen.getByRole("tablist", { name: "Chat views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Chat", "Codex session"]);
-    fireEvent.click(within(nav).getByRole("button", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Desktop", "Browser", "Files", "Terminal"]);
+    // The Computer button opens Files, not the Desktop choice; Git is not a tab.
     expect(screen.getByText("Files panel")).toBeInTheDocument();
-    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Git" })).not.toBeInTheDocument();
-    fireEvent.click(within(nav).getByRole("button", { name: "Terminal" }));
-    expect(screen.queryByRole("tablist", { name: "Computer views" })).not.toBeInTheDocument();
     // Where it runs is a tooltip on the title bar's name, not a row of its own.
     expect(screen.getByTitle("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).toHaveTextContent("Codex 1");
     expect(screen.queryByText("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).not.toBeInTheDocument();
-    fireEvent.click(within(nav).getByRole("button", { name: "Settings" }));
-    // The row is Settings, so its own pane's view says so too: no "Settings › Settings".
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    // The group is Settings, so its own pane's tab says so too: no "Settings › Settings".
     expect(within(screen.getByRole("tablist", { name: "Settings views" })).getAllByRole("tab").map((tab) => tab.textContent))
       .toEqual(["Settings", "Skills", "Telegram"]);
     expect(screen.getByText("Manage panel")).toBeInTheDocument();
@@ -1067,64 +1042,35 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
   });
 
-  it("opens an agent's Browser from its own row, apart from Computer", async () => {
-    mockGetAgent.mockResolvedValue({ id: "agent_123", type: "claude-code", name: "Browsing", status: "running", cpu: 2, ram: 4,
-      chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
-    mockBrowserStatus.mockResolvedValue({ enabled: true, error: null });
-    render(<AgentPage />);
-    const nav = await screen.findByRole("navigation", { name: "Views" });
-    expect(Array.from(nav.querySelectorAll("[data-view-row]")).map((row) => row.textContent))
-      .toEqual(["Chat", "Browser", "Computer", "Files", "Terminal", "Settings"]);
-    fireEvent.click(within(nav).getByRole("button", { name: "Browser" }));
-    expect(within(nav).getByRole("button", { name: "Browser" })).toHaveAttribute("aria-current", "page");
-    expect(within(nav).getByRole("button", { name: "Computer" })).not.toHaveAttribute("aria-current");
-    expect(new URLSearchParams(window.location.search).get("tab")).toBe("browser");
-    // View-only is a note in the title bar, and the title bar draws no group control for a single view.
-    expect(screen.getByText("View only")).toBeInTheDocument();
-    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-  });
-
-  it.each([
-    ["browser", "Browser"], ["box", "Terminal"], ["files", "Files"], ["git", "Files"],
-    ["desktop", "Computer"], ["manage", "Settings"], ["skills", "Settings"], ["terminal", "Chat"],
-  ])("opens the %s deep link on the %s row", async (tab, row) => {
-    window.history.replaceState(null, "", `/dashboard/agent/agent_123?tab=${tab}`);
-    mockSearchGet.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
-    mockBrowserStatus.mockResolvedValue({ enabled: true, error: null });
-    render(<AgentPage />);
-    const nav = await screen.findByRole("navigation", { name: "Views" });
-    await waitFor(() => expect(within(nav).getByRole("button", { name: row })).toHaveAttribute("aria-current", "page"));
-    expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
-  });
-
-  it("shows the agent's name and a plain status word in the title bar", async () => {
+  it("shows the agent's name once in the sidebar switcher and its status in the title bar", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "codex", name: "Codex 1", status: "running", cpu: 1.5, ram: 3,
       chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed" });
     render(<AgentPage />);
-    const bar = await screen.findByTestId("app-title-bar");
-    await waitFor(() => expect(bar).toHaveTextContent(/^Codex 1running/));
-    // The shell's default title steps aside: the name is there once.
-    expect(screen.getAllByText("Codex 1")).toHaveLength(1);
+    const sidebar = await screen.findByRole("complementary", { name: "Agent navigation" });
+    const switcher = within(sidebar).getByRole("button", { name: "Switch agent or computer: Codex 1" });
+    expect(switcher).toHaveTextContent(/^Codex 1$/);
+    const bar = screen.getByRole("banner");
+    expect(bar).toHaveTextContent(/^Codex 1running/);
   });
 
   it("names the status beside the name in the title bar, with no kind caption", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
     const { unmount } = render(<AgentPage />);
-    expect(await screen.findByText("OPENCLAW_AGENT")).toBeInTheDocument();
-    expect(screen.getByTestId("app-title-bar")).toHaveTextContent("running");
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: OPENCLAW_AGENT" })).toHaveTextContent(/^OPENCLAW_AGENT$/);
+    expect(screen.getByRole("banner")).toHaveTextContent("running");
     unmount();
     mockGetAgent.mockResolvedValue(CONNECTED_UBUNTU);
     render(<AgentPage />);
-    expect(await screen.findByText("UBUNTU")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: UBUNTU" })).toHaveTextContent(/^UBUNTU$/);
   });
 
-  it("gives a dashboard agent's single-surface rows no second row, with Export data still in reach", async () => {
+  it("gives a dashboard agent's single-surface groups no second row, with Export data still in reach", async () => {
     mockGetAgent.mockResolvedValue({ id: "agent_123", type: "openclaw", name: "OPENCLAW_AGENT", status: "running",
       cpu: 2, ram: 4, chat_url: "https://box.example.com", api_token: "box-token", computer_substrate: "proxmox-kvm" });
     render(<AgentPage />);
-    const nav = await screen.findByRole("navigation", { name: "Views" });
-    expect(Array.from(nav.querySelectorAll("[data-view-row]")).map((button) => button.textContent)).toEqual(["Dashboard", "Browser", "Computer", "Files", "Terminal", "Settings"]);
+    const nav = await screen.findByRole("navigation", { name: "Resource surfaces" });
+    expect(Array.from(nav.querySelectorAll("[data-surface-group]")).map((button) => button.textContent)).toEqual(["Dashboard", "Computer", "Settings"]);
     expect(await screen.findByTitle("OpenClaw · dashboard")).toBeInTheDocument();
     // Dashboard and Settings each hold one surface: their rows open it, and
     // no "Dashboard › Dashboard" or "Settings › Settings" control repeats the name.
@@ -1134,7 +1080,9 @@ describe("AgentPage", () => {
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/hivra/agents/agent_123/export");
-    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    expect(within(screen.getByRole("tablist", { name: "Computer views" })).getAllByRole("tab").map((tab) => tab.textContent))
+      .toEqual(["Desktop", "Browser", "Files", "Terminal"]);
     expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
   });
 
@@ -1366,7 +1314,7 @@ describe("AgentPage", () => {
     });
     view.rerender(<AgentPage />);
     // The next agent opens on its own surface, so its session is opened by hand.
-    expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Switch agent or computer: NEXT_AGENT" })).toBeInTheDocument();
     fireEvent.click(await findSurfaceButton(/claude code session/i));
     const frame = await screen.findByTitle("Claude Code session");
     expect(frame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
@@ -1571,7 +1519,7 @@ describe("AgentPage", () => {
       await act(async () => { view.rerender(<AgentPage />); });
       expect(oldFrame).not.toBeInTheDocument();
       await act(async () => { jest.advanceTimersByTime(2000); });
-      expect(await screen.findByText("NEXT_AGENT")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Switch agent or computer: NEXT_AGENT" })).toBeInTheDocument();
       fireEvent.click(await findSurfaceButton(/claude code session/i));
       const nextFrame = await screen.findByTitle("Claude Code session");
       expect(nextFrame.parentElement?.querySelector("form")).toHaveAttribute("action", "https://next.example.com/auth/bootstrap");
@@ -2464,7 +2412,7 @@ describe("AgentPage", () => {
     });
     const fetchMock = global.fetch as unknown as jest.Mock;
     render(<AgentPage />);
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/hivra/agents/agent_123/remote-desktop",
       expect.objectContaining({
@@ -2486,7 +2434,7 @@ describe("AgentPage", () => {
     const proofRequests = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/hivra/agents/agent_123/remote-desktop");
 
     render(<AgentPage />);
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     await waitFor(() => expect(proofRequests()).toHaveLength(1));
     // The desktop's first session request found the proof expired and asks
     // for one while the page's is still running: it gets the page's.
@@ -2619,7 +2567,7 @@ describe("AgentPage", () => {
       computer_substrate: "proxmox-kvm",
     });
     render(<AgentPage />);
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     fireEvent.click(getSurfaceButton(/^Terminal$/));
     const guidance = await screen.findByText(/Secure access credentials for this computer/);
     expect(guidance).toHaveTextContent("Contact support to restore access.");
@@ -2644,7 +2592,7 @@ describe("AgentPage", () => {
     });
     const fetchMock = global.fetch as unknown as jest.Mock;
     render(<AgentPage />);
-    await screen.findByRole("navigation", { name: "Views" });
+    await screen.findByRole("navigation", { name: "Resource surfaces" });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/hivra/agents/agent_123/remote-desktop",
       expect.objectContaining({

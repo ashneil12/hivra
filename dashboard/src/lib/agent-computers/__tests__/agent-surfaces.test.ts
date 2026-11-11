@@ -8,7 +8,6 @@ import {
   agentSurfaceGroups,
   agentSurfaceLabel,
   agentSurfacesFor,
-  agentViewRows,
   computerPlacementFor,
   computerSizeLabel,
 } from "../agent-surfaces";
@@ -112,33 +111,6 @@ describe("agent page groups", () => {
       { id: "manage", label: "Manage", surfaces: ["manage"] },
     ]);
     expect(agentSurfaceGroups(["manage"], def)).toEqual([{ id: "manage", label: "Manage", surfaces: ["manage"] }]);
-  });
-
-  it("lists an agent's views as sidebar rows, with the browser apart from the desktop", () => {
-    const rows = (type: string, isComputer = false, state: Record<string, string> = RUNNING) =>
-      agentViewRows(agentPageSurfacesFor({ type, ...state }), { isComputer });
-    expect(rows("codex").map((row) => [row.id, row.label, row.surfaces])).toEqual([
-      ["chat", "Chat", ["chat", "terminal"]],
-      ["browser", "Browser", ["browser"]],
-      ["computer", "Computer", ["desktop"]],
-      ["files", "Files", ["files"]],
-      ["terminal", "Terminal", ["box"]],
-      ["settings", "Settings", ["manage", "skills", "telegram"]],
-    ]);
-    // Each row opens its first view.
-    expect(rows("codex").map((row) => row.home)).toEqual(["chat", "browser", "desktop", "files", "box", "manage"]);
-    // A dashboard agent opens its dashboard instead of a chat.
-    expect(rows("aeon").map((row) => row.label)).toEqual(["Dashboard", "Computer", "Files", "Terminal", "Settings"]);
-  });
-
-  it("lists a computer's own surfaces, its desktop as Desktop, and drops rows it lacks", () => {
-    const labels = (profile: string | null) => agentViewRows(
-      agentPageSurfacesFor({ type: "linux-desktop", computer_profile: profile, ...RUNNING }), { isComputer: true },
-    ).map((row) => row.label);
-    expect(labels("ubuntu-desktop")).toEqual(["Desktop", "Files", "Terminal", "Settings"]);
-    // A Linux computer with no desktop has no Desktop row.
-    expect(labels("linux-terminal")).toEqual(["Files", "Terminal", "Settings"]);
-    expect(agentViewRows([])).toEqual([]);
   });
 
   it("calls the shell Terminal everywhere and the agent's own CLI its session", () => {
