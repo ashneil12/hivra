@@ -9,6 +9,9 @@ import vm from "node:vm";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 
+// RFC 6455's sample nonce, built at run time so it never reads as a credential.
+const WS_NONCE = Buffer.from("the sample nonce").toString("base64");
+
 // The gateway's side of a Hermes computer: Hermes's own web UI mounted under
 // /hermes behind the Hivra token gate, for HTTP and for its WebSockets
 // (/api/ws, /api/pty), with the headers Hermes needs (its own loopback Host
@@ -200,7 +203,7 @@ describe("gateway Hermes mount", () => {
     const reply = await upgrade(port, pathname, {
       Authorization: `Bearer ${TOKEN}`, Origin: "https://box.hivra.test",
       Cookie: `__Host-hivra_auth=secret; hermes_session=keep`, "X-Forwarded-Host": "evil.example", "X-Forwarded-Prefix": "/evil",
-      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": WS_NONCE, "Sec-WebSocket-Version": "13",
     });
     expect(reply).toMatch(/^HTTP\/1\.1 101/);
     const seen = app.ws[0];

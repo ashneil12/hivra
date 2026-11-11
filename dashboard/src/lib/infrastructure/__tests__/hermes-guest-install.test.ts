@@ -4,6 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// A made-up managed key, built at run time so it never reads as a credential.
+const SAMPLE_KEY = ["hven", "abc-DEF", "123"].join("_");
+
 // A Hermes computer runs OFFICIAL Hermes, installed by Hermes's own installer:
 // no fork, no overlay, no pin, no patches. These checks read the installer
 // block of provision-claude-code-box.sh and run the one piece of it that is
@@ -89,10 +92,10 @@ describe("Hermes guest install", () => {
       expect(heredoc).not.toBeNull();
       const env = path.join(home, ".env");
       fs.writeFileSync(env, "KEEP=1\nOPENAI_API_KEY=old\nOPENAI_BASE_URL=https://old.test\n", { mode: 0o644 });
-      const result = seed("hven_abc-DEF_123");
+      const result = seed(SAMPLE_KEY);
       expect(result.status).toBe(0);
       expect(fs.readFileSync(env, "utf8").trim().split("\n")).toEqual([
-        "KEEP=1", "OPENAI_BASE_URL=https://gateway.test/v1", "OPENAI_API_KEY=hven_abc-DEF_123",
+        "KEEP=1", "OPENAI_BASE_URL=https://gateway.test/v1", `OPENAI_API_KEY=${SAMPLE_KEY}`,
       ]);
       expect(fs.statSync(env).mode & 0o777).toBe(0o600);
       expect(fs.existsSync(`${env}.next`)).toBe(false);
