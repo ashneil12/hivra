@@ -45,6 +45,8 @@ export interface AgentShellProps<T extends string> {
   exportHref?: string;
   /** A small note in the title bar for the active surface (e.g. "View only"). */
   surfaceNote?: Partial<Record<string, string>>;
+  /** What the back button calls the first group's view (the agent's own UI goes by the agent's name). */
+  homeLabel?: string;
   children: ReactNode;
 }
 
@@ -57,7 +59,7 @@ export interface AgentShellProps<T extends string> {
  */
 export function AgentShell<T extends string>({
   name, status, nameTitle, switcher, titleExtras, surfaces, groups, active, onSelect, chatSurface, panelId,
-  exportHref, surfaceNote, children,
+  exportHref, surfaceNote, homeLabel, children,
 }: AgentShellProps<T>) {
   const sidebarId = useId();
   const drawerMode = useMediaQuery(DRAWER_QUERY);
@@ -98,6 +100,12 @@ export function AgentShell<T extends string>({
 
   const hasChat = surfaces.some((surface) => surface.id === chatSurface);
   const activeGroupId = nav.activeGroup?.id ?? null;
+  // Away from the agent's own view (Computer, Browser, Settings), the title bar
+  // always offers the way back, so it never depends on the sidebar being open.
+  const homeGroup = nav.visibleGroups[0] ?? null;
+  const back = homeGroup && activeGroupId && activeGroupId !== homeGroup.id
+    ? { label: homeLabel || homeGroup.label, onClick: () => nav.openGroup(homeGroup) }
+    : undefined;
 
   return (
     <div className={styles.shell}>
@@ -132,6 +140,7 @@ export function AgentShell<T extends string>({
           note={surfaceNote?.[active]}
           exportHref={activeGroupId === "manage" ? exportHref : undefined}
           sidebarToggle={drawerMode || collapsed ? { onClick: openSidebar, controlsId: sidebarId, expanded: drawerMode && drawerOpen } : undefined}
+          back={back}
         />
         <AgentChatListSlotContext.Provider value={chatSlot}>
           {children}

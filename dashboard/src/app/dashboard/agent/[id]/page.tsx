@@ -1594,6 +1594,7 @@ export default function AgentPage() {
           panelId={WORK_PANE_ID}
           exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
           surfaceNote={{ browser: "View only" }}
+          homeLabel={isDashboard ? def?.name : undefined}
         >
           {content}
         </AgentShell>
