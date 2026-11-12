@@ -16,6 +16,7 @@ import {
   effectiveAgentCliAutoUpdate,
   isAgentSoftwareTarget,
   isAgentSoftwareVersion,
+  isLatestTargetApp,
   summarizeAgentSoftware,
   type AgentCliAutoUpdateMode,
   type AgentCliRequestResult,
@@ -46,13 +47,13 @@ export interface AgentSoftwareAgentRow {
 export function testedVersionFor(subject: AgentSoftwareSubject): string | null {
   if (subject.cli) return AGENT_CLI_VERSIONS[subject.cli];
   // Hermes is the official Hermes Agent, updated by its own updater: Hivra tests no version of it.
-  if (subject.app === "hermes") return null;
+  if (isLatestTargetApp(subject.app)) return null;
   return subject.app ? AGENT_APP_VERSIONS[subject.app].version : null;
 }
 
 /** The app's tested versions Hivra moved off, newest first (empty for the CLIs). */
 export function previousVersionsFor(subject: AgentSoftwareSubject): string[] {
-  return subject.app && subject.app !== "hermes" ? AGENT_APP_VERSIONS[subject.app].previous.map((pin) => pin.version) : [];
+  return subject.app && !isLatestTargetApp(subject.app) ? AGENT_APP_VERSIONS[subject.app].previous.map((pin) => pin.version) : [];
 }
 
 

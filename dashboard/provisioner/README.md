@@ -527,6 +527,20 @@ update them yet.
   Hermes snapshots a project before it changes files, and `/rollback` or `/undo` in a Hermes
   chat goes back. Manage shows the switch only when `NEXT_PUBLIC_HIVRA_RESTORE_POINTS_ENABLED`
   is `true`. Existing computers get it from the connection service update.
+- **OpenBot (CopilotKit).** From `2026.11.12.4`, `--agent-kind openbot` pulls the latest
+  official `ghcr.io/copilotkit/openbot` image (no Hivra image, fork or patch), records its
+  `OPENBOT_BUILD_VERSION`, and runs it by digest as `hivra-openbot.service` on host
+  networking at `127.0.0.1:3101` with its embedded PostgreSQL, in OpenBot's single-user
+  mode. Launch model settings become its `OPENAI_BASE_URL`/`OPENAI_API_KEY` (Chat
+  Completions). OpenBot has no base path, so the gateway serves it at the root of the box
+  origin behind the token gate, HTTP and WebSocket, presenting OpenBot's own loopback Host
+  and (for requests from the box's own origin) Origin; the gateway keeps only its own paths
+  (`/api/meta`, terminals, files and the other Hivra routes). `/openbot/` is the entry: it
+  asks once for the owner's CopilotKit Intelligence key (OpenBot refuses to start without
+  one), stores it in `~/.hivra/openbot-intelligence-key`, and the service, which waits for
+  that file, starts. Update OpenBot (`hivra-agent-app-update.sh openbot latest`) pulls the
+  latest image, swaps only if it is new, copies the database aside first and puts the
+  previous image and database back if the new release does not answer.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

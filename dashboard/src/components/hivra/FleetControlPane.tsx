@@ -18,6 +18,7 @@ import { deleteAgent, startAgent } from "@/lib/hivra/agent-api";
 import styles from "./HomeWorkspace.module.css";
 import { HomeContinue } from "./HomeContinue";
 import { FirstRunCard } from "./FirstRunCard";
+import { InboxAnswer } from "./InboxAnswer";
 import { OnboardingChecklist } from "@/components/dashboard/OnboardingChecklist";
 import { StatusText } from "@/components/ui/StatusText";
 import { inRecentOrder } from "@/lib/workspace/recent-order";
@@ -325,6 +326,15 @@ function AttentionResolution({ agent, onResolved }: { agent: UnifiedAgent; onRes
     }
   };
   const button = "mono inline-flex min-h-[32px] pointer-coarse:min-h-[44px] items-center border border-[var(--etched-border)] px-3 text-[12px] font-semibold text-[var(--ink-black)] outline-none hover:border-[var(--hivra-red-line)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] disabled:opacity-60";
+  // What the agent is waiting on, answered right here (approvals) or opened in its chat (questions).
+  if (agent.prompt && (agent.attention === "approval" || agent.attention === "clarify")) {
+    return (
+      <div data-testid="attention-resolution" className="flex flex-col gap-2 border border-t-0 border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 py-3">
+        <InboxAnswer agentId={agent.id} agentName={agent.name} chatHref={fleetEntryHref(agent)} prompt={agent.prompt}
+          onAnswered={() => window.setTimeout(() => onResolved?.(), 6000)} />
+      </div>
+    );
+  }
   return (
     <div data-testid="attention-resolution" className="flex flex-col gap-2 border border-t-0 border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 py-3">
       <p className="text-[12.5px] leading-[1.45] text-[var(--text-secondary)]">{reason}</p>

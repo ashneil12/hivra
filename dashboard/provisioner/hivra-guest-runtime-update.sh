@@ -391,8 +391,8 @@ AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
 AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
 agent_app_report() {
   local name="$KIND_BEFORE" target version state
-  case "$name" in aeon|openclaw|agent-zero|hermes) ;; *) return 0 ;; esac
-  if [ "$name" = hermes ]; then
+  case "$name" in aeon|openclaw|agent-zero|hermes|openbot) ;; *) return 0 ;; esac
+  if [ "$name" = hermes ] || [ "$name" = openbot ]; then
     target=latest
   else
   target="$(python3 -I -c 'import json, re, sys
@@ -411,6 +411,10 @@ print(value)' "$WORK/agent-app-versions.json" "$name")" || return 0
     hermes)
       version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin \
         timeout -k 5 30 /home/bux/.local/bin/hermes --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
+      ;;
+    openbot)
+      version="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(head -n 1 /opt/openbot/image 2>/dev/null)" 2>/dev/null \
+        | sed -n 's/^OPENBOT_BUILD_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)" || version=""
       ;;
     agent-zero)
       version="$(docker inspect --format '{{.Config.Image}}' hivra-agent-zero 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n 1)" || version=""
@@ -431,7 +435,7 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
   # can't ask Docker itself) and the next update agree: computers provisioned
   # before the record existed, and any swap that ended without recording.
   if [ -n "$version" ] && ! systemctl is-active --quiet hivra-agent-app-update.service \
-    && { [ "$name" = agent-zero ] || [ "$name" = hermes ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
+    && { [ "$name" = agent-zero ] || [ "$name" = hermes ] || [ "$name" = openbot ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
     install -d -o root -g root -m 0755 /var/lib/hivra
     printf '{"name":"%s","version":"%s"}\n' "$name" "$version" > "$AGENT_APP_RECORD.next"
     chmod 0644 "$AGENT_APP_RECORD.next"

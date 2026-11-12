@@ -47,7 +47,7 @@ export function nativeCliAgentRequest(input: {
   };
 }
 
-/** OpenClaw, Agent Zero, Aeon, DeepSeek Harness and Hermes (as a Hivra
+/** OpenClaw, Agent Zero, OpenBot, Aeon, DeepSeek Harness and Hermes (as a Hivra
  * computer). Hivra credits set `managedVenice`; OpenClaw
  * and Agent Zero have no connect step, so their credit key is minted at launch
  * from a managed Venice selection. Aeon sets its credits up when GitHub is
@@ -55,7 +55,7 @@ export function nativeCliAgentRequest(input: {
  * the `llm` block they are given (credits or the owner's Venice key); Hermes
  * set up inside itself sends none. */
 export function dashboardAgentRequest(input: {
-  type: "openclaw" | "agent-zero" | "aeon" | "deepseek-harness" | "hermes";
+  type: "openclaw" | "agent-zero" | "openbot" | "aeon" | "deepseek-harness" | "hermes";
   name: string;
   cpu: number;
   ram: number;
@@ -68,7 +68,7 @@ export function dashboardAgentRequest(input: {
 }): CreateAgentInput {
   const llm: AgentLlmInput | undefined = input.type === "deepseek-harness" || input.type === "hermes"
     ? input.llm
-    : (input.type === "openclaw" || input.type === "agent-zero") && input.credits
+    : (input.type === "openclaw" || input.type === "agent-zero" || input.type === "openbot") && input.credits
       ? { provider: "venice", mode: "managed", walletType: input.credits.walletType }
       : undefined;
   return {

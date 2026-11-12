@@ -283,6 +283,10 @@
     {
       "path": "/api/cron/advance-hermes-moves",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/agent-inbox-install",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

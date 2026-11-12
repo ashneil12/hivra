@@ -62,6 +62,7 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
       return ["native", "api-key", "credits"];
     case "openclaw":
     case "agent-zero":
+    case "openbot":
     case "aeon":
       return ["native", "credits"];
     // Hermes on a Hivra computer is pointed at Venice at install: credits, the
@@ -172,6 +173,12 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
         title: "Set up inside Agent Zero after it opens",
         detail: "Choose a model provider in its Settings.",
         summary: "Choose a model provider in Agent Zero's Settings after it opens.",
+      };
+    case "openbot":
+      return {
+        title: "Set up inside OpenBot after it opens",
+        detail: "Choose a model provider in OpenBot's own settings.",
+        summary: "Choose a model provider in OpenBot's own settings after it opens.",
       };
     case "aeon":
       return {

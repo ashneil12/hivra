@@ -235,6 +235,9 @@ jobs:
       - name: Attached network filter rendering (T5, T36, T37)
         run: python3 -I -B scripts/test-attached-network-sets.py
 
+      - name: Needs you add-on for Hermes (hivra-inbox plugin)
+        run: python3 -I -B scripts/test-hermes-inbox-plugin.py
+
       - name: Attached DNS relay (T36)
         run: docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-dns-relay.py
 

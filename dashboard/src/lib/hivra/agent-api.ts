@@ -6,6 +6,7 @@
 
 import type { ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import type { AgentId } from "./agent-catalog";
+import type { InboxPrompt } from "@/lib/agent-inbox/types";
 import type { ComputerTemplateId } from "./computer-catalog";
 import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
@@ -70,6 +71,8 @@ export interface HivraAgent {
   provisioned_at?: string | null;
   /** Bearer token for the box's introspection endpoints (sessions/files/skills). */
   api_token?: string | null;
+  /** The newest approval or question this agent is waiting on (Needs you). */
+  inbox_prompt?: InboxPrompt | null;
   /** Onboarding + identity (the bootstrap system). All optional. */
   goal?: string | null;
   context?: string | null;

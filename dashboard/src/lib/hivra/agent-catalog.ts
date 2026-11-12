@@ -5,8 +5,9 @@
 // Slot counts come from the authoritative source (subscription/agent-slots, pure data).
 
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
+import { isOpenBotAgentEnabled } from "./openbot-flag";
 
-export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
+export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "openbot" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
 export type PlanTier = "free" | "pro" | "power";
 
 export interface AgentDef {
@@ -250,6 +251,31 @@ const ALL_AGENTS: AgentDef[] = [
     llm: { wire: "openai", providers: ["venice"] },
   },
   {
+    id: "openbot",
+    name: "OpenBot",
+    vendor: "CopilotKit",
+    tagline: "CopilotKit's open-source AI coworkers, each with its own browser and files, in OpenBot's own workspace.",
+    // Runs OpenBot's official Docker image on the box (not pool-exempt).
+    minPlan: "pro",
+    weight: 2,
+    // OpenBot brings its own browser; the box's CDP Chrome stack is not wired.
+    browser: false,
+    badge: "Coworkers",
+    accent: "#6e56cf",
+    // Off until NEXT_PUBLIC_HIVRA_OPENBOT_AGENT is set.
+    available: isOpenBotAgentEnabled(),
+    // OpenBot's web UI listens on box loopback :3101 and is served by the
+    // gateway at the box origin root; /openbot/ is its entry path. No chat-CLI
+    // surface and no vendor login on Hivra's side.
+    surface: "dashboard",
+    floor: { cpu: 1, ram: 3 },
+    dashboardPort: 3101,
+    // Inference: managed-Venice key minted at LAUNCH over the generic
+    // HIVRA_MODEL_* env, written into OpenBot's env by the box.
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
+  },
+  {
     id: "linux-desktop",
     name: "Ubuntu Desktop",
     vendor: "Hivra",
@@ -411,6 +437,9 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
   }
   if (def.id === "deepseek-harness") {
     return `This runs ${def.name}, ${def.vendor}'s coding agent, on the agent's private virtual machine. Its own interface is reached through Hivra's authenticated gateway. It runs on DeepSeek V4.1 Flash through Hivra credits, or your own Venice API key. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
+  }
+  if (def.id === "openbot") {
+    return `This installs the official OpenBot image from CopilotKit on the agent's private virtual machine and opens OpenBot's own workspace through Hivra's authenticated gateway. OpenBot needs a CopilotKit Intelligence key (CopilotKit has a free plan); you paste it once when you first open it. Models run through Venice on your Hivra credits by default. Update it with the Update button. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by CopilotKit.`;
   }
   if (def.id === "agent-zero") {
     return `This hosts Agent Zero in a container on the agent's private virtual machine. Its dashboard is bound to localhost and reached through Hivra's authenticated gateway. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Agent Zero project.`;

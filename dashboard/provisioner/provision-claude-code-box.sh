@@ -71,7 +71,7 @@ HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
 AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server) ;;
+  claude|codex|aeon|openclaw|agent-zero|hermes|openbot|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
@@ -121,6 +121,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "agent-zero" ] && WANT_BROWSER=0
 # Hermes is installed with --skip-browser; it never gets the box CDP stack.
 [ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0
+# OpenBot ships its OWN browser inside its container — never the box CDP stack.
+[ "$AGENT_KIND" = "openbot" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
 # The desktop-free Linux server has no browser stack either.
@@ -1309,6 +1311,158 @@ if ! visudo -cf /etc/sudoers.d/hivra-agent-zero >/dev/null 2>&1; then warn "hivr
 ok "Agent Zero service + restart helper installed (container :80 -> 127.0.0.1:${A0_PORT})"
 fi
 
+if [ "$AGENT_KIND" = "openbot" ]; then
+say "5f/7  OpenBot by CopilotKit (official image, its own web UI)"
+# ===========================================================================
+# OpenBot (github.com/CopilotKit/openbot, MIT) is a workspace of AI coworkers
+# whose OWN web UI is the product. It ships as one official image carrying the
+# app, its API, its own Chromium and an embedded PostgreSQL. Hivra installs the
+# latest release unmodified and runs it on host networking bound to loopback
+# :OB_PORT, in single-user mode (it trusts only loopback callers addressed to
+# loopback). The box gateway serves it at the ROOT of the box origin (OpenBot
+# has no base path) behind the token gate, presenting OpenBot's own loopback
+# Host and Origin. OpenBot refuses to start without a CopilotKit Intelligence
+# key, which the owner pastes once on the gateway's /openbot/ setup page; until
+# then the service waits for it. Owners update with the Update button (the app
+# updater pulls upstream's latest release).
+OB_PORT="${OPENBOT_PORT:-3101}"
+OB_ROOT="/opt/openbot"
+OB_REPO="ghcr.io/copilotkit/openbot"
+
+if ! command -v docker >/dev/null 2>&1; then
+  say "installing Docker from Ubuntu's signed package repository"
+  apt_get install -y docker.io || die "docker.io package installation failed"
+fi
+systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
+systemctl is-active --quiet docker || die "Docker service is not active"
+ok "docker present ($(docker --version 2>/dev/null | head -1 || echo '?'))"
+
+install -d -o root -g root -m 0700 "${OB_ROOT}"
+# OpenBot's credential vault key: made once, kept across re-runs (losing it
+# loses every credential OpenBot stored).
+if [ ! -s "${OB_ROOT}/encryption-key" ]; then
+  (umask 077; head -c 32 /dev/urandom | base64 -w0 > "${OB_ROOT}/encryption-key")
+fi
+OB_ENC_KEY="$(tr -d '\r\n' < "${OB_ROOT}/encryption-key")"
+[[ "$OB_ENC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] || die "invalid OpenBot encryption key in ${OB_ROOT}/encryption-key"
+# NOTE: this block's stdout IS the env file — emit ONLY env lines here.
+{
+  printf 'PORT=%s\nSERVER_PORT=%s\n' "$OB_PORT" "$OB_PORT"
+  printf 'NODE_ENV=production\nEMBEDDED_POSTGRES=on\nOPENBOT_SINGLE_USER=true\n'
+  printf 'TRUSTED_ORIGINS=http://127.0.0.1:%s\n' "$OB_PORT"
+  printf 'KEY_ENCRYPTION_KEY=%s\n' "$OB_ENC_KEY"
+  printf 'INTELLIGENCE_API_URL=https://api.intelligence.copilotkit.ai\n'
+  printf 'INTELLIGENCE_GATEWAY_WS_URL=wss://realtime.intelligence.copilotkit.ai\n'
+  printf 'COPILOTKIT_TELEMETRY_DISABLED=true\n'
+  if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
+    OB_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
+    OB_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+    printf '%s' "$OB_MODEL" | grep -qE '^[A-Za-z0-9_.:/-]+$' || OB_MODEL="deepseek-v4-pro"
+    printf '%s' "$OB_BASEURL" | grep -qE '^https://[A-Za-z0-9.:/_-]+$' \
+      || OB_BASEURL="https://hivra.cloud/api/managed-venice/v1"
+    # Venice speaks OpenAI Chat Completions, not the Responses API.
+    printf 'OPENAI_API_KEY=%s\nOPENAI_BASE_URL=%s\n' "${HIVRA_MODEL_KEY}" "$OB_BASEURL"
+    printf 'COPILOTKIT_OPENAI_API=chat\nBOT_MODEL=%s\nROUTER_MODEL=%s\n' "$OB_MODEL" "$OB_MODEL"
+  fi
+} > "${OB_ROOT}/openbot.env"
+chmod 600 "${OB_ROOT}/openbot.env"
+if grep -q '^OPENAI_API_KEY=' "${OB_ROOT}/openbot.env"; then
+  ok "managed Venice set as OpenBot's model provider (model ${HIVRA_HERMES_MODEL:-deepseek-v4-pro})"
+else
+  warn "no managed model at launch; set a model provider in OpenBot's own settings"
+fi
+
+# The latest upstream release, run by its digest so a restart never changes version.
+docker pull "${OB_REPO}:latest" >/tmp/openbot-pull.log 2>&1 \
+  || die "OpenBot image pull failed (see /tmp/openbot-pull.log)"
+OB_IMAGE="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${OB_REPO}:latest" 2>/dev/null \
+  | grep -m1 -E "^${OB_REPO}@sha256:[0-9a-f]{64}$" || true)"
+[ -n "$OB_IMAGE" ] || die "OpenBot image digest is unavailable after pull"
+OB_VERSION="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$OB_IMAGE" 2>/dev/null \
+  | sed -n 's/^OPENBOT_BUILD_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)"
+[ -n "$OB_VERSION" ] || die "OpenBot image names no release version"
+printf '%s\n' "$OB_IMAGE" > "${OB_ROOT}/image.next"
+chmod 0600 "${OB_ROOT}/image.next"
+mv -f -- "${OB_ROOT}/image.next" "${OB_ROOT}/image"
+record_agent_app openbot "$OB_VERSION"
+ok "OpenBot ${OB_VERSION} pulled (${OB_IMAGE})"
+
+# Starts the pulled image once the owner has given the Intelligence key. The
+# key file is the agent's own (the gateway writes it): never follow a link to
+# it, and pass it to Docker in a root-only env file, never on a command line.
+install -d -o root -g root -m 0755 /usr/local/sbin
+cat > /usr/local/sbin/hivra-openbot-run <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+ROOT=/opt/openbot
+KEY_FILE=/home/bux/.hivra/openbot-intelligence-key
+read_key() {
+  python3 -I -c '
+import os, re, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError:
+    sys.exit(1)
+try:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        sys.exit(1)
+    raw = os.read(fd, 600)
+finally:
+    os.close(fd)
+key = raw.decode("ascii", "ignore").strip()
+if not re.fullmatch(r"[A-Za-z0-9_.-]{8,512}", key):
+    sys.exit(1)
+print(key)
+' "$KEY_FILE"
+}
+until key="$(read_key)"; do sleep 3; done
+printf 'CPK_INTELLIGENCE_API_KEY=%s\n' "$key" > "$ROOT/intelligence.env.next"
+mv -f -- "$ROOT/intelligence.env.next" "$ROOT/intelligence.env"
+image="$(head -n 1 "$ROOT/image")"
+[[ "$image" =~ ^ghcr\.io/copilotkit/openbot@sha256:[0-9a-f]{64}$ ]] || { echo "invalid OpenBot image" >&2; exit 1; }
+/usr/bin/docker rm -f hivra-openbot >/dev/null 2>&1 || true
+exec /usr/bin/docker run --rm --name hivra-openbot --network host \
+  --env-file "$ROOT/openbot.env" --env-file "$ROOT/intelligence.env" \
+  -v hivra-openbot-data:/var/lib/postgresql -v hivra-openbot-workspace:/workspace "$image"
+RUNNER
+chmod 0755 /usr/local/sbin/hivra-openbot-run
+
+# Same stop budget as Agent Zero: 25 s grace inside the 40 s host shutdown.
+cat > /etc/systemd/system/hivra-openbot.service <<UNIT
+[Unit]
+Description=Hivra OpenBot (CopilotKit OpenBot on 127.0.0.1:${OB_PORT}, served at the box root)
+After=network-online.target docker.service
+Requires=docker.service
+[Service]
+TimeoutStartSec=0
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/sbin/hivra-openbot-run
+ExecStop=-/usr/bin/docker stop -t 25 hivra-openbot
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 /etc/systemd/system/hivra-openbot.service
+
+# Scoped restart helper (the box user has no general sudo): the gateway runs it
+# after the owner saves a new Intelligence key.
+cat > /usr/local/bin/hivra-openbot-apply <<'HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  restart) systemctl restart hivra-openbot.service ;;
+  *) echo "usage: hivra-openbot-apply restart" >&2; exit 2 ;;
+esac
+HELPER
+chmod 0755 /usr/local/bin/hivra-openbot-apply
+printf '%s ALL=(root) NOPASSWD: /usr/local/bin/hivra-openbot-apply\n' "${AGENT_USER}" > /etc/sudoers.d/hivra-openbot
+chmod 0440 /etc/sudoers.d/hivra-openbot
+if ! visudo -cf /etc/sudoers.d/hivra-openbot >/dev/null 2>&1; then warn "hivra-openbot sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-openbot; fi
+ok "OpenBot service + restart helper installed (127.0.0.1:${OB_PORT}, served at the box root)"
+fi
+
 # ===========================================================================
 if [ "$AGENT_KIND" = "hermes" ]; then
 say "5e/7  Hermes Agent (official installer + Hermes's own web UI)"
@@ -1490,7 +1644,7 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && ! is_linux_computer; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1644,6 +1798,12 @@ if [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl enable --now hivra-agent-zero.service >/dev/null 2>&1 \
     || die "Agent Zero service did not start"
   ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-50080}, mounted at /agent-zero)"
+fi
+
+if [ "$AGENT_KIND" = "openbot" ]; then
+  systemctl enable --now hivra-openbot.service >/dev/null 2>&1 \
+    || die "OpenBot service did not start"
+  ok "hivra-openbot enabled + started (waits for the owner's CopilotKit Intelligence key)"
 fi
 
 if [ "$AGENT_KIND" = "hermes" ]; then
@@ -1812,6 +1972,12 @@ elif [ "$AGENT_KIND" = "agent-zero" ]; then
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
   ok "Agent Zero passed runtime-specific readiness"
+elif [ "$AGENT_KIND" = "openbot" ]; then
+  systemctl is-active --quiet hivra-openbot.service || die "OpenBot service is not active"
+  # OpenBot starts only once the owner gives its Intelligence key, so before
+  # then the gateway's setup page is the readiness gate.
+  wait_for_http "http://127.0.0.1:${HIVRA_CHAT_PORT}/healthz" || die "Hivra gateway did not become ready"
+  ok "OpenBot passed runtime-specific readiness (waiting for its Intelligence key)"
 elif [ "$AGENT_KIND" = "hermes" ]; then
   systemctl is-active --quiet bux-hermes.service || die "Hermes service is not active"
   # The first start loads Hermes's Python environment; allow up to 3 minutes.
@@ -1842,6 +2008,8 @@ RECEIPT_ARGS=(
 )
 if [ "$AGENT_KIND" = "agent-zero" ]; then
   RECEIPT_ARGS+=(--agent-zero-image "$A0_IMAGE")
+elif [ "$AGENT_KIND" = "openbot" ]; then
+  RECEIPT_ARGS+=(--agent-zero-image "$OB_IMAGE")
 fi
 RECEIPT_RESULT="$(python3 "$SRC_DIR/hivra-runtime-receipt.py" "${RECEIPT_ARGS[@]}")" \
   || die "installed runtime receipt generation failed"
@@ -1862,6 +2030,9 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
 elif [ "$AGENT_KIND" = "hermes" ]; then
   LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Scheduled tasks and chat channels run in the Hermes gateway (user service). Update with: sudo -iu ${AGENT_USER} hermes update"
   STATUS_HINT="systemctl status bux-hermes --no-pager; sudo -iu ${AGENT_USER} hermes gateway status; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "openbot" ]; then
+  LOGIN_HINT="open the agent page (/openbot/) and paste a CopilotKit Intelligence key once; a managed model is pre-seeded"
+  STATUS_HINT="systemctl status hivra-openbot --no-pager; docker logs --tail 40 hivra-openbot 2>&1 | tail -40; curl -fsS http://127.0.0.1:${OPENBOT_PORT:-3101}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"
