@@ -32,7 +32,7 @@ a free account works with a server the person connects.
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
-| DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.4 or later |
+| DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.5 or later |
 
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
@@ -44,7 +44,7 @@ creates the computer, runs Hermes's own installer, points it at Venice inference
 Hermes's own web UI behind the Hivra sign-in at `/hermes/`. There is no
 Hivra-built image, fork or patch. Owners update it with `hermes update` in
 Terminal or the Update Hermes button on the agent's Manage tab. It needs
-provisioner release 2026.11.11.4 or later and at least 1 CPU and 2 GB, on a paid
+provisioner release 2026.11.12.1 or later and at least 1 CPU and 2 GB, on a paid
 plan like every Hivra-run computer (there is no free compute). There is no
 deployment switch for it: what Canary runs is what a production promotion ships.
 

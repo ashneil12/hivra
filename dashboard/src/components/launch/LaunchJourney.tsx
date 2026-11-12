@@ -1537,7 +1537,7 @@ export function LaunchJourney(
     // A Free account is the platform, not a computer: it works with the
     // owner's own computer. Hivra-hosted compute is bought.
     capacityBlocker = ownServerOk
-      ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.`
+      ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own server: connect one, or choose a plan. ${ownServerNeeds(draft.profileId)}`
       : `${currentProfile?.name ?? "This launch"} runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.`;
     blockerRemedy = "managed-plan";
     paywall = "paid_profile";
@@ -2382,10 +2382,10 @@ export function LaunchJourney(
             <div className={styles.notice} role="status" data-testid="launch-free-notice">
               <Cloud size={16} aria-hidden />
               <span className={styles.noticeBody}>
-                <span>Hivra Cloud is part of a paid plan, from {firstPaidPrice} a month. On Free you can run agents on a computer you connect.</span>
+                <span>Hivra Cloud is part of a paid plan, from {firstPaidPrice} a month. On Free you can run Claude Code, Codex and other agents on a Proxmox VE server you connect, or Linux Sandbox on an Ubuntu server. Hermes needs a paid plan.</span>
                 <span className={styles.noticeActions}>
                   <Link href="/dashboard/billing">See plans</Link>
-                  <button type="button" onClick={() => setCapacitySheetOpen(true)}>Use my own computer</button>
+                  <button type="button" onClick={() => setCapacitySheetOpen(true)}>Connect my own server</button>
                 </span>
               </span>
             </div>
