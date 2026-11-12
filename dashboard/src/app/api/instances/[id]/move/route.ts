@@ -1,16 +1,16 @@
-// GET/POST /api/instances/[id]/move
+// GET /api/instances/[id]/move
 //
 // Moving an old Hermes agent onto the official Hermes (docs/release/HERMES-OFFICIAL-MOVE.md).
-//   GET   the offer, the move (if any) and where the agent moved to; advances a move in flight
-//   POST  start the move (owner only)
+//   GET   the offer, when the move is planned, the move (if any) and where the agent moved to;
+//         advances a move in flight
+// Owners cannot start a move: an automatic wave moves every agent, a few a day.
 import { auth } from "@clerk/nextjs/server";
 import type { NextRequest } from "next/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { createMoveDeps } from "@/lib/hermes-move/deps";
-import { isActiveMove, movedToOf, moveOffer, startMove, toMoveView } from "@/lib/hermes-move/orchestrator";
-import { advanceAfterResponse, leaseIsFree, moveRequestErrorResponse, UUID_RE } from "@/lib/hermes-move/route-support";
+import { movedToOf, moveOffer, moveScheduledFor, toMoveView } from "@/lib/hermes-move/orchestrator";
+import { advanceAfterResponse, leaseIsFree, UUID_RE } from "@/lib/hermes-move/route-support";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +33,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const to = movedToOf(instance);
     const response = apiSuccess({
       offer,
+      scheduledFor: moveScheduledFor(instance),
       move: move ? toMoveView(move) : null,
       movedTo: to ? { agentId: to.agentId } : null,
     });
@@ -40,21 +41,5 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     return response;
   } catch (err) {
     return handleApiError(err);
-  }
-}
-
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { userId } = await auth();
-    if (!userId) return apiError("Unauthorized", 401);
-    if (!isSameOriginMutationRequest(request)) return apiError("Start the move from this dashboard.", 403);
-    const { id } = await params;
-    if (!UUID_RE.test(id)) return apiError("Invalid ID format", 400);
-    const deps = createMoveDeps();
-    const move = await startMove({ userId, instanceId: id, initiatedBy: "owner" }, deps);
-    if (isActiveMove(move)) advanceAfterResponse(move.id);
-    return apiSuccess({ move: toMoveView(move) }, 202);
-  } catch (err) {
-    return moveRequestErrorResponse(err) ?? handleApiError(err);
   }
 }

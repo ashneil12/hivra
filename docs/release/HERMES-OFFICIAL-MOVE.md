@@ -1,16 +1,21 @@
 # Moving an existing Hermes agent onto the official Hermes
 
-Status: design, being built on Canary. Nothing here has touched production.
+Status: built on Canary; the first real move finished there on 2026-11-12. Nothing here has touched
+production.
 
 ## What the owner sees
 
-On an old Hermes agent's page (a `hermes_instances` row), when the official Hermes lane is on
-(`isHermesComputerEnabled()`), one card replaces the old update cards:
+Every old Hermes agent has to move to keep getting updates, so there is no button. On an old Hermes
+agent's page (a `hermes_instances` row), when the official Hermes lane is on
+(`isHermesComputerEnabled()`), one status card replaces the old update cards:
 
-> **Move to the official Hermes.** Your agent moves to a new computer running the official Hermes,
-> which you update yourself. Your chats, memory, skills, settings, scheduled tasks, chat channels and
-> files come with it. It takes about ten minutes and your agent is offline meanwhile. Your current
-> computer is kept for 7 days, so you can undo the move.
+> **Moving to the official Hermes on <date>** (or **soon**, before the owner has been told). Every
+> Hermes agent is moving to the official Hermes, which you update yourself. Your chats, memory, skills,
+> settings, scheduled tasks, chat channels and files come with it. Your agent is offline for about 15
+> minutes, and your current computer is kept for 7 days so the move can be undone.
+
+The owner gets an email the day before ("moves tomorrow, nothing to do") and one when it is done ("now
+runs the official Hermes; update it with `hermes update`; undo until <date>").
 
 Progress shows real steps only: setting up the new computer, packing your data, copying it, unpacking
 and checking it, done. It ends in one of three states:
@@ -116,11 +121,29 @@ containers (`restart-old`), set the old row back to `running` and clear its dele
 wallet back, delete the new computer, `state = undone`. Anything done on the new computer since the
 move is lost, and the button says so.
 
-## Fleet run (production, at ship time)
+## The automatic wave
 
-`POST /api/ops/hermes-moves` (ops admin) queues moves for chosen instances or all running old Hermes
-agents, with `dryRun` to list them first. The cron advances at most `HERMES_MOVE_CONCURRENCY` (default
-2) at a time. Owners get the same "Moved" notice on their new agent.
+`hermes_move_wave` (one row, off by default) drives it. On each run of the move cron
+(`/api/cron/advance-hermes-moves`, every 2 minutes), after advancing the moves in flight:
+
+1. Off or paused: nothing.
+2. An automatic move (`initiated_by = 'auto'`) that ended `failed` or `needs_attention` after
+   `resumed_at` pauses the wave (`paused_at`, `paused_reason`) and alerts ops. A failed move already put
+   the old agent back as it was.
+3. Agents whose owner was told at least 24 hours ago (`config.moveNoticeAt`) are queued, earliest
+   first, up to `per_day` automatic moves in the last 24 hours. An agent with a non-cron chat in the last
+   30 minutes (`last_agent_activity_at`) is tried on a later run.
+4. The next owners (oldest agents first) are told: `config.moveNoticeAt` is set and the "moves tomorrow"
+   email goes out, up to `per_day` a day.
+
+An agent whose owner undid a move is left alone (an operator looks first); undo clears its
+`moveNoticeAt`. Stopped agents are not moved; they are picked up once running.
+
+Operators: `POST /api/ops/hermes-moves` with `{ "wave": { "enabled": true, "perDay": 5 } }` turns it
+on, `{ "wave": { "resume": true } }` resumes after a pause (only later failures pause it again), and
+`{ "instanceIds": [...] }` or `{ "all": true }` (with `dryRun`) still queues moves by hand. The cron
+advances at most `HERMES_MOVE_CONCURRENCY` (default 2) moves at a time. The runbook is
+`.codex/skills/hermes-fleet-move/SKILL.md`.
 
 ## Hermes gateway on official computers
 
