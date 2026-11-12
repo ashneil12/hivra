@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  listLiveComputers,
   ORPHAN_GRACE_HOURS,
   rotatingContainmentBatch,
   runOrphanSweep,
@@ -344,4 +345,21 @@ it("does not persist stale orphan config after concurrent terminal deletion", as
 it("keeps the missed-webhook ownership check on a fifteen-minute schedule", () => {
   const config = require("../../../../vercel.json");
   expect(config.crons.find((entry: { path: string }) => entry.path === "/api/cron/check-orphaned-instances").schedule).toBe("*/15 * * * *");
+});
+
+describe("listLiveComputers and sleeping computers", () => {
+  it("lists every computer that is not deleted, whatever its sleep state, so a deleted owner's sleeping computer is still contained", async () => {
+    const chain: Record<string, jest.Mock> = {};
+    chain.select = jest.fn(() => chain);
+    chain.neq = jest.fn(() => chain);
+    chain.eq = jest.fn(() => chain);
+    chain.gt = jest.fn(() => chain);
+    chain.order = jest.fn(() => chain);
+    chain.limit = jest.fn(async () => ({ data: [{ id: "c1", user_id: "u1", status: "running" }], error: null }));
+    const supabase = { from: jest.fn(() => chain) } as unknown as SupabaseClient;
+    await expect(listLiveComputers(supabase)).resolves.toEqual([{ id: "c1", user_id: "u1", status: "running" }]);
+    expect(chain.select).toHaveBeenCalledWith("id,user_id,status");
+    expect(chain.neq).toHaveBeenCalledWith("status", "deleted");
+    expect(chain.eq).not.toHaveBeenCalled();
+  });
 });

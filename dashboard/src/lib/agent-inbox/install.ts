@@ -92,6 +92,8 @@ export async function sweepInboxInstalls(now = new Date()): Promise<InstallSweep
     .select("*")
     .eq("type", "hermes")
     .eq("status", "running")
+    // A sleeping computer cannot take an install, and a try on one would count as a failed attempt.
+    .eq("sleep_state", "awake")
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) throw new Error(`could not list Hermes computers: ${error.message}`);

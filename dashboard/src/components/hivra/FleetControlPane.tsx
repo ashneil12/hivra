@@ -24,7 +24,7 @@ import { StatusText } from "@/components/ui/StatusText";
 import { inRecentOrder } from "@/lib/workspace/recent-order";
 import { listRecents, visitHref, type RecentVisit } from "@/lib/workspace/recents";
 import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
-import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { isRunningState, unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
 
 const NO_RECENTS: RecentVisit[] = [];
@@ -97,7 +97,7 @@ export function FleetControlPane({ requested = false, attentionRequested = false
     const last = recents[0];
     if (!last) return null;
     const agent = currentAgents.find((candidate) => candidate.uid === last.uid);
-    if (!agent || agent.state !== "running") return null;
+    if (!agent || !isRunningState(agent.state)) return null;
     return { agent, href: visitHref(agent.uid, last.tab, fleetEntryHref(agent)) };
   }, [currentAgents, recents]);
 
@@ -294,7 +294,7 @@ function FleetEntry({
           </span>
         ) : null}
         <span className="mt-3 block text-[12px] font-medium text-[var(--text-secondary)] group-hover:text-[var(--ink-black)]">
-          {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : agent.state !== "running" ? "View details" : fleetEntryOpenLabel(agent)} <span aria-hidden="true">→</span>
+          {stale ? "View details" : agent.attention === "approval" || agent.attention === "clarify" ? "Open to respond" : !isRunningState(agent.state) ? "View details" : fleetEntryOpenLabel(agent)} <span aria-hidden="true">→</span>
         </span>
       </span>
     </Link>

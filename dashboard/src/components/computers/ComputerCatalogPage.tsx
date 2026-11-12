@@ -56,6 +56,7 @@ function computerState(computer: HivraAgent): ComputerState {
 
 function statusTone(state: ComputerState): string {
   if (state === "running") return styles.running;
+  if (state === "asleep" || state === "waking") return styles.asleep;
   if (state === "error") return styles.error;
   if (state === "provisioning" || state === "updating") return styles.working;
   return styles.stopped;

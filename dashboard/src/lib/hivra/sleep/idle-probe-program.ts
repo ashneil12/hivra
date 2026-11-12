@@ -13,9 +13,11 @@
 export const IDLE_PROBE_PREFIX = "HIVRA_IDLE ";
 export const IDLE_PROBE_VERSION = 1;
 
-export const IDLE_PROBE_PROGRAM = String.raw`import calendar, json, os, re, signal, subprocess, sys, time
+export const IDLE_PROBE_PROGRAM = String.raw`import calendar, errno, json, os, re, signal, subprocess, sys, time
 # hivra-idle-probe v1. Runs as root via the guest agent. Counts and times only.
-def _alarm(*_): raise TimeoutError()
+# BaseException, so no "except OSError" or "except Exception" below can swallow the alarm.
+class _Timeout(BaseException): pass
+def _alarm(*_): raise _Timeout()
 def _fail(*_):
     sys.stderr.write("HIVRA_IDLE_FAILURE\n")
     os._exit(3)
@@ -27,18 +29,39 @@ ME = os.getpid()
 HOME = "/home/bux"
 os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
 OUT = {"v": 1, "errors": []}
-def err(k): OUT["errors"].append(k)
+def err(k):
+    if k not in OUT["errors"]: OUT["errors"].append(k)
 def iso(t): return None if t is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
-def rd(p, n=262144):
+# A file that is not there is fine. A file that is there and cannot be read is
+# an error: the answer is then unknown, and an unknown answer never lets the
+# agent sleep. /proc files are read in a loop to the end, because one read of a
+# multi-record file such as /proc/net/tcp stops after about 4 KB.
+GONE = (errno.ENOENT, errno.ENOTDIR, errno.ESRCH)
+def rdb(p, n):
+    try: fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        if e.errno not in GONE: err("read")
+        return None
     try:
-        fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
-        try: return os.read(fd, n).decode("utf-8", "replace")
-        finally: os.close(fd)
-    except OSError: return None
+        chunks, total = [], 0
+        while total < n:
+            b = os.read(fd, min(65536, n - total))
+            if not b: break
+            chunks.append(b); total += len(b)
+        return b"".join(chunks)
+    except OSError as e:
+        if e.errno not in GONE: err("read")
+        return None
+    finally: os.close(fd)
+def rd(p, n=262144):
+    b = rdb(p, n)
+    return None if b is None else b.decode("utf-8", "replace")
 def rjson(p, n=262144):
-    s = rd(p, n)
-    try: return json.loads(s) if s else None
-    except ValueError: return None
+    b = rdb(p, n + 1)
+    if b is None: return None
+    if len(b) > n: err("json"); return None
+    try: return json.loads(b.decode("utf-8"))
+    except ValueError: err("json"); return None
 def newest(root, depth, budget):
     best, stack, seen = None, [(root, 0)], 0
     while stack and seen < budget:
@@ -190,7 +213,7 @@ ch = []
 def active(unit):
     try:
         return subprocess.run(["systemctl", "is-active", "--quiet", unit], timeout=2).returncode == 0
-    except Exception: return False
+    except Exception: err("systemctl"); return False
 tg = rd("/etc/bux/tg.env", 8192) or ""
 if re.search(r"^TG_BOT_TOKEN=\S", tg, re.M) and active("bux-tg"): ch.append("telegram:bux-tg")
 env = rd(HOME + "/.hermes/.env", 65536) or ""

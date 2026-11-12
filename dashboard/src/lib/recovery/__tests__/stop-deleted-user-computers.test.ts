@@ -9,6 +9,8 @@ jest.mock("@/lib/hivra/agent-operation-store", () => ({ claimHivraAgentOperation
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
 jest.mock("@/lib/remote-computers/session-broker", () => ({ revokeRemoteDesktopCapability: jest.fn() }));
+const mockMarkAwake = jest.fn();
+jest.mock("@/lib/hivra/sleep-aware", () => ({ markAgentAwake: (...args: unknown[]) => mockMarkAwake(...args) }));
 const single = jest.fn();
 let operationId: string | null;
 const baseAgent = { id: "computer", user_id: "user_gone", status: "running", vmid: 123, computer_substrate: "proxmox-kvm" };
@@ -23,6 +25,7 @@ beforeEach(() => {
   (recordHivraAgentOperationFailure as jest.Mock).mockResolvedValue(true);
   (runProxmoxHostScript as jest.Mock).mockResolvedValue({ ok: true });
   (revokeRemoteDesktopCapability as jest.Mock).mockResolvedValue({ ok: true });
+  mockMarkAwake.mockResolvedValue(true);
 });
 it("claims the owner-bound operation and confirms shutdown before persisting stopped", async () => {
   await stopDeletedUserComputer("user_gone", "computer");
@@ -67,4 +70,29 @@ it("retries the same durable stop operation after an uncertain outcome", async (
   expect(claimHivraAgentOperation).not.toHaveBeenCalled();
   expect(completeHivraAgentOperation).toHaveBeenCalledWith(expect.objectContaining({ operationId, expectedDesiredState: "stopped", status: "stopped" }));
   expect(completeHivraAgentOperation).toHaveBeenCalled();
+});
+
+describe("a napping or hibernated computer", () => {
+  it("is stopped without being woken, by a script that handles both, and ends awake in the sleep record", async () => {
+    await stopDeletedUserComputer("user_gone", "computer");
+    const script = (runProxmoxHostScript as jest.Mock).mock.calls[0][0];
+    // A paused VM is switched off; a hibernation is discarded before autostart is turned off.
+    expect(script).toContain("qmpstatus:");
+    expect(script).toContain("qm unlock");
+    expect(script.indexOf("qm unlock")).toBeLessThan(script.indexOf("--onboot 0"));
+    expect(mockMarkAwake).toHaveBeenCalledWith("computer");
+    expect((completeHivraAgentOperation as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(mockMarkAwake.mock.invocationCallOrder[0]);
+  });
+
+  it("does not reset the sleep record when the stop was not confirmed", async () => {
+    (runProxmoxHostScript as jest.Mock).mockResolvedValue({ ok: false });
+    await expect(stopDeletedUserComputer("user_gone", "computer")).rejects.toThrow("unconfirmed");
+    expect(mockMarkAwake).not.toHaveBeenCalled();
+  });
+
+  it("still counts the stop done when the sleep record cannot be reset", async () => {
+    mockMarkAwake.mockRejectedValue(new Error("database down"));
+    await expect(stopDeletedUserComputer("user_gone", "computer")).resolves.toBeUndefined();
+    expect(recordHivraAgentOperationFailure).not.toHaveBeenCalled();
+  });
 });

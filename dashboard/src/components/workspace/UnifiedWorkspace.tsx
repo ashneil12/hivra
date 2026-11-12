@@ -15,7 +15,7 @@ import {
 import type { AgentComputer, AgentComputerSurface } from "@/lib/agent-computers/contracts";
 import { startAgent, type HivraAgent } from "@/lib/hivra/agent-api";
 import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
-import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { isRunningState, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import type { ReleaseMetadata } from "@/lib/workspace/release-metadata";
 import type {
@@ -400,7 +400,7 @@ function landingFor(agent: UnifiedAgent) {
     source: agent.kind,
     type: agent.agentType ?? null,
     computerProfile: agent.computerProfile ?? null,
-    status: agent.state,
+    status: isRunningState(agent.state) ? "running" : agent.state,
     surfaceKind: agent.surfaceKind,
     resourceKind: agent.resourceKind,
   });
@@ -490,7 +490,7 @@ export function UnifiedWorkspace({
     const candidates = workspaceAgents.agents;
     if (candidates.length === 0) return;
     const preferred =
-      candidates.find((candidate) => candidate.state === "running") ??
+      candidates.find((candidate) => isRunningState(candidate.state)) ??
       candidates[0];
     const landing = landingFor(preferred).landing;
     setRoute({ agent: preferred.uid, surface: landing });
@@ -1100,7 +1100,7 @@ function ResolvedAgentBoundary({
       source: agent.kind,
       type: agent.agentType ?? null,
       computerProfile: agent.computerProfile ?? null,
-      status: agent.state,
+      status: isRunningState(agent.state) ? "running" : agent.state,
       surfaceKind: agent.surfaceKind,
       resourceKind: agent.resourceKind,
     });

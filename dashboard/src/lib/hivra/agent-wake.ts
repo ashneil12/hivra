@@ -213,7 +213,10 @@ interface WakeOutcome {
 
 async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome> {
   const fromState = String(row.sleep_state);
-  const restore = fromState === "hibernated";
+  // Only a nap is known to be a quick resume. A hibernation, and a wake that
+  // failed before (the host may hold either), get the restore protections: a host
+  // slot, and the longer script limit a start from saved memory needs.
+  const restore = fromState !== "napping";
   const detail: WakeDetail = { from: fromState };
   const failed = (reason: string): WakeOutcome => ({ result: "wake_failed", reason, cold: false, detail });
 

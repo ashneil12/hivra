@@ -214,6 +214,10 @@ export async function readSleepFacts(row: AgentRow): Promise<SleepFacts> {
   } catch {
     // unknown
   }
+  // An attachment is open while its row is claimed, and a detach or access change
+  // step on it (claimed or dispatched) is open too. Either one keeps the agent
+  // awake; if either read fails and neither shows one, it is unknown.
+  let attachmentOpen: boolean | null = false;
   try {
     const { data, error } = await db
       .from("hivra_agent_attachments")
@@ -221,10 +225,26 @@ export async function readSleepFacts(row: AgentRow): Promise<SleepFacts> {
       .eq("source_id", agentId)
       .eq("phase", "claimed")
       .limit(1);
-    if (!error && Array.isArray(data)) facts.openAttachment = data.length > 0;
+    if (!error && Array.isArray(data)) { if (data.length > 0) attachmentOpen = true; }
+    else attachmentOpen = null;
   } catch {
-    // unknown
+    attachmentOpen = null;
   }
+  if (attachmentOpen !== true) {
+    try {
+      const { data, error } = await db
+        .from("hivra_agent_attachment_operations")
+        .select("id")
+        .eq("source_id", agentId)
+        .in("phase", ["claimed", "dispatched"])
+        .limit(1);
+      if (!error && Array.isArray(data)) { if (data.length > 0) attachmentOpen = true; }
+      else attachmentOpen = null;
+    } catch {
+      attachmentOpen = null;
+    }
+  }
+  facts.openAttachment = attachmentOpen;
   try {
     facts.ownerLapsed = await isStartBlockedForLapse(row as { user_id?: unknown }, "start");
   } catch {
@@ -406,21 +426,28 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
 
   // The host's own answer when the script could not tell us: wake it, so it
   // ends up awake, and read the state the wake reports.
+  // A script that is still running on the host (the wake script says busy then)
+  // will move the computer after this call returns, so no state observed now can
+  // be recorded. The lease stays and the sweep settles it from the host once the
+  // computer has stopped changing.
+  const leaveLease = async (reason: string, recovered: boolean): Promise<SleepOutcome> => {
+    await record("fail", "unknown", reason, { recovered });
+    log.warn("agent sleep left its lease for the sweep: state unknown", {
+      source: LOG_SOURCE,
+      failureType: "agent_sleep_state_unknown",
+      instanceId: agentId,
+      reason,
+    });
+    return { outcome: "failed", reason, ms: now() - startedAt };
+  };
   const recoverByWaking = async (reason: string): Promise<SleepOutcome> => {
-    const run = await runWakeHostScript(row, target, { restore: false });
-    const observed = run.receipt ? stateFromObserved(run.receipt.to === "cold" ? "awake" : run.receipt.to) : null;
-    if (!observed) {
-      // The state cannot be read. Leave the lease: the sweep settles it from the host.
-      await record("fail", "unknown", reason, { recovered: false });
-      log.warn("agent sleep left its lease for the sweep: state unknown", {
-        source: LOG_SOURCE,
-        failureType: "agent_sleep_state_unknown",
-        instanceId: agentId,
-        reason,
-      });
-      return { outcome: "failed", reason, ms: now() - startedAt };
-    }
-    await finish(observed);
+    // A hibernation that lost its receipt may be saved to disk: that wake is a restore.
+    const run = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
+    const busy = run.receipt?.reason === "busy";
+    const observed = run.receipt && !busy ? stateFromObserved(run.receipt.to === "cold" ? "awake" : run.receipt.to) : null;
+    if (!observed) return leaveLease(reason, false);
+    const finished = await finish(observed);
+    if (!finished) return leaveLease(reason, false);
     await record("fail", observed, reason, { recovered: true });
     return { outcome: "failed", state: observed, reason, ms: now() - startedAt };
   };
@@ -439,9 +466,15 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   if (!receipt) return recoverByWaking("no_receipt");
 
   if (!receipt.ok) {
+    // Another script holds this computer. What the host shows now is not where it will end up.
+    if (receipt.reason === "busy") {
+      await record("abort", "unknown", "busy", { ...receiptDetail(receipt), lease_left: true });
+      return { outcome: "aborted", reason: "busy", ms: now() - startedAt };
+    }
     const observed = stateFromObserved(receipt.to);
     if (!observed) return recoverByWaking(receipt.reason);
-    await finish(observed);
+    const finishedAbort = await finish(observed);
+    if (!finishedAbort) return leaveLease(receipt.reason, false);
     await record(ABORT_REASONS.has(receipt.reason) ? "abort" : "fail", observed, receipt.reason, receiptDetail(receipt));
     return {
       outcome: ABORT_REASONS.has(receipt.reason) ? "aborted" : "failed",
@@ -457,9 +490,11 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   const finalVerdict = receipt.probe ? idleVerdict(receipt.probe, verdictOptions(receipt.probe.cpus)) : verdict;
   if (receipt.probe && finalVerdict && !finalVerdict.idle) {
     const woke = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
-    const observed = woke.receipt ? stateFromObserved(woke.receipt.to === "cold" ? "awake" : woke.receipt.to) : null;
+    const observed = woke.receipt && woke.receipt.reason !== "busy"
+      ? stateFromObserved(woke.receipt.to === "cold" ? "awake" : woke.receipt.to)
+      : null;
     if (observed === "awake") {
-      await finish("awake");
+      if (!(await finish("awake"))) return leaveLease("recheck_finish_not_recorded", false);
       await record("abort", "awake", "recheck_not_idle", receiptDetail(receipt, { blockers: finalVerdict.reasons.join(",") }));
       return { outcome: "aborted", state: "awake", reason: "recheck_not_idle", reasons: finalVerdict.reasons, ms: now() - startedAt };
     }

@@ -1,14 +1,20 @@
 // The owner's two sleep settings for one agent: "Sleep when idle" (sleep_policy
 // full or off) and "Keep awake" (always_on). Nothing here puts an agent to sleep.
+// Opting out of sleep (Keep awake on, or Sleep when idle off) does wake an agent
+// that is asleep right now: the sweep leaves an opted-out agent alone, so nothing
+// else would, and its channels and scheduled jobs would stay stopped.
 
 export const runtime = "nodejs";
+// Turning a sleeping agent's settings off wakes it, and that work runs after the answer.
+export const maxDuration = 180;
 
-import type { NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
+import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -51,6 +57,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return apiError("Could not save this setting.", 503);
     }
     if (!data) return apiError("Agent not found", 404);
+    if (data.always_on === true || data.sleep_policy === "off") {
+      // A no-op for an awake agent (one read). The wake itself carries on after the answer.
+      try {
+        await ensureHivraAgentAwake(String(data.id), {
+          trigger: "action",
+          waitMs: 0,
+          onBackground: (work) => after(() => work),
+        });
+      } catch {
+        // The setting is saved; the agent wakes on its next use.
+      }
+    }
     const response = apiSuccess({ always_on: data.always_on, sleep_policy: data.sleep_policy });
     response.headers.set("Cache-Control", "no-store");
     return response;

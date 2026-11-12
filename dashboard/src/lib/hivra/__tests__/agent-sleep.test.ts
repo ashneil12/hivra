@@ -41,7 +41,7 @@ jest.mock("../lapse-gate", () => ({ isStartBlockedForLapse: (...a: unknown[]) =>
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: jest.fn() }));
 jest.mock("@/lib/proxmox/wake-admission", () => ({}));
 
-import { resolveSleepTimings, sleepEligibility, sleepHivraAgent, type SleepFacts } from "../agent-sleep";
+import { readSleepFacts, resolveSleepTimings, sleepEligibility, sleepHivraAgent, type SleepFacts } from "../agent-sleep";
 import { probeLine } from "./sleep-stub-host.fixtures";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -188,6 +188,27 @@ describe("sleepEligibility", () => {
   });
 });
 
+describe("readSleepFacts", () => {
+  beforeEach(() => { jest.resetAllMocks(); mockLapsed.mockResolvedValue(false); });
+  const facts = (rows: Record<string, unknown>) => {
+    mockListRows.mockImplementation((table: string) => rows[table] ?? { data: [], error: null });
+    return readSleepFacts(eligibleRow());
+  };
+
+  it("sees an open attachment, or an open detach or access step, as not safe to sleep", async () => {
+    expect((await facts({})).openAttachment).toBe(false);
+    expect((await facts({ hivra_agent_attachments: { data: [{ id: "a" }], error: null } })).openAttachment).toBe(true);
+    expect((await facts({ hivra_agent_attachment_operations: { data: [{ id: "o" }], error: null } })).openAttachment).toBe(true);
+  });
+
+  it("calls an attachment read that failed unknown, unless the other read already found one", async () => {
+    const failed = { data: null, error: { message: "x" } };
+    expect((await facts({ hivra_agent_attachments: failed })).openAttachment).toBeNull();
+    expect((await facts({ hivra_agent_attachment_operations: failed })).openAttachment).toBeNull();
+    expect((await facts({ hivra_agent_attachments: { data: [{ id: "a" }], error: null }, hivra_agent_attachment_operations: failed })).openAttachment).toBe(true);
+  });
+});
+
 describe("resolveSleepTimings", () => {
   it("defaults to 300 and 900 seconds and ignores nonsense", () => {
     expect(resolveSleepTimings({})).toEqual({ napAfterSeconds: 300, hibernateAfterSeconds: 900, horizonSeconds: 1200 });
@@ -316,6 +337,38 @@ describe("sleepHivraAgent", () => {
     expect(result).toEqual(expect.objectContaining({ outcome: "aborted", state: "awake", reason: "active" }));
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "abort", toState: "awake", reason: "active" }));
+  });
+
+  it("leaves the lease, and never records the observed state, when another script still holds the computer", async () => {
+    stubScripts({ probe: probeLine(), sleep: sleepReceipt({ ok: false, to: "awake", reason: "busy", probe: null }) });
+    const result = await run({ tier: "nap", trigger: "sweep" });
+    expect(result).toEqual(expect.objectContaining({ outcome: "aborted", reason: "busy" }));
+    expect(mockFinish).not.toHaveBeenCalled();
+    expect(ranScript("HIVRA_WAKE_RESULT")).toBe(false);
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "abort", reason: "busy", detail: expect.objectContaining({ lease_left: true }) }));
+  });
+
+  it("does not trust a wake that says busy after a lost receipt: the lease stays for the sweep", async () => {
+    stubScripts({ probe: probeLine(), sleep: undefined, wake: wakeReceipt({ ok: false, to: "awake", reason: "busy" }) });
+    const result = await run({ tier: "nap", trigger: "sweep" });
+    expect(result).toEqual(expect.objectContaining({ outcome: "failed", reason: "no_receipt" }));
+    expect(result.state).toBeUndefined();
+    expect(mockFinish).not.toHaveBeenCalled();
+  });
+
+  it("reports an unrecovered lease when the finish is not recorded after a failed sleep", async () => {
+    mockFinish.mockResolvedValue(false);
+    stubScripts({ probe: probeLine(), sleep: sleepReceipt({ ok: false, to: "awake", reason: "suspend_failed", probe: null }) });
+    const result = await run({ tier: "nap", trigger: "sweep" });
+    expect(result.state).toBeUndefined();
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "fail", toState: "unknown", detail: expect.objectContaining({ recovered: false }) }));
+  });
+
+  it("recovers a lost hibernate receipt with a restore-length wake", async () => {
+    stubScripts({ probe: probeLine(), sleep: undefined, wake: wakeReceipt({ from: "hibernated", reason: "restored" }) });
+    await run({ tier: "hibernate", trigger: "sweep" });
+    const wakeCall = mockRunScript.mock.calls.find((c) => String(c[0]).includes("HIVRA_WAKE_RESULT"))!;
+    expect(wakeCall[2]).toEqual({ timeoutMs: 120_000 });
   });
 
   it("finishes at the observed state when the script fails, and logs a fail event", async () => {

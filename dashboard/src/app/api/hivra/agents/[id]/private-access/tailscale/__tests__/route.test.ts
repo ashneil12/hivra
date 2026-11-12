@@ -15,6 +15,7 @@ const mockConnectNetbird = jest.fn();
 const mockObserveNetbird = jest.fn();
 const mockReapply = jest.fn();
 const mockRateLimit = jest.fn();
+const mockWake = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
 jest.mock("@/lib/rate-limit", () => ({
@@ -32,6 +33,7 @@ jest.mock("@/lib/hivra/tailscale-private-access", () => {
     connectHivraNetbird: (...args: unknown[]) => mockConnectNetbird(...args),
     observeHivraNetbird: (...args: unknown[]) => mockObserveNetbird(...args),
     reapplyHivraOutboundBlock: (...args: unknown[]) => mockReapply(...args),
+    wakeHivraPrivateAccessComputer: (...args: unknown[]) => mockWake(...args),
   };
 });
 
@@ -62,6 +64,7 @@ describe("Hivra Tailscale private access route", () => {
     jest.clearAllMocks();
     mockAuth.mockResolvedValue({ userId: "owner" });
     mockRateLimit.mockReturnValue({ success: true });
+    mockWake.mockResolvedValue({ ok: true });
     agent = { id: ID, user_id: "owner", type: "linux-desktop", computer_profile: "ubuntu-desktop",
       status: "running", desired_state: "running", operation_id: null, operation_kind: null,
       vmid: 1113, ip: "10.250.20.63", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
@@ -341,5 +344,27 @@ describe("Hivra Tailscale private access route", () => {
       expect(response.status).toBe(409);
       expect(mockReapply).not.toHaveBeenCalled();
     });
+  });
+  it("wakes a sleeping computer before it reads or changes the network on connect", async () => {
+    const response = await POST(request({ action: "connect", authKey: "tskey-auth-abc" }), params);
+    expect(response.status).toBe(200);
+    expect(mockWake).toHaveBeenCalledWith(ID);
+    expect(mockWake.mock.invocationCallOrder[0]).toBeLessThan(mockObserve.mock.invocationCallOrder[0]);
+    expect(mockWake.mock.invocationCallOrder[0]).toBeLessThan(mockConnect.mock.invocationCallOrder[0]);
+  });
+
+  it("says the computer is still waking, and touches nothing, when the wake has not finished", async () => {
+    mockWake.mockResolvedValue({ ok: false });
+    const response = await POST(request({ action: "connect", authKey: "tskey-auth-abc" }), params);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ success: false, code: "computer_asleep" });
+    expect(mockObserve).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it("never wakes a computer just to read its status", async () => {
+    await POST(request({ action: "refresh" }), params);
+    expect(mockWake).not.toHaveBeenCalled();
   });
 });

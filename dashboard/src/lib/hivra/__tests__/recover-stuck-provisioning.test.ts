@@ -223,7 +223,7 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
       });
       chain.not = jest.fn((col: string, op: string, val: unknown) => {
         if (col === "operation_kind") {
-          expect([op, val]).toEqual(["in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)"]);
+          expect([op, val]).toEqual(["in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach,sleep,wake)"]);
           excludesDesktopPrepare = true;
           return chain;
         }

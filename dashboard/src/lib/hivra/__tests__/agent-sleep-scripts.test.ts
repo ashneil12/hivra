@@ -102,7 +102,8 @@ host("sleep script against a stub host", () => {
 
     it("aborts as busy when the per-VM lock is held, touching nothing", () => {
       const run = h.run(nap(), withProbe(AWAKE), { STUB_FLOCK_BUSY: "1" });
-      expect(receipt(run)).toMatchObject({ ok: false, reason: "busy" });
+      // The other script decides what happens next, so the receipt says what the host shows now.
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "busy", to: "awake" });
       noMutation(run.calls);
       expect(run.calls.some((c) => c.startsWith("guest "))).toBe(false);
     });
@@ -128,6 +129,15 @@ host("sleep script against a stub host", () => {
       expect(r).toMatchObject({ ok: false, reason: "active", from: "awake", to: "awake" });
       expect(r?.probe).not.toBeNull();
       noMutation(run.calls);
+    });
+
+    it("leaves the computer awake when the probe reports an error other than a timer count", () => {
+      for (const errors of [["conn"], ["read"], ["timers", "json"]]) {
+        const run = h.run(nap(), withProbe(AWAKE, { errors }));
+        expect(receipt(run)).toMatchObject({ ok: false, reason: "probe_invalid", to: "awake" });
+        noMutation(run.calls);
+      }
+      expect(receipt(h.run(nap(), withProbe(AWAKE, { errors: ["timers"] })))).toMatchObject({ ok: true });
     });
 
     it("a manual sleep ignores the page's own connections but never a run or a channel", () => {
@@ -297,9 +307,10 @@ host("wake script against a stub host", () => {
     const resume = run.calls.indexOf(`qm resume ${VMID}`);
     expect(resume).toBeGreaterThan(-1);
     expect(resume).toBeLessThan(run.calls.findIndex((c) => c.startsWith("guest ")));
-    // A nap needs no admission and no host-wide lock.
+    // A nap needs no admission and no host-wide lock, only the per-computer lock it shares with a sleep.
     expect(run.calls.some((c) => c.startsWith("admission"))).toBe(false);
-    expect(run.calls.some((c) => c.startsWith("flock"))).toBe(false);
+    expect(run.calls.filter((c) => c.startsWith("flock"))).toEqual(["flock -x -w 20 9"]);
+    expect(run.calls.indexOf("flock -x -w 20 9")).toBeLessThan(run.calls.indexOf(`qm resume ${VMID}`));
     expect(run.stdout.split("\n").filter((l) => l.startsWith("HIVRA_WAKE_RESULT ")).length).toBe(1);
   });
 
@@ -316,6 +327,21 @@ host("wake script against a stub host", () => {
     expect(at("flock -u 8")).toBeLessThan(at(`qm set ${VMID} --onboot 1`));
     expect(at(`qm set ${VMID} --onboot 1`)).toBeLessThan(at("guest "));
     expect(Object.keys(receipt(run)?.steps ?? {})).toContain("admission");
+  });
+
+  it("changes nothing, and says what the host shows, when a sleep holds the computer", () => {
+    for (const [state, to] of [[AWAKE, "awake"], [NAPPING, "napping"], [HIBERNATED, "hibernated"]] as const) {
+      const run = h.run(wake(), state, { STUB_FLOCK_BUSY: "1" });
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "busy", to });
+      none(run.calls);
+      expect(run.calls.some((c) => c.startsWith("guest "))).toBe(false);
+    }
+  });
+
+  it("keeps the lock descriptors away from the computer's own process", () => {
+    expect(wake()).toMatch(/qm start "\$VMID" 8>&- 9>&-/);
+    // And every way out of the script closes them.
+    expect(wake()).toMatch(/exec 8>&- 9>&-\n\s*exit "\$code"/);
   });
 
   it("does not start a hibernated computer the host has no room for", () => {

@@ -165,6 +165,7 @@ async function main() {
       ["error", { status: "error" }],
       ["stop requested", { desired_state: "stopped" }],
       ["delete requested", { desired_state: "deleted" }],
+      ["keep awake switched on", { always_on: true }],
       ["another lease", { operation_id: uuid(), operation_kind: "restart", operation_started_at: "2026-11-01T00:00:00Z" }],
     ]) {
       const id = await make(set);

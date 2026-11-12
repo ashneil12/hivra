@@ -158,6 +158,30 @@ describe("ensureHivraAgentAwake", () => {
     expect(String(mockRunScript.mock.calls[0][0])).toContain("/opt/hivra/provisioner");
   });
 
+  it("treats a retry after a failed wake as a restore: a host slot and the longer script limit", async () => {
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "wake_failed" }), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "action", ...fast });
+    expect(result.state).toBe("awake");
+    expect(mockAcquire).toHaveBeenCalledTimes(1);
+    expect(mockRunScript.mock.calls[0][2]).toEqual({ timeoutMs: 120_000 });
+    mockRunScript.mockClear();
+    mockAcquire.mockClear();
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "napping" }), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "" });
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "action", ...fast });
+    expect(mockAcquire).not.toHaveBeenCalled();
+    expect(mockRunScript.mock.calls[0][2]).toEqual({ timeoutMs: 60_000 });
+  });
+
+  it("finishes as wake_failed with reason busy when a sleep still holds the computer, and does not call it awake", async () => {
+    mockReadRow.mockResolvedValue({ data: row(), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ ok: false, to: "awake", reason: "busy" }), stderr: "" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(result).toEqual({ state: "failed", reason: "busy" });
+    expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
+  });
+
   it("finishes as wake_failed when the host defers the wake, and runs no script", async () => {
     mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
     mockAcquire.mockResolvedValue({ admitted: false, reason: "host_ram", freeMb: 100, activeWakes: 1, cap: 2, retryAfterSeconds: 30 });

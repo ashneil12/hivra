@@ -177,6 +177,9 @@
 .working {
   background: var(--hg-warn);
 }
+.asleep {
+  background: #7c8fc7;
+}
 .error {
   background: var(--hg-bad);
 }

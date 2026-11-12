@@ -28,6 +28,9 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, browserToggle, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
+import { agentSleepUiEnabled, agentSleepView, sleepGenerationOf } from "@/lib/hivra/agent-sleep-ui";
+import { useAgentWake } from "@/components/hivra/useAgentWake";
+import { AgentWakePanel, WokeUpNote } from "@/components/hivra/AgentWakePanel";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
@@ -885,7 +888,16 @@ export default function AgentPage() {
   const browserProbeRef = useRef<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
-  const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
+  // Asleep, an agent's computer cannot answer: wake it once, show a short wait
+  // instead of the surfaces, and hold every call to it until it is awake. With
+  // the sleep switch off, every agent reads as awake and none of this runs.
+  const sleepView = agent?.id === id ? agentSleepView(agent) : "awake";
+  const awake = sleepView === "awake";
+  const wake = useAgentWake(id, sleepView, agent?.id === id ? agent.sleep_state : undefined, () => setReloadKey((k) => k + 1));
+  // The surfaces start fresh after every wake: their connections died with the sleep.
+  const wakeEpoch = agentSleepUiEnabled() && agent?.id === id ? sleepGenerationOf(agent) : 0;
+  const surfaceEpoch = wakeEpoch ? `:g${wakeEpoch}` : "";
+  const chatReadiness = useChatReadiness(id, agent?.id === id && awake ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
   const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
   // A second look at a failed connection check. While it runs, the failure
   // panel stays put with its button showing "Checking…" (for at least a beat,
@@ -934,7 +946,7 @@ export default function AgentPage() {
   // For browser-capable agents, learn the box's live browser-automation state
   // (drives the Browser tab visibility + the Manage toggle + the resize floor).
   useEffect(() => {
-    if (agent?.status === "running" && agent.chat_url && catalogAgent(agent.type)?.browser && browserOn === null) {
+    if (awake && agent?.status === "running" && agent.chat_url && catalogAgent(agent.type)?.browser && browserOn === null) {
       // One probe per agent at a time: browserOn stays null until this resolves,
       // and each poll that changes the agent object re-runs this effect.
       if (browserProbeRef.current === agent.id) return;
@@ -954,7 +966,7 @@ export default function AgentPage() {
         setBrowserOn(s.enabled);
       });
     }
-  }, [agent, browserOn]);
+  }, [agent, browserOn, awake]);
 
   useEffect(() => {
     if (agent?.status !== "error") return;
@@ -1113,7 +1125,7 @@ export default function AgentPage() {
   // first. Nothing aborts it, since the desktop may be waiting on it.
   // Never prepare — Omarchy autoPrepare stays prepare=1 only.
   useEffect(() => {
-    if (!agent || agent.status !== "running" || agent.id !== id) return;
+    if (!agent || agent.status !== "running" || agent.id !== id || !awake) return;
     if (catalogAgent(agent.type)?.surface !== "computer") return;
     if (agent.computer_substrate === "gvisor") return;
     // No desktop, so no desktop capability to read.
@@ -1121,12 +1133,12 @@ export default function AgentPage() {
     if (capabilityPrefetchRef.current === agent.id) return;
     capabilityPrefetchRef.current = agent.id;
     void refreshDesktopCapability(agent.id).catch(() => {});
-  }, [agent, id]);
+  }, [agent, id, awake]);
 
   // Check the computer's connection service as soon as its address is known,
   // so opening a terminal or another session tab doesn't wait for it. Windows
   // computers and provider desktops have no surface that uses it.
-  const checksSurfaceAccess = agent?.id === id && agent.status === "running" && agent.computer_profile !== "windows"
+  const checksSurfaceAccess = agent?.id === id && awake && agent.status === "running" && agent.computer_profile !== "windows"
     && !(agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop");
   const surfaceCheckUrl = checksSurfaceAccess ? agent.chat_url : null;
   const surfaceCheckToken = checksSurfaceAccess ? agent.api_token : null;
@@ -1296,7 +1308,7 @@ export default function AgentPage() {
           gates itself on this visit's welcome + probe + per-box dismiss).
           Hidden while already on the Telegram tab and for dashboard-surface
           agents (no Telegram tab to point at). */}
-      {agent.status === "running" && agent.chat_url && !isDashboard && !isComputer && effectiveTab !== "telegram" ? (
+      {awake && agent.status === "running" && agent.chat_url && !isDashboard && !isComputer && effectiveTab !== "telegram" ? (
         <ChannelConnectNudge
           welcome={launchWelcome}
           boxUrl={agent.chat_url}
@@ -1306,24 +1318,27 @@ export default function AgentPage() {
         />
       ) : null}
 
+      {wake.wokeMs !== null && awake ? <WokeUpNote ms={wake.wokeMs} /> : null}
+
       <div id={WORK_PANE_ID} className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
             among local surfaces. Only computers have a desktop. */}
         <DesktopTabOpen.Provider value={effectiveTab === "desktop"}>
         <SurfaceCodeBoundary visible={effectiveTab === "desktop"}>
-        {isComputer && agent.status === "running" ? (
+        {isComputer && agent.status === "running" && awake ? (
           agent.computer_profile === "omarchy" ? (
-            <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
+            <HivraOmarchyDesktop key={`omarchy${surfaceEpoch}`} computerId={agent.id} name={agent.name}
               active={effectiveTab === "desktop"}
               autoPrepare={isComputer && searchParams?.get("prepare") === "1"}
               handoffWarmOrigin={(() => { try { return agent.chat_url ? new URL(agent.chat_url).origin : null; } catch { return null; } })()} />
           ) : agent.computer_profile === "windows" ? (
-            <HivraConsoleDesktop computerId={agent.id} name={agent.name}
+            <HivraConsoleDesktop key={`console${surfaceEpoch}`} computerId={agent.id} name={agent.name}
               profile={agent.computer_profile} active={effectiveTab === "desktop"}
               autoOpenFast={landing.desktopAutoOpen || searchParams?.get("open") === "fast"} />
           ) : landing.desktopTransport === "remote" ? (
             <HivraRemoteDesktop
+              key={`remote${surfaceEpoch}`}
               computerId={agent.id}
               name={agent.name}
               active={effectiveTab === "desktop"}
@@ -1341,16 +1356,16 @@ export default function AgentPage() {
         ) : null}
         </SurfaceCodeBoundary>
         </DesktopTabOpen.Provider>
-        {chatOpened && chatSurfaceReady && agent.chat_url ? (
+        {chatOpened && chatSurfaceReady && awake && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
-            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat${surfaceEpoch}`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
           </div>
         ) : null}
-        {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
+        {awake && agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
           <>
             {!isDashboard && !isComputer ? (
               <RetainedTerminal
-                key={`${agent.id}:${agent.chat_url}:terminal`}
+                key={`${agent.id}:${agent.chat_url}:terminal${surfaceEpoch}`}
                 active={effectiveTab === "terminal"}
                 surfaceId="terminal"
                 url={`${agent.chat_url.replace(/\/$/, "")}/terminal/`}
@@ -1361,12 +1376,12 @@ export default function AgentPage() {
               />
             ) : null}
             {providerWorkspace ? <>
-              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-box`} computerId={agent.id}
+              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-box${surfaceEpoch}`} computerId={agent.id}
                 boxOrigin={agent.chat_url} surface="box-terminal" active={effectiveTab === "box"} />
-              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-files`} computerId={agent.id}
+              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-files${surfaceEpoch}`} computerId={agent.id}
                 boxOrigin={agent.chat_url} surface="files" active={effectiveTab === "files"} />
             </> : <RetainedTerminal
-              key={`${agent.id}:${agent.chat_url}:box`}
+              key={`${agent.id}:${agent.chat_url}:box${surfaceEpoch}`}
               active={effectiveTab === "box"}
               surfaceId="box"
               url={`${agent.chat_url.replace(/\/$/, "")}/box-terminal/`}
@@ -1385,7 +1400,9 @@ export default function AgentPage() {
             {managePanel}
           </div>
         ) : null}
-        {showManage ? null : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
+        {showManage ? null : !awake ? (
+          <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} />
+        ) : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
               <div className="serif" style={{ fontSize: 24, color: "var(--ink-black)", marginBottom: 10 }}>Finish Windows setup on your Proxmox host</div>
@@ -1563,7 +1580,7 @@ export default function AgentPage() {
             surfaces={tabs}
             active={effectiveTab}
             onSelect={selectTab}
-            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+            exportHref={agent.status === "running" && awake && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
           />
           {content}
         </>
@@ -1572,7 +1589,7 @@ export default function AgentPage() {
           key={agent.id}
           agent={agent}
           surfaces={tabs.map((t) => t.id)}
-          enabled={!isComputer && agent.status === "running"}
+          enabled={!isComputer && agent.status === "running" && awake}
           onOpenSurface={selectTab}
           onOpenManageSection={openManageSection}
           onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
@@ -1581,7 +1598,7 @@ export default function AgentPage() {
           {({ settings, busy, suggestion }) => (
           <AgentShell
             name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
-            status={provisioning ? activity.label : agent.status}
+            status={provisioning ? activity.label : sleepView === "asleep" ? "asleep" : sleepView === "waking" ? "waking up" : agent.status}
             nameTitle={isComputer ? undefined : computerNote}
             switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
             titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
@@ -1591,7 +1608,7 @@ export default function AgentPage() {
             onSelect={selectTab}
             chatSurface="chat"
             panelId={WORK_PANE_ID}
-            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+            exportHref={agent.status === "running" && awake && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
             surfaceNote={{ browser: "View only" }}
             homeLabel={isDashboard ? def?.name : undefined}
             quickSettings={settings}

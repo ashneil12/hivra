@@ -4,7 +4,7 @@ import { ArrowRight, Bot, Monitor } from "lucide-react";
 import Link from "next/link";
 
 import { fleetEntryHref } from "@/lib/hivra/fleet-sections";
-import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
+import { isRunningState, unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import type { RecentEntry } from "@/lib/workspace/recent-order";
 import { recentSurfaceLabel, usedAgoLabel } from "@/lib/workspace/recent-presentation";
 import { visitHref } from "@/lib/workspace/recents";
@@ -32,7 +32,7 @@ export function continueEntry(
   entries: readonly RecentEntry<UnifiedAgent>[],
   isStale: (agent: UnifiedAgent) => boolean,
 ): RecentEntry<UnifiedAgent> | null {
-  return entries.find(({ item }) => item.state === "running" && !isStale(item)) ?? null;
+  return entries.find(({ item }) => isRunningState(item.state) && !isStale(item)) ?? null;
 }
 
 function needsResponse(agent: UnifiedAgent): boolean {
@@ -106,7 +106,7 @@ function ContinueCard({ entry, now }: { entry: RecentEntry<UnifiedAgent>; now: n
 
 function RecentItem({ entry, stale, now }: { entry: RecentEntry<UnifiedAgent>; stale: boolean; now: number }) {
   const { item: agent, visit } = entry;
-  const usable = !stale && agent.state === "running";
+  const usable = !stale && isRunningState(agent.state);
   const used = usedAgoLabel(visit.usedAt, now);
   // Only a running resource reopens on the surface you left: anything else
   // goes to its page, which explains its state.

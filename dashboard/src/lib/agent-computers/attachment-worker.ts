@@ -6,6 +6,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { hivraInfrastructureBindingTag } from "@/lib/hivra/agent-authority";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
+import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
+import { wakeAgentForUserAction } from "@/lib/hivra/sleep-aware";
 import type { RemoteDesktopAgentRow } from "@/lib/remote-computers/guest-installation";
 import { log } from "@/lib/logger";
 import { ATTACHED_SERVICE_POLICY_V2_SHA256 } from "./attach-review";
@@ -35,9 +37,15 @@ import { createAttachmentLifecycleStore, type AttachmentInterruptReason, type At
 const COMPUTER_COLUMNS = "id, user_id, name, type, cpu, ram, status, desired_state, operation_id, operation_kind, vmid, ip, chat_url, provisioned_at, "
   + "computer_profile, computer_substrate, deployment_mode, proxmox_host, infrastructure_connection_id, deployment_target_id, "
   + "infrastructure_connection_revision, infrastructure_binding_token_hash, infrastructure_binding_token_enforced, "
-  + "managed_provisioner_channel";
+  + "managed_provisioner_channel, sleep_state";
 
-type ComputerRow = RemoteDesktopAgentRow & { name: string; cpu: number | null; ram: number | null; provisioned_at?: string | null };
+type ComputerRow = RemoteDesktopAgentRow & { name: string; cpu: number | null; ram: number | null; provisioned_at?: string | null;
+  /** Where the computer is on the sleep ladder. Absent counts as awake. */
+  sleep_state?: string | null };
+
+/** How long one pass waits for a sleeping computer to wake, and the time it keeps back for the rest of its work. */
+const ATTACH_WAKE_WAIT_MS = 25_000;
+const ATTACH_WAKE_RESERVE_MS = 10_000;
 
 /** A guest that has not answered Hivra for this long since the claim is not ready: the attach fails with that reason. */
 export const ATTACH_GUEST_ANSWER_WINDOW_MS = 3 * 60_000;
@@ -75,6 +83,8 @@ type Dependencies = {
   now: () => number;
   /** The pass's own deadline (epoch ms): a host step that could outlast it is not started. */
   deadline: number;
+  /** Wakes a sleeping computer for an attach the owner asked for. `ok` is false while it is still asleep. */
+  wake: (computerId: string, waitMs: number) => Promise<{ ok: boolean }>;
 };
 
 async function loadComputer(ownerId: string, sourceId: string): Promise<ComputerRow | null> {
@@ -101,7 +111,8 @@ function defaults(overrides: Partial<Dependencies>): Dependencies {
   return {
     store: createAttachmentLifecycleStore(), loadComputer, hostAddresses, stage: progressAttachmentStaging,
     execute: executeAttachedAgentStep, gatewayProtocol: readAttachedGatewayProtocol, uuid: randomUUID, token: () => randomBytes(32).toString("hex"),
-    event: logHivraAgentEvent, now: Date.now, deadline: Number.POSITIVE_INFINITY, ...overrides,
+    event: logHivraAgentEvent, now: Date.now, deadline: Number.POSITIVE_INFINITY,
+    wake: async (computerId, waitMs) => ({ ok: (await wakeAgentForUserAction(computerId, { waitMs })).ok }), ...overrides,
   };
 }
 
@@ -181,14 +192,16 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   if (!state) return held("state_unavailable");
   if (state.phase === "attached") return { kind: "attach", id, state: "attached" };
   if (!["claimed", "dispatched"].includes(state.phase)) return { kind: "attach", id, state: state.phase === "failed" ? "failed" : "cancelled" };
-  const computer = await deps.loadComputer(ownerId, state.sourceId);
+  let computer = await deps.loadComputer(ownerId, state.sourceId);
   if (!computer) return held("computer_unavailable");
   const architecture = "x86_64" as const;
   const letGo = letGoOf(ownerId, "attach", id, deps);
 
   // A step that let its computer go waits for it, then takes it back (T3).
   if (state.leaseReleased) {
-    if (!computerBack(state)) return { kind: "attach", id, state: "interrupted", reason: state.interruptReason ?? "computer_not_running" };
+    // A computer that is asleep is not back: it reads as running, but nothing
+    // can reach it, so the step keeps waiting rather than resuming into it.
+    if (!computerBack(state) || !isAgentAwake(computer)) return { kind: "attach", id, state: "interrupted", reason: state.interruptReason ?? "computer_not_running" };
     if (!await deps.store.resume(ownerId, "attach", id)) return held("resume_unconfirmed");
     state = await deps.store.readState(ownerId, id);
     if (!state || state.phase !== "dispatched" || state.leaseReleased) return held("state_unavailable");
@@ -218,6 +231,16 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
     if (state.desiredState === "deleted") {
       return await deps.store.cancel(ownerId, id, "pending_delete")
         ? { kind: "attach", id, state: "cancelled", reason: "pending_delete" } : held("cancel_unconfirmed");
+    }
+    // The owner asked for this attach, so a sleeping computer is woken first. While
+    // it wakes the claim is held, not refused: asleep is not "not ready", and the
+    // answer window below only counts a guest that stayed silent once it was up.
+    if (!isAgentAwake(computer) && computer.status === "running") {
+      const waitMs = Math.min(ATTACH_WAKE_WAIT_MS, deps.deadline - deps.now() - ATTACH_WAKE_RESERVE_MS);
+      if (!(waitMs > 0) || !(await deps.wake(computer.id, waitMs).catch(() => ({ ok: false }))).ok) return held("computer_asleep");
+      const awake = await deps.loadComputer(ownerId, state.sourceId);
+      if (!awake) return held("computer_unavailable");
+      computer = awake;
     }
     const precondition = attachPrecondition(computer, state.desiredState);
     if (precondition) return await refuse(precondition);

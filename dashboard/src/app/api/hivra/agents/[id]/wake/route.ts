@@ -4,7 +4,9 @@
 // 202 while it is still waking (ask again), and an error when it cannot be woken.
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// The wake itself can take a restore (up to 120 s) plus the public health check (30 s), and
+// the work that outlives the 45 s answer runs through after(), which the limit also covers.
+export const maxDuration = 180;
 
 import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";

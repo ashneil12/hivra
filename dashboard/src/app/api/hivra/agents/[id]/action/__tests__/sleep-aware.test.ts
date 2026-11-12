@@ -1,0 +1,172 @@
+/** @jest-environment node */
+import { NextRequest } from "next/server";
+import { POST } from "../route";
+
+// A sleeping computer is woken before any lifecycle action touches it (every
+// action except rename). The wake service itself is covered in agent-wake.test.ts;
+// this is the route half: when it asks, what it does with each answer, and that
+// nothing reaches the lease or the host while the computer is still asleep.
+
+const mockAuth = jest.fn();
+const mockRpc = jest.fn();
+const mockRun = jest.fn();
+const mockRateLimit = jest.fn();
+const mockWake = jest.fn();
+const mockMarkAwake = jest.fn();
+const mockSingle = jest.fn();
+let mockRow: Record<string, unknown>;
+
+jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
+jest.mock("@/lib/supabase", () => ({
+  supabaseAdmin: {
+    from: () => ({
+      select: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: (...args: unknown[]) => mockSingle(...args),
+      maybeSingle: jest.fn(async () => ({ data: { priority: 0 }, error: null })),
+    }),
+    rpc: (...args: unknown[]) => mockRpc(...args),
+  },
+}));
+jest.mock("@/lib/services/proxmox-instance-service", () => ({
+  resolveProxmoxTargetConfiguration: () => ({ env: { PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21", PROXMOX_VMID_START: "1090", PROXMOX_IP_LAST_OCTET_START: "90" } }),
+  runProxmoxHostScript: (...args: unknown[]) => mockRun(...args),
+  buildAgentContainerCgroupScript: () => "",
+}));
+jest.mock("@/lib/infrastructure/proxmox-execution-context", () => {
+  class ProxmoxExecutionContextError extends Error {
+    constructor(public readonly code: string) { super(code); }
+  }
+  return { ProxmoxExecutionContextError, resolveSelfManagedProxmoxExecutionContext: jest.fn() };
+});
+jest.mock("@/lib/hivra/managed-provisioner-readiness", () => ({ checkManagedHivraHostReadiness: async () => ({ ok: true }) }));
+jest.mock("@/lib/hivra/agent-events", () => ({ logHivraAgentEvent: jest.fn() }));
+jest.mock("@/lib/proxmox/wake-admission", () => ({ checkHostWakeCapacity: async () => ({ ok: true, freeMb: 32_768 }) }));
+jest.mock("@/lib/hivra/resource-gate", () => ({ validateAgentResources: async () => ({ ok: true }) }));
+jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
+jest.mock("@/lib/remote-computers/session-broker", () => ({ revokeRemoteDesktopCapability: async () => ({ ok: true, revoked: true }) }));
+jest.mock("@/lib/hivra/provider-agent-power", () => ({ advanceProviderAgentPower: jest.fn() }));
+jest.mock("@/lib/hivra/provider-agent-power-store", () => ({ claimProviderAgentPowerOperation: jest.fn(async () => true) }));
+jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args) }));
+jest.mock("@/lib/hivra/prepared-canary-computers", () => ({
+  ...jest.requireActual("@/lib/hivra/prepared-canary-computers"),
+  matchPreparedCanaryComputer: () => null,
+}));
+jest.mock("@/lib/billing/instance-entitlement", () => ({ resolveEffectiveSubscription: async () => null, hasTokenTierInGrace: () => Promise.resolve(false) }));
+jest.mock("@/lib/hivra/sleep-aware", () => ({
+  wakeForUserAction: (...args: unknown[]) => mockWake(...args),
+  markAgentAwake: (...args: unknown[]) => mockMarkAwake(...args),
+}));
+const mockUpdateRuntime = jest.fn();
+jest.mock("@/lib/hivra/agent-runtime-update", () => ({ runHivraAgentRuntimeUpdate: (...args: unknown[]) => mockUpdateRuntime(...args) }));
+
+const asleep = {
+  id: "agent-1", user_id: "owner", name: "Desk", type: "claude-code", computer_profile: null,
+  status: "running", desired_state: "running", cpu: 2, ram: 4, vmid: 1113, ip: "10.250.21.63", proxmox_host: "fixturenode11",
+  deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm", managed_provisioner_channel: "default",
+  infrastructure_binding_token_hash: "b".repeat(64), infrastructure_binding_token_enforced: true,
+  operation_id: null, operation_kind: null, chat_url: "https://box-agent-1.example.test", api_token: "fixture-bearer",
+  sleep_state: "napping", sleep_generation: 4,
+};
+
+function send(body: Record<string, unknown>) {
+  const headers = { Host: "hivra.cloud", "Content-Type": "application/json", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin" };
+  return POST(new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", { method: "POST", headers, body: JSON.stringify(body) }),
+    { params: Promise.resolve({ id: "agent-1" }) });
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockRow = { ...asleep };
+  mockSingle.mockImplementation(async () => ({ data: mockRow, error: null }));
+  mockAuth.mockResolvedValue({ userId: "owner" });
+  mockRateLimit.mockReturnValue(null);
+  mockRpc.mockResolvedValue({ data: true, error: null });
+  mockRun.mockResolvedValue({ ok: true, stdout: "stopped 1113\nHIVRA_STOP_MODE already\nHIVRA_FORCE_STOPPED vmid=1113\nkicked\n", stderr: "" });
+  mockWake.mockResolvedValue({ ok: true, woke: false, cold: false });
+  mockMarkAwake.mockResolvedValue(true);
+  mockUpdateRuntime.mockResolvedValue({ ok: true, agentCli: null, agentApp: null });
+});
+
+describe("waking a sleeping computer before an action", () => {
+  it("never wakes for a rename", async () => {
+    expect((await send({ action: "rename", name: "New name" })).status).toBe(200);
+    expect(mockWake).not.toHaveBeenCalled();
+  });
+
+  it.each(["start", "stop", "restart", "force_stop", "force_restart", "resize", "snapshot", "restore", "update_runtime"])(
+    "%s asks for the wake, and does nothing else while the computer is still waking", async (action) => {
+      mockWake.mockResolvedValue({ ok: false, reason: "waking", status: 503, code: "computer_asleep",
+        message: "Your computer is still waking up. Try again in a few seconds." });
+      const response = await send({ action, cpu: 2, ram: 4, snapshotId: "snap-1" });
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body.code).toBe("computer_asleep");
+      expect(body.error).toMatch(/still waking up/);
+      expect(mockWake).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-1", sleep_state: "napping" }), expect.any(Object));
+      expect(mockRpc).not.toHaveBeenCalled();
+      expect(mockRun).not.toHaveBeenCalled();
+      expect(mockUpdateRuntime).not.toHaveBeenCalled();
+    });
+
+  it("lets only Stop and Force off go ahead for an owner whose plan has lapsed", async () => {
+    await send({ action: "stop" });
+    await send({ action: "force_stop" });
+    await send({ action: "restart" });
+    const allowLapsed = mockWake.mock.calls.map(([, options]) => (options as { allowLapsed: boolean }).allowLapsed);
+    expect(allowLapsed).toEqual([true, true, false]);
+  });
+
+  it("works from a fresh copy of the row after a wake", async () => {
+    mockWake.mockResolvedValue({ ok: true, woke: true, cold: false });
+    const callsBefore = mockSingle.mock.calls.length;
+    expect((await send({ action: "stop" })).status).toBe(200);
+    // The first read loads the agent; the second is the reload after the wake.
+    expect(mockSingle.mock.calls.length - callsBefore).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not reload the row when nothing was woken", async () => {
+    mockRow = { ...asleep, sleep_state: "awake" };
+    mockSingle.mockClear();
+    expect((await send({ action: "stop" })).status).toBe(200);
+    const readsOfTheAgent = mockSingle.mock.calls.length;
+    mockSingle.mockClear();
+    mockWake.mockResolvedValue({ ok: true, woke: true, cold: false });
+    expect((await send({ action: "stop" })).status).toBe(200);
+    expect(mockSingle.mock.calls.length).toBe(readsOfTheAgent + 1);
+  });
+
+  it("puts the sleep record back to awake once a computer is switched off", async () => {
+    expect((await send({ action: "stop" })).status).toBe(200);
+    expect(mockMarkAwake).toHaveBeenCalledWith("agent-1");
+    mockMarkAwake.mockClear();
+    expect((await send({ action: "force_stop" })).status).toBe(200);
+    expect(mockMarkAwake).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("does not run an update on a computer that was switched off with nothing saved", async () => {
+    mockWake.mockResolvedValue({ ok: true, woke: true, cold: true });
+    const response = await send({ action: "update_runtime" });
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("not_running");
+    expect(mockUpdateRuntime).not.toHaveBeenCalled();
+  });
+
+  it("goes ahead with Start for a computer that was off with nothing saved", async () => {
+    mockWake.mockResolvedValue({ ok: true, woke: true, cold: true });
+    expect((await send({ action: "start" })).status).toBe(200);
+    expect(mockRun).toHaveBeenCalled();
+  });
+
+  it("the Stop and Force off scripts switch off a napping computer and discard a hibernation", async () => {
+    await send({ action: "stop" });
+    const stop = String(mockRun.mock.calls[0][0]);
+    expect(stop).toContain("qmpstatus:");
+    expect(stop).toContain("qm unlock");
+    await send({ action: "force_stop" });
+    const forced = String(mockRun.mock.calls[1][0]);
+    expect(forced).toContain("qm unlock");
+    expect(forced).toContain("--delete vmstate,runningmachine,runningcpu");
+  });
+});

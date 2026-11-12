@@ -129,7 +129,7 @@ exec "$@"
 const FLOCK = `#!/usr/bin/env bash
 echo "flock $*" >> "$STUB_DIR/calls.log"
 case "$*" in
-  "-x -n 9") [ -z "\${STUB_FLOCK_BUSY:-}" ] || exit 1 ;;
+  "-x -n 9"|"-x -w 20 9") [ -z "\${STUB_FLOCK_BUSY:-}" ] || exit 1 ;;
   "-w 60 8") [ -z "\${STUB_FLOCK_TIMEOUT:-}" ] || exit 1 ;;
 esac
 exit 0

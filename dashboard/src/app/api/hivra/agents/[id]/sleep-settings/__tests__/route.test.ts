@@ -24,6 +24,10 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+const mockEnsure = jest.fn();
+jest.mock("@/lib/hivra/agent-wake", () => ({ ensureHivraAgentAwake: (...a: unknown[]) => mockEnsure(...a) }));
+const mockAfter = jest.fn();
+jest.mock("next/server", () => ({ ...jest.requireActual("next/server"), after: (...a: unknown[]) => mockAfter(...a) }));
 
 import { PATCH } from "../route";
 
@@ -51,6 +55,7 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     mockAuth.mockResolvedValue({ userId: "user-1" });
     mockRateLimit.mockReturnValue({ success: true });
     mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "full" }, error: null });
+    mockEnsure.mockResolvedValue({ state: "awake" });
   });
 
   it("requires sign-in and same origin, and is rate limited", async () => {
@@ -88,5 +93,28 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
   it("answers 404 when the agent is not the caller's", async () => {
     mockMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
     expect((await PATCH(request({ always_on: true }), params)).status).toBe(404);
+  });
+
+  it("wakes an agent that is asleep when Keep awake is switched on or Sleep when idle is switched off", async () => {
+    await PATCH(request({ always_on: true }), params);
+    expect(mockEnsure).toHaveBeenCalledWith(ID, expect.objectContaining({ trigger: "action", waitMs: 0 }));
+    mockEnsure.mockClear();
+    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: false, sleep_policy: "off" }, error: null });
+    await PATCH(request({ sleep_policy: "off" }), params);
+    expect(mockEnsure).toHaveBeenCalledTimes(1);
+    // Wake work that is still going is kept alive after the answer.
+    const call = mockEnsure.mock.calls[0][1] as { onBackground: (work: Promise<unknown>) => void };
+    const work = Promise.resolve();
+    call.onBackground(work);
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wake anything when the agent is left free to sleep, and still saves when the wake throws", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: false, sleep_policy: "full" }, error: null });
+    expect((await PATCH(request({ always_on: false }), params)).status).toBe(200);
+    expect(mockEnsure).not.toHaveBeenCalled();
+    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "full" }, error: null });
+    mockEnsure.mockRejectedValue(new Error("boom"));
+    expect((await PATCH(request({ always_on: true }), params)).status).toBe(200);
   });
 });

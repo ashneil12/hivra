@@ -56,6 +56,7 @@ import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readStoredUsage } from "@/lib/hivra/computer-usage";
+import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
 import { readComputerUsageCache } from "@/lib/hivra/computer-usage-cache";
 import { preparedOmarchyRefreshPending } from "@/lib/hivra/prepared-omarchy-refresh-contract";
 import { advancePreparedOmarchyRefresh, cancelPreparedOmarchyRefresh } from "@/lib/hivra/prepared-omarchy-refresh";
@@ -356,16 +357,23 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       current = polled.agent;
     }
 
+    // A sleeping computer cannot take a guest write, and this poll never wakes
+    // one: the seeds, the contract and the link kit wait until it is awake, and
+    // a poll of a sleeping agent just reports it (sleep_state is in the row).
+    const awake = isAgentAwake(current);
     const needsBootstrap =
+      awake &&
       current.type !== "linux-desktop" &&
       current.status === "running" && !current.bootstrapped_at && Boolean(current.ip);
     const supportsBoxSkills = Boolean(bankrSkillsDirForType(current.type as string | null));
     const needsBankrSkills =
+      awake &&
       current.status === "running" &&
       !current.bankr_skills_seeded_at &&
       Boolean(current.ip) &&
       supportsBoxSkills;
     const needsTemplateSkills =
+      awake &&
       current.status === "running" &&
       !current.template_skills_seeded_at &&
       Boolean(current.ip) &&
@@ -432,7 +440,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // It waits for the confirmed bootstrap, which rewrites the same
     // system-prompt.md: a bootstrap retry on the next poll could otherwise
     // overwrite a contract block this poll just delivered.
-    if (current.status === "running" && current.ip && current.bootstrapped_at
+    if (awake && current.status === "running" && current.ip && current.bootstrapped_at
       && contractPlan.status === "deliverable" && contractPlan.channel === "proxmox-seed") {
       const snapshot = current;
       // The owner-scoped host environment is resolved only when a round trip
@@ -446,7 +454,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // Linked computers: a link that changed while this agent was stopped
     // reaches it now. Only an agent whose kit is marked out of date is read.
-    if (current.status === "running" && current.ip) {
+    if (awake && current.status === "running" && current.ip) {
       const linkAgentId = String(current.id), endpoint = agentLinkEndpoint(new URL(req.url).origin);
       runAfterResponse(async () => {
         const record = await loadKeyRecord(linkAgentId);

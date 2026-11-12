@@ -26,6 +26,7 @@ import {
   observeHivraTailscale,
   reapplyHivraOutboundBlock,
   sameHivraPrivateAccessAuthority,
+  wakeHivraPrivateAccessComputer,
   type HivraPrivateAccessAgentRow,
   type HivraTailscaleReceipt,
 } from "@/lib/hivra/tailscale-private-access";
@@ -54,7 +55,7 @@ const AGENT_FIELDS = [
   "id","user_id","type","computer_profile","status","desired_state","operation_id","operation_kind",
   "vmid","ip","computer_substrate","deployment_mode","proxmox_host","infrastructure_connection_id",
   "deployment_target_id","infrastructure_connection_revision","infrastructure_binding_token_hash",
-  "infrastructure_binding_token_enforced","managed_provisioner_channel",
+  "infrastructure_binding_token_enforced","managed_provisioner_channel","sleep_state",
 ].join(",");
 
 type StoredConnection = {
@@ -410,6 +411,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const connectFor = () => provider === "netbird"
     ? connectHivraNetbird(owner.agent, (parsed.data as { authKey: string }).authKey, loginServer)
     : connectHivraTailscale(owner.agent, (parsed.data as { authKey: string }).authKey, loginServer);
+
+  // A napping or hibernated computer cannot answer the guest commands below, and
+  // reading it first (observeAnyNetwork) would wrongly look like a missing
+  // connection. Connecting is the owner's request, so wake it before anything else.
+  if (parsed.data.action === "connect") {
+    const woke = await wakeHivraPrivateAccessComputer(id);
+    if (!woke.ok) {
+      return response({ success: false, code: "computer_asleep",
+        error: "Your computer is still waking up. Try again in a few seconds." }, 503);
+    }
+  }
 
   // Switching: leave the old network first, in the same request, then join the new one.
   if (switching) {

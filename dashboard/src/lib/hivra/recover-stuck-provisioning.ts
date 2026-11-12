@@ -1723,8 +1723,10 @@ export async function runRecoverStuckHivraProvisioningSweep(
     // Desktop preparation has its own evidence rules and candidate cap below,
     // and an attached agent's steps end only through the attach worker's own
     // receipts; their long-lived leases must not be cleared by, or starve,
-    // this limited lifecycle sweep.
-    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)")
+    // this limited lifecycle sweep. A sleep or wake lease is the sleep sweep's
+    // to settle from the host's observed state: this sweep reads the start log,
+    // which a sleep never writes, and could end such a lease as an error.
+    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach,sleep,wake)")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
     // intentionally retained leases must not fill the oldest-12 snapshot/

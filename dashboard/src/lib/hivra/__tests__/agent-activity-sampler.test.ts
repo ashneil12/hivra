@@ -147,6 +147,8 @@ describe("runAgentActivitySampling", () => {
     // The bearer is handed to the reader only, never stored.
     expect(JSON.stringify(rpc.mock.calls)).not.toContain("a".repeat(64));
     expect(filters).toContainEqual({ table: "hivra_agents", method: "eq", args: ["status", "running"] });
+    // A sleeping computer cannot answer: it is never read, so "unreachable" stays a real fault.
+    expect(filters).toContainEqual({ table: "hivra_agents", method: "eq", args: ["sleep_state", "awake"] });
   });
 
   it("reads the longest unread agents first and leaves the rest when time runs out", async () => {

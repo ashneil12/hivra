@@ -31,6 +31,8 @@ jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) },
 }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+const mockWake = jest.fn();
+jest.mock("@/lib/hivra/sleep-aware", () => ({ wakeForUserAction: (...args: unknown[]) => mockWake(...args) }));
 
 const ID = "00000000-0000-4000-8000-000000001022";
 const CONTROL_BYPASS_SECRET = "canary_control_bypass_1234567890";
@@ -446,5 +448,76 @@ describe("POST /api/hivra/agents/[id]/remote-desktop", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ success: false, code: "desktop_prepare_pending",
       error: "Preparation is unconfirmed; conflicting changes remain paused." });
+  });
+});
+
+
+describe("POST /api/hivra/agents/[id]/remote-desktop and a sleeping computer", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.NEXT_PUBLIC_APP_URL = "https://canary.hermesos.cloud";
+    process.env.VERCEL_TARGET_ENV = "production";
+    delete process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL;
+    mockAuth.mockResolvedValue({ userId: "user-1" });
+    mockRateLimit.mockReturnValue({ success: true });
+    agent = {
+      id: ID, user_id: "user-1", type: "linux-desktop", computer_profile: "ubuntu-desktop", status: "running",
+      desired_state: "running", operation_id: null, operation_kind: null, vmid: 1112, ip: "10.250.20.62",
+      chat_url: "https://box.example.test", computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+      infrastructure_binding_token_enforced: true, sleep_state: "napping",
+    };
+    mockFrom.mockImplementation(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn(async () => ({ data: agent, error: null })),
+    }));
+    mockInspect.mockResolvedValue({ ok: true, agentId: ID, targetId: "fixturenode11", vmid: 1112 });
+    mockWake.mockResolvedValue({ ok: true, woke: true, cold: false });
+  });
+
+  it("wakes the computer before it looks at the desktop, then works from the fresh row", async () => {
+    mockFrom.mockImplementation(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn(async () => ({ data: agent, error: null })),
+    }));
+    mockWake.mockImplementation(async () => { agent = { ...agent!, sleep_state: "awake" }; return { ok: true, woke: true, cold: false }; });
+    const response = await POST(request({ action: "refresh" }), params);
+    expect(response.status).toBe(200);
+    expect(mockWake).toHaveBeenCalledTimes(1);
+    expect(mockWake.mock.invocationCallOrder[0]).toBeLessThan(mockInspect.mock.invocationCallOrder[0]);
+    const inspected = await mockInspect.mock.calls[0][1].loadAgent(ID);
+    expect(inspected.sleep_state).toBe("awake");
+  });
+
+  it("says the computer is still waking, and goes no further, when the wake has not finished", async () => {
+    mockWake.mockResolvedValue({ ok: false, reason: "waking", status: 503, code: "computer_asleep",
+      message: "Your computer is still waking up. Try again in a few seconds." });
+    const response = await POST(request({ action: "prepare" }), params);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ success: false, code: "computer_asleep", error: "Your computer is still waking up. Try again in a few seconds." });
+    expect(mockInspect).not.toHaveBeenCalled();
+    expect(mockInstall).not.toHaveBeenCalled();
+  });
+
+  it("does not turn a sleep lease into the active operation answer", async () => {
+    agent = { ...agent!, operation_id: "22222222-2222-4222-8222-222222222222", operation_kind: "wake", sleep_state: "waking" };
+    mockWake.mockResolvedValue({ ok: false, reason: "waking", status: 503, code: "computer_asleep", message: "still waking" });
+    const response = await POST(request({ action: "refresh" }), params);
+    expect((await response.json()).code).toBe("computer_asleep");
+  });
+
+  it("asks the owner to start a computer that was off with nothing saved", async () => {
+    mockWake.mockResolvedValue({ ok: true, woke: false, cold: true });
+    const response = await POST(request({ action: "refresh" }), params);
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/Start it in Manage/);
+    expect(mockInspect).not.toHaveBeenCalled();
+  });
+
+  it("does no wake work for an awake computer", async () => {
+    agent = { ...agent!, sleep_state: "awake" };
+    expect((await POST(request({ action: "refresh" }), params)).status).toBe(200);
+    expect(mockWake).not.toHaveBeenCalled();
   });
 });

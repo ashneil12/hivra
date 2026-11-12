@@ -88,7 +88,16 @@ finish() {
 on_exit() {
   local code=$?
   cleanup_hivra_qga_result >/dev/null 2>&1 || true
+  # A hibernate cut off before it settled must not leave autostart off on a computer that is still up.
+  if [ "\${ONBOOT_PENDING:-0}" = 1 ]; then
+    observe >/dev/null 2>&1 || true
+    case "$OBS" in
+      awake|napping) if [ "\${ONBOOT_WAS:-}" = 1 ]; then qm set "$VMID" --onboot 1 >/dev/null 2>&1 || true; fi ;;
+    esac
+  fi
   if [ "$EMITTED" = 0 ]; then OK=false; emit; fi
+  # No lock descriptor outlives the script, whichever way it ends.
+  exec 8>&- 9>&-
   exit "$code"
 }
 trap on_exit EXIT
@@ -158,6 +167,12 @@ for my $key (qw(activeRuns cliProcesses)) {
 my $channels = $d->{liveChannels};
 unless (ref($channels) eq "ARRAY") { print "invalid\n"; exit 0; }
 $busy = 1 if @$channels;
+# The only error that does not make the answer unknown is a failed timer count.
+my $errs = $d->{errors};
+unless (ref($errs) eq "ARRAY") { print "invalid\n"; exit 0; }
+for my $e (@$errs) {
+    unless (defined($e) && !ref($e) && $e eq "timers") { print "invalid\n"; exit 0; }
+}
 unless ($manual) {
     for my $key (qw(openConnections sshSessions)) {
         my $n = as_count($d->{$key});
@@ -494,6 +509,7 @@ mark pool "$STEP"
 ONBOOT_WAS="$(printf '%s\\n' "$VM_CONFIG" | awk '$1=="onboot:" {print $2; exit}')"
 # A host that restarts must not resume a saved computer by itself, and the lock blocks this change afterwards.
 if ! qm set "$VMID" --onboot 0 >/dev/null; then finish false onboot_failed "$FROM"; fi
+ONBOOT_PENDING=1
 STEP="$(now_ms)"
 RC=0
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
@@ -502,6 +518,7 @@ mark hibernate "$STEP"
 HAS_VMSTATE=0
 if printf '%s\\n' "$CONFIG" | grep '^vmstate:' >/dev/null; then HAS_VMSTATE=1; fi
 if [ "$OBS" = hibernated ] && [ "$HAS_VMSTATE" = 1 ]; then
+  ONBOOT_PENDING=0
   finish true hibernated hibernated
 fi
 # Not saved. A computer that is still up gets its autostart back.
@@ -539,7 +556,8 @@ ${probeShell(input.manual === true)}
 require_binding
 install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
-flock -x -n 9 || finish false busy
+# Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
+flock -x -n 9 || { observe; finish false busy "$OBS"; }
 ${nap ? napBody() : hibernateBody()}
 `;
 }
@@ -634,7 +652,8 @@ case "$ST/$QMP/$LOCK" in
       finish false capacity hibernated
     fi
     mark admission "$ADMIT"
-    if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" >/dev/null </dev/null; then
+    # The VM process outlives this script, so it must not inherit the lock descriptors.
+    if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 8>&- 9>&- >/dev/null </dev/null; then
       observe
       finish false start_failed "$OBS"
     fi
@@ -707,6 +726,12 @@ ${receiptShell("wake")}
 ${STATE_SHELL}
 ${wakeAdmissionShell(input.admission)}
 require_binding
+install -d -m 0755 /run/lock
+# The sleep script holds this lock while it works. A wake never runs beside it:
+# it would see a computer that is about to be paused and report it awake. It
+# waits a little, then says busy with what the host shows, and changes nothing.
+exec 9>/run/lock/hivra-vm-${input.vmid}.lock
+flock -x -w 20 9 || { observe; finish false busy "$OBS"; }
 ${wakeBody()}
 `;
 }

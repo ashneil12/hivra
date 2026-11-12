@@ -75,8 +75,9 @@ comment on column public.hivra_agent_sleep_events.detail is
 
 -- Take the agent for a sleep. Returns the new sleep_generation, or null when
 -- refused: the agent is not running, is being stopped or deleted, holds another
--- operation, was touched since the caller read it (generation mismatch), or is
--- not in a state this tier can start from.
+-- operation, is set to stay awake (the owner may have turned that on after the
+-- caller read the agent), was touched since the caller read it (generation
+-- mismatch), or is not in a state this tier can start from.
 create or replace function public.claim_hivra_agent_sleep(
   p_agent_id uuid, p_operation_id uuid, p_tier text, p_expected_generation bigint)
 returns bigint language plpgsql security definer set search_path = public as $$
@@ -88,6 +89,7 @@ begin
   if not found then return null; end if;
   if a.status is distinct from 'running' or a.desired_state is distinct from 'running'
     or a.operation_id is not null
+    or a.always_on is distinct from false
     or a.sleep_generation is distinct from p_expected_generation then return null; end if;
   if p_tier = 'nap' and a.sleep_state is distinct from 'awake' then return null; end if;
   if p_tier = 'hibernate' and a.sleep_state not in ('awake', 'napping') then return null; end if;

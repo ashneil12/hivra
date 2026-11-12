@@ -18,6 +18,7 @@ import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import {
+  isRunningState,
   unifiedStateLabel,
   unifyAll,
   type UnifiedAgent,
@@ -49,6 +50,8 @@ export function matchesInventoryFilter(
   if (filter === "all") return true;
   if (filter === "starting")
     return state === "provisioning" || state === "updating";
+  // An agent asleep or waking up is still a running agent.
+  if (filter === "running") return isRunningState(state);
   return state === filter;
 }
 
@@ -259,7 +262,7 @@ export function HivraAgentsPanel({
             }
             onTools={
               agent.kind === "hivra" &&
-              agent.state === "running" &&
+              isRunningState(agent.state) &&
               TOOL_CAPABLE_TYPES.has(agent.agentType || "")
                 ? () =>
                     go(

@@ -114,6 +114,48 @@ run("idle probe program, run for real against fixture files", () => {
     expect(channels).not.toContain("openclaw:slack");
   });
 
+  it("calls a scheduler file that is there but unreadable an error, never an empty schedule", () => {
+    put("home/.hermes/cron/jobs.json", '{"jobs": [{"enabled": true, "next_run_at": "20');
+    const truncated = probe();
+    expect(truncated.errors).toContain("json");
+    expect(truncated.nextJobAt).toBeNull();
+    put("home/.hermes/cron/jobs.json", "");
+    expect(probe().errors).toContain("json");
+    // A file that is not there at all is just no schedule.
+    rmSync(path.join(dir, "home/.hermes/cron/jobs.json"));
+    expect(probe().errors).toEqual([]);
+  });
+
+  it("reads a connection table longer than one 4 KB read", () => {
+    const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+    const row = (n: number, port: string, state: string) =>
+      `   ${n}: 0100007F:${port} 0100007F:C350 ${state} 00000000:00000000 00:00000000 00000000     0        0 ${n}\n`;
+    let table = header;
+    for (let i = 0; i < 80; i++) table += row(i, "1F90", "0A");
+    table += row(81, "0016", "01");
+    expect(Buffer.byteLength(table)).toBeGreaterThan(4096 * 1.5);
+    put("tcp", table);
+    const program = IDLE_PROBE_PROGRAM.replaceAll('"/proc/net/tcp"', JSON.stringify(path.join(dir, "tcp")))
+      .replaceAll('HOME = "/home/bux"', `HOME = ${JSON.stringify(path.join(dir, "home"))}`);
+    const result = spawnSync("python3", ["-I", "-B", "-c", program], { encoding: "utf8", timeout: 20_000 });
+    expect(parseIdleProbeOutput(result.stdout)?.sshSessions).toBe(1);
+  });
+
+  it("reads every /proc table to its end and lets the alarm through every handler", () => {
+    expect(IDLE_PROBE_PROGRAM).toContain("while total < n:");
+    expect(IDLE_PROBE_PROGRAM).toContain("class _Timeout(BaseException)");
+    expect(IDLE_PROBE_PROGRAM).not.toContain("raise TimeoutError");
+  });
+
+  it("records an error when systemctl cannot answer, so a channel is never dropped silently", () => {
+    put("tg.env", "TG_BOT_TOKEN=abc\n");
+    const broken = IDLE_PROBE_PROGRAM.replace('["systemctl", "is-active", "--quiet", unit]', '["/nonexistent/systemctl", "is-active", "--quiet", unit]')
+      .replace("/etc/bux/tg.env", path.join(dir, "tg.env"))
+      .replaceAll('HOME = "/home/bux"', `HOME = ${JSON.stringify(path.join(dir, "home"))}`);
+    const result = spawnSync("python3", ["-I", "-B", "-c", broken], { encoding: "utf8", timeout: 20_000 });
+    expect(parseIdleProbeOutput(result.stdout)?.errors).toContain("systemctl");
+  });
+
   it("prints nothing on stdout and exits non-zero when it fails", () => {
     const broken = IDLE_PROBE_PROGRAM.replace("def has_cron_jobs(text):", "def has_cron_jobs(text):\n    raise RuntimeError('boom')");
     const result = spawnSync("python3", ["-I", "-B", "-c", broken], { encoding: "utf8" });
