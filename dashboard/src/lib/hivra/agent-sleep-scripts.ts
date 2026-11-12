@@ -69,10 +69,13 @@ function assertTarget(vmid: number, bindingTag: string | null): string {
 function receiptShell(kind: "sleep" | "wake"): string {
   const prefix = kind === "sleep" ? SLEEP_RESULT_PREFIX.trim() : WAKE_RESULT_PREFIX.trim();
   const format = kind === "sleep"
-    ? `'%s {"ok":%s,"vmid":%s,"tier":"%s","from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s},"probe":%s}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$TIER" "$FROM" "$TO" "$REASON" "$(( $(now_ms) - T0 ))" "$STEPS" "$PROBE_JSON"`
-    : `'%s {"ok":%s,"vmid":%s,"from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s},"via":"%s","tries":%s}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$FROM" "$TO" "$REASON" "$(( $(now_ms) - T0 ))" "$STEPS" "$VIA" "$TRIES"`;
+    ? `'%s {"ok":%s,"vmid":%s,"tier":"%s","from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s},"probe":%s}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$TIER" "$FROM" "$TO" "$REASON" "$(since_ms "$T0")" "$STEPS" "$PROBE_JSON"`
+    : `'%s {"ok":%s,"vmid":%s,"from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s},"via":"%s","tries":%s}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$FROM" "$TO" "$REASON" "$(since_ms "$T0")" "$STEPS" "$VIA" "$TRIES"`;
   return `RECEIPT_PREFIX=${prefix}
-now_ms() { date +%s%3N; }
+# Durations come from the monotonic uptime clock (10 ms steps), never the wall clock, which can step
+# backwards under NTP. A reading that still goes backwards is reported as 0.
+now_ms() { local up; read -r up _ </proc/uptime || { echo 0; return; }; echo $(( 10#\${up/./} * 10 )); }
+since_ms() { local d=$(( $(now_ms) - $1 )); [ "$d" -ge 0 ] || d=0; echo "$d"; }
 T0="$(now_ms)"
 STEPS=""
 OK=false
@@ -89,7 +92,7 @@ LOCK=none
 CONFIG=""
 CONFIG_FRESH=0
 OBS=unknown
-mark() { STEPS="\${STEPS:+$STEPS,}\\"$1\\":$(( $(now_ms) - $2 ))"; }
+mark() { STEPS="\${STEPS:+$STEPS,}\\"$1\\":$(since_ms "$2")"; }
 emit() {
   [ "$EMITTED" = 0 ] || return 0
   EMITTED=1

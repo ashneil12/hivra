@@ -34,6 +34,17 @@ describe("script construction", () => {
     expect(() => buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION("/opt/p; reboot") })).toThrow();
   });
 
+  it("times steps on the monotonic clock, so a wall clock step never gives a negative time", () => {
+    for (const script of [
+      buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false }),
+      buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION("/opt/hivra") }),
+    ]) {
+      expect(script).toContain("</proc/uptime");
+      expect(script).not.toContain("%3N");
+      expect(script).toContain('"$(since_ms "$T0")"');
+    }
+  });
+
   it("quotes values and wraps qm in timeout in every script", () => {
     for (const script of [
       buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false }),
