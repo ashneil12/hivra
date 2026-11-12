@@ -252,7 +252,7 @@ export default async function OpsMarginsPage(props: {
           </div>
 
           <p style={{ margin: '14px 0 0', fontSize: 12, lineHeight: 1.6, color: 'var(--hg-text-2)' }}>
-            An hour counts when an agent made a model request through Hivra credits or reported a run in it. Agents on their own model key are not counted yet. Each paying person&apos;s part of the share follows what they pay, and is split between the agents they used by hours. Subscriptions are counted at the monthly list price for the people on a paid plan today, so earlier months are approximate.
+            An hour counts when an agent made a model request through Hivra credits, reported a run, or was found in use when Hivra read its computer. An agent that only works through a messaging channel or on a schedule, on its own model key, is not counted yet. Each paying person&apos;s part of the share follows what they pay, and is split between the agents they used by hours. Subscriptions are counted at the monthly list price for the people on a paid plan today, so earlier months are approximate.
             {preview.appStorePeople > 0 && ` ${count(preview.appStorePeople)} of them pay through the App Store and are counted at the App Store fee.`}
           </p>
         </>

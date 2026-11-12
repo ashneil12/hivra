@@ -265,6 +265,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/sample-agent-activity",
+      "schedule": "*/10 * * * *"
+    },
+    {
       "path": "/api/cron/venice-promo-expiry",
       "schedule": "35 * * * *"
     },

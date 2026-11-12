@@ -88,6 +88,31 @@ on record.
 select * from public.hivra_usage_by_user_and_type('2026-11-01', '2026-12-01');
 ```
 
+### Use measured on every agent's computer
+
+Added 2026-11-13 (migration `20261113033000_agent_activity_samples`). Managed
+inference and run events miss an agent that runs on its owner's own model key.
+Each computer's connection service already reports when the agent's app was
+last used through it, how many of its connections are open, whether a reply is
+being written and whether a terminal is attached. A sampler stores those
+answers: counts and times only, never content.
+
+| Piece | What it does |
+|---|---|
+| `hivra_agent_activity` | The latest reading per agent. A part the computer did not report is null, never 0. `last_used_at` is the last moment Hivra knows the agent was used. |
+| `hivra_agent_activity_hours` | Per agent and hour: readings taken (`samples`) and readings that found the agent in use (`active_samples`). Carries owner and agent type, and stays after the agent is deleted. |
+| `hivra_record_agent_activity(...)` | Stores one reading in both. A reading older than the stored one is dropped. Service role only. |
+| `src/lib/hivra/agent-activity-sampler.ts` | Reads every running agent Hivra can read and decides what the reading says: in use now (open app connection, reply being written, attached terminal) or used since the previous reading (a newer reply, or the app's last-used time moving forward under the same connection service start). |
+| `/api/cron/sample-agent-activity` | Runs the sampler every 10 minutes. Off unless `HIVRA_AGENT_ACTIVITY_SAMPLING=1`. |
+
+`hivra_agent_active_hours` and `hivra_usage_by_user_and_type` count an hour with
+an in-use reading as an active hour, once, together with any inference or run
+events in the same hour.
+
+Still not visible: an agent that works only through a messaging channel or on a
+schedule, on its owner's own model key, with nobody connected. An open app tab
+counts as use for as long as its connection stays open.
+
 ---
 
 ## What the marketplace adds later (NOT now)

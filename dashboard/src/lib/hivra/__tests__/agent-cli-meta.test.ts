@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { readAgentIdleEvidence, readAgentSoftwareFromBox } from "../agent-cli-meta";
+import { readAgentActivityFromBox, readAgentIdleEvidence, readAgentSoftwareFromBox } from "../agent-cli-meta";
 import { agentSoftwareSubject, type AgentSoftwareSubject } from "../agent-cli-status";
 
 const HOST = "box-7f3a.hivra.example";
@@ -164,6 +164,77 @@ describe("readAgentIdleEvidence", () => {
     expect(await readAgentIdleEvidence({ ...idleTarget, apiToken: null }, fetcher)).toBeNull();
     expect(await readAgentIdleEvidence({ ...idleTarget, chatUrl: `http://${HOST}` }, fetcher)).toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("readAgentActivityFromBox", () => {
+  const AEON_META = { ...CURRENT_META, agentKind: "aeon" };
+  function box(options: { publicMeta?: unknown; privateMeta?: unknown; runs?: unknown; sessions?: unknown; fail?: string[] } = {}) {
+    const publicMeta = options.publicMeta ?? AEON_META;
+    return jest.fn(async (url: string, init?: RequestInit) => {
+      const route = url.slice(ORIGIN.length);
+      if ((options.fail ?? []).some((prefix) => route.startsWith(prefix))) return json({ error: "unavailable" }, { status: 409 });
+      if (route === "/api/meta") {
+        const authorized = new Headers(init?.headers).get("authorization") === `Bearer ${TOKEN}`;
+        return json(authorized ? options.privateMeta ?? publicMeta : publicMeta);
+      }
+      if (route === "/api/chat/runs") return json({ runs: options.runs ?? [] });
+      return json({ surface: "agent", sessions: options.sessions ?? [] });
+    });
+  }
+
+  it("reads app use, replies and terminals with the bearer only after the public reply proves the service", async () => {
+    const fetcher = box({
+      privateMeta: { ...AEON_META, agentApp: { name: "aeon", version: null, activity: { lastUsedAt: "2026-11-05T10:14:00.000Z", openConnections: 2 } } },
+      runs: [{ state: "running", createdAt: "2026-11-05T10:10:00.000Z" }],
+      sessions: [{ slot: 1, attached: true }],
+    });
+    const reading = await readAgentActivityFromBox(target(aeon), fetcher);
+    expect(reading).toEqual({
+      bootId: CURRENT_META.bootId,
+      appLastUsedAt: Date.parse("2026-11-05T10:14:00.000Z"),
+      appOpenConnections: 2,
+      runningReplies: 1,
+      lastReplyActivityAt: Date.parse("2026-11-05T10:10:00.000Z"),
+      terminalAttached: true,
+    });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `${ORIGIN}/api/meta`, `${ORIGIN}/api/meta`, `${ORIGIN}/api/chat/runs`, `${ORIGIN}/api/terminal/sessions?surface=agent`,
+    ]);
+    expect(new Headers((fetcher.mock.calls[0][1] as RequestInit).headers).has("authorization")).toBe(false);
+    expect(JSON.stringify(reading)).not.toContain(TOKEN);
+  });
+
+  it("reports what it could not read as unknown, never as zero", async () => {
+    // A Codex computer has no app; here its run list and terminals do not answer either.
+    const reading = await readAgentActivityFromBox(target(), box({ publicMeta: CURRENT_META, fail: ["/api/chat/runs", "/api/terminal"] }));
+    expect(reading).toEqual({
+      bootId: CURRENT_META.bootId, appLastUsedAt: null, appOpenConnections: null,
+      runningReplies: null, lastReplyActivityAt: null, terminalAttached: null,
+    });
+  });
+
+  it.each([
+    ["another kind of connection service", { publicMeta: { ...AEON_META, agentKind: "codex" } }],
+    ["an older connection service", { publicMeta: { agentKind: "aeon", surfaceAuth: "post-cookie-v1" } }],
+  ])("returns nothing and sends no bearer to %s", async (_case, options) => {
+    const fetcher = box(options);
+    expect(await readAgentActivityFromBox(target(aeon), fetcher)).toBeNull();
+    expect(sentBearer(fetcher)).toBe(false);
+  });
+
+  it("returns nothing when the service restarted between the two replies", async () => {
+    const fetcher = box({ privateMeta: { ...AEON_META, bootId: "0".repeat(32) } });
+    expect(await readAgentActivityFromBox(target(aeon), fetcher)).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("never asks without a valid bearer and origin, and survives a failure", async () => {
+    const fetcher = box();
+    expect(await readAgentActivityFromBox(target(aeon, { apiToken: null }), fetcher)).toBeNull();
+    expect(await readAgentActivityFromBox(target(aeon, { chatUrl: `http://${HOST}` }), fetcher)).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await readAgentActivityFromBox(target(aeon), jest.fn(async () => { throw new TypeError("fetch failed"); }))).toBeNull();
   });
 });
 
