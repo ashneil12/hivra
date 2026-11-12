@@ -260,8 +260,6 @@ describe("runObserveAgentSleepSweep", () => {
     it("turns a fresh reading into known signals", () => {
       expect(activitySignalsFromRow(reading({ last_used_at: iso(20 * 60_000) }), NOW)).toEqual({
         lastUsedAt: NOW - 20 * 60_000,
-        openConnections: 0,
-        activeRun: false,
         terminalAttached: false,
         desktopAttached: false,
       });
@@ -319,8 +317,8 @@ describe("runObserveAgentSleepSweep", () => {
 
       const [a1, a2, a3] = inserted(calls);
       expect(a1.reasons).toEqual(expect.arrayContaining(["open_connections", "active_run", "terminal_attached"]));
-      expect(a2.reasons).not.toEqual(expect.arrayContaining(["unknown_signal:openConnections"]));
-      expect(a2.reasons).not.toContain("unknown_signal:activeRun");
+      // Zero app connections and zero chat replies do not prove idle (other runs are not counted).
+      expect(a2.reasons).toEqual(expect.arrayContaining(["unknown_signal:openConnections", "unknown_signal:activeRun"]));
       expect(a2.reasons).not.toContain("unknown_signal:terminalAttached");
       // Its last use (30 min ago) is later than "no event in 6 h", so that is its idle time.
       expect(a2.idle_seconds).toBe(30 * 60);
@@ -353,6 +351,45 @@ describe("runObserveAgentSleepSweep", () => {
       const [row] = inserted(calls);
       expect(row.reasons).toContain("unknown_signal:lastActivityAt");
       expect(row.idle_seconds).toBeNull();
+    });
+
+    it("only lets a reported use raise the last activity, never lower it", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ data: [{ agent_id: "a1", created_at: iso(2 * 60_000) }] }],
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [{ data: [reading({ last_used_at: iso(30 * 60_000) })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(inserted(calls)[0].idle_seconds).toBe(120);
+    });
+
+    it("keeps idle time unknown when the events read is truncated, even with a fresh use reading", async () => {
+      const full = Array.from({ length: EVENT_PAGE_SIZE }, () => ({ agent_id: "other", created_at: iso(HOUR) }));
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1"), agent("other")] }],
+        hivra_agent_events: Array.from({ length: EVENT_MAX_PAGES }, () => ({ data: full })),
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [{ data: [reading({ last_used_at: iso(30 * 60_000) })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      const a1 = inserted(calls).find((r) => r.agent_id === "a1")!;
+      expect(a1.reasons).toContain("unknown_signal:lastActivityAt");
+      expect(a1.idle_seconds).toBeNull();
+    });
+
+    it("keeps a desktop attached by its session even when the reading says it is not", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ data: [] }],
+        hivra_remote_desktop_sessions: [{ data: [{ computer_id: "a1" }] }],
+        hivra_agent_activity: [{ data: [reading({ desktop_attached: false })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(inserted(calls)[0].reasons).toContain("desktop_attached");
     });
 
     it("carries on with those signals unknown when the readings cannot be read", async () => {

@@ -98,8 +98,12 @@ export function activitySignalsFromRow(row: ActivityRow | undefined, nowMs: numb
   const lastUsed = parseMs(row.last_used_at);
   // A use dated after the reading itself is not trusted.
   if (lastUsed !== null && lastUsed <= observedMs + ACTIVITY_CLOCK_SKEW_MS) signals.lastUsedAt = Math.min(lastUsed, nowMs);
-  if (isCount(row.open_connections)) signals.openConnections = row.open_connections;
-  if (isCount(row.active_runs)) signals.activeRun = row.active_runs > 0;
+  // open_connections counts only the agent app's own connections, and
+  // active_runs only replies started through Hivra chat. A run from a channel,
+  // a schedule or the CLI is not in either, so a count above zero proves busy
+  // but zero proves nothing: zero stays unknown.
+  if (isCount(row.open_connections) && row.open_connections > 0) signals.openConnections = row.open_connections;
+  if (isCount(row.active_runs) && row.active_runs > 0) signals.activeRun = true;
   if (typeof row.terminal_attached === "boolean") signals.terminalAttached = row.terminal_attached;
   if (typeof row.desktop_attached === "boolean") signals.desktopAttached = row.desktop_attached;
   return signals;
