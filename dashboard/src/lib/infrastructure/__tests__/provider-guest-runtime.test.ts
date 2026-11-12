@@ -30,7 +30,7 @@ it("selects the standalone access service in the signed runtime probe", () => {
   expect(plan.script).toContain('"hivra-direct-access.service" if EXPECTED["accessMode"] == "direct-https"');
 });
 it("runs the actual generated recipes and filesystem guards without network or systemd calls", async () => {
-  const scripts = Object.fromEntries((["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot"] as const)
+  const scripts = Object.fromEntries((["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos"] as const)
     .flatMap(runtime => [[runtime, buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), runtime }).script],
       [runtime + "-power", buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), runtime, captureBootId: true }).script]]));
   // spawnSync intermittently stalled this >64KiB input in Python's read-to-EOF

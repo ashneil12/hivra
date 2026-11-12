@@ -1452,7 +1452,7 @@ export default function AgentPage() {
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />

@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.12.4.json";
+import currentRelease from "../../../provisioner-releases/2026.11.12.5.json";
+import openbotRelease from "../../../provisioner-releases/2026.11.12.4.json";
 import restorePointsRelease from "../../../provisioner-releases/2026.11.12.3.json";
 import gitGuardRelease from "../../../provisioner-releases/2026.11.12.2.json";
 import hermesModelRelease from "../../../provisioner-releases/2026.11.12.1.json";
@@ -102,8 +103,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.12.4"
+  const release = identity.bundle.provisionerVersion === "2026.11.12.5"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.4"
+      ? openbotRelease
     : identity.bundle.provisionerVersion === "2026.11.12.3"
       ? restorePointsRelease
     : identity.bundle.provisionerVersion === "2026.11.12.2"

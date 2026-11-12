@@ -6,7 +6,7 @@ import { checkOutboundUrlSafety } from "@/lib/url-safety";
 import { validateHivraChatOrigin } from "./agent-host-result";
 
 const Input = z.object({ hostname: z.string().min(1).max(253), apiToken: z.string().regex(/^[a-f0-9]{64}$/),
-  runtime: z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "hermes"]) }).strict();
+  runtime: z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes"]) }).strict();
 
 async function boundedText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
@@ -51,7 +51,7 @@ export async function verifyProviderPublicRuntime(raw: z.infer<typeof Input>, fe
     const meta: unknown = JSON.parse(metadata.text);
     const summary = z.object({ agentKind: z.literal(input.runtime), surfaceAuth: z.literal("post-cookie-v1") }).safeParse(meta);
     if (health.status !== 200 || health.text !== "ok" || metadata.status !== 200 || !summary.success || unauthenticated.status !== 401) return false;
-    const native = { aeon: "/aeon/", openclaw: "/openclaw/", "agent-zero": "/agent-zero/", openbot: "/openbot/", hermes: "/hermes/" };
+    const native = { aeon: "/aeon/", openclaw: "/openclaw/", "agent-zero": "/agent-zero/", openbot: "/openbot/", nuphos: "/nuphos/", hermes: "/hermes/" };
     const nativePath = input.runtime in native ? native[input.runtime as keyof typeof native] : null;
     const [authenticated, terminal, boxTerminal, dashboard] = await Promise.all([
       get("/api/model", true, true), get("/terminal/", true), get("/box-terminal/", true),

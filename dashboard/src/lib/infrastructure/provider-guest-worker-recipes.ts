@@ -435,6 +435,11 @@ const recipes = Object.freeze({
     workerSha256: "ed590be9e1dde134bdba172cea0f182f2c1ab0b6e0681cd8e128257878b4024a",
     workerSize: 45206,
   }),
+  "2026.11.12.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds Nuphos as an agent kind. The worker accepts the kind and advances its release labels.
+    workerSha256: "6900bb616ab7449874567c8ed33f780dc8a6fce571786f1fd5cd468d29899a92",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

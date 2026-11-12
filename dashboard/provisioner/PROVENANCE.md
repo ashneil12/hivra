@@ -544,6 +544,20 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.12.5` builds on `2026.11.12.4` and adds Nuphos as an agent kind. The guest
+installer (`provision-claude-code-box.sh`) installs Docker, pulls Nuphos's official runtime image
+(`ghcr.io/nuphos/runtime:latest-claude-code`) and records it by digest, and runs it on the
+computer's loopback (port 3102) with all capabilities dropped under `hivra-nuphos.service`. The
+box gateway (`hivra-chat/server.js`) serves the runtime's own console at the root of the
+computer's address behind the Hivra sign-in, presenting the computer's host as HTTPS, and passes
+the WebSocket upgrade of exactly `/acp` through without the Hivra gate (stripping Hivra's
+credentials), because Nuphos's servers connect there with a team key the runtime checks itself.
+`hivra-agent-app-update.sh` updates it to the latest runtime, copying the runtime's home aside
+first and putting the previous image and home back if the new one does not start. The typed
+installer, host provisioner, guest runtime update, receipt and agent shell learn the kind.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, or update any existing computer.
+
 Release `2026.11.12.4` builds on `2026.11.12.3` and adds OpenBot by CopilotKit as an agent
 kind. The guest installer (`provision-claude-code-box.sh`) installs Docker, pulls CopilotKit's
 official `ghcr.io/copilotkit/openbot` image at its latest release and records it by digest, and

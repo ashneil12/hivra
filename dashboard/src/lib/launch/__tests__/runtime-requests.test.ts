@@ -166,6 +166,14 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
     }));
   });
 
+  it("sends Nuphos with no Hivra model, even when credits are passed", () => {
+    for (const credits of [null, { walletType: "card" as const }]) {
+      const request = dashboardAgentRequest({ type: "nuphos", name: "Nuphos 1", cpu: 1, ram: 3, browser: false, credits, deployment: MANAGED });
+      expect(request).toMatchObject({ type: "nuphos", managedVenice: false });
+      expect(request).not.toHaveProperty("llm");
+    }
+  });
+
   it("mints OpenClaw and Agent Zero credits at launch, but leaves Aeon's to its GitHub connect step", () => {
     const openclaw = dashboardAgentRequest({ type: "openclaw", name: "OpenClaw 1", cpu: 1, ram: 2, browser: false, credits: { walletType: "card" }, deployment: MANAGED });
     const aeon = dashboardAgentRequest({ type: "aeon", name: "Aeon 1", cpu: 0.5, ram: 1, browser: false, credits: { walletType: "card" }, deployment: MANAGED });

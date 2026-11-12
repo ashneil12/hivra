@@ -541,6 +541,23 @@ update them yet.
   that file, starts. Update OpenBot (`hivra-agent-app-update.sh openbot latest`) pulls the
   latest image, swaps only if it is new, copies the database aside first and puts the
   previous image and database back if the new release does not answer.
+- **Nuphos.** From `2026.11.12.5`, `--agent-kind nuphos` pulls the latest official Nuphos
+  runtime image (`ghcr.io/nuphos/runtime:latest-claude-code`; no Hivra image, fork or patch),
+  records its `OPENAB_RUNTIME_VERSION`, and runs it by digest as `hivra-nuphos.service` on
+  host networking at `127.0.0.1:3102` with all capabilities dropped and its home on the
+  `hivra-nuphos-home` volume. The gateway serves the runtime's own console at the root of
+  the box origin behind the token gate, presenting the box host as HTTPS
+  (`X-Forwarded-Host`/`X-Forwarded-Proto`) so the runtime tells Nuphos `wss://<box>/acp`
+  and sets its Secure console cookie; the gateway keeps only its own paths. The owner sets
+  the console password, presses Connect to Nuphos and chats from the Nuphos apps with
+  their own Nuphos account and Claude sign-in; Hivra gives it no model. The one exception
+  to the gate is the WebSocket upgrade of exactly `/acp`, which Nuphos's servers open with
+  a team key the runtime checks itself (it refuses every upgrade before setup); Hivra's
+  bearer and cookie are stripped from it and it never counts as use through Hivra. `/nuphos/`
+  is the entry the agent page opens. Update Nuphos (`hivra-agent-app-update.sh nuphos
+  latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
+  its session homes recently, copies the runtime home aside first and puts the previous
+  image and home back if the new release does not answer.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
