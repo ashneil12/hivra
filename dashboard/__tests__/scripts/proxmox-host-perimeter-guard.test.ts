@@ -64,6 +64,7 @@ const NTP_ACCEPT = 'iifname "vmbr1" udp dport 123 accept';
 const TAILSCALE_8006 = 'iifname "tailscale0" tcp dport 8006 accept';
 const RFC1918_FWD_DROP =
   'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop';
+const RFC1918_FWD_DROP6 = 'iifname "vmbr1" ip6 daddr { fc00::/7, fe80::/10 } drop';
 const CF_ACCEPTS = [
   "ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept",
   "ip6 saddr @cloudflare_ipv6 tcp dport { 80, 443 } accept",
@@ -334,12 +335,13 @@ fi
       expect(output).toContain('iif "lo" accept');
     });
 
-    it("drops vmbr1 forwards to private/link-local space before the WAN accept", () => {
+    it("drops vmbr1 forwards to private/link-local space (v4 and v6) before the WAN accept", () => {
       const { output } = rewriteInPlace(INLINE_CHAIN_NFT);
       expect(output).toContain(RFC1918_FWD_DROP);
-      expect(output.indexOf(RFC1918_FWD_DROP)).toBeLessThan(
-        output.indexOf('iifname "vmbr1" oifname "vmbr0" accept'),
-      );
+      expect(output).toContain(RFC1918_FWD_DROP6);
+      const wanIdx = output.indexOf('iifname "vmbr1" oifname "vmbr0" accept');
+      expect(output.indexOf(RFC1918_FWD_DROP)).toBeLessThan(wanIdx);
+      expect(output.indexOf(RFC1918_FWD_DROP6)).toBeLessThan(wanIdx);
     });
 
     it("leaves the output chain, NAT table, and bridge isolation table intact", () => {
@@ -393,15 +395,25 @@ fi
       }
     });
 
-    it("keeps earlier guest-to-guest/DNAT accepts ahead of the forward drop", () => {
+    it("leads the forward chain with the v4+v6 drops, above the guest hairpin and WAN accepts", () => {
+      // A vmbr1->vmbr1 hairpin accept used to be kept ahead of the drop, which
+      // left a routed path to private space (guest -> host gateway MAC ->
+      // another guest) that the bridge isolation table never sees. The drops now
+      // lead the forward chain so nothing guest-sourced can precede them.
       const { output } = rewriteInPlace(CUSTOM_CHAINS_NFT);
       expect(output).toContain(RFC1918_FWD_DROP);
-      const guestAcceptIdx = output.indexOf('iifname "vmbr1" oifname "vmbr1" accept');
+      expect(output).toContain(RFC1918_FWD_DROP6);
       const dropIdx = output.indexOf(RFC1918_FWD_DROP);
+      const drop6Idx = output.indexOf(RFC1918_FWD_DROP6);
+      const hairpinIdx = output.indexOf('iifname "vmbr1" oifname "vmbr1" accept');
       const wanIdx = output.indexOf('iifname "vmbr1" oifname "vmbr0" accept');
-      expect(guestAcceptIdx).toBeGreaterThan(-1);
-      expect(guestAcceptIdx).toBeLessThan(dropIdx);
+      expect(hairpinIdx).toBeGreaterThan(-1);
+      expect(dropIdx).toBeLessThan(hairpinIdx);
+      expect(drop6Idx).toBeLessThan(hairpinIdx);
       expect(dropIdx).toBeLessThan(wanIdx);
+      expect(drop6Idx).toBeGreaterThan(dropIdx);
+      // The DNAT service jump and isolation table are still preserved.
+      expect(output).toContain("jump hivra_omarchy_2099");
     });
   });
   describe("--rewrite-nft-only rule ordering", () => {
