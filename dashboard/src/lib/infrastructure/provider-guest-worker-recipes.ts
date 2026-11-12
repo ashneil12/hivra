@@ -435,6 +435,11 @@ const recipes = Object.freeze({
     workerSha256: "ed590be9e1dde134bdba172cea0f182f2c1ab0b6e0681cd8e128257878b4024a",
     workerSize: 45206,
   }),
+  "2026.11.12.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens hivra-tg-apply's env-file write against symlink redirection (stage in a root-only dir, then atomic rename). The worker only advances its release labels.
+    workerSha256: "f00ca676b41f7f589c112631fcaa65e58b5ed2a51d3a6162e8de931af3409a79",
+    workerSize: 45206,
+  }),
 });
 
 type Version = keyof typeof recipes;
