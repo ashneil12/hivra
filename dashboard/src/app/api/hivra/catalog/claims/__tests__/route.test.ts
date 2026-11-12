@@ -24,6 +24,7 @@ describe("catalog claims route", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG = "1";
+    process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS = "1";
     mockedAuth.mockResolvedValue({ userId: "user-1" } as Awaited<ReturnType<typeof auth>>);
     read.mockResolvedValue(VIEW as Awaited<ReturnType<typeof readClaimView>>);
     start.mockResolvedValue(VIEW as Awaited<ReturnType<typeof startClaim>>);
@@ -32,11 +33,15 @@ describe("catalog claims route", () => {
   });
   afterEach(() => {
     delete process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG;
+    delete process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS;
     logSpies.forEach(spy => spy.mockRestore());
   });
 
-  it("is not there while the catalog switch is off", async () => {
-    delete process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG;
+  it.each([
+    ["the maker claims switch", "NEXT_PUBLIC_HIVRA_MAKER_CLAIMS"],
+    ["the catalog switch", "NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG"],
+  ])("is not there while %s is off", async (_words, name) => {
+    delete process.env[name];
     expect((await get("?profile=codex")).status).toBe(404);
     expect((await post({ profile: "codex", action: "start" })).status).toBe(404);
     expect(mockedAuth).not.toHaveBeenCalled();
