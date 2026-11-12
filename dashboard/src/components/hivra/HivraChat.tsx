@@ -26,7 +26,7 @@ import { MemoryUsageBanner } from "@/components/memory/MemoryUsageBanner";
 import { useAgentChatListSlot } from "@/components/hivra/agent-shell/AgentChatListSlot";
 import { AgentTurn } from "./chat/AgentTurn";
 import { ChatComposer, MAX_ATTACHMENTS, type ComposerAttachment } from "./chat/ChatComposer";
-import { ChatEmpty } from "./chat/ChatEmpty";
+import { ChatEmpty, ChatStarters } from "./chat/ChatEmpty";
 import { ChatList } from "./chat/ChatList";
 import { JumpToLatest } from "./chat/JumpToLatest";
 import type { QueuedMessage } from "./chat/MessageQueue";
@@ -1636,6 +1636,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // edit or send; it never sends on its own.
  const goalDef = goal ? getGoal(goal) : null;
  const starters = firstMessageStarters(agentKind) ?? (goalDef ?? getGoal(undefined)).starters;
+ // After the agent's own welcome reply, and before the owner has written
+ // anything, the agent's starters stay under it.
+ const agentStarters = firstMessageStarters(agentKind);
+ const afterWelcomeStarters = agentStarters && messages.length > 0
+ && messages.every((m) => m.welcome && m.role !== "user" && m.outcome !== "error")
+ && !messages.some((m) => m.streaming)
+ && !input.trim()
+ ? agentStarters
+ : null;
  const fillComposer = useCallback((starter: string) => {
  setInput(starter);
  const box = composerRef.current;
@@ -1752,6 +1761,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  rating={feedback[activeId + ":" + i]} onRate={rateMessage} onOpenHistory={showBoxHistory}
  busy={busy} onBuildPlan={(message) => void send(message)} />
  ))}
+ {afterWelcomeStarters ? <ChatStarters starters={afterWelcomeStarters} disabled={busy} onPick={fillComposer} /> : null}
  </div>
  </div>
  </div>

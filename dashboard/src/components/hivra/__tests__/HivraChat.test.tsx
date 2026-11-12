@@ -1574,6 +1574,19 @@ describe("HivraChat", () => {
     expect(screen.getByText("Hi, I'm Atlas.")).toBeInTheDocument();
   });
 
+  it("keeps the starters under the agent's welcome until the owner writes, and a tap only fills the box", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(welcomeResponse()));
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-after-welcome" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText(WELCOME_TEXT);
+    const group = await screen.findByTestId("chat-welcome-starters");
+    fireEvent.click(within(group).getByRole("button", { name: "Clone a GitHub repo and give me a tour of it" }));
+    expect(screen.getByRole("textbox", { name: "Message Atlas" })).toHaveValue("Clone a GitHub repo and give me a tour of it");
+    expect(fetchMock).not.toHaveBeenCalled();
+    // A message in the box hides them; the owner's own wording comes first.
+    expect(screen.queryByTestId("chat-welcome-starters")).not.toBeInTheDocument();
+  });
+
   it("uses Codex's own starters for a Codex chat and hides them once there is a message", async () => {
     (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, status: 502, body: null }));
     render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-codex" token="box-token" agentName="Atlas" agentKind="codex" />);
