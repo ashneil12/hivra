@@ -66,9 +66,6 @@
   "components/console/CodexOAuthModal.tsx": {
     "instance": 1
   },
-  "components/dashboard/HermesDashboardPage.tsx": {
-    "Command Center": 2
-  },
   "components/dashboard/command-center/HivraAgentsPanel.tsx": {
     "instance": 1
   },

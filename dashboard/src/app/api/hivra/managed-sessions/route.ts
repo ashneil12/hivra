@@ -13,11 +13,9 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { launchDigitalOceanSession, listManagedSessions } from "@/lib/hivra/do-managed-sessions";
 import { ManagedSessionLaunchSchema } from "@/lib/hivra/managed-session-contracts";
 import { listDigitalOceanTargets } from "@/lib/infrastructure/digitalocean-store";
-import { managedSessionFailure, noStore, readMutationBody, hivraApiUnavailable } from "./route-support";
+import { managedSessionFailure, noStore, readMutationBody } from "./route-support";
 
-export async function GET(request: NextRequest) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
+export async function GET() {
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   try {
@@ -29,8 +27,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const rateLimit = enforceAuthenticatedRouteRateLimit(request, { routeKey: "hivra_managed_session_launch", userId, limit: 6, windowMs: 60_000 });

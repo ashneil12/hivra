@@ -13,9 +13,6 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraApiAllowed: () => true,
-}));
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 

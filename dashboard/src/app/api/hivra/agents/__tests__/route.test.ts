@@ -244,9 +244,6 @@ function mockDefaultRpc(name: string, args: Record<string, unknown>) {
   return Promise.resolve({ data: null, error: { message: `unexpected rpc ${name}` } });
 }
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraApiAllowed: () => true,
-}));
 
 jest.mock("@/lib/hivra/agent-operation-store", () => ({
   beginHivraAgentVmAllocation: (...args: unknown[]) => mockBeginHivraAgentVmAllocation(...args),
@@ -331,13 +328,6 @@ function makeRequest(body: Record<string, unknown>) {
     method: "POST",
     headers: { "Content-Type": "application/json", Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin" },
     body: JSON.stringify({ deployment: { mode: "hivra-managed" }, ...launchBody }),
-  });
-}
-
-function makeGetRequest() {
-  return new Request("https://hivra.cloud/api/hivra/agents", {
-    method: "GET",
-    headers: { Host: "hivra.cloud" },
   });
 }
 
@@ -1246,16 +1236,7 @@ describe("POST /api/hivra/agents", () => {
     }));
   });
 
-  it("does not launch Hermes on a Hivra computer unless the Hermes computer flag is on for this deployment", async () => {
-    process.env.VERCEL_TARGET_ENV = "production";
-    process.env.HERMES_DEPLOY_CHANNEL = "production";
-    const response = await POST(makeRequest({ type: "hermes", name: "HERMES_FLAG_OFF", cpu: 1, ram: 2 }) as never);
-    expect(response.status).toBe(400);
-    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
-    expect(mockAgentInsert).not.toHaveBeenCalled();
-  });
-
-  it("launches the official Hermes Agent as a Hivra computer kind on Canary, on the default model", async () => {
+  it("launches the official Hermes Agent as a Hivra computer kind, on the default model", async () => {
     process.env.VERCEL_TARGET_ENV = "canary";
     process.env.HERMES_DEPLOY_CHANNEL = "canary";
     mockSubscriptionRow = {
@@ -4054,7 +4035,7 @@ describe("GET /api/hivra/agents", () => {
       { id: "agent-running", type: "claude-code", name: "RUNNING_AGENT", status: "running", cpu: 2, ram: 4 },
     ];
 
-    const response = await GET(makeGetRequest() as never);
+    const response = await GET();
     expect(response.status).toBe(200);
     const body = await response.json();
 
@@ -4071,7 +4052,7 @@ describe("GET /api/hivra/agents", () => {
       { id: "gone", type: "linux-desktop", name: "GONE", status: "error", error: "This computer no longer exists on its host.", created_at: old, cpu: 2, ram: 4 },
       { id: "old-failed", type: "linux-desktop", name: "OLD_FAILED", status: "error", error: "Setup failed", created_at: old, cpu: 2, ram: 4 },
     ];
-    const body = await (await GET(makeGetRequest() as never)).json();
+    const body = await (await GET()).json();
     expect(body.data.agents.map((agent: { id: string }) => agent.id)).toEqual(["gone"]);
   });
 
@@ -4103,7 +4084,7 @@ describe("GET /api/hivra/agents", () => {
     });
     const fetchSpy = jest.spyOn(global, "fetch");
 
-    const body = await (await GET(makeGetRequest() as never)).json();
+    const body = await (await GET()).json();
     const byId = Object.fromEntries(body.data.agents.map((agent: { id: string }) => [agent.id, agent]));
     expect(byId["agent-behind"].agent_software).toEqual({ badge: "update_available", cli: "codex", app: null, installed: "0.100.0", tested: AGENT_CLI_VERSIONS.codex });
     expect(byId["agent-current"].agent_software).toEqual({ badge: null, cli: "codex", app: null, installed: AGENT_CLI_VERSIONS.codex, tested: AGENT_CLI_VERSIONS.codex });
@@ -4115,7 +4096,7 @@ describe("GET /api/hivra/agents", () => {
 
   it("still lists agents when their software observations can't be read", async () => {
     mockExistingAgents = [{ id: "agent-running", type: "codex", name: "RUNNING", status: "running", cpu: 2, ram: 4 }];
-    const response = await GET(makeGetRequest() as never);
+    const response = await GET();
     expect(response.status).toBe(200);
     expect((await response.json()).data.agents).toEqual([expect.not.objectContaining({ agent_software: expect.anything() })]);
   });
@@ -4126,7 +4107,7 @@ describe("GET /api/hivra/agents", () => {
       cpu: 2, ram: 4, vmid: 163, proxmox_host: "fixturenode10", ip: "10.253.0.90",
     }];
 
-    const response = await GET(makeGetRequest() as never);
+    const response = await GET();
     expect(response.status).toBe(200);
     const body = await response.json();
 

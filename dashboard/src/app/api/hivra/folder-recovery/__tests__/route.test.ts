@@ -1,11 +1,9 @@
 jest.mock("server-only", () => ({}));
 const mockAuth = jest.fn();
-const mockAllowed = jest.fn();
 const mockExport = jest.fn();
 const mockRestore = jest.fn();
 const mockLog = jest.fn();
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: (...args: unknown[]) => mockAllowed(...args) }));
 jest.mock("@/lib/hivra/folder-recovery-service", () => ({ exportComputerFolder: (...args: unknown[]) => mockExport(...args), restoreComputerFolder: (...args: unknown[]) => mockRestore(...args) }));
 jest.mock("@/lib/logger", () => ({ log: {
   error: (...args: unknown[]) => mockLog(...args), warn: (...args: unknown[]) => mockLog(...args), info: (...args: unknown[]) => mockLog(...args),
@@ -23,7 +21,7 @@ function request(body: unknown, headers: Record<string,string> = {}) {
   });
 }
 beforeEach(() => {
-  mockAuth.mockResolvedValue({ userId: "owner" }); mockAllowed.mockReturnValue(true);
+  mockAuth.mockResolvedValue({ userId: "owner" });
   mockExport.mockReset().mockResolvedValue(Buffer.from("encrypted artifact"));
   mockRestore.mockReset().mockResolvedValue({ files: 1, bytes: 5 }); mockLog.mockReset();
 });

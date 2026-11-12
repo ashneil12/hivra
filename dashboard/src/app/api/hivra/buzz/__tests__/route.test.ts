@@ -9,7 +9,6 @@ import { createBuzzCoordinator, BuzzCoordinatorError } from "@/lib/hivra/buzz-co
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn(() => true) }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   enforceAuthenticatedRouteRateLimit: jest.fn(() => null),
   RATE_LIMIT_PRESETS: { secretWrite: { limit: 20, windowMs: 60_000 } },
@@ -85,7 +84,7 @@ describe("Hivra Buzz API", () => {
       bindings: [{ id: BINDING, publicKey: "b".repeat(64), runtimeAdapter: "not_installed" }],
       agents: [],
     });
-    const response = await GET(request("/api/hivra/buzz"));
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -96,7 +95,7 @@ describe("Hivra Buzz API", () => {
 
   it("requires authentication before listing or mutating Buzz", async () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: null });
-    expect((await GET(request("/api/hivra/buzz"))).status).toBe(401);
+    expect((await GET()).status).toBe(401);
     expect((await CONNECT(request("/api/hivra/buzz", "POST", { relayUrl: "https://buzz.example" }))).status).toBe(401);
     expect(coordinator.summary).not.toHaveBeenCalled();
     expect(coordinator.connect).not.toHaveBeenCalled();

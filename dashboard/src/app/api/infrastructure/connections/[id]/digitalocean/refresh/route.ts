@@ -9,11 +9,9 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { refreshDigitalOceanConnection } from "@/lib/hivra/do-managed-sessions";
 import { isSameOriginMutationRequest } from "../../../request-security";
-import { managedSessionFailure, noStore, UUID, hivraApiUnavailable } from "@/app/api/hivra/managed-sessions/route-support";
+import { managedSessionFailure, noStore, UUID } from "@/app/api/hivra/managed-sessions/route-support";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   if (request.nextUrl.search || !isSameOriginMutationRequest(request)) return noStore(apiError("Same-origin request required.", 403));

@@ -69,7 +69,6 @@ export async function runMoveWave(deps: WaveDeps): Promise<WaveResult> {
   const settings = await deps.store.getSettings();
   if (!settings?.enabled) return { state: "off" };
   if (settings.paused_at) return { state: "paused", reason: settings.paused_reason };
-  if (!deps.moves.isEnabled()) return { state: "off" };
 
   const now = deps.moves.now();
   const nowIso = now.toISOString();
@@ -96,7 +95,7 @@ export async function runMoveWave(deps: WaveDeps): Promise<WaveResult> {
   const active = new Set((await deps.moves.store.listActiveMoves()).map((m) => m.instance_id));
   const undone = await deps.store.undoneInstanceIds();
   const candidates = (await deps.store.listCandidates(2000)).filter(
-    (row) => !undone.has(row.id) && moveOffer(row, active.has(row.id) ? { state: "queued" } : null, true).available,
+    (row) => !undone.has(row.id) && moveOffer(row, active.has(row.id) ? { state: "queued" } : null).available,
   );
 
   // 3. Move the agents whose owner was told at least a day ago.

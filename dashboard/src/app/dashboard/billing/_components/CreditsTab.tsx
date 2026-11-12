@@ -9,7 +9,7 @@ import { ManagedVeniceWalletPanel } from "@/components/billing/ManagedVeniceWall
 import type { BillingController } from "../useBillingController";
 import styles from "../Billing.module.css";
 
-/** DOM id deep links use to land on model credits (e.g. HermesDashboardPage). */
+/** DOM id deep links use to land on model credits. */
 export const MANAGED_VENICE_ANCHOR_ID = "managed-venice";
 
 export function CreditsTab({ c, variants }: { c: BillingController; variants: Variants }) {

@@ -91,7 +91,7 @@ beforeEach(() => {
 });
 
 it("tells a free account Hermes runs on Hivra Cloud only, without offering a computer", async () => {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
 
@@ -103,7 +103,7 @@ it("tells a free account Hermes runs on Hivra Cloud only, without offering a com
 
 it("opens a free account on its ready connected server instead of the paid-plan blocker", async () => {
   targets = [SERVER];
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
 

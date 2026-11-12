@@ -16,7 +16,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { isActiveComputeStatus } from "@/lib/hivra/resource-gate";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
@@ -38,7 +37,6 @@ async function launchAgent(request: NextRequest) {
     // Canary/prod gate: Hivra boxes only launch where the feature is explicitly
     // enabled. Host selection is separate and uses the Proxmox allocator unless
     // ops deliberately pins a dedicated lane.
-    if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
@@ -77,9 +75,8 @@ function isRecentFailedLaunch(row: Record<string, unknown>, now: number): boolea
   return Number.isFinite(at) && now - at <= FAILED_LAUNCH_LIST_WINDOW_MS;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);

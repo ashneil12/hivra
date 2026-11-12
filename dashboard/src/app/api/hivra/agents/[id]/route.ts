@@ -26,7 +26,6 @@ import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { seedAgentBox } from "@/lib/hivra/agent-bootstrap";
 import { advanceProxmoxComputerContract } from "@/lib/hivra/computer-contract-delivery";
 import { advanceProviderAgentUpkeep, providerAgentUpkeepApplies } from "@/lib/hivra/provider-agent-upkeep";
@@ -62,7 +61,6 @@ import { preparedOmarchyRefreshPending } from "@/lib/hivra/prepared-omarchy-refr
 import { advancePreparedOmarchyRefresh, cancelPreparedOmarchyRefresh } from "@/lib/hivra/prepared-omarchy-refresh";
 import { matchPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
-import { isAgentLinksEnabled } from "@/lib/agent-links/flag";
 import { agentLinkEndpoint, syncAgentLinkKit } from "@/lib/agent-links/kit-delivery";
 import { loadKeyRecord } from "@/lib/agent-links/store";
 
@@ -238,7 +236,6 @@ function publicAgent(row: Record<string, unknown>, extra: Record<string, unknown
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const pollStartedAt = Date.now();
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -449,8 +446,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // Linked computers: a link that changed while this agent was stopped
     // reaches it now. Only an agent whose kit is marked out of date is read.
-    if (isAgentLinksEnabled() && current.status === "running" && current.ip) {
-      const linkAgentId = String(current.id), endpoint = agentLinkEndpoint(req.nextUrl.origin);
+    if (current.status === "running" && current.ip) {
+      const linkAgentId = String(current.id), endpoint = agentLinkEndpoint(new URL(req.url).origin);
       runAfterResponse(async () => {
         const record = await loadKeyRecord(linkAgentId);
         if (record && record.kit_sha256 === null) await syncAgentLinkKit(userId, linkAgentId, endpoint);
@@ -465,7 +462,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);

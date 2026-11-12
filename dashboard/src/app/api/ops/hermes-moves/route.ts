@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     const active = new Set((await deps.store.listActiveMoves()).map((m) => m.instance_id));
     const eligible = ((data ?? []) as unknown as Array<{ id: string; user_id: string; name: string; status: string; backend: string | null; deleted_at: string | null; config: Record<string, unknown> | null }>)
-      .filter((row) => moveOffer(row, active.has(row.id) ? { state: "queued" } : null, deps.isEnabled()).available);
+      .filter((row) => moveOffer(row, active.has(row.id) ? { state: "queued" } : null).available);
     const listing = eligible.map((row) => ({ id: row.id, name: row.name, ownerId: row.user_id, status: row.status }));
 
     if (dryRun) return apiSuccess({ dryRun: true, eligible: listing });

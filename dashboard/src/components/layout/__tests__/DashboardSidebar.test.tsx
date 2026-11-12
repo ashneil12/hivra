@@ -351,42 +351,15 @@ describe('DashboardSidebar', () => {
     expect(input).toHaveAttribute('spellcheck', 'false');
   });
 
-  it.each([
-    ['/dashboard/agent/desktop', 'Computers', 'Agents'],
-    ['/dashboard/agent/same', 'Agents', 'Computers'],
-    ['/dashboard/instances/same/console', 'Agents', 'Computers'],
-  ])('selects the loaded resource section at %s', (pathname, active, inactive) => {
-    (usePathname as jest.Mock).mockReturnValue(pathname);
-    render(<DashboardSidebar {...props} />);
-    const primary = within(screen.getByRole('navigation', { name: 'Primary' }));
-    expect(primary.getByRole('link', { name: active })).toHaveAttribute('aria-current', 'page');
-    expect(primary.getByRole('link', { name: inactive })).not.toHaveAttribute('aria-current');
-  });
-
-  it.each([
-    ['/dashboard/agent/same', 'Computers'],
-    ['/dashboard/instances/same/console', 'Agents'],
-  ])('uses source-qualified routes when an agent and computer share an ID at %s', (pathname, active) => {
-    (usePathname as jest.Mock).mockReturnValue(pathname);
-    (useDashboardResources as jest.Mock).mockReturnValue({
-      resources: resources.map((item) => item.uid === 'x-same'
-        ? { ...item, kind: 'computer', href: '/dashboard/agent/same?tab=desktop' }
-        : item),
-      loading: true, errors: { hermes: null, hivra: null }, refresh,
-    });
-    render(<DashboardSidebar {...props} />);
-    const primary = within(screen.getByRole('navigation', { name: 'Primary' }));
-    expect(primary.getAllByRole('link', { current: 'page' })).toEqual([primary.getByRole('link', { name: active })]);
-  });
-
-  it.each([true, false])('does not guess the kind of an unresolved shared detail route when loading is %s', (loading) => {
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/unknown');
-    (useDashboardResources as jest.Mock).mockReturnValue({
-      resources, loading, errors: { hermes: null, hivra: loading ? null : 'Other agents and computers could not be refreshed.' }, refresh,
-    });
-    render(<DashboardSidebar {...props} />);
-    expect(within(screen.getByRole('navigation', { name: 'Primary' })).queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
-  });
+  it.each(['/dashboard/agent/desktop', '/dashboard/agent/unknown', '/dashboard/instances/same/console'])(
+    'keeps Home selected inside a runtime at %s',
+    (pathname) => {
+      (usePathname as jest.Mock).mockReturnValue(pathname);
+      render(<DashboardSidebar {...props} />);
+      const primary = within(screen.getByRole('navigation', { name: 'Primary' }));
+      expect(primary.getAllByRole('link', { current: 'page' })).toEqual([primary.getByRole('link', { name: 'Home' })]);
+    },
+  );
 
   it.each(['metaKey', 'ctrlKey'])('opens keyboard search with %s and navigates the matched source', (modifier) => {
     render(<DashboardSidebar {...props} />);

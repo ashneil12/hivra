@@ -117,7 +117,7 @@ const reviewButton = () => screen.getByTestId("launch-primary-action");
 
 describe("a new account in Launch", () => {
   it("tells a new account the free account works with its own computer, instead of offering a free hosted one", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(await screen.findByText("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.")).toBeInTheDocument();
@@ -131,7 +131,7 @@ describe("a new account in Launch", () => {
   });
 
   it("offers See plans and Use my own computer in the Free notice", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     const notice = await screen.findByTestId("launch-free-notice");
     expect(within(notice).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
@@ -139,7 +139,7 @@ describe("a new account in Launch", () => {
   });
 
   it("blocks a Hivra Cloud launch for a free account, offers a plan or its own capacity, and activates nothing", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
 
@@ -156,7 +156,7 @@ describe("a new account in Launch", () => {
   });
 
   it("offers a paid plan for a launch Free can't hold either, never Free", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Ubuntu Desktop/ }));
 
@@ -167,7 +167,7 @@ describe("a new account in Launch", () => {
 
   it("goes straight to review for an account that already has a plan", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     expect(screen.queryByText(/The Free plan runs one agent/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
@@ -183,7 +183,7 @@ describe("a paying customer whose plan is on hold", () => {
 
   it("says the paid plan needs its payment settled in Billing, and never offers Free over it", async () => {
     fetchPlanStrictMock.mockResolvedValue(PRO_ON_HOLD);
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(await screen.findByText("Your plan is on hold because a payment didn't go through, so your Hivra Cloud computers are stopped. Update your payment in Billing to launch on Hivra Cloud.")).toBeInTheDocument();
@@ -209,7 +209,7 @@ describe("a paying customer whose plan is on hold", () => {
 describe("an account without a plan that already runs something", () => {
   it("says it couldn't check, instead of assuming nothing runs, when billing couldn't read it", async () => {
     fetchPlanStrictMock.mockResolvedValue({ ...NO_PLAN, usage: undefined });
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(await screen.findByText("We couldn't check your plan, so we can't show what fits it yet.")).toBeInTheDocument();
@@ -222,7 +222,7 @@ describe("an account without a plan that already runs something", () => {
 
   it("still says a hosted launch needs a plan, from what billing observed", async () => {
     fetchPlanStrictMock.mockResolvedValue({ ...NO_PLAN, usage: { agentCount: 1, usedCpu: 0.5, usedRam: 1 } });
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     expect(screen.getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Needs Pro");
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
@@ -238,7 +238,7 @@ describe("the first-run funnel", () => {
 
   it("records a launch request and its acceptance, without the launch's name", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
@@ -262,7 +262,7 @@ describe("the first-run funnel", () => {
   it("records a refused launch as a failure the first-run audit can read, with secrets redacted", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
     createAgentMock.mockRejectedValue(new HivraLaunchRejectedError("Provision kickoff failed for sk-live-abcdefghijklmnop", 502, "provision_kickoff_failed"));
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
@@ -288,7 +288,7 @@ describe("the first-run funnel", () => {
       }
       return baseFetch(input, init);
     }) as unknown as typeof fetch;
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
@@ -309,7 +309,7 @@ describe("the first-run funnel", () => {
 
   it("records a plan paywall once per launch, and the upgrade it leads to", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Ubuntu Desktop/ }));
     await screen.findByText(/Ubuntu Desktop on Hivra Cloud needs a paid plan/);
@@ -332,7 +332,7 @@ describe("starting from a template", () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
     templates = [{ id: TEMPLATE_ID, slug: "research-bot", name: "Research Bot", type: "claude-code", emoji: null }];
     searchParams = { template: TEMPLATE_ID, start: "1" };
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
 
     expect(await screen.findByRole("heading", { name: "Review and launch Research Bot" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Research Bot");
@@ -351,7 +351,7 @@ describe("starting from a template", () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
     sharedTemplate = { id: TEMPLATE_ID, slug: "ops-helper", name: "Ops Helper", type: "openclaw" };
     searchParams = { template: TEMPLATE_ID, templateToken: "share_abc123", start: "1" };
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
 
     expect(await screen.findByRole("heading", { name: "Review and launch Ops Helper" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Ops Helper");
@@ -361,7 +361,7 @@ describe("starting from a template", () => {
   it("says a template is gone and lets the owner choose instead, without launching anything", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
     searchParams = { template: TEMPLATE_ID, start: "1" };
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
 
     expect(await screen.findByText("This template is no longer available. Choose what to launch instead.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
@@ -372,7 +372,7 @@ describe("starting from a template", () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
     templates = [{ id: TEMPLATE_ID, name: "Research Bot", type: "claude-code" }];
     searchParams = { template: TEMPLATE_ID, start: "1" };
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "Review and launch Research Bot" });
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
@@ -383,7 +383,7 @@ describe("starting from a template", () => {
 
   it("links to saved templates from Choose", async () => {
     fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     expect(screen.getByRole("link", { name: "Start from a template" })).toHaveAttribute("href", "/dashboard/templates");
   });

@@ -21,7 +21,6 @@ import {
   labelForNavigationItem,
   type DashboardNavigationItem,
 } from '@/lib/dashboard-navigation';
-import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
 import { listRecents, recentHref, visitHref } from '@/lib/workspace/recents';
 import { needsOwnerAttention } from '@/lib/hivra/resource-attention';
 import { StatusText } from '@/components/ui/StatusText';
@@ -36,7 +35,6 @@ interface DashboardSidebarProps {
   /** The account code the server setup script shows (XXXX-XXXX). */
   accountCode?: string | null;
   resourceOwnerKey?: string;
-  onActiveResourceKindChange?: (kind: DashboardResource['kind'] | null) => void;
   /** The phone bar has no sidebar, so it badges More with this count. */
   onAttentionCountChange?: (count: number) => void;
   /** Controlled by the shell so the phone header and More sheet can open it. */
@@ -64,7 +62,7 @@ export function getDashboardSidebarToggleStyle(isExpanded: boolean): React.CSSPr
 const COMPACT_RAIL_QUERY = '(min-width: 768px) and (max-width: 1023px)';
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
-  userName, userEmail, accountCode, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
+  userName, userEmail, accountCode, resourceOwnerKey, onAttentionCountChange,
   switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, compact = false,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
@@ -88,7 +86,6 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const attentionCount = resources.filter(item => !loading && !errors[item.source] && needsOwnerAttention(item)).length;
   const currentResource = resources.find((item) => resourceMatchesPath(item, pathname));
   const effectivelyExpanded = compactRail ? compactExpanded : isExpanded;
-  const currentResourceKind = currentResource?.kind ?? null;
   // The most recent agent or computer, for the Continue shortcut. Recents live
   // in this browser's storage, so it is read after mount (never during the
   // server render) and again whenever the route changes.
@@ -100,10 +97,6 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const continueResource = lastUsedUid && lastUsedUid !== currentResource?.uid
     ? resources.find((item) => item.uid === lastUsedUid) ?? null
     : null;
-
-  useEffect(() => {
-    onActiveResourceKindChange?.(currentResourceKind);
-  }, [currentResourceKind, onActiveResourceKindChange]);
 
   useEffect(() => {
     onAttentionCountChange?.(attentionCount);
@@ -169,14 +162,10 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   // Touch tablets cannot see title tooltips, so the collapsed rail shows a label.
   const railLabel = (item: DashboardNavigationItem, label: string) =>
     effectivelyExpanded ? null : <span className={styles.railLabel} aria-hidden>{label === item.label ? DASHBOARD_RAIL_SHORT_LABELS[item.id] ?? label : label}</span>;
-  const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
   // Home is the list. From inside an agent or computer the link asks for it
   // explicitly as well; the legacy page ignores ?runtimes=1.
   const homeHref = pathname && isRuntimeDetailPath(pathname) ? DASHBOARD_RUNTIME_LIST_HREF : '/dashboard';
-  const primaryNavigation = filterDashboardNavigation(
-    DASHBOARD_PRIMARY_NAVIGATION,
-    workspaceShellEnabled,
-  );
+  const primaryNavigation = filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION);
   const renderContinue = (item: DashboardResource) => {
     const Icon = item.kind === 'agent' ? Bot : Monitor;
     const label = `Continue ${item.name}`;
@@ -190,12 +179,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
     </Link>;
   };
   const renderNavigationItem = (item: DashboardNavigationItem): React.ReactNode => {
-    const active = isDashboardNavigationItemActive(
-      item,
-      pathname,
-      currentResourceKind,
-      workspaceShellEnabled,
-    );
+    const active = isDashboardNavigationItemActive(item, pathname);
     const label = localizedLabel(item);
     const Icon = item.icon;
     return <Link key={item.id} href={item.id === 'home' ? homeHref : item.href} className={`${styles.navItem} ${active ? styles.active : ''}`}
@@ -247,7 +231,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
           <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <StatusText value="Need you" />}<span className={styles.attentionCount}>{attentionCount}</span>
         </Link>}
         <div className={styles.footer}>
-          <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, isWorkspaceShellNavigationEnabled()).map(renderNavigationItem)}</nav>
+          <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION).map(renderNavigationItem)}</nav>
           <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
           <div className={styles.account}>
             {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}

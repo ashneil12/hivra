@@ -10,7 +10,6 @@ import { z } from "zod";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   preparedConsoleHostPreparationScript,
   preparedConsoleOrigin,
@@ -39,7 +38,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { userId } = await auth();
     if (!userId) return response({ error: "Unauthorized" }, 401);
-    if (!isHivraApiAllowed(request.headers.get("host"))) return response({ error: "Not found" }, 404);
     if (request.nextUrl.search || !isSameOriginMutationRequest(request)) return response({ error: "Request denied" }, 403);
     const { id } = await params;
     if (!z.string().uuid().safeParse(id).success || !supabaseAdmin) return response({ error: "Computer not found" }, 404);

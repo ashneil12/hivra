@@ -15,13 +15,11 @@ const mockRateLimit = jest.fn();
 const mockMatchPrepared = jest.fn();
 const mockLogError = jest.fn();
 const mockRecordMissing = jest.fn();
-let mockHivraAllowed = true;
 let mockRow: Record<string, unknown> | null;
 let mockCache: Record<string, unknown> | null;
 const agentQueries: Array<{ method: string; args: unknown[] }> = [];
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => mockHivraAllowed }));
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: (table: string) => {
@@ -81,7 +79,6 @@ const rpcArgs = (name: string) => mockRpc.mock.calls.find(([called]) => called =
 beforeEach(() => {
   jest.clearAllMocks();
   agentQueries.length = 0;
-  mockHivraAllowed = true;
   mockAuth.mockResolvedValue({ userId: "owner" });
   mockRow = { ...running };
   mockCache = null;
@@ -105,10 +102,7 @@ describe("GET /api/hivra/agents/[id]/usage", () => {
       expect(mockRun).not.toHaveBeenCalled();
     });
 
-    it("is not found outside Hivra, for a malformed id, and for another owner's or a deleted computer", async () => {
-      mockHivraAllowed = false;
-      expect((await get()).status).toBe(404);
-      mockHivraAllowed = true;
+    it("is not found for a malformed id, and for another owner's or a deleted computer", async () => {
       expect((await get("", "not-a-uuid")).status).toBe(404);
       mockRow = null;
       expect((await get()).status).toBe(404);

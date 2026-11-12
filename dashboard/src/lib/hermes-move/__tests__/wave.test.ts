@@ -1,5 +1,4 @@
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
-jest.mock("@/lib/hermes-computer/flag", () => ({ isHermesComputerEnabled: () => true }));
 
 import type { MoveDeps, MoveRow } from "@/lib/hermes-move/orchestrator";
 import { runMoveWave, type WaveCandidate, type WaveDeps, type WaveSettings } from "@/lib/hermes-move/wave";
@@ -40,7 +39,6 @@ function world(opts: {
   const candidates = opts.candidates ?? [];
   const moves = {
     now: () => new Date(NOW),
-    isEnabled: () => true,
     randomKeyHex: () => "k".repeat(64),
     encrypt: (s: string) => `enc:${s.length}`,
     alert: async (e: { title: string }) => { w.alerts.push(e.title); },

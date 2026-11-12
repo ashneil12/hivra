@@ -82,7 +82,7 @@ import {
   type LaunchResourceKind,
   type LaunchStage,
 } from "@/lib/launch/contracts";
-import { hermesLaunchProfile, withHermesLane } from "@/lib/hermes-computer/launch-lane";
+import { HERMES_LAUNCH_PROFILE, withHermesLane } from "@/lib/hermes-computer/launch-lane";
 import {
   clearLaunchDraft,
   createLaunchDraft,
@@ -703,10 +703,14 @@ function ownServerNeeds(profileId: LaunchProfileId | null): string {
 }
 
 export function LaunchJourney(
-  { preparedProfiles = [], hermesComputer = false }: {
+  { preparedProfiles = [], legacyHermesLane = false }: {
     preparedProfiles?: readonly ("omarchy" | "windows")[];
-    /** New Hermes agents launch as a Hivra computer (decided on the server per deployment). */
-    hermesComputer?: boolean;
+    /**
+     * Tests only: launch Hermes on the old instances lane. Every real launch
+     * uses the Hermes computer lane; the old lane's launch path is kept, and
+     * tested, until it is deleted.
+     */
+    legacyHermesLane?: boolean;
   },
 ) {
   const router = useRouter();
@@ -1032,7 +1036,7 @@ export function LaunchJourney(
         initial = stored;
       } else if (isUnfinishedLaunchDraft(stored)) {
         setDraft(null);
-        setResumeChoice({ stored, fresh: withHermesLane(freshFromIntent(), hermesLaunchProfile(hermesComputer)) });
+        setResumeChoice({ stored, fresh: withHermesLane(freshFromIntent(), legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE) });
         return;
       } else {
         initial = freshFromIntent();
@@ -1047,7 +1051,7 @@ export function LaunchJourney(
     // Hermes goes to the lane that applies: a link or draft that names plain
     // Hermes opens the computer lane where it is on, and a computer-lane draft
     // restored where it is off goes back to the instances lane.
-    const hermesProfile = hermesLaunchProfile(hermesComputer);
+    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
     initial = withHermesLane(withCurrentStage(initial), hermesProfile);
     setResumeChoice(null);
     writeLaunchDraft(initial, ownerId);
@@ -1056,7 +1060,7 @@ export function LaunchJourney(
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [hermesComputer, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
 
   // Following a plain Launch link while already inside the journey drops the
   // stage from the URL; that is a new start, so Choose opens with nothing picked.
@@ -2124,7 +2128,7 @@ export function LaunchJourney(
   };
   // A self-hosted installation has no Hivra Cloud, so an agent that runs only
   // there isn't offered.
-  const hermesTile = hermesLaunchProfile(hermesComputer);
+  const hermesTile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
   const agentTiles = AGENT_TILES
     .filter(tile => (tile.id !== "hermes" && tile.id !== "hermes-computer") || tile.id === hermesTile)
     .filter(tile => !selfHosted || PROFILE_DETAILS[tile.id].ownServer);

@@ -143,7 +143,7 @@ beforeEach(() => {
 });
 
 async function chooseAgent(name: string) {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
   expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
@@ -331,7 +331,7 @@ describe("a provider key saved in the Vault", () => {
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
 
     cleanup();
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("launch-primary-action"));
@@ -352,7 +352,7 @@ describe("a provider key saved in the Vault", () => {
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
 
     cleanup();
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: OPENAI_KEY } });

@@ -6,7 +6,6 @@ import { auth } from "@clerk/nextjs/server";
 import type { NextRequest } from "next/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { createMoveDeps } from "@/lib/hermes-move/deps";
 import { toMoveView } from "@/lib/hermes-move/orchestrator";
 import { advanceAfterResponse, leaseIsFree, UUID_RE } from "@/lib/hermes-move/route-support";
@@ -18,7 +17,6 @@ export const maxDuration = 300;
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);

@@ -14,8 +14,6 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { attachSupported } from "@/lib/agent-computers/attach-plan";
 import { attachDependencies, readAttachChoices, type AttachChoice } from "@/lib/agent-computers/attach-routes";
@@ -46,10 +44,8 @@ const UNCHECKED = "Hivra couldn't check this computer right now. Open it to try 
 
 export async function GET(req: NextRequest) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
-    if (!isAgentAttachEnabled()) return noStore(apiSuccess({ enabled: false, agents: [], eligibleComputerIds: [], computerReasons: {} }));
     const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra:attached-agents:read", userId, limit: 60, windowMs: 60_000 });
     if (limited) return noStore(limited);
     const store = createAttachmentLifecycleStore();

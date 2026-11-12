@@ -29,7 +29,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     const move = await deps.store.latestMoveForInstance(id);
     if (move && leaseIsFree(move)) advanceAfterResponse(move.id);
-    const offer = moveOffer(instance, move, deps.isEnabled());
+    const offer = moveOffer(instance, move);
     const to = movedToOf(instance);
     const response = apiSuccess({
       offer,

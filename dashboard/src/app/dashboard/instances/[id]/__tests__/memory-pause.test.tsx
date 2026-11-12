@@ -20,8 +20,6 @@ jest.mock("@/components/instances/InstanceTelegramConnect", () => ({ InstanceTel
 jest.mock("@/components/instances/InstanceChannelsPanel", () => ({ InstanceChannelsPanel: () => null }));
 jest.mock("@/components/instances/CommandPanel", () => ({ CommandPanel: () => null }));
 jest.mock("@/components/storage/StorageUsageBanner", () => ({ StorageUsageBanner: () => null }));
-jest.mock("@/components/billing/SleepWakeUpgradePrompt", () => ({ SleepWakeUpgradePrompt: () => null }));
-jest.mock("@/components/billing/ArchiveUpgradeWall", () => ({ ArchiveUpgradeWall: () => null }));
 jest.mock("@/lib/hivra/agent-api", () => ({ fetchPlanStrict: jest.fn().mockResolvedValue(null), isFreePlanInfo: () => false }));
 
 import InstancePage from "../page";

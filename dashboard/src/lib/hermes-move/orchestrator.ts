@@ -14,7 +14,6 @@
 // new gateway, start the old containers, restore the old row, delete the new
 // computer) so only a finished outcome ends the move.
 
-import { isHermesComputerEnabled } from "@/lib/hermes-computer/flag";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { HERMES_DEFAULT_MODEL, ModelKeySelectionSchema } from "@/lib/hivra/model-key-selection";
 import { log } from "@/lib/logger";
@@ -180,7 +179,6 @@ export interface MoveDeps {
   alert: (event: { title: string; message: string; moveId: string; userId: string; instanceId: string; failureType: string }) => Promise<void>;
   /** Tell the owner their agent has moved (best effort; a failure never stops the move). */
   notifyMoved?: (p: { userId: string; agentName: string; agentId: string; undoUntil: string }) => Promise<unknown>;
-  isEnabled: () => boolean;
 }
 
 export class MoveRequestError extends Error {
@@ -224,7 +222,6 @@ export function isActiveMove(row: Pick<MoveRow, "state"> | null | undefined): bo
 
 export type MoveOfferReason =
   | "available"
-  | "not_enabled"
   | "not_hermes"
   | "not_running"
   | "already_moved"
@@ -261,9 +258,7 @@ export function moveScheduledFor(instance: { config?: Record<string, unknown> | 
 export function moveOffer(
   instance: Pick<InstanceRow, "status" | "backend" | "deleted_at" | "config">,
   activeMove?: Pick<MoveRow, "state"> | null,
-  enabled: boolean = isHermesComputerEnabled(),
 ): MoveOffer {
-  if (!enabled) return { available: false, reason: "not_enabled" };
   if (movedToOf(instance) || instance.status === "scheduled_for_deletion") return { available: false, reason: "already_moved" };
   if (isActiveMove(activeMove)) return { available: false, reason: "move_in_progress" };
   const webfree = instance.backend === "webui" || instance.backend === "gateway";
@@ -281,7 +276,7 @@ export async function startMove(
   const instance = await deps.store.getInstance(input.instanceId);
   if (!instance || instance.user_id !== input.userId) throw new MoveRequestError("Agent not found.", 404, "not_found");
   const active = await deps.store.activeMoveForInstance(input.instanceId);
-  const offer = moveOffer(instance, active, deps.isEnabled());
+  const offer = moveOffer(instance, active);
   if (!offer.available) {
     throw new MoveRequestError(offerMessage(offer.reason), offer.reason === "move_in_progress" ? 409 : 409, offer.reason);
   }
@@ -305,7 +300,6 @@ function offerMessage(reason: MoveOfferReason): string {
     case "move_in_progress": return "A move is already running for this agent.";
     case "already_moved": return "This agent has already moved.";
     case "not_running": return "Start this agent before moving it.";
-    case "not_enabled": return "Moving to the official Hermes is not available yet.";
     default: return "This agent cannot be moved.";
   }
 }
@@ -476,7 +470,7 @@ async function failBeforeChange(row: MoveRow, failureType: string, reason: strin
 
 async function stepStartLaunch(row: MoveRow, deps: MoveDeps): Promise<MovePatch> {
   const instance = await oldInstance(row, deps);
-  const offer = moveOffer(instance, null, deps.isEnabled());
+  const offer = moveOffer(instance, null);
   if (!offer.available) {
     return failBeforeChange(row, "move_not_available", offerMessage(offer.reason), `offer ${offer.reason}`, deps, false);
   }

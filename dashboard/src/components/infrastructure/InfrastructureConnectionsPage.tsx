@@ -17,7 +17,6 @@ import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 
 import {
   deleteInfrastructureConnection,
@@ -218,11 +217,6 @@ function launchLinkFromHref(href: string | null): { targetId: string | null } | 
 }
 
 export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: EmbeddedCapacity | null } = {}) {
-  // DigitalOcean sessions are Hivra agents; offer them only where those are on.
-  const [hivraAgentsEnabled, setHivraAgentsEnabled] = useState(false);
-  useEffect(() => {
-    setHivraAgentsEnabled(isHivraEnabled());
-  }, []);
   // The server decides whether a machine on the owner's network can connect through the outbound connector.
   const [homeConnectorEnabled, setHomeConnectorEnabled] = useState(false);
   useEffect(() => {
@@ -1072,7 +1066,7 @@ export function InfrastructureConnectionsPage({ embedded = null }: { embedded?: 
             selfHosted={selfHosted}
             onChooseHivraCloud={openHivraCloudDialog}
             onConnectHetzner={openHetznerDialog}
-            onConnectDigitalOcean={hivraAgentsEnabled ? openDigitalOceanDialog : undefined}
+            onConnectDigitalOcean={openDigitalOceanDialog}
             onConnectExisting={openServerEnrollment}
             homeConnectorEnabled={homeConnectorEnabled}
             onConnectHomeMachine={connectHomeMachine}

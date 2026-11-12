@@ -40,7 +40,6 @@ import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { getPersonaSoul } from "@/lib/persona-souls-accessor";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
@@ -196,7 +195,6 @@ async function probeBoxBrowserEnabled(chatUrl: string | null, token: string | nu
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);

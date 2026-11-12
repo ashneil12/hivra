@@ -60,7 +60,6 @@ import { resourceInventory } from "@/lib/workspace/resource-inventory";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
-import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
@@ -71,8 +70,6 @@ import {
   buildWelcomePersonalizationContext,
   parseWelcomePersonalizationContext,
 } from "@/lib/welcome-personalization";
-
-const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
 
 // A desktop stays mounted (hidden) while its owner works in other tabs, so
 // its placeholder shows only while Desktop is the open tab.
@@ -847,7 +844,6 @@ export default function AgentPage() {
     nextURL.searchParams.delete("welcome");
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
   }, [welcomeParam]);
-  const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
   const [agent, setAgent] = useState<HivraAgent | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [statusObservation, setStatusObservation] = useState<{
@@ -927,16 +923,6 @@ export default function AgentPage() {
   useEffect(() => {
     capabilityPrefetchRef.current = null;
   }, [id]);
-
-  // Read the window-based Hivra flag only after hydration. A build-time true is
-  // already authoritative; otherwise server and client both start unresolved
-  // and render neutral feedback until the live hostname / ?hivra=1 check runs.
-  // Reading the hostname in a lazy initializer would make preview deployments
-  // render differently on the server and client and cause a hydration mismatch.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate post-hydration flip of a render-gating flag; see comment above.
-    setFlagOn(isHivraEnabled());
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -1063,7 +1049,7 @@ export default function AgentPage() {
   }, [id, reloadKey]);
 
   const go = useCallback(
-    (path: string) => router.push(`${path}${ENV_FLAG ? "" : `${path.includes("?") ? "&" : "?"}hivra=1`}`),
+    (path: string) => router.push(path),
     [router],
   );
 
@@ -1111,8 +1097,8 @@ export default function AgentPage() {
 
   // While that agent's Chat is on screen, the visit is the agent's own
   // (`a-<attachment id>`), not the computer's Desktop.
-  const attachedVisit = Boolean(flagOn && attachedAgent && agent?.id === id && tab === "chat");
-  const visitTab: Tab | null = flagOn && agent && agent.id === id
+  const attachedVisit = Boolean(attachedAgent && agent?.id === id && tab === "chat");
+  const visitTab: Tab | null = agent && agent.id === id
     ? attachedVisit || agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
     : null;
   useRecordVisit(
@@ -1161,12 +1147,6 @@ export default function AgentPage() {
     if (desktopRequested) startDesktopDownload(fastDesktopRequested);
   }, [desktopRequested, fastDesktopRequested]);
 
-  if (flagOn === null) {
-    return <LoadingState label="Checking availability…" />;
-  }
-  if (!flagOn) {
-    return <div className={styles.statusPanel}>This preview isn&apos;t enabled here.</div>;
-  }
   if (loaded && !agent) {
     return (
       <div className={styles.statusPanel}>

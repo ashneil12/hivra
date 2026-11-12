@@ -18,7 +18,6 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { agentSoftwareAutoUpdates, agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
@@ -49,7 +48,6 @@ async function ownerAgent(id: string, userId: string): Promise<{ agent: AgentSof
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
@@ -78,7 +76,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);

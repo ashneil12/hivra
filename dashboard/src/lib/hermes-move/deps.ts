@@ -8,7 +8,6 @@ import { deleteProxmoxHivraAgent } from "@/lib/hivra/delete-hivra-agent";
 import { hivraAgentProvisionLogPath, resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
 import { buildPinnedGuestHostScript, resolvePinnedGuestTarget } from "@/lib/hivra/pinned-guest-seed";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
-import { isHermesComputerEnabled } from "@/lib/hermes-computer/flag";
 import { sshExec } from "@/lib/hetzner/ssh";
 import { resolveInstanceIpv4 } from "@/lib/instance-resolvers";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -54,7 +53,6 @@ export function createMoveDeps(): MoveDeps {
     randomKeyHex: () => randomBytes(32).toString("hex"),
     encrypt: encryptSecret,
     decrypt: decryptSecret,
-    isEnabled: () => isHermesComputerEnabled(),
     launch: (userId, body, options) => launchHivraAgentForUser(userId, body, options),
     observeLaunch: async (userId, agent) => {
       const polled = await advanceProxmoxProvisionPoll(

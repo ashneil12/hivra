@@ -1,9 +1,8 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
 import { AgentActivityPanel } from "../AgentActivityPanel";
-import { fetchPlanStrict, type PlanInfo } from "@/lib/hivra/agent-api";
 
 // captureClient is best-effort telemetry — stub it so the panel's mount event
 // doesn't need a live PostHog.
@@ -11,32 +10,10 @@ jest.mock("@/lib/telemetry/posthog-client", () => ({
   captureClient: jest.fn(),
 }));
 
-// Keep the real isFreePlanInfo (the gate under test); only stub the network
-// fetchPlanStrict so we can drive free vs paid vs unknown.
-jest.mock("@/lib/hivra/agent-api", () => {
-  const actual = jest.requireActual("@/lib/hivra/agent-api");
-  return { ...actual, fetchPlanStrict: jest.fn() };
-});
-
 // Marker mocks for children we're not exercising here.
 jest.mock("@/components/stats/Sparkline", () => ({
   Sparkline: () => <div data-testid="sparkline" />,
 }));
-jest.mock("@/components/billing/UsageUpgradeFooter", () => ({
-  UsageUpgradeFooter: () => <div data-testid="usage-upgrade-footer">footer</div>,
-}));
-
-const FREE_PLAN: PlanInfo = {
-  subscribed: false,
-  name: "Free",
-  key: "free",
-  maxAgents: 1,
-  maxCpuPerAgent: 0.5,
-  maxRamPerAgent: 1,
-  poolCpu: 0.5,
-  poolRam: 1,
-};
-const PRO_PLAN: PlanInfo = { ...FREE_PLAN, subscribed: true, name: "Pro", key: "operator" };
 
 const EMPTY_HIVRA = {
   eventCount: 0,
@@ -139,9 +116,6 @@ const HIVRA_ONLY_ACTIVITY = {
   },
 };
 
-const FLAG = "NEXT_PUBLIC_HERMES_USAGE_UPGRADE_CTA_ENABLED";
-let originalFlag: string | undefined;
-
 function mockActivityFetch(payload: unknown) {
   global.fetch = jest.fn().mockResolvedValue({
     ok: true,
@@ -151,70 +125,7 @@ function mockActivityFetch(payload: unknown) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  originalFlag = process.env[FLAG];
-  delete process.env[FLAG];
-  (fetchPlanStrict as jest.Mock).mockResolvedValue(FREE_PLAN);
   mockActivityFetch(ACTIVITY_WITH_USAGE);
-});
-
-afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
-});
-
-describe("AgentActivityPanel — usage upgrade footer gating", () => {
-  it("renders the footer for a FREE user with usage when the flag is ON", async () => {
-    process.env[FLAG] = "1";
-    (fetchPlanStrict as jest.Mock).mockResolvedValue(FREE_PLAN);
-    render(<AgentActivityPanel />);
-
-    expect(await screen.findByTestId("usage-upgrade-footer")).toBeInTheDocument();
-  });
-
-  it("NEVER renders the footer for a PAID user, even with the flag ON", async () => {
-    process.env[FLAG] = "1";
-    (fetchPlanStrict as jest.Mock).mockResolvedValue(PRO_PLAN);
-    render(<AgentActivityPanel />);
-
-    // Wait for the ready render + the plan fetch to resolve, then assert absence.
-    expect(await screen.findByText(/total tokens/i)).toBeInTheDocument();
-    await waitFor(() => expect(fetchPlanStrict).toHaveBeenCalled());
-    expect(screen.queryByTestId("usage-upgrade-footer")).not.toBeInTheDocument();
-  });
-
-  it("does NOT render the footer when the flag is OFF, and skips the plan fetch entirely", async () => {
-    delete process.env[FLAG];
-    (fetchPlanStrict as jest.Mock).mockResolvedValue(FREE_PLAN);
-    render(<AgentActivityPanel />);
-
-    expect(await screen.findByText(/total tokens/i)).toBeInTheDocument();
-    // Dark feature = zero extra API calls: the plan fetch must not even fire.
-    expect(fetchPlanStrict).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("usage-upgrade-footer")).not.toBeInTheDocument();
-  });
-
-  it("does NOT render the footer when the plan is UNKNOWN (strict fetch failed)", async () => {
-    process.env[FLAG] = "1";
-    (fetchPlanStrict as jest.Mock).mockResolvedValue(null);
-    render(<AgentActivityPanel />);
-
-    expect(await screen.findByText(/total tokens/i)).toBeInTheDocument();
-    await waitFor(() => expect(fetchPlanStrict).toHaveBeenCalled());
-    expect(screen.queryByTestId("usage-upgrade-footer")).not.toBeInTheDocument();
-  });
-
-  it("does NOT render the footer when there's no usage yet (nothing to show off)", async () => {
-    process.env[FLAG] = "1";
-    (fetchPlanStrict as jest.Mock).mockResolvedValue(FREE_PLAN);
-    // Genuinely empty on BOTH lanes and with no boxes. Previously this test
-    // used a zero-usage payload with boxes present, encoding "empty Hermes ==
-    // empty account" as correct — which is the defect.
-    mockActivityFetch(EMPTY_ACTIVITY);
-    render(<AgentActivityPanel />);
-
-    expect(await screen.findByText(/no activity recorded yet/i)).toBeInTheDocument();
-    expect(screen.queryByTestId("usage-upgrade-footer")).not.toBeInTheDocument();
-  });
 });
 
 describe("AgentActivityPanel — lane coverage", () => {

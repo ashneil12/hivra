@@ -108,7 +108,7 @@ beforeEach(() => {
 });
 
 it("adds capacity in a sheet over the launch and comes back to the same launch with the new server chosen", async () => {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   const name = screen.getByLabelText(/Agent name/i);
@@ -135,7 +135,7 @@ it("adds capacity in a sheet over the launch and comes back to the same launch w
 });
 
 it("closes the sheet with Back to your launch and keeps the launch as it was", async () => {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
   fireEvent.click(await screen.findByRole("switch", { name: /Browser for Codex/ }));
@@ -149,7 +149,7 @@ it("closes the sheet with Back to your launch and keeps the launch as it was", a
 });
 
 it("tells a Free account about the paid plan on Choose, and Use my own computer opens the sheet over the launch", async () => {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
 
   const notice = await screen.findByTestId("launch-free-notice");

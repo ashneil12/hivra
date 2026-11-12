@@ -44,11 +44,6 @@ import {
   dismissStandingTasksNudge,
   readStandingTasksNudgeDismissed,
 } from "@/lib/nudges/standing-tasks-dismissal";
-import { fetchPlanStrict, isFreePlanInfo, type PlanInfo } from "@/lib/hivra/agent-api";
-import { isSleepUpgradePromptEnabled, isArchiveUpgradeWallEnabled } from "@/lib/flags/upgrade-prompts";
-import { SleepWakeUpgradePrompt } from "@/components/billing/SleepWakeUpgradePrompt";
-import { ArchiveUpgradeWall } from "@/components/billing/ArchiveUpgradeWall";
-import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hivra/archive-countdown";
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
 import { UpdateAvailableBanner } from "@/components/instances/UpdateAvailableBanner";
 import { NoForkMigrationCard } from "@/components/instances/NoForkMigrationCard";
@@ -69,8 +64,7 @@ interface Instance {
   // UX; see PausedStateBanner below.
   paused_reason?: string | null;
   // Timestamp of the last lifecycle transition (set by the inactivity-sweep when
-  // it pauses). For an inactivity-paused free agent this drives the archive
-  // countdown (deadline = this + dormant-reclaim window); see archive-countdown.
+  // it pauses).
   last_lifecycle_transition_at?: string | null;
   backend?: "gateway" | "webui" | null;
   provider: string;
@@ -749,34 +743,6 @@ export default function InstanceDetailPage() {
     instance,
   ]);
 
-  // The user's real plan — only needed to gate the free→paid sleep-wake pitch
-  // (Moment #1), so we fetch it lazily, and ONLY when this instance is in the
-  // inactivity-paused state that surfaces the pitch. Keeps the hot instance page
-  // from doing an extra /api/billing/usage call on every open. Starts null
-  // (unknown) so a paying customer never flashes the pitch before their plan
-  // resolves; paid tiers are also structurally exempt from the inactivity sweep.
-  const [plan, setPlan] = useState<PlanInfo | null>(null);
-  const planFetchedRef = useRef(false);
-  useEffect(() => {
-    // Both consumers (sleep banner + archive wall) are dark unless a flag is
-    // on — skip the fetch entirely so the dark features add zero API calls.
-    if (!isSleepUpgradePromptEnabled() && !isArchiveUpgradeWallEnabled()) return;
-    if (instance?.paused_reason !== "inactivity") return;
-    if (planFetchedRef.current) return;
-    planFetchedRef.current = true;
-    let alive = true;
-    void fetchPlanStrict()
-      .then((p) => {
-        if (alive) setPlan(p);
-      })
-      .catch(() => {
-        // Unknown plan stays null (≠ free) → no pitch for an unresolved payer.
-      });
-    return () => {
-      alive = false;
-    };
-  }, [instance?.paused_reason]);
-
   // Fire free_limit_hit once per RAM-capped instance — the in-product paywall
   // view event. Deduped per instance like inactivityWakeFiredRef above.
   const ramCapBannerViewedRef = useRef<string | null>(null);
@@ -1400,30 +1366,6 @@ export default function InstanceDetailPage() {
         */}
         {(instance.paused_reason === "inactivity" &&
           (instance.status === "stopped" || instance.status === "provisioning")) ? (
-          // Moment #3 (the HARD wall) takes precedence when the free agent is
-          // actually counting down to the dormant-reclaim archive: same slot,
-          // loss-aversion copy + real countdown. shouldShowArchiveUpgradeWall
-          // fails closed on paid plans and any non-inactivity state, and the flag
-          // is default-OFF.
-          shouldShowArchiveUpgradeWall({
-            enabled: isArchiveUpgradeWallEnabled(),
-            plan,
-            instance,
-          }) ? (
-            <ArchiveUpgradeWall
-              instanceId={id}
-              instanceName={instance.name}
-              daysUntilArchive={getArchiveCountdownDays(instance) ?? 0}
-            />
-          ) :
-          // Moment #1: when the flag is ON and the user is confirmed FREE, swap
-          // the plain wake banner for the sharpened always-on pitch (paid users
-          // never reach this — inactivity-sweep exempts them — and the flag is
-          // default-OFF). Otherwise keep the existing live banner unchanged so
-          // there is no regression while the copy is under review.
-          isSleepUpgradePromptEnabled() && isFreePlanInfo(plan) ? (
-            <SleepWakeUpgradePrompt instanceId={id} instanceName={instance.name} />
-          ) : (
           <div
             data-testid="instance-inactivity-wake-banner"
             className="instance-chat-banner"
@@ -1487,7 +1429,6 @@ export default function InstanceDetailPage() {
               </button>
             </div>
           </div>
-          )
         ) : null}
         {/*
           RAM-cap banner: rendered when the resource-watchdog cron paused
