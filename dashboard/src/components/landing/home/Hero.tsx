@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Code2, Server, ShieldCheck } from "lucide-react";
+import { ArrowRight, Cloud, KeyRound, Monitor } from "lucide-react";
 import AgentsDeployedStat from "@/components/landing/AgentsDeployedStat";
 import type { AgentsDeployedSnapshot } from "./agents-deployed-format";
 import { AGENT_LAUNCH_HREF, HERO } from "./content";
@@ -9,7 +9,7 @@ import { glossify } from "@/components/gloss/glossify";
 
 // One icon per HERO.proof line, in the same order. A missing entry renders the
 // homepage as a 500 once it sits inside HomeMotion (the element is undefined).
-const PROOF_ICONS = [ShieldCheck, Server, Code2];
+const PROOF_ICONS = [Monitor, KeyRound, Cloud];
 
 /**
  * The first screen. The headline, subhead and call to action are plain server
@@ -36,7 +36,7 @@ export default function Hero({ agentsDeployed }: { agentsDeployed?: AgentsDeploy
               <span>{HERO.primary}</span>
               <ArrowRight size={18} aria-hidden="true" />
             </Link>
-            <a href="#pricing" className={styles.textCta} data-cta="hero-secondary">
+            <a href={HERO.secondaryHref} className={styles.textCta} data-cta="hero-secondary">
               {HERO.secondary}
               <ArrowRight size={16} aria-hidden="true" />
             </a>
