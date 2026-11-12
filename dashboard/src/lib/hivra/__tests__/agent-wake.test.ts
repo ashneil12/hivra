@@ -78,7 +78,8 @@ const target = {
 
 function wakeReceipt(over: Record<string, unknown> = {}) {
   return `noise\nHIVRA_WAKE_RESULT ${JSON.stringify({
-    ok: true, vmid: VMID, from: "napping", to: "awake", reason: "resumed", ms: 900, steps: { resume: 120, healthz: 300 }, ...over,
+    ok: true, vmid: VMID, from: "napping", to: "awake", reason: "resumed", ms: 900, steps: { resume: 120, fixup: 300 },
+    via: "socket", tries: 1, ...over,
   })}\n`;
 }
 
@@ -143,7 +144,7 @@ describe("ensureHivraAgentAwake", () => {
     expect(mockFinish).toHaveBeenCalledWith({ agentId: AGENT_ID, operationId: claimedOp, result: "awake" });
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
       agentId: AGENT_ID, kind: "wake", trigger: "open", fromState: "napping", toState: "awake", generation: 6,
-      detail: expect.objectContaining({ resume_ms: 120, from: "napping" }),
+      detail: expect.objectContaining({ resume_ms: 120, fixup_ms: 300, fixup_via: "socket", fixup_tries: 1, from: "napping" }),
     }));
   });
 

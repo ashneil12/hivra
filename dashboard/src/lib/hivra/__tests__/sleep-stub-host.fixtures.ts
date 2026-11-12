@@ -1,6 +1,8 @@
 // A fake Proxmox host for running the sleep and wake scripts for real: stub
-// qm, flock, timeout, systemd-run, lvs and sleep binaries on PATH, plus a
-// temp directory standing in for /run. Test support only.
+// qm, flock, timeout, systemd-run, lvs and sleep binaries on PATH, a temp
+// directory standing in for /run, and a fake QEMU that answers QMP and the
+// guest agent on unix sockets in a temp directory standing in for
+// /var/run/qemu-server. Both read and write the same state file. Test support only.
 
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,6 +30,15 @@ export interface HostState {
   startNoop?: boolean;
   setFail?: boolean;
   pingFail?: boolean;
+  /** QMP: refuse connections, fail or ignore a stop or a cont. */
+  qmpDown?: boolean;
+  qmpStopFail?: boolean;
+  qmpStopNoop?: boolean;
+  qmpContFail?: boolean;
+  qmpContNoop?: boolean;
+  /** Guest agent socket: close every connection, or stay silent for the first N connections (a guest still booting). */
+  qgaDown?: boolean;
+  qgaSilentConnects?: number;
   /** A guest command containing this text exits 1. */
   execFailMatch?: string;
   /** What the guest prints for the probe program. */
@@ -90,6 +101,7 @@ elif a[0] == "set":
 elif a[0] == "guest" and a[1] == "cmd":
     sys.exit(1 if s.get("pingFail") else 0)
 elif a[0] == "guest" and a[1] == "exec":
+    if s.get("pingFail"): sys.exit(1)
     rest = a[a.index("--") + 1:]
     text = " ".join(rest)
     if rest[0].endswith("python3"):
@@ -117,6 +129,91 @@ elif "lv_size,data_percent" in a:
 else: sys.exit(2)
 `;
 
+// A fake QEMU. Daemonises once both sockets are listening. The QMP side sends
+// async events ahead of the replies, as the real one does.
+const FAKE_QEMU = String.raw`#!/usr/bin/env python3
+import json, os, socketserver, sys, threading, time
+d, qdir, vmid = sys.argv[1], sys.argv[2], sys.argv[3]
+SP = os.path.join(d, "state.json")
+def load(): return json.load(open(SP))
+def save(s): json.dump(s, open(SP, "w"))
+def log(t): open(os.path.join(d, "calls.log"), "a").write(t + "\n")
+conns = {"qga": 0}
+lock = threading.Lock()
+
+class Qmp(socketserver.StreamRequestHandler):
+    def handle(self):
+        s = load()
+        if s["status"] != "running" or s.get("qmpDown"): return
+        w = self.wfile
+        def out(o): w.write((json.dumps(o) + "\n").encode()); w.flush()
+        out({"QMP": {"version": {"qemu": {"major": 9}}, "capabilities": ["oob"]}})
+        for raw in self.rfile:
+            req = json.loads(raw)
+            cmd, rid = req["execute"], req.get("id")
+            s = load()
+            def reply(o):
+                if rid is not None: o["id"] = rid
+                out(o)
+            if cmd == "qmp_capabilities": reply({"return": {}})
+            elif cmd == "query-status":
+                reply({"return": {"status": s["qmp"], "running": s["qmp"] == "running", "singlestep": False}})
+            elif cmd in ("stop", "cont"):
+                log("qmp " + cmd)
+                out({"timestamp": {"seconds": 1, "microseconds": 2}, "event": "STOP" if cmd == "stop" else "RESUME"})
+                if s.get("qmpStopFail" if cmd == "stop" else "qmpContFail"):
+                    reply({"error": {"class": "GenericError", "desc": "refused"}}); continue
+                if not s.get("qmpStopNoop" if cmd == "stop" else "qmpContNoop"):
+                    s["qmp"] = "paused" if cmd == "stop" else "running"; save(s)
+                reply({"return": {}})
+            else: reply({"error": {"class": "CommandNotFound", "desc": "no"}})
+
+class Qga(socketserver.StreamRequestHandler):
+    def handle(self):
+        s = load()
+        with lock:
+            conns["qga"] += 1
+            n = conns["qga"]
+        if s["status"] != "running" or s.get("qgaDown"): return
+        w = self.wfile
+        silent = n <= s.get("qgaSilentConnects", 0)
+        def out(o): w.write(b"\xff" + (json.dumps(o) + "\n").encode()); w.flush()
+        polls = 0
+        for raw in self.rfile:
+            if silent: continue
+            req = json.loads(raw)
+            cmd, args = req["execute"], req.get("arguments", {})
+            if cmd == "guest-sync-delimited": out({"return": args["id"]})
+            elif cmd == "guest-exec":
+                text = args["arg"][-1]
+                log("qga exec " + text)
+                code = 1 if s.get("execFailMatch") and s["execFailMatch"] in text else 0
+                polls = 0
+                out({"return": {"pid": 4242}})
+            elif cmd == "guest-exec-status":
+                polls += 1
+                out({"return": {"exited": False}} if polls < 2 else {"return": {"exited": True, "exitcode": code}})
+            else: out({"error": {"class": "CommandNotFound", "desc": "no"}})
+
+class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+os.makedirs(qdir, exist_ok=True)
+paths = [os.path.join(qdir, vmid + ".qmp"), os.path.join(qdir, vmid + ".qga")]
+if os.fork():
+    for _ in range(500):
+        if all(os.path.exists(p) for p in paths): sys.exit(0)
+        time.sleep(0.01)
+    sys.exit(1)
+os.setsid()
+devnull = os.open(os.devnull, os.O_RDWR)
+for fd in (0, 1, 2): os.dup2(devnull, fd)
+open(os.path.join(d, "qemu.pid"), "w").write(str(os.getpid()))
+a, b = Server(paths[0], Qmp), Server(paths[1], Qga)
+threading.Thread(target=a.serve_forever, daemon=True).start()
+b.serve_forever()
+`;
+
 const TIMEOUT = `#!/usr/bin/env bash
 # stub timeout: log the limit, optionally pretend it expired, else run the command
 [ "$1" = "-k" ] && shift 2
@@ -129,7 +226,7 @@ exec "$@"
 const FLOCK = `#!/usr/bin/env bash
 echo "flock $*" >> "$STUB_DIR/calls.log"
 case "$*" in
-  "-x -n 9"|"-x -w 20 9") [ -z "\${STUB_FLOCK_BUSY:-}" ] || exit 1 ;;
+  "-x -n 9"|"-x -w 15 9") [ -z "\${STUB_FLOCK_BUSY:-}" ] || exit 1 ;;
   "-w 60 8") [ -z "\${STUB_FLOCK_TIMEOUT:-}" ] || exit 1 ;;
 esac
 exit 0
@@ -173,6 +270,8 @@ export function makeHostHarness(): HostHarness {
   mkdirSync(bin);
   mkdirSync(provisionerDir);
   const put = (file: string, body: string) => { writeFileSync(file, body); chmodSync(file, 0o755); };
+  const qemu = path.join(dir, "fake-qemu.py");
+  put(qemu, FAKE_QEMU);
   put(path.join(bin, "qm"), QM);
   put(path.join(bin, "lvs"), LVS);
   put(path.join(bin, "timeout"), TIMEOUT);
@@ -189,14 +288,25 @@ export function makeHostHarness(): HostHarness {
       mkdirSync(runDir);
       writeFileSync(path.join(dir, "state.json"), JSON.stringify(state));
       writeFileSync(path.join(dir, "calls.log"), "");
-      // The script writes to /run; point it at the temp directory. The script goes in on stdin, as the real transport does.
-      const local = script.replaceAll("/run/", `${runDir}/`);
-      const result = spawnSync("bash", ["-s"], {
-        input: local,
-        encoding: "utf8",
-        env: { PATH: `${bin}:/usr/bin:/bin`, STUB_DIR: dir, LC_ALL: "C", ...env },
-        timeout: 60_000,
-      });
+      // The script writes to /run and talks to /var/run/qemu-server; point both at the temp directory.
+      // The script goes in on stdin, as the real transport does.
+      const qemuDir = path.join(runDir, "qemu-server");
+      const local = script.replaceAll("/var/run/qemu-server", "@@QEMU@@").replaceAll("/run/", `${runDir}/`).replaceAll("@@QEMU@@", qemuDir);
+      const pidFile = path.join(dir, "qemu.pid");
+      rmSync(pidFile, { force: true });
+      const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID)], { stdio: "ignore", timeout: 15_000 });
+      if (started.status !== 0) throw new Error("the fake QEMU did not start");
+      let result;
+      try {
+        result = spawnSync("bash", ["-s"], {
+          input: local,
+          encoding: "utf8",
+          env: { PATH: `${bin}:/usr/bin:/bin`, STUB_DIR: dir, LC_ALL: "C", ...env },
+          timeout: 60_000,
+        });
+      } finally {
+        try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); } catch { /* already gone */ }
+      }
       return {
         status: result.status,
         stdout: result.stdout,

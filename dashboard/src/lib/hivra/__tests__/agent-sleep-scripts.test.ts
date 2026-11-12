@@ -4,6 +4,7 @@ import {
   buildIdleProbeHostScript, buildSleepHostScript, buildWakeHostScript, idleVerdict, parseIdleProbeOutput,
   parseIdleProbeRefusal, parseSleepReceipt, parseWakeReceipt, type WakeAdmission,
 } from "../agent-sleep-scripts";
+import { HOST_VM_CONTROL_PROGRAM } from "../sleep/host-vm-control-program";
 import {
   AWAKE, COLD, HIBERNATED, NAPPING, TAG, VMID, makeHostHarness, probeLine, type HostHarness, type HostState,
 } from "./sleep-stub-host.fixtures";
@@ -51,8 +52,11 @@ describe("script construction", () => {
       expect(script).toContain("run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c");
       expect(script).toContain("HIVRA_SLEEP_RESULT");
     }
-    expect(nap).toContain('qm suspend "$VMID" >/dev/null');
+    // A nap is QMP stop through the helper, never the qm CLI.
+    expect(nap).toContain('ctl 10 qmp "$VMID" stop 5');
+    expect(nap).not.toContain("qm suspend");
     expect(nap).not.toContain("--todisk");
+    expect(hib).toContain("qm suspend");
     expect(hib).toContain(`timeout -k 10 240 systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1`);
     expect(hib).toContain('qm set "$VMID" --onboot 0');
     expect(hib).toContain("lvs");
@@ -64,11 +68,29 @@ describe("script construction", () => {
     expect(script).toContain("PROVISIONER_DIR='/opt/hivra'");
     expect(script).toContain("CPU_DENSITY_MILLI=1500");
     expect(script.indexOf("qm start")).toBeLessThan(script.indexOf("flock -u 8"));
-    expect(script).toContain("hivra-cf-tunnel");
-    expect(script).toContain("hwclock --hctosys");
-    expect(script).toContain("systemd-timesyncd");
-    expect(script).toContain("127.0.0.1:8080/healthz");
     expect(script).toContain("HIVRA_WAKE_RESULT");
+  });
+
+  it("the wake script resumes through QMP cont and runs the fixups through the helper, not the CLI", () => {
+    const script = buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION("/opt/hivra") });
+    expect(script).toContain('ctl 10 qmp "$VMID" cont 5');
+    expect(script).toContain('fixup "$VMID" "$AGENT_WAIT"');
+    // The helper runs isolated, with no .pyc and no user site, as the spec says.
+    expect(script).toContain('python3 -I -B -c "$HOST_CTL_PROGRAM"');
+    // The one guest command lives in the helper, with the epoch filled in at send time.
+    expect(HOST_VM_CONTROL_PROGRAM).toContain("date -s @%s >/dev/null; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel");
+    expect(script).not.toContain("hwclock");
+    expect(script).not.toContain("run_vmid_bound_guest_exec");
+  });
+
+  it("checks the binding once and reuses that config read for the first state read", () => {
+    for (const script of [
+      buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false }),
+      buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION("/opt/hivra") }),
+    ]) {
+      expect(script.match(/^require_binding$/gm)?.length).toBe(1);
+      expect(script).toContain("CONFIG_FRESH=1");
+    }
   });
 });
 
@@ -83,7 +105,7 @@ host("sleep script against a stub host", () => {
     ({ ...state, probeStdout: probeLine(overrides) });
   const receipt = (run: { stdout: string }) => parseSleepReceipt(run.stdout, VMID);
   const noMutation = (calls: string[]) =>
-    expect(calls.filter((c) => /^qm (suspend|resume|start|set)/.test(c))).toEqual([]);
+    expect(calls.filter((c) => /^(qm (suspend|resume|start|set)|qmp (stop|cont)|qga )/.test(c))).toEqual([]);
 
   describe("nap", () => {
     it("pauses an idle running computer and reports the probe", () => {
@@ -94,8 +116,12 @@ host("sleep script against a stub host", () => {
       expect(r?.probe?.activeRuns).toBe(0);
       expect(Object.keys(r?.steps ?? {})).toEqual(expect.arrayContaining(["read_state", "probe", "suspend"]));
       expect(run.state.qmp).toBe("paused");
-      expect(run.calls).toContain(`qm suspend ${VMID}`);
-      expect(run.calls.some((c) => c.startsWith("qm resume"))).toBe(false);
+      // QMP stop on the monitor socket, not the qm CLI.
+      expect(run.calls).toContain("qmp stop");
+      expect(run.calls.some((c) => c.startsWith("qm suspend") || c.startsWith("qm resume"))).toBe(false);
+      // One config read serves the binding check and the state read; the state itself comes from QMP.
+      expect(run.calls.filter((c) => c.startsWith("qm config")).length).toBe(1);
+      expect(run.calls.some((c) => c.startsWith("qm status"))).toBe(false);
       expect(run.calls).toContain("flock -x -n 9");
       expect(run.stdout.split("\n").filter((l) => l.startsWith("HIVRA_SLEEP_RESULT ")).length).toBe(1);
     });
@@ -112,7 +138,7 @@ host("sleep script against a stub host", () => {
       const run = h.run(nap(), withProbe({ ...AWAKE, tags: `${TAG.slice(0, -1)}b;other` }));
       expect(receipt(run)).toMatchObject({ ok: false, reason: "binding_mismatch" });
       noMutation(run.calls);
-      expect(run.calls.some((c) => c.startsWith("flock"))).toBe(false);
+      expect(run.calls.some((c) => c.startsWith("guest "))).toBe(false);
     });
 
     it.each([
@@ -183,11 +209,20 @@ host("sleep script against a stub host", () => {
     });
 
     it("reports a suspend that did not take as unconfirmed, and never resumes", () => {
-      const run = h.run(nap(), withProbe({ ...AWAKE, suspendNoop: true }));
+      const run = h.run(nap(), withProbe({ ...AWAKE, qmpStopNoop: true }));
       expect(receipt(run)).toMatchObject({ ok: false, reason: "suspend_unconfirmed", to: "awake" });
-      expect(run.calls.some((c) => c.startsWith("qm resume"))).toBe(false);
-      const failed = h.run(nap(), withProbe({ ...AWAKE, suspendFail: true }));
+      expect(run.calls.some((c) => c.startsWith("qm resume") || c === "qmp cont")).toBe(false);
+      const failed = h.run(nap(), withProbe({ ...AWAKE, qmpStopFail: true }));
       expect(receipt(failed)).toMatchObject({ ok: false, reason: "suspend_failed", to: "awake" });
+      expect(failed.calls.some((c) => c.startsWith("qm suspend"))).toBe(false);
+    });
+
+    it("reports a computer it cannot reach over QMP as failed, never as napping", () => {
+      const run = h.run(nap(), withProbe({ ...AWAKE, qmpDown: true }));
+      // QMP does not answer, so the state read falls back to the CLI and the stop cannot be made.
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "suspend_failed", to: "awake" });
+      expect(run.calls.some((c) => c.startsWith("qm status"))).toBe(true);
+      expect(run.calls.some((c) => c.startsWith("qm suspend") || c === "qmp stop")).toBe(false);
     });
 
     it("still prints a receipt, and keeps the failing exit, when the script itself breaks", () => {
@@ -288,35 +323,47 @@ host("wake script against a stub host", () => {
   afterAll(() => h.cleanup());
 
   const wake = () => buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION(h.provisionerDir) });
+  // Short waits for the cases that run a wait out: one second for the guest agent, two polls for a start.
+  const quick = (script: string) => script.replace("AGENT_WAIT=8", "AGENT_WAIT=1").replace("seq 1 30", "seq 1 2");
   const receipt = (run: { stdout: string }) => parseWakeReceipt(run.stdout, VMID);
   const none = (calls: string[]) =>
-    expect(calls.filter((c) => /^qm (resume|start|set)/.test(c))).toEqual([]);
+    expect(calls.filter((c) => /^(qm (resume|start|set)|qmp cont)/.test(c))).toEqual([]);
+  const fixups = (calls: string[]) => calls.filter((c) => c.startsWith("qga exec "));
+  const FIXUP = /^qga exec date -s @(\d{10})\.(\d{9}) >\/dev\/null; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel$/;
 
-  it("resumes a napping computer, fixes the clock and tunnel, and waits for health", () => {
+  it("resumes a napping computer with QMP cont and runs the one fixup over the guest agent socket", () => {
+    const before = Date.now();
     const run = h.run(wake(), NAPPING);
+    const after = Date.now();
     expect(run.status).toBe(0);
     const r = receipt(run);
-    expect(r).toMatchObject({ ok: true, from: "napping", to: "awake", reason: "resumed", vmid: VMID });
-    expect(Object.keys(r?.steps ?? {})).toEqual(expect.arrayContaining(["resume", "agent", "clock", "tunnel", "healthz"]));
+    expect(r).toMatchObject({ ok: true, from: "napping", to: "awake", reason: "resumed", vmid: VMID, via: "socket", tries: 1 });
+    expect(Object.keys(r?.steps ?? {})).toEqual(expect.arrayContaining(["read_state", "resume", "fixup", "lock", "agent", "exec"]));
     expect(run.state.qmp).toBe("running");
-    const guest = run.calls.filter((c) => c.startsWith("guest "));
-    expect(guest[0]).toContain("hwclock --hctosys");
-    expect(guest[0]).toContain("systemd-timesyncd");
-    expect(guest[1]).toContain("systemctl restart hivra-cf-tunnel");
-    expect(guest[2]).toContain("127.0.0.1:8080/healthz");
-    const resume = run.calls.indexOf(`qm resume ${VMID}`);
-    expect(resume).toBeGreaterThan(-1);
-    expect(resume).toBeLessThan(run.calls.findIndex((c) => c.startsWith("guest ")));
+    // QMP cont first, then exactly one guest exec, and none of the CLI paths.
+    expect(run.calls.indexOf("qmp cont")).toBeGreaterThan(-1);
+    expect(run.calls.indexOf("qmp cont")).toBeLessThan(run.calls.findIndex((c) => c.startsWith("qga exec")));
+    expect(fixups(run.calls).length).toBe(1);
+    expect(run.calls.some((c) => c.startsWith("qm resume") || c.startsWith("qm guest") || c.startsWith("guest "))).toBe(false);
+    // One config read (binding and state together) and the state itself from QMP.
+    expect(run.calls.filter((c) => c.startsWith("qm config")).length).toBe(1);
+    expect(run.calls.some((c) => c.startsWith("qm status"))).toBe(false);
+    // The clock the guest is given is the host's, read while the script ran.
+    const m = FIXUP.exec(fixups(run.calls)[0]);
+    expect(m).not.toBeNull();
+    const epochMs = Number(m![1]) * 1000 + Number(m![2]) / 1e6;
+    expect(epochMs).toBeGreaterThanOrEqual(before - 5);
+    expect(epochMs).toBeLessThanOrEqual(after + 5);
     // A nap needs no admission and no host-wide lock, only the per-computer lock it shares with a sleep.
     expect(run.calls.some((c) => c.startsWith("admission"))).toBe(false);
-    expect(run.calls.filter((c) => c.startsWith("flock"))).toEqual(["flock -x -w 20 9"]);
-    expect(run.calls.indexOf("flock -x -w 20 9")).toBeLessThan(run.calls.indexOf(`qm resume ${VMID}`));
+    expect(run.calls.filter((c) => c.startsWith("flock"))).toEqual(["flock -x -w 15 9"]);
+    expect(run.calls.indexOf("flock -x -w 15 9")).toBeLessThan(run.calls.indexOf("qmp cont"));
     expect(run.stdout.split("\n").filter((l) => l.startsWith("HIVRA_WAKE_RESULT ")).length).toBe(1);
   });
 
   it("restores a hibernated computer under admission, holding the lock until it runs", () => {
     const run = h.run(wake(), HIBERNATED);
-    expect(receipt(run)).toMatchObject({ ok: true, from: "hibernated", to: "awake", reason: "restored" });
+    expect(receipt(run)).toMatchObject({ ok: true, from: "hibernated", to: "awake", reason: "restored", via: "socket" });
     expect(run.state).toMatchObject({ status: "running", qmp: "running", lock: "", onboot: 1 });
     const at = (prefix: string) => run.calls.findIndex((c) => c.startsWith(prefix));
     expect(run.calls[at("admission")]).toBe("admission 1234 4096 4096 2 2048 1 1500 1200 0");
@@ -325,8 +372,16 @@ host("wake script against a stub host", () => {
     expect(at("admission")).toBeLessThan(at(`qm start ${VMID}`));
     expect(at(`qm start ${VMID}`)).toBeLessThan(at("flock -u 8"));
     expect(at("flock -u 8")).toBeLessThan(at(`qm set ${VMID} --onboot 1`));
-    expect(at(`qm set ${VMID} --onboot 1`)).toBeLessThan(at("guest "));
-    expect(Object.keys(receipt(run)?.steps ?? {})).toContain("admission");
+    expect(at(`qm set ${VMID} --onboot 1`)).toBeLessThan(at("qga exec"));
+    expect(run.calls.some((c) => c === "qmp cont")).toBe(false);
+    expect(Object.keys(receipt(run)?.steps ?? {})).toEqual(expect.arrayContaining(["admission", "start", "fixup"]));
+  });
+
+  it("retries the guest agent until it answers after a restore", () => {
+    // The first connection stays silent, as a guest that is still booting does.
+    const run = h.run(quick(wake()).replace("AGENT_WAIT=8", "AGENT_WAIT=1").replace("AGENT_WAIT=30", "AGENT_WAIT=6"), { ...HIBERNATED, qgaSilentConnects: 1 });
+    expect(receipt(run)).toMatchObject({ ok: true, reason: "restored", via: "socket", tries: 2 });
+    expect(fixups(run.calls).length).toBe(1);
   });
 
   it("changes nothing, and says what the host shows, when a sleep holds the computer", () => {
@@ -334,14 +389,14 @@ host("wake script against a stub host", () => {
       const run = h.run(wake(), state, { STUB_FLOCK_BUSY: "1" });
       expect(receipt(run)).toMatchObject({ ok: false, reason: "busy", to });
       none(run.calls);
-      expect(run.calls.some((c) => c.startsWith("guest "))).toBe(false);
+      expect(fixups(run.calls)).toEqual([]);
     }
   });
 
   it("keeps the lock descriptors away from the computer's own process", () => {
-    expect(wake()).toMatch(/qm start "\$VMID" 8>&- 9>&-/);
+    expect(wake()).toMatch(/qm start "\$VMID" 7>&- 8>&- 9>&-/);
     // And every way out of the script closes them.
-    expect(wake()).toMatch(/exec 8>&- 9>&-\n\s*exit "\$code"/);
+    expect(wake()).toMatch(/exec 7>&- 8>&- 9>&-\n\s*exit "\$code"/);
   });
 
   it("does not start a hibernated computer the host has no room for", () => {
@@ -355,24 +410,26 @@ host("wake script against a stub host", () => {
   });
 
   it("keeps the lock and reports it when the start does not show running", () => {
-    const run = h.run(wake(), { ...HIBERNATED, startNoop: true });
+    const run = h.run(quick(wake()), { ...HIBERNATED, startNoop: true });
     expect(receipt(run)).toMatchObject({ ok: false, reason: "start_unconfirmed", to: "hibernated" });
     expect(run.calls.some((c) => c.startsWith("flock -u 8"))).toBe(false);
+    expect(fixups(run.calls)).toEqual([]);
     const failed = h.run(wake(), { ...HIBERNATED, startFail: true });
     expect(receipt(failed)).toMatchObject({ ok: false, reason: "start_failed", to: "hibernated" });
   });
 
-  it("only runs the fixups on a computer that is already running", () => {
+  it("only runs the fixup on a computer that is already running", () => {
     const run = h.run(wake(), AWAKE);
     expect(receipt(run)).toMatchObject({ ok: true, from: "awake", to: "awake", reason: "already" });
     none(run.calls);
-    expect(run.calls.filter((c) => c.startsWith("guest ")).length).toBe(3);
+    expect(fixups(run.calls).length).toBe(1);
   });
 
   it("reports a stopped computer with no saved state as cold, for the caller to start normally", () => {
     const run = h.run(wake(), COLD);
     expect(receipt(run)).toMatchObject({ ok: false, from: "cold", to: "cold", reason: "cold" });
     none(run.calls);
+    expect(fixups(run.calls)).toEqual([]);
   });
 
   it("refuses any odd state and never resumes it", () => {
@@ -380,6 +437,7 @@ host("wake script against a stub host", () => {
       const run = h.run(wake(), state);
       expect(receipt(run)).toMatchObject({ ok: false, reason: "unexpected_state", to: "unknown" });
       none(run.calls);
+      expect(fixups(run.calls)).toEqual([]);
     }
   });
 
@@ -387,18 +445,47 @@ host("wake script against a stub host", () => {
     const run = h.run(wake(), { ...NAPPING, tags: "someone-else" });
     expect(receipt(run)).toMatchObject({ ok: false, reason: "binding_mismatch" });
     none(run.calls);
+    expect(fixups(run.calls)).toEqual([]);
   });
 
-  it("reports a resume that fails or does not take", () => {
-    expect(receipt(h.run(wake(), { ...NAPPING, resumeFail: true }))).toMatchObject({ ok: false, reason: "resume_failed", to: "napping" });
+  describe("when the QMP resume does not work", () => {
+    it("falls back to qm resume, and reports a resume that fails or does not take", () => {
+      const viaCli = h.run(wake(), { ...NAPPING, qmpContFail: true });
+      expect(receipt(viaCli)).toMatchObject({ ok: true, reason: "resumed", to: "awake" });
+      expect(viaCli.calls).toContain(`qm resume ${VMID}`);
+      expect(fixups(viaCli.calls).length).toBe(1);
+      const noop = h.run(wake(), { ...NAPPING, qmpContNoop: true });
+      expect(receipt(noop)).toMatchObject({ ok: true, reason: "resumed" });
+      const failed = h.run(wake(), { ...NAPPING, qmpContFail: true, resumeFail: true });
+      expect(receipt(failed)).toMatchObject({ ok: false, reason: "resume_failed", to: "napping" });
+      expect(fixups(failed.calls)).toEqual([]);
+    });
   });
 
-  it("leaves the computer running and reports each failed fixup", () => {
-    expect(receipt(h.run(wake(), { ...NAPPING, pingFail: true }))).toMatchObject({ ok: false, reason: "agent_timeout", to: "awake" });
-    expect(receipt(h.run(wake(), { ...NAPPING, execFailMatch: "hivra-cf-tunnel" }))).toMatchObject({ ok: false, reason: "tunnel_failed", to: "awake" });
-    expect(receipt(h.run(wake(), { ...NAPPING, execFailMatch: "healthz" }))).toMatchObject({ ok: false, reason: "healthz_timeout", to: "awake" });
-    // A clock that cannot be set is not a failed wake.
-    expect(receipt(h.run(wake(), { ...NAPPING, execFailMatch: "hwclock" }))).toMatchObject({ ok: true });
+  describe("the guest fixup", () => {
+    it("falls back to a timeout-wrapped qm guest exec when the socket never works", () => {
+      const run = h.run(quick(wake()), { ...NAPPING, qgaDown: true });
+      expect(receipt(run)).toMatchObject({ ok: true, to: "awake", via: "qm" });
+      expect(receipt(run)!.tries).toBeGreaterThan(1);
+      const guest = run.calls.filter((c) => c.startsWith("guest "));
+      expect(guest.length).toBe(1);
+      expect(guest[0]).toMatch(/^guest \/bin\/sh -c date -s @\d{10}\.\d{9} >\/dev\/null; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel$/);
+      const i = run.calls.findIndex((c) => c.startsWith("qm guest exec"));
+      expect(run.calls[i - 1]).toMatch(/^timeout \d+$/);
+      expect(Object.keys(receipt(run)?.steps ?? {})).toContain("fallback");
+    });
+
+    it("leaves the computer running and reports an agent that never answers", () => {
+      const run = h.run(quick(wake()), { ...NAPPING, qgaDown: true, pingFail: true });
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "agent_timeout", to: "awake" });
+    });
+
+    it("reports a tunnel that did not restart, without running it twice", () => {
+      const run = h.run(wake(), { ...NAPPING, execFailMatch: "hivra-cf-tunnel" });
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "tunnel_failed", to: "awake", via: "socket" });
+      expect(fixups(run.calls).length).toBe(1);
+      expect(run.calls.some((c) => c.startsWith("guest "))).toBe(false);
+    });
   });
 });
 
@@ -609,5 +696,17 @@ describe("receipt parsers", () => {
     expect(parseWakeReceipt(wakeLine(wakeRow({ vmid: 1 })), VMID)).toBeNull();
     expect(parseWakeReceipt(wakeLine(wakeRow()), 4321)).toBeNull();
     expect(parseWakeReceipt(sleepLine(wakeRow()), VMID)).toBeNull();
+  });
+
+  it("reads how the wake fixup ran, and rejects anything else", () => {
+    expect(parseWakeReceipt(wakeLine(wakeRow()), VMID)).toMatchObject({ via: "none", tries: 0 });
+    expect(parseWakeReceipt(wakeLine(wakeRow({ via: "socket", tries: 3 })), VMID)).toMatchObject({ via: "socket", tries: 3 });
+    expect(parseWakeReceipt(wakeLine(wakeRow({ via: "qm", tries: 9 })), VMID)).toMatchObject({ via: "qm" });
+    for (const bad of [{ via: "ssh" }, { via: 1 }, { tries: -1 }, { tries: 1.5 }, { tries: "2" }, { via: "none", tries: 0 }]) {
+      expect(parseWakeReceipt(wakeLine(wakeRow(bad)), VMID)).toBeNull();
+    }
+    // A failure may report that no fixup ran.
+    expect(parseWakeReceipt(wakeLine(wakeRow({ ok: false, to: "hibernated", from: "hibernated", reason: "capacity", via: "none", tries: 0 })), VMID))
+      .toMatchObject({ ok: false, via: "none" });
   });
 });

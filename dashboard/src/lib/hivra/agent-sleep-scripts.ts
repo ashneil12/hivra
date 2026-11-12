@@ -12,12 +12,19 @@
 // refused and never resumed or suspended. Every script prints exactly one
 // receipt line, and a reader that cannot parse it counts the run as failed.
 //
+// The fast path does not go through the qm CLI (about 0.6 s of start-up per
+// call). A nap is QMP `stop` and its wake is QMP `cont`, and the guest fixups
+// after any wake go straight to the guest agent socket, all through one small
+// python3 helper (sleep/host-vm-control-program.ts). `qm` stays for the state
+// read, hibernate, restore and the fallbacks.
+//
 // Receipts always exit 0 when they carry an answer, so the caller reads the
 // receipt rather than the exit code. An unexpected shell failure still prints a
 // receipt (reason script_error, state unknown) and keeps its non-zero exit.
 
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
+import { HOST_VM_CONTROL_PREFIX, HOST_VM_CONTROL_PROGRAM } from "@/lib/hivra/sleep/host-vm-control-program";
 import { IDLE_PROBE_PREFIX, IDLE_PROBE_PROGRAM, IDLE_PROBE_VERSION } from "@/lib/hivra/sleep/idle-probe-program";
 
 export const SLEEP_RESULT_PREFIX = "HIVRA_SLEEP_RESULT ";
@@ -33,6 +40,13 @@ export const HIBERNATE_POOL_MAX_PERCENT = 85;
 export const HIBERNATE_POOL_HEADROOM_FACTOR = 1.25;
 /** `qm suspend --todisk` is cut off after this long. */
 export const HIBERNATE_TIMEOUT_SECONDS = 240;
+/** How long the guest agent gets to answer after a wake. A restore from disk needs longer than a resume. */
+export const WAKE_AGENT_WAIT_SECONDS = 8;
+export const RESTORE_AGENT_WAIT_SECONDS = 30;
+/** What the wake script waits for a sleep script that holds the computer. */
+export const WAKE_LOCK_WAIT_SECONDS = 15;
+/** The guest agent socket lock, shared by every script that talks to one guest agent. */
+const QGA_LOCK_WAIT_SECONDS = 30;
 
 const MIN_VMID = 100;
 const MAX_VMID = 999_999_999;
@@ -56,7 +70,7 @@ function receiptShell(kind: "sleep" | "wake"): string {
   const prefix = kind === "sleep" ? SLEEP_RESULT_PREFIX.trim() : WAKE_RESULT_PREFIX.trim();
   const format = kind === "sleep"
     ? `'%s {"ok":%s,"vmid":%s,"tier":"%s","from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s},"probe":%s}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$TIER" "$FROM" "$TO" "$REASON" "$(( $(now_ms) - T0 ))" "$STEPS" "$PROBE_JSON"`
-    : `'%s {"ok":%s,"vmid":%s,"from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s}}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$FROM" "$TO" "$REASON" "$(( $(now_ms) - T0 ))" "$STEPS"`;
+    : `'%s {"ok":%s,"vmid":%s,"from":"%s","to":"%s","reason":"%s","ms":%s,"steps":{%s},"via":"%s","tries":%s}\\n' "$RECEIPT_PREFIX" "$OK" "$VMID" "$FROM" "$TO" "$REASON" "$(( $(now_ms) - T0 ))" "$STEPS" "$VIA" "$TRIES"`;
   return `RECEIPT_PREFIX=${prefix}
 now_ms() { date +%s%3N; }
 T0="$(now_ms)"
@@ -67,10 +81,13 @@ TO=unknown
 REASON=script_error
 PROBE_JSON=null
 EMITTED=0
+VIA=none
+TRIES=0
 ST=""
 QMP=""
 LOCK=none
 CONFIG=""
+CONFIG_FRESH=0
 OBS=unknown
 mark() { STEPS="\${STEPS:+$STEPS,}\\"$1\\":$(( $(now_ms) - $2 ))"; }
 emit() {
@@ -87,7 +104,7 @@ finish() {
 }
 on_exit() {
   local code=$?
-  cleanup_hivra_qga_result >/dev/null 2>&1 || true
+  if declare -F cleanup_hivra_qga_result >/dev/null; then cleanup_hivra_qga_result >/dev/null 2>&1 || true; fi
   # A hibernate cut off before it settled must not leave autostart off on a computer that is still up.
   if [ "\${ONBOOT_PENDING:-0}" = 1 ]; then
     observe >/dev/null 2>&1 || true
@@ -97,7 +114,7 @@ on_exit() {
   fi
   if [ "$EMITTED" = 0 ]; then OK=false; emit; fi
   # No lock descriptor outlives the script, whichever way it ends.
-  exec 8>&- 9>&-
+  exec 7>&- 8>&- 9>&-
   exit "$code"
 }
 trap on_exit EXIT
@@ -106,15 +123,84 @@ trap 'exit 130' INT
 trap 'exit 143' TERM`;
 }
 
-const STATE_SHELL = `read_state() {
+/**
+ * Runs the host helper (QMP and guest agent sockets) and reads its one receipt
+ * line into CTL_* variables with perl, never trusting its shape: anything that
+ * is not exactly one valid line reads as a failed helper.
+ */
+const CTL_SHELL = `HOST_CTL_PROGRAM=${shellQuote(HOST_VM_CONTROL_PROGRAM)}
+CTL_OK=false
+CTL_REASON=helper_failed
+CTL_STATUS=""
+CTL_VIA=none
+CTL_TRIES=0
+CTL_STEPS=""
+# ctl <time limit s> <op> <vmid> [args]: the limit also kills a helper that hangs.
+ctl() {
+  local limit="$1" out parsed
+  shift
+  CTL_OK=false; CTL_REASON=helper_failed; CTL_STATUS=""; CTL_VIA=none; CTL_TRIES=0; CTL_STEPS=""
+  out="$(command timeout -k 2 "$limit" python3 -I -B -c "$HOST_CTL_PROGRAM" "$@" 2>/dev/null </dev/null)" || true
+  parsed="$(HIVRA_CTL_OUT="$out" /usr/bin/perl -MJSON::PP - <<'HIVRA_CTL_PARSE'
+${String.raw`use strict;
+use warnings;
+use JSON::PP;
+my $bad = "false\nhelper_failed\n\nnone\n0\n\n";
+my @lines = grep { index($_, "${HOST_VM_CONTROL_PREFIX}") == 0 } split /\n/, ($ENV{HIVRA_CTL_OUT} // "");
+unless (@lines == 1) { print $bad; exit 0; }
+my $d = eval { JSON::PP::decode_json(substr($lines[0], ${HOST_VM_CONTROL_PREFIX.length})) };
+unless (ref($d) eq "HASH" && JSON::PP::is_bool($d->{ok}) && defined($d->{reason}) && !ref($d->{reason}) && $d->{reason} =~ /\A[a-z_]{1,40}\z/) { print $bad; exit 0; }
+my $status = $d->{status};
+$status = "" unless defined($status) && !ref($status) && $status =~ /\A[a-z_-]{1,24}\z/;
+my $via = $d->{via};
+$via = "none" unless defined($via) && !ref($via) && $via =~ /\A(?:socket|qm|none)\z/;
+my $tries = $d->{tries};
+$tries = 0 unless defined($tries) && !ref($tries) && $tries =~ /\A[0-9]{1,6}\z/;
+my @steps;
+if (ref($d->{steps}) eq "HASH") {
+    for my $k (sort keys %{$d->{steps}}) {
+        my $v = $d->{steps}{$k};
+        next unless $k =~ /\A[a-z_]{1,24}\z/ && defined($v) && !ref($v) && $v =~ /\A[0-9]{1,8}\z/;
+        push @steps, "\"$k\":$v";
+    }
+}
+print(($d->{ok} ? "true" : "false"), "\n", $d->{reason}, "\n", $status, "\n", $via, "\n", $tries, "\n", join(",", @steps), "\n");`}
+HIVRA_CTL_PARSE
+)" || return 1
+  { read -r CTL_OK; read -r CTL_REASON; read -r CTL_STATUS; read -r CTL_VIA; read -r CTL_TRIES; read -r CTL_STEPS; } <<<"$parsed" || true
+}
+# The fast read of a running computer: QMP answers in milliseconds. No answer (stopped, or anything odd) leaves the CLI to say.
+qmp_fast() {
+  ctl 8 qmp "$VMID" status 3
+  [ "$CTL_OK" = true ] && [ -n "$CTL_STATUS" ] || return 1
+  ST=running
+  QMP="$CTL_STATUS"
+}
+# Every script that talks to one computer's guest agent takes this lock first, so two of them never share the socket.
+qga_lock() {
+  exec 7>"/run/lock/hivra-qga-$VMID.lock" || return 1
+  flock -x -w ${QGA_LOCK_WAIT_SECONDS} 7 || { exec 7>&-; return 1; }
+}
+qga_unlock() {
+  flock -u 7 >/dev/null 2>&1 || true
+  exec 7>&-
+}`;
+
+const STATE_SHELL = `# One config read serves the binding check and the first state read.
+read_state() {
   local out
-  ST=""; QMP=""; LOCK=none; CONFIG=""
-  out="$(qm status "$VMID" 2>/dev/null)" || return 1
-  ST="$(printf '%s\\n' "$out" | awk '$1=="status:" {print $2; exit}')"
-  out="$(qm status "$VMID" --verbose 2>/dev/null)" || return 1
-  QMP="$(printf '%s\\n' "$out" | awk '$1=="qmpstatus:" {print $2; exit}')"
-  CONFIG="$(qm config "$VMID" 2>/dev/null)" || return 1
+  ST=""; QMP=""; LOCK=none
+  if [ "$CONFIG_FRESH" = 1 ]; then
+    CONFIG_FRESH=0
+  else
+    CONFIG="$(qm config "$VMID" 2>/dev/null)" || { CONFIG=""; return 1; }
+  fi
   LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
+  if ! qmp_fast; then
+    out="$(qm status "$VMID" --verbose 2>/dev/null)" || return 1
+    ST="$(printf '%s\\n' "$out" | awk '$1=="status:" {print $2; exit}')"
+    QMP="$(printf '%s\\n' "$out" | awk '$1=="qmpstatus:" {print $2; exit}')"
+  fi
   [ -n "$LOCK" ] || LOCK=none
   [ -n "$QMP" ] || QMP=none
   [ -n "$ST" ]
@@ -129,13 +215,15 @@ tier_of() {
   esac
 }
 observe() { if read_state; then OBS="$(tier_of)"; else OBS=unknown; fi; }
+# The exact binding tag, checked once per script, from the same config read the state read then reuses.
 require_binding() {
   [ -n "$EXPECTED_BINDING_TAG" ] || finish false binding_missing
-  local config tags
-  config="$(qm config "$VMID" 2>/dev/null)" || finish false unreachable
-  tags="$(printf '%s\\n' "$config" | sed -n 's/^tags:[[:space:]]*//p')"
+  local tags
+  CONFIG="$(qm config "$VMID" 2>/dev/null)" || finish false unreachable
+  tags="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
   printf '%s\\n' "$tags" | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
     || finish false binding_mismatch
+  CONFIG_FRESH=1
 }`;
 
 /** Checks the instantaneous signals of a probe. Prints ok, active or invalid. */
@@ -193,7 +281,9 @@ MANUAL=${manual ? 1 : 0}
 run_probe() {
   local out lines line
   PROBE_JSON=null
-  out="$(run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c "$PROBE_PROGRAM" 2>/dev/null)" || return 1
+  qga_lock || return 1
+  out="$(run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c "$PROBE_PROGRAM" 2>/dev/null)" || { qga_unlock; return 1; }
+  qga_unlock
   lines="$(printf '%s\\n' "$out" | awk 'index($0, "${IDLE_PROBE_PREFIX}") == 1 { n++ } END { print n + 0 }')"
   [ "$lines" = 1 ] || return 1
   line="$(printf '%s\\n' "$out" | sed -n 's/^${IDLE_PROBE_PREFIX}//p')"
@@ -241,8 +331,10 @@ refuse() { printf '${IDLE_REFUSED_PREFIX}%s\\n' "$1"; exit 0; }
 CONFIG="$(qm config "$VMID" 2>/dev/null)" || refuse unreachable
 printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
   || refuse binding_mismatch
-STATUS="$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" || refuse unreachable
-QMPSTATUS="$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" {print $2; exit}')" || refuse unreachable
+# One call gives both the status and the qmpstatus.
+VERBOSE="$(qm status "$VMID" --verbose 2>/dev/null)" || refuse unreachable
+STATUS="$(printf '%s\\n' "$VERBOSE" | awk '$1=="status:" {print $2; exit}')"
+QMPSTATUS="$(printf '%s\\n' "$VERBOSE" | awk '$1=="qmpstatus:" {print $2; exit}')"
 LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
 case "$STATUS/\${QMPSTATUS:-none}/\${LOCK:-none}" in
   running/running/none) ;;
@@ -252,6 +344,10 @@ case "$STATUS/\${QMPSTATUS:-none}/\${LOCK:-none}" in
 esac
 ${buildVmidBoundGuestExecPrelude()}
 qm() { command timeout -k 5 25 qm "$@" </dev/null; }
+install -d -m 0755 /run/lock
+# Taken only now, so a refusal never waits on it. No other script reads this computer's guest agent meanwhile.
+exec 7>/run/lock/hivra-qga-${target.vmid}.lock
+flock -x -w ${QGA_LOCK_WAIT_SECONDS} 7 || refuse guest_busy
 run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(IDLE_PROBE_PROGRAM)} || refuse guest_unreachable
 `;
 }
@@ -451,15 +547,17 @@ if [ "$FROM" != awake ]; then finish false not_sleepable "$FROM"; fi
 STEP="$(now_ms)"
 probe_or_finish
 mark probe "$STEP"
+# QMP stop, then query-status in the same session: the helper says ok only when the computer reports paused.
 STEP="$(now_ms)"
-if ! qm suspend "$VMID" >/dev/null; then
+ctl 10 qmp "$VMID" stop 5
+mark suspend "$STEP"
+if [ "$CTL_OK" != true ]; then
+  STOP_REASON="$CTL_REASON"
   observe
+  # Whatever else the computer now reports, it is never resumed from here.
+  if [ "$STOP_REASON" = unconfirmed ]; then finish false suspend_unconfirmed "$OBS"; fi
   finish false suspend_failed "$OBS"
 fi
-observe
-mark suspend "$STEP"
-# Whatever else the computer now reports, it is never resumed from here.
-if [ "$OBS" != napping ]; then finish false suspend_unconfirmed "$OBS"; fi
 finish true napped napping`;
 }
 
@@ -531,12 +629,14 @@ finish false hibernate_unconfirmed "$OBS"`;
 }
 
 /**
- * Put one computer to sleep. A nap pauses it (`qm suspend`, RAM stays); a
- * hibernate saves its RAM to disk and stops it (`qm suspend --todisk 1`, run
- * as a systemd unit so a dropped connection cannot interrupt it).
+ * Put one computer to sleep. A nap pauses it with QMP `stop` straight on the
+ * VM's monitor socket (milliseconds, RAM stays); a hibernate saves its RAM to
+ * disk and stops it (`qm suspend --todisk 1`, run as a systemd unit so a
+ * dropped connection cannot interrupt it).
  *
- * Steps: an exclusive non-blocking per-VM lock (busy aborts), read the state,
- * check the guest is idle (the probe JSON goes in the receipt), act, confirm.
+ * Steps: an exclusive non-blocking per-VM lock (busy aborts), the binding tag
+ * check and one state read, check the guest is idle (the probe JSON goes in the
+ * receipt), act, confirm.
  * Prints one HIVRA_SLEEP_RESULT line.
  */
 export function buildSleepHostScript(input: SleepHostScriptInput): string {
@@ -551,13 +651,14 @@ TIER=${input.tier}
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${buildVmidBoundGuestExecPrelude()}
 ${receiptShell("sleep")}
+${CTL_SHELL}
 ${STATE_SHELL}
 ${probeShell(input.manual === true)}
-require_binding
 install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
-flock -x -n 9 || { observe; finish false busy "$OBS"; }
+flock -x -n 9 || { require_binding; observe; finish false busy "$OBS"; }
+require_binding
 ${nap ? napBody() : hibernateBody()}
 `;
 }
@@ -593,12 +694,6 @@ function assertAdmission(admission: WakeAdmission): void {
   if (!ok) throw new Error("Invalid wake admission policy.");
 }
 
-/** Run inside the guest after any wake: the clock froze while it slept and the edge connections died. */
-export const WAKE_CLOCK_COMMAND = "hwclock --hctosys 2>/dev/null || true; systemctl restart systemd-timesyncd 2>/dev/null || true";
-export const WAKE_TUNNEL_COMMAND = "systemctl restart hivra-cf-tunnel";
-export const WAKE_HEALTHZ_COMMAND =
-  "i=0; while [ \"$i\" -lt 10 ]; do curl -sf -m 2 -o /dev/null http://127.0.0.1:8080/healthz && exit 0; i=$((i+1)); sleep 1; done; exit 1";
-
 function wakeAdmissionShell(admission: WakeAdmission): string {
   return `PROVISIONER_DIR=${shellQuote(admission.provisionerDirectory)}
 HOST_RESERVE_MB=${admission.hostReserveMb}
@@ -630,15 +725,21 @@ read_state || finish false state_unreadable
 mark read_state "$STEP"
 FROM="$(tier_of)"
 WOKE_REASON=resumed
+AGENT_WAIT=${WAKE_AGENT_WAIT_SECONDS}
 STEP="$(now_ms)"
 case "$ST/$QMP/$LOCK" in
   running/paused/none)
-    if ! qm resume "$VMID" >/dev/null; then observe; finish false resume_failed "$OBS"; fi
-    observe
-    [ "$OBS" = awake ] || finish false resume_unconfirmed "$OBS"
+    # QMP cont, confirmed by query-status. If the socket path fails, the CLI gets one try before the wake is called failed.
+    ctl 10 qmp "$VMID" cont 5
+    if [ "$CTL_OK" != true ]; then
+      if ! qm resume "$VMID" >/dev/null; then observe; finish false resume_failed "$OBS"; fi
+      observe
+      [ "$OBS" = awake ] || finish false resume_unconfirmed "$OBS"
+    fi
     ;;
   stopped/*/suspended)
     WOKE_REASON=restored
+    AGENT_WAIT=${RESTORE_AGENT_WAIT_SECONDS}
     capacity_inputs || finish false capacity_inputs hibernated
     install -d -m 0755 /run/lock
     exec 8>/run/lock/hivra-allocation.lock
@@ -653,12 +754,15 @@ case "$ST/$QMP/$LOCK" in
     fi
     mark admission "$ADMIT"
     # The VM process outlives this script, so it must not inherit the lock descriptors.
-    if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 8>&- 9>&- >/dev/null </dev/null; then
+    START="$(now_ms)"
+    if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 7>&- 8>&- 9>&- >/dev/null </dev/null; then
       observe
       finish false start_failed "$OBS"
     fi
+    mark start "$START"
     # The lock stays held until the computer is counted as running.
     for _ in $(seq 1 30); do
+      if qmp_fast && [ "$QMP" = running ]; then OBS=awake; break; fi
       observe
       [ "$OBS" = awake ] && break
       sleep 1
@@ -680,24 +784,16 @@ case "$ST/$QMP/$LOCK" in
     ;;
 esac
 mark resume "$STEP"
-# From here the computer is running. A failed step leaves it running and reports it.
+# From here the computer is running. A failed fixup leaves it running and says what failed.
+# One guest exec over the guest agent socket: set the clock from this host, kill the tunnel hard, restart it.
+# After a restore the agent may need a few seconds to answer; the helper retries until AGENT_WAIT runs out.
 STEP="$(now_ms)"
-AGENT_UP=0
-for _ in $(seq 1 30); do
-  if qm guest cmd "$VMID" ping >/dev/null 2>&1; then AGENT_UP=1; break; fi
-  sleep 1
-done
-mark agent "$STEP"
-[ "$AGENT_UP" = 1 ] || finish false agent_timeout awake
-STEP="$(now_ms)"
-run_vmid_bound_guest_exec /bin/sh -c ${shellQuote(WAKE_CLOCK_COMMAND)} >/dev/null 2>&1 || true
-mark clock "$STEP"
-STEP="$(now_ms)"
-run_vmid_bound_guest_exec /bin/sh -c ${shellQuote(WAKE_TUNNEL_COMMAND)} >/dev/null 2>&1 || { mark tunnel "$STEP"; finish false tunnel_failed awake; }
-mark tunnel "$STEP"
-STEP="$(now_ms)"
-run_vmid_bound_guest_exec /bin/sh -c ${shellQuote(WAKE_HEALTHZ_COMMAND)} >/dev/null 2>&1 || { mark healthz "$STEP"; finish false healthz_timeout awake; }
-mark healthz "$STEP"
+ctl $((AGENT_WAIT + 45)) fixup "$VMID" "$AGENT_WAIT"
+VIA="$CTL_VIA"
+TRIES="$CTL_TRIES"
+if [ -n "$CTL_STEPS" ]; then STEPS="\${STEPS:+$STEPS,}$CTL_STEPS"; fi
+mark fixup "$STEP"
+[ "$CTL_OK" = true ] || finish false "$CTL_REASON" awake
 finish true "$WOKE_REASON" awake`;
 }
 
@@ -709,9 +805,11 @@ finish true "$WOKE_REASON" awake`;
  * one with no saved state prints `to=cold, ok=false` so the caller falls back
  * to the normal start action.
  *
- * After any wake it runs inside the guest: set the clock from the hardware
- * clock and restart time sync, restart the tunnel, and wait up to 10 seconds
- * for the local health check. Prints one HIVRA_WAKE_RESULT line.
+ * A nap is resumed with QMP `cont` (the CLI `qm resume` is the fallback). After
+ * any wake ONE guest exec runs through the guest agent socket: set the clock
+ * from this host (a guest cannot reach NTP and its clock froze), hard-kill the
+ * tunnel and restart it. The caller then polls the public health check.
+ * Prints one HIVRA_WAKE_RESULT line.
  */
 export function buildWakeHostScript(input: WakeHostScriptInput): string {
   const tag = assertTarget(input.vmid, input.bindingTag);
@@ -721,17 +819,17 @@ VMID=${input.vmid}
 EXPECTED_BINDING_TAG=${shellQuote(tag)}
 # The host script itself arrives on stdin, so no command may read it.
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
-${buildVmidBoundGuestExecPrelude()}
 ${receiptShell("wake")}
+${CTL_SHELL}
 ${STATE_SHELL}
 ${wakeAdmissionShell(input.admission)}
-require_binding
 install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:
 # it would see a computer that is about to be paused and report it awake. It
 # waits a little, then says busy with what the host shows, and changes nothing.
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
-flock -x -w 20 9 || { observe; finish false busy "$OBS"; }
+flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish false busy "$OBS"; }
+require_binding
 ${wakeBody()}
 `;
 }
@@ -762,7 +860,12 @@ export interface SleepReceipt extends ReceiptBase {
   probe: IdleProbe | null;
 }
 
-export type WakeReceipt = ReceiptBase;
+export interface WakeReceipt extends ReceiptBase {
+  /** How the guest fixup ran: over the guest agent socket, through `qm guest exec`, or not at all. */
+  via: "socket" | "qm" | "none";
+  /** How many times the guest agent socket was tried. */
+  tries: number;
+}
 
 function readReceiptLine(stdout: string, prefix: string): Record<string, unknown> | null {
   if (typeof stdout !== "string") return null;
@@ -829,5 +932,12 @@ export function parseWakeReceipt(stdout: string, expectedVmid?: number): WakeRec
   if (!base) return null;
   // A success is an awake computer.
   if (base.ok && base.to !== "awake") return null;
-  return base;
+  // Older receipts carry neither field.
+  const via = row.via === undefined ? "none" : row.via;
+  if (via !== "socket" && via !== "qm" && via !== "none") return null;
+  const tries = row.tries === undefined ? 0 : row.tries;
+  if (!Number.isInteger(tries) || (tries as number) < 0 || (tries as number) > 100_000) return null;
+  // A success went through a fixup, so it says how.
+  if (base.ok && base.reason !== "cold" && via === "none" && row.via !== undefined) return null;
+  return { ...base, via, tries: tries as number };
 }

@@ -28,8 +28,9 @@ import { buildWakeHostScript, parseWakeReceipt, type WakeAdmission, type WakeRec
  * hivra_agents.status. A lapsed owner is never woken.
  *
  * The wake script (agent-sleep-scripts.ts) does the host work: resume a nap,
- * restore a hibernation under host capacity admission, then fix the guest's
- * clock and restart its tunnel. This file claims the lease, runs the script,
+ * restore a hibernation under host capacity admission, then, in one guest
+ * exec over the guest agent socket, set the guest's clock from the host and
+ * hard-restart its tunnel. This file claims the lease, runs the script,
  * waits for the public health check, and records the result.
  */
 
@@ -41,7 +42,7 @@ const MAX_WAKE_WAIT_MS = 120_000;
 export const WAKE_HEALTHZ_BUDGET_MS = 30_000;
 const HEALTHZ_REQUEST_TIMEOUT_MS = 5_000;
 const HEALTHZ_INTERVAL_MS = 1_000;
-/** The host script's own bounds are 10 s of guest-agent wait, 10 s of local health check, and for a restore the start itself. */
+/** The host script's own bounds: up to 15 s for a sleep that holds the computer, 8 s of guest-agent wait, and for a restore the start itself. A nap wake normally takes about one second. */
 const WAKE_SCRIPT_TIMEOUT_MS = 60_000;
 const RESTORE_SCRIPT_TIMEOUT_MS = 120_000;
 const DEFAULT_POLL_MS = 1_000;
@@ -249,6 +250,8 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
     if (!run.receipt) return failed(run.runError ?? "no_receipt");
     for (const [name, ms] of Object.entries(run.receipt.steps)) detail[`${name}_ms`] = ms;
     detail.host_from = run.receipt.from;
+    detail.fixup_via = run.receipt.via;
+    detail.fixup_tries = run.receipt.tries;
 
     if (run.receipt.to === "cold") {
       // Nothing saved and the computer is off. The normal start path owns that.
