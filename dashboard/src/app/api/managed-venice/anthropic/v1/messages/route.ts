@@ -55,6 +55,7 @@ import {
   ManagedVeniceInsufficientBalanceError,
 } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
+import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
   anthropicRequestToOpenAi,
   openAiResponseToAnthropic,
@@ -172,7 +173,7 @@ export async function POST(req: NextRequest) {
       return anthropicError({
         status: 402,
         type: "billing_error",
-        message: `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ${managedVeniceTopUpUrl(walletType)}`,
+        message: managedVeniceSpendCapMessage(error, managedVeniceTopUpUrl(walletType)),
       });
     }
     if (error instanceof ManagedVeniceBalanceHeldError) {
