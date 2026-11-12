@@ -35,6 +35,9 @@ jobs:
       - name: Every test file is run by CI or exempted with a reason
         run: node dashboard/scripts/check-test-wiring.cjs
 
+      - name: Upstream repository list and weekly check script
+        run: node --test scripts/upstreams/check-upstreams.test.mjs
+
       - name: Guard managed hosting control validation
         run: node --test scripts/release/check-managed-hosting-controls.test.mjs
 
