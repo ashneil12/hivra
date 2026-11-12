@@ -287,6 +287,10 @@
     {
       "path": "/api/cron/agent-inbox-install",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/observe-agent-sleep",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

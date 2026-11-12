@@ -1,0 +1,33 @@
+/* Styles for the agent security check only. Colours come from the same variables the tools module uses. */
+
+.group { margin:0 0 32px; }
+.groupTitle { font-size:18px; font-weight:600; letter-spacing:-.02em; color:var(--ink-black); margin:0 0 12px; padding-bottom:8px; border-bottom:1px solid var(--etched-border); }
+
+.check { border:1px solid var(--etched-border); background:var(--vellum-bg); padding:18px 20px; margin:0 0 16px; scroll-margin-top:110px; }
+.meta { display:flex; flex-wrap:wrap; gap:4px 16px; margin:0 0 8px; font:12px/1.6 var(--font-sans); color:var(--text-muted); }
+.why { margin:0 0 12px; font-size:14.5px; line-height:1.7; color:var(--text-secondary); }
+
+.fix { margin-top:16px; padding-top:14px; border-top:1px solid var(--etched-border); }
+.fixTitle { font:12px/1.6 var(--font-sans); color:var(--text-muted); margin:0 0 6px; }
+.fixText { margin:0 0 12px; font-size:15px; line-height:1.75; color:var(--ink-black); }
+.lines { list-style:none; margin:0; padding:0; }
+.line { display:grid; grid-template-columns:76px minmax(0,1fr) auto; gap:4px 12px; align-items:start; padding:10px 0; border-top:1px solid var(--etched-border); font-size:14px; line-height:1.6; color:var(--text-secondary); }
+.agent { font:12px/1.9 var(--font-sans); color:var(--text-muted); }
+.code { display:block; font:13px/1.6 var(--font-sans); font-variant-ligatures:none; color:var(--ink-black); overflow-wrap:anywhere; }
+.codeNote { display:block; margin-top:2px; }
+.general { margin:12px 0 0; font-size:14px; line-height:1.7; color:var(--text-muted); }
+
+.result { margin:8px 0 32px; }
+.bandName { font-size:clamp(26px,3.4vw,38px); line-height:1.15; font-weight:500; letter-spacing:-.04em; color:var(--ink-black); margin:0 0 8px; }
+.top { margin:16px 0 0; padding-left:22px; font-size:15px; line-height:1.75; color:var(--text-secondary); }
+.top li + li { margin-top:12px; }
+.top a { color:var(--ink-black); text-decoration:underline; text-decoration-color:var(--gold-leaf); text-underline-offset:4px; }
+
+.hivraList { margin:0 0 16px; padding-left:20px; font-size:15px; line-height:1.75; color:var(--text-secondary); }
+.hivraList li + li { margin-top:8px; }
+
+@media(max-width:700px) {
+  .check { padding:16px; }
+  .line { grid-template-columns:minmax(0,1fr) auto; }
+  .agent { grid-column:1 / -1; line-height:1.4; }
+}

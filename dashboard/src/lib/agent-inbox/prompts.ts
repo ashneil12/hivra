@@ -106,12 +106,33 @@ export interface PendingInput {
   choices?: string[];
   sessionId?: string;
   ttlSeconds?: number;
+  /** The agent tool asking (Claude Code: Bash, Write, Edit ...). */
+  tool?: string;
 }
 
-export async function recordPending(computer: InboxComputer, input: PendingInput, now = new Date()): Promise<void> {
+/**
+ * Record a waiting prompt. When the owner already chose "Allow for this chat"
+ * for the same tool in the same chat, the prompt is answered at once and that
+ * answer is returned, so the agent carries on without asking again.
+ */
+export async function recordPending(computer: InboxComputer, input: PendingInput, now = new Date()): Promise<{ choice: ApprovalChoice } | null> {
   const ttl = Math.min(Math.max(Math.floor(input.ttlSeconds ?? 300), 30), MAX_TTL_SECONDS);
   const kind = input.kind;
   const choices = kind === "approval" ? cleanChoices(input.choices ?? []) : [];
+  const sessionId = input.sessionId?.trim() || null;
+  const tool = input.tool?.trim().slice(0, 40) || null;
+  let auto: { choice: ApprovalChoice } | null = null;
+  if (kind === "approval" && sessionId && tool && choices.includes("session")) {
+    const { data, error } = await db()
+      .from("agent_inbox_prompts")
+      .select("prompt_id")
+      .eq("agent_id", computer.id)
+      .eq("session_id", sessionId)
+      .eq("tool", tool)
+      .eq("answer_choice", "session")
+      .limit(1);
+    if (!error && Array.isArray(data) && data.length > 0) auto = { choice: "session" };
+  }
   const { error } = await db()
     .from("agent_inbox_prompts")
     .upsert({
@@ -119,15 +140,18 @@ export async function recordPending(computer: InboxComputer, input: PendingInput
       user_id: computer.user_id,
       prompt_id: input.promptId,
       kind,
+      tool,
       summary: input.summary?.trim() || null,
       command: kind === "approval" ? input.command?.trim() || null : null,
       command_complete: kind === "approval" && Boolean(input.commandComplete && input.command?.trim()),
       choices: choices.includes("deny") ? choices : [],
-      session_id: input.sessionId?.trim() || null,
+      session_id: sessionId,
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + ttl * 1000).toISOString(),
+      ...(auto ? { answer_choice: auto.choice, answered_at: now.toISOString(), resolved_at: now.toISOString(), resolved_outcome: "allowed_for_chat" } : {}),
     }, { onConflict: "agent_id,prompt_id", ignoreDuplicates: true });
   if (error) throw new Error(`could not record a prompt: ${error.message}`);
+  return auto;
 }
 
 export async function recordResolved(computer: InboxComputer, promptId: string, outcome: string, now = new Date()): Promise<void> {

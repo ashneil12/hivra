@@ -30,9 +30,7 @@
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  FREE_ACCOUNT_SENTENCE,
   HOSTED_COMPUTE_NEEDS_PLAN,
-  HOSTED_COMPUTE_NEEDS_PLAN_SHORT,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
   MONEY_BACK_GUARANTEE,
@@ -59,15 +57,29 @@ export const STAYS_ON = "A paid Hivra Cloud computer stays on and is not paused 
 
 /** The first screen: what it is, one sentence on how, one button. */
 export const HERO = {
-  titleLead: "Launch an AI",
-  titleWord: "agent.",
-  titleTail: "On a computer of its own.",
+  titleLead: "Give your",
+  titleWord: "AI agent",
+  titleTail: "a computer of its own.",
   subhead:
-    "Pick Claude Code, Codex, Hermes or another agent. Hivra gives it a private cloud computer you open from any browser, away from your own files and accounts.",
+    "Research, code, automate and get work done without running an agent on your own computer. Choose an agent and Hivra gives it a private cloud computer you can open from anywhere.",
   primary: "Launch an agent",
   secondary: "See pricing",
-  /** Three short facts under the buttons, in this order (one icon each in Hero.tsx). */
-  proof: ["Free to start", "Bring your own AI key", "Open source"],
+  /**
+   * Three short facts under the buttons, in this order (one icon each in Hero.tsx).
+   * "Free" is only ever said with its condition: the free account runs on a
+   * server you connect (Ash, 12 Nov 2026).
+   */
+  proof: ["7-day money-back guarantee", "Free on your own server", "Open source"],
+} as const;
+
+/**
+ * Straight under the hero: why the agent gets a computer of its own (Ash, 12 Nov
+ * 2026). Without it the page reads as one more cloud agent host.
+ */
+export const SEPARATE = {
+  title: "Your agent needs computer access.",
+  titleTail: "It doesn't need your computer.",
+  body: "Agents browse, run commands, install software and work with files. Hivra gives that work a separate computer instead of putting it beside your personal files, browser sessions and credentials.",
 } as const;
 
 /**
@@ -90,14 +102,16 @@ export interface HomeAgent {
   line: string;
   /** A limit worth seeing before the click, shown in italics under the description. */
   note?: string;
+  /** A short label on the card's top edge. Only the one agent most people should start with carries it. */
+  badge?: string;
   href: string;
   /** Illustrative activity for the card's small screen. */
   screen: string[];
 }
 
 export const AGENTS_SECTION = {
-  title: "Pick an agent.",
-  titleTail: "We'll give it a computer.",
+  title: "Choose what you want done.",
+  titleTail: "We'll give the agent a computer.",
   /** One line for every card below: the cost belongs to the computer, not to one agent. */
   paid: HOSTED_COMPUTE_NEEDS_PLAN,
   compare: "Compare agents",
@@ -106,43 +120,44 @@ export const AGENTS_SECTION = {
 
 export const HOME_AGENTS: HomeAgent[] = [
   {
+    id: "hermes",
+    name: "Hermes",
+    role: "Research and everyday tasks",
+    line: "Looks things up, compares information, writes, uses tools and runs repeat jobs for you. It remembers what you tell it.",
+    note: "Hermes runs on Hivra Cloud only.",
+    badge: "Recommended",
+    href: buildLaunchHref({ start: true, profile: "hermes" }),
+    screen: ["hermes › compare these pages", "reading the sources", "✓ Saved notes/pricing.md"],
+  },
+  {
     id: "claude-code",
     name: "Claude Code",
-    role: "Coding",
-    line: "Write, fix and test software. Sign in with your own Claude account, subject to the provider's terms.",
+    role: "Code with Claude",
+    line: "Writes, fixes and tests software using Claude Code. Sign in with your own Claude account, subject to the provider's terms, or use Hivra credits.",
     href: buildLaunchHref({ start: true, profile: "claude-code" }),
     screen: ["> fix the flaky auth test", "● Editing src/auth.ts", "✓ Tests pass"],
   },
   {
     id: "codex",
     name: "Codex",
-    role: "Coding",
+    role: "Code with Codex",
     line: "OpenAI's coding agent, with your own ChatGPT login, subject to the provider's terms.",
     href: buildLaunchHref({ start: true, profile: "codex" }),
     screen: ["› add rate limiting", "• Writing middleware/limit.ts", "✓ Ready for review"],
   },
   {
-    id: "hermes",
-    name: "Hermes",
-    role: "Research and automation",
-    line: "Browsing, research, tools and repeat jobs, in one place that remembers.",
-    note: "Hermes runs on Hivra Cloud only.",
-    href: buildLaunchHref({ start: true, profile: "hermes" }),
-    screen: ["hermes › compare these pages", "reading the sources", "✓ Saved notes/pricing.md"],
-  },
-  {
     id: "openclaw",
     name: "OpenClaw",
-    role: "Chat-based agent",
-    line: "An agent you can reach from the messaging apps you already use.",
+    role: "Work from your chat apps",
+    line: "Run an agent you can reach from the messaging apps you already use.",
     href: buildLaunchHref({ start: true, profile: "openclaw" }),
     screen: ["openclaw › sort today's messages", "drafting replies", "✓ Waiting for you"],
   },
   {
     id: "agent-zero",
     name: "Agent Zero",
-    role: "General-purpose agent",
-    line: "Give it a task, follow its steps and check its work.",
+    role: "Take on bigger tasks",
+    line: "Breaks larger jobs into steps and works through them with tools.",
     href: buildLaunchHref({ start: true, profile: "agent-zero" }),
     screen: ["a0 › write the weekly report", "planning 3 steps", "✓ Report ready"],
   },
@@ -162,21 +177,21 @@ export const COMPUTERS = {
  */
 export const STEPS = {
   title: "Three steps.",
-  titleTail: "Then just talk to it.",
+  titleTail: "Then it gets to work.",
   steps: [
     {
       n: "1",
-      title: "Pick an agent",
-      body: "Claude Code, Codex, Hermes and more. Each one gets its own computer, with its own files and settings.",
+      title: "Choose an agent",
+      body: "Choose based on the work you want done. Each agent gets its own computer, files and environment.",
     },
     {
       n: "2",
-      title: "Connect a model",
-      body: "Sign in with your Claude or ChatGPT account where the agent supports it, subject to the provider's terms. Or paste an API key, or pay with Hivra credits.",
+      title: "Choose its AI",
+      body: "Use Hivra credits with nothing else to set up. Where supported, you can also sign in with your Claude or ChatGPT account, subject to the provider's terms, or connect your own API key.",
     },
     {
       n: "3",
-      title: "Chat from anywhere",
+      title: "Open it from anywhere",
       body: `Open it in your browser to chat, watch its screen or take over. ${STAYS_ON}.`,
     },
   ],
@@ -185,14 +200,14 @@ export const STEPS = {
 const [ENTRY_SIZE, LARGER_SIZE] = HOSTED_SIZES;
 
 export const PRICING = {
-  title: "Free to start.",
-  titleTail: `Hosted from ${ENTRY_PLAN_PRICE} a month.`,
+  title: "Use Hivra Cloud, or run it on your own server.",
+  titleTail: `Hosted plans start at ${ENTRY_PLAN_PRICE} a month.`,
   free: {
-    name: "Free",
+    name: "Your own server",
     price: "$0",
-    per: "account",
-    size: "Your own server, or self-host",
-    body: `${FREE_ACCOUNT_SENTENCE} Or run the open-source platform yourself.`,
+    per: "Hivra account",
+    size: "You provide the server",
+    body: "Connect a supported Proxmox VE server you run, or self-host Hivra yourself. Claude Code and Codex can run on supported owner-managed infrastructure. Hermes currently requires Hivra Cloud.",
     cta: "Sign up free",
     href: PUBLIC_START_HREF,
     selfHost: { label: "Self-host from GitHub", href: SELF_HOST_SOURCE_URL },
@@ -202,7 +217,7 @@ export const PRICING = {
     price: ENTRY_PLAN_PRICE,
     per: "/month",
     size: ENTRY_PLAN_SIZE,
-    body: "We run the computer for you. It stays on, with browser access and nothing to maintain.",
+    body: "We run the computer for you. Nothing to install or maintain. Your agent's computer stays available when your own computer is closed, and you can open it from any browser.",
     cta: "Get started",
     href: ENTRY_SIZE.href,
   },
@@ -273,8 +288,8 @@ export function homepageFaq(showTokenSentence: boolean): { q: string; a: string 
       a: "No. It gives you an important boundary, but connected services, account permissions, networking and configuration still matter.",
     },
     {
-      q: "Do I have to use Hivra Cloud?",
-      a: `No. Hivra is open source: you can connect your own server or self-host the whole platform. Some managed agents and capabilities are Hivra Cloud-specific. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
+      q: "Is Hivra free?",
+      a: "The Hivra account and open-source software are free. If you run Hivra on supported infrastructure you control, there is no Hivra hosting charge. Hivra Cloud is the managed option and requires a paid plan for each computer. Some managed agents, including Hermes, currently require Hivra Cloud.",
     },
     {
       q: "Do I need a token?",
@@ -289,12 +304,12 @@ export function homepageFaq(showTokenSentence: boolean): { q: string; a: string 
 export const HOMEPAGE_FAQ = homepageFaq(false);
 
 export const CLOSING = {
-  title: "Launch your first agent.",
-  paid: "Sign up free and connect a computer or server you already have, or launch on Hivra Cloud with a paid plan.",
+  title: "Give your agent a computer of its own.",
+  paid: `Launch with Hivra Cloud from ${ENTRY_PLAN_PRICE} a month, with a ${MONEY_BACK_GUARANTEE}. Already run your own server? Connect supported infrastructure with a free Hivra account.`,
   primary: "Launch an agent",
 } as const;
 
 export const STICKY = {
   cta: "Launch an agent",
-  note: "Free to start",
+  note: `Hivra Cloud from ${ENTRY_PLAN_PRICE}/month`,
 } as const;

@@ -59,9 +59,15 @@
 .firstRunChoice:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 3px; }
 .firstRunName { font-size: 16px; font-weight: 600; }
 .firstRunTagline { font-size: 13px; line-height: 1.45; color: var(--hg-text-2); }
-.firstRunPlan { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--hg-text-2); }
+.firstRunBadge { padding: 1px 9px; border: 1px solid var(--hg-stroke-strong); border-radius: 999px; background: var(--hg-fill-1); font-size: 11px; font-weight: 600; letter-spacing: 0.03em; color: var(--hg-text); }
+.firstRunAgent { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--hg-text-3); }
+.firstRunPlan { width: 100%; margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--hg-text-2); text-align: left; }
+.firstRunWaysTitle { margin: 0 0 10px; font-size: 14px; font-weight: 600; text-align: center; color: var(--hg-text); }
+.firstRunWays { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.firstRunWays li { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--hg-stroke); border-radius: var(--hg-radius-lg); background: var(--hg-fill-1); }
+.firstRunWays a { font-weight: 600; }
 .firstRunPlan a, .firstRunMore { color: var(--hg-text); text-decoration: underline; text-underline-offset: 4px; }
 .firstRunMore { display: inline-flex; align-items: center; min-height: 44px; font-size: 13px; color: var(--hg-text-3); }
 .firstRunPlan a:focus-visible, .firstRunMore:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 3px; }
-@media (max-width: 600px) { .firstRunChoices { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .firstRunChoices, .firstRunWays { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .firstRunChoice, .firstRunChoice:hover { transition: none; transform: none; } }
