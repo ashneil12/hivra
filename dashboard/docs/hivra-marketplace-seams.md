@@ -113,6 +113,87 @@ Still not visible: an agent that works only through a messaging channel or on a
 schedule, on its owner's own model key, with nobody connected. An open app tab
 counts as use for as long as its connection stays open.
 
+### A catalog view of Launch (behind a switch)
+
+`NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG=1` turns on the catalog view of Launch's Choose
+step. It is off by default and adds nothing that can launch: it only presents the
+tiles Launch already offers.
+
+- `src/lib/launch/launch-catalog.ts` holds what nothing else records about each
+  launch profile: its jobs, search words, how you talk to it, its maker's page, a
+  picture and a few first tasks. The maker's name, places, browser and model access
+  are read from `agent-catalog.ts`, `PROFILE_DETAILS` and `model-access.ts`, not
+  repeated.
+- Choose gains a search (every word has to match a tile's name, description, jobs or
+  search words), an All / Agents / Computers filter and "Browse by job".
+- A tile opens its page before Review. The page has its own history entry, so Back
+  returns to the list, and `?about=<profile>` opens one directly.
+- Each page view sends `launch_catalog_page_viewed` with the profile, next to the
+  launch events that already exist. That is the "saw the page, then launched" count a
+  maker page would show.
+- A picture is a file under `public/` named by the entry's `cover`. The computers use
+  the workspace pictures already in the repository; an agent without a picture shows
+  its icon on a wash of its catalog colour.
+
+- Home gains "Try next" under the owner's own agents and computers: up to two agents
+  they do not run yet, one that does a job they already use an agent for first
+  ("Because you run Codex"). Each opens its page in Launch. Nothing is suggested to an
+  owner who runs no agent, or during a search.
+- The tiles themselves live in `src/components/launch/launch-tiles.ts`, so Home and
+  Launch name and describe a thing in the same words.
+
+### Maker claims, a maker's numbers and the order by use
+
+Added 2026-11-13 (migration `20261113051700_catalog_maker_claims`). Records and
+reading only: nothing here pays, bills or changes what can be launched.
+
+Claiming is its own step with its own switch, so the catalog view of Launch can be
+turned on without it:
+
+- `NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG=1` alone gives the catalog view and the order by
+  use. No page offers a claim, `/dashboard/makers/<profile>` is not found and
+  `/api/hivra/catalog/claims` answers 404.
+- `NEXT_PUBLIC_HIVRA_MAKER_CLAIMS=1` as well adds "Are you the maker?" to an agent's
+  page, the maker's page and the claims API. On its own, without the catalog switch,
+  it does nothing.
+
+Both are off by default.
+
+| Piece | What it does |
+|---|---|
+| `hivra_catalog_claims` | One row per person and catalog page: the repository the proof is read from, the value of their `hivra-claim=` line, `pending` or `verified`, and what the last check found. Service role only. Deleting a row takes the claim away. |
+| `hivra_catalog_use_by_type(from, to)` | Per agent type: people and hours in use between two times (from `hivra_usage_by_user_and_type`), finished launches, agents running now, and of the agents launched in the 30 days ending two weeks before `to`, how many were not deleted in their first two weeks. Service role only. |
+| `src/lib/hivra/catalog-claims.ts` | Gives a person their line, looks for it in the maker's repository, and reads a proven maker's numbers and the order by use. |
+| `/api/hivra/catalog/claims` | `GET ?profile=` reads the signed-in person's view of a page's claim. `POST { profile, action }` starts a claim (`start`) or looks for the line (`check`). |
+| `/api/hivra/catalog/order` | Agent types by how many people used each in the last 30 days. The order only, never the numbers. Read at most once every ten minutes per server. |
+| `/dashboard/makers/<profile>` | The maker's page: the steps to prove a claim, then the numbers, a launch button for a README and earnings shown as not turned on. |
+
+How a claim is proven:
+
+- Only an agent whose catalog entry links a public repository can be claimed
+  (`catalogSourceRepo`). Computers and agents without one cannot.
+- The maker adds `.well-known/hivra.txt` to that repository's default branch, with
+  the line Hivra gave them on a line of its own.
+- Hivra reads the file from the repository the catalog names, never from an address
+  the person typed, and refuses redirects. So only someone who can change that
+  repository's default branch can prove a claim, and the line itself is not a secret.
+- A proven claim stays until an operator deletes its row. Nothing re-checks it on a
+  schedule yet.
+
+What a proven claim gives today: the page says its maker has claimed it, and the
+maker sees people using the agent, finished launches, the share still running after
+two weeks, hours in use and agents running now, each for the last 30 days. They also
+get a README button that opens the agent's page in Launch. Earnings are shown as not
+turned on, with the hours that would count.
+
+The order: when the order is known, Launch lists agents whose type more people used
+first and says so. An agent nobody used keeps its fixed place after them. A
+self-hosted deployment keeps the fixed order.
+
+Not built yet: a maker editing their page, proof by a DNS record, how many people
+saw a page (page views go to analytics, not the database), and adding a new agent
+without a code change.
+
 ---
 
 ## What the marketplace adds later (NOT now)

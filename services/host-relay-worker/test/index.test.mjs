@@ -302,3 +302,18 @@ test('local bridge: a revoked connector ends the pending exec', async (t) => {
   });
   assert.equal((await pending).status, 504);
 });
+
+test('local bridge: a reconnect sends the command to the new control socket, not the replaced one', async (t) => {
+  const mf = await relay(t);
+  await agent(mf);
+  const second = await agent(mf);
+  const status = await mf.dispatchFetch(`${BASE}/v1/hosts/${HOST_A}/status`, { headers: { authorization: `Bearer ${adminToken()}` } });
+  assert.equal((await status.json()).online, true);
+  const pending = execCall(mf, { ticket: 'ticket.value', request: { argv: ['true'], timeoutSeconds: 5 } });
+  const sent = JSON.parse(await second.next('the exec request on the new socket'));
+  assert.equal(sent.type, 'exec');
+  second.socket.send(JSON.stringify({ type: 'exec_result', id: sent.id, ok: true, stdout: '', stderr: '', exitCode: 0, truncated: false, durationMs: 1 }));
+  const answer = await pending;
+  assert.equal(answer.status, 200);
+  assert.equal((await answer.json()).exitCode, 0);
+});

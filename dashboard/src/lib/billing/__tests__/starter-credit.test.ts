@@ -4,6 +4,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 
 const paid = async () => ({ plan: "pro", status: "active" });
+const signedUp = async () => new Date("2026-11-12T20:28:00Z");
 
 function rpcDb(result: { data: unknown; error: { message: string } | null }) {
   const rpc = jest.fn().mockResolvedValue(result);
@@ -27,14 +28,14 @@ describe("starterCreditMicroUsd", () => {
 describe("tryGrantStarterCredit", () => {
   it("grants $2 to an active paid plan", async () => {
     const { db, rpc } = rpcDb({ data: { granted: true, status: "granted", amountMicroUsd: 2000000 }, error: null });
-    const r = await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid }, db);
+    const r = await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid, resolveAccountCreatedAt: signedUp }, db);
     expect(r).toMatchObject({ attempted: true, granted: true, amountMicroUsd: 2000000 });
-    expect(rpc).toHaveBeenCalledWith("grant_starter_credit", expect.objectContaining({ p_user_id: "u1", p_amount_micro_usd: 2000000 }));
+    expect(rpc).toHaveBeenCalledWith("grant_starter_credit", expect.objectContaining({ p_user_id: "u1", p_amount_micro_usd: 2000000, p_account_created_at: "2026-11-12T20:28:00.000Z" }));
   });
 
   it("reports an already-granted repeat", async () => {
     const { db } = rpcDb({ data: { granted: false, status: "already_granted", amountMicroUsd: 2000000 }, error: null });
-    const r = await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid }, db);
+    const r = await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid, resolveAccountCreatedAt: signedUp }, db);
     expect(r).toMatchObject({ attempted: true, granted: false, status: "already_granted" });
   });
 
@@ -49,16 +50,23 @@ describe("tryGrantStarterCredit", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("skips when the sign-up time can't be read", async () => {
+    const { db, rpc } = rpcDb({ data: {}, error: null });
+    const r = await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid, resolveAccountCreatedAt: async () => null }, db);
+    expect(r).toEqual({ attempted: false, skipped: "no_account_created_at" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("does nothing when turned off", async () => {
     const { db, rpc } = rpcDb({ data: {}, error: null });
-    const r = await tryGrantStarterCredit({ userId: "u1", env: { HIVRA_STARTER_CREDIT_USD: "0" }, resolveSubscription: paid }, db);
+    const r = await tryGrantStarterCredit({ userId: "u1", env: { HIVRA_STARTER_CREDIT_USD: "0" }, resolveSubscription: paid, resolveAccountCreatedAt: signedUp }, db);
     expect(r.skipped).toBe("disabled");
     expect(rpc).not.toHaveBeenCalled();
   });
 
   it("swallows rpc and lookup errors", async () => {
     const { db } = rpcDb({ data: null, error: { message: "boom" } });
-    expect((await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid }, db)).skipped).toBe("error");
+    expect((await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid, resolveAccountCreatedAt: signedUp }, db)).skipped).toBe("error");
     const r = await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: async () => { throw new Error("x"); } }, db);
     expect(r.skipped).toBe("error");
   });
