@@ -14,7 +14,7 @@ import { useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
-import { agentSoftwareSubject, type AgentAppName, type AgentSoftwareUpdateReport, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
+import { agentSoftwareSubject, isLatestTargetApp, type AgentAppName, type AgentSoftwareUpdateReport, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 import { agentSoftwareDisplayName, agentSoftwareVersionName } from "@/lib/hivra/agent-software-names";
 import { setAgentSoftwareAutoUpdate, type AgentSoftwareAutoUpdate } from "@/lib/hivra/agent-software-api";
 import { useAgentSoftware } from "./useAgentSoftware";
@@ -223,7 +223,7 @@ export const HERMES_TERMINAL_UPDATE = "hermes update";
  * says what is installed, what an update is doing or did, and always offers
  * the update (Hermes's own updater decides whether anything is newer).
  */
-function hermesStateCopy(view: AgentSoftwareView, name: string): { text: string; action: Action } {
+function hermesStateCopy(view: AgentSoftwareView, name: string, terminalUpdate: string | null = HERMES_TERMINAL_UPDATE): { text: string; action: Action } {
   const update = (label = `Update ${name}`, primary = false): Action => ({ label, primary });
   switch (view.kind) {
     case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
@@ -232,7 +232,7 @@ function hermesStateCopy(view: AgentSoftwareView, name: string): { text: string;
     case "older_connection_service":
     case "not_reported":
       return {
-        text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below to bring it up to date. You can still update ${name} yourself in Terminal.`,
+        text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below to bring it up to date. ${terminalUpdate ? `You can still update ${name} yourself in Terminal.` : ""}`.trim(),
         action: null,
       };
     case "version_unreadable":
@@ -254,7 +254,7 @@ function hermesStateCopy(view: AgentSoftwareView, name: string): { text: string;
     case "update_failed":
       if (view.reason === "local_changes") {
         return {
-          text: `${name} didn't update because its install has changes of your own, and its updater leaves those alone. Nothing was changed. Run ${HERMES_TERMINAL_UPDATE} in Terminal to see what it needs.`,
+          text: `${name} didn't update because its install has changes of your own, and its updater leaves those alone. Nothing was changed.${terminalUpdate ? ` Run ${terminalUpdate} in Terminal to see what it needs.` : ""}`,
           action: update("Try again"),
         };
       }
@@ -265,7 +265,7 @@ function hermesStateCopy(view: AgentSoftwareView, name: string): { text: string;
         return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: update("Try again") };
       }
       return {
-        text: `The ${name} update didn't finish. ${name} keeps its current version${view.installed ? ` (${view.installed})` : ""}. Try again, or run ${HERMES_TERMINAL_UPDATE} in Terminal to see why.`,
+        text: `The ${name} update didn't finish. ${name} keeps its current version${view.installed ? ` (${view.installed})` : ""}. Try again${terminalUpdate ? `, or run ${terminalUpdate} in Terminal to see why` : ""}.`,
         action: update("Try again", true),
       };
     // Hermes has no tested version, so these never arise for it.
@@ -390,7 +390,8 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
   const app = state.app;
   const shown = agentSoftwareDisplayName(app, name);
   const hermes = app === "hermes";
-  const copy = hermes ? hermesStateCopy(view, shown)
+  const unpinned = isLatestTargetApp(app);
+  const copy = unpinned ? hermesStateCopy(view, shown, hermes ? HERMES_TERMINAL_UPDATE : null)
     : app && state.tested ? appStateCopy(view, app, shown, state.tested, recovery) : stateCopy(view, name, state.tested, recovery);
   const rawInstalled = "installed" in view && view.installed ? view.installed : view.kind === "update_done" ? view.target : null;
   const installed = rawInstalled && app ? agentSoftwareVersionName(rawInstalled) : rawInstalled;
@@ -412,7 +413,7 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
       <div style={card}>
         <div style={{ display: "grid", gap: 8 }}>
           <Fact label={`${shown} installed`}>{installed ?? (view.kind === "checking" || view.kind === "not_running" || view.kind === "unreachable" ? "—" : "Not reported")}</Fact>
-          {hermes ? null : <Fact label="Hivra's tested version">{tested ?? "—"}</Fact>}
+          {unpinned ? null : <Fact label="Hivra's tested version">{tested ?? "—"}</Fact>}
           <Fact label="Last checked">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span>{checkedAt(state.observedAt)}</span>
@@ -446,7 +447,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
               </button>
             </div>
             <div style={{ ...manageMuted, fontSize: 11.5 }}>
-              {hermes
+              {unpinned && !hermes
+                ? `Updating installs ${shown}'s newest release and also refreshes Hivra's connection service without restarting the computer. ${shown} restarts once, when nobody is using it.`
+                : hermes
                 ? <>Updating runs Hermes&apos;s own updater, and also refreshes Hivra&apos;s connection service without restarting the computer. Hermes restarts once, when nobody is using it. Or run <code>{HERMES_TERMINAL_UPDATE}</code> in Terminal.</>
                 : app
                 ? `Updating also refreshes Hivra's connection service without restarting the computer. ${shown} itself restarts once, when nobody is using it.`
@@ -468,7 +471,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
         ) : null}
 
         <div style={{ ...manageMuted, fontSize: 11.5 }}>
-          {hermes
+          {unpinned && !hermes
+            ? `OpenBot is the official release from CopilotKit. Hivra doesn't change it or pin a version; Update installs the newest release.`
+            : hermes
             ? <>Hermes is the official Hermes Agent, installed and updated by Hermes&apos;s own installer and updater. Hivra doesn&apos;t change it or pin a version. To update it yourself, run <code>{HERMES_TERMINAL_UPDATE}</code> in Terminal.</>
             : app
             ? `Hivra installs only ${name} versions it has tested, so this can be older than the newest ${name} release.${app === "aeon" ? " Hivra updates the dashboard it hosts. Your Aeon skills and workflows live in your GitHub fork, which you keep up to date on GitHub." : ""}`

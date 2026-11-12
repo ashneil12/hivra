@@ -258,7 +258,7 @@ export function AgentCommandPanel({ agent, caps, onOpenSurface, onOpenManageSect
   const tile = (action: PanelAction): ReactNode => {
     const Icon = action.id === "update" && softwareBusy ? Loader2 : ICONS[action.id];
     const busy = (action.id === "update" && softwareBusy) || (action.id === "restart" && restarting);
-    const note = action.id === "update" ? updateNote(softwareView, action.description, agent.type === "hermes") : action.description;
+    const note = action.id === "update" ? updateNote(softwareView, action.description, agent.type === "hermes" || agent.type === "openbot") : action.description;
     return (
       <button key={action.id} type="button" className={styles.tile} aria-busy={busy || undefined} onClick={() => press(action)} data-action={action.id}>
         <span className={styles.tileHead}>

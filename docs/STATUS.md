@@ -33,6 +33,7 @@ a free account works with a server the person connects.
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
 | DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.5 or later |
+| OpenBot (CopilotKit) | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.4 or later |
 
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
@@ -56,6 +57,20 @@ person's own Venice API key. It is labelled alpha because the upstream version i
 at an alpha release. It has no public agent page yet, and a connected server or
 a computer in the owner's own cloud cannot run it. Its Launch tile is not on
 the first-run card, which stays at three choices.
+
+OpenBot on a Hivra computer is CopilotKit's official OpenBot image (MIT),
+unmodified: Hivra pulls the latest release, runs it on the computer's loopback
+in OpenBot's single-user mode, and serves OpenBot's own workspace at the root of
+the computer's address behind the Hivra sign-in (the agent page opens
+`/openbot/`). OpenBot will not start without a CopilotKit Intelligence key
+(CopilotKit has a free plan), so the first open shows a one-step page to paste
+it; Hivra keeps it on the computer only. Models run through Venice on Hivra
+credits by default, and the owner can change provider in OpenBot's settings.
+Owners update with the Update button, which pulls upstream's latest image and
+puts the previous image and database back if the new one does not start. It
+needs at least 1 CPU and 3 GB. It is not in the Launch list unless the
+deployment sets `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT=1`. The other app named
+OpenBot (Nightly Labs) is not offered: its licence does not allow a paid host.
 
 The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 

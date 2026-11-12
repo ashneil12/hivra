@@ -361,7 +361,7 @@ export function ModelAccessControl({
           ) : null}
           {profileId === "aeon" ? (
             <p className={styles.note}>Aeon adds the credits to its model settings when you connect GitHub. You can change this choice there.</p>
-          ) : profileId === "openclaw" || profileId === "agent-zero" || profileId === "hermes-computer" ? (
+          ) : profileId === "openclaw" || profileId === "agent-zero" || profileId === "openbot" || profileId === "hermes-computer" ? (
             <p className={styles.note}>Hivra sets {name} up with Venice models paid from your credits. You can change its provider later in its own settings.</p>
           ) : null}
           {modelPicker}

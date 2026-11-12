@@ -24,6 +24,7 @@ const TEMPLATE_PROFILES: Readonly<Record<string, LaunchAgentProfileId>> = {
   codex: "codex",
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
+  openbot: "openbot",
   aeon: "aeon",
 };
 

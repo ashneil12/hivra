@@ -430,6 +430,11 @@ const recipes = Object.freeze({
     workerSha256: "ccd68eccf4a4a25c88f67d88c9688244ae4b8adf0f6fa31b737436944954af94",
     workerSize: 45195,
   }),
+  "2026.11.12.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds OpenBot (CopilotKit) as an agent kind. The worker accepts the kind and advances its release labels.
+    workerSha256: "ed590be9e1dde134bdba172cea0f182f2c1ab0b6e0681cd8e128257878b4024a",
+    workerSize: 45206,
+  }),
 });
 
 type Version = keyof typeof recipes;
