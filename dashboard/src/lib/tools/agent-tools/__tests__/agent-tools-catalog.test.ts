@@ -63,6 +63,7 @@ describe("agent tool entries", () => {
       for (const link of entry.relatedLinks) {
         const m = /^\/tools\/(.+)$/.exec(link.href);
         if (m) expect(slugs.has(m[1]) || known.has(m[1])).toBe(true);
+        else expect(["/pricing", "/agents/hermes", "/agents/openclaw", "/agents/claude-code", "/agents/codex", "/compare/openclaw-to-hermes", "/compare/vs-self-hosted"]).toContain(link.href);
       }
     }
   });

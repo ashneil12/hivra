@@ -82,6 +82,9 @@ export const AGENT_PICKER_ENTRY: ToolEntry = {
     },
   ],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
+    { href: "/compare/openclaw-to-hermes", label: "Moving from OpenClaw to Hermes" },
     { href: "/agents/claude-code", label: "Run Claude Code on Hivra" },
     { href: "/agents/codex", label: "Run Codex on Hivra" },
     { href: "/pricing", label: "Hivra pricing" },

@@ -280,7 +280,7 @@ describe("the catalog entry", () => {
   });
 
   it("links only to routes the existing tests allow", () => {
-    const allowed = new Set(["/pricing", "/agents/claude-code", "/agents/codex", "/tools/agent-survival-check"]);
+    const allowed = new Set(["/pricing", "/agents/hermes", "/agents/openclaw", "/compare/openclaw-to-hermes", "/compare/vs-self-hosted", "/agents/claude-code", "/agents/codex", "/tools/agent-survival-check"]);
     expect(entry.relatedLinks.length).toBeGreaterThanOrEqual(2);
     for (const link of entry.relatedLinks) expect(allowed.has(link.href)).toBe(true);
   });

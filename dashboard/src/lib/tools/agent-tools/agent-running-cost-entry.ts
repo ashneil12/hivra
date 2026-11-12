@@ -84,6 +84,9 @@ export const AGENT_RUNNING_COST_ENTRY: ToolEntry = {
     },
   ],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
+    { href: "/compare/vs-self-hosted", label: "Hivra compared with a self-hosted server" },
     { href: "/tools/ai-agent-hosting-cost-calculator", label: "AI agent hosting cost calculator" },
     { href: "/tools/agent-survival-check", label: "Agent survival check" },
     { href: "/pricing", label: "Hivra pricing" },

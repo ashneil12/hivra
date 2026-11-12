@@ -62,6 +62,8 @@ export const AGENT_JOB_LIBRARY_ENTRY: ToolEntry = {
     },
   ],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
     { href: "/tools/agent-survival-check", label: "Agent survival check" },
     { href: "/tools/ai-agent-hosting-cost-calculator", label: "AI agent hosting cost calculator" },
     { href: "/pricing", label: "Hivra pricing" },

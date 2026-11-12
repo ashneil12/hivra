@@ -87,6 +87,8 @@ export const AGENT_MODEL_FINDER_ENTRY: ToolEntry = {
   ],
   faqCode: ["hermes model", ":free", "openrouter/free"],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
     { href: "/tools/ai-agent-hosting-cost-calculator", label: "AI agent hosting cost calculator" },
     { href: "/tools/agent-survival-check", label: "Agent survival check" },
     { href: "/pricing", label: "Hivra pricing" },

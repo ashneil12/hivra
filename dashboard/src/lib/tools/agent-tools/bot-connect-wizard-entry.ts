@@ -73,6 +73,8 @@ export const BOT_CONNECT_WIZARD_ENTRY: ToolEntry = {
   ],
   faqCode: ["/newbot", "/mybots", "/revoke", "/token", "scope=bot%20applications.commands"],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
     { href: "/tools/hermes-vs-openclaw", label: "Hermes or OpenClaw: which agent fits you?" },
     { href: "/agents/claude-code", label: "Run Claude Code on Hivra" },
     { href: "/pricing", label: "Hivra pricing" },
