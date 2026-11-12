@@ -113,6 +113,9 @@ Where each queued step stands:
   with no refusal logged. **Production** is pending:
   apply the same file with the same version only after the owner's Promote,
   never in the schema catch-up before it. The file stays here until then.
+  As of 2026-10-29 production serves the slot-lock code (main `bd02b283`,
+  promoted by the owner) and has migration A; migration B still waits for a
+  launch smoke test on production before and after it.
 
 ## Provisioner releases in flight
 
