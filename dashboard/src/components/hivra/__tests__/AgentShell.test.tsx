@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { AgentShell } from "../agent-shell/AgentShell";
 import type { AgentShellGroup } from "../agent-shell/useAgentSurfaceNav";
 
@@ -15,11 +15,13 @@ const groups: AgentShellGroup<Id>[] = [
   { id: "manage", label: "Settings", icon: null, surfaces: ["manage"], home: "manage" },
 ];
 
-function Page({ start, homeLabel, onSelect }: { start: Id; homeLabel?: string; onSelect?: (id: Id) => void }) {
+const openPill = () => fireEvent.click(screen.getByRole("button", { name: /Show controls$/ }));
+
+function Page({ start, homeLabel, onSelect, chat = true }: { start: Id; homeLabel?: string; onSelect?: (id: Id) => void; chat?: boolean }) {
   const [active, setActive] = useState<Id>(start);
   return (
     <AgentShell<Id> name="Hermes 1" status="running" switcher={<span>Hermes 1</span>} surfaces={surfaces} groups={groups}
-      active={active} onSelect={(id) => { onSelect?.(id); setActive(id); }} chatSurface="aeon" panelId="agent-work-pane" homeLabel={homeLabel}>
+      active={active} onSelect={(id) => { onSelect?.(id); setActive(id); }} chatSurface={chat ? "aeon" : ("chat" as Id)} panelId="agent-work-pane" homeLabel={homeLabel}>
       <div data-testid="pane">{active}</div>
     </AgentShell>
   );
@@ -47,6 +49,7 @@ describe("AgentShell way back", () => {
     for (const start of ["files", "desktop", "manage"] as const) {
       const view = render(<Page start={start} homeLabel="Hermes" />);
       expect(screen.getByRole("button", { name: "Back to Hermes" })).toBeInTheDocument();
+      openPill();
       expect(screen.getByRole("button", { name: "Show sidebar" })).toBeInTheDocument();
       view.unmount();
     }
@@ -55,5 +58,60 @@ describe("AgentShell way back", () => {
   it("falls back to the first group's name when the page gives no label", () => {
     render(<Page start="files" />);
     expect(screen.getByRole("button", { name: "Back to Dashboard" })).toBeInTheDocument();
+  });
+});
+
+describe("AgentShell pill", () => {
+  beforeEach(() => { try { window.localStorage.clear(); window.localStorage.setItem("hivra:agent-pill-intro-seen", "1"); } catch { /* not needed */ } });
+  const sidebar = () => document.querySelector("aside");
+
+  it("has no title bar, and offers every view as a quick button: one for a single-view group, one per view otherwise", () => {
+    render(<Page start="aeon" />);
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+    openPill();
+    const nav = within(screen.getByRole("navigation", { name: "Views" }));
+    expect(nav.getAllByRole("button").map((button) => button.textContent)).toEqual(["Dashboard", "Desktop", "Files", "Terminal", "Settings"]);
+    expect(nav.getByRole("button", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("opens the chosen view and marks the one that is open", () => {
+    const onSelect = jest.fn();
+    render(<Page start="aeon" onSelect={onSelect} />);
+    openPill();
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Views" })).getByRole("button", { name: "Terminal" }));
+    expect(onSelect).toHaveBeenLastCalledWith("box");
+    expect(screen.getByTestId("pane")).toHaveTextContent("box");
+    openPill();
+    expect(within(screen.getByRole("navigation", { name: "Views" })).getByRole("button", { name: "Terminal" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows the sidebar by default with a chat, and hides it without one", () => {
+    const view = render(<Page start="aeon" />);
+    expect(sidebar()).not.toHaveAttribute("hidden");
+    view.unmount();
+    render(<Page start="aeon" chat={false} />);
+    expect(sidebar()).toHaveAttribute("hidden");
+  });
+
+  it("remembers the sidebar separately for a page with a chat and one without", () => {
+    const view = render(<Page start="aeon" chat={false} />);
+    openPill();
+    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(sidebar()).not.toHaveAttribute("hidden");
+    expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed:no-chat")).toBe("false");
+    expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed")).toBeNull();
+    view.unmount();
+    render(<Page start="aeon" chat={false} />);
+    expect(sidebar()).not.toHaveAttribute("hidden");
+
+  });
+
+  it("hides the sidebar from the pill when the page has a chat, and remembers that under the chat key", () => {
+    render(<Page start="aeon" />);
+    openPill();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Hide sidebar" }));
+    expect(sidebar()).toHaveAttribute("hidden");
+    expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed")).toBe("true");
+    expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed:no-chat")).toBeNull();
   });
 });
