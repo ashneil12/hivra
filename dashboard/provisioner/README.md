@@ -522,6 +522,11 @@ update them yet.
   created or cloned there gets a `pre-commit` hook (system `init.templateDir`) that refuses
   a commit staging that file. Claude Code's "don't ask again" saves approved commands,
   passwords included, in it. Existing computers are unchanged.
+- **Hermes restore points (`2026.11.12.3`).** `/api/restore-points` on a Hermes computer
+  reads and sets Hermes's own `checkpoints.enabled` with `hermes config get`/`set`. With it on,
+  Hermes snapshots a project before it changes files, and `/rollback` or `/undo` in a Hermes
+  chat goes back. Manage shows the switch only when `NEXT_PUBLIC_HIVRA_RESTORE_POINTS_ENABLED`
+  is `true`. Existing computers get it from the connection service update.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

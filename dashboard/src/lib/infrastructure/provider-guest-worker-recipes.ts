@@ -425,6 +425,11 @@ const recipes = Object.freeze({
     workerSha256: "279c849b8ee4720a70d3509c453984f7098e6504cf2ac333f055201bfee9cf61",
     workerSize: 45195,
   }),
+  "2026.11.12.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds Hermes restore points to the box gateway (/api/restore-points). The worker only advances its release labels.
+    workerSha256: "ccd68eccf4a4a25c88f67d88c9688244ae4b8adf0f6fa31b737436944954af94",
+    workerSize: 45195,
+  }),
 });
 
 type Version = keyof typeof recipes;
