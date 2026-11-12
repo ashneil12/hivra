@@ -62,6 +62,7 @@ function balance(cardUsd: number, tokenUsd = 0) {
 let savedKeys: Array<typeof VENICE_KEY>;
 let instanceBodies: Array<Record<string, unknown>>;
 let workspaceReady: boolean;
+let agentStatus: "provisioning" | "running";
 let resolveInstance: ((response: Response) => void) | null;
 
 function json(body: unknown, status = 200): Response {
@@ -76,6 +77,7 @@ beforeEach(() => {
   savedKeys = [];
   instanceBodies = [];
   workspaceReady = false;
+  agentStatus = "running";
   resolveInstance = null;
   tokenGeoStatus = "allowed";
   fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
@@ -91,6 +93,9 @@ beforeEach(() => {
       instanceBodies.push(JSON.parse(String(init.body)));
       if (resolveInstance === null) return json({ success: true, data: { id: AGENT_ID, name: "Hermes 1", status: "provisioning" } });
       return new Promise<Response>(resolve => { resolveInstance = resolve; });
+    }
+    if (url === `/api/hivra/agents/${AGENT_ID}`) {
+      return json({ success: true, data: { agent: { id: AGENT_ID, status: agentStatus, chat_url: agentStatus === "running" ? "https://agent.example.test" : null } } });
     }
     if (url === `/api/instances/${AGENT_ID}/webui-login-url`) {
       return workspaceReady ? json({ url: "https://hermes.example.test/login" }) : json({ retryAfterMs: 2500 }, 202);
@@ -126,7 +131,7 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(review.getByText("Chat, a terminal, files and skills on its own computer.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
 
-    await screen.findByRole("heading", { name: "Hermes 1 has its own computer and is starting." });
+    await screen.findByRole("heading", { name: "Hermes 1 is setting up." });
     expect(instanceBodies).toHaveLength(1);
     expect(instanceBodies[0]).toMatchObject({
       name: "Hermes 1", provider: "venice", model: "deepseek-v4-1-flash", apiKey: "",
@@ -151,6 +156,25 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(screen.getByRole("link", { name: "Also chat from Telegram" }))
       .toHaveAttribute("href", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1&connect=telegram`);
   });
+
+  it("holds a Claude Code launch on Setting up until the agent can answer", async () => {
+    agentStatus = "provisioning";
+    render(<LaunchJourney legacyHermesLane />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
+    await reviewLaunch();
+    fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
+
+    await screen.findByRole("heading", { name: "Claude Code 1 is setting up." });
+    expect(screen.getByTestId("launch-primary-action")).toHaveTextContent("Open Claude Code 1 now");
+    expect(screen.queryByRole("link", { name: /Start chatting/ })).not.toBeInTheDocument();
+    expect(routerPushMock).not.toHaveBeenCalled();
+
+    agentStatus = "running";
+    const start = await screen.findByRole("link", { name: /Start chatting/ }, { timeout: 8000 });
+    expect(start).toHaveAttribute("href", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`);
+    expect(screen.getByRole("heading", { name: "Claude Code 1 is ready." })).toBeInTheDocument();
+  }, 15000);
 
   it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {
     summaryMock.mockResolvedValue(balance(0));
@@ -256,7 +280,8 @@ describe("every catalog agent launches in the Launch journey", () => {
       llm: { provider: "venice", mode: "byok", model: "deepseek-v4-1-flash", vaultKeyId: VENICE_KEY.id },
     });
     expect(createAgentMock.mock.calls[0][0].llm).not.toHaveProperty("apiKey");
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`));
+    expect(await screen.findByTestId("launch-primary-action")).toHaveAttribute("href", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`);
+    expect(routerPushMock).not.toHaveBeenCalled();
   });
 
   it("keeps a pasted key out of the saved draft", async () => {
@@ -286,7 +311,8 @@ describe("every catalog agent launches in the Launch journey", () => {
       type: "openclaw", name: "OpenClaw 1", cpu: 1, ram: 2, browser: false, managedVenice: true,
       llm: { provider: "venice", mode: "managed", walletType: "card" }, deployment: { mode: "hivra-managed" },
     });
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
+    expect(await screen.findByTestId("launch-primary-action")).toHaveAttribute("href", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`);
+    expect(routerPushMock).not.toHaveBeenCalled();
   });
 
   it("offers DeepSeek Harness as a tile, runs it on Hivra credits by default, and launches it on Hivra Cloud", async () => {
@@ -313,7 +339,8 @@ describe("every catalog agent launches in the Launch journey", () => {
       llm: { provider: "venice", mode: "managed", model: "deepseek-v4-1-flash", walletType: "card" },
       deployment: { mode: "hivra-managed" },
     });
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith(`/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`));
+    expect(await screen.findByTestId("launch-primary-action")).toHaveAttribute("href", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`);
+    expect(routerPushMock).not.toHaveBeenCalled();
   });
 
   it("does not launch DeepSeek Harness for a Free account, and offers a plan rather than its own computer", async () => {

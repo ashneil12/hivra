@@ -744,13 +744,23 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
   return `/dashboard/agent/${id}?welcome=1&tab=${surface === "dashboard" ? "aeon" : "terminal"}`;
 }
 
-/** Hermes shows its outcome in the journey (Start chatting); every other
- * accepted launch opens its own surface straight away. */
+/** Every agent shows its outcome in the journey (Setting up, then Ready);
+ * computers open their own surface straight away. */
 export function opensOnAcceptance(profileId: LaunchProfileId | null): boolean {
-  return profileId !== "hermes";
+  return !holdsForReadiness(profileId);
 }
 
-/** As opensOnAcceptance, for this launch: Hermes on DigitalOcean opens its
+/** Agent launches wait in the journey until the agent can answer. */
+export function holdsForReadiness(profileId: LaunchProfileId | null): boolean {
+  return profileId !== null && PROFILE_DETAILS[profileId].resourceKind === "agent";
+}
+
+/** Agents whose first screen is the Hivra chat, so the ready button says Start chatting. */
+export function opensInHivraChat(profileId: LaunchProfileId | null): boolean {
+  return profileId === "claude-code" || profileId === "codex" || profileId === "hermes" || profileId === "hermes-computer";
+}
+
+/** As opensOnAcceptance, for this launch: an agent on DigitalOcean opens its
  * DigitalOcean chat, never the Hivra Cloud workspace wait. */
 export function opensOnAcceptanceFor(draft: Pick<LaunchDraft, "profileId" | "capacity">): boolean {
   return draft.capacity.mode === "digitalocean" || opensOnAcceptance(draft.profileId);

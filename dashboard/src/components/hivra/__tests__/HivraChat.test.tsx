@@ -1556,6 +1556,33 @@ describe("HivraChat", () => {
     expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
   });
 
+  it("offers three starters for the agent and fills the composer without sending", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, status: 502, body: null }));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-fill" token="box-token" agentName="Atlas" agentKind="claude" goal="grow" />);
+    await waitFor(() => expect(startAgentWelcomeRun).toHaveBeenCalled());
+    await waitFor(() => expect(clientLog.warn).toHaveBeenCalledWith("agent first message generation failed", expect.anything()));
+
+    const starter = await screen.findByRole("button", { name: "Clone a GitHub repo and give me a tour of it" });
+    expect(screen.getByRole("button", { name: "Build a small web app and show me it running" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "What can you do on this computer?" })).toBeInTheDocument();
+
+    fireEvent.click(starter);
+
+    expect(screen.getByLabelText("Message Atlas")).toHaveValue("Clone a GitHub repo and give me a tour of it");
+    expect(screen.getByRole("button", { name: "Clone a GitHub repo and give me a tour of it" })).toBeInTheDocument();
+    // Nothing was sent: the conversation is still empty.
+    expect(screen.getByText("Hi, I'm Atlas.")).toBeInTheDocument();
+  });
+
+  it("uses Codex's own starters for a Codex chat and hides them once there is a message", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, status: 502, body: null }));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-codex" token="box-token" agentName="Atlas" agentKind="codex" />);
+    await waitFor(() => expect(startAgentWelcomeRun).toHaveBeenCalled());
+    await waitFor(() => expect(clientLog.warn).toHaveBeenCalledWith("agent first message generation failed", expect.anything()));
+    expect(await screen.findByRole("button", { name: "Write a small script that tidies a folder, and run it" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Build a small web app and show me it running" })).not.toBeInTheDocument();
+  });
+
   it("starts the welcome again after a reload when its request never reached the computer", async () => {
     (startAgentWelcomeRun as jest.Mock).mockImplementationOnce(() => deferred<Response>().promise);
     const first = render(<HivraChat boxUrl="https://box.example.com" storageKey="welcome-lost" token="box-token" agentName="Atlas" agentKind="claude" />);

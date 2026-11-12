@@ -104,6 +104,7 @@ beforeEach(() => {
     if (url.includes("/api/infrastructure/targets")) return json({ success: true, data: { targets: [] } });
     if (url === "/api/vault") return json({ success: true, data: [] });
     if (url === "/api/hivra/agents") return json({ success: true, data: { agents: [] } });
+    if (url === `/api/hivra/agents/${AGENT_ID}`) return json({ success: true, data: { agent: { id: AGENT_ID, status: "running", chat_url: "https://agent.example.test" } } });
     if (url === "/api/instances?summary=true") return json({ success: true, data: [] });
     if (url === "/api/hivra/templates") return json({ success: true, data: { templates } });
     if (url.startsWith("/api/hivra/templates/shared/")) {
@@ -243,7 +244,7 @@ describe("the first-run funnel", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalled());
+    expect(await screen.findByRole("link", { name: /Start chatting/ })).toBeInTheDocument();
 
     const [requested] = events("activation_instance_requested");
     expect(requested).toMatchObject({

@@ -17,6 +17,7 @@ import { PanelLeft, Plus, RotateCcw } from "lucide-react";
 
 import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
+import { firstMessageStarters } from "@/lib/hivra/first-message-starters";
 import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import { getAdapter, type AgentKind, type ChatSink, type TurnOutcome } from "@/lib/hivra/agent-adapters";
 import { clientLog } from "@/lib/client/logger";
@@ -1630,11 +1631,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  const welcomeFailed = Boolean(lastMessage?.welcome && !lastMessage.streaming && lastMessage.outcome === "error");
  // The open chat's conversation on the box, when it has one to reload from.
  const historySessionId = active?.claudeSessionId ? active.id : null;
- // Welcome suggestions: the chosen goal's three concrete starters (falls back to
- // the general-purpose goal so there's always something to tap). Tapping one
- // sends it as the first message — the seeded agent answers in character.
+ // Suggested first messages: three concrete starters for this agent, falling
+ // back to the chosen goal's. Tapping one fills the composer for the owner to
+ // edit or send; it never sends on its own.
  const goalDef = goal ? getGoal(goal) : null;
- const starters = (goalDef ?? getGoal(undefined)).starters;
+ const starters = firstMessageStarters(agentKind) ?? (goalDef ?? getGoal(undefined)).starters;
+ const fillComposer = useCallback((starter: string) => {
+ setInput(starter);
+ const box = composerRef.current;
+ if (box) {
+ box.focus();
+ box.setSelectionRange(starter.length, starter.length);
+ }
+ }, []);
 
  // How full the model's context is, once the stream has said.
  const contextUsage = useMemo(() => contextUsageOf(messages), [messages]);
@@ -1735,7 +1744,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  intro={goalDef ? `I'm set up to help you ${goalDef.label.toLowerCase()}. Want to start with one of these?` : "Tell me what you need, or start with one of these."}
  starters={starters}
  disabled={busy}
- onPick={(starter) => void send(starter)}
+ onPick={fillComposer}
  />
  ) : null}
  {messages.map((m, i) => (
