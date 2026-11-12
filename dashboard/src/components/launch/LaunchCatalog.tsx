@@ -5,11 +5,14 @@
 // Review. Shown only where isLaunchCatalogEnabled() is on.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import Link from "next/link";
 import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Copy, Search, type LucideIcon } from "lucide-react";
 
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { makerPageHref, type CatalogClaimView } from "@/lib/hivra/catalog-claim-types";
 import { PROFILE_DETAILS, profileHasBrowser, runsOnHivraCloudOnly, type LaunchProfileId } from "@/lib/launch/contracts";
 import {
+  catalogSourceRepo,
   LAUNCH_CATALOG,
   primaryCatalogJob,
   type CatalogFilter,
@@ -20,6 +23,7 @@ import { capabilitySummary } from "@/lib/launch/launch-plan";
 import { captureLaunchEventOnce } from "@/lib/launch/launch-telemetry";
 import { modelAccessModes } from "@/lib/launch/model-access";
 
+import { fetchCatalogClaim } from "./catalog-claims-client";
 import journey from "./LaunchJourney.module.css";
 import styles from "./LaunchCatalog.module.css";
 
@@ -92,7 +96,7 @@ export function LaunchCatalogToolbar({ filter, onChange, counts, jobs }: {
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -142,7 +146,7 @@ function sourceLabel(url: string): string {
   return url.replace(/^https:\/\//, "");
 }
 
-function Row({ label, value, note, action }: { label: string; value: ReactNode; note?: string | null; action?: ReactNode }) {
+export function CatalogRow({ label, value, note, action }: { label: string; value: ReactNode; note?: string | null; action?: ReactNode }) {
   return (
     <div className={journey.planRow}>
       <span className={journey.planLabel}>{label}</span>
@@ -184,6 +188,20 @@ export function LaunchCatalogPage({ profileId, name, description, icon: Icon, fi
     headingRef.current?.focus();
     captureLaunchEventOnce(`catalog-page:${profileId}`, "launch_catalog_page_viewed", { profile_id: profileId });
   }, [profileId]);
+  // A page can be claimed where Hivra can read its maker's repository, on the hosted service.
+  const claimable = catalogSourceRepo(profileId) !== null && !selfHosted;
+  const [claimRead, setClaimRead] = useState<CatalogClaimView | null>(null);
+  useEffect(() => {
+    if (!claimable) return;
+    const controller = new AbortController();
+    void fetchCatalogClaim(profileId, controller.signal).then(next => {
+      if (!controller.signal.aborted) setClaimRead(next);
+    });
+    return () => controller.abort();
+  }, [claimable, profileId]);
+  // An answer for another page is not this page's.
+  const claim = claimable && claimRead?.profileId === profileId ? claimRead : null;
+  const makerWords = maker === name ? `the ${name} project` : maker;
 
   return (
     <section className={journey.stage} aria-labelledby="launch-about-heading" data-testid="launch-catalog-page">
@@ -211,22 +229,29 @@ export function LaunchCatalogPage({ profileId, name, description, icon: Icon, fi
       )}
       <div className={journey.planCard} role="group" aria-label={`About ${name}`}>
         {maker ? (
-          <Row
+          <CatalogRow
             label="Made by"
             value={maker === name ? `The ${name} project` : maker}
-            note={`Hivra wrote this page and is independent of ${maker === name ? `the ${name} project` : maker}.`}
+            note={claim?.claimed
+              ? "Hivra wrote this page. Its maker has claimed it."
+              : `Hivra wrote this page and is independent of ${makerWords}.`}
+            action={claimable ? (
+              <Link className={`${journey.inlineAction} ${styles.rowAction}`} href={makerPageHref(profileId)}>
+                {claim?.mine?.status === "verified" ? "Your maker page" : "Are you the maker?"}
+              </Link>
+            ) : null}
           />
         ) : null}
-        {entry.talk ? <Row label="You talk to it" value={entry.talk} /> : null}
-        <Row
+        {entry.talk ? <CatalogRow label="You talk to it" value={entry.talk} /> : null}
+        <CatalogRow
           label={computer ? "What you get" : "It can use"}
           value={uses}
           note={profileHasBrowser(profileId) ? "A browser is optional. You choose in review." : null}
         />
-        {modelAccess ? <Row label="Model access" value={modelAccess} note="You choose in review." /> : null}
-        <Row label="Where it runs" value={whereItRuns(profileId, selfHosted)} />
+        {modelAccess ? <CatalogRow label="Model access" value={modelAccess} note="You choose in review." /> : null}
+        <CatalogRow label="Where it runs" value={whereItRuns(profileId, selfHosted)} />
         {entry.sourceUrl ? (
-          <Row
+          <CatalogRow
             label="Its maker's page"
             value={sourceLabel(entry.sourceUrl)}
             action={(

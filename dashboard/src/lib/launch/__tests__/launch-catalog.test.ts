@@ -5,11 +5,13 @@ import { LAUNCH_PROFILE_IDS, PROFILE_DETAILS, type LaunchProfileId } from "../co
 import {
   CATALOG_JOBS,
   catalogJobCounts,
+  catalogSourceRepo,
   filterCatalog,
   isCatalogFiltered,
   isLaunchCatalogEnabled,
   LAUNCH_CATALOG,
   NO_CATALOG_FILTER,
+  orderCatalogByUse,
   primaryCatalogJob,
   relatedCatalogItems,
   searchWords,
@@ -73,6 +75,14 @@ describe("catalog entries", () => {
     }
   });
 
+  it("names a repository to prove a claim in for agents only", () => {
+    expect(catalogSourceRepo("codex")).toBe("openai/codex");
+    expect(catalogSourceRepo("openbot")).toBeNull();
+    for (const id of LAUNCH_PROFILE_IDS) {
+      if (PROFILE_DETAILS[id].resourceKind === "computer") expect(catalogSourceRepo(id)).toBeNull();
+    }
+  });
+
   it("writes each first task as a title and words to give the agent", () => {
     for (const id of LAUNCH_PROFILE_IDS) {
       const titles = LAUNCH_CATALOG[id].firstTasks.map(task => task.title);
@@ -131,6 +141,19 @@ describe("searching the catalog", () => {
     expect(ids(relatedCatalogItems("claude-code", ITEMS))).toEqual(["codex"]);
     expect(ids(relatedCatalogItems("hermes-computer", ITEMS))).toEqual(["openclaw", "agent-zero"]);
     expect(relatedCatalogItems("ubuntu-desktop", ITEMS)).toEqual([]);
+  });
+});
+
+describe("ordering by use", () => {
+  it("puts the types more people use first and keeps the rest in their places", () => {
+    expect(ids(orderCatalogByUse(ITEMS, ["openclaw", "hermes", "codex"]))).toEqual([
+      "openclaw", "hermes-computer", "codex", "claude-code", "agent-zero", "aeon", "ubuntu-server", "ubuntu-desktop",
+    ]);
+  });
+
+  it("changes nothing when no use is known, or for a type the catalog does not offer", () => {
+    expect(orderCatalogByUse(ITEMS, [])).toEqual(ITEMS);
+    expect(orderCatalogByUse(ITEMS, ["unknown"])).toEqual(ITEMS);
   });
 });
 
