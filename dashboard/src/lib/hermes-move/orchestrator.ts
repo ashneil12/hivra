@@ -27,6 +27,7 @@ import {
   buildStopNewGatewayGuestScript,
   buildUnpackGuestScript,
   buildUploadCommand,
+  moveCountsArrived,
   parseMoveJobStatus,
 } from "@/lib/hermes-move/guest-jobs";
 
@@ -401,12 +402,6 @@ async function readJob(
   return parseMoveJobStatus(res.stdout);
 }
 
-function countsMatch(a: MoveCounts, b: MoveCounts): boolean {
-  const keys = [...(a.envKeys ?? [])].sort().join("\n") === [...(b.envKeys ?? [])].sort().join("\n");
-  return a.sessions === b.sessions && a.messages === b.messages && a.skills === b.skills
-    && a.cronJobs === b.cronJobs && a.profiles === b.profiles && keys;
-}
-
 // ---------------------------------------------------------------- launch
 
 function launchBody(instance: InstanceRow): Record<string, unknown> {
@@ -643,7 +638,7 @@ async function stepWatchUnpack(row: MoveRow, deps: MoveDeps): Promise<MovePatch>
     return beginRollback(row, { failureType: "move_unpack_failed", reason: "Your data did not check out on the new computer.", technical: status.message || status.step, fromPack: false, stopNew: true }, deps);
   }
   const result = status.result as { counts?: MoveCounts; gateway?: string } | undefined;
-  if (!result?.counts || !row.counts_before || !countsMatch(row.counts_before, result.counts)) {
+  if (!result?.counts || !row.counts_before || !moveCountsArrived(row.counts_before, result.counts, Boolean(row.managed_model))) {
     return beginRollback(row, { failureType: "move_counts_mismatch", reason: "Your data did not check out on the new computer.", technical: `counts differ: before ${JSON.stringify(row.counts_before)} after ${JSON.stringify(result?.counts ?? null)}`, fromPack: false, stopNew: true }, deps);
   }
   if (result.gateway !== "running") {

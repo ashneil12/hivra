@@ -28,6 +28,7 @@ jest.mock("../guest-jobs", () => ({
   buildReadNewStatusGuestScript: (_id: string, job: string) => `new:read:${job}`,
   parseMoveJobStatus: (out: string | null | undefined) => (out ? JSON.parse(out) : null),
   MOVE_STATUS_DIR: (id: string) => `/var/lib/hivra-move/${id}`,
+  moveCountsArrived: jest.requireActual("../guest-jobs").moveCountsArrived,
 }));
 
 const T0 = Date.parse("2026-11-12T10:00:00.000Z");
@@ -459,6 +460,34 @@ describe("failure paths", () => {
     expect(w.instance.status).toBe("running");
     expect(w.deleted).toEqual(["agent-1"]);
     expect(w.removed).toEqual([`${id}/part-000`]);
+  });
+
+  it("unpack with the official install's extra skills and the old plumbing keys removed: finishes", async () => {
+    const { w, deps } = makeWorld();
+    const { id } = await begin(deps);
+    await toPacking(deps, id);
+    const before = { ...COUNTS, envKeys: ["A", "API_SERVER_KEY", "BROWSER_CDP_URL", "HERMES_INFERENCE_PROVIDER"] };
+    w.oldJobs.pack = status("done", { parts: PARTS, counts: before, managedModel: true, totalBytes: 10 });
+    await advanceMove(id, deps);
+    w.oldJobs.upload = status("done", {});
+    await advanceMove(id, deps);
+    const after = { ...COUNTS, skills: COUNTS.skills + 4, envKeys: ["A", "OPENAI_API_KEY"] };
+    w.newJobs.unpack = status("done", { counts: after, gateway: "running" });
+    const m = (await advanceMove(id, deps))!;
+    expect(m).toMatchObject({ state: "finishing", counts_after: after });
+  });
+
+  it("unpack missing one of the owner's settings: restores", async () => {
+    const { w, deps } = makeWorld();
+    const { id } = await begin(deps);
+    await toPacking(deps, id);
+    w.oldJobs.pack = status("done", { parts: PARTS, counts: COUNTS, managedModel: false, totalBytes: 10 });
+    await advanceMove(id, deps);
+    w.oldJobs.upload = status("done", {});
+    await advanceMove(id, deps);
+    w.newJobs.unpack = status("done", { counts: { ...COUNTS, envKeys: ["A"] }, gateway: "running" });
+    const m = (await advanceMove(id, deps))!;
+    expect(m.failure?.failureType).toBe("move_counts_mismatch");
   });
 
   it("unpack counts differ: stops the new gateway first, then restores", async () => {
