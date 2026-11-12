@@ -109,7 +109,7 @@ export interface SleepFacts {
 }
 
 export interface SleepEligibilityOptions {
-  /** A manual test sleep. On a Canary server it does not need the host switch. */
+  /** A manual test sleep: it skips the owner's policy, but never the server or host switch. */
   manual?: boolean;
   serverMode?: SleepMode;
   tier?: AgentSleepTier;
@@ -183,7 +183,8 @@ export function sleepEligibility(
     if (host.status === "maintenance") reasons.push("host_maintenance");
     else if (host.status !== "active" && host.status !== "draining") reasons.push("host_status_unknown");
     const hostActs = host.sleep_mode === "canary" || host.sleep_mode === "on";
-    if (!hostActs && !(manual && options.serverMode === "canary")) reasons.push("host_sleep_mode_off");
+    // The host switch is a hard stop for everything, a manual test sleep included.
+    if (!hostActs) reasons.push("host_sleep_mode_off");
   }
 
   if (!manual) {

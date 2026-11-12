@@ -59,7 +59,10 @@ jest.mock("../agent-wake", () => ({
 const mockFinishSleep = jest.fn();
 const mockFinishWake = jest.fn();
 const mockLogEvent = jest.fn();
+const mockReconcileState = jest.fn();
 jest.mock("../agent-sleep-store", () => ({
+  reconcileAgentSleepState: (...args: unknown[]) => mockReconcileState(...args),
+  parseSleepGeneration: (value: unknown) => (typeof value === "number" ? value : null),
   finishAgentSleep: (...args: unknown[]) => mockFinishSleep(...args),
   finishAgentWake: (...args: unknown[]) => mockFinishWake(...args),
   logAgentSleepEvent: (...args: unknown[]) => mockLogEvent(...args),
@@ -91,6 +94,9 @@ const opsOf = (call: Call, name: string) => call.ops.filter(([op]) => op === nam
 const hasOp = (call: Call, name: string, ...args: unknown[]) =>
   opsOf(call, name).some((a) => JSON.stringify(a) === JSON.stringify(args));
 const callsFor = (table: string) => mockCalls.filter((c) => c.table === table);
+/** The nap and hibernate candidate queries select just the id and host; the record drift queries select whole rows. */
+const isCandidateQuery = (c: Call, state: "awake" | "napping") =>
+  c.table === "hivra_agents" && hasOp(c, "select", "id, proxmox_host") && hasOp(c, "eq", "sleep_state", state);
 
 type Tables = Partial<{
   wakes: Result;
@@ -100,6 +106,7 @@ type Tables = Partial<{
   nap: Result;
   events: Result;
   activity: Result;
+  drift: Result;
 }>;
 
 /** Routes each query to a canned result by what it asks for. */
@@ -112,8 +119,9 @@ function setTables(tables: Tables) {
     if (call.table === "hivra_agents") {
       if (hasOp(call, "in", "operation_kind", ["sleep", "wake"])) return tables.leases ?? empty;
       if (opsOf(call, "lte").some((a) => a[0] === "next_wake_at")) return tables.wakes ?? empty;
-      if (hasOp(call, "eq", "sleep_state", "napping")) return tables.hibernate ?? empty;
-      if (hasOp(call, "eq", "sleep_state", "awake")) return tables.nap ?? empty;
+      if (isCandidateQuery(call, "napping")) return tables.hibernate ?? empty;
+      if (isCandidateQuery(call, "awake")) return tables.nap ?? empty;
+      if (hasOp(call, "select", "*")) return tables.drift ?? empty;
     }
     return empty;
   };
@@ -134,6 +142,7 @@ beforeEach(() => {
   mockHealthz.mockResolvedValue({ up: true, ms: 10, attempts: 1 });
   mockFinishSleep.mockResolvedValue(true);
   mockFinishWake.mockResolvedValue(true);
+  mockReconcileState.mockResolvedValue(true);
   mockLogEvent.mockResolvedValue(true);
   mockRunScript.mockResolvedValue({ ok: true, stdout: "" });
   mockTarget.mockResolvedValue({ ok: true, target: { vmid: VMID, bindingTag: TAG, env: { host: "h" } } });
@@ -185,7 +194,7 @@ describe("runSleepIdleSweep: switches", () => {
     setTables({ hosts: { data: hostsTable([{ id: "a", sleep_mode: "off" }]) } });
     const summary = await run();
     expect(summary.nap.candidates).toBe(0);
-    expect(callsFor("hivra_agents").some((c) => hasOp(c, "eq", "sleep_state", "awake"))).toBe(false);
+    expect(callsFor("hivra_agents").some((c) => isCandidateQuery(c, "awake"))).toBe(false);
     expect(mockSleep).not.toHaveBeenCalled();
   });
 });
@@ -395,6 +404,122 @@ describe("step 2: stale lease recovery", () => {
   });
 });
 
+describe("step 2b: record drift", () => {
+  const record = (n: number, over: Record<string, unknown> = {}) => ({
+    id: id(n), user_id: "user-1", status: "running", desired_state: "running", vmid: VMID,
+    cf_hostname: `agent-${n}.example.test`, sleep_state: "awake", sleep_generation: 3,
+    operation_id: null, operation_kind: null, operation_started_at: null, ...over,
+  });
+  const stateLine = (observed: string, extra: Record<string, unknown> = {}) => ({
+    ok: true,
+    stdout: `HIVRA_SLEEP_STATE ${JSON.stringify({ ok: observed !== "unknown", vmid: VMID, observed, reason: "observed", unit_active: false, ...extra })}\n`,
+  });
+  /** Canned rows for the three drift queries, told apart by the sleep states they ask for. */
+  function setDrift(rows: { stuck?: unknown[]; awake?: unknown[]; asleep?: unknown[] }) {
+    setTables({});
+    const base = mockResolve.fn;
+    mockResolve.fn = (call) => {
+      const isDrift = call.table === "hivra_agents" && hasOp(call, "select", "*") && hasOp(call, "is", "operation_id", null)
+        && !hasOp(call, "in", "operation_kind", ["sleep", "wake"]);
+      if (!isDrift) return base(call);
+      if (hasOp(call, "eq", "sleep_state", "awake")) return { data: rows.awake ?? [], error: null };
+      if (opsOf(call, "in").some((a) => a[0] === "sleep_state" && (a[1] as string[]).includes("napping"))) return { data: rows.asleep ?? [], error: null };
+      return { data: rows.stuck ?? [], error: null };
+    };
+  }
+  const driftQueries = () => callsFor("hivra_agents").filter((c) => hasOp(c, "select", "*") && hasOp(c, "is", "operation_id", null));
+
+  it("asks for stuck records, recently changed awake records, and long asleep records, never ones holding a lease", async () => {
+    setDrift({});
+    await run();
+    const [stuck, awake, asleep] = driftQueries();
+    for (const q of [stuck, awake, asleep]) {
+      for (const [op, ...args] of [["eq", "status", "running"], ["eq", "desired_state", "running"], ["is", "operation_id", null],
+        ["eq", "deployment_mode", "hivra-managed"], ["eq", "computer_substrate", "proxmox-kvm"]] as const) {
+        expect(hasOp(q, op, ...args)).toBe(true);
+      }
+    }
+    expect(hasOp(stuck, "in", "sleep_state", ["draining", "hibernating", "waking", "wake_failed"])).toBe(true);
+    expect(hasOp(stuck, "lte", "sleep_tier_changed_at", iso(6 * MIN))).toBe(true);
+    expect(hasOp(awake, "eq", "sleep_state", "awake")).toBe(true);
+    expect(hasOp(awake, "gte", "sleep_tier_changed_at", iso(60 * MIN))).toBe(true);
+    expect(hasOp(awake, "lte", "sleep_tier_changed_at", iso(5 * MIN))).toBe(true);
+    expect(hasOp(asleep, "in", "sleep_state", ["napping", "hibernated"])).toBe(true);
+    expect(hasOp(asleep, "lte", "sleep_tier_changed_at", iso(10 * MIN))).toBe(true);
+  });
+
+  it("corrects an awake record whose computer is paused, and wakes it, even in off mode", async () => {
+    setDrift({ awake: [record(1)] });
+    mockRunScript.mockResolvedValue(stateLine("napping"));
+    const summary = await run({ HIVRA_SLEEP_MODE: "off" });
+    expect(mockReconcileState).toHaveBeenCalledWith({ agentId: id(1), expectedGeneration: 3, to: "napping" });
+    expect(mockEnsure).toHaveBeenCalledWith(id(1), expect.objectContaining({ trigger: "reconcile" }));
+    expect(summary.drift).toEqual({ checked: 1, settled: 1, consistent: 0, left: 0, woke: 1 });
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "reconcile", reason: "awake_record_on_sleeping_computer" }));
+  });
+
+  it("corrects a napping record whose computer is hibernated, and a stuck transient record, without waking them", async () => {
+    setDrift({ asleep: [record(2, { sleep_state: "napping" })], stuck: [record(3, { sleep_state: "hibernating" })] });
+    mockRunScript.mockResolvedValue(stateLine("hibernated"));
+    const summary = await run();
+    expect(mockReconcileState).toHaveBeenCalledWith({ agentId: id(2), expectedGeneration: 3, to: "hibernated" });
+    expect(mockReconcileState).toHaveBeenCalledWith({ agentId: id(3), expectedGeneration: 3, to: "hibernated" });
+    expect(mockEnsure).not.toHaveBeenCalled();
+    expect(summary.drift).toMatchObject({ checked: 2, settled: 2, woke: 0 });
+  });
+
+  it("counts a record that already matches its host, and one it had to leave", async () => {
+    setDrift({ asleep: [record(4, { sleep_state: "napping" }), record(5, { sleep_state: "napping" })] });
+    mockRunScript.mockResolvedValueOnce(stateLine("napping")).mockResolvedValueOnce({ ok: false, stdout: "" });
+    const summary = await run();
+    expect(summary.drift).toMatchObject({ checked: 2, consistent: 1, left: 1, settled: 0 });
+    expect(mockReconcileState).not.toHaveBeenCalled();
+  });
+
+  it("checks stuck records first, at most six a run, each agent once, and not again inside the cool-down", async () => {
+    const stuck = [1, 2, 3].map((n) => record(n, { sleep_state: "waking" }));
+    const awake = [3, 4, 5].map((n) => record(n));
+    const asleep = [6, 7, 8].map((n) => record(n, { sleep_state: "hibernated" }));
+    setDrift({ stuck, awake, asleep });
+    mockRunScript.mockResolvedValue(stateLine("awake"));
+    const first = await run();
+    expect(first.drift.checked).toBe(6);
+    const checked = mockTarget.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(new Set(checked).size).toBe(6);
+    expect(checked.slice(0, 3).sort()).toEqual([id(1), id(2), id(3)]);
+    mockTarget.mockClear();
+    const second = await run();
+    // The six are cooling down; the two left over are checked now.
+    expect(second.drift.checked).toBe(2);
+    expect(mockTarget).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips a row that holds a lease or another operation: the lease step owns those", async () => {
+    setDrift({ stuck: [record(1, { operation_id: "op", operation_kind: "sleep", operation_started_at: iso(MIN) }), record(2, { operation_id: "op", operation_kind: "restart" })] });
+    const summary = await run();
+    expect(summary.drift.checked).toBe(0);
+    expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
+  it("carries on when a drift query fails, and counts the error", async () => {
+    setTables({});
+    const base = mockResolve.fn;
+    mockResolve.fn = (call) => (call.table === "hivra_agents" && hasOp(call, "select", "*") && hasOp(call, "is", "operation_id", null)
+      ? { data: null, error: { message: "x" } } : base(call));
+    const summary = await run();
+    expect(summary.errors).toBeGreaterThan(0);
+    expect(summary.drift.checked).toBe(0);
+  });
+
+  it("never writes agent status", async () => {
+    setDrift({ awake: [record(1)] });
+    mockRunScript.mockResolvedValue(stateLine("hibernated"));
+    await run();
+    const calls = mockReconcileState.mock.calls.map((c) => JSON.stringify(c[0]));
+    expect(calls.join("")).not.toMatch(/status/);
+  });
+});
+
 describe("steps 3 and 4: hibernate and nap", () => {
   const hosts = (over: Array<Record<string, unknown>> = [{ id: "local", sleep_mode: "canary" }]) => ({ data: hostsTable(over) });
   const rows = (ids: number[], host: string | null = null) => ids.map((n) => ({ id: id(n), proxmox_host: host }));
@@ -403,7 +528,7 @@ describe("steps 3 and 4: hibernate and nap", () => {
     setTables({ hosts: hosts(), hibernate: { data: rows([1]) } });
     mockSleep.mockResolvedValue(outcome({ state: "hibernated" }));
     const summary = await run();
-    const query = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "napping"))!;
+    const query = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
     expect(hasOp(query, "lte", "sleep_tier_changed_at", iso(900_000))).toBe(true);
     expect(hasOp(query, "is", "operation_id", null)).toBe(true);
     expect(hasOp(query, "eq", "always_on", false)).toBe(true);
@@ -414,22 +539,22 @@ describe("steps 3 and 4: hibernate and nap", () => {
   it("uses the hibernate window from the timings", async () => {
     setTables({ hosts: hosts(), hibernate: { data: [] } });
     await run();
-    const query = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "napping"))!;
+    const query = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
     expect(opsOf(query, "lte")[0][0]).toBe("sleep_tier_changed_at");
   });
 
   it("filters by policy in canary mode and not in on mode", async () => {
     setTables({ hosts: hosts() });
     await run({ HIVRA_SLEEP_MODE: "canary" });
-    const canaryNap = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "awake"))!;
-    const canaryHib = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "napping"))!;
+    const canaryNap = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
+    const canaryHib = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
     expect(hasOp(canaryNap, "in", "sleep_policy", ["t1", "full"])).toBe(true);
     expect(hasOp(canaryHib, "in", "sleep_policy", ["t3", "full"])).toBe(true);
 
     mockCalls.length = 0;
     await run({ HIVRA_SLEEP_MODE: "on" });
-    const onNap = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "awake"))!;
-    const onHib = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "napping"))!;
+    const onNap = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
+    const onHib = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
     expect(opsOf(onNap, "in").some((a) => a[0] === "sleep_policy")).toBe(false);
     expect(opsOf(onHib, "in").some((a) => a[0] === "sleep_policy")).toBe(false);
     // Always-on agents are never candidates, in either mode.
@@ -439,7 +564,7 @@ describe("steps 3 and 4: hibernate and nap", () => {
   it("builds the cheap nap prefilter from the database columns", async () => {
     setTables({ hosts: hosts() });
     await run();
-    const query = callsFor("hivra_agents").find((c) => hasOp(c, "eq", "sleep_state", "awake"))!;
+    const query = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
     for (const [op, ...args] of [
       ["eq", "status", "running"],
       ["eq", "desired_state", "running"],
@@ -780,6 +905,16 @@ describe("buildSleepStateHostScript", () => {
     it("reports a hibernate unit that is still running", () => {
       expect(exec(HIBERNATED, true).receipt).toMatchObject({ ok: true, observed: "hibernated", unitActive: true });
       expect(exec(AWAKE, true).calls).toContain(`systemctl is-active --quiet hivra-sleep-${VMID}`);
+    });
+
+    it("reports a sleep or wake script that still holds the computer's lock as still working", () => {
+      expect(exec(NAPPING).calls).toContain("flock -x -n 9");
+      const held = h.run(buildSleepStateHostScript({ vmid: VMID, bindingTag: TAG }), NAPPING, {
+        PATH: `${extraBin}:${h.dir}/bin:/usr/bin:/bin`,
+        STUB_FLOCK_BUSY: "1",
+      });
+      expect(parseSleepStateReceipt(held.stdout, VMID)).toMatchObject({ ok: true, observed: "napping", unitActive: true });
+      expect(held.state).toEqual(NAPPING);
     });
 
     it("refuses a computer with another binding tag", () => {

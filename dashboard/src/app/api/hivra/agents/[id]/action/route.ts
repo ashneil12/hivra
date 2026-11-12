@@ -102,6 +102,7 @@ import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import { lifecycleBusyResponse, lifecycleFailureResponse } from "@/lib/hivra/lifecycle-failure-reason";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 import { markAgentAwake, wakeForUserAction } from "@/lib/hivra/sleep-aware";
+import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
@@ -687,7 +688,41 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         desiredState,
         operationPayload,
       });
-      return claimed ? operationId : null;
+      if (!claimed) return null;
+      // The row was read before this lease: the sleep sweep may have napped the
+      // computer in between. Stop only needs the computer off, and its script handles a
+      // napping or hibernated one itself. Every other action needs it awake, so give the
+      // lease back untouched and ask the caller to try again once it is up.
+      if (operationKind !== "stop") {
+        const { data: live, error: liveError } = await supabaseAdmin
+          .from("hivra_agents")
+          .select("sleep_state")
+          .eq("id", agent.id)
+          .eq("user_id", userId)
+          .single();
+        // An unreadable row is not proof of sleep: the wake check above already passed, so go on.
+        if (!liveError && live && !isAgentAwake(live)) {
+          asleepAfterClaim = true;
+          await releaseHivraAgentOperation({
+            userId,
+            agentId: String(agent.id),
+            operationId,
+            error: "The computer fell asleep before this action started.",
+            markError: false,
+          }).catch(() => false);
+          return null;
+        }
+      }
+      return operationId;
+    };
+    // True when the last claim was given back because the computer had fallen asleep.
+    let asleepAfterClaim = false;
+    const claimRefusedResponse = () => {
+      if (asleepAfterClaim) {
+        return apiError("Your computer fell asleep just now. Try again in a few seconds.", 503, undefined, { code: "computer_asleep" });
+      }
+      const busy = lifecycleBusyResponse(agent);
+      return apiError(busy.message, 409, undefined, busy.extra);
     };
 
     const releaseProviderOperation = async (
@@ -1009,10 +1044,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         );
       }
       const operationId = await claimProviderOperation("start", "running");
-      if (!operationId) {
-        const busy = lifecycleBusyResponse(agent);
-        return apiError(busy.message, 409, undefined, busy.extra);
-      }
+      if (!operationId) return claimRefusedResponse();
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         `${startLifecyclePrelude}\n${startKickoff(operationId)}`,
@@ -1048,10 +1080,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
 
     if (action === "restart") {
       const operationId = await claimProviderOperation("restart", "running");
-      if (!operationId) {
-        const busy = lifecycleBusyResponse(agent);
-        return apiError(busy.message, 409, undefined, busy.extra);
-      }
+      if (!operationId) return claimRefusedResponse();
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         `${lifecyclePrelude}\n${verifiedStopVmBody(vmid, 40)}\nsleep 2\n${startKickoff(operationId)}`,
@@ -1194,10 +1223,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         : { data: null };
       const cpuunits = priorityToCpuUnits((pool as { priority?: number } | null)?.priority);
       const operationId = await claimProviderOperation("resize", "running", { cpu, ram, maximumCpu, maximumRam });
-      if (!operationId) {
-        const busy = lifecycleBusyResponse(agent);
-        return apiError(busy.message, 409, undefined, busy.extra);
-      }
+      if (!operationId) return claimRefusedResponse();
       const reductionOnly = Number.isFinite(currentRam)
         && ram <= currentRam
         && maximumRam <= currentMaximumRam

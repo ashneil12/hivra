@@ -44,10 +44,13 @@ jest.mock("@/lib/proxmox/wake-admission", () => ({
 const mockLapsed = jest.fn();
 jest.mock("../lapse-gate", () => ({ isStartBlockedForLapse: (...a: unknown[]) => mockLapsed(...a) }));
 
+const mockReconcile = jest.fn();
+jest.mock("../sleep-reconcile", () => ({ reconcileAgentSleep: (...a: unknown[]) => mockReconcile(...a) }));
+
 const mockSsrfFetch = jest.fn();
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: (...a: unknown[]) => mockSsrfFetch(...a) }));
 
-import { ensureHivraAgentAwake, pollPublicHealthz } from "../agent-wake";
+import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz } from "../agent-wake";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const VMID = 1234;
@@ -84,6 +87,13 @@ function wakeReceipt(over: Record<string, unknown> = {}) {
 }
 
 const fast = { pollIntervalMs: 1 };
+
+/** A sleep or wake that is moving the agent right now: a fresh lease. */
+const live = (state: string, kind: "sleep" | "wake" = "sleep") =>
+  row({ sleep_state: state, operation_id: "op-live", operation_kind: kind, operation_started_at: new Date().toISOString() });
+/** A sleep or wake whose holder is long gone. */
+const abandoned = (state: string, kind: "sleep" | "wake" = "sleep") =>
+  row({ sleep_state: state, operation_id: "op-old", operation_kind: kind, operation_started_at: new Date(Date.now() - 10 * 60_000).toISOString() });
 
 describe("ensureHivraAgentAwake", () => {
   beforeEach(() => {
@@ -261,18 +271,50 @@ describe("ensureHivraAgentAwake", () => {
 
   it("waits while the agent is draining, hibernating or waking, then returns awake", async () => {
     mockReadRow
-      .mockResolvedValueOnce({ data: row({ sleep_state: "draining" }), error: null })
-      .mockResolvedValueOnce({ data: row({ sleep_state: "draining" }), error: null })
-      .mockResolvedValueOnce({ data: row({ sleep_state: "waking" }), error: null })
+      .mockResolvedValueOnce({ data: live("draining"), error: null })
+      .mockResolvedValueOnce({ data: live("draining"), error: null })
+      .mockResolvedValueOnce({ data: live("waking", "wake"), error: null })
       .mockResolvedValue({ data: row({ sleep_state: "awake" }), error: null });
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 5000, ...fast })).resolves.toEqual({ state: "awake" });
     expect(mockClaim).not.toHaveBeenCalled();
   });
 
   it("returns waking when the wait runs out on a transient state", async () => {
-    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernating" }), error: null });
+    mockReadRow.mockResolvedValue({ data: live("hibernating"), error: null });
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20, ...fast })).resolves.toEqual({ state: "waking", reason: "still_settling" });
     expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it("settles a transient state nobody is working on from the host, instead of waiting for the sweep", async () => {
+    for (const stuck of [abandoned("hibernating"), abandoned("waking", "wake"), row({ sleep_state: "draining", operation_id: null })]) {
+      mockReconcile.mockReset();
+      mockReadRow
+        .mockResolvedValueOnce({ data: stuck, error: null })
+        .mockResolvedValueOnce({ data: stuck, error: null })
+        .mockResolvedValue({ data: row({ sleep_state: "awake" }), error: null });
+      mockReconcile.mockResolvedValue({ outcome: "settled", to: "awake", hostState: "awake", why: "stale_lease" });
+      await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 5000, ...fast })).resolves.toEqual({ state: "awake" });
+      expect(mockReconcile).toHaveBeenCalledTimes(1);
+      expect(mockReconcile.mock.calls[0][0]).toMatchObject({ id: AGENT_ID });
+    }
+  });
+
+  it("settles a stuck row only once per call, then falls back to waiting, and survives a reconcile that throws", async () => {
+    mockReadRow.mockResolvedValue({ data: abandoned("hibernating"), error: null });
+    mockReconcile.mockRejectedValue(new Error("boom"));
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 30, ...fast })).resolves.toEqual({ state: "waking", reason: "still_settling" });
+    expect(mockReconcile).toHaveBeenCalledTimes(1);
+    expect(mockClaim).not.toHaveBeenCalled();
+  });
+
+  it("claims a wake once the stuck row has been settled to napping", async () => {
+    mockReadRow
+      .mockResolvedValueOnce({ data: abandoned("draining"), error: null })
+      .mockResolvedValue({ data: row({ sleep_state: "napping" }), error: null });
+    mockReconcile.mockResolvedValue({ outcome: "settled", to: "napping", hostState: "napping", why: "stale_lease" });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 5000, ...fast })).resolves.toMatchObject({ state: "awake" });
+    expect(mockClaim).toHaveBeenCalledTimes(1);
   });
 
   it("waits out a busy claim, then claims once the agent settles", async () => {
@@ -332,5 +374,25 @@ describe("pollPublicHealthz", () => {
     const down = await pollPublicHealthz("a.example.test", { fetchImpl: jest.fn().mockResolvedValue({ status: 502 }), intervalMs: 5, budgetMs: 30 });
     expect(down.up).toBe(false);
     expect(down.attempts).toBeGreaterThan(1);
+  });
+});
+
+describe("isStuckTransient", () => {
+  const now = Date.UTC(2026, 10, 12, 12, 0, 0);
+  const lease = (state: string, ageMs: number, kind = "sleep") => ({
+    sleep_state: state, operation_id: "op", operation_kind: kind, operation_started_at: new Date(now - ageMs).toISOString(),
+  });
+  it("is true for a transient state with no lease, or a sleep or wake lease past the stale age", () => {
+    expect(isStuckTransient({ sleep_state: "draining", operation_id: null }, now)).toBe(true);
+    expect(isStuckTransient(lease("hibernating", 6 * 60_000), now)).toBe(true);
+    expect(isStuckTransient(lease("waking", 20 * 60_000, "wake"), now)).toBe(true);
+  });
+  it("is false for a fresh lease, another operation's lease, a settled state, or a row whose lease is not known", () => {
+    expect(isStuckTransient(lease("hibernating", 60_000), now)).toBe(false);
+    expect(isStuckTransient(lease("hibernating", 60 * 60_000, "restart"), now)).toBe(false);
+    expect(isStuckTransient({ sleep_state: "napping", operation_id: null }, now)).toBe(false);
+    expect(isStuckTransient({ sleep_state: "awake", operation_id: null }, now)).toBe(false);
+    expect(isStuckTransient({ sleep_state: "draining" }, now)).toBe(false);
+    expect(isStuckTransient(lease("draining", 0, "sleep"), now)).toBe(false);
   });
 });

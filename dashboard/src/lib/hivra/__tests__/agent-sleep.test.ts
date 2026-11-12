@@ -169,13 +169,15 @@ describe("sleepEligibility", () => {
     expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "on" }, okFacts, { serverMode: "on" }).eligible).toBe(true);
   });
 
-  it("lets a manual sleep skip the host switch on a canary server only", () => {
+  it("never lets a manual sleep skip the host switch, on any server mode", () => {
     const off = { status: "active", sleep_mode: "off" };
-    expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true, serverMode: "canary" }).eligible).toBe(true);
+    expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true, serverMode: "canary" }).reasons).toContain("host_sleep_mode_off");
     expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true, serverMode: "on" }).reasons).toContain("host_sleep_mode_off");
+    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "canary" }, okFacts, { manual: true, serverMode: "canary" }).eligible).toBe(true);
     expect(sleepEligibility(eligibleRow(), { status: "maintenance", sleep_mode: "off" }, okFacts, { manual: true, serverMode: "canary" }).reasons).toContain("host_maintenance");
     expect(sleepEligibility(eligibleRow({ always_on: true }), off, okFacts, { manual: true, serverMode: "canary" }).reasons).toContain("always_on");
   });
+
 
   it("asks for the agent's policy on canary and honours t1 and t3, but not in on mode or for a manual sleep", () => {
     const off = eligibleRow({ sleep_policy: "off" });
@@ -329,6 +331,14 @@ describe("sleepHivraAgent", () => {
     expect(result.outcome).toBe("slept");
     expect(String(mockRunScript.mock.calls.find((c) => String(c[0]).includes("HIVRA_SLEEP_RESULT"))![0])).toContain("MANUAL=1");
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ trigger: "manual", detail: expect.objectContaining({ manual: true }) }));
+  });
+
+  it("refuses a manual sleep end to end while the host switch is off", async () => {
+    mockHostRow.mockResolvedValue({ data: { status: "active", sleep_mode: "off" }, error: null });
+    const result = await run({ tier: "nap", trigger: "manual", manual: true });
+    expect(result).toMatchObject({ outcome: "ineligible", reason: "host_sleep_mode_off" });
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
   });
 
   it("finishes awake with an abort event when the script finds the agent busy", async () => {

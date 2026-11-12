@@ -2,38 +2,40 @@ import "server-only";
 
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { parseSleepMode, type SleepMode } from "./agent-sleep-policy";
-import { shellQuote, resolveHivraProxmoxHost } from "./proxmox-target";
-import {
-  finishAgentSleep,
-  finishAgentWake,
-  logAgentSleepEvent,
-  type AgentSleepFinishResult,
-  type AgentWakeFinishResult,
-} from "./agent-sleep-store";
-import { type ObservedSleepState } from "./agent-sleep-scripts";
+import { resolveHivraProxmoxHost } from "./proxmox-target";
 import {
   SCHEDULED_WAKE_LEAD_SECONDS,
   resolveSleepTimings,
   sleepHivraAgent,
   type SleepOutcome,
 } from "./agent-sleep";
-import {
-  ensureHivraAgentAwake,
-  pollPublicHealthz,
-  resolveSleepTarget,
-  type AgentRow,
-  type EnsureAwakeResult,
-} from "./agent-wake";
+import { ensureHivraAgentAwake, type AgentRow, type EnsureAwakeResult } from "./agent-wake";
+import { STALE_LEASE_MS, reconcileAgentSleep, sleepLeaseKind } from "./sleep-reconcile";
+
+// The host state script, its parser and the lease rules live in sleep-reconcile.ts; they
+// are re-exported here because this is where the sweep's callers and tests look for them.
+export {
+  SLEEP_STATE_PREFIX,
+  STALE_LEASE_MS,
+  buildSleepStateHostScript,
+  leaselessReconcileTarget,
+  parseSleepStateReceipt,
+  staleLeaseResult,
+  type SleepStateReceipt,
+} from "./sleep-reconcile";
 
 /**
  * The sleep sweep: the cron that puts idle agents to sleep and keeps the sleep
  * machinery honest. Every minute, in this order and inside one time budget:
  *
  *   1. Scheduled wakes: an agent whose next job is close is woken ahead of it.
- *   2. Stale lease recovery: a sleep or wake lease older than 10 minutes is
- *      finished to the state the host reports.
+ *   2. Stale lease recovery: a sleep or wake lease older than six minutes is
+ *      finished to the state the host reports. Then record drift: agents whose
+ *      sleep record is not awake without a lease, and awake agents that changed
+ *      sleep state lately, are checked against the host and the record is set
+ *      to what the host shows (an awake record on a paused or hibernated
+ *      computer is corrected and the agent is woken).
  *   3. Hibernate: agents that have napped long enough save their memory to disk.
  *   4. Nap: awake agents that pass the cheap database prefilter go to
  *      sleepHivraAgent, and its live idle probe makes the real decision.
@@ -62,20 +64,26 @@ const WAKE_CONCURRENCY = 4;
 /** A wake that failed is retried by the schedule only after this long. */
 const WAKE_RETRY_BACKOFF_MS = 5 * 60_000;
 
-/**
- * A sleep or wake lease older than this is settled from the host. Longer than the
- * slowest legitimate hold (a hibernate script is allowed 280 s, plus its probe),
- * short enough that an agent whose caller died is not stuck for long.
- */
-export const STALE_LEASE_MS = 6 * 60_000;
 const LEASE_MAX_PER_RUN = 10;
 /** More rows are read than settled, so leases that are left in place do not block the rest. */
 const LEASE_SCAN_LIMIT = 40;
 /** A lease the sweep had to leave is not looked at again for this long (best effort, per server instance). */
 const LEASE_LEFT_COOLDOWN_MS = 5 * 60_000;
 const LEASE_CONCURRENCY = 3;
-const STATE_SCRIPT_TIMEOUT_MS = 30_000;
-const LEASE_HEALTHZ_BUDGET_MS = 6_000;
+
+/** Record drift: how many agents are checked against their host per run, and how many at once. */
+const DRIFT_MAX_PER_RUN = 6;
+const DRIFT_CONCURRENCY = 3;
+const DRIFT_SCAN_LIMIT = 60;
+/** A transient or failed record with no lease is checked once it has sat this long (the lease age limit). */
+const DRIFT_STUCK_AFTER_MS = STALE_LEASE_MS;
+/** An asleep record is checked only after it has been that way this long. */
+const DRIFT_ASLEEP_AFTER_MS = 10 * 60_000;
+/** An awake record is checked when its sleep state changed lately, but not while that change may still be settling. */
+const DRIFT_AWAKE_RECENT_MS = 60 * 60_000;
+const DRIFT_AWAKE_SETTLE_MS = 5 * 60_000;
+/** An agent that was checked is not checked again for this long (best effort, per server instance). */
+const DRIFT_COOLDOWN_MS = 15 * 60_000;
 
 /** Work per host per run: hibernates and naps together. */
 export const HOST_WORK_CAP = 3;
@@ -103,128 +111,12 @@ const CHEAP_SKIPS = new Set([
 
 const cooldowns = new Map<string, number>();
 const leaseCooldowns = new Map<string, number>();
+const driftCooldowns = new Map<string, number>();
 /** Test support: forgets which agents were found busy. */
 export function resetSleepSweepCooldowns(): void {
   cooldowns.clear();
   leaseCooldowns.clear();
-}
-
-// ---------------------------------------------------------------------------
-// Host state script (read only)
-// ---------------------------------------------------------------------------
-
-export const SLEEP_STATE_PREFIX = "HIVRA_SLEEP_STATE ";
-const OBSERVED: readonly ObservedSleepState[] = ["awake", "napping", "hibernated", "cold", "unknown"];
-
-/**
- * Reads where a computer is in its sleep, and whether a hibernate unit is still
- * running for it. Changes nothing. Starts like the other lifecycle scripts: the
- * exact binding tag is required (a missing tag refuses), `set -euo pipefail`,
- * every value quoted, and `qm` under `timeout`. Prints one HIVRA_SLEEP_STATE line.
- */
-export function buildSleepStateHostScript(target: { vmid: number; bindingTag: string | null }): string {
-  if (!Number.isSafeInteger(target.vmid) || target.vmid < 100 || target.vmid > 999_999_999) {
-    throw new Error("Invalid sleep state script VMID.");
-  }
-  if (typeof target.bindingTag !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(target.bindingTag)) {
-    throw new Error("Sleep state script needs the computer's exact binding tag.");
-  }
-  return `set -euo pipefail
-VMID=${target.vmid}
-EXPECTED_BINDING_TAG=${shellQuote(target.bindingTag)}
-# The host script itself arrives on stdin, so no command may read it.
-qm() { command timeout -k 5 25 qm "$@" </dev/null; }
-emit() { printf '${SLEEP_STATE_PREFIX}{"ok":%s,"vmid":%s,"observed":"%s","reason":"%s","unit_active":%s}\\n' "$1" "$VMID" "$2" "$3" "$4"; exit 0; }
-[ -n "$EXPECTED_BINDING_TAG" ] || emit false unknown binding_missing false
-CONFIG="$(qm config "$VMID" 2>/dev/null)" || emit false unknown unreachable false
-printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
-  || emit false unknown binding_mismatch false
-UNIT=false
-if systemctl is-active --quiet "hivra-sleep-$VMID" 2>/dev/null; then UNIT=true; fi
-STATUS="$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" || emit false unknown unreachable "$UNIT"
-QMP="$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" {print $2; exit}')" || emit false unknown unreachable "$UNIT"
-LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
-case "$STATUS/\${QMP:-none}/\${LOCK:-none}" in
-  running/running/none) emit true awake observed "$UNIT" ;;
-  running/paused/none) emit true napping observed "$UNIT" ;;
-  stopped/*/suspended) emit true hibernated observed "$UNIT" ;;
-  stopped/*/none) emit true cold observed "$UNIT" ;;
-  *) emit false unknown unexpected_state "$UNIT" ;;
-esac
-`;
-}
-
-export interface SleepStateReceipt {
-  ok: boolean;
-  vmid: number;
-  observed: ObservedSleepState;
-  reason: string;
-  unitActive: boolean;
-}
-
-/** Strict read of the state script's one line. Anything else is null, and null means unknown. */
-export function parseSleepStateReceipt(stdout: string, expectedVmid?: number): SleepStateReceipt | null {
-  if (typeof stdout !== "string") return null;
-  const lines = stdout
-    .split("\n")
-    .map((line) => line.replace(/\r$/, ""))
-    .filter((line) => line.startsWith(SLEEP_STATE_PREFIX));
-  if (lines.length !== 1) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(lines[0].slice(SLEEP_STATE_PREFIX.length));
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  if (
-    typeof row.ok !== "boolean" ||
-    !Number.isSafeInteger(row.vmid) ||
-    (row.vmid as number) < 100 ||
-    (expectedVmid !== undefined && row.vmid !== expectedVmid) ||
-    typeof row.observed !== "string" ||
-    !OBSERVED.includes(row.observed as ObservedSleepState) ||
-    typeof row.reason !== "string" ||
-    !/^[a-z_]{1,40}$/.test(row.reason) ||
-    typeof row.unit_active !== "boolean"
-  ) {
-    return null;
-  }
-  // A readable state is a success; an unreadable one says so.
-  if (row.ok === (row.observed === "unknown")) return null;
-  return {
-    ok: row.ok,
-    vmid: row.vmid as number,
-    observed: row.observed as ObservedSleepState,
-    reason: row.reason,
-    unitActive: row.unit_active,
-  };
-}
-
-/**
- * The state a stale lease is finished to, or null to leave it. Pure.
- *
- * A sleep lease follows the host: paused is napping, saved to disk is
- * hibernated, running is awake. A computer that is off is not asleep, so that
- * is awake too (the normal start path owns it). A wake lease that is not
- * finished is a failed wake, except when the computer is up and answering.
- * Unknown is never settled.
- */
-export function staleLeaseResult(
-  kind: "sleep" | "wake",
-  observed: ObservedSleepState,
-  healthzUp: boolean,
-): AgentSleepFinishResult | AgentWakeFinishResult | null {
-  if (observed === "unknown") return null;
-  if (kind === "sleep") {
-    if (observed === "napping") return "napping";
-    if (observed === "hibernated") return "hibernated";
-    return "awake";
-  }
-  if (observed === "cold") return "awake";
-  if (observed === "awake") return healthzUp ? "awake" : "wake_failed";
-  return "wake_failed";
+  driftCooldowns.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +140,8 @@ export interface SleepIdleSweepSummary {
   reason?: string;
   wakes: { due: number; awake: number; waking: number; failed: number; cold: number };
   leases: { stale: number; settled: number; left: number };
+  /** Agents checked against their host for record drift, and what came of it. */
+  drift: { checked: number; settled: number; consistent: number; left: number; woke: number };
   hibernate: SweepStepCounts;
   nap: SweepStepCounts;
   timedOut: boolean;
@@ -265,6 +159,7 @@ function emptySummary(mode: SleepMode): SleepIdleSweepSummary {
     skipped: false,
     wakes: { due: 0, awake: 0, waking: 0, failed: 0, cold: 0 },
     leases: { stale: 0, settled: 0, left: 0 },
+    drift: { checked: 0, settled: 0, consistent: 0, left: 0, woke: 0 },
     hibernate: emptyCounts(),
     nap: emptyCounts(),
     timedOut: false,
@@ -424,64 +319,9 @@ async function runScheduledWakes(ctx: Context): Promise<void> {
 
 async function settleStaleLease(ctx: Context, row: AgentRow): Promise<void> {
   const { summary } = ctx;
-  const agentId = String(row.id);
-  const operationId = String(row.operation_id);
-  const kind = row.operation_kind === "wake" ? "wake" : "sleep";
-  const leave = (why: string, extra: Record<string, unknown> = {}) => {
-    summary.leases.left += 1;
-    log.warn("stale sleep lease left in place", {
-      source: LOG_SOURCE,
-      failureType: "sleep_sweep_lease_left",
-      instanceId: agentId,
-      kind,
-      why,
-      ...extra,
-    });
-  };
-
-  const resolved = await resolveSleepTarget(row, LOG_SOURCE);
-  if (!resolved.ok) return leave(`target_${resolved.code}`);
-  const target = resolved.target;
-  if (!target.bindingTag) return leave("binding_not_enforced");
-
-  const run = await runProxmoxHostScript(
-    buildSleepStateHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }),
-    target.env,
-    { timeoutMs: STATE_SCRIPT_TIMEOUT_MS },
-  );
-  const receipt = parseSleepStateReceipt(run?.stdout ?? "", target.vmid);
-  if (!receipt) return leave("state_unreadable");
-  // A hibernate that is still running on the host is not stale, only slow.
-  if (receipt.unitActive) return leave("unit_active");
-  if (!receipt.ok) return leave(receipt.reason);
-
-  let healthzUp = false;
-  if (kind === "wake" && receipt.observed === "awake") {
-    healthzUp = (await pollPublicHealthz(row.cf_hostname, { budgetMs: LEASE_HEALTHZ_BUDGET_MS })).up;
-  }
-  const result = staleLeaseResult(kind, receipt.observed, healthzUp);
-  if (!result) return leave("state_unknown");
-
-  const finished =
-    kind === "sleep"
-      ? await finishAgentSleep({ agentId, operationId, result: result as AgentSleepFinishResult })
-      : await finishAgentWake({ agentId, operationId, result: result as AgentWakeFinishResult });
-  if (!finished) return leave("finish_not_recorded");
-
-  summary.leases.settled += 1;
-  const startedAt = Date.parse(String(row.operation_started_at));
-  await logAgentSleepEvent({
-    agentId,
-    kind: "reconcile",
-    trigger: "reconcile",
-    fromState: String(row.sleep_state ?? ""),
-    toState: result,
-    reason: `stale_${kind}_lease`,
-    detail: {
-      host_state: receipt.observed,
-      age_s: Number.isFinite(startedAt) ? Math.round((ctx.now() - startedAt) / 1000) : null,
-    },
-  });
+  const outcome = await reconcileAgentSleep(row, { now: ctx.now });
+  if (outcome.outcome === "settled") summary.leases.settled += 1;
+  else summary.leases.left += 1;
 }
 
 async function recoverStaleLeases(ctx: Context): Promise<void> {
@@ -520,6 +360,106 @@ async function recoverStaleLeases(ctx: Context): Promise<void> {
     // One that was left (unit still running, host unreadable) steps aside so the next ones get their turn.
     if (summary.leases.left > leftBefore) leaseCooldowns.set(String(row.operation_id), ctx.now() + LEASE_LEFT_COOLDOWN_MS);
   });
+}
+
+// --- Step 2b: record drift ----------------------------------------------------
+
+/** One drift query: agents with no operation in flight, selected whole so the reconcile can read the row. */
+function driftQuery(ctx: Context) {
+  return ctx.db
+    .from("hivra_agents")
+    .select("*")
+    .eq("status", "running")
+    .eq("desired_state", "running")
+    .is("operation_id", null)
+    .eq("deployment_mode", "hivra-managed")
+    .eq("computer_substrate", "proxmox-kvm");
+}
+
+async function loadDriftCandidates(ctx: Context): Promise<AgentRow[]> {
+  const nowMs = ctx.now();
+  const iso = (msAgo: number) => new Date(nowMs - msAgo).toISOString();
+  const stuck = await driftQuery(ctx)
+    .in("sleep_state", ["draining", "hibernating", "waking", "wake_failed"])
+    .lte("sleep_tier_changed_at", iso(DRIFT_STUCK_AFTER_MS))
+    .order("sleep_tier_changed_at", { ascending: true })
+    .limit(DRIFT_SCAN_LIMIT);
+  if (stuck.error) fail(ctx, "failed to load stuck sleep records", stuck.error, "sleep_sweep_drift_stuck_query_failed");
+  const awake = await driftQuery(ctx)
+    .eq("sleep_state", "awake")
+    .gte("sleep_tier_changed_at", iso(DRIFT_AWAKE_RECENT_MS))
+    .lte("sleep_tier_changed_at", iso(DRIFT_AWAKE_SETTLE_MS))
+    .order("sleep_tier_changed_at", { ascending: false })
+    .limit(DRIFT_SCAN_LIMIT);
+  if (awake.error) fail(ctx, "failed to load recent awake records", awake.error, "sleep_sweep_drift_awake_query_failed");
+  const asleep = await driftQuery(ctx)
+    .in("sleep_state", ["napping", "hibernated"])
+    .lte("sleep_tier_changed_at", iso(DRIFT_ASLEEP_AFTER_MS))
+    .order("sleep_tier_changed_at", { ascending: true })
+    .limit(DRIFT_SCAN_LIMIT);
+  if (asleep.error) fail(ctx, "failed to load asleep records", asleep.error, "sleep_sweep_drift_asleep_query_failed");
+
+  // Stuck records first, then awake ones that changed lately, then a rotating look at the sleepers.
+  const ordered = [
+    ...((stuck.data ?? []) as AgentRow[]),
+    ...((awake.data ?? []) as AgentRow[]),
+    ...shuffle((asleep.data ?? []) as AgentRow[]),
+  ];
+  const seen = new Set<string>();
+  const out: AgentRow[] = [];
+  for (const row of ordered) {
+    const id = String(row.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    // A row that holds a lease is the lease step's, and one with another operation is not ours.
+    if (row.operation_id != null || sleepLeaseKind(row)) continue;
+    if ((driftCooldowns.get(id) ?? 0) > nowMs) continue;
+    out.push(row);
+    if (out.length >= DRIFT_MAX_PER_RUN) break;
+  }
+  return out;
+}
+
+async function reconcileDrift(ctx: Context): Promise<void> {
+  const { summary } = ctx;
+  const rows = await loadDriftCandidates(ctx);
+  if (rows.length === 0) return;
+  const background: Promise<unknown>[] = [];
+  await pool(rows, DRIFT_CONCURRENCY, async (row) => {
+    if (remaining(ctx) < 8_000) return;
+    const id = String(row.id);
+    driftCooldowns.set(id, ctx.now() + DRIFT_COOLDOWN_MS);
+    summary.drift.checked += 1;
+    try {
+      const done = await untilDeadline(
+        ctx,
+        reconcileAgentSleep(row, { now: ctx.now, onBackground: (work) => background.push(work) }),
+      );
+      if (done.timedOut) {
+        summary.drift.left += 1;
+        return;
+      }
+      const outcome = done.value;
+      if (outcome.outcome === "settled") {
+        summary.drift.settled += 1;
+        if (outcome.woke) summary.drift.woke += 1;
+        log.warn("sleep record was out of line with its host and was corrected", {
+          source: LOG_SOURCE,
+          failureType: "sleep_sweep_drift_corrected",
+          instanceId: id,
+          from: String(row.sleep_state ?? "awake"),
+          to: outcome.to,
+          hostState: outcome.hostState,
+          why: outcome.why,
+        });
+      } else if (outcome.outcome === "consistent") summary.drift.consistent += 1;
+      else summary.drift.left += 1;
+    } catch (error) {
+      summary.drift.left += 1;
+      fail(ctx, "sleep drift reconcile threw", error, "sleep_sweep_drift_threw");
+    }
+  });
+  if (background.length > 0) await untilDeadline(ctx, Promise.allSettled(background));
 }
 
 // --- Steps 3 and 4: hibernate and nap -----------------------------------------
@@ -823,6 +763,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
   const steps: Array<[string, (c: Context) => Promise<void>]> = [
     ["scheduled wakes", runScheduledWakes],
     ["stale lease recovery", recoverStaleLeases],
+    ["record drift", reconcileDrift],
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
   ];
   for (const [name, step] of steps) {
@@ -843,13 +784,14 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     summary.reason = mode === "off" ? "sleep_mode_off" : "observe_mode_only";
   }
   const acted =
-    summary.wakes.due + summary.leases.stale + summary.hibernate.attempted + summary.nap.attempted > 0;
+    summary.wakes.due + summary.leases.stale + summary.drift.checked + summary.hibernate.attempted + summary.nap.attempted > 0;
   if (acted) {
     log.info("sleep sweep finished", {
       source: LOG_SOURCE,
       mode,
       wakes: summary.wakes,
       leases: summary.leases,
+      drift: summary.drift,
       hibernate: summary.hibernate,
       nap: summary.nap,
       timedOut: summary.timedOut,

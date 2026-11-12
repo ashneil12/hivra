@@ -1,7 +1,8 @@
 // Wake a sleeping agent. The owner's agent page calls this when it opens a
 // computer that is napping or hibernated, and the chat calls it again if a
 // send fails. It waits up to 45 seconds for the wake: 200 when the agent is up,
-// 202 while it is still waking (ask again), and an error when it cannot be woken.
+// 202 while it is still waking (ask again), 409 when the computer is switched off
+// (it has to be started, not woken), and an error when it cannot be woken.
 
 export const runtime = "nodejs";
 // The wake itself can take a restore (up to 120 s) plus the public health check (30 s), and
@@ -52,7 +53,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       onBackground: (work) => after(() => work),
     });
 
-    if (result.state === "awake" || result.state === "cold") {
+    if (result.state === "cold") {
+      // The computer is off with nothing saved, so there is nothing to wake. Saying "awake"
+      // here would send the page to a tunnel that is down; the normal Start action owns this.
+      return apiError("Your computer is switched off. Start it from its power controls.", 409, undefined, {
+        code: "not_running",
+        state: "cold",
+      });
+    }
+    if (result.state === "awake") {
       const response = apiSuccess({ state: result.state, ...(result.wakeMs !== undefined ? { wakeMs: result.wakeMs } : {}) });
       response.headers.set("Cache-Control", "no-store");
       return response;

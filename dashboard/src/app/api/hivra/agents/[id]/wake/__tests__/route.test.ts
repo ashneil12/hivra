@@ -5,6 +5,7 @@ const mockRateLimit = jest.fn();
 const mockMaybeSingle = jest.fn();
 const mockEnsure = jest.fn();
 const mockAfter = jest.fn();
+const mockEq = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
 jest.mock("next/server", () => ({ ...jest.requireActual("next/server"), after: (...a: unknown[]) => mockAfter(...a) }));
@@ -16,7 +17,8 @@ jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: () => {
       const q: Record<string, unknown> = {};
-      for (const m of ["select", "eq"]) q[m] = () => q;
+      q.select = () => q;
+      q.eq = (...args: unknown[]) => { mockEq(...args); return q; };
       q.maybeSingle = () => mockMaybeSingle();
       return q;
     },
@@ -97,10 +99,22 @@ describe("POST /api/hivra/agents/[id]/wake", () => {
     expect((await failed.json()).state).toBe("failed");
   });
 
-  it("answers 200 cold when the computer is off and nothing was saved", async () => {
+  it("never reports a switched off computer as awake: it answers 409 not_running", async () => {
     mockEnsure.mockResolvedValueOnce({ state: "cold", reason: "cold" });
     const response = await POST(request(), params);
-    expect(response.status).toBe(200);
-    expect((await response.json()).data.state).toBe("cold");
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toMatchObject({ success: false, code: "not_running", state: "cold" });
+    expect(body.error).toMatch(/switched off/i);
+  });
+
+  it("looks the agent up by id and signed-in owner before it wakes anything", async () => {
+    expect((await POST(request(), params)).status).toBe(200);
+    expect(mockEq).toHaveBeenCalledWith("id", ID);
+    expect(mockEq).toHaveBeenCalledWith("user_id", "user-1");
+    mockMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    mockEnsure.mockClear();
+    expect((await POST(request(), params)).status).toBe(404);
+    expect(mockEnsure).not.toHaveBeenCalled();
   });
 });

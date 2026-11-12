@@ -8,6 +8,7 @@ import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
 import { acquireHostWakeSlot, normalizeWakeRamMb, releaseHostWakeSlot } from "@/lib/proxmox/wake-admission";
 import { resolveHivraLifecycleTarget, type HivraLifecycleTarget } from "./agent-lifecycle-host";
+import { STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { isStartBlockedForLapse } from "./lapse-gate";
 import {
   claimAgentWake,
@@ -51,6 +52,19 @@ const DEFAULT_POLL_MS = 1_000;
 const TRANSIENT_STATES: readonly string[] = ["draining", "hibernating", "waking"];
 
 const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i;
+
+/**
+ * Whether a row in a transient sleep state has no one working on it: no lease at all (a
+ * delete finished the lease and left the state), or a sleep or wake lease that has outlived
+ * any legitimate hold. Such a row never settles by itself, so waiting on it is pointless.
+ */
+export function isStuckTransient(row: AgentRow, nowMs: number): boolean {
+  if (!TRANSIENT_STATES.includes(String(row.sleep_state))) return false;
+  if (row.operation_id === null) return true;
+  if (row.operation_kind !== "sleep" && row.operation_kind !== "wake") return false;
+  const startedAt = Date.parse(String(row.operation_started_at));
+  return Number.isFinite(startedAt) && nowMs - startedAt >= STALE_SLEEP_LEASE_MS;
+}
 
 export type EnsureAwakeState = "awake" | "waking" | "failed" | "cold";
 
@@ -352,11 +366,24 @@ export async function ensureHivraAgentAwake(
   }
 
   let operationId = "";
+  let settledStuck = false;
   for (;;) {
     if (!row) return { state: "failed", reason: "agent_unreadable" };
     if (isAgentAwake(row)) return { state: "awake" };
 
     if (TRANSIENT_STATES.includes(String(row.sleep_state))) {
+      if (!settledStuck && isStuckTransient(row, Date.now())) {
+        // Nobody is working on this row: settle it from the host now rather than waiting for the sweep.
+        settledStuck = true;
+        try {
+          const { reconcileAgentSleep } = await import("./sleep-reconcile");
+          await reconcileAgentSleep(row);
+        } catch {
+          // The sweep settles it; this call falls through to the wait below.
+        }
+        row = await tryReadRow(agentId);
+        continue;
+      }
       if (Date.now() >= deadline) return { state: "waking", reason: "still_settling" };
       await delay(pollMs);
       row = await tryReadRow(agentId);

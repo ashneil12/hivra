@@ -154,6 +154,46 @@ export async function finishAgentWake(input: {
   }
 }
 
+export type AgentSleepReconcileTarget = "awake" | "napping" | "hibernated" | "wake_failed";
+
+/**
+ * Records what the host shows for an agent that holds no sleep or wake lease:
+ * one UPDATE that applies only while the agent is still as the caller read it
+ * (same generation, no operation, running and not being deleted). It bumps the
+ * generation, so a sleep or wake that started meanwhile wins. Returns true when
+ * the row changed. Never touches status.
+ */
+export async function reconcileAgentSleepState(input: {
+  agentId: string;
+  expectedGeneration: number;
+  to: AgentSleepReconcileTarget;
+}): Promise<boolean> {
+  if (!supabaseAdmin) return false;
+  if (!Number.isSafeInteger(input.expectedGeneration) || input.expectedGeneration < 0) return false;
+  try {
+    const patch: Record<string, unknown> = {
+      sleep_state: input.to,
+      sleep_generation: input.expectedGeneration + 1,
+      sleep_tier_changed_at: new Date().toISOString(),
+    };
+    if (input.to === "awake") patch.next_wake_at = null;
+    const { data, error } = await supabaseAdmin
+      .from("hivra_agents")
+      .update(patch)
+      .eq("id", input.agentId)
+      .eq("sleep_generation", input.expectedGeneration)
+      .eq("status", "running")
+      .eq("desired_state", "running")
+      .is("operation_id", null)
+      .select("id");
+    if (error) throw new Error("database_error");
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    warn("sleep record could not be reconciled", input.agentId, "sleep_reconcile_failed");
+    return false;
+  }
+}
+
 function safeInteger(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return Math.max(0, Math.min(2_147_483_647, Math.round(value)));

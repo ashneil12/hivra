@@ -2,7 +2,17 @@
 
 const mockRpc = jest.fn();
 const mockInsert = jest.fn();
-const mockFrom = jest.fn(() => ({ insert: (...args: unknown[]) => mockInsert(...args) }));
+const mockUpdate = jest.fn();
+const mockUpdateFilters: Array<[string, ...unknown[]]> = [];
+const mockUpdateResult: { value: unknown } = { value: { data: [{ id: "x" }], error: null } };
+const mockFrom = jest.fn(() => {
+  const chain: Record<string, unknown> = {};
+  chain.insert = (...args: unknown[]) => mockInsert(...args);
+  chain.update = (patch: unknown) => { mockUpdate(patch); return chain; };
+  for (const op of ["eq", "is"]) chain[op] = (...args: unknown[]) => { mockUpdateFilters.push([op, ...args]); return chain; };
+  chain.select = () => Promise.resolve(mockUpdateResult.value);
+  return chain;
+});
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { rpc: (...args: unknown[]) => mockRpc(...args), from: (...args: unknown[]) => (mockFrom as (...a: unknown[]) => unknown)(...args) },
 }));
@@ -16,6 +26,7 @@ import {
   isAgentAwake,
   logAgentSleepEvent,
   parseSleepGeneration,
+  reconcileAgentSleepState,
 } from "../agent-sleep-store";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
@@ -134,6 +145,47 @@ describe("agent sleep store", () => {
       await expect(logAgentSleepEvent({ agentId, kind: "fail", trigger: "open" })).resolves.toBe(false);
       mockInsert.mockRejectedValueOnce(new Error("network"));
       await expect(logAgentSleepEvent({ agentId, kind: "fail", trigger: "open" })).resolves.toBe(false);
+    });
+  });
+
+  describe("reconcileAgentSleepState", () => {
+    beforeEach(() => {
+      mockUpdate.mockReset();
+      mockUpdateFilters.length = 0;
+      mockUpdateResult.value = { data: [{ id: agentId }], error: null };
+    });
+
+    it("applies only while the agent is still as it was read, and bumps the generation", async () => {
+      await expect(reconcileAgentSleepState({ agentId, expectedGeneration: 7, to: "napping" })).resolves.toBe(true);
+      expect(mockFrom).toHaveBeenCalledWith("hivra_agents");
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ sleep_state: "napping", sleep_generation: 8, sleep_tier_changed_at: expect.any(String) }));
+      expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("next_wake_at");
+      expect(mockUpdateFilters).toEqual(expect.arrayContaining([
+        ["eq", "id", agentId],
+        ["eq", "sleep_generation", 7],
+        ["eq", "status", "running"],
+        ["eq", "desired_state", "running"],
+        ["is", "operation_id", null],
+      ]));
+    });
+
+    it("never writes status, and clears the scheduled wake only when the result is awake", async () => {
+      await reconcileAgentSleepState({ agentId, expectedGeneration: 1, to: "awake" });
+      const patch = mockUpdate.mock.calls[0][0] as Record<string, unknown>;
+      expect(patch).toMatchObject({ sleep_state: "awake", next_wake_at: null });
+      expect(patch).not.toHaveProperty("status");
+      expect(patch).not.toHaveProperty("error");
+    });
+
+    it("is false when the compare and set matched nothing, the database errors, or the generation is unusable", async () => {
+      mockUpdateResult.value = { data: [], error: null };
+      await expect(reconcileAgentSleepState({ agentId, expectedGeneration: 1, to: "hibernated" })).resolves.toBe(false);
+      mockUpdateResult.value = { data: null, error: { code: "x" } };
+      await expect(reconcileAgentSleepState({ agentId, expectedGeneration: 1, to: "hibernated" })).resolves.toBe(false);
+      mockUpdate.mockClear();
+      await expect(reconcileAgentSleepState({ agentId, expectedGeneration: -1, to: "awake" })).resolves.toBe(false);
+      await expect(reconcileAgentSleepState({ agentId, expectedGeneration: 1.5, to: "awake" })).resolves.toBe(false);
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
   });
 });

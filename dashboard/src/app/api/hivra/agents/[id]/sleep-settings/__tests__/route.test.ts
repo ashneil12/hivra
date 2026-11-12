@@ -117,4 +117,20 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     mockEnsure.mockRejectedValue(new Error("boom"));
     expect((await PATCH(request({ always_on: true }), params)).status).toBe(200);
   });
+
+  it("in on mode, switching Sleep when idle off wakes nothing (the policy does not decide who sleeps there), but Keep awake still does", async () => {
+    const before = process.env.HIVRA_SLEEP_MODE;
+    process.env.HIVRA_SLEEP_MODE = "on";
+    try {
+      mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: false, sleep_policy: "off" }, error: null });
+      expect((await PATCH(request({ sleep_policy: "off" }), params)).status).toBe(200);
+      expect(mockEnsure).not.toHaveBeenCalled();
+      mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "off" }, error: null });
+      await PATCH(request({ always_on: true }), params);
+      expect(mockEnsure).toHaveBeenCalledTimes(1);
+    } finally {
+      if (before === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = before;
+    }
+  });
 });

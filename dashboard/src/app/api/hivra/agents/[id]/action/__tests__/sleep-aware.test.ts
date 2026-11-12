@@ -154,7 +154,8 @@ describe("waking a sleeping computer before an action", () => {
   });
 
   it("goes ahead with Start for a computer that was off with nothing saved", async () => {
-    mockWake.mockResolvedValue({ ok: true, woke: true, cold: true });
+    // A cold wake finishes the sleep record as awake.
+    mockWake.mockImplementation(async () => { mockRow = { ...mockRow, sleep_state: "awake" }; return { ok: true, woke: true, cold: true }; });
     expect((await send({ action: "start" })).status).toBe(200);
     expect(mockRun).toHaveBeenCalled();
   });
@@ -168,5 +169,35 @@ describe("waking a sleeping computer before an action", () => {
     const forced = String(mockRun.mock.calls[1][0]);
     expect(forced).toContain("qm unlock");
     expect(forced).toContain("--delete vmstate,runningmachine,runningcpu");
+  });
+});
+
+describe("a computer that falls asleep between the wake check and the lease", () => {
+  /** The first read (the route's own) sees an awake computer; every later read sees it napping. */
+  function fallAsleepAfterFirstRead() {
+    let reads = 0;
+    mockSingle.mockImplementation(async () => {
+      reads += 1;
+      return { data: { ...asleep, sleep_state: reads === 1 ? "awake" : "napping" }, error: null };
+    });
+  }
+  const released = () => mockRpc.mock.calls.filter(([name]) => name === "release_hivra_agent_operation");
+
+  it.each(["start", "restart", "resize"])("%s gives the lease back untouched and asks to try again", async (action) => {
+    fallAsleepAfterFirstRead();
+    const response = await send({ action, cpu: 2, ram: 4 });
+    expect(response.status).toBe(503);
+    expect((await response.json()).code).toBe("computer_asleep");
+    expect(released()).toHaveLength(1);
+    expect(released()[0][1]).toMatchObject({ p_mark_error: false });
+    expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("lets Stop go ahead, because its script handles a napping or hibernated computer itself", async () => {
+    fallAsleepAfterFirstRead();
+    const response = await send({ action: "stop" });
+    expect(response.status).toBe(200);
+    expect(released()).toHaveLength(0);
+    expect(mockRun).toHaveBeenCalled();
   });
 });
