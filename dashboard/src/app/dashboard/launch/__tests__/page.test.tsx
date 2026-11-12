@@ -2140,7 +2140,7 @@ describe("LaunchPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server"));
     chooseTile("Ubuntu Desktop");
     const blocker = await screen.findByRole("alert");
-    expect(blocker).toHaveTextContent("Ubuntu Desktop on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.");
+    expect(blocker).toHaveTextContent("Ubuntu Desktop on Hivra Cloud needs a paid plan. Your free account works with your own server: connect one, or choose a plan. This needs a Proxmox VE server");
     // The blocker offers the plan the badge named, not a pricier one.
     const upgrade = within(blocker).getByRole("link", { name: "Upgrade to Pro" });
     const saved = storedDraftJson();

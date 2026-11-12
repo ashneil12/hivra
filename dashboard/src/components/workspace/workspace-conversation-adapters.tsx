@@ -106,7 +106,9 @@ function resolveHivraConversation(
     // than falling through to the "no conversation" notice.
     if (!boxUrl) return null;
     const origin = boxUrl.replace(/\/$/, "");
-    const mountPath = definition.id === "aeon" ? "/aeon/" : `/${definition.id}/`;
+    // DeepSeek Harness serves its own interface at the box root, as the agent
+    // page does; every other dashboard agent sits under its own name.
+    const mountPath = definition.id === "deepseek-harness" ? "/" : `/${definition.id}/`;
     return {
       uid,
       computer: projection.computer,
