@@ -2,8 +2,9 @@
 //
 // The fleet run: queue moves of old Hermes agents onto the official Hermes. The cron
 // (/api/cron/advance-hermes-moves) runs them a few at a time.
-//   POST  { instanceIds?: string[], all?: boolean, dryRun?: boolean }
-//   GET   every move with its state
+//   POST  { instanceIds?: string[], all?: boolean, dryRun?: boolean }   queue now
+//   POST  { wave: { enabled?: boolean, perDay?: number, resume?: true } } the automatic wave
+//   GET   every move with its state, and the wave
 import type { NextRequest } from "next/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
@@ -25,8 +26,9 @@ export async function POST(request: NextRequest) {
     if (!admin.ok) return apiError(admin.message, admin.status);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
 
-    const body = (await request.json().catch(() => null)) as { instanceIds?: unknown; all?: unknown; dryRun?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as { instanceIds?: unknown; all?: unknown; dryRun?: unknown; wave?: unknown } | null;
     if (!body || typeof body !== "object") return apiError("Send a JSON body.", 400);
+    if (body.wave !== undefined) return updateWave(body.wave, admin.actor);
     const all = body.all === true;
     const dryRun = body.dryRun === true;
     const ids = Array.isArray(body.instanceIds) ? body.instanceIds : [];
@@ -72,12 +74,41 @@ export async function POST(request: NextRequest) {
   }
 }
 
+async function updateWave(input: unknown, actor: unknown) {
+  if (!supabaseAdmin) return apiError("Database not configured", 500);
+  const w = (input && typeof input === "object" ? input : {}) as { enabled?: unknown; perDay?: unknown; resume?: unknown };
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { updated_at: now };
+  if (w.enabled !== undefined) {
+    if (typeof w.enabled !== "boolean") return apiError("wave.enabled must be true or false.", 400);
+    patch.enabled = w.enabled;
+  }
+  if (w.perDay !== undefined) {
+    if (!Number.isInteger(w.perDay) || (w.perDay as number) < 0 || (w.perDay as number) > 200) return apiError("wave.perDay must be a whole number from 0 to 200.", 400);
+    patch.per_day = w.perDay;
+  }
+  if (w.resume !== undefined) {
+    if (w.resume !== true) return apiError("wave.resume must be true.", 400);
+    // Failures before now no longer pause the wave; a later one pauses it again.
+    Object.assign(patch, { paused_at: null, paused_reason: null, resumed_at: now });
+  }
+  if (Object.keys(patch).length === 1) return apiError("Name wave.enabled, wave.perDay or wave.resume.", 400);
+  const { data, error } = await supabaseAdmin.from("hermes_move_wave").update(patch).eq("id", true).select("enabled, per_day, paused_at, paused_reason, resumed_at").maybeSingle();
+  if (error) return apiError("Failed to update the wave", 500);
+  log.info("hermes move wave changed by an operator", { source: "hermes-move", actor, change: Object.keys(patch).filter((k) => k !== "updated_at") });
+  return apiSuccess({ wave: data });
+}
+
 export async function GET() {
   try {
     const admin = await requireOpsAdmin();
     if (!admin.ok) return apiError(admin.message, admin.status);
     const moves = await createMoveDeps().store.listMoves(500);
+    const wave = supabaseAdmin
+      ? (await supabaseAdmin.from("hermes_move_wave").select("enabled, per_day, paused_at, paused_reason, resumed_at").eq("id", true).maybeSingle()).data
+      : null;
     return apiSuccess({
+      wave,
       moves: moves.map((m) => ({
         ...toMoveView(m),
         userId: m.user_id,

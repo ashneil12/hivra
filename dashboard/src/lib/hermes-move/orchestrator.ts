@@ -62,6 +62,8 @@ export function canMoveTransition(from: MoveState, to: MoveState): boolean {
 }
 
 export const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** The automatic wave emails the owner this long before it moves their agent (config.moveNoticeAt). */
+export const MOVE_NOTICE_MS = 24 * 60 * 60 * 1000;
 export const OLD_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
 
 const LEASE_MS = 2 * 60_000;
@@ -87,7 +89,7 @@ export interface MoveRow {
   counts_before: MoveCounts | null;
   counts_after: MoveCounts | null;
   managed_model: boolean | null;
-  initiated_by: "owner" | "operator";
+  initiated_by: MoveInitiator;
   error: string | null;
   failure: { failureType: string; reason: string; technical: string; setupLog?: string } | null;
   lease_until: string | null;
@@ -101,6 +103,8 @@ export interface MoveRow {
 }
 
 export type MovePatch = Partial<Omit<MoveRow, "id" | "user_id" | "instance_id">>;
+/** owner: the old button (gone); operator: one agent queued by hand; auto: the wave. */
+export type MoveInitiator = "owner" | "operator" | "auto";
 
 export interface InstanceRow {
   id: string;
@@ -126,7 +130,7 @@ export interface AgentRow {
 export interface CommandResult { ok: boolean; stdout: string; stderr: string; error?: string }
 
 export interface MoveStore {
-  insertMove(row: { user_id: string; instance_id: string; initiated_by: "owner" | "operator"; key_encrypted: string }): Promise<MoveRow>;
+  insertMove(row: { user_id: string; instance_id: string; initiated_by: MoveInitiator; key_encrypted: string }): Promise<MoveRow>;
   getMove(id: string): Promise<MoveRow | null>;
   /** Take the advance lease if it is free or expired. Null when someone else holds it. */
   claimLease(id: string, leaseUntil: string, nowIso: string): Promise<MoveRow | null>;
@@ -173,6 +177,8 @@ export interface MoveDeps {
     remove: (paths: string[]) => Promise<void>;
   };
   alert: (event: { title: string; message: string; moveId: string; userId: string; instanceId: string; failureType: string }) => Promise<void>;
+  /** Tell the owner their agent has moved (best effort; a failure never stops the move). */
+  notifyMoved?: (p: { userId: string; agentName: string; agentId: string; undoUntil: string }) => Promise<unknown>;
 }
 
 export class MoveRequestError extends Error {
@@ -238,6 +244,13 @@ function hasProxmoxHandle(config: Record<string, unknown> | null | undefined): b
   return Boolean(infra && infra.provider === "proxmox" && infra.vmid);
 }
 
+/** When the wave will move this agent: a day after the owner was told (config.moveNoticeAt), or null if not told yet. */
+export function moveScheduledFor(instance: { config?: Record<string, unknown> | null }): string | null {
+  const at = instance.config?.moveNoticeAt;
+  const t = typeof at === "string" ? Date.parse(at) : NaN;
+  return Number.isFinite(t) ? new Date(t + MOVE_NOTICE_MS).toISOString() : null;
+}
+
 /**
  * Whether an old Hermes agent can be moved now. Pure: the routes pass the
  * row's active move (if they have read it) so an in-flight move reads as such.
@@ -257,7 +270,7 @@ export function moveOffer(
 // ---------------------------------------------------------------- start
 
 export async function startMove(
-  input: { userId: string; instanceId: string; initiatedBy: "owner" | "operator" },
+  input: { userId: string; instanceId: string; initiatedBy: MoveInitiator },
   deps: MoveDeps,
 ): Promise<MoveRow> {
   const instance = await deps.store.getInstance(input.instanceId);
@@ -664,12 +677,16 @@ async function stepFinish(row: MoveRow, deps: MoveDeps): Promise<MovePatch> {
   await deps.store.relinkWalletToAgent(instance.id, agent.id);
   // 4. The encrypted parts are no longer needed.
   await deps.storage.remove((row.parts ?? []).map((p) => `${row.id}/${p.name}`)).catch((e) => log.warn("hermes move could not delete its parts", { source: "hermes-move", moveId: row.id, errorMessage: String(e).slice(0, 200) }));
+  const undoUntil = iso(new Date(now.getTime() + UNDO_WINDOW_MS));
+  // 5. Tell the owner.
+  await deps.notifyMoved?.({ userId: row.user_id, agentName: instance.name, agentId: agent.id, undoUntil })
+    .catch((e) => log.warn("hermes move could not email the owner", { source: "hermes-move", moveId: row.id, errorMessage: String(e).slice(0, 200) }));
   return {
     state: "done",
     step: "done",
     message: "Your agent has moved to the official Hermes.",
     finished_at: at,
-    undo_until: iso(new Date(now.getTime() + UNDO_WINDOW_MS)),
+    undo_until: undoUntil,
     step_attempts: 0,
     error: null,
   };
@@ -848,8 +865,10 @@ async function finishRollback(row: MoveRow, instance: InstanceRow, deps: MoveDep
 }
 
 async function finishUndo(row: MoveRow, instance: InstanceRow, deps: MoveDeps): Promise<MovePatch> {
-  const { movedTo: _movedTo, ...config } = (instance.config ?? {}) as Record<string, unknown>;
+  // The automatic wave leaves an undone agent alone (an operator looks first), so its date goes too.
+  const { movedTo: _movedTo, moveNoticeAt: _notice, ...config } = (instance.config ?? {}) as Record<string, unknown>;
   void _movedTo;
+  void _notice;
   await deps.store.patchInstance(instance.id, {
     ...buildInstanceLifecyclePatch("running", { now: deps.now() }),
     scheduled_deletion_at: null,

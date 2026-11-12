@@ -231,6 +231,8 @@ describe("startMove", () => {
 describe("happy path", () => {
   it("walks every step to done and switches over", async () => {
     const { w, deps } = makeWorld();
+    const notified: unknown[] = [];
+    deps.notifyMoved = async (p) => { notified.push(p); };
     const { id } = await begin(deps);
 
     // 1. launch, with the old size and model and without the old row counting
@@ -281,6 +283,7 @@ describe("happy path", () => {
     expect(w.calls).toContain("shutdown-old-vm");
     expect(w.wallet).toBe("agent");
     expect(w.removed).toEqual([`${id}/part-000`]);
+    expect(notified).toEqual([{ userId: USER, agentName: "Ada", agentId: "agent-1", undoUntil: m.undo_until }]);
     expect(m.lease_until).toBeNull();
   });
 

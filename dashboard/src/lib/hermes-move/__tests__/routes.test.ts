@@ -15,6 +15,7 @@ const store = {
   transitionMove: jest.fn(),
 };
 const mockSweep = jest.fn();
+const mockWave = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth(), currentUser: jest.fn() }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
@@ -29,13 +30,15 @@ jest.mock("@/lib/hermes-move/deps", () => ({
     encrypt: (s: string) => `enc(${s})`,
     randomKeyHex: () => "k".repeat(64),
   }),
+  createWaveDeps: (moves: unknown) => ({ moves }),
 }));
+jest.mock("@/lib/hermes-move/wave", () => ({ runMoveWave: (...args: unknown[]) => mockWave(...args) }));
 jest.mock("@/lib/hermes-move/orchestrator", () => ({
   ...jest.requireActual("@/lib/hermes-move/orchestrator"),
   sweepMoves: (...args: unknown[]) => mockSweep(...args),
 }));
 
-import { GET as instanceGet, POST as instancePost } from "@/app/api/instances/[id]/move/route";
+import { GET as instanceGet } from "@/app/api/instances/[id]/move/route";
 import { GET as agentGet } from "@/app/api/hivra/agents/[id]/move/route";
 import { POST as undoPost } from "@/app/api/hivra/agents/[id]/move/undo/route";
 import { GET as cronGet } from "@/app/api/cron/advance-hermes-moves/route";
@@ -77,10 +80,19 @@ describe("GET /api/instances/[id]/move", () => {
     mockAuth.mockResolvedValue({ userId: "someone-else" });
     expect((await instanceGet(req(`/api/instances/${ID}/move`), ctx(ID))).status).toBe(404);
   });
-  it("returns the offer and no move", async () => {
+  it("returns the offer, no planned time and no move", async () => {
     const res = await instanceGet(req(`/api/instances/${ID}/move`), ctx(ID));
     expect(res.status).toBe(200);
-    expect((await res.json()).data).toEqual({ offer: { available: true, reason: "available" }, move: null, movedTo: null });
+    expect((await res.json()).data).toEqual({ offer: { available: true, reason: "available" }, scheduledFor: null, move: null, movedTo: null });
+  });
+  it("returns when the move is planned: the notice plus 24 hours", async () => {
+    store.getInstance.mockResolvedValue({ ...instance, config: { ...instance.config, moveNoticeAt: "2026-11-11T08:00:00.000Z" } });
+    const body = (await (await instanceGet(req(`/api/instances/${ID}/move`), ctx(ID))).json()).data;
+    expect(body.scheduledFor).toBe("2026-11-12T08:00:00.000Z");
+  });
+  it("no longer lets owners start a move", async () => {
+    const routeModule = await import("@/app/api/instances/[id]/move/route");
+    expect(routeModule).not.toHaveProperty("POST");
   });
   it("advances a move in flight whose lease is free, and leaves a held lease alone", async () => {
     store.latestMoveForInstance.mockResolvedValue({ ...doneMove, state: "packing", step: "pack-running", lease_until: null });
@@ -98,32 +110,6 @@ describe("GET /api/instances/[id]/move", () => {
     const body = (await (await instanceGet(req(`/api/instances/${ID}/move`), ctx(ID))).json()).data;
     expect(body.movedTo).toEqual({ agentId: AGENT });
     expect(body.move).not.toHaveProperty("key_encrypted");
-  });
-});
-
-describe("POST /api/instances/[id]/move", () => {
-  const post = () => instancePost(req(`/api/instances/${ID}/move`, { method: "POST", headers: same }), ctx(ID));
-  it("needs a session and a same-origin request", async () => {
-    mockAuth.mockResolvedValue({ userId: null });
-    expect((await post()).status).toBe(401);
-    mockAuth.mockResolvedValue({ userId: "owner" });
-    expect((await instancePost(req(`/api/instances/${ID}/move`, { method: "POST" }), ctx(ID))).status).toBe(403);
-  });
-  it("refuses an agent that belongs to someone else", async () => {
-    mockAuth.mockResolvedValue({ userId: "someone-else" });
-    expect((await post()).status).toBe(404);
-  });
-  it("starts the move: 202 with the view, advancing after the response", async () => {
-    store.insertMove.mockResolvedValue({ ...doneMove, state: "queued", step: "queued", agent_id: null, finished_at: null, undo_until: null });
-    const res = await post();
-    expect(res.status).toBe(202);
-    expect((await res.json()).data.move).toMatchObject({ id: "m1", state: "queued" });
-    expect(mockAfter).toHaveBeenCalledTimes(1);
-    expect(store.insertMove).toHaveBeenCalledWith(expect.objectContaining({ user_id: "owner", initiated_by: "owner" }));
-  });
-  it("answers 409 when a move is already running", async () => {
-    store.activeMoveForInstance.mockResolvedValue({ state: "packing" });
-    expect((await post()).status).toBe(409);
   });
 });
 
@@ -166,6 +152,21 @@ describe("cron and ops", () => {
     await cronGet(req("/api/cron/advance-hermes-moves", { headers: { authorization: "Bearer s3cret" } }));
     expect(mockSweep.mock.calls[1][0]).toBe(3);
     delete process.env.HERMES_MOVE_CONCURRENCY;
+  });
+  it("cron runs the wave after the sweep, and a wave error does not fail the sweep", async () => {
+    mockSweep.mockResolvedValue({ advanced: 0, started: 0, active: 0, queued: 0 });
+    mockWave.mockResolvedValueOnce({ state: "off" });
+    let res = await cronGet(req("/api/cron/advance-hermes-moves", { headers: { authorization: "Bearer s3cret" } }));
+    expect((await res.json()).data.wave).toEqual({ state: "off" });
+    mockWave.mockRejectedValueOnce(new Error("db down"));
+    res = await cronGet(req("/api/cron/advance-hermes-moves", { headers: { authorization: "Bearer s3cret" } }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.wave).toEqual({ state: "error" });
+  });
+  it("ops POST validates the wave controls", async () => {
+    for (const wave of [{}, { enabled: "yes" }, { perDay: 500 }, { perDay: 1.5 }, { resume: false }]) {
+      expect((await opsPost(req("/api/ops/hermes-moves", { method: "POST", body: { wave } }))).status).toBe(400);
+    }
   });
   it("ops routes need an ops admin", async () => {
     mockOps.mockResolvedValue({ ok: false, status: 403, message: "Forbidden" });

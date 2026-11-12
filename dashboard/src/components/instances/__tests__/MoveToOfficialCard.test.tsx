@@ -9,14 +9,13 @@ const push = jest.fn();
 const replace = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push, replace }) }));
 
-const MOVE_URL = "/api/instances/inst_1/move";
 const json = (body: unknown, ok = true) => ({ ok, json: async () => body });
 const mv = (state: MoveView["state"], extra: Partial<MoveView> = {}): MoveView => ({
   id: "m1", instanceId: "inst_1", agentId: null, state, step: null, message: null,
   startedAt: "2026-11-11T10:00:00Z", finishedAt: null, undoUntil: null, ...extra,
 });
-const get = (move: MoveView | null, available = true, movedTo: { agentId: string } | null = null) =>
-  json({ success: true, data: { offer: { available, reason: null }, move, movedTo } });
+const get = (move: MoveView | null, available = true, movedTo: { agentId: string } | null = null, scheduledFor: string | null = null) =>
+  json({ success: true, data: { offer: { available, reason: null }, scheduledFor, move, movedTo } });
 
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   const fn = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => handler(String(input), init));
@@ -42,25 +41,35 @@ describe("MoveToOfficialCard", () => {
     expect(screen.queryByTestId("move-card")).toBeNull();
   });
 
-  it("offers the move, confirms inline, then posts", async () => {
-    const fetchMock = mockFetch((_u, init) =>
-      init?.method === "POST" ? json({ success: true, data: { move: mv("queued") } }, true) : get(null));
+  it("says when the move is planned, with no button", async () => {
+    const at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const when = new Date(at).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+    const fetchMock = mockFetch(() => get(null, true, null, at));
     await renderCard();
     expect(screen.queryByText("old cards")).toBeNull();
-    expect(screen.getByText("Move to the official Hermes")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Move my agent" }));
-    expect(screen.getByText("Your agent will be offline for about ten minutes.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Move now" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(MOVE_URL, expect.objectContaining({ method: "POST" })));
-    await waitFor(() => expect(screen.getByTestId("move-steps")).toBeInTheDocument());
+    expect(screen.getByText(`Moving to the official Hermes on ${when}`)).toBeInTheDocument();
+    expect(screen.getByTestId("move-card")).toHaveAttribute("data-state", "scheduled");
+    expect(screen.getByText(/offline for about 15 minutes/)).toBeInTheDocument();
+    expect(screen.queryByText(/email you the day before/)).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("goes back to the offer on Not now", async () => {
+  it("goes back to soon, without promising another email, once the planned time has passed", async () => {
+    mockFetch(() => get(null, true, null, new Date(Date.now() - 60 * 60 * 1000).toISOString()));
+    await renderCard();
+    expect(screen.getByText("Moving to the official Hermes soon")).toBeInTheDocument();
+    expect(screen.getByTestId("move-card")).toHaveAttribute("data-state", "soon");
+    expect(screen.queryByText(/email you the day before/)).toBeNull();
+  });
+
+  it("says it is coming soon and promises an email when not scheduled yet", async () => {
     mockFetch(() => get(null));
     await renderCard();
-    fireEvent.click(screen.getByRole("button", { name: "Move my agent" }));
-    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
-    expect(screen.getByRole("button", { name: "Move my agent" })).toBeInTheDocument();
+    expect(screen.getByText("Moving to the official Hermes soon")).toBeInTheDocument();
+    expect(screen.getByTestId("move-card")).toHaveAttribute("data-state", "soon");
+    expect(screen.getByText(/We'll email you the day before\./)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("ticks steps as the real state advances and shows the message", async () => {
@@ -98,15 +107,13 @@ describe("MoveToOfficialCard", () => {
     expect(push).toHaveBeenCalledWith("/dashboard/agent/a_9");
   });
 
-  it("says nothing was lost on failure and retries", async () => {
-    const fetchMock = mockFetch((_u, init) =>
-      init?.method === "POST" ? json({ success: true, data: { move: mv("queued") } }) : get(mv("failed", { message: "Checks did not match" })));
+  it("says nothing was lost on failure, with no button", async () => {
+    mockFetch(() => get(mv("failed", { message: "Checks did not match" })));
     await renderCard();
     expect(screen.getByText("Not moved, and nothing was lost.")).toBeInTheDocument();
     expect(screen.getByText("Checks did not match")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(MOVE_URL, expect.objectContaining({ method: "POST" })));
-    await waitFor(() => expect(screen.getByTestId("move-steps")).toBeInTheDocument());
+    expect(screen.getByText("We'll try again once we've checked what went wrong.")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("tells the owner when it needs attention", async () => {
@@ -116,10 +123,11 @@ describe("MoveToOfficialCard", () => {
     expect(screen.getByText(/Your data is safe/)).toBeInTheDocument();
   });
 
-  it("shows the offer again after an undo", async () => {
+  it("shows the planned move again after an undo", async () => {
     mockFetch(() => get(mv("undone")));
     await renderCard();
-    expect(screen.getByRole("button", { name: "Move my agent" })).toBeInTheDocument();
+    expect(screen.getByText("Moving to the official Hermes soon")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("redirects at once when the agent already moved", async () => {

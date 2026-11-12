@@ -24,6 +24,7 @@ export interface MoveView {
 
 interface MoveResponse {
   offer: { available: boolean; reason: string | null };
+  scheduledFor: string | null;
   move: MoveView | null;
   movedTo: { agentId: string } | null;
 }
@@ -52,12 +53,10 @@ const MONO_LABEL = {
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
 } as const;
-const PRIMARY_BUTTON = { ...MONO_LABEL, border: 'none', background: 'var(--ink-black)', color: 'var(--bg-surface)' } as const;
-const SECONDARY_BUTTON = { ...MONO_LABEL, border: '1px solid var(--etched-border)', background: 'transparent', color: 'var(--ink-black)' } as const;
 const BODY_TEXT = { margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--text-secondary)' } as const;
 
-async function readJson(url: string, init?: RequestInit) {
-  const res = await fetch(url, { cache: 'no-store', ...init });
+async function readJson(url: string) {
+  const res = await fetch(url, { cache: 'no-store' });
   const body = await res.json().catch(() => null);
   return { ok: res.ok, body };
 }
@@ -66,8 +65,8 @@ const isRunning = (m: MoveView | null) =>
   !!m && m.state !== 'done' && m.state !== 'failed' && m.state !== 'needs_attention' && m.state !== 'undone';
 
 /**
- * "Move to the official Hermes": one card for an old Hermes agent. Offers the move, shows the real
- * step it is on, and ends honestly (moved, not moved and nothing lost, or needs attention).
+ * "Move to the official Hermes": one card for an old Hermes agent. Says when the automatic move is
+ * planned (there is no button), shows the real step it is on, and ends honestly (moved, not moved and nothing lost, or needs attention).
  * Renders `children` (the old update cards) when there is nothing to offer or show.
  */
 export function MoveToOfficialCard({ instanceId, children }: Props) {
@@ -75,9 +74,6 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
   const url = `/api/${API_AGENTS}/${instanceId}/move`;
   const [data, setData] = useState<MoveResponse | null>(null);
   const [settled, setSettled] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [posting, setPosting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
 
   const load = useCallback(async () => {
@@ -121,24 +117,6 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
     if (doneAgentId) router.push(`/dashboard/agent/${doneAgentId}`);
   }, [doneAgentId, router]);
 
-  const start = async () => {
-    setPosting(true);
-    setError(null);
-    try {
-      const { ok, body } = await readJson(url, { method: 'POST' });
-      if (ok && body?.success && body.data?.move) {
-        setConfirming(false);
-        setData((prev) => ({ offer: prev?.offer ?? { available: true, reason: null }, movedTo: null, move: body.data.move as MoveView }));
-      } else {
-        setError(typeof body?.error === 'string' ? body.error : 'Could not start the move. Nothing was changed.');
-      }
-    } catch {
-      setError('Network error starting the move. Nothing was changed.');
-    } finally {
-      setPosting(false);
-    }
-  };
-
   if (!settled) return null;
   if (movedTo) return null;
   const shownMove = move && move.state !== 'undone' ? move : null;
@@ -147,7 +125,13 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
   const done = shownMove?.state === 'done';
   const failed = shownMove?.state === 'failed';
   const attention = shownMove?.state === 'needs_attention';
-  const offering = !shownMove;
+  const waiting = !shownMove;
+  const scheduledMs = data.scheduledFor ? Date.parse(data.scheduledFor) : NaN;
+  const told = Number.isFinite(scheduledMs);
+  // Once the planned time has passed (the wave runs a few a day), it is just "soon" again.
+  const scheduledDate = told && scheduledMs > Date.now()
+    ? new Date(scheduledMs).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+    : null;
   const accent = failed || attention ? 'var(--hg-warn)' : done ? 'var(--hg-ok)' : 'var(--hg-fg)';
   const Icon = done ? CheckCircle2 : failed || attention ? Undo2 : DownloadCloud;
   const stepIndex = shownMove ? STEPS.findIndex((s) => s.states.includes(shownMove.state)) : -1;
@@ -161,13 +145,15 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
           ? 'Moving your agent back'
           : running
           ? 'Moving your agent'
-          : 'Move to the official Hermes';
+          : scheduledDate
+            ? `Moving to the official Hermes on ${scheduledDate}`
+            : 'Moving to the official Hermes soon';
 
   return (
     <div
       role="status"
       data-testid="move-card"
-      data-state={shownMove?.state ?? 'offer'}
+      data-state={shownMove?.state ?? (scheduledDate ? 'scheduled' : 'soon')}
       style={{ margin: '0.5rem 0 1rem', padding: '14px 16px', border: '1px solid var(--hg-stroke-strong)', background: 'var(--hg-fill-2)', color: 'var(--ink-black)' }}
     >
       <div className={styles.row}>
@@ -176,9 +162,9 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
             <Icon size={14} strokeWidth={2.25} aria-hidden="true" />
             <span className={styles.text}>{title}</span>
           </p>
-          {offering ? (
+          {waiting ? (
             <p className={styles.text} style={BODY_TEXT}>
-              Your agent moves to a new computer running the official Hermes, which you update yourself. Your chats, memory, skills, settings, scheduled tasks, chat channels and files come with it. It takes about ten minutes, and your agent is offline meanwhile. Your current computer is kept for 7 days, so you can undo the move.
+              Every Hermes agent is moving to the official Hermes, which you update yourself. Your chats, memory, skills, settings, scheduled tasks, chat channels and files come with it. Your agent is offline for about 15 minutes, and your current computer is kept for 7 days so the move can be undone.{told ? '' : " We'll email you the day before."}
             </p>
           ) : null}
           {attention ? (
@@ -187,21 +173,10 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
           {shownMove?.message && !done ? (
             <p className={styles.text} data-testid="move-message" style={BODY_TEXT}>{shownMove.message}</p>
           ) : null}
+          {failed ? (
+            <p className={styles.text} style={BODY_TEXT}>We&apos;ll try again once we&apos;ve checked what went wrong.</p>
+          ) : null}
         </div>
-        {offering && !confirming ? (
-          <div className={styles.actions}>
-            <button type="button" className={styles.button} onClick={() => setConfirming(true)} style={{ ...PRIMARY_BUTTON, cursor: 'pointer' }}>
-              Move my agent
-            </button>
-          </div>
-        ) : null}
-        {failed ? (
-          <div className={styles.actions}>
-            <button type="button" className={styles.button} onClick={() => void start()} disabled={posting} style={{ ...PRIMARY_BUTTON, cursor: posting ? 'not-allowed' : 'pointer', opacity: posting ? 0.7 : 1 }}>
-              Try again
-            </button>
-          </div>
-        ) : null}
       </div>
 
       {running && !undoing ? (
@@ -218,22 +193,6 @@ export function MoveToOfficialCard({ instanceId, children }: Props) {
         </ol>
       ) : null}
 
-      {offering && confirming ? (
-        <div data-testid="move-confirm" style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>Your agent will be offline for about ten minutes.</p>
-          <div className={styles.actions}>
-            <button type="button" className={styles.button} onClick={() => void start()} disabled={posting} style={{ ...PRIMARY_BUTTON, cursor: posting ? 'not-allowed' : 'pointer', opacity: posting ? 0.7 : 1 }}>
-              {posting ? 'Starting...' : 'Move now'}
-            </button>
-            <button type="button" className={styles.button} onClick={() => setConfirming(false)} disabled={posting} style={{ ...SECONDARY_BUTTON, cursor: 'pointer' }}>
-              Not now
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {error ? (
-        <p role="alert" data-testid="move-error" style={{ margin: '12px 0 0', fontSize: 12, color: 'var(--hg-bad)' }}>{error}</p>
-      ) : null}
     </div>
   );
 }

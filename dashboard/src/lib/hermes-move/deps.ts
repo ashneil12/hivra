@@ -20,6 +20,9 @@ import {
 import { runProxmoxHostScript, shutdownProxmoxInstance, startProxmoxInstance } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createSupabaseMoveStore } from "@/lib/hermes-move/store";
+import { createSupabaseWaveStore } from "@/lib/hermes-move/wave-store";
+import type { WaveDeps } from "@/lib/hermes-move/wave";
+import { sendHermesMovedEmail, sendHermesMoveNoticeEmail } from "@/lib/email/hermes-move";
 import type { AgentRow, CommandResult, InstanceRow, MoveDeps } from "@/lib/hermes-move/orchestrator";
 
 const BUCKET = "hermes-moves";
@@ -125,5 +128,10 @@ export function createMoveDeps(): MoveDeps {
         metadata: { moveId: event.moveId, failureType: event.failureType },
       });
     },
+    notifyMoved: (p) => sendHermesMovedEmail(p),
   };
+}
+
+export function createWaveDeps(moves: MoveDeps = createMoveDeps()): WaveDeps {
+  return { store: createSupabaseWaveStore(), moves, sendNotice: (p) => sendHermesMoveNoticeEmail(p) };
 }
