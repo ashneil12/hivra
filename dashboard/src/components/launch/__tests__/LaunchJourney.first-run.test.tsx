@@ -244,7 +244,7 @@ describe("the first-run funnel", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
     await waitFor(() => expect(reviewButton()).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
-    expect(await screen.findByRole("link", { name: /Start chatting/ })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /Open my agent/ })).toBeInTheDocument();
 
     const [requested] = events("activation_instance_requested");
     expect(requested).toMatchObject({

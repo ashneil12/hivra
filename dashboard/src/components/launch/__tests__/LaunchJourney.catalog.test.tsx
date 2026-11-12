@@ -143,14 +143,14 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(routerPushMock).not.toHaveBeenCalled();
   });
 
-  it("shows Start chatting as the primary action once the Hermes workspace answers", async () => {
+  it("shows Open my agent as the primary action once the Hermes workspace answers", async () => {
     workspaceReady = true;
     await chooseAgent("Hermes");
     await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
     await reviewLaunch();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
 
-    const start = await screen.findByRole("link", { name: /Start chatting/ });
+    const start = await screen.findByRole("link", { name: /Open my agent/ });
     expect(start).toHaveAttribute("href", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1`);
     expect(start).toHaveAttribute("data-testid", "launch-primary-action");
     expect(screen.getByRole("link", { name: "Also chat from Telegram" }))
@@ -167,13 +167,13 @@ describe("every catalog agent launches in the Launch journey", () => {
 
     await screen.findByRole("heading", { name: "Claude Code 1 is setting up." });
     expect(screen.getByTestId("launch-primary-action")).toHaveTextContent("Open Claude Code 1 now");
-    expect(screen.queryByRole("link", { name: /Start chatting/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open my agent/ })).not.toBeInTheDocument();
     expect(routerPushMock).not.toHaveBeenCalled();
 
     agentStatus = "running";
-    const start = await screen.findByRole("link", { name: /Start chatting/ }, { timeout: 8000 });
+    const start = await screen.findByRole("link", { name: /Open my agent/ }, { timeout: 8000 });
     expect(start).toHaveAttribute("href", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`);
-    expect(screen.getByRole("heading", { name: "Claude Code 1 is ready." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your agent's computer is ready." })).toBeInTheDocument();
   }, 15000);
 
   it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {

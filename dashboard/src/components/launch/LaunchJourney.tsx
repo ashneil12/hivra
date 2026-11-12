@@ -98,7 +98,6 @@ import {
   launchResumeModeFor,
   opensOnAcceptanceFor,
   holdsForReadiness,
-  opensInHivraChat,
   reconcileLaunchDraft,
   savedMemoryKey,
   submitLaunchDraft,
@@ -669,9 +668,9 @@ function LaunchedScreen({ name, href, readiness, readyLabel, extraLink, onLeave,
     <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading" aria-live="polite">
       <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
       <span className={styles.eyebrow}>{ready ? "Ready" : "Setting up"}</span>
-      <h1 id="launch-accepted-heading">{ready ? `${name} is ready.` : `${name} is setting up.`}</h1>
+      <h1 id="launch-accepted-heading">{ready ? "Your agent's computer is ready." : `${name} is setting up.`}</h1>
       <p>{ready
-        ? "It answered. Start with a first message."
+        ? "Open your agent and start working. You can return to the same computer from your browser whenever it's running."
         : "This usually takes a few minutes. You can wait here, or open it now and watch it start."}</p>
       {ready ? (
         <>
@@ -707,7 +706,7 @@ function HermesLaunched({ name, instanceId, href, onLeave, onStartNew }: {
   const readiness = useHermesWorkspaceReadiness(instanceId);
   const telegramHref = `${href}${href.includes("?") ? "&" : "?"}connect=telegram`;
   return (
-    <LaunchedScreen name={name} href={href} readiness={readiness} readyLabel="Start chatting"
+    <LaunchedScreen name={name} href={href} readiness={readiness} readyLabel="Open my agent"
       extraLink={{ href: telegramHref, label: "Also chat from Telegram" }} onLeave={onLeave} onStartNew={onStartNew} />
   );
 }
@@ -2833,7 +2832,7 @@ export function LaunchJourney(
           name={draft.result.name || draft.name.trim()}
           agentId={draft.result.id}
           href={launchResultHref(draft, draft.result.id)}
-          readyLabel={opensInHivraChat(draft.profileId) ? "Start chatting" : `Open ${currentProfile.name}`}
+          readyLabel="Open my agent"
           onLeave={() => clearLaunchDraft(storageOwner)}
           onStartNew={startNew}
         />
