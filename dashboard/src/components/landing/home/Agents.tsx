@@ -13,10 +13,10 @@ export default function Agents() {
         <h2 id="agents-heading" className={styles.sectionTitle}>
           {AGENTS_SECTION.title} <em>{AGENTS_SECTION.titleTail}</em>
         </h2>
+        <p className={styles.bodyText}>{AGENTS_SECTION.intro}</p>
       </header>
       <AgentGrid agents={HOME_AGENTS} />
       <div className={styles.agentsFoot}>
-        <p>{AGENTS_SECTION.paid}</p>
         <Link href="/agents" className={styles.inlineLink} data-cta="agents-compare">
           {AGENTS_SECTION.compare}
           <ArrowRight size={15} aria-hidden="true" />

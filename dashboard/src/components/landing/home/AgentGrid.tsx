@@ -11,6 +11,8 @@ export interface GridAgent {
   name: string;
   role: string;
   line: string;
+  /** A second paragraph under the line. */
+  detail?: string;
   /** A limit worth seeing before the click. */
   note?: string;
   /** A short label on the card's top edge, for the one agent most people should start with. */
@@ -88,6 +90,7 @@ function Card({ agent, index, inView }: { agent: GridAgent; index: number; inVie
         <span className={styles.cardName}>{agent.name}</span>
         <span className={styles.cardRole}>{agent.role}</span>
         <span className={styles.cardLine}>{agent.line}</span>
+        {agent.detail ? <span className={styles.cardDetail}>{agent.detail}</span> : null}
         {agent.note ? <em className={styles.cardNote}>{agent.note}</em> : null}
         <Screen lines={agent.screen} running={inView} delay={500 + index * 260} />
       </m.a>
