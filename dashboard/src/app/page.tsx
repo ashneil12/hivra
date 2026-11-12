@@ -17,6 +17,7 @@ import { HOSTED_SIZES } from "@/app/pricing/pricing-content";
 import { HomeMotion } from "@/components/landing/home/motion";
 import Hero from "@/components/landing/home/Hero";
 import Agents from "@/components/landing/home/Agents";
+import Separate from "@/components/landing/home/Separate";
 import Steps from "@/components/landing/home/Steps";
 import Pricing from "@/components/landing/home/Pricing";
 import Founder from "@/components/landing/home/Founder";
@@ -138,7 +139,8 @@ function buildHomepageSchema(faq: readonly { q: string; a: string }[]) {
         mainEntity: faq.map(({ q, a }) => ({
           "@type": "Question",
           name: q,
-          acceptedAnswer: { "@type": "Answer", text: a },
+          // Answers keep their paragraphs apart on the page; structured data takes one line.
+          acceptedAnswer: { "@type": "Answer", text: a.replace(/\n\n/g, " ") },
         })),
       },
       {
@@ -201,6 +203,7 @@ export default async function LandingPage(_props: { searchParams?: Promise<{ lan
       <main id="main-content" className={styles.home}>
         <HomeMotion>
           <Hero agentsDeployed={agentsDeployed} />
+          <Separate />
           <Agents />
           <Steps />
           <Pricing />

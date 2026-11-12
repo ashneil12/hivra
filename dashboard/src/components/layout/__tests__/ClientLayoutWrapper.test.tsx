@@ -25,6 +25,8 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 
+jest.mock('@/components/hivra/PendingBridgeCard', () => ({ PendingBridgeCard: () => <div data-testid="pending-bridge-card" /> }));
+
 jest.mock('../useDashboardResources', () => ({
   useDashboardResources: jest.fn(),
 }));
@@ -476,7 +478,7 @@ describe('ClientLayoutWrapper', () => {
       );
       expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
       expect(screen.queryByTestId('home-continue')).not.toBeInTheDocument();
-      await waitFor(() => expect(screen.getByText('Launch your first agent')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText('What would you like to work on?')).toBeInTheDocument());
       expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
     } finally {
       global.fetch = originalFetch;
@@ -541,5 +543,19 @@ describe('ClientLayoutWrapper', () => {
     unmount();
 
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('shows the "Waiting for your OK" card on the home page and on an agent page, and nowhere else', () => {
+    const shown = (path: string) => {
+      (usePathname as jest.Mock).mockReturnValue(path);
+      const { unmount } = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      const found = screen.queryByTestId('pending-bridge-card') !== null;
+      unmount();
+      return found;
+    };
+    expect(shown('/dashboard')).toBe(true);
+    expect(shown('/dashboard/agent/11111111-1111-4111-8111-111111111111')).toBe(true);
+    expect(shown('/dashboard/settings')).toBe(false);
+    expect(shown('/dashboard/agents')).toBe(false);
   });
 });

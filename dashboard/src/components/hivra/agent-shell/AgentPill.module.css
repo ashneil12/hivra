@@ -1,5 +1,7 @@
 /* One floating pill at the top middle of the work column. Tapping it opens a glass dropdown with every view, quick settings and the shell's own buttons. */
 .anchor { position: absolute; top: var(--pill-top); left: 0; right: 0; z-index: 30; display: flex; justify-content: center; pointer-events: none; font-family: var(--font-sans); --pill-top: 8px; }
+/* Under the open dropdown: catches a press anywhere over the work pane, iframes included. */
+.scrim { position: absolute; inset: 0; z-index: 30; background: transparent; }
 .group { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 16px); }
 .group[data-open="true"] { opacity: 0; visibility: hidden; }
 .group[data-dragging="true"] { transition: none; }

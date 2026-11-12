@@ -1,0 +1,44 @@
+/* Styles for the SOUL.md generator only. Colours come from the same variables the tools module uses. */
+
+.presets { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)); gap:12px; margin:0 0 28px; }
+.preset { text-align:left; min-height:44px; padding:14px 16px; border:1px solid var(--etched-border); background:var(--vellum-bg); color:var(--ink-black); cursor:pointer; font:inherit; transition:border-color .2s; }
+.preset:hover { border-color:var(--gold-leaf); }
+.preset[data-active="true"] { border-color:var(--ink-black); box-shadow:inset 0 0 0 1px var(--ink-black); }
+.presetName { display:block; font-size:15px; font-weight:600; margin-bottom:4px; }
+.presetBlurb { display:block; font-size:13px; line-height:1.55; color:var(--text-secondary); }
+
+.layout { display:grid; grid-template-columns:minmax(0,1fr); gap:32px; align-items:start; }
+@media(min-width:1000px) { .layout { grid-template-columns:minmax(0,1.05fr) minmax(0,1fr); } .sticky { position:sticky; top:96px; } }
+
+.group { border:1px solid var(--etched-border); background:var(--vellum-bg); padding:18px 20px; margin:0 0 16px; }
+.groupTitle { font-size:16px; font-weight:600; letter-spacing:-.01em; color:var(--ink-black); margin:0 0 4px; }
+.groupHint { font-size:13.5px; line-height:1.65; color:var(--text-muted); margin:0 0 14px; }
+.fieldBlock { margin:0 0 16px; }
+.fieldBlock:last-child { margin-bottom:0; }
+.textarea { min-height:96px; resize:vertical; font-family:inherit; line-height:1.6; }
+.counter { margin:4px 0 0; font-size:12.5px; color:var(--text-muted); }
+.checks { display:grid; gap:0; margin:0 0 12px; }
+
+.preview { border:1px solid var(--etched-border); background:var(--vellum-bg); padding:16px 18px; }
+.previewHead { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin:0 0 4px; }
+.previewTitle { font-size:16px; font-weight:600; margin:0; color:var(--ink-black); }
+.previewText { font:13px/1.65 var(--font-sans); font-variant-ligatures:none; white-space:pre-wrap; overflow-wrap:anywhere; margin:12px 0; padding:14px 16px; border:1px solid var(--etched-border); max-height:560px; overflow:auto; color:var(--ink-black); background:transparent; }
+.empty { margin:12px 0; padding:16px; border:1px dashed var(--etched-border); font-size:14.5px; line-height:1.7; color:var(--text-secondary); }
+.actions { display:flex; flex-wrap:wrap; gap:8px 12px; }
+.actions button { margin-top:0; }
+.warn { margin:12px 0 0; padding:10px 14px; border-left:3px solid var(--gold-leaf); font-size:14px; line-height:1.7; color:var(--text-secondary); }
+
+.limits { margin:0 0 32px; padding-left:20px; font-size:15px; line-height:1.75; color:var(--text-secondary); }
+.limits li + li { margin-top:10px; }
+.where { width:100%; border-collapse:collapse; font-size:14px; line-height:1.6; }
+.where th, .where td { text-align:left; vertical-align:top; padding:10px 12px; border-top:1px solid var(--etched-border); color:var(--text-secondary); }
+.where th { font-weight:600; color:var(--ink-black); }
+.where thead th { border-top:0; font-size:12.5px; color:var(--text-muted); }
+.whereWrap { overflow-x:auto; margin:0 0 32px; }
+.factList { margin:0 0 12px; padding-left:20px; font-size:14.5px; line-height:1.7; color:var(--text-secondary); }
+.factList li + li { margin-top:6px; }
+
+@media(max-width:700px) {
+  .group { padding:16px; }
+  .actions button { flex:1 1 auto; }
+}

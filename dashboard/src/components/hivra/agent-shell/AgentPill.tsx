@@ -15,6 +15,8 @@ const OFFSET_KEY = "hivra:agent-pill-offset";
 const INTRO_KEY = "hivra:agent-pill-intro-seen";
 const INTRO_DELAY_MS = 700;
 const READY_MS = 4000;
+/** How long a new status must hold before the pill shows it. */
+const SETTLE_MS = 1200;
 const DRAG_THRESHOLD = 4;
 const EDGE = 8;
 const MENU_WIDTH = 380;
@@ -108,6 +110,25 @@ function clamp(value: number, limit: number): number {
 }
 
 /**
+ * The value once it has held for `ms`, or at once where `now` says so. While an
+ * agent starts, its status can flicker for a moment; the pill only shows what stays.
+ */
+function useSettled<T>(value: T, ms: number, now: (value: T) => boolean): T {
+  const [settled, setSettled] = useState(value);
+  const immediate = !Object.is(value, settled) && now(value);
+  if (immediate) setSettled(value);
+  useEffect(() => {
+    if (Object.is(value, settled)) return;
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, settled, ms]);
+  return immediate ? value : settled;
+}
+
+// An action that starts (the owner pressed Update or Restart) shows at once.
+const startsAction = (key: string) => key.startsWith("busy:");
+
+/**
  * The agent page's one floating control: a small pill at the top middle of the
  * work column that opens a glass dropdown with the agent's status, every view,
  * quick settings and the shell's own buttons. It knows nothing about agents;
@@ -130,9 +151,13 @@ export function AgentPill({
   const [box, setBox] = useState({ col: 0, group: 0 });
   const [dragging, setDragging] = useState(false);
 
-  const tone = busy ? "busy" : statusTone(status);
+  // What the pill shows only changes once it has held for a moment.
+  const shown = useSettled(busy ? `busy:${busy}` : `status:${status}`, SETTLE_MS, startsAction);
+  const shownBusy = shown.startsWith("busy:") ? shown.slice(5) : null;
+  const shownStatus = shownBusy === null ? shown.slice(7) : status;
+  const tone = shownBusy ? "busy" : statusTone(shownStatus);
   const working = tone === "busy";
-  const word = busy ?? status;
+  const word = shownBusy ?? shownStatus;
 
   // "Ready" for a few seconds after the agent finishes starting or updating.
   const [prevWorking, setPrevWorking] = useState(working);
@@ -231,7 +256,7 @@ export function AgentPill({
 
   // First time this browser shows the pill for a running agent, open it once by itself.
   const introTried = useRef(false);
-  const running = tone === "ok" && !busy;
+  const running = tone === "ok";
   useEffect(() => {
     if (!running || introTried.current) return;
     let seen: boolean;
@@ -255,7 +280,10 @@ export function AgentPill({
     return () => window.clearTimeout(timer);
   }, [running, openMenu]);
 
-  // Escape (a pop-up goes back to the menu first), a press outside, and focus moving into an iframe.
+  // Escape (a pop-up goes back to the menu first) and a press outside close it.
+  // Nothing closes it by itself: an embedded agent page taking focus, or the
+  // pointer wandering off, leaves it open. Presses over the work pane land on
+  // the scrim below, since a press inside an iframe never reaches this document.
   useEffect(() => {
     if (!open) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -268,20 +296,14 @@ export function AgentPill({
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (dropRef.current?.contains(target) || groupRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest("[data-agent-pill-keep]")) return;
+      if (target instanceof Element && target.closest("[data-agent-pill-keep], [data-agent-pill-scrim]")) return;
       closeMenu(false);
-    };
-    // Hermes, Terminal and Desktop are iframes: a press inside one never reaches the document.
-    const onBlur = () => {
-      if (document.activeElement?.tagName === "IFRAME") closeMenu(false);
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("blur", onBlur);
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("blur", onBlur);
     };
   }, [open, sub, closeMenu]);
 
@@ -317,7 +339,8 @@ export function AgentPill({
   const onClick = () => {
     // A drag's own click arrives at once; anything later is a real tap.
     if (Date.now() - handledAt.current < 150) return;
-    openMenu();
+    if (open) closeMenu(true);
+    else openMenu();
   };
 
   // ----- What the dropdown shows -----
@@ -370,7 +393,7 @@ export function AgentPill({
             {working ? (
               <>
                 <span className={styles.orb} aria-hidden="true"><ThinkingOrb size={20} /></span>
-                <span className={styles.word}>{busy ?? <StatusText value={status} />}</span>
+                <span className={styles.word}>{shownBusy ?? <StatusText value={shownStatus} />}</span>
               </>
             ) : tone === "ok" ? (
               <>
@@ -381,13 +404,18 @@ export function AgentPill({
             ) : (
               <>
                 <span className={styles.dot} data-tone={tone} aria-hidden="true" />
-                <span className={styles.word}><StatusText value={status} /></span>
+                <span className={styles.word}><StatusText value={shownStatus} /></span>
               </>
             )}
             {suggestion ? <span className={styles.badge} data-testid="agent-pill-badge" aria-hidden="true" /> : null}
           </button>
         </div>
       </div>
+
+      {open ? (
+        // Closes on its click, not its press, so the rest of a tap never lands on the page below.
+        <div className={styles.scrim} data-agent-pill-scrim="" data-testid="agent-pill-scrim" aria-hidden="true" onClick={() => closeMenu(false)} />
+      ) : null}
 
       {open ? (
         <div

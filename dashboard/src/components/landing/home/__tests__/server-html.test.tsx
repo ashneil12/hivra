@@ -17,10 +17,10 @@ test("the hero copy and call to action ship visible, before any script runs", ()
   const markup = renderToStaticMarkup(<Hero />);
   // The words end with the proof list; the illustration after it may animate in.
   const copy = markup.slice(0, markup.indexOf("</ul>"));
-  expect(readable(copy)).toContain("Launch an AI agent.");
+  expect(readable(copy)).toContain("Give your");
   expect(copy).toContain("Launch an agent");
-  expect(copy).toContain("See pricing");
-  expect(readable(copy)).toContain("Pick Claude Code, Codex, Hermes or another agent.");
+  expect(copy).toContain("See how Hivra works");
+  expect(readable(copy)).toContain("Run Claude Code, Codex, Hermes and other AI agents on computers separate from your own.");
   // Only the illustration may start hidden and animate in; the words never do.
   expect(copy.length).toBeGreaterThan(0);
   expect(copy).not.toMatch(HIDDEN);
@@ -43,17 +43,17 @@ test("pricing ships three offers complete and visible in server HTML", () => {
   const markup = renderToStaticMarkup(<Pricing />);
   expect(markup.match(/<article\b/g)).toHaveLength(3);
   const text = readable(markup);
-  for (const expected of ["Free", "$0", "Hivra Cloud", "$9.99", "2 vCPU and 4 GB of RAM", "More room", "$19.99", "4 vCPU and 8 GB of RAM", "Self-host from GitHub", "Full pricing"]) {
+  for (const expected of ["Your own server", "No Hivra hosting charge", "Hivra Cloud", "$9.99", "2 vCPU and 4 GB of RAM", "More room", "$19.99", "4 vCPU and 8 GB of RAM", "Compare plans", "Connect your server"]) {
     expect(text).toContain(expected);
   }
-  for (const href of ["/get-started?plan=operator", "/get-started?plan=fleet", "/sign-up", "/pricing", "/terms", "https://github.com/ashneil12/hivra"]) expect(markup).toContain(`href="${href}"`);
+  for (const href of ["/get-started?plan=operator", "/sign-up", "/pricing"]) expect(markup).toContain(`href="${href}"`);
   expect(markup).toContain('id="hosting"');
   expect(markup).toContain('id="own-server"');
   expect(markup).not.toMatch(HIDDEN);
   // The price of each size sits with its size in one sentence (lib/tools/copy-rules.ts).
   expect(findBannedClaims(text)).toEqual([]);
-  expect(text).toContain(PRICING.aiUsage);
-  expect(text).toContain("Hosted plans carry a 7-day money-back guarantee on card payments, subject to the terms.");
+  expect(text).toContain("7-day money-back guarantee on card payments.");
+  expect(text).toContain(PRICING.cloud.tagline);
   expect(text).not.toContain("Start here");
 });
 
@@ -61,21 +61,21 @@ test("every answer is in the server HTML, all closed so the list stays short", (
   const markup = renderToStaticMarkup(<Faq />);
   expect(markup.match(/<details\b/g)).toHaveLength(HOMEPAGE_FAQ.length);
   expect(markup.match(/<details[^>]*\bopen\b/g)).toBeNull();
-  for (const { a } of HOMEPAGE_FAQ) expect(readable(markup)).toContain(a);
+  for (const { a } of HOMEPAGE_FAQ) for (const paragraph of a.split("\n\n")) expect(readable(markup)).toContain(paragraph);
 });
 
-test("the question list has a one-word title", () => {
-  expect(renderToStaticMarkup(<Faq />)).toContain(">Questions.</h2>");
+test("the question list has its title", () => {
+  expect(renderToStaticMarkup(<Faq />)).toContain(">Frequently asked questions</h2>");
 });
 
-test("the token sentence is in the answer only for the list the page hands in", () => {
+test("no answer mentions a token, whichever list the page hands in", () => {
   expect(readable(renderToStaticMarkup(<Faq items={homepageFaq(false)} />))).not.toContain("Token-related access");
-  expect(readable(renderToStaticMarkup(<Faq items={homepageFaq(true)} />))).toContain("Token-related access and future plans are explained separately.");
+  expect(readable(renderToStaticMarkup(<Faq items={homepageFaq(true)} />))).not.toContain("Token-related access");
 });
 
-test("the three steps ship complete and visible in server HTML", () => {
+test("the four steps ship complete and visible in server HTML", () => {
   const markup = renderToStaticMarkup(<Steps />);
-  expect(markup.match(/<li\b/g)).toHaveLength(3);
+  expect(markup.match(/<li\b/g)).toHaveLength(4);
   for (const step of STEPS.steps) {
     expect(readable(markup)).toContain(step.title);
     expect(readable(markup)).toContain(step.body);

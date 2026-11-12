@@ -365,7 +365,7 @@ async function main() {
     await db.exec(OPENBOT_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedOpenBot, "re-applying the 2026.11.12.4 admission changes nothing");
     // 2026.11.12.5 anchors on the 2026.11.12.4 entry; idempotent too.
-    const NUPHOS_ADMISSION = migration("20261113020000_provider_release_admission_2026_11_12_5.sql");
+    const NUPHOS_ADMISSION = migration("20261113091000_provider_release_admission_2026_11_12_5.sql");
     await db.exec(NUPHOS_ADMISSION);
     const admittedNuphos = await admissionDefinitions();
     admittedNuphos.forEach((definition, index) => {

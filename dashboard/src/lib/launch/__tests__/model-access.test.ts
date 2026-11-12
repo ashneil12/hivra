@@ -64,7 +64,7 @@ describe("the model access choices", () => {
     const options = modelAccessOptions("deepseek-harness", CONTEXT);
     expect(options.map(option => option.mode)).toEqual(["api-key", "credits"]);
     expect(byMode("deepseek-harness").credits.unavailable).toBeNull();
-    expect(byMode("deepseek-harness")["api-key"]).toMatchObject({ unavailable: null, detail: "A Venice API key. Venice bills your model usage." });
+    expect(byMode("deepseek-harness")["api-key"]).toMatchObject({ unavailable: null, detail: "Connect a supported AI provider using your own API key. A Venice API key. Venice bills your model usage." });
     const ready = { name: "DeepSeek Harness 1", pastedKey: "", savedKeys: [], options };
     expect(modelAccessProblem("deepseek-harness", access({ mode: "credits" }), ready)).toBeNull();
     // A stale draft that chose its own sign-in can't launch.
@@ -131,11 +131,11 @@ describe("the model access choices", () => {
   });
 
   it("shows the credit balance, and at $0 asks for credit and offers to add some", () => {
-    expect(byMode("hermes").credits).toMatchObject({ detail: "$4.25 available. Model usage is paid from your credits at provider rates.", unavailable: null, offerAddCredit: false });
+    expect(byMode("hermes").credits).toMatchObject({ detail: "Use supported AI models through Hivra without configuring a separate model provider API key. $4.25 available. Model usage is paid from your credits at provider rates.", unavailable: null, offerAddCredit: false });
     expect(byMode("hermes", { ...CONTEXT, balance: EMPTY }).credits).toMatchObject({ unavailable: "Add credit to start chatting.", offerAddCredit: true });
     // A balance that couldn't be read is not $0.
     expect(byMode("hermes", { ...CONTEXT, balance: { state: "unknown" } }).credits).toMatchObject({ unavailable: null, offerAddCredit: false });
-    expect(byMode("hermes", { ...CONTEXT, balance: { state: "loading" } }).credits.detail).toBe("Checking your Hivra credits…");
+    expect(byMode("hermes", { ...CONTEXT, balance: { state: "loading" } }).credits.detail).toBe("Use supported AI models through Hivra without configuring a separate model provider API key. Checking your Hivra credits…");
   });
 
   it("has no Hivra credits to offer on a self-hosted installation", () => {

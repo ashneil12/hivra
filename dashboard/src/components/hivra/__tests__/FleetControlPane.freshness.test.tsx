@@ -70,7 +70,7 @@ it("does not offer an agent deleted since its list was read, even moments later"
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
   expect(screen.queryByText("CODEX_AGENT")).not.toBeInTheDocument();
 
-  await waitFor(() => expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { name: "What would you like to work on?" })).toBeInTheDocument());
   expect(listReads()).toBe(2);
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
   expect(screen.queryByText("CODEX_AGENT")).not.toBeInTheDocument();
@@ -85,7 +85,7 @@ it("does not offer a stale list's agent while the new read is in flight", async 
   render(<FleetControlPane requested />);
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
   await waitFor(() => expect(listReads()).toBe(2));
-  await waitFor(() => expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByRole("heading", { name: "What would you like to work on?" })).toBeInTheDocument());
   expect(screen.queryByTestId("home-continue")).not.toBeInTheDocument();
 });
 

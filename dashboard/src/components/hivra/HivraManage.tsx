@@ -38,6 +38,7 @@ import { HivraGitHubConnect } from "./HivraGitHubConnect";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
+import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import {
   ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
 } from "./manage/ManageReachability";
@@ -220,7 +221,7 @@ function computerHostingDisclaimer(template: ComputerTemplateDefinition): string
 type ErrorSlot = "header" | "power" | "force" | "updates" | "restore" | "browser" | "model" | "permissions" | "tools" | "resources" | "danger";
 const ERROR_SLOT: Record<string, ErrorSlot> = {
   rename: "header", start: "power", stop: "power", restart: "power", force_stop: "force", force_restart: "force", "runtime-update": "updates",
-  snapshot: "restore", restore: "restore", browser: "browser", model: "model", restrict: "permissions",
+  snapshot: "restore", restore: "restore", browser: "browser", model: "model", restrict: "permissions", "ask-first": "permissions",
   mcp: "tools", resize: "resources", destroy: "danger",
 };
 const SLOT_SECTION: Record<ErrorSlot, ManageSectionId | null> = {
@@ -389,6 +390,34 @@ function HivraManageContent({
     });
     return () => { alive = false; };
   }, [isChatCli, agent.chat_url, agent.api_token]);
+
+  // "Ask me first" (Claude Code only): wait for the owner's answer in Needs you
+  // before shell commands and file changes. The route answers available:false
+  // while Needs you answers are off or for other agents, which hides it.
+  const [askFirst, setAskFirst] = useState<{ available: boolean; enabled: boolean } | null>(null);
+  useEffect(() => {
+    if (def?.cliKind !== "claude" || agent.type !== "claude-code") return;
+    let alive = true;
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/ask-first`, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as { data?: { available?: boolean; enabled?: boolean } }).data : null))
+      .then((data) => { if (alive && data) setAskFirst({ available: Boolean(data.available), enabled: Boolean(data.enabled) }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [def?.cliKind, agent.type, agent.id]);
+
+  const applyAskFirst = useCallback(async (next: boolean) => {
+    if (acting) return;
+    setActing("ask-first"); setErr(null);
+    try {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/ask-first`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }),
+      });
+      const body = (await res.json().catch(() => null)) as { data?: { available?: boolean; enabled?: boolean }; error?: string; message?: string } | null;
+      if (!res.ok) throw new Error(body?.error || body?.message || "Couldn't change Ask me first");
+      setAskFirst({ available: true, enabled: Boolean(body?.data?.enabled) });
+    } catch (e) { setErr({ slot: "permissions", message: (e as Error).message }); }
+    finally { setActing(null); }
+  }, [agent.id, acting]);
 
   // MCP servers — list + add form state. Tools (curated bundles) install MCP
   // servers too, so the picker refreshes this same list on change.
@@ -969,6 +998,8 @@ function HivraManageContent({
       {/* OVERVIEW — what this is, its size and where it runs, and power. */}
       <ManagePanel id="overview" selected={selected}>
         <div style={{ display: "grid", gap: 20 }}>
+          {/* A Hermes agent moved to the official setup can go back for 7 days. */}
+          <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputerOnly} />
           {/* Error lands here, not on a surface: say why and what to do next
               where the owner actually is, not only under Advanced. */}
           {agent.status === "error" && agent.error && !missingOnHost ? (
@@ -1306,6 +1337,41 @@ function HivraManageContent({
                         ? (def?.cliKind === "codex" ? "Sandboxed to its workspace — can edit project files but not the wider system." : "Shell commands are off; file reads and edits still work.")
                         : "The agent runs autonomously with full access to its own computer (it's single-tenant, yours alone)."}
                   </div>
+                  {askFirst?.available && restrict !== "readonly" ? (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, borderTop: "1px solid var(--etched-border)", paddingTop: 10 }}>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={askFirst.enabled}
+                        aria-label="Ask me first"
+                        disabled={busy || agent.status !== "running"}
+                        onClick={() => void applyAskFirst(!askFirst.enabled)}
+                        style={{
+                          flex: "none", width: 38, height: 22, borderRadius: 11, padding: 2, marginTop: 1,
+                          border: "1px solid " + (askFirst.enabled ? "var(--ink-black)" : "var(--etched-border)"),
+                          background: askFirst.enabled ? "var(--ink-black)" : "transparent",
+                          cursor: busy || agent.status !== "running" ? "default" : "pointer",
+                        }}
+                      >
+                        <span style={{
+                          display: "block", width: 16, height: 16, borderRadius: 8,
+                          background: askFirst.enabled ? "var(--bg-surface)" : "var(--text-muted)",
+                          transform: askFirst.enabled ? "translateX(16px)" : "none", transition: "transform 120ms ease",
+                        }} />
+                      </button>
+                      <div style={{ display: "grid", gap: 2 }}>
+                        <div style={{ fontSize: 12.5, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 6 }}>
+                          Ask me first
+                          {acting === "ask-first" ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }} /> : null}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                          {askFirst.enabled
+                            ? "Before each command or file change, Claude Code waits for your answer in Needs you. No answer in 9 minutes means no."
+                            : "Off: Claude Code works on its own. Turn on to approve each command or file change from Needs you."}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
