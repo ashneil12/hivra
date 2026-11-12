@@ -1,6 +1,7 @@
 import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
 
 import { tryGrantLaunchCredit, type PromoDb } from "@/lib/venice/promo/service";
+import { tryGrantStarterCredit, type StarterCreditDb } from "@/lib/billing/starter-credit";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import {
@@ -250,6 +251,8 @@ export async function createManagedVeniceProxyKey(
   // resolved so a card wallet it funds is seen as funded.
   if (requestedWalletType === "card" || params.autoSelectFundedWallet) {
     await tryGrantLaunchCredit({ userId: params.userId }, client as unknown as PromoDb);
+    // One-time starter credit for a paid plan (best-effort, never throws).
+    await tryGrantStarterCredit({ userId: params.userId }, client as unknown as StarterCreditDb);
   }
   const defaultWalletType = params.autoSelectFundedWallet
     ? await resolveFundedWalletType(

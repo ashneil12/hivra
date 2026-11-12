@@ -102,6 +102,7 @@ computer)" and "Windows on your own server with your licensed image".
 | --- | --- |
 | Buzz agent collaboration | Usable: connect a relay and install the sidecar on an eligible computer. Not a launch target. |
 | Self-hosting the whole platform | Preview. `README.md` headlines "Self-host preview" and the roadmap page says so. |
+| Free agent tools on `/tools` | Canary only. Seven added tools (agent picker, running-cost calculator, free-model finder, job library, Telegram and Discord wizard, security check, SOUL.md builder) show only while `NEXT_PUBLIC_HIVRA_AGENT_TOOLS_ENABLED` is on. The flag is on for Canary and off for hivra.cloud. |
 | Canary only, not yet on hivra.cloud | Listed in the "Where things stand" paragraph of [the roadmap](../ROADMAP.md). Nothing reaches hivra.cloud until the owner approves a production promotion. |
 
 ## Owner decisions

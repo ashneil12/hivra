@@ -2,8 +2,9 @@
 
 // OnboardingChecklist — the day-one activation guide on the main dashboard.
 //
-// Shown while the user's FIRST deployment is younger than 14 days and the
-// checklist isn't finished (and not dismissed). Every item derives live state
+// Shown while the user's FIRST deployment is younger than 14 days, the
+// checklist isn't finished (and not dismissed), and no first message has been
+// sent yet (sending one hides it for good). Every item derives live state
 // from data that already exists — no new tables:
 //   ① deploy   — any Hermes instance / Hivra box exists (always true here:
 //                visibility requires a deployment, so the first tick is free).
@@ -329,7 +330,9 @@ export function OnboardingChecklist({
 
   const fresh =
     firstDeployAtMs !== null && nowMs !== null && nowMs - firstDeployAtMs < MAX_FIRST_DEPLOY_AGE_MS;
-  const visible = !dismissed && agentsLoaded && totalDeployments > 0 && fresh && !allDone;
+  // The first message is the first win: once it has been sent the checklist
+  // goes away for good (it never reappears, so no dismissal is needed).
+  const visible = !dismissed && agentsLoaded && totalDeployments > 0 && fresh && !allDone && !firstMessageDone;
 
   if (dismissed && undoable) {
     return (

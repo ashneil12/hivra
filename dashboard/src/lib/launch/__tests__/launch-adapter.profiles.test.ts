@@ -549,9 +549,12 @@ describe("each runtime opens its own surface", () => {
       .toBe(`/dashboard/instances/${AGENT_ID}?focus=nous-tool-gateway&surface=chat&welcome=1`);
   });
 
-  it("keeps Hermes in the journey until its workspace answers", () => {
+  it("keeps every agent in the journey until it can answer, and opens computers straight away", () => {
     expect(opensOnAcceptance("hermes")).toBe(false);
-    expect(opensOnAcceptance("claude-code")).toBe(true);
+    expect(opensOnAcceptance("claude-code")).toBe(false);
+    expect(opensOnAcceptance("codex")).toBe(false);
+    expect(opensOnAcceptance("openclaw")).toBe(false);
+    expect(opensOnAcceptance("ubuntu-desktop")).toBe(true);
   });
 });
 

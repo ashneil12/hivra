@@ -38,6 +38,7 @@ import {
 } from "@/components/dashboard/welcome/DeploymentDestinationControl";
 import { parseLaunchTargetHandoff } from "@/components/dashboard/welcome/launch-target-handoff";
 import { useHermesWorkspaceReadiness } from "@/components/dashboard/welcome/useHermesWorkspaceReady";
+import { useAgentRunningReadiness } from "@/components/dashboard/welcome/useAgentRunningReadiness";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
@@ -96,6 +97,7 @@ import {
   launchResultHref,
   launchResumeModeFor,
   opensOnAcceptanceFor,
+  holdsForReadiness,
   reconcileLaunchDraft,
   savedMemoryKey,
   submitLaunchDraft,
@@ -645,45 +647,45 @@ function Stepper({ current }: { current: number }) {
 
 type ResumeChoice = { stored: LaunchDraft; fresh: LaunchDraft };
 
-/** A Hermes agent the launch created. Its computer exists; the screen says
- * so, and offers Start chatting once its workspace actually answers. */
-function HermesLaunched({
-  name,
-  instanceId,
-  href,
-  onLeave,
-  onStartNew,
-}: {
+type LaunchedScreenProps = {
   name: string;
-  instanceId: string;
   href: string;
+  readiness: { ready: boolean; checking: boolean; recheck: () => void };
+  /** The primary action once the agent answers. */
+  readyLabel: string;
+  /** A secondary link shown once ready, when the agent has one. */
+  extraLink?: { href: string; label: string };
   onLeave: () => void;
   onStartNew: () => void;
-}) {
-  const { ready, checking, recheck } = useHermesWorkspaceReadiness(instanceId);
-  const telegramHref = `${href}${href.includes("?") ? "&" : "?"}connect=telegram`;
+};
+
+/** The calm screen after an agent launch: Setting up, then Ready. The primary
+ * action is offered only once the agent can answer; until then the owner can
+ * still open it to watch it start. */
+function LaunchedScreen({ name, href, readiness, readyLabel, extraLink, onLeave, onStartNew }: LaunchedScreenProps) {
+  const { ready, checking, recheck } = readiness;
   return (
     <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading" aria-live="polite">
       <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
-      <span className={styles.eyebrow}>{ready ? "Ready to chat" : "Launch accepted"}</span>
-      <h1 id="launch-accepted-heading">{ready ? `${name} is ready.` : `${name} has its own computer and is starting.`}</h1>
+      <span className={styles.eyebrow}>{ready ? "Ready" : "Setting up"}</span>
+      <h1 id="launch-accepted-heading">{ready ? "Your agent's computer is ready." : `${name} is setting up.`}</h1>
       <p>{ready
-        ? "Its workspace answered. Start your first chat."
-        : "Hivra is waiting for its workspace to answer. This usually takes a few minutes; you can open it now and watch it start."}</p>
+        ? "Open your agent and start working. You can return to the same computer from your browser whenever it's running."
+        : "This usually takes a few minutes. You can wait here, or open it now and watch it start."}</p>
       {ready ? (
         <>
           <Link className={styles.primaryAction} data-testid="launch-primary-action" href={href} onClick={onLeave}>
-            Start chatting <ArrowRight size={15} aria-hidden />
+            {readyLabel} <ArrowRight size={15} aria-hidden />
           </Link>
-          <Link className={styles.outcomeLink} href={telegramHref} onClick={onLeave}>Also chat from Telegram</Link>
+          {extraLink ? <Link className={styles.outcomeLink} href={extraLink.href} onClick={onLeave}>{extraLink.label}</Link> : null}
         </>
       ) : (
         <>
           {checking ? (
-            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Waiting for the workspace to answer</p>
+            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Waiting for it to answer</p>
           ) : (
             <p className={styles.observed} role="status">
-              The workspace hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
+              It hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
               <button type="button" className={styles.outcomeLink} onClick={recheck}>Check again</button>
             </p>
           )}
@@ -695,6 +697,27 @@ function HermesLaunched({
       <button type="button" className={styles.outcomeLink} onClick={onStartNew}>Launch something else</button>
     </section>
   );
+}
+
+/** A Hermes agent on the instances lane. Ready when its workspace answers. */
+function HermesLaunched({ name, instanceId, href, onLeave, onStartNew }: {
+  name: string; instanceId: string; href: string; onLeave: () => void; onStartNew: () => void;
+}) {
+  const readiness = useHermesWorkspaceReadiness(instanceId);
+  const telegramHref = `${href}${href.includes("?") ? "&" : "?"}connect=telegram`;
+  return (
+    <LaunchedScreen name={name} href={href} readiness={readiness} readyLabel="Open my agent"
+      extraLink={{ href: telegramHref, label: "Also chat from Telegram" }} onLeave={onLeave} onStartNew={onStartNew} />
+  );
+}
+
+/** Any other agent the launch created. Ready once its record says running with
+ * a chat address, the same bar the agent page uses. */
+function AgentLaunched({ name, agentId, href, readyLabel, onLeave, onStartNew }: {
+  name: string; agentId: string; href: string; readyLabel: string; onLeave: () => void; onStartNew: () => void;
+}) {
+  const readiness = useAgentRunningReadiness(agentId);
+  return <LaunchedScreen name={name} href={href} readiness={readiness} readyLabel={readyLabel} onLeave={onLeave} onStartNew={onStartNew} />;
 }
 
 /** What a connected server needs before it can run this profile. */
@@ -1275,7 +1298,7 @@ export function LaunchJourney(
 
   useEffect(() => {
     if (draft?.launchState !== "accepted" || !draft.result) return;
-    // Hermes stays here to show when its workspace answers (Start chatting).
+    // Agents stay here to show when they can answer (Start chatting).
     if (!opensOnAcceptanceFor(draft)) return;
     const href = launchResultHref(draft, draft.result.id);
     clearLaunchDraft(storageOwner);
@@ -2804,7 +2827,18 @@ export function LaunchJourney(
         />
       ) : null}
 
-      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && (!hermes || digitalOceanLane) ? (
+      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && !hermes && !digitalOceanLane && holdsForReadiness(draft.profileId) ? (
+        <AgentLaunched
+          name={draft.result.name || draft.name.trim()}
+          agentId={draft.result.id}
+          href={launchResultHref(draft, draft.result.id)}
+          readyLabel="Open my agent"
+          onLeave={() => clearLaunchDraft(storageOwner)}
+          onStartNew={startNew}
+        />
+      ) : null}
+
+      {draft.stage === "launch" && currentProfile && draft.launchState === "accepted" && draft.result && (digitalOceanLane || (!hermes && !holdsForReadiness(draft.profileId))) ? (
         <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading">
           <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
           <span className={styles.eyebrow}>Launch accepted</span>
