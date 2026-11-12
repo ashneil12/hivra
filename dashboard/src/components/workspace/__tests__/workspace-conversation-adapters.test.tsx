@@ -228,6 +228,8 @@ describe("workspace conversation adapters", () => {
     { type: "agent-zero" as const, destination: "/agent-zero/" },
     { type: "openclaw" as const, destination: "/openclaw/" },
     { type: "aeon" as const, destination: "/aeon/" },
+    { type: "hermes" as const, destination: "/hermes/" },
+    { type: "deepseek-harness" as const, destination: "/" },
   ])("embeds $type at its native mount $destination", async ({ type, destination }) => {
     const originalFetch = (globalThis as { fetch?: unknown }).fetch;
     const requestSubmit = jest.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => undefined);
