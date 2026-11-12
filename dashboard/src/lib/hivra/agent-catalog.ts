@@ -104,9 +104,11 @@ const ALL_AGENTS: AgentDef[] = [
     accent: "var(--gold-leaf)",
     available: true,
     // On a Hivra computer, Hermes is the official Hermes Agent, installed by its
-    // own installer and updated by `hermes update`. Hivra hosts its own web UI
-    // (`hermes dashboard`, loopback :9119) behind the token gate under /hermes,
-    // and points it at Venice inference through its own config. Nothing about
+    // own installer and updated by `hermes update`. Hivra serves Hermes's own
+    // Desktop workspace in the browser (`hermes webapp`, from Hermes's gateway on
+    // loopback :9120) behind the token gate under /hermes, falling back to
+    // `hermes dashboard` (loopback :9119) until the Webapp is built, and points
+    // it at Venice inference through its own config. Nothing about
     // Hermes is built, forked or patched by Hivra. (The older Hermes lane,
     // /api/instances, does not read this entry's surface.)
     surface: "dashboard",

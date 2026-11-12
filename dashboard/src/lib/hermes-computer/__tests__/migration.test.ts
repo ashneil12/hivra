@@ -75,3 +75,19 @@ describe("provider release 2026.11.11.6 admission", () => {
     }
   });
 });
+
+describe("provider release 2026.11.11.7 admission", () => {
+  const text = sql("20261112160000_provider_release_admission_2026_11_11_7.sql");
+  const release = JSON.parse(readFileSync(path.join(process.cwd(), "provisioner-releases/2026.11.11.7.json"), "utf8")) as { version: string };
+
+  it("extends exactly the 2026.11.11.6 entry and admits only the 2026.11.11.7 digest after it", () => {
+    expect(release.version).toBe("2026.11.11.7");
+    expect(text).toContain("f2148144fee2ab681d36c584d882198c8bded295c3f6375780919e113ad0ef86");
+    expect(text).toContain("880754711e2f8bd3d57eaa11b8dc1be47780de107214f610d2fbbe261d32eb0e");
+    expect(text).toContain("provisionerVersion''=''2026.11.11.7''");
+    expect(text).toContain("Provider release admission anchor mismatch");
+    for (const fn of ["admit_prepared_provider_computer", "hivra_provider_native_identity_valid", "hivra_provider_desktop_identity_valid"]) {
+      expect(text).toContain(`public.${fn}(`);
+    }
+  });
+});

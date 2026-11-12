@@ -42,13 +42,16 @@ const OPENCLAW_PORT = Number(process.env.OPENCLAW_GATEWAY_PORT) || 18789;
 // its own web UI with a seeded basic-auth login, and MUST sit behind this token
 // proxy — mounted under /agent-zero with a path strip + Referer re-home.
 const AGENT_ZERO_PORT = Number(process.env.AGENT_ZERO_PORT) || 50080;
-// Loopback port Hermes's own web UI (`hermes dashboard`) serves on. It is the
-// official, unmodified Hermes; it knows how to live under a path prefix, so it
-// is mounted under /hermes with the prefix stripped and announced in
-// X-Forwarded-Prefix. It only accepts a loopback Host/Origin and peer, so this
-// gateway presents exactly that and is the only way in.
+// Hermes's own browser UIs, official and unmodified. /hermes shows the Webapp:
+// Hermes's Desktop workspace in a browser, which Hermes's gateway serves on
+// HERMES_WEBAPP_PORT once `webapp.enabled` is on. A computer that does not serve
+// it yet (set up before it, or while the gateway restarts) shows Hermes's admin
+// dashboard (`hermes dashboard`, HERMES_PORT) there instead. Both know how to
+// live under a path prefix, so they are mounted under /hermes with the prefix
+// stripped and announced in X-Forwarded-Prefix. Both only accept a loopback
+// Host/Origin and peer, so this gateway presents exactly that and is the only way in.
 const HERMES_PORT = Number(process.env.HERMES_DASHBOARD_PORT) || 9119;
-const HERMES_ORIGIN = "http://127.0.0.1:" + HERMES_PORT;
+const HERMES_WEBAPP_PORT = Number(process.env.HERMES_WEBAPP_PORT) || 9120;
 // Attached mode (design 5.4): the same gateway code runs as an attached agent's
 // own sandboxed instance on a computer its owner already has. Its root-written
 // unit sets these; nothing in the agent's writable HOME can change them.
@@ -200,7 +203,7 @@ function agentCliUpdateRefusal() {
 const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
-  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT] } : null;
+  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
@@ -641,7 +644,8 @@ function handleAuthBootstrap(req, res) {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "default-src 'none'");
-    res.writeHead(303, { Location: destination });
+    // Opening Hermes goes through the Webapp's own sign-in (hermesSignIn).
+    res.writeHead(303, { Location: hermesEntry(destination) ? HERMES_SIGN_IN : destination });
     res.end();
   });
 }
@@ -2408,20 +2412,84 @@ function gateProxy(req, res, port, strip) {
 // the request presents Hermes's own address, and anything the client sent that
 // could steer Hermes's idea of its public address is dropped.
 const HERMES_MOUNT = "/hermes";
+const HERMES_SIGN_IN = "/hermes-sign-in";
 const HERMES_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
-function hermesHeaders(origin) {
+function hermesHeaders(origin, port) {
   const set = { "x-forwarded-prefix": HERMES_MOUNT };
   for (const name of HERMES_DROPPED_HEADERS) set[name] = null;
-  set.origin = origin ? HERMES_ORIGIN : null;
+  set.origin = origin ? "http://127.0.0.1:" + port : null;
   return set;
 }
 function hermesMounted(u) {
   return AGENT_KIND === "hermes" && (u === HERMES_MOUNT || u.startsWith(HERMES_MOUNT + "/"));
 }
+function hermesEntry(destination) {
+  return AGENT_KIND === "hermes" && (destination === HERMES_MOUNT || destination === HERMES_MOUNT + "/");
+}
+// Whether Hermes's gateway serves the Webapp: its page answers 200 on the
+// Webapp's port. Checked before each sign-in and again by /hermes traffic once
+// the last answer is a few seconds old, so a gateway that starts serving it (or
+// stops, for a restart) is followed within seconds. Until the first answer
+// /hermes shows the dashboard.
+const HERMES_WEBAPP_RECHECK_MS = 5000;
+let hermesWebappServing = false;
+let hermesWebappCheckedAt = 0;
+function checkHermesWebapp(done) {
+  let settled = false;
+  hermesWebappCheckedAt = Date.now();
+  const finish = (serving) => {
+    if (settled) return;
+    settled = true;
+    hermesWebappServing = serving;
+    hermesWebappCheckedAt = Date.now();
+    if (done) done(serving);
+  };
+  const probe = http.request({ host: "127.0.0.1", port: HERMES_WEBAPP_PORT, method: "GET", path: "/",
+    headers: { host: "127.0.0.1:" + HERMES_WEBAPP_PORT, accept: "text/html" }, timeout: 3000 }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode === 200 && String(pr.headers["content-type"] || "").startsWith("text/html"));
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+if (AGENT_KIND === "hermes" && !ATTACHED) checkHermesWebapp();
+function hermesPort() {
+  if (Date.now() - hermesWebappCheckedAt > HERMES_WEBAPP_RECHECK_MS) checkHermesWebapp();
+  return hermesWebappServing ? HERMES_WEBAPP_PORT : HERMES_PORT;
+}
+// The Webapp keeps its sign-in in the browser tab and takes it only from a
+// one-use link that Hermes hands its own user (`hermes webapp --no-open`). The
+// owner already passed this gateway's gate, so the gateway, which runs as that
+// user, asks Hermes for the link and sends the browser through Hermes's own
+// launch page under /hermes. The ticket travels only in the fragment, which the
+// browser never sends to a server. Without the Webapp, /hermes is the dashboard.
+const HERMES_LAUNCH_FRAGMENT = /\/webapp\/launch#(ticket=[A-Za-z0-9_-]{43}(?:&[A-Za-z0-9_.~%=&+-]{0,512})?)(?:\s|$)/;
+function hermesSignIn(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  const go = (location) => {
+    res.writeHead(303, { Location: location, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy": "default-src 'none'" });
+    res.end();
+  };
+  checkHermesWebapp((serving) => {
+    if (!serving) return go(HERMES_MOUNT + "/");
+    execFile(HERMES_BIN, ["webapp", "--no-open", "--skip-build"], { env: AGENT_ENV, cwd: HOME, timeout: 30000, maxBuffer: 64 * 1024 },
+      (err, stdout) => {
+        const match = String(stdout || "").match(HERMES_LAUNCH_FRAGMENT);
+        if (err || !match) {
+          console.warn("hivra-chat: hermes webapp gave no sign-in link" + (err ? ": " + String(err.message || err).slice(0, 200) : ""));
+          return go(HERMES_MOUNT + "/");
+        }
+        go(HERMES_MOUNT + "/webapp/launch#" + match[1]);
+      });
+  });
+}
 function hermesProxy(req, res) {
   if (!authed(req)) return denyHtml(res);
   if (agentAppHold(req, res)) return;
-  return proxyHttp(req, res, HERMES_PORT, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin)));
+  const port = hermesPort();
+  return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
 }
 
 // ---- terminals on owner-only unix sockets -----------------------------------
@@ -3915,6 +3983,7 @@ const server = http.createServer((req, res) => {
   if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
   if (u === "/agent-zero" || u.startsWith("/agent-zero/")) return a0Proxy(req, res);
   // Hermes's own web UI (the official one, unmodified), prefix stripped.
+  if (AGENT_KIND === "hermes" && req.method === "GET" && u === HERMES_SIGN_IN) return hermesSignIn(req, res);
   if (hermesMounted(u)) return hermesProxy(req, res);
   res.writeHead(404); res.end("not found");
 });
@@ -3945,7 +4014,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = "/openclaw"; } // gateway WS control/RPC (served at root)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
-  else if (hermesMounted(u)) { port = HERMES_PORT; strip = HERMES_MOUNT; } // Hermes /api/ws and /api/pty (served at root)
+  else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
   if (isAgentAppPort(port)) {
@@ -3974,7 +4043,7 @@ server.on("upgrade", (req, socket, head) => {
   // Hermes accepts a WebSocket only from its own loopback Host and Origin (or
   // none) and reads its path prefix from X-Forwarded-Prefix.
   const hermesWs = hermesMounted(u);
-  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin)) : null;
+  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port) : null;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4002,7 +4071,7 @@ server.on("upgrade", (req, socket, head) => {
       hdr += k + ": " + v + "\r\n";
     }
     if (hermesWs) {
-      hdr += "host: 127.0.0.1:" + HERMES_PORT + "\r\n";
+      hdr += "host: 127.0.0.1:" + port + "\r\n";
       for (const [name, value] of Object.entries(hermesSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;

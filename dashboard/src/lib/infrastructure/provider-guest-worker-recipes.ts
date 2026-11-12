@@ -410,6 +410,11 @@ const recipes = Object.freeze({
     workerSha256: "b053788bb30f0faaab1543510683987fbb2628f775436f311ec588e3235779af",
     workerSize: 45195,
   }),
+  "2026.11.11.7": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Hermes's own Desktop Webapp at /hermes (the box gateway, guest installer and Update Hermes change). The worker only advances its release labels.
+    workerSha256: "ee41d3606f887223a35a8c3845c5560cabd486372cb4e7717f63d384ef0c48b2",
+    workerSize: 45195,
+  }),
 });
 
 type Version = keyof typeof recipes;

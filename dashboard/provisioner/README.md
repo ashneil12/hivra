@@ -504,6 +504,15 @@ update them yet.
   The Hermes gateway (scheduled tasks and chat channels) runs as a user service of the
   agent user with linger, installed by `hermes gateway install`, at launch and by the
   runtime update on existing Hermes computers.
+  From `2026.11.11.7`, `/hermes/` shows Hermes's own Desktop workspace in the browser
+  (`hermes webapp`) instead of the admin dashboard. The guest installer sets
+  `webapp.enabled` and runs `hermes webapp --build-only`; Hermes's gateway then serves the
+  Webapp on `127.0.0.1:9120`. Opening `/hermes/` through `/auth/bootstrap` goes to
+  `/hermes-sign-in`, which asks Hermes for a one-use launch link (`hermes webapp --no-open
+  --skip-build`) and redirects to it, so the owner is signed in without a token. While the
+  Webapp is not served, `/hermes/` keeps showing the dashboard on `:9119`. Update Hermes
+  turns the setting on, builds the Webapp after `hermes update` and restarts the gateway,
+  which is how existing Hermes computers switch over.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
