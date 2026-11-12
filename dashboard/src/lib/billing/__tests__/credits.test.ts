@@ -8,14 +8,13 @@ import {
   deriveReservedCreditBalance,
   getCachedCreditBalance,
   getCreditSummary,
-  getPlanMonthlyCreditGrant,
   grantStripeTopUpCredits,
-  grantSubscriptionCycleCredits,
   isTopUpPackageCredits,
   recordComputeUsageDebit,
   recordLlmUsageEvent,
   releaseCreditReservation,
 } from "@/lib/billing/credits";
+import * as creditsModule from "@/lib/billing/credits";
 
 interface LedgerEntry {
   user_id: string;
@@ -242,17 +241,13 @@ function createMemoryDb() {
 }
 
 describe("credits billing domain", () => {
-  it("uses integer credits and plan packaging grants", () => {
+  it("uses integer credits and grants no monthly plan credits", () => {
     expect(CREDIT_UNIT_LABEL).toBe("100 credits = $1");
     expect(creditsToUsd(500)).toBe(5);
-    // Plan monthly credit grant scales by plan price × tier multiplier:
-    //   operator (Pro):   $9.99 × 1.10  = 1099 credits
-    //   fleet    (Power): $19.99 × 1.20 = 2399 credits (rounded)
-    //   command:          $49.00 × 1.30 = 6370 credits (unchanged)
-    expect(getPlanMonthlyCreditGrant("operator")).toBe(1099);
-    expect(getPlanMonthlyCreditGrant("fleet")).toBe(2399);
-    expect(getPlanMonthlyCreditGrant("command")).toBe(6370);
-    expect(getPlanMonthlyCreditGrant("unknown")).toBe(0);
+    // Plans no longer grant monthly credits: nothing spends them, so the
+    // grant (and its helpers) were removed rather than shown as a balance.
+    expect(Object.keys(creditsModule)).not.toEqual(expect.arrayContaining(["grantSubscriptionCycleCredits"]));
+    expect(Object.keys(creditsModule)).not.toEqual(expect.arrayContaining(["getPlanMonthlyCreditGrant"]));
   });
 
   it("validates allowed top-up packages", () => {
@@ -436,103 +431,8 @@ describe("credits billing domain", () => {
     ).rejects.toThrow(/reference ID is required/);
   });
 
-  it("grants subscription-cycle credits idempotently per billing period", async () => {
-    const { db, ledger } = createMemoryDb();
-
-    await grantSubscriptionCycleCredits(
-      {
-        userId: "user_1",
-        planKey: "fleet",
-        subscriptionId: "sub_1",
-        periodStart: 100,
-        periodEnd: 200,
-      },
-      db
-    );
-    const duplicate = await grantSubscriptionCycleCredits(
-      {
-        userId: "user_1",
-        planKey: "fleet",
-        subscriptionId: "sub_1",
-        periodStart: 100,
-        periodEnd: 200,
-      },
-      db
-    );
-
-    expect(duplicate.inserted).toBe(false);
-    // Fleet (Power) credit grant after launch-pricing drop = 2399.
-    expect(duplicate.balance).toBe(2399);
-    expect(ledger).toHaveLength(1);
-  });
-
   // Characterization: with NO provenance params the grant writes exactly what
   // the pre-parameterization code hardcoded — Stripe callers see zero change.
-  it("keeps the default subscription-grant provenance byte-identical (stripe)", async () => {
-    const { db, ledger } = createMemoryDb();
-
-    await grantSubscriptionCycleCredits(
-      {
-        userId: "user_default",
-        planKey: "operator",
-        subscriptionId: "sub_default",
-        periodStart: 100,
-        periodEnd: 200,
-      },
-      db
-    );
-
-    expect(ledger).toHaveLength(1);
-    const entry = ledger[0] as LedgerEntry & { actor: string };
-    expect(entry.source).toBe("stripe");
-    expect(entry.actor).toBe("stripe_webhook");
-    expect(entry.reason).toBe("subscription_grant");
-    expect(entry.reference_id).toBe("stripe_subscription:sub_default:100:200");
-    expect(entry.amount_credits).toBe(1099);
-  });
-
-  it("grants Apple-lane subscription credits with apple provenance and the apple idempotency ref", async () => {
-    const { db, ledger } = createMemoryDb();
-
-    await grantSubscriptionCycleCredits(
-      {
-        userId: "user_apple",
-        planKey: "operator",
-        subscriptionId: "2000000123456789", // originalTransactionId
-        periodStart: 1_752_600_000_000,
-        periodEnd: 1_755_278_400_000,
-        source: "apple",
-        actor: "apple_webhook",
-        referencePrefix: "apple_subscription",
-      },
-      db
-    );
-    // Redelivery / reconciler convergence for the same period dedupes.
-    const duplicate = await grantSubscriptionCycleCredits(
-      {
-        userId: "user_apple",
-        planKey: "operator",
-        subscriptionId: "2000000123456789",
-        periodStart: 1_752_600_000_000,
-        periodEnd: 1_755_278_400_000,
-        source: "apple",
-        actor: "apple_webhook",
-        referencePrefix: "apple_subscription",
-      },
-      db
-    );
-
-    expect(duplicate.inserted).toBe(false);
-    expect(ledger).toHaveLength(1);
-    const entry = ledger[0] as LedgerEntry & { actor: string };
-    expect(entry.source).toBe("apple");
-    expect(entry.actor).toBe("apple_webhook");
-    expect(entry.reference_id).toBe(
-      "apple_subscription:2000000123456789:1752600000000:1755278400000"
-    );
-    expect(entry.amount_credits).toBe(1099);
-  });
-
   it("tracks active credit reservations separately from ledger balance", async () => {
     const { db, reservations } = createMemoryDb();
 
@@ -765,8 +665,6 @@ describe("credits billing domain", () => {
 
     await expect(getCreditSummary("user_1", "operator", db)).resolves.toEqual({
       balance: 500,
-      // Operator (Pro) grant = $9.99 × 1.10 = 1099.
-      monthlyGrant: 1099,
       unit: "100 credits = $1",
     });
   });

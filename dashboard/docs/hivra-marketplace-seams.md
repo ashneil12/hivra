@@ -21,6 +21,53 @@ deploy in one click, publish your own, and monetise usage (settled in $HermesOS)
 
 ---
 
+## Usage and cost records in place now (no payouts)
+
+Added 2026-11-12 (migration `20261112210000_agent_usage_and_host_costs`). Records
+only: nothing here bills, pays or switches anything on. Service role only.
+
+| Record | What it holds |
+|---|---|
+| `hivra_host_costs` | What each server costs per month (minor units, EUR/USD/GBP). Add a row with a later `effective_from` when a price changes; the latest row on or before a date is the price that day. |
+| `managed_venice_proxy_keys.metadata->>'agentId'` | The agent each managed inference key belongs to. Stamped by a trigger whenever an agent's `llm_config` names a key, and kept after the agent is deleted. |
+| `hivra_agent_active_hours` (view) | One row per agent per hour in which Hivra saw it work: managed inference requests (charged and upstream cost) and run events (`otel_log`). |
+
+Not visible yet: agents on the owner's own model key with no run reporter, and
+older keys made before the link existed for agents that were already deleted.
+
+Example queries:
+
+```sql
+-- Active hours per agent type this month.
+select agent_type, count(distinct agent_id) as agents, count(*) as active_hours
+  from public.hivra_agent_active_hours
+ where hour >= date_trunc('month', now())
+ group by 1 order by 3 desc;
+
+-- Record a server price.
+insert into public.hivra_host_costs (host_id, monthly_cost_minor, currency, effective_from, note)
+values ('<host id>', 3990, 'EUR', '2026-11-01', 'monthly price');
+
+-- Server cost per active agent hour this month, per host.
+with price as (
+  select distinct on (host_id) host_id, monthly_cost_minor, currency
+    from public.hivra_host_costs
+   where effective_from <= current_date
+   order by host_id, effective_from desc
+), hours as (
+  select a.proxmox_host as host_id, count(*) as active_hours
+    from public.hivra_agent_active_hours h
+    join public.hivra_agents a on a.id = h.agent_id
+   where h.hour >= date_trunc('month', now())
+   group by 1
+)
+select p.host_id, p.monthly_cost_minor, p.currency, h.active_hours,
+       round(p.monthly_cost_minor::numeric / nullif(h.active_hours, 0), 2) as cost_minor_per_active_hour
+  from price p left join hours h on h.host_id = p.host_id;
+```
+
+---
+
 ## What the marketplace adds later (NOT now)
 
 ### Data model (additive — mirrors how `agent-catalog.ts` is shaped today)
