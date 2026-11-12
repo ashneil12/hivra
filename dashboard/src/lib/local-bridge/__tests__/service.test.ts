@@ -37,6 +37,9 @@ jest.mock("../store", () => {
     loadRequestForAgent: async (user: string, agent: string, id: string) => { const row = state.requests.get(id); return row && row.user_id === user && row.agent_id === agent ? { ...row } : null; },
     countPending: async (agent: string) => [...state.requests.values()].filter((row) => row.agent_id === agent && row.status === "pending").length,
     transition: async (id: string, from: string, patch: any) => {
+      // Same rule as the real store and the database trigger.
+      const { canMoveBridgeRequest } = jest.requireActual("../states");
+      if (!canMoveBridgeRequest(from, patch.status)) throw new Error(`bridge request cannot move ${from} -> ${patch.status}`);
       const row = state.requests.get(id);
       if (!row || row.status !== from) return false;
       Object.assign(row, patch);

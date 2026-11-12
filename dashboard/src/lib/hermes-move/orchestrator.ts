@@ -37,6 +37,31 @@ export const ACTIVE_STATES = ["queued", "launching", "packing", "uploading", "un
 export const TERMINAL_STATES = ["done", "failed", "needs_attention", "undone"] as const;
 export type MoveState = (typeof ACTIVE_STATES)[number] | (typeof TERMINAL_STATES)[number];
 
+/**
+ * The one list of how a move may change state. Rollback steps run inside the
+ * move's current state (step "rollback-*") and end in failed; anything that
+ * cannot be rolled back ends in needs_attention. Only a done move may reopen,
+ * into undoing. The database trigger in
+ * 20261112130000_explicit_state_transitions.sql enforces the same list.
+ */
+export const MOVE_TRANSITIONS: Readonly<Record<MoveState, readonly MoveState[]>> = {
+  queued: ["launching", "failed", "needs_attention"],
+  launching: ["packing", "failed", "needs_attention"],
+  packing: ["uploading", "failed", "needs_attention"],
+  uploading: ["unpacking", "failed", "needs_attention"],
+  unpacking: ["finishing", "failed", "needs_attention"],
+  finishing: ["done", "failed", "needs_attention"],
+  undoing: ["undone", "needs_attention"],
+  done: ["undoing"],
+  failed: [],
+  needs_attention: [],
+  undone: [],
+};
+
+export function canMoveTransition(from: MoveState, to: MoveState): boolean {
+  return from === to || MOVE_TRANSITIONS[from].includes(to);
+}
+
 export const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const OLD_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
 

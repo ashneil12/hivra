@@ -1,6 +1,7 @@
 import type { MoveCounts } from "../guest-jobs";
 import {
   advanceMove,
+  canMoveTransition,
   moveOffer,
   redactSetupLog,
   startMove,
@@ -91,9 +92,14 @@ function makeWorld(opts: { instance?: Partial<InstanceRow> } = {}) {
       m.lease_until = leaseUntil;
       return { ...m };
     },
-    async patchMove(id, patch: MovePatch) { Object.assign(w.moves.get(id)!, patch); },
+    async patchMove(id, patch: MovePatch) {
+      const m = w.moves.get(id)!;
+      if (patch.state && !canMoveTransition(m.state, patch.state)) throw new Error(`illegal move ${m.state} -> ${patch.state}`);
+      Object.assign(m, patch);
+    },
     async transitionMove(id, from, patch) {
       const m = w.moves.get(id);
+      if (patch.state && !canMoveTransition(from, patch.state)) throw new Error(`illegal move ${from} -> ${patch.state}`);
       if (!m || m.state !== from) return null;
       Object.assign(m, patch);
       return { ...m };

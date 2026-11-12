@@ -3,12 +3,13 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
-import { expireStalePending, purgeAllOldResults } from "@/lib/local-bridge/store";
+import { closeStuckRequests, expireStalePending, purgeAllOldResults } from "@/lib/local-bridge/store";
 import { log } from "@/lib/logger";
 
 /**
  * Daily cleanup for the local bridge: clears stored command output older than
- * 7 days and expires approval requests nobody answered. Does nothing while the
+ * 7 days, expires approval requests nobody answered, and closes requests
+ * that were approved but never ran or started running and never finished. Does nothing while the
  * bridge flag is off. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`.
  */
 export const maxDuration = 60;
@@ -26,6 +27,7 @@ export async function GET(req: NextRequest) {
   if (!isLocalBridgeEnabled()) return apiSuccess({ skipped: "local bridge is off" });
   try {
     await expireStalePending();
+    await closeStuckRequests();
     await purgeAllOldResults();
     return apiSuccess({ cleaned: true });
   } catch (err) {
