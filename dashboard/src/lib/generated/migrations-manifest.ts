@@ -437,4 +437,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261113060000", name: "hivra_agent_sleep_wake" },
   { version: "20261113061500", name: "starter_credit_account_age" },
   { version: "20261113080000", name: "hivra_bridge_enrol_codes" },
+  { version: "20261113090000", name: "nuphos_agent_software" },
+  { version: "20261113091000", name: "provider_release_admission_2026_11_12_5" },
 ];

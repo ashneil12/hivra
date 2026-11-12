@@ -12,6 +12,7 @@ const PORTABLE_AGENT_LAUNCH_IDS = [
   "openclaw",
   "agent-zero",
   "openbot",
+  "nuphos",
 ] as const;
 
 export type PortableAgentLaunchId = typeof PORTABLE_AGENT_LAUNCH_IDS[number];
@@ -77,6 +78,7 @@ const AGENT_TYPE_PROFILES: Readonly<Record<string, LaunchAgentProfileId>> = {
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
   openbot: "openbot",
+  nuphos: "nuphos",
   "deepseek-harness": "deepseek-harness",
 };
 
@@ -98,6 +100,7 @@ const PORTABLE_LAUNCH_PROFILES: Readonly<Record<PortableLaunchResourceId, Launch
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
   openbot: "openbot",
+  nuphos: "nuphos",
   "linux-desktop": "ubuntu-desktop",
   "linux-terminal": "linux-terminal",
   windows: "windows",

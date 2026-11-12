@@ -95,7 +95,7 @@ describe("the routes the dashboard itself hands a native shell", () => {
     }
     accepted(buildLaunchHref({ profile: "claude-code", template: "tpl_research-01", templateToken: "Share-Token_9" }));
     accepted(launchReturnPath(AGENT_ID));
-    for (const resource of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "linux-desktop", "linux-terminal", "windows"] as const) {
+    for (const resource of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "linux-desktop", "linux-terminal", "windows"] as const) {
       for (const unified of [true, false]) accepted(buildInfrastructureSetupHref(resource, { unified }));
     }
   });

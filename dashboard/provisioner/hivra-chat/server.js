@@ -60,6 +60,15 @@ const HERMES_WEBAPP_PORT = Number(process.env.HERMES_WEBAPP_PORT) || 9120;
 // the entry the agent page opens: a one-time setup page for the CopilotKit
 // Intelligence key OpenBot needs before it starts, then a redirect to /.
 const OPENBOT_PORT = Number(process.env.OPENBOT_PORT) || 3101;
+// Nuphos's official runtime, unmodified, on loopback NUPHOS_PORT. Its own
+// console (password setup, "Connect to Nuphos", provider sign-in) is served at
+// the ROOT of this origin behind the token gate, with this origin's own Host so
+// the runtime tells Nuphos the right public address. People then chat from the
+// Nuphos apps: Nuphos's servers open /acp, a WebSocket the runtime guards with
+// each connected team's key, so that one upgrade passes through without the
+// Hivra gate (and never carries Hivra's credentials). /nuphos/ is the entry the
+// agent page opens.
+const NUPHOS_PORT = Number(process.env.NUPHOS_PORT) || 3102;
 // Attached mode (design 5.4): the same gateway code runs as an attached agent's
 // own sandboxed instance on a computer its owner already has. Its root-written
 // unit sets these; nothing in the agent's writable HOME can change them.
@@ -96,6 +105,7 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
   : _agentKindRaw === "hermes" ? "hermes"
   : _agentKindRaw === "openbot" ? "openbot"
+  : _agentKindRaw === "nuphos" ? "nuphos"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -213,16 +223,17 @@ const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: 
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
   : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] }
-  : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] } : null;
+  : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] }
+  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
-// What an update status may name as its target. Hermes and OpenBot have no
+const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+// What an update status may name as its target. Hermes, OpenBot and Nuphos have no
 // Hivra pin: their update is always to whatever upstream publishes as latest.
-const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/ };
+const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/, nuphos: /^latest$/ };
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -1885,8 +1896,8 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") {
-    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot are hosted dashboards, not chat-CLI agents — no
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") {
+    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot + Nuphos are hosted dashboards, not chat-CLI agents — no
     // /api/chat surface; the user works in the agent's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
@@ -2638,13 +2649,13 @@ function openbotAnswers(done) {
   probe.on("error", () => finish(false));
   probe.end();
 }
-function openbotPage(res, status, title, body, refreshSeconds) {
+function openbotPage(res, status, title, body, refreshSeconds, entry = OPENBOT_ENTRY) {
   // same-origin, not no-referrer: a form post under no-referrer carries
   // Origin: null, which the gate (rightly) refuses as a cookie mutation.
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "same-origin",
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'" });
   res.end("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    + (refreshSeconds ? "<meta http-equiv=\"refresh\" content=\"" + refreshSeconds + ";url=" + OPENBOT_ENTRY + "/\">" : "")
+    + (refreshSeconds ? "<meta http-equiv=\"refresh\" content=\"" + refreshSeconds + ";url=" + entry + "/\">" : "")
     + "<title>" + title + "</title><style>"
     + ":root{color-scheme:light dark;--bg:#fafafa;--fg:#161616;--muted:#6b6b6b;--line:#e2e2e2;--accent:#6e56cf}"
     + "@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#ededed;--muted:#9a9a9a;--line:#2a2a2a;--accent:#9e8cfc}}"
@@ -2712,6 +2723,54 @@ function openbotProxy(req, res) {
   }
   if (agentAppHold(req, res)) return;
   return proxyHttp(req, res, OPENBOT_PORT, null, false, openbotHeaders(req));
+}
+
+// ---- Nuphos runtime console at the box root --------------------------------
+const NUPHOS_ENTRY = "/nuphos";
+const NUPHOS_ACP = "/acp";
+// Paths this gateway answers itself on a Nuphos computer; every other path is
+// the runtime's (its console lives under / and /_openab/, its ACP at /acp).
+const NUPHOS_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY).concat([NUPHOS_ENTRY]);
+function nuphosGatewayPath(u) {
+  return NUPHOS_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+// The runtime builds the address it gives Nuphos, its same-origin check and
+// its Secure console cookie from the host and X-Forwarded-Proto it sees:
+// present this origin as HTTPS (cloudflared terminates TLS in front of us),
+// name the Host the browser used (proxyHttp addresses the loopback port) and
+// drop any other forwarding claim the client sent.
+const NUPHOS_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forwarded-host": null, "x-forwarded-port": null,
+  "x-real-ip": null, "x-forwarded-proto": "https" };
+function nuphosHeaders(req) {
+  const host = String(req.headers.host || "").trim();
+  return { ...NUPHOS_SET_HEADERS, "x-forwarded-host": /^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$/.test(host) ? host : null };
+}
+function nuphosAnswers(done) {
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({ host: "127.0.0.1", port: NUPHOS_PORT, method: "GET", path: "/",
+    headers: { host: "127.0.0.1:" + NUPHOS_PORT, accept: "text/html" }, timeout: 3000 }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+// GET /nuphos/: the runtime's console at / once it answers, a short wait before.
+function nuphosEntry(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  nuphosAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(res, 200, "Starting Nuphos", "<h1>Starting Nuphos…</h1><p>The Nuphos runtime is starting. This page opens its console when it is ready.</p>",
+      5, NUPHOS_ENTRY);
+  });
+}
+function nuphosProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, NUPHOS_PORT, null, false, nuphosHeaders(req));
 }
 
 // ---- terminals on owner-only unix sockets -----------------------------------
@@ -2894,7 +2953,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -4044,6 +4103,10 @@ const server = http.createServer((req, res) => {
     if (u === OPENBOT_ENTRY || u.startsWith(OPENBOT_ENTRY + "/")) return openbotEntry(req, res, u);
     if (!openbotGatewayPath(u)) return openbotProxy(req, res);
   }
+  if (AGENT_KIND === "nuphos" && !ATTACHED) {
+    if (u === NUPHOS_ENTRY || u.startsWith(NUPHOS_ENTRY + "/")) return nuphosEntry(req, res);
+    if (!nuphosGatewayPath(u)) return nuphosProxy(req, res);
+  }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
   // controls, so these land on the box root — this chat server — and die as 404s.
@@ -4227,13 +4290,18 @@ server.on("upgrade", (req, socket, head) => {
     if (!DEEPSEEK_POLICY.surfaceOriginAllowed(req, DEEPSEEK_CONFIG.publicOrigin)) { socket.destroy(); return; }
   }
   const u = req.url.split("?")[0];
+  // Nuphos's servers connect to the runtime's /acp with a team key the runtime
+  // checks itself (it refuses every upgrade before the owner sets it up). It is
+  // the one WebSocket that passes without the Hivra gate, and it never counts
+  // as use of the app through Hivra.
+  const nuphosAcp = AGENT_KIND === "nuphos" && u === NUPHOS_ACP;
   const remoteDesktopUpgrade = u.startsWith("/desktop/");
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
   // /desktop has a separate short-lived session cookie and must never accept
   // the management bearer/cookie as equivalent authority.
-  if (!remoteDesktopUpgrade && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
+  if (!remoteDesktopUpgrade && !nuphosAcp && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
   let port = null, strip = null;
   if (remoteDesktopUpgrade) port = REMOTE_DESKTOP_BROKER_PORT;
   else if (u.startsWith("/terminal")) port = 7681;
@@ -4245,9 +4313,10 @@ server.on("upgrade", (req, socket, head) => {
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
+  else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
-  if (isAgentAppPort(port)) {
+  if (isAgentAppPort(port) && !nuphosAcp) {
     agentAppLastUsedAt = Date.now();
     if (agentAppUpdating()) {
       try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 15\r\n\r\n"); } catch (e) {}
@@ -4277,6 +4346,7 @@ server.on("upgrade", (req, socket, head) => {
   // OpenBot's live sockets present its own loopback Host and (from this origin) Origin.
   const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
   const openbotSet = openbotWs ? openbotHeaders(req) : null;
+  const nuphosWs = AGENT_KIND === "nuphos" && port === NUPHOS_PORT;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4293,6 +4363,7 @@ server.on("upgrade", (req, socket, head) => {
       if (a0Ws && key === "cookie") continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
+      if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;
@@ -4311,6 +4382,9 @@ server.on("upgrade", (req, socket, head) => {
     if (openbotWs) {
       hdr += "host: 127.0.0.1:" + port + "\r\n";
       for (const [name, value] of Object.entries(openbotSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
+    }
+    if (nuphosWs) {
+      for (const [name, value] of Object.entries(NUPHOS_SET_HEADERS)) if (value !== null) hdr += name + ": " + value + "\r\n";
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";
