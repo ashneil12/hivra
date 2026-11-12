@@ -9,9 +9,22 @@ case "${1:-}" in
   apply)
     umask 027
     install -d -m 2775 -g bux "$TG_ENV_DIR"
-    cat > "$TG_ENV_DIR/tg.env"
-    chgrp bux "$TG_ENV_DIR/tg.env"
-    chmod 640 "$TG_ENV_DIR/tg.env"
+    # $TG_ENV_DIR is group-bux-writable (bux owns its tg-state.json / tg-allowed.txt
+    # there), so bux can replace the tg.env entry with a symlink. Writing the
+    # root-owned secret straight onto that name with `cat >` — and the follow-up
+    # chgrp/chmod — would follow such a symlink and let bux redirect a
+    # root-authored write to an arbitrary file. Stage the file in the parent
+    # dir (/etc, root-only — bux cannot touch it, so the perms steps cannot be
+    # raced onto a symlink), then move it into place on the same filesystem:
+    # rename(2) replaces the directory entry atomically and never follows a
+    # symlink sitting at the destination.
+    staging="$(mktemp "$(dirname "$TG_ENV_DIR")/.hivra-tg.env.XXXXXX")"
+    trap 'rm -f "$staging"' EXIT
+    cat > "$staging"
+    chgrp bux "$staging"
+    chmod 0640 "$staging"
+    mv -f "$staging" "$TG_ENV_DIR/tg.env"
+    trap - EXIT
     # bux-tg reads tg.env only when it starts, and `enable --now` is a no-op
     # for a bot that is already running, so a new token or pairing link would
     # be ignored. Restart it so the bot always runs with what was just written.
