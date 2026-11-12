@@ -80,7 +80,7 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "infrastructure/home-connector/install$", "infrastructure/home-connector/enrol$", "activity/ingest$", "activity/collector/renew$", "agent-link$", "agent-bridge$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "infrastructure/home-connector/install$", "infrastructure/home-connector/enrol$", "activity/ingest$", "activity/collector/renew$", "agent-link$", "agent-bridge$", "hivra/bridge/install$", "hivra/bridge/enrol$"]);
   });
 
   // The exclusion used to end at "aeon-gate" with no `$`, unlike every other
@@ -111,6 +111,18 @@ describe("proxy config", () => {
     }
     for (const url of ["/api/infrastructure/home-connector", "/api/infrastructure/home-connector/install/x",
       "/api/infrastructure/home-connector/11111111-1111-4111-8111-111111111111", "/api/infrastructure/home-connector/enrol-other"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("routes only the exact local bridge installer and enrol paths around Clerk", async () => {
+    const { config } = await import("@/proxy");
+    for (const url of ["/api/hivra/bridge/install", "/api/hivra/bridge/enrol"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
+    }
+    // The owner route and every sibling or child stay behind Clerk.
+    for (const url of ["/api/hivra/bridge", "/api/hivra/bridge/install/x", "/api/hivra/bridge/enrol-other",
+      "/api/hivra/bridge/enrol/x", "/api/hivra/bridges/install", "/api/hivra/agents"]) {
       expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
     }
   });

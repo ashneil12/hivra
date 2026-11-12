@@ -435,4 +435,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261113033000", name: "agent_activity_samples" },
   { version: "20261113051700", name: "catalog_maker_claims" },
   { version: "20261113061500", name: "starter_credit_account_age" },
+  { version: "20261113080000", name: "hivra_bridge_enrol_codes" },
 ];

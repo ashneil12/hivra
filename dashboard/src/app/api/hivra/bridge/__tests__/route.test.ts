@@ -106,8 +106,18 @@ describe("/api/hivra/bridge", () => {
     expect(runAfterResponse).toHaveBeenCalledTimes(1);
   });
 
+  it("set up returns the one command and its expiry, never the settings", async () => {
+    jest.mocked(enrollComputer).mockResolvedValue({
+      ok: true, value: { computer: { id: "c1", label: "Mac" } as never, command: "curl -fsSL https://x.test/api/hivra/bridge/install | bash -s -- hvb_x", expiresAt: "2026-11-12T10:15:00Z" },
+    } as never);
+    const response = await POST(post({ action: "enroll", label: "Mac" }));
+    const data = (await response.json()).data;
+    expect(data).toEqual({ computer: { id: "c1", name: "Mac" }, command: expect.stringContaining("hvb_"), expiresAt: "2026-11-12T10:15:00Z" });
+    expect(JSON.stringify(data)).not.toMatch(/bridgeKey|secret|config/);
+  });
+
   it("re-syncs every agent's kit after an enroll and after a revoke", async () => {
-    jest.mocked(enrollComputer).mockResolvedValue({ ok: true, value: { computer: { id: REQUEST_ID, label: "Mac" } as never, config: {} as never } });
+    jest.mocked(enrollComputer).mockResolvedValue({ ok: true, value: { computer: { id: REQUEST_ID, label: "Mac" } as never, command: "x", expiresAt: "2026-11-12T10:15:00Z" } });
     jest.mocked(revokeComputer).mockResolvedValue({ ok: true, value: { generation: 2 } });
     for (const body of [{ action: "enroll", label: "Mac" }, { action: "revoke", computerId: REQUEST_ID }]) {
       jest.mocked(runAfterResponse).mockClear();

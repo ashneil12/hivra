@@ -90,8 +90,9 @@ export async function POST(req: NextRequest) {
       const enrolled = await enrollComputer(userId, body.label ?? "My computer", body.computerId);
       if (!enrolled.ok) return noStore(apiError(enrolled.message, enrolled.status));
       resyncKits(userId, req);
-      // The configuration holds this computer's secrets: shown to the owner once, never logged.
-      return noStore(apiSuccess({ computer: { id: enrolled.value.computer.id, name: enrolled.value.computer.label }, config: enrolled.value.config }));
+      // No secrets here: the owner gets one command that carries a one-time code. The computer
+      // swaps the code for its settings once (POST /api/hivra/bridge/enrol).
+      return noStore(apiSuccess({ computer: { id: enrolled.value.computer.id, name: enrolled.value.computer.label }, command: enrolled.value.command, expiresAt: enrolled.value.expiresAt }));
     }
     if (body.action === "revoke") {
       const revoked = await revokeComputer(userId, body.computerId);
