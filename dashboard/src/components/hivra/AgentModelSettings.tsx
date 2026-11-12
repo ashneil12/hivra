@@ -6,6 +6,7 @@ import type { AgentLlmInput } from "@/lib/hivra/agent-api";
 import { AgentModelSettingsError, cancelAgentLaunchModel, continueAgentLaunchModel, getAgentModelSettings, resumeAgentModelSettings, setAgentModelSettings,
   type AgentModelSettings as Settings } from "@/lib/hivra/agent-model-settings-api";
 import { VeniceModelList } from "./VeniceModelList";
+import { AgentSpendLimit } from "./AgentSpendLimit";
 import { VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import styles from "./AgentModelSettings.module.css";
 import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
@@ -167,6 +168,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
           if (signal && !signal.aborted) { setNotice(null); setUpgradeRequired(false); void refresh(signal); }
         }} aria-label="Refresh model settings"><RefreshCw size={14} aria-hidden="true" />Refresh</button>
       </div>
+      {settings?.llm?.mode === "managed" ? <AgentSpendLimit agentId={agentId} refreshKey={settings.llm.enabledAt} /> : null}
       {error ? <p role="alert" className={styles.warning}>{error}</p> : null}
       {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
       <p className={styles.help}>These settings connect Hivra Chat. The native {agentName} interface keeps its own sign-in and configuration.</p>
