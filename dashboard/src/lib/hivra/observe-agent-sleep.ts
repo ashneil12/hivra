@@ -16,11 +16,18 @@ import {
  * policy WOULD decide and records it. It never contacts a host and never changes
  * a VM or an agent; the only writes are rows in hivra_agent_sleep_observations.
  *
- * Signals come only from data already in the database. Anything the database
- * cannot tell us (open connections, active runs, terminals, CPU, schedules,
- * channel sockets) stays unknown, so every verdict is `awake` and the reasons
- * list which signals were missing. That is the point: the log shows how much we
+ * Signals come only from data already in the database: agent events, desktop
+ * sessions, and the latest use reading in hivra_agent_activity (written by the
+ * activity sampler every 10 minutes when HIVRA_AGENT_ACTIVITY_SAMPLING=1).
+ * A use reading counts only when the computer answered and the reading is
+ * recent; otherwise its signals stay unknown. Anything still unknown (CPU,
+ * schedules, channel sockets) keeps the verdict `awake`, and the reasons list
+ * which signals were missing. That is the point: the log shows how much we
  * would still need to measure before any agent could be put to sleep.
+ *
+ * A use reading can be up to ACTIVITY_MAX_AGE_MS old. That is fine for a log,
+ * never for acting: a mode that actually sleeps an agent must re-check it live
+ * right before doing so.
  *
  * With HIVRA_SLEEP_MODE unset or `off` this does nothing at all, not even a read.
  */
@@ -44,6 +51,59 @@ export const EVENT_PAGE_SIZE = 1000;
 export const EVENT_MAX_PAGES = 10;
 /** A desktop session that expired this recently still counts as attached. */
 const DESKTOP_GRACE_MS = 10 * 60 * 1000;
+/**
+ * A use reading older than this is stale and counts as unknown. The sampler
+ * runs every 10 minutes and may leave a computer for its next run when it runs
+ * out of time, so allow two runs plus a little slack.
+ */
+export const ACTIVITY_MAX_AGE_MS = 25 * 60 * 1000;
+/** How far a reading's time may run ahead of ours before it is not trusted. */
+const ACTIVITY_CLOCK_SKEW_MS = 60 * 1000;
+
+interface ActivityRow {
+  agent_id: string;
+  observed_at: string | null;
+  reachable: boolean | null;
+  last_used_at: string | null;
+  open_connections: number | null;
+  active_runs: number | null;
+  terminal_attached: boolean | null;
+  desktop_attached: boolean | null;
+}
+
+/** The parts of a use reading the policy can trust. Absent fields stay unknown. */
+export interface ActivitySignals {
+  lastUsedAt?: number;
+  openConnections?: number;
+  activeRun?: boolean;
+  terminalAttached?: boolean;
+  desktopAttached?: boolean;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/**
+ * Turn one stored use reading into signals. Pure. A missing, unreachable,
+ * stale or future-dated reading gives nothing, so every signal stays unknown
+ * (fail toward awake). Within a fresh reading, each null column stays unknown.
+ */
+export function activitySignalsFromRow(row: ActivityRow | undefined, nowMs: number): ActivitySignals {
+  if (!row || row.reachable !== true) return {};
+  const observedMs = parseMs(row.observed_at);
+  if (observedMs === null) return {};
+  if (nowMs - observedMs > ACTIVITY_MAX_AGE_MS || observedMs - nowMs > ACTIVITY_CLOCK_SKEW_MS) return {};
+  const signals: ActivitySignals = {};
+  const lastUsed = parseMs(row.last_used_at);
+  // A use dated after the reading itself is not trusted.
+  if (lastUsed !== null && lastUsed <= observedMs + ACTIVITY_CLOCK_SKEW_MS) signals.lastUsedAt = Math.min(lastUsed, nowMs);
+  if (isCount(row.open_connections)) signals.openConnections = row.open_connections;
+  if (isCount(row.active_runs)) signals.activeRun = row.active_runs > 0;
+  if (typeof row.terminal_attached === "boolean") signals.terminalAttached = row.terminal_attached;
+  if (typeof row.desktop_attached === "boolean") signals.desktopAttached = row.desktop_attached;
+  return signals;
+}
 
 interface AgentRow {
   id: string;
@@ -197,13 +257,39 @@ export async function runObserveAgentSleepSweep(
       }
     }
 
+    const activityByAgent = new Map<string, ActivityRow>();
+    {
+      const { data: activity, error: activityError } = await db
+        .from("hivra_agent_activity")
+        .select(
+          "agent_id, observed_at, reachable, last_used_at, open_connections, active_runs, terminal_attached, desktop_attached",
+        )
+        .in("agent_id", ids);
+      if (activityError) {
+        // Not fatal: without readings those signals simply stay unknown.
+        fail("failed to read agent use readings for sleep observation", activityError, "observe_activity_query_failed");
+      } else {
+        for (const row of (activity ?? []) as ActivityRow[]) activityByAgent.set(row.agent_id, row);
+      }
+    }
+
     const rows = agents.map((agent) => {
       const createdMs = parseMs(agent.created_at);
+      const activity = activitySignalsFromRow(activityByAgent.get(agent.id), nowMs);
+      // Attached if either source says so; unknown only if neither can tell.
+      const desktopFromSessions = desktopsKnown ? attachedDesktops.has(agent.id) : undefined;
+      const desktopAttached =
+        desktopFromSessions === true || activity.desktopAttached === true
+          ? true
+          : (desktopFromSessions ?? activity.desktopAttached);
       const signals: SleepSignals = {
         agentType: agent.type,
         sampledAt: nowMs,
         operationInFlight: agent.operation_id !== null,
-        desktopAttached: desktopsKnown ? attachedDesktops.has(agent.id) : undefined,
+        desktopAttached,
+        activeRun: activity.activeRun,
+        openConnections: activity.openConnections,
+        terminalAttached: activity.terminalAttached,
       };
       if (eventsKnown) {
         const lastEvent = lastEventAt.get(agent.id);
@@ -215,6 +301,12 @@ export async function runObserveAgentSleepSweep(
           signals.lastActivityAt = Math.max(eventSinceMs, createdMs ?? 0);
         }
         // Truncated read and no event seen: leave lastActivityAt unknown (fail toward awake).
+      }
+      // A use the computer reported is activity too; take the later of the two.
+      // Only raises a known value: it cannot make an unknown idle time known,
+      // because an events read that failed may have hidden a later event.
+      if (signals.lastActivityAt != null && activity.lastUsedAt !== undefined) {
+        signals.lastActivityAt = Math.max(signals.lastActivityAt, activity.lastUsedAt);
       }
       // Observe what the policy would do if the owner had opted in; a per-agent
       // `off` would otherwise hide everything. always_on is still respected.
