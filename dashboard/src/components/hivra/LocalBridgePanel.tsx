@@ -4,31 +4,34 @@
 // Shows the commands agents are waiting to run (the agent, the computer, the
 // exact command and the folder) with Approve, Deny and "Allow any command
 // from this agent for 1 hour", the allowances in force with End, and the computers you set up with
-// Revoke. Setting up a computer shows its bridge settings once. Nothing shows
+// Revoke. Setting up a computer shows one command to paste on it (with a one-time
+// code inside; no secrets reach the browser). Nothing shows
 // where the bridge isn't offered: the server answers 404 while
 // HIVRA_LOCAL_BRIDGE_ENABLED is off, and the `enabled` prop can also hide it.
 
 import { useCallback, useEffect, useState } from "react";
-import { Laptop, Loader2, RefreshCw } from "lucide-react";
+import { Check, Copy, Laptop, Loader2, RefreshCw } from "lucide-react";
 
 import styles from "./ComputerAgentsPanel.module.css";
 
 /** While a request waits for you, read again this often. */
 export const BRIDGE_POLL_MS = 5_000;
+/** Fired on the window after an answer or a change, so every bridge view on the page reads again. */
+export const BRIDGE_CHANGED_EVENT = "hivra:bridge-changed";
 
-type BridgeRequestView = {
+export type BridgeRequestView = {
   id: string; agentId: string; computerId: string; argv: string[]; cwd: string | null; status: string;
   createdAt: string; expiresAt: string; hasResult?: boolean;
 };
 type BridgeResult = { stdout?: string; stderr?: string; exitCode?: number | null; truncated?: boolean; message?: string };
-type BridgeView = {
+export type BridgeView = {
   computers: { id: string; name: string; revoked: boolean }[];
   agents: { id: string; name: string }[];
   requests: BridgeRequestView[];
   allowances: { agentId: string; computerId: string; expiresAt: string }[];
 };
-type Load = { state: "loading" } | { state: "not_offered" } | { state: "unavailable"; message: string } | { state: "ready"; view: BridgeView };
-type Enrolled = { computerName: string; config: Record<string, unknown> };
+export type Load = { state: "loading" } | { state: "not_offered" } | { state: "unavailable"; message: string } | { state: "ready"; view: BridgeView };
+type Enrolled = { computerName: string; command: string; expiresAt: string | null };
 
 const API = "/api/hivra/bridge";
 
@@ -52,7 +55,7 @@ export function commandLine(argv: string[]): string {
   return argv.map((arg) => (arg !== "" && /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg) ? arg : escapeUnusual(JSON.stringify(arg)))).join(" ");
 }
 
-async function post(body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; message: string }> {
+export async function post(body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; message: string }> {
   try {
     const response = await fetch(API, {
       method: "POST", credentials: "same-origin", cache: "no-store",
@@ -66,7 +69,7 @@ async function post(body: Record<string, unknown>): Promise<{ ok: true; data: Re
   }
 }
 
-async function load(): Promise<Load> {
+export async function load(): Promise<Load> {
   try {
     const response = await fetch(API, { cache: "no-store", credentials: "same-origin" });
     if (response.status === 404) return { state: "not_offered" };
@@ -79,6 +82,47 @@ async function load(): Promise<Load> {
   } catch {
     return { state: "unavailable", message: "Couldn't load the bridge." };
   }
+}
+
+/** What the owner answers: the agent, the computer, the exact command, the folder, and the three buttons. */
+export function PendingRequests({ requests, agents, computers, busy, onDecide }: {
+  requests: BridgeRequestView[];
+  agents: BridgeView["agents"];
+  computers: BridgeView["computers"];
+  busy: boolean;
+  onDecide: (requestId: string, decision: "approve" | "deny" | "allow_hour") => void;
+}) {
+  const agentName = (id: string) => escapeUnusual(agents.find((agent) => agent.id === id)?.name ?? "An agent");
+  const computerName = (id: string) => escapeUnusual(computers.find((computer) => computer.id === id)?.name ?? "your computer");
+  return <ul className={styles.rows} aria-label="Waiting for your OK">
+    {requests.map((request) => <li key={request.id} className={styles.row}>
+      <p className={styles.body}><strong>{agentName(request.agentId)}</strong> wants to run this on <strong>{computerName(request.computerId)}</strong>:</p>
+      <pre className={styles.note} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 }}>{commandLine(request.argv)}</pre>
+      <p className={styles.note}>Starts in: {request.cwd === null ? "the first folder you listed on that computer" : escapeUnusual(request.cwd)}</p>
+      {hasUnusual(...request.argv, request.cwd ?? "") ? <p className={styles.note} role="alert">This command has unusual characters, shown as {"\\uXXXX"}. Check it carefully before you approve it.</p> : null}
+      <div className={styles.actions}>
+        <button type="button" className={styles.primary} disabled={busy} onClick={() => onDecide(request.id, "approve")}>Approve</button>
+        <button type="button" className={styles.danger} disabled={busy} onClick={() => onDecide(request.id, "deny")}>Deny</button>
+        <button type="button" className={styles.button} disabled={busy} onClick={() => onDecide(request.id, "allow_hour")}>Allow any command from this agent for 1 hour</button>
+      </div>
+    </li>)}
+  </ul>;
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      setCopied(false);
+    }
+  }
+  return <button type="button" className={styles.button} onClick={() => void copy()}>
+    {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />} {copied ? "Copied" : "Copy"}
+  </button>;
 }
 
 export function LocalBridgePanel({ enabled = true }: { enabled?: boolean }) {
@@ -97,6 +141,13 @@ export function LocalBridgePanel({ enabled = true }: { enabled?: boolean }) {
     void load().then((result) => { if (alive) setState(result); });
     return () => { alive = false; };
   }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const again = () => { void refresh(); };
+    window.addEventListener(BRIDGE_CHANGED_EVENT, again);
+    return () => window.removeEventListener(BRIDGE_CHANGED_EVENT, again);
+  }, [enabled, refresh]);
 
   const waiting = state.state === "ready" && state.view.requests.some((request) => request.status === "pending");
   useEffect(() => {
@@ -127,6 +178,7 @@ export function LocalBridgePanel({ enabled = true }: { enabled?: boolean }) {
     setBusy(false);
     if (!result.ok) setError(result.message);
     await refresh();
+    window.dispatchEvent(new Event(BRIDGE_CHANGED_EVENT));
     return result;
   }
   async function showOutput(id: string) {
@@ -141,8 +193,8 @@ export function LocalBridgePanel({ enabled = true }: { enabled?: boolean }) {
   async function enroll(computerId?: string) {
     const result = await act(computerId ? { action: "enroll", computerId } : { action: "enroll", label: label.trim() || "My computer" });
     if (result.ok) {
-      const data = result.data as { computer?: { name?: string }; config?: Record<string, unknown> };
-      setEnrolled({ computerName: data.computer?.name ?? "your computer", config: data.config ?? {} });
+      const data = result.data as { computer?: { name?: string }; command?: string; expiresAt?: string };
+      setEnrolled({ computerName: data.computer?.name ?? "your computer", command: data.command ?? "", expiresAt: data.expiresAt ?? null });
       setLabel("");
     }
   }
@@ -157,19 +209,9 @@ export function LocalBridgePanel({ enabled = true }: { enabled?: boolean }) {
       </p>
       {error ? <p className={styles.note} role="alert">{error}</p> : null}
 
-      {pending.length > 0 ? <ul className={styles.rows} aria-label="Waiting for your OK">
-        {pending.map((request) => <li key={request.id} className={styles.row}>
-          <p className={styles.body}><strong>{agentName(request.agentId)}</strong> wants to run this on <strong>{computerName(request.computerId)}</strong>:</p>
-          <pre className={styles.note} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 }}>{commandLine(request.argv)}</pre>
-          <p className={styles.note}>Starts in: {request.cwd === null ? "the first folder you listed on that computer" : escapeUnusual(request.cwd)}</p>
-          {hasUnusual(...request.argv, request.cwd ?? "") ? <p className={styles.note} role="alert">This command has unusual characters, shown as {"\\uXXXX"}. Check it carefully before you approve it.</p> : null}
-          <div className={styles.actions}>
-            <button type="button" className={styles.primary} disabled={busy} onClick={() => void act({ action: "decide", requestId: request.id, decision: "approve" })}>Approve</button>
-            <button type="button" className={styles.danger} disabled={busy} onClick={() => void act({ action: "decide", requestId: request.id, decision: "deny" })}>Deny</button>
-            <button type="button" className={styles.button} disabled={busy} onClick={() => void act({ action: "decide", requestId: request.id, decision: "allow_hour" })}>Allow any command from this agent for 1 hour</button>
-          </div>
-        </li>)}
-      </ul> : <p className={styles.note}>No commands are waiting for your OK.</p>}
+      {pending.length > 0 ? <PendingRequests requests={pending} agents={agents} computers={computers} busy={busy}
+        onDecide={(requestId, decision) => void act({ action: "decide", requestId, decision })} />
+        : <p className={styles.note}>No commands are waiting for your OK.</p>}
 
       {allowances.length > 0 ? <ul className={styles.rows} aria-label="Allowed for now">
         {allowances.map((allowance) => <li key={`${allowance.agentId}|${allowance.computerId}`} className={styles.rowHead}>
@@ -197,11 +239,17 @@ export function LocalBridgePanel({ enabled = true }: { enabled?: boolean }) {
         <button type="button" className={styles.button} disabled={busy} onClick={() => void enroll()}>Set up a computer</button>
       </div>
 
-      {enrolled ? <div className={styles.contract} role="region" aria-label="Bridge settings">
-        <p className={styles.body}>Settings for <strong>{enrolled.computerName}</strong>. They are shown only now: save them as <code>~/.config/hivra-bridge/config.json</code> (mode 600), add <code>&quot;allowedFolders&quot;: [&quot;/the/folders/you/allow&quot;]</code>, then run the bridge.</p>
-        <pre className={styles.note} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 }}>{JSON.stringify(enrolled.config, null, 2)}</pre>
-        <pre className={styles.note} style={{ margin: 0 }}>python3 hivra_bridge.py run --config ~/.config/hivra-bridge/config.json</pre>
-        <div className={styles.actions}><button type="button" className={styles.button} onClick={() => setEnrolled(null)}>I saved them</button></div>
+      {enrolled && enrolled.command ? <div className={styles.contract} role="region" aria-label="Set up this computer">
+        <p className={styles.body}>To set up <strong>{escapeUnusual(enrolled.computerName)}</strong>, open a terminal on that computer and paste this one command.</p>
+        <pre className={styles.note} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 }}>{enrolled.command}</pre>
+        <div className={styles.actions}>
+          <CopyButton text={enrolled.command} />
+          <button type="button" className={styles.button} onClick={() => setEnrolled(null)}>Done</button>
+        </div>
+        <p className={styles.note}>
+          It installs the bridge for your own account only (do not run it with sudo), makes a shared folder called Hivra that commands start in,
+          and starts the bridge when you log in. It works on a Mac or on Linux with Python 3. The code works once and expires in 15 minutes{enrolled.expiresAt ? `, at ${new Date(enrolled.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}.
+        </p>
       </div> : null}
 
       {recent.length > 0 ? <details>

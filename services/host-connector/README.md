@@ -60,6 +60,19 @@ It is not the system connector: you start it, and stopping it is the off switch.
 - Revoke in the dashboard raises the connector generation; the bridge exits
   with status 3.
 
+**Set up with one command.** In the dashboard, "Set up a computer" shows
+`curl -fsSL <origin>/api/hivra/bridge/install | bash -s -- hvb_<code>`. Run it
+as yourself (not with sudo) on a Mac or Linux machine with Python 3. The code
+works once and expires in 15 minutes. The script installs `hivra_bridge.py` and
+`hivra_connector.py` into `~/.hivra-bridge/`, writes the config (mode 600), makes
+a shared folder `~/Hivra` as the only allowed folder, and starts the bridge at
+login (a launchd user agent `cloud.hivra.bridge` on macOS, a `systemd --user`
+service `hivra-bridge` on Linux). Edit `allowedFolders` in the config to add
+folders. The installer copies served from the dashboard live in
+`dashboard/bootstrap/local-bridge/` and must stay identical to these files.
+
+By hand:
+
 ```sh
 python3 hivra_bridge.py run --config ~/.config/hivra-bridge/config.json   # config is mode 600
 python3 -m unittest -v test_hivra_bridge
@@ -67,4 +80,4 @@ python3 -m unittest -v test_hivra_bridge
 
 The config is the JSON the dashboard issues (relay, connectionId, generation,
 secret, bridgeKey, ownerId, computerId) plus your own `allowedFolders`.
-`hivra-bridge.launchd.plist.example` is an example for macOS; nothing installs it.
+`hivra-bridge.launchd.plist.example` is a by-hand example for macOS; the installer writes a similar one that also starts at login.

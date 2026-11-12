@@ -59,10 +59,29 @@ export async function markComputerEnrolled(userId: string, id: string, bridgeKey
  */
 export async function bumpGeneration(userId: string, computer: BridgeComputer, bridgeKeyEncrypted: string, revoked: boolean): Promise<number> {
   const next = computer.generation + 1;
-  const row = check(await db().from("hivra_bridge_computers").update({ generation: next, revoked_at: revoked ? new Date().toISOString() : null, bridge_key_encrypted: bridgeKeyEncrypted })
+  // A revoke also voids any setup code still waiting to be used.
+  const patch = { generation: next, revoked_at: revoked ? new Date().toISOString() : null, bridge_key_encrypted: bridgeKeyEncrypted, ...(revoked ? { enrol_token_hash: null, enrol_expires_at: null } : {}) };
+  const row = check(await db().from("hivra_bridge_computers").update(patch)
     .eq("id", computer.id).eq("user_id", userId).eq("generation", computer.generation).select("generation").maybeSingle());
   if (!row) throw new Error("conflict");
   return next;
+}
+
+/** Keeps only the hash of this computer's one-time setup code (a new code replaces any older one). */
+export async function setEnrolCode(userId: string, computerId: string, tokenHash: string, expiresAt: string): Promise<void> {
+  const row = check(await db().from("hivra_bridge_computers").update({ enrol_token_hash: tokenHash, enrol_expires_at: expiresAt })
+    .eq("id", computerId).eq("user_id", userId).select("id").maybeSingle());
+  if (!row) throw new Error("database_unavailable");
+}
+
+/**
+ * Redeems a setup code: one conditional update that clears it, so it works once, only before
+ * it expires and never for a revoked computer. Returns the computer, or null when the code is
+ * unknown, used, expired or revoked.
+ */
+export async function consumeEnrolCode(tokenHash: string, nowIso: string): Promise<BridgeComputer | null> {
+  return check(await db().from("hivra_bridge_computers").update({ enrol_token_hash: null, enrol_expires_at: null })
+    .eq("enrol_token_hash", tokenHash).gt("enrol_expires_at", nowIso).is("revoked_at", null).select(COMPUTER_COLUMNS).maybeSingle()) as unknown as BridgeComputer | null;
 }
 
 export async function insertRequest(row: {
