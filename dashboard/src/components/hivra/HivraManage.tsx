@@ -38,6 +38,7 @@ import { HivraGitHubConnect } from "./HivraGitHubConnect";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
+import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import {
   ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
 } from "./manage/ManageReachability";
@@ -969,6 +970,8 @@ function HivraManageContent({
       {/* OVERVIEW — what this is, its size and where it runs, and power. */}
       <ManagePanel id="overview" selected={selected}>
         <div style={{ display: "grid", gap: 20 }}>
+          {/* A Hermes agent moved to the official setup can go back for 7 days. */}
+          <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputerOnly} />
           {/* Error lands here, not on a surface: say why and what to do next
               where the owner actually is, not only under Advanced. */}
           {agent.status === "error" && agent.error && !missingOnHost ? (
