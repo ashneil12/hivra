@@ -5,6 +5,8 @@ import { KeyRound, Loader2, RefreshCw } from "lucide-react";
 import type { AgentLlmInput } from "@/lib/hivra/agent-api";
 import { AgentModelSettingsError, cancelAgentLaunchModel, continueAgentLaunchModel, getAgentModelSettings, resumeAgentModelSettings, setAgentModelSettings,
   type AgentModelSettings as Settings } from "@/lib/hivra/agent-model-settings-api";
+import { VeniceModelList } from "./VeniceModelList";
+import { VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import styles from "./AgentModelSettings.module.css";
 import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
 import { isLocalAuthMode } from "@/lib/self-host/config";
@@ -33,6 +35,7 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [wallet, setWallet] = useState<"hermesos" | "card">("hermesos");
+  const modelSeeded = useRef(false);
   const lifetime = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
   const refreshEpoch = useRef(0);
@@ -57,6 +60,13 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
     void refresh(controller.signal);
     return () => { controller.abort(); if (busyRef.current) onBusyChange(false); };
   }, [refresh, onBusyChange]);
+
+  useEffect(() => {
+    const saved = settings?.llm?.model;
+    if (modelSeeded.current || !saved) return;
+    modelSeeded.current = true;
+    setModel(saved);
+  }, [settings]);
 
   useEffect(() => {
     if (previousReady.current === ready || acting || busyRef.current) return;
@@ -206,10 +216,9 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
             <option value="hermesos">Token wallet</option><option value="card">Card balance</option>
           </select>
         </label>}
-        <label className={styles.field}><span>Model <span className={styles.help}>(optional)</span></span>
-          <input value={model} onChange={e => setModel(e.target.value)} maxLength={64} placeholder="Default: deepseek-v4-pro" spellCheck={false}
-            autoCapitalize="none" autoCorrect="off" enterKeyHint="done" />
-        </label>
+        <div className={styles.field}><span>Model <span className={styles.help}>(optional)</span></span>
+          <VeniceModelList label="Model" value={model || VENICE_DEFAULT_MODEL} current={settings?.llm?.model ?? null} onChange={setModel} />
+        </div>
         <p className={styles.help}>{mode === "byok"
           ? "Stored encrypted and delivered by Hivra directly to this computer. Your infrastructure key and model API key are separate."
           : `Usage is charged to your ${wallet === "card" ? "card balance" : "token wallet"}. Requests pause when funds run out; we do not switch wallets automatically.`}</p>

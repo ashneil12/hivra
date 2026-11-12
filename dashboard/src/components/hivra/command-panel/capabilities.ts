@@ -9,6 +9,7 @@
 
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { veniceModelName } from "@/lib/venice/model-catalog";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { agentSoftwareDisplayName } from "@/lib/hivra/agent-software-names";
 import type { ManageSectionId } from "@/lib/hivra/manage-sections";
@@ -131,7 +132,7 @@ export function commandPanelCapabilities(agent: HivraAgent, surfaces: readonly s
     actions.push({
       id: "model",
       label: "Model",
-      description: agent.llm_config?.model ? agent.llm_config.model : "Choose which model it uses",
+      description: agent.type !== "hermes" && agent.llm_config?.model ? veniceModelName(agent.llm_config.model) : "Choose which model it uses",
       defaultShown: true,
       target: { kind: "manage", section: "model", opening: "Opening model settings" },
     });

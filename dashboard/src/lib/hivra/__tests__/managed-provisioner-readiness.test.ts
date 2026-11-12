@@ -198,12 +198,12 @@ describe("managed readiness per runtime", () => {
   it("lets only hosts on the release that ships linux-server take it, and keeps Linux Desktop on older hosts", () => {
     for (const purpose of ["provision", "runtime-update"] as const) {
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "linux-server"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
       // DeepSeek Harness needs the release that seeds its launch-time model.
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "deepseek-harness"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
     }
-    // Hermes is placed only on the release that shows its Desktop at /hermes.
+    // Hermes is placed only on the release that lets Hivra set its own model.
     expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual([PORTABLE_HIVRA_PROVISIONER_VERSION]);
     const desktop = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "linux-desktop"));
     expect(desktop).toContain("2026.11.10.3");

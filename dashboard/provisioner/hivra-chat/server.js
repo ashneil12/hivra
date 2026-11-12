@@ -1553,6 +1553,54 @@ function handleModelSet(res, body) {
   } catch (e) { jsonRes(res, 500, { ok: false, error: String((e && e.message) || e) }); }
 }
 
+// ---- Hermes's own model (Manage → Model) -------------------------------------
+// Hermes keeps its model in its own config (model.default), the setting its own
+// model picker writes, and uses it for new chats. Hivra reads and writes it only
+// through Hermes's own CLI, so Hermes validates the change. Hivra offers Venice
+// models, so a Hermes the owner pointed at another provider is left alone.
+function hermesConfigGet(key) {
+  return new Promise((resolve) => {
+    try {
+      execFile(HERMES_BIN, ["config", "get", key], { env: AGENT_ENV, cwd: HOME, timeout: 20000, maxBuffer: 16 * 1024 },
+        (err, stdout) => resolve(err ? null : String(stdout || "").trim().split("\n", 1)[0].trim() || null));
+    } catch { resolve(null); }
+  });
+}
+function hermesUsesVenice(baseUrl) {
+  try {
+    const u = new URL(baseUrl || "");
+    return u.protocol === "https:" && (u.hostname === "api.venice.ai" || /^\/api\/managed-venice\/v1\/?$/.test(u.pathname));
+  } catch { return false; }
+}
+async function hermesModelState() {
+  const [model, baseUrl] = await Promise.all([hermesConfigGet("model.default"), hermesConfigGet("model.base_url")]);
+  return { model: model && MODEL_RE.test(model) ? model : null, provider: hermesUsesVenice(baseUrl) ? "venice" : "other" };
+}
+function handleHermesModelGet(res) {
+  hermesModelState().then((state) => jsonRes(res, 200, { agentKind: AGENT_KIND, hermesConfig: true, ...state }),
+    () => jsonRes(res, 503, { error: "Hermes did not report its model" }));
+}
+let hermesModelWriting = false;
+function handleHermesModelSet(res, body) {
+  let model = "";
+  try { model = String((JSON.parse(body || "{}")).model || "").trim(); } catch {}
+  if (!model || !MODEL_RE.test(model)) return jsonRes(res, 400, { ok: false, error: "Pick a model from the list." });
+  if (hermesModelWriting) return jsonRes(res, 409, { ok: false, error: "Hermes is already changing its model. Try again in a moment." });
+  if (agentAppUpdating()) return jsonRes(res, 409, { ok: false, error: "Hermes is being updated. Try again when the update finishes." });
+  hermesModelWriting = true;
+  hermesModelState().then((state) => {
+    if (state.provider !== "venice") {
+      hermesModelWriting = false;
+      return jsonRes(res, 409, { ok: false, error: "Hermes uses a provider set up in Hermes itself, so change its model there." });
+    }
+    execFile(HERMES_BIN, ["config", "set", "model.default", model], { env: AGENT_ENV, cwd: HOME, timeout: 30000, maxBuffer: 64 * 1024 }, (err) => {
+      hermesModelWriting = false;
+      if (err) return jsonRes(res, 500, { ok: false, error: "Hermes could not save the model. Nothing changed." });
+      jsonRes(res, 200, { ok: true, model });
+    });
+  }, () => { hermesModelWriting = false; jsonRes(res, 503, { ok: false, error: "Hermes did not report its model" }); });
+}
+
 // ---- alternative LLM provider (Venice byok / managed gateway) ----------------
 // ~/.hivra/llm-provider.json: { provider:"venice", baseUrl, apiKey, model }.
 // Legacy provision/bootstrap and explicit POST /api/llm remain compatible until
@@ -3892,8 +3940,8 @@ const server = http.createServer((req, res) => {
     return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...((levels) => levels ? { chatEffort: levels } : {})(chatEffortAdvertised()), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}), ...(authed(req) ? ((app) => app ? { agentApp: app } : {})(agentAppReport()) : {}) });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
-  if (req.method === "GET" && u === "/api/model") return authed(req) ? handleModelGet(res) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/model") return authed(req) ? (AGENT_KIND === "hermes" ? handleHermesModelGet(res) : handleModelGet(res)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => AGENT_KIND === "hermes" ? handleHermesModelSet(res, b) : handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Alternative LLM provider (Manage tab) — token-gated; GET never echoes the key.
   if (u === "/api/llm" || u === "/api/llm/application") res.setHeader("Cache-Control", "no-store");
   if (u === "/api/llm/application") return handleLlmApplication(req, res);

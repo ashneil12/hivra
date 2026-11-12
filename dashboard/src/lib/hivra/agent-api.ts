@@ -1200,13 +1200,13 @@ export async function desktopClipboardCopy(boxUrl: string, token?: string | null
 // ---- per-box model override (Manage → Model) --------------------------------
 // model=null means "the CLI's own default". Changes apply on the NEXT chat turn
 // (the box reads ~/.hivra/agent-model per spawn) — no restart, no redeploy.
-export async function getBoxModel(boxUrl: string, token?: string | null): Promise<{ model: string | null; error: string | null }> {
+export async function getBoxModel(boxUrl: string, token?: string | null): Promise<{ model: string | null; error: string | null; hermesConfig: boolean; provider: "venice" | "other" | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/model`, { cache: "no-store", headers: boxHeaders(token) });
-    const j = (await r.json().catch(() => ({}))) as { model?: string | null; error?: string };
-    if (!r.ok) return { model: null, error: j.error || `HTTP ${r.status}` };
-    return { model: j.model || null, error: null };
-  } catch (e) { return { model: null, error: (e as Error).message }; }
+    const j = (await r.json().catch(() => ({}))) as { model?: string | null; error?: string; hermesConfig?: boolean; provider?: string | null };
+    if (!r.ok) return { model: null, error: j.error || `HTTP ${r.status}`, hermesConfig: false, provider: null };
+    return { model: j.model || null, error: null, hermesConfig: j.hermesConfig === true, provider: j.provider === "venice" || j.provider === "other" ? j.provider : null };
+  } catch (e) { return { model: null, error: (e as Error).message, hermesConfig: false, provider: null }; }
 }
 export async function setBoxModel(boxUrl: string, model: string | null, token?: string | null): Promise<{ ok: boolean; model?: string | null; error: string | null }> {
   try {

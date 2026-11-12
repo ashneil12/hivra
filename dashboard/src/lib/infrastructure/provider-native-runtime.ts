@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.11.7.json";
+import currentRelease from "../../../provisioner-releases/2026.11.12.1.json";
+import webappRelease from "../../../provisioner-releases/2026.11.11.7.json";
 import libatomicRelease from "../../../provisioner-releases/2026.11.11.6.json";
 import gatewayRelease from "../../../provisioner-releases/2026.11.11.5.json";
 import hermesRelease from "../../../provisioner-releases/2026.11.11.4.json";
@@ -98,8 +99,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.11.7"
+  const release = identity.bundle.provisionerVersion === "2026.11.12.1"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.7"
+      ? webappRelease
     : identity.bundle.provisionerVersion === "2026.11.11.6"
       ? libatomicRelease
     : identity.bundle.provisionerVersion === "2026.11.11.5"

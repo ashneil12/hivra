@@ -544,6 +544,17 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.12.1` builds on `2026.11.11.7` and lets the owner choose a Hermes
+computer's model from Hivra's Manage page. Hermes keeps its model in its own config
+(`model.default`), the setting its own model picker writes, and uses it for new chats.
+On a Hermes computer, `hivra-chat/server.js` now answers `GET /api/model` from Hermes's own
+`hermes config get model.default` and `model.base_url`, and `POST /api/model` runs
+`hermes config set model.default <model>`, only when Hermes still points at Venice (Hivra's
+managed gateway or Venice's API) and not while Hermes is being updated. Before this
+release the endpoint wrote a file Hermes never read. `hivra-provider-worker.py` advances
+its release labels. This source release does not deploy, install, or update any existing
+computer.
+
 Release `2026.11.11.7` builds on `2026.11.11.6` and shows Hermes's own Desktop workspace
 at `/hermes` on Hermes computers. Before this release `/hermes` served `hermes dashboard`,
 Hermes's admin page, and its pages went blank when opened under `/hermes`. Upstream Hermes
