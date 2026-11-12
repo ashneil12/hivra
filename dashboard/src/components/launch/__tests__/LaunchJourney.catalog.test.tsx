@@ -62,7 +62,7 @@ function balance(cardUsd: number, tokenUsd = 0) {
 let savedKeys: Array<typeof VENICE_KEY>;
 let instanceBodies: Array<Record<string, unknown>>;
 let workspaceReady: boolean;
-let agentStatus: "provisioning" | "running";
+let agentStatus: "provisioning" | "running" | "error";
 let resolveInstance: ((response: Response) => void) | null;
 
 function json(body: unknown, status = 200): Response {
