@@ -9,6 +9,7 @@
 
 import { resourceAttention, type ResourceAttention } from "./resource-attention";
 import type { HivraAgent } from "./agent-api";
+import type { InboxPrompt } from "@/lib/agent-inbox/types";
 import { getAgent as catalogAgent } from "./agent-catalog";
 import { getComputerTemplate } from "./computer-catalog";
 import { isComputerMissingOnHostRow } from "./computer-usage-contract";
@@ -30,6 +31,8 @@ export interface HermesInstanceLite {
 
 export interface UnifiedAgent {
   attention?: ResourceAttention | null;
+  /** What the agent is waiting on, when Needs you can show (and maybe answer) it. */
+  prompt?: InboxPrompt;
   /** Unique across both families (kind-prefixed). */
   uid: string;
   kind: UnifiedKind;
@@ -162,7 +165,8 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
   const resourceKind = hivraResourceKind(a);
   return {
     uid: `x-${a.id}`, kind: "hivra", id: a.id, name: a.name, emoji: a.emoji ?? null,
-    attention: resourceAttention(a.status),
+    attention: resourceAttention(a.status, a.inbox_prompt),
+    ...(a.inbox_prompt && a.status === "running" ? { prompt: a.inbox_prompt } : {}),
     statusRaw: a.status, state, dot: HIVRA_DOT[state],
     // Every computer shares the linux-desktop catalog entry ("Ubuntu Desktop"),
     // so its operating system comes from the stored profile.
