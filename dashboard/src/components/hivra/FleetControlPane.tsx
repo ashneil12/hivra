@@ -26,6 +26,9 @@ import { listRecents, visitHref, type RecentVisit } from "@/lib/workspace/recent
 import { isAppOpenAtHome, markHomeOpened } from "@/lib/workspace/app-open";
 import { unifiedStateLabel, type UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { agentComputerPairDetail } from "@/lib/agent-computers/agent-surfaces";
+import { offeredAgentTiles } from "@/components/launch/launch-tiles";
+import { isLaunchCatalogEnabled, primaryCatalogJob, tryNextSuggestions } from "@/lib/launch/launch-catalog";
+import { isLocalAuthMode } from "@/lib/self-host/config";
 
 const NO_RECENTS: RecentVisit[] = [];
 
@@ -84,6 +87,14 @@ export function FleetControlPane({ requested = false, attentionRequested = false
   const recent = useMemo(() => inRecentOrder(agents, recents), [agents, recents]);
   const isStale = useCallback((agent: UnifiedAgent) => Boolean(staleSource(agent)), [staleSource]);
   const searching = query.trim().length > 0;
+  // "Try next": agents the owner does not run yet, where the catalog view of
+  // Launch is on. Each opens its page there.
+  const tryNext = useMemo(() => {
+    if (!isLaunchCatalogEnabled()) return [];
+    const runtimeIds = currentAgents.flatMap((agent) =>
+      agent.resourceKind === "computer" ? [] : agent.kind === "hermes" ? ["hermes"] : agent.agentType ? [agent.agentType] : []);
+    return tryNextSuggestions(offeredAgentTiles({ selfHosted: isLocalAuthMode() }), runtimeIds);
+  }, [currentAgents]);
   const empty = !loading && agents.length === 0 && !hermesError && !hivraError;
 
   /**
@@ -235,6 +246,46 @@ export function FleetControlPane({ requested = false, attentionRequested = false
               </ul>
             </section>
           ))}
+          {tryNext.length > 0 && !searching && !attentionOnly ? (
+            <section className="mb-6 last:mb-0" aria-labelledby="home-try-next-heading">
+              <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <h2 id="home-try-next-heading" className="mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                  Try next
+                </h2>
+                <Link
+                  href="/dashboard/launch?start=1"
+                  className="mono inline-flex min-h-[28px] pointer-coarse:min-h-[44px] items-center text-[11px] font-semibold text-[var(--text-muted)] outline-none hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+                >
+                  See everything you can launch
+                </Link>
+              </div>
+              <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {tryNext.map(({ item, because }) => {
+                  const Icon = item.icon ?? Bot;
+                  const job = primaryCatalogJob(item.id);
+                  return (
+                    <li key={item.id} className="min-w-0">
+                      <Link
+                        href={`/dashboard/launch?start=1&about=${item.id}`}
+                        className="group flex min-h-[96px] min-w-0 items-center gap-3 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-4 py-4 outline-none transition-colors hover:border-[var(--hivra-red-line)] hover:bg-[var(--bg-elevated)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1"
+                      >
+                        <span className={styles.resourceIcon} aria-hidden="true"><Icon size={21} /></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13.5px] font-medium leading-[1.4]">{item.name}</span>
+                          <span className="mono block truncate text-[11px] leading-[1.35] text-[var(--text-muted)]">
+                            {[job?.label, because ? `Because you run ${because}` : null].filter(Boolean).join(" · ")}
+                          </span>
+                          <span className="mt-3 block text-[12px] font-medium text-[var(--text-secondary)] group-hover:text-[var(--ink-black)]">
+                            See what it does <span aria-hidden="true">→</span>
+                          </span>
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
         </div>
       )}
 

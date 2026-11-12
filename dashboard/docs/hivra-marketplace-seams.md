@@ -113,6 +113,38 @@ Still not visible: an agent that works only through a messaging channel or on a
 schedule, on its owner's own model key, with nobody connected. An open app tab
 counts as use for as long as its connection stays open.
 
+### A catalog view of Launch (behind a switch)
+
+`NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG=1` turns on the catalog view of Launch's Choose
+step. It is off by default and adds nothing that can launch: it only presents the
+tiles Launch already offers.
+
+- `src/lib/launch/launch-catalog.ts` holds what nothing else records about each
+  launch profile: its jobs, search words, how you talk to it, its maker's page, a
+  picture and a few first tasks. The maker's name, places, browser and model access
+  are read from `agent-catalog.ts`, `PROFILE_DETAILS` and `model-access.ts`, not
+  repeated.
+- Choose gains a search (every word has to match a tile's name, description, jobs or
+  search words), an All / Agents / Computers filter and "Browse by job".
+- A tile opens its page before Review. The page has its own history entry, so Back
+  returns to the list, and `?about=<profile>` opens one directly.
+- Each page view sends `launch_catalog_page_viewed` with the profile, next to the
+  launch events that already exist. That is the "saw the page, then launched" count a
+  maker page would show.
+- A picture is a file under `public/` named by the entry's `cover`. The computers use
+  the workspace pictures already in the repository; an agent without a picture shows
+  its icon on a wash of its catalog colour.
+
+- Home gains "Try next" under the owner's own agents and computers: up to two agents
+  they do not run yet, one that does a job they already use an agent for first
+  ("Because you run Codex"). Each opens its page in Launch. Nothing is suggested to an
+  owner who runs no agent, or during a search.
+- The tiles themselves live in `src/components/launch/launch-tiles.ts`, so Home and
+  Launch name and describe a thing in the same words.
+
+Not built yet: ordering by how many people keep using a thing, pages a maker can
+claim and edit, and adding a new agent without a code change.
+
 ---
 
 ## What the marketplace adds later (NOT now)

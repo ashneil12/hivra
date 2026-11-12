@@ -6,25 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import {
   AlertTriangle,
-  AppWindow,
   ArrowLeft,
   ArrowRight,
-  Bot,
-  Boxes,
   Check,
   Cloud,
-  Code2,
-  Cpu,
   Droplet,
-  Monitor,
-  Orbit,
   Server,
-  Terminal,
-  TerminalSquare,
-  Triangle,
-  Users,
-  Waves,
-  type LucideIcon,
 } from "lucide-react";
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
@@ -56,7 +43,9 @@ import {
 import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
 import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { AttachEntryLink } from "./AttachEntryLink";
-import { getAgent } from "@/lib/hivra/agent-catalog";
+import { LaunchCatalogPage, LaunchCatalogToolbar } from "./LaunchCatalog";
+import { COMPUTER_TILES, offeredAgentTiles, type ChooseTile } from "./launch-tiles";
+import catalogStyles from "./LaunchCatalog.module.css";
 import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
@@ -155,6 +144,15 @@ import {
   type SizePreset,
 } from "@/lib/launch/launch-plan";
 import { launchResourcePolicy } from "@/lib/launch/resource-envelope";
+import {
+  catalogJobCounts,
+  filterCatalog,
+  isCatalogFiltered,
+  isLaunchCatalogEnabled,
+  NO_CATALOG_FILTER,
+  relatedCatalogItems,
+  type CatalogFilter,
+} from "@/lib/launch/launch-catalog";
 import {
   captureLaunchEvent,
   captureLaunchEventOnce,
@@ -443,6 +441,14 @@ const LEGACY_HISTORY_STAGES: Readonly<Record<string, HistoryStage>> = {
 };
 const HISTORY_STAGE_KEY = "hivraLaunchStage";
 const HISTORY_PUSHED_KEY = "hivraLaunchPushed";
+/** The catalog page open on the Choose step, kept on its own history entry so
+ * the system back gesture returns to the list. */
+const HISTORY_ABOUT_KEY = "hivraLaunchAbout";
+
+function historyAbout(): LaunchProfileId | null {
+  const about = (window.history.state as Record<string, unknown> | null)?.[HISTORY_ABOUT_KEY];
+  return isLaunchProfileId(about) ? about : null;
+}
 
 function parseHistoryStage(value: unknown): HistoryStage | null {
   const stage = HISTORY_STAGES.find(candidate => candidate === value);
@@ -520,32 +526,9 @@ function visibleStep(stage: LaunchStage): number {
 
 // ── Choose ──────────────────────────────────────────────────────────────────
 
-type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
-
 /** Tiles that run only on a server the owner connected. With none ready, the
  * tile says so in one line and offers to add one. */
 const SERVER_ONLY_TILES: ReadonlySet<LaunchProfileId> = new Set(["linux-terminal"]);
-
-const AGENT_TILES: readonly ChooseTile[] = ([
-  { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account, or run it on Hivra credits.", icon: Code2 },
-  { id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },
-  { id: "hermes", name: "Hermes", description: "A general-purpose agent for research and automation.", icon: Bot },
-  // Hermes as a Hivra computer, where that lane is on: it takes the Hermes tile's place.
-  { id: "hermes-computer", name: "Hermes", description: "The official Hermes Agent, in its own web UI, on its own computer.", icon: Bot },
-  { id: "openclaw", name: "OpenClaw", description: "An agent you reach from your messaging apps, on a computer that stays on.", icon: Cpu },
-  { id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit },
-  { id: "openbot", name: "OpenBot", description: "CopilotKit's open-source AI coworkers, in OpenBot's own workspace.", icon: Users },
-  { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
-  { id: "deepseek-harness", name: "DeepSeek Harness", description: "DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.", icon: Waves },
-] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
-
-const COMPUTER_TILES: readonly ChooseTile[] = [
-  { id: "ubuntu-server", name: "Linux computer", description: "A light Linux computer with a terminal and files. No desktop.", icon: Terminal },
-  { id: "ubuntu-desktop", name: "Ubuntu Desktop", description: "A desktop, terminal and files you open in your browser.", icon: Monitor },
-  { id: "linux-terminal", name: "Linux Sandbox", description: "A locked-down Linux terminal on a server you've connected.", icon: TerminalSquare },
-  { id: "omarchy", name: "Omarchy", description: "A ready-made Omarchy desktop you open in your browser.", icon: null },
-  { id: "windows", name: "Windows (your ISO)", description: "Install Windows from your own ISO on a server you connected.", icon: AppWindow },
-];
 
 /** The owner's Capacity page, opened for this runtime when it can use a
  * server they connect. */
@@ -805,6 +788,11 @@ export function LaunchJourney(
   // The step on screen, for catching the history up when that pop lands.
   const shownStageRef = useRef<LaunchStage | null>(null);
   const journeyRef = useRef<HTMLElement | null>(null);
+  // The catalog view of Choose (off unless its switch is on): a search and
+  // filters over the tiles, and a page for each one before Review.
+  const catalogOn = isLaunchCatalogEnabled();
+  const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>(NO_CATALOG_FILTER);
+  const [aboutId, setAboutId] = useState<LaunchProfileId | null>(null);
   const activeStage = resumeChoice ? "resume" : draft?.stage;
   const activeOutcome = activeStage === "launch" ? draft?.launchState : null;
 
@@ -1132,6 +1120,17 @@ export function LaunchJourney(
       ? { ...current, name }
       : current);
   }, [draft, existingNames]);
+
+  // `about=` opens a catalog page directly (links from elsewhere in the app),
+  // and a reload keeps the page its history entry names.
+  const aboutParam = searchParams?.get("about") ?? null;
+  useEffect(() => {
+    if (!catalogOn) return;
+    const syncAbout = () => setAboutId(historyAbout());
+    setAboutId(historyAbout() ?? (isLaunchProfileId(aboutParam) ? aboutParam : null));
+    window.addEventListener("popstate", syncAbout);
+    return () => window.removeEventListener("popstate", syncAbout);
+  }, [catalogOn, aboutParam]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -1841,7 +1840,23 @@ export function LaunchJourney(
     setSizeExpanded(false);
     destination.setMode("hivra-managed");
     setDraft(next);
+    setAboutId(null);
+    setCatalogFilter(NO_CATALOG_FILTER);
     writeStageHistory(next.stage, "replace");
+  };
+  // A catalog page gets its own history entry on the Choose step, so Back
+  // (the button or the system gesture) returns to the list.
+  const openAbout = (profileId: LaunchProfileId) => {
+    setAboutId(profileId);
+    window.history.pushState(
+      { [HISTORY_STAGE_KEY]: "choose", [HISTORY_PUSHED_KEY]: true, [HISTORY_ABOUT_KEY]: profileId },
+      "",
+      `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    );
+  };
+  const closeAbout = () => {
+    setAboutId(null);
+    if (historyAbout()) window.history.back();
   };
   const reviewFailedLaunch = () => {
     const nextIdentity = createLaunchDraft();
@@ -2131,7 +2146,7 @@ export function LaunchJourney(
         type="button"
         className={styles.tile}
         data-selected={draft.profileId === tile.id}
-        onClick={() => chooseProfile(tile.id)}
+        onClick={() => (catalogOn ? openAbout(tile.id) : chooseProfile(tile.id))}
       >
         {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
         <span className={styles.tileText}>
@@ -2151,20 +2166,17 @@ export function LaunchJourney(
       </div>
     );
   };
-  // A self-hosted installation has no Hivra Cloud, so an agent that runs only
-  // there isn't offered.
-  const hermesTile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
-  const agentTiles = AGENT_TILES
-    .filter(tile => (tile.id !== "hermes" && tile.id !== "hermes-computer") || tile.id === hermesTile)
-    .filter(tile => !selfHosted || PROFILE_DETAILS[tile.id].ownServer);
-  const agentSection = (
+  const agentTiles = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE });
+  const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);
+  const shownAgentTiles = catalogFiltered ? filterCatalog(agentTiles, catalogFilter) : agentTiles;
+  const agentSection = shownAgentTiles.length === 0 ? null : (
     <section key="agents" className={styles.chooseSection} aria-labelledby="launch-agents-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-agents-heading">An agent</h2>
         <p>An AI that works on its own computer.</p>
       </div>
-      <div className={styles.tileGrid}>{agentTiles.map(renderTile)}</div>
-      {selfHosted ? null : <AttachEntryLink className={styles.attachEntry} />}
+      <div className={styles.tileGrid}>{shownAgentTiles.map(renderTile)}</div>
+      {selfHosted || catalogFiltered ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
   // The prepared desktop computer is offered only where this deployment has a
@@ -2172,15 +2184,20 @@ export function LaunchJourney(
   const computerTiles = preparedCanaryAvailable
     ? COMPUTER_TILES
     : COMPUTER_TILES.filter(tile => tile.id !== "omarchy");
-  const computerSection = (
+  const shownComputerTiles = catalogFiltered ? filterCatalog(computerTiles, catalogFilter) : computerTiles;
+  const computerSection = shownComputerTiles.length === 0 ? null : (
     <section key="computers" className={styles.chooseSection} aria-labelledby="launch-computers-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-computers-heading">A computer</h2>
         <p>A machine you use yourself. It runs on its own, without an agent.</p>
       </div>
-      <div className={styles.tileGrid}>{computerTiles.map(renderTile)}</div>
+      <div className={styles.tileGrid}>{shownComputerTiles.map(renderTile)}</div>
     </section>
   );
+  // The catalog page on screen: only for a tile this page offers.
+  const aboutTile = catalogOn && aboutId
+    ? [...agentTiles, ...computerTiles].find(tile => tile.id === aboutId) ?? null
+    : null;
 
   const selfHostedTargetLabel = "Connected host";
   const whereForcedOpen = draft.profileId === "windows"
@@ -2374,7 +2391,21 @@ export function LaunchJourney(
         <Stepper current={visibleStep(draft.stage)} />
       </header>
 
-      {draft.stage === "choose" ? (
+      {draft.stage === "choose" && aboutTile ? (
+        <LaunchCatalogPage
+          profileId={aboutTile.id}
+          name={aboutTile.name}
+          description={aboutTile.description}
+          icon={aboutTile.icon}
+          fit={<FitBadge fit={launchFit(launchProfileFitSubject(aboutTile.id), fitEvidence)} />}
+          selfHosted={selfHosted}
+          related={relatedCatalogItems(aboutTile.id, agentTiles).map(renderTile)}
+          onBack={closeAbout}
+          onReview={() => chooseProfile(aboutTile.id)}
+        />
+      ) : null}
+
+      {draft.stage === "choose" && !aboutTile ? (
         <section className={styles.stage} aria-labelledby="launch-choose-heading">
           <div className={styles.stageIntro}>
             <span className={styles.eyebrow}>Start something new</span>
@@ -2423,7 +2454,21 @@ export function LaunchJourney(
               </span>
             </div>
           ) : null}
+          {catalogOn ? (
+            <LaunchCatalogToolbar
+              filter={catalogFilter}
+              onChange={setCatalogFilter}
+              counts={{ all: agentTiles.length + computerTiles.length, agent: agentTiles.length, computer: computerTiles.length }}
+              jobs={catalogJobCounts(agentTiles)}
+            />
+          ) : null}
           {requestedKindParam === "computer" ? [computerSection, agentSection] : [agentSection, computerSection]}
+          {catalogFiltered && !agentSection && !computerSection ? (
+            <p className={catalogStyles.empty} role="status">
+              Nothing matches. Try fewer words, or{" "}
+              <button type="button" className={styles.inlineAction} onClick={() => setCatalogFilter(NO_CATALOG_FILTER)}>show everything</button>
+            </p>
+          ) : null}
           <p className={styles.chooseAside}>
             Saved an agent as a template? <Link href="/dashboard/templates">Start from a template</Link>
           </p>
