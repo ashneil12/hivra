@@ -38,6 +38,25 @@ script only says where to look.
 | --- | --- |
 | Nightly Labs OpenBot | PolyForm Noncommercial since 0.1.12. Hivra runs CopilotKit OpenBot (MIT) instead. |
 
+## Check of 2026-11-12 (second run, evening)
+
+This run came the same day as the first full check, so it covers about half a
+day of upstream work. No licence changes anywhere: every repository checked
+still carries the licence recorded in `upstreams.json`.
+
+| Repository | Hivra uses | What moved | Decision |
+| --- | --- | --- | --- |
+| hardbeat920/monocode | ported chat UI | nothing | MonoCode Hub fork is already level with upstream main. |
+| anthropics/claude-code | 2.1.292 | 2.1.323 | Take with the next provisioner release (now 2.1.323 rather than 2.1.322). New opt-in Code Mode and plugin version ranges; the rest are fixes. |
+| openai/codex | 0.149.1 | 0.168.0 | Still needs a live test first. 0.168.0 adds provider browsing in the TUI, runtime auth across backend paths and more Guardian review work. |
+| NousResearch/hermes-agent | latest (installer) | 117 commits, no new release | Nothing to do. Mostly security fixes: credential refs withheld from MCP stdio children, Google OAuth redaction, Skills Hub redirect checks, gateway `/stop` authorisation, dashboard logout. Owners get them with `hermes update`. |
+| openclaw/openclaw | 2026.6.10 | 34 commits, no new release | Unchanged decision (live test first). Includes a fix for updating from 2026.11.3 when Workboard is installed. |
+| CopilotKit/openbot | latest image | 8 commits, no new release | Keep holding `latest`; consider pinning v1.0.2. |
+| nuphos/nuphos | latest image | 2 commits | Fine as is. |
+| block/buzz, block/buzz-app | desktop 0.5.20 | fixes; buzz-app added an upgrade guide for old Buzz app users | Leave; the move to buzz-app is still open. |
+| selkies-project/selkies | image digest | HTTPS on a second port | Leave the pinned digest. |
+| Inspiration projects | designs only | small changes | Nothing to merge. |
+
 ## Check of 2026-11-12
 
 No licence changes anywhere.
