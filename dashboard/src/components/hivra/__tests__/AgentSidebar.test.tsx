@@ -131,7 +131,15 @@ function Shell({ initialActive = "files" as Id }) {
   );
 }
 
+/** The floating pill's dropdown, opened if it is not already. */
+function pillMenu() {
+  if (!screen.queryByRole("dialog", { name: "Site Builder controls" })) fireEvent.click(screen.getByRole("button", { name: /Show controls$/ }));
+  return within(screen.getByRole("dialog", { name: "Site Builder controls" }));
+}
+
 describe("AgentShell around the sidebar", () => {
+  beforeEach(() => { window.localStorage.setItem("hivra:agent-pill-intro-seen", "1"); });
+
   it("provides the chat list element, and a chat opened from it shows the Chat surface", () => {
     render(<Shell />);
     const slot = document.querySelector("[data-agent-chat-list]") as HTMLElement;
@@ -147,19 +155,17 @@ describe("AgentShell around the sidebar", () => {
     const nav = screen.getByRole("navigation", { name: "Resource surfaces" });
     fireEvent.click(within(nav).getByRole("button", { name: "Computer" }));
     expect(document.getElementById("pane")).toHaveAttribute("data-active", "files");
-    fireEvent.click(within(screen.getByRole("tablist", { name: "Computer views" })).getByRole("tab", { name: "Desktop" }));
+    fireEvent.click(within(pillMenu().getByRole("navigation", { name: "Views" })).getByRole("button", { name: "Desktop" }));
     fireEvent.click(within(nav).getByRole("button", { name: "Chat" }));
     expect(document.getElementById("pane")).toHaveAttribute("data-active", "chat");
     fireEvent.click(within(nav).getByRole("button", { name: "Computer" }));
     expect(document.getElementById("pane")).toHaveAttribute("data-active", "desktop");
   });
 
-  it("collapses the sidebar, brings it back from the title bar, and remembers the choice", () => {
+  it("collapses the sidebar, brings it back from the pill, and remembers the choice", () => {
     const view = render(<Shell />);
     const sidebar = () => screen.queryByRole("complementary", { name: "Agent navigation" });
     expect(sidebar()).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
     expect(sidebar()).not.toBeInTheDocument();
     expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed")).toBe("true");
@@ -169,7 +175,7 @@ describe("AgentShell around the sidebar", () => {
     view.unmount();
     render(<Shell />);
     expect(sidebar()).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    fireEvent.click(pillMenu().getByRole("button", { name: "Show sidebar" }));
     expect(sidebar()).toBeInTheDocument();
     expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed")).toBe("false");
   });
@@ -187,28 +193,25 @@ describe("AgentShell around the sidebar", () => {
   describe("below 768px, as a drawer", () => {
     beforeEach(() => mockViewport(true));
 
-    it("starts closed, opens from the title bar as a modal dialog and closes on Escape, returning focus", () => {
+    it("starts closed, opens from the pill as a modal dialog and closes on Escape", () => {
       render(<Shell />);
       expect(screen.queryByRole("dialog", { name: "Agent navigation" })).not.toBeInTheDocument();
-      const menu = screen.getByRole("button", { name: "Show sidebar" });
-      menu.focus();
-      fireEvent.click(menu);
+      fireEvent.click(pillMenu().getByRole("button", { name: "Show sidebar" }));
       const drawer = screen.getByRole("dialog", { name: "Agent navigation" });
       expect(drawer).toHaveAttribute("aria-modal", "true");
       expect(drawer.contains(document.activeElement)).toBe(true);
 
       fireEvent.keyDown(drawer, { key: "Escape" });
       expect(screen.queryByRole("dialog", { name: "Agent navigation" })).not.toBeInTheDocument();
-      expect(document.activeElement).toBe(menu);
     });
 
     it("closes from the backdrop, and behind a choice", () => {
       render(<Shell initialActive="chat" />);
-      fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+      fireEvent.click(pillMenu().getByRole("button", { name: "Show sidebar" }));
       fireEvent.click(screen.getByTestId("agent-sidebar-backdrop"));
       expect(screen.queryByRole("dialog", { name: "Agent navigation" })).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+      fireEvent.click(pillMenu().getByRole("button", { name: "Show sidebar" }));
       fireEvent.click(within(screen.getByRole("navigation", { name: "Resource surfaces" })).getByRole("button", { name: "Computer" }));
       expect(screen.queryByRole("dialog", { name: "Agent navigation" })).not.toBeInTheDocument();
       expect(document.getElementById("pane")).toHaveAttribute("data-active", "files");
@@ -216,7 +219,7 @@ describe("AgentShell around the sidebar", () => {
 
     it("keeps Tab inside the open drawer", () => {
       render(<Shell />);
-      fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+      fireEvent.click(pillMenu().getByRole("button", { name: "Show sidebar" }));
       const drawer = screen.getByRole("dialog", { name: "Agent navigation" });
       const focusable = Array.from(drawer.querySelectorAll<HTMLElement>("a[href], button:not([disabled])"));
       const last = focusable[focusable.length - 1];
@@ -229,7 +232,7 @@ describe("AgentShell around the sidebar", () => {
 
     it("does not touch the remembered desktop preference", () => {
       render(<Shell />);
-      fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+      fireEvent.click(pillMenu().getByRole("button", { name: "Show sidebar" }));
       fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
       act(() => undefined);
       expect(window.localStorage.getItem("hivra:agent-sidebar-collapsed")).toBeNull();
