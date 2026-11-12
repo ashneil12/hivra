@@ -544,6 +544,21 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.11.7` builds on `2026.11.11.6` and shows Hermes's own Desktop workspace
+at `/hermes` on Hermes computers. Before this release `/hermes` served `hermes dashboard`,
+Hermes's admin page, and its pages went blank when opened under `/hermes`. Upstream Hermes
+also serves its Desktop workspace in a browser (`hermes webapp`) from its gateway on
+`127.0.0.1:9120` once `webapp.enabled` is on. `provision-claude-code-box.sh` now turns that
+setting on and builds the Webapp with Hermes's own `hermes webapp --build-only`.
+`hivra-chat/server.js` proxies `/hermes` to the Webapp when it is served and signs the owner
+in with the one-use launch link `hermes webapp --no-open --skip-build` prints; while the
+Webapp is not served it keeps proxying the dashboard, so older computers keep working.
+`hivra-agent-app-update.sh` (Update Hermes) turns the setting on, runs `hermes update`, then
+builds the Webapp and restarts Hermes's gateway, which is how existing Hermes computers move
+over. Hermes itself is still installed and updated unmodified by its own commands.
+`hivra-provider-worker.py` advances its release labels. This source release does not
+deploy, install, or update any existing computer.
+
 Release `2026.11.11.6` builds on `2026.11.11.5` and lets the official Hermes installer
 finish on a fresh Hermes computer. Hermes's installer downloads the official Node.js
 build, which links the host's `libatomic.so.1`; the Ubuntu 22.04 cloud image leaves that

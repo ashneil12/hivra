@@ -55,8 +55,15 @@ case "$url" in
     now=$(date +%s); at=$((now - \${FAKE_LAST_USED_AGE:-100000}))
     python3 -c 'import sys,time; print("{\\"agentApp\\":{\\"activity\\":{\\"lastUsedAt\\":\\"%s\\",\\"openConnections\\":%s}}}" % (time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(int(sys.argv[1]))), sys.argv[2]))' "$at" "\${FAKE_OPEN_CONNECTIONS:-0}"
     ;;
+  # Hermes's Webapp, when the test decides its answer apart from the dashboard's.
+  *:9120/*) echo "curl $url" >> "$FAKE_LOG"; cat "$FAKE_DIR/webapp-code" 2>/dev/null || cat "$FAKE_DIR/http-code" 2>/dev/null || printf 000 ;;
   *) echo "curl $url" >> "$FAKE_LOG"; cat "$FAKE_DIR/http-code" 2>/dev/null || printf 000 ;;
 esac
+`,
+  // id -u of the agent's user, for its systemd user session.
+  id: `#!/bin/sh
+[ "$1" = -u ] && { echo 1000; exit 0; }
+exec /usr/bin/id "$@"
 `,
   // systemctl: start/restart make the app answer 200 unless it now runs FAKE_BAD_VERSION.
   systemctl: `#!/bin/sh
@@ -163,8 +170,10 @@ function fixture(app: App): Fixture {
     fs.writeFileSync(path.join(home, ".hermes-version"), "0.23.1");
     // The real `hermes update --yes` is Hermes's own; this one only records
     // that it ran (and whether the surface lock was held) and moves the version.
+    // Its gateway serves the Webapp after a restart unless webapp-stuck exists.
     fs.writeFileSync(path.join(home, ".local", "bin", "hermes"), `#!/bin/sh
 home="\${HOME}"
+fakes="${fakes}"
 case "$1" in
   --version) echo "Hermes Agent v$(cat "$home/.hermes-version") (2026.11.1)"; echo "Install directory: $home/.hermes/hermes-agent" ;;
   update)
@@ -172,6 +181,10 @@ case "$1" in
     code=$(cat "$home/.hermes-update-exit" 2>/dev/null || echo 0)
     [ "$code" = 0 ] && echo 0.24.0 > "$home/.hermes-version"
     exit "$code" ;;
+  config|webapp|gateway)
+    echo "hermes $* lock=$([ -e "$home/../agent-app-update.lock" ] && echo held || echo free) session=\${XDG_RUNTIME_DIR:-none}" >> "$home/hermes-calls"
+    if [ "$1 $2" = "gateway restart" ] && [ ! -e "$fakes/webapp-stuck" ]; then printf 200 > "$fakes/webapp-code"; fi
+    exit 0 ;;
 esac
 `, { mode: 0o755 });
     fs.mkdirSync(path.join(home, ".hermes", "sessions"), { recursive: true });
@@ -247,13 +260,45 @@ describe("hivra-agent-app-update.sh", () => {
       const f = make("hermes");
       const result = run(f, "hermes", "latest");
       expect(result.status).toBe(0);
-      expect(calls(f)).toEqual(["hermes update --yes lock=held"]);
+      // The Webapp is turned on first, so the update builds it; it is already
+      // served here, so the gateway is left alone.
+      expect(calls(f)).toEqual([
+        "hermes config set webapp.enabled true lock=held session=none",
+        "hermes update --yes lock=held",
+        "hermes webapp --build-only lock=held session=none",
+      ]);
       expect(result.log.filter((line) => line.startsWith("runuser ")).every((line) => line.startsWith("runuser bux "))).toBe(true);
       expect(result.log).toContain("systemctl restart bux-hermes.service lock=held");
       expect(result.doc).toMatchObject({ name: "hermes", state: "done", from: "0.23.1", to: "latest" });
       expect(result.record).toMatchObject({ name: "hermes", version: "0.24.0" });
       expect(fs.existsSync(f.lock)).toBe(false);
       expect(fs.existsSync(path.join(f.state, "agent-app-swap"))).toBe(false);
+    });
+
+    it("restarts Hermes's gateway once, in the agent's user session, when it does not serve the Webapp yet", () => {
+      const f = make("hermes");
+      fs.writeFileSync(path.join(f.fakes, "webapp-code"), "000");
+      const result = run(f, "hermes", "latest");
+      expect(result.status).toBe(0);
+      expect(calls(f).slice(-2)).toEqual([
+        "hermes webapp --build-only lock=held session=none",
+        "hermes gateway restart lock=held session=/run/user/1000",
+      ]);
+      expect(result.log).toContain("curl http://127.0.0.1:9120/");
+      expect(result.doc).toMatchObject({ state: "done" });
+      expect(result.stderr).not.toContain("Webapp is not served");
+    });
+
+    it("still finishes the update when the Webapp does not come up, and says so", () => {
+      const f = make("hermes");
+      fs.writeFileSync(path.join(f.fakes, "webapp-code"), "000");
+      fs.writeFileSync(path.join(f.fakes, "webapp-stuck"), "");
+      const result = run(f, "hermes", "latest");
+      expect(result.status).toBe(0);
+      expect(result.doc).toMatchObject({ state: "done" });
+      expect(result.record).toMatchObject({ version: "0.24.0" });
+      expect(result.stderr).toContain("Webapp is not served");
+      expect(fs.existsSync(f.lock)).toBe(false);
     });
 
     it("waits while the owner is using Hermes through Hivra and never forces the update", () => {
@@ -277,6 +322,7 @@ describe("hivra-agent-app-update.sh", () => {
       expect(result.status).toBe(1);
       expect(result.doc).toMatchObject({ state: "failed", reason: "local_changes" });
       expect(result.record).toMatchObject({ version: "0.23.1" });
+      expect(calls(f).some((call) => call.startsWith("hermes webapp") || call.startsWith("hermes gateway"))).toBe(false);
       expect(fs.existsSync(f.lock)).toBe(false);
     });
 

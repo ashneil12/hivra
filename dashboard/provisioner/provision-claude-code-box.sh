@@ -1412,6 +1412,27 @@ else
 fi
 rm -rf -- "${HERMES_TMP}"
 
+# What the agent page shows at /hermes is Hermes's Desktop workspace in a
+# browser (the Webapp), which Hermes's gateway serves on loopback once
+# webapp.enabled is on (127.0.0.1:9120, Hermes's own defaults). The gateway,
+# started below, reads the setting when it starts. The bundle is built here
+# with Hermes's own command, and `hermes update` rebuilds it from then on.
+# Until it is served, /hermes shows Hermes's dashboard, so a failure only warns.
+HERMES_WEBAPP_PORT=9120
+hermes_webapp_setup() {
+  sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+    PATH="${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+    "${HERMES_BIN}" config set webapp.enabled true >/dev/null </dev/null || return 1
+  timeout -k 30 1800 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
+    PATH="${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+    "${HERMES_BIN}" webapp --build-only </dev/null || return 1
+}
+if hermes_webapp_setup; then
+  ok "Hermes Webapp turned on and built (the gateway serves it on 127.0.0.1:${HERMES_WEBAPP_PORT}, mounted at /hermes)"
+else
+  warn "Hermes Webapp could not be turned on or built; /hermes shows Hermes's dashboard until: hermes webapp --build-only"
+fi
+
 # Hermes's own web UI on loopback. The box gateway is the only public path.
 cat > /etc/systemd/system/bux-hermes.service <<UNIT
 [Unit]
@@ -1745,6 +1766,11 @@ elif [ "$AGENT_KIND" = "hermes" ]; then
     ok "Hermes gateway is active (scheduled tasks and chat channels can run)"
   else
     warn "Hermes gateway is not active; scheduled tasks and chat channels will not run (dashboard is unaffected)"
+  fi
+  if wait_for_exact_http_200 "http://127.0.0.1:${HERMES_WEBAPP_PORT:-9120}/"; then
+    ok "Hermes Webapp is served (the agent page opens it at /hermes)"
+  else
+    warn "Hermes Webapp is not served; the agent page shows Hermes's dashboard at /hermes until it is"
   fi
 fi
 

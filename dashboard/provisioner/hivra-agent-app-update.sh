@@ -13,7 +13,8 @@
 # rolled back by Hivra. "hermes latest" waits for the same idle moment, holds
 # the same surface lock, and runs Hermes's own `hermes update --yes` as the
 # agent's user (exactly what the owner would type in Terminal), then restarts
-# the dashboard and reports the version it finds.
+# the dashboard, makes sure Hermes's gateway serves its Webapp and reports the
+# version it finds.
 #
 # hivra-update-guest-runtime.sh starts it as a transient systemd unit, so a slow
 # download or build never holds the dashboard's update request. It first
@@ -567,9 +568,39 @@ wait_until_idle() {
   done
 }
 
+# The agent page shows Hermes's Webapp (its Desktop workspace in a browser),
+# which Hermes's gateway serves on loopback once webapp.enabled is on. A
+# computer set up before that gets it here, with Hermes's own commands: the
+# setting goes on before `hermes update` (which then builds the Webapp with the
+# rest of Hermes), the bundle is built if it is still missing, and the gateway,
+# which reads the setting when it starts, is restarted once if it does not
+# serve the Webapp yet. None of this fails the update: until the Webapp is
+# served, the agent page shows the dashboard.
+HERMES_WEBAPP_URL="http://127.0.0.1:${HIVRA_HERMES_WEBAPP_PORT:-9120}/"
+as_agent_session() {
+  local uid; uid="$(id -u "$AGENT_USER")" || return 1
+  runuser -u "$AGENT_USER" -- env -i PATH="$AGENT_PATH" HOME="$AGENT_HOME" LANG=C.UTF-8 \
+    XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" "$@"
+}
+hermes_webapp_on() {
+  as_agent timeout -k 10 120 "$BIN" config set webapp.enabled true >/dev/null 2>&1 </dev/null
+}
+hermes_webapp_ready() {
+  local i
+  as_agent timeout -k 30 "$HERMES_UPDATE_SECONDS" "$BIN" webapp --build-only >/dev/null 2>&1 </dev/null || return 1
+  [ "$(http_code "$HERMES_WEBAPP_URL")" = 200 ] && return 0
+  as_agent_session timeout -k 10 240 "$BIN" gateway restart >/dev/null 2>&1 </dev/null || return 1
+  for i in $(seq 1 40); do
+    [ "$(http_code "$HERMES_WEBAPP_URL")" = 200 ] && return 0
+    sleep "$HEALTH_POLL_SECONDS"
+  done
+  return 1
+}
+
 # Hermes: no pin, no staged copy, no rollback. Hermes's own updater does the
 # work as the agent's user; this only waits for a quiet moment, holds the
-# surface, restarts the dashboard and reports what it finds.
+# surface, restarts the dashboard, makes sure the Webapp is served and reports
+# what it finds.
 run_hermes() {
   local rc=0 now
   [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
@@ -581,6 +612,7 @@ run_hermes() {
   write_status waiting
   wait_until_idle
   write_status installing
+  hermes_webapp_on || echo "WARNING: could not turn on Hermes's Webapp (hermes config set webapp.enabled true)" >&2
   as_agent timeout -k 30 "$HERMES_UPDATE_SECONDS" "$BIN" update --yes >/dev/null 2>&1 </dev/null || rc=$?
   if [ "$rc" -ne 0 ]; then
     # Exit 2 is Hermes saying it would not touch local changes (or another
@@ -599,6 +631,7 @@ run_hermes() {
     write_status failed install_failed
     exit 1
   fi
+  hermes_webapp_ready || echo "WARNING: Hermes's Webapp is not served; the agent page shows the dashboard until it is (hermes webapp --build-only, then hermes gateway restart)" >&2
   release_lock
   write_record "$now"
   write_status done
