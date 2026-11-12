@@ -139,7 +139,8 @@ function buildHomepageSchema(faq: readonly { q: string; a: string }[]) {
         mainEntity: faq.map(({ q, a }) => ({
           "@type": "Question",
           name: q,
-          acceptedAnswer: { "@type": "Answer", text: a },
+          // Answers keep their paragraphs apart on the page; structured data takes one line.
+          acceptedAnswer: { "@type": "Answer", text: a.replace(/\n\n/g, " ") },
         })),
       },
       {

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
+import { getStarterCreditLine, tryGrantStarterCredit } from "@/lib/billing/starter-credit";
 import { isVenicePromoEnabled } from "@/lib/venice/promo/core";
 import { getUserPromoLines, recordVeniceAttribution, redeemVeniceCode, tryGrantLaunchCredit, type RedeemStatus } from "@/lib/venice/promo/service";
 import { VENICE_ATTRIBUTION_COOKIE, parseVeniceAttribution } from "@/lib/venice/attribution";
@@ -29,7 +30,17 @@ const MESSAGES: Record<RedeemStatus, string> = {
 export async function GET(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) return apiError("Unauthorized", 401);
-  if (!isVenicePromoEnabled()) return apiSuccess({ enabled: false, lines: [], codeEntry: false });
+  // Starter credit is its own feature, not gated by the promo flag. Launch
+  // asks with ?prepareLaunch=1 before it reads the balance; the grant is
+  // best-effort and never throws.
+  if (request.nextUrl.searchParams.get("prepareLaunch") === "1") {
+    await tryGrantStarterCredit({ userId });
+  }
+  const starter = await getStarterCreditLine(userId).catch(() => null);
+  const starterLines = starter ? [{ grantId: "starter-credit", label: starter.label, expiresAt: null }] : [];
+  if (!isVenicePromoEnabled()) {
+    return apiSuccess({ enabled: starterLines.length > 0, lines: starterLines, codeEntry: false });
+  }
   // A visitor who arrived from /venice (or a link with ?code=) carries the
   // attribution cookie: remember it for this account. Idempotent.
   const attribution = parseVeniceAttribution(request.cookies.get(VENICE_ATTRIBUTION_COOKIE)?.value);
@@ -55,10 +66,10 @@ export async function GET(request: NextRequest) {
     return apiSuccess({
       enabled: true,
       codeEntry: true,
-      lines: lines.map((l) => ({ grantId: l.grantId, label: l.label, expiresAt: l.expiresAt })),
+      lines: [...starterLines, ...lines.map((l) => ({ grantId: l.grantId, label: l.label, expiresAt: l.expiresAt }))],
     });
   } catch {
-    return apiSuccess({ enabled: false, lines: [], codeEntry: false });
+    return apiSuccess({ enabled: starterLines.length > 0, lines: starterLines, codeEntry: false });
   }
 }
 

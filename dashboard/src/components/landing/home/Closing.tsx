@@ -9,11 +9,15 @@ export default function Closing() {
     <section id="start" className={styles.closing} aria-labelledby="closing-heading">
       <div className={styles.closingCopy}>
         <h2 id="closing-heading" className={styles.closingTitle}>{CLOSING.title}</h2>
-        <p className={styles.bodyText}>{CLOSING.paid}</p>
+        {CLOSING.paragraphs.map(text => <p key={text} className={styles.bodyText}>{text}</p>)}
         <div className={styles.heroActions}>
           <a href={AGENT_LAUNCH_HREF} className={styles.primaryCta} data-cta="closing-primary">
             <span>{CLOSING.primary}</span>
             <ArrowRight size={18} aria-hidden="true" />
+          </a>
+          <a href={CLOSING.secondaryHref} className={styles.textCta} data-cta="closing-secondary">
+            {CLOSING.secondary}
+            <ArrowRight size={16} aria-hidden="true" />
           </a>
         </div>
         <MotionSwitch />

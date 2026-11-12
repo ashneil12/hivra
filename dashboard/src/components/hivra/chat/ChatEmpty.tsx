@@ -39,3 +39,18 @@ export function ChatEmpty({ agentName, emoji, intro, starters, disabled, onPick 
     </div>
   );
 }
+
+/** The starters on their own, under the agent's welcome reply: the owner's
+ * first message is still to come, so the same suggestions stay one tap away. */
+export function ChatStarters({ starters, disabled, onPick }: Pick<ChatEmptyProps, "starters" | "disabled" | "onPick">) {
+  return (
+    <div className={styles.starters} data-testid="chat-welcome-starters" aria-label="Suggested first messages" role="group">
+      {starters.map((starter, i) => (
+        <button key={i} type="button" disabled={disabled} onClick={() => onPick(starter)} className={styles.starter}>
+          <ArrowRight size={13} aria-hidden className={styles.starterArrow} />
+          <span>{starter}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
