@@ -415,6 +415,11 @@ const recipes = Object.freeze({
     workerSha256: "ee41d3606f887223a35a8c3845c5560cabd486372cb4e7717f63d384ef0c48b2",
     workerSize: 45195,
   }),
+  "2026.11.12.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets Hivra read and set Hermes's own model through Hermes's CLI (the box gateway changes). The worker only advances its release labels.
+    workerSha256: "9abab12289cd7978348324e16278019d4668e521405d1e180d7c4dd3011427cf",
+    workerSize: 45195,
+  }),
 });
 
 type Version = keyof typeof recipes;

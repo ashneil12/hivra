@@ -320,6 +320,17 @@ async function main() {
     });
     await db.exec(WEBAPP_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedWebapp, "re-applying the 2026.11.11.7 admission changes nothing");
+    // 2026.11.12.1 anchors on the 2026.11.11.7 entry; idempotent too.
+    const HERMES_MODEL_ADMISSION = migration("20261112170000_provider_release_admission_2026_11_12_1.sql");
+    await db.exec(HERMES_MODEL_ADMISSION);
+    const admittedHermesModel = await admissionDefinitions();
+    admittedHermesModel.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(HERMES_MODEL_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedHermesModel, "re-applying the 2026.11.12.1 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

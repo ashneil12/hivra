@@ -421,4 +421,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261112140000", name: "computer_status_follows_lifecycle" },
   { version: "20261112150000", name: "hermes_move_wave" },
   { version: "20261112160000", name: "provider_release_admission_2026_11_11_7" },
+  { version: "20261112170000", name: "provider_release_admission_2026_11_12_1" },
 ];

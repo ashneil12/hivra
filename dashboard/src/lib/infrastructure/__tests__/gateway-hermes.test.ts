@@ -35,6 +35,9 @@ describe("gateway Hermes mount", () => {
   let hermesOutput: string | null;
   let webappOutput: string | null;
   let hermesCalls: string[][];
+  // Hermes's own config, as `hermes config get/set` sees it.
+  let hermesConfig: Record<string, string>;
+  let hermesConfigSetFails: boolean;
 
   beforeEach(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-hermes-gateway-"));
@@ -43,6 +46,8 @@ describe("gateway Hermes mount", () => {
     hermesOutput = "Hermes Agent v0.23.1 (2026.11.1)\nInstall directory: /home/bux/.hermes/hermes-agent\n";
     webappOutput = `→ Reusing Hermes Webapp renderer\nOpen the Webapp with this one-use link (valid for 60 seconds):\n  http://127.0.0.1:9120/webapp/launch#ticket=${"T".repeat(43)}\n`;
     hermesCalls = [];
+    hermesConfig = { "model.default": "deepseek-v4-1-flash", "model.base_url": "https://hivra.test/api/managed-venice/v1", "model.provider": "custom" };
+    hermesConfigSetFails = false;
   });
   afterEach(async () => {
     for (const close of closers.splice(0)) await close();
@@ -76,6 +81,16 @@ describe("gateway Hermes mount", () => {
         if (typeof callback !== "function") return;
         if (file.endsWith("hermes")) {
           hermesCalls.push(args);
+          if (args[0] === "config" && args[1] === "get") {
+            const value = hermesConfig[args[2]];
+            setImmediate(() => value === undefined ? callback(new Error(`Config key not set: ${args[2]}`), "") : callback(null, `${value}\n`));
+            return;
+          }
+          if (args[0] === "config" && args[1] === "set") {
+            if (!hermesConfigSetFails) hermesConfig[args[2]] = args[3];
+            setImmediate(() => callback(hermesConfigSetFails ? new Error("exit 1") : null, ""));
+            return;
+          }
           const output = args[0] === "webapp" ? webappOutput : hermesOutput;
           setImmediate(() => output === null ? callback(new Error("not found"), "") : callback(null, output));
           return;
@@ -334,6 +349,61 @@ describe("gateway Hermes mount", () => {
   it("has no chat or login surface of its own: the owner works in Hermes's UI", async () => {
     const port = await boot("hermes");
     expect((await request(port, "/api/login/status")).json).toMatchObject({ loggedIn: true });
+  });
+
+  it("reads Hermes's own model and whether it runs on Venice, for the owner only", async () => {
+    const port = await boot("hermes");
+    expect((await request(port, "/api/model")).json).toEqual({ agentKind: "hermes", hermesConfig: true, model: "deepseek-v4-1-flash", provider: "venice" });
+    expect((await request(port, "/api/model", {}, { auth: false })).status).toBe(401);
+    hermesConfig["model.base_url"] = "https://api.venice.ai/api/v1";
+    expect((await request(port, "/api/model")).json).toMatchObject({ provider: "venice" });
+    hermesConfig["model.base_url"] = "https://openrouter.test/api/v1";
+    expect((await request(port, "/api/model")).json).toMatchObject({ model: "deepseek-v4-1-flash", provider: "other" });
+    delete hermesConfig["model.default"]; delete hermesConfig["model.base_url"];
+    expect((await request(port, "/api/model")).json).toEqual({ agentKind: "hermes", hermesConfig: true, model: null, provider: "other" });
+  });
+
+  it("changes Hermes's model through Hermes's own config, and nothing else", async () => {
+    const port = await boot("hermes");
+    const post = (body: unknown, auth = true) => request(port, "/api/model", { "Content-Type": "application/json" }, { auth, method: "POST", body: JSON.stringify(body) });
+    expect((await post({ model: "kimi-k2-6" }, false)).status).toBe(401);
+    const saved = await post({ model: "kimi-k2-6" });
+    expect(saved).toMatchObject({ status: 200, json: { ok: true, model: "kimi-k2-6" } });
+    expect(hermesCalls).toContainEqual(["config", "set", "model.default", "kimi-k2-6"]);
+    expect((await request(port, "/api/model")).json).toMatchObject({ model: "kimi-k2-6", provider: "venice" });
+    expect(fs.existsSync(path.join(home, ".hivra", "agent-model"))).toBe(false);
+    for (const model of ["", "bad id; rm -rf", "x".repeat(65)]) expect((await post({ model })).status).toBe(400);
+    expect(hermesConfig["model.default"]).toBe("kimi-k2-6");
+  });
+
+  it("leaves a Hermes on another provider alone, and reports a model Hermes would not save", async () => {
+    const port = await boot("hermes");
+    const post = (model: string) => request(port, "/api/model", { "Content-Type": "application/json" }, { method: "POST", body: JSON.stringify({ model }) });
+    hermesConfigSetFails = true;
+    expect(await post("kimi-k2-6")).toMatchObject({ status: 500, json: { ok: false } });
+    expect(hermesConfig["model.default"]).toBe("deepseek-v4-1-flash");
+    hermesConfigSetFails = false;
+    hermesConfig["model.base_url"] = "https://openrouter.test/api/v1";
+    expect(await post("kimi-k2-6")).toMatchObject({ status: 409, json: { ok: false } });
+    expect(hermesCalls.filter((call) => call[1] === "set")).toHaveLength(1);
+    expect(hermesConfig["model.default"]).toBe("deepseek-v4-1-flash");
+  });
+
+  it("does not change Hermes's model while Hermes is being updated", async () => {
+    fs.writeFileSync(files().lock, "");
+    const port = await boot("hermes");
+    const saved = await request(port, "/api/model", { "Content-Type": "application/json" }, { method: "POST", body: JSON.stringify({ model: "kimi-k2-6" }) });
+    expect(saved).toMatchObject({ status: 409, json: { ok: false } });
+    expect(hermesCalls.filter((call) => call[0] === "config")).toEqual([]);
+  });
+
+  it("keeps the per-box model file for agents other than Hermes", async () => {
+    const port = await boot("openclaw");
+    const saved = await request(port, "/api/model", { "Content-Type": "application/json" }, { method: "POST", body: JSON.stringify({ model: "kimi-k2-6" }) });
+    expect(saved.json).toEqual({ ok: true, model: "kimi-k2-6" });
+    expect(fs.readFileSync(path.join(home, ".hivra", "agent-model"), "utf8")).toBe("kimi-k2-6\n");
+    expect((await request(port, "/api/model")).json).toEqual({ agentKind: "openclaw", model: "kimi-k2-6" });
+    expect(hermesCalls.filter((call) => call[0] === "config")).toEqual([]);
   });
 
   it("reports the version Hermes states, and its update progress toward 'latest'", async () => {

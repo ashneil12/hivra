@@ -513,6 +513,10 @@ update them yet.
   Webapp is not served, `/hermes/` keeps showing the dashboard on `:9119`. Update Hermes
   turns the setting on, builds the Webapp after `hermes update` and restarts the gateway,
   which is how existing Hermes computers switch over.
+  From `2026.11.12.1`, Manage › Model reads and sets Hermes's own model (`model.default`)
+  through `/api/model`, which runs `hermes config get`/`hermes config set` as the agent
+  user. It applies to new chats, like Hermes's own model picker. A Hermes the owner pointed
+  at another provider in Hermes itself is left alone (the endpoint answers 409).
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

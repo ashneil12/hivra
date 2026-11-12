@@ -18,6 +18,7 @@ import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { CookieImportModal } from "@/components/instances/CookieImportModal";
 import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
+import { HermesModelSettings } from "./HermesModelSettings";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
@@ -859,7 +860,8 @@ function HivraManageContent({
 
   const chatModelSection = isChatCli && Boolean(agent.chat_url) && modelSupported;
   // DeepSeek Harness has no post-launch model delivery path, so no Manage section.
-  const veniceModelSection = Boolean(def?.llm?.providers.includes("venice")) && agent.type !== "deepseek-harness";
+  const veniceModelSection = Boolean(def?.llm?.providers.includes("venice")) && agent.type !== "deepseek-harness" && agent.type !== "hermes";
+  const hermesModelSection = agent.type === "hermes" && Boolean(agent.chat_url);
   const permissionsSection = isChatCli && Boolean(agent.chat_url) && restrictSupported;
   const toolsSection = isChatCli && Boolean(agent.chat_url);
 
@@ -1228,6 +1230,15 @@ function HivraManageContent({
                   <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                     A model your account can&apos;t access fails on the next message with a clear error in chat — switch back here if that happens.
                   </div>
+                </div>
+              </div>
+            ) : null}
+
+            {hermesModelSection ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={card}>
+                  <HermesModelSettings chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
+                    running={agent.status === "running" && !agent.activity} disabled={busy} />
                 </div>
               </div>
             ) : null}
