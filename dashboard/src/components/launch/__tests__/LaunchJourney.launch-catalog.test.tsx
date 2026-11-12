@@ -75,6 +75,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG;
+  delete process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS;
 });
 
 async function openLaunch() {
@@ -181,7 +182,18 @@ describe("the catalog view of Launch", () => {
     expect(page.queryByRole("heading", { name: "Good first tasks" })).not.toBeInTheDocument();
   });
 
+  it("keeps claiming off the page while maker claims are not turned on", async () => {
+    await openLaunch();
+    fireEvent.click(tile("Codex")!);
+    const about = within(screen.getByRole("group", { name: "About Codex" }));
+    expect(about.getByText("Hivra wrote this page and is independent of OpenAI.")).toBeInTheDocument();
+    expect(about.queryByRole("link", { name: "Are you the maker?" })).not.toBeInTheDocument();
+    const asked = (global.fetch as jest.Mock).mock.calls.map(([input]) => String(input));
+    expect(asked.some(url => url.includes("/api/hivra/catalog/claims"))).toBe(false);
+  });
+
   it("offers the maker a way to claim the page, and says once it is claimed", async () => {
+    process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS = "1";
     await openLaunch();
     fireEvent.click(tile("Codex")!);
     let about = within(screen.getByRole("group", { name: "About Codex" }));

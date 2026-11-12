@@ -142,11 +142,22 @@ tiles Launch already offers.
 - The tiles themselves live in `src/components/launch/launch-tiles.ts`, so Home and
   Launch name and describe a thing in the same words.
 
-### Maker claims, a maker's numbers and the order by use (same switch)
+### Maker claims, a maker's numbers and the order by use
 
 Added 2026-11-13 (migration `20261113051700_catalog_maker_claims`). Records and
-reading only: nothing here pays, bills or changes what can be launched. All of it
-is off with `NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG`.
+reading only: nothing here pays, bills or changes what can be launched.
+
+Claiming is its own step with its own switch, so the catalog view of Launch can be
+turned on without it:
+
+- `NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG=1` alone gives the catalog view and the order by
+  use. No page offers a claim, `/dashboard/makers/<profile>` is not found and
+  `/api/hivra/catalog/claims` answers 404.
+- `NEXT_PUBLIC_HIVRA_MAKER_CLAIMS=1` as well adds "Are you the maker?" to an agent's
+  page, the maker's page and the claims API. On its own, without the catalog switch,
+  it does nothing.
+
+Both are off by default.
 
 | Piece | What it does |
 |---|---|

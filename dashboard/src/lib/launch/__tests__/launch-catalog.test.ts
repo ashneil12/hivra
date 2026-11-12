@@ -9,6 +9,7 @@ import {
   filterCatalog,
   isCatalogFiltered,
   isLaunchCatalogEnabled,
+  isMakerClaimsEnabled,
   LAUNCH_CATALOG,
   NO_CATALOG_FILTER,
   orderCatalogByUse,
@@ -42,6 +43,17 @@ describe("the Launch catalog switch", () => {
     expect(isLaunchCatalogEnabled("0")).toBe(false);
     expect(isLaunchCatalogEnabled("1")).toBe(true);
     expect(isLaunchCatalogEnabled(" TRUE ")).toBe(true);
+  });
+});
+
+describe("the maker claims switch", () => {
+  it("is off unless it and the Launch catalog are both on", () => {
+    expect(isMakerClaimsEnabled(undefined, "1")).toBe(false);
+    expect(isMakerClaimsEnabled("0", "1")).toBe(false);
+    expect(isMakerClaimsEnabled("1", undefined)).toBe(false);
+    expect(isMakerClaimsEnabled("1", "0")).toBe(false);
+    expect(isMakerClaimsEnabled("1", "1")).toBe(true);
+    expect(isMakerClaimsEnabled(" True ", "true")).toBe(true);
   });
 });
 
