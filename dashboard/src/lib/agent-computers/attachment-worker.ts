@@ -223,8 +223,9 @@ async function progressAttach(ownerId: string, id: string, deps: Dependencies): 
   // failed with that reason, never held (5.5, 5.8).
   const refuse = async (reason: Precondition): Promise<AttachmentWorkProgress> => {
     if (!await deps.store.refuse(ownerId, id, reason)) return held("failure_unconfirmed");
-    await deps.event({ userId: ownerId, event: "agent_attach_failed", agentId: computer.id, agentType: computer.type as string,
-      detail: { attachmentId: id, agentName: state!.agentName, computerName: computer.name, reason } });
+    // `computer` was checked above; the wake step may swap it for a fresher read, never for null.
+    await deps.event({ userId: ownerId, event: "agent_attach_failed", agentId: computer!.id, agentType: computer!.type as string,
+      detail: { attachmentId: id, agentName: state!.agentName, computerName: computer!.name, reason } });
     return { kind: "attach", id, state: "failed", reason };
   };
   if (state.phase === "claimed") {

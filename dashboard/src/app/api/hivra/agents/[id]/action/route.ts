@@ -693,7 +693,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       // computer in between. Stop only needs the computer off, and its script handles a
       // napping or hibernated one itself. Every other action needs it awake, so give the
       // lease back untouched and ask the caller to try again once it is up.
-      if (operationKind !== "stop") {
+      if (operationKind !== "stop" && supabaseAdmin) {
         const { data: live, error: liveError } = await supabaseAdmin
           .from("hivra_agents")
           .select("sleep_state")

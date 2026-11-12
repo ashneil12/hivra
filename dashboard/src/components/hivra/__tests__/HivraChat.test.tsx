@@ -789,7 +789,7 @@ describe("HivraChat", () => {
       expect(wakeAgent).toHaveBeenCalledWith("agent-1");
       const bodies = fetchMock.mock.calls
         .filter(([url]) => String(url).endsWith("/api/chat"))
-        .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+        .map((call) => JSON.parse(String(((call as unknown[])[1] as RequestInit).body)));
       expect(bodies).toHaveLength(2);
       expect(new Set(bodies.map((body) => body.runId)).size).toBe(1);
       expect(bodies.every((body) => body.message === "hello")).toBe(true);

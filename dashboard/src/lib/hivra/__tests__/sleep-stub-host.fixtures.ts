@@ -301,7 +301,7 @@ export function makeHostHarness(): HostHarness {
         result = spawnSync("bash", ["-s"], {
           input: local,
           encoding: "utf8",
-          env: { PATH: `${bin}:/usr/bin:/bin`, STUB_DIR: dir, LC_ALL: "C", ...env },
+          env: { PATH: `${bin}:/usr/bin:/bin`, STUB_DIR: dir, LC_ALL: "C", ...env } as unknown as NodeJS.ProcessEnv,
           timeout: 60_000,
         });
       } finally {

@@ -50,6 +50,8 @@ export type HivraLifecycleAgentRow = Record<string, unknown> & {
   vmid?: unknown;
   ip?: unknown;
   proxmox_host?: unknown;
+  /** Where the computer is on the sleep ladder; absent counts as awake. */
+  sleep_state?: unknown;
 };
 
 export interface HivraLifecycleTarget {

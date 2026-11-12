@@ -62,7 +62,7 @@ function runHelper(args: string[], options: { edits?: Array<[string, string]>; q
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn("python3", ["-I", "-B", "-c", program(options.edits), ...args], {
-      env: { PATH: `${bin}:/usr/bin:/bin`, LC_ALL: "C", STUB_DIR: dir, QM_MODE: options.qm ?? "ok" },
+      env: { PATH: `${bin}:/usr/bin:/bin`, LC_ALL: "C", STUB_DIR: dir, QM_MODE: options.qm ?? "ok" } as unknown as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
