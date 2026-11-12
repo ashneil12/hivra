@@ -43,8 +43,10 @@ test("the first screen says what it is and asks once", async () => {
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   const hero = within(document.querySelector("#home-title")?.closest("section") as HTMLElement);
   expect(hero.getByRole("link", { name: "See how Hivra works" })).toHaveAttribute("href", "#how");
-  expect(hero.getByText("Your agent's own computer")).toBeInTheDocument();
-  expect(hero.getByText("Run on Hivra Cloud or your own infrastructure")).toBeInTheDocument();
+  // The illustration repeats a proof phrase as a label, so look in the proof list itself.
+  const proof = within(hero.getByRole("list", { name: "What you get" }));
+  expect(proof.getByText("Your agent's own computer")).toBeInTheDocument();
+  expect(proof.getByText("Run on Hivra Cloud or your own infrastructure")).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Hermes OS is now Hivra/ })).not.toBeInTheDocument();
   expect(document.querySelector("#home-title")?.closest("section")).not.toHaveTextContent(/\$9\.99/);
   expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
