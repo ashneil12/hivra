@@ -37,6 +37,23 @@ script only says where to look.
 | Project | Why |
 | --- | --- |
 | Nightly Labs OpenBot | PolyForm Noncommercial since 0.1.12. Hivra runs CopilotKit OpenBot (MIT) instead. |
+| beam-cloud/beta9 | AGPL. Ideas only: lazy image mounts that stream blocks on first read, for fast wakes. No code taken. |
+| reliant-labs/reliant | BSL. Ideas only: the owner picks the idle time before a computer sleeps. No code taken. |
+| julianosig/easi.run | AGPL. Ideas only: a per-agent browser the owner can take over for a login or captcha, then hand back. No code taken. |
+
+## Finds of 2026-11-12
+
+Projects from a scan of competitors and open-source tools. The MIT and Apache ones
+are now in `upstreams.json` as `inspiration`, so the weekly check watches them.
+
+| Project | Taken | Why |
+| --- | --- | --- |
+| Self-hosted managed agents (Anthropic and Google) | A guide, off by default (`NEXT_PUBLIC_HIVRA_MANAGED_AGENTS_GUIDE`) | Both vendors' workers run on any Linux machine that stays on. The guide stays off until both workers have been run on a real Hivra computer. |
+| huntaway (MIT) | Passed to the sleep/wake work | Per-harness idle detection and runaway-process killing fit the sleep observer. |
+| Rakazo (Apache-2.0) | Watched | A catalog candidate (always-on bots with their own computer, Docker quick start). Not offered yet. |
+| Rowboat (Apache-2.0) | Watched | Competitor that hosts Hermes and OpenClaw or connects agents elsewhere. |
+| muster, Muxflow (MIT) | Watched | Phone alerts when an agent needs you and pasting screenshots into remote sessions. Hivra's Needs-you inbox covers the first; the second is a chat attachment idea. |
+| safeagents (Apache-2.0) | Watched | A tool-call checking proxy owners could install themselves. Not wired in. |
 
 ## Check of 2026-11-12 (second run, evening)
 

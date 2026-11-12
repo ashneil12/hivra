@@ -481,6 +481,110 @@
         "head": "f9ef4d8186e17d2fabc1d0ae929ccafc1dfa4785",
         "latest": null
       }
+    },
+    {
+      "id": "rakazo",
+      "repo": "elie222/rakazo",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Always-on bots with memory, routines and their own computer. Candidate for the agent catalog (has a Docker quick start); not offered yet.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "94dbc2e580af57ee0bdf4ce424a805e25e586833",
+        "latest": null
+      }
+    },
+    {
+      "id": "rowboat",
+      "repo": "rowboatlabs/rowboat",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Hosts Hermes, OpenClaw, Claude Code or Codex agents in one group chat, or connects agents running elsewhere. Competitor; watch its agent-connect protocol.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "505de5a420307e55c15a07b15356b27901ddf553",
+        "latest": null
+      }
+    },
+    {
+      "id": "huntaway",
+      "repo": "jpsanders/huntaway",
+      "role": "inspiration",
+      "licence": "MIT",
+      "use": "Idle detection per agent harness, runaway-process killing, save-and-close of idle CLI sessions. Input to sleep/wake (docs/plans/mono-sleep-wake.md).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "64630c04addb8bb18f3b89cb6eb3d08efe8eecfa",
+        "latest": null
+      }
+    },
+    {
+      "id": "muster",
+      "repo": "ZacxDev/muster",
+      "role": "inspiration",
+      "licence": "MIT",
+      "use": "One waiting-first list of agent sessions across machines, phone push when a session needs you; machines dial out. Reference for the Needs-you inbox.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "b5d64643894dafc6006f2e810a1ca46c2c0454fc",
+        "latest": null
+      }
+    },
+    {
+      "id": "muxflow",
+      "repo": "gal064/muxflow",
+      "role": "inspiration",
+      "licence": "MIT",
+      "use": "Screenshot and file paste into remote agent sessions over SSH, phone alerts from agent hooks. Reference for chat attachments and alerts.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "c45f0c88410aefee36a78040e713951a291e9e5b",
+        "latest": null
+      }
+    },
+    {
+      "id": "safeagents",
+      "repo": "huggingface/safeagents",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Local proxy that checks every tool call before the harness runs it (works by base URL). Candidate owner-installed guard; not wired in.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "d3f2b35f69cf283aa566cd0ec3e54a9dcd77be70",
+        "latest": null
+      }
+    },
+    {
+      "id": "gemini-api-cli",
+      "repo": "google-gemini/gemini-api-cli",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Self-hosted environment worker for Gemini managed agents (`gemini-api environments connect`). Used in the off-by-default managed agents guide (dashboard/src/lib/blog/articles/run-managed-agents-on-your-own-computer.ts).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "2030ff16e8b4e0e815c358e7a5156a9e5bb40191",
+        "latest": null
+      }
+    },
+    {
+      "id": "anthropic-cli",
+      "repo": "anthropics/anthropic-cli",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "The `ant` CLI; `ant beta:worker poll` is the self-hosted sandbox worker for Claude Managed Agents. Used in the same off-by-default guide.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "00f918c5127ffff1d33bc24ad8187c144eadcdd8",
+        "latest": null
+      }
     }
   ],
   "excluded": [
