@@ -120,7 +120,7 @@ describe("a new account in Launch", () => {
     render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
-    expect(await screen.findByText("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.")).toBeInTheDocument();
+    expect(await screen.findByText("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run Claude Code, Codex and other agents on a Proxmox VE server you connect, or Linux Sandbox on an Ubuntu server. Hermes needs a paid plan.")).toBeInTheDocument();
     expect(screen.queryByText(/The Free plan runs one agent/)).not.toBeInTheDocument();
     expect(screen.queryByText(/turn it on/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn.t check your plan/i)).not.toBeInTheDocument();
@@ -130,12 +130,12 @@ describe("a new account in Launch", () => {
     expect(screen.queryByText(/Fits Free/)).not.toBeInTheDocument();
   });
 
-  it("offers See plans and Use my own computer in the Free notice", async () => {
+  it("offers See plans and Connect my own server in the Free notice", async () => {
     render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     const notice = await screen.findByTestId("launch-free-notice");
     expect(within(notice).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
-    expect(within(notice).getByRole("button", { name: "Use my own computer" })).toBeInTheDocument();
+    expect(within(notice).getByRole("button", { name: "Connect my own server" })).toBeInTheDocument();
   });
 
   it("blocks a Hivra Cloud launch for a free account, offers a plan or its own capacity, and activates nothing", async () => {
@@ -143,7 +143,7 @@ describe("a new account in Launch", () => {
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
 
-    expect(await screen.findByText("Claude Code on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.")).toBeInTheDocument();
+    expect(await screen.findByText(/^Claude Code on Hivra Cloud needs a paid plan\. Your free account works with your own server: connect one, or choose a plan\. This needs a Proxmox VE server/)).toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
     expect(screen.getByText("Free account · needs a paid plan")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Upgrade to/ })).toHaveAttribute("href", expect.stringContaining("/dashboard/billing?from=launch&returnTo="));
@@ -227,7 +227,7 @@ describe("an account without a plan that already runs something", () => {
     expect(screen.getByRole("button", { name: /^Hermes/ })).toHaveTextContent("Needs Pro");
     fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
 
-    expect(await screen.findByText("Claude Code on Hivra Cloud needs a paid plan. Your free account works with your own computer: connect one, or choose a plan.")).toBeInTheDocument();
+    expect(await screen.findByText(/^Claude Code on Hivra Cloud needs a paid plan\. Your free account works with your own server: connect one, or choose a plan\. This needs a Proxmox VE server/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn on Free" })).not.toBeInTheDocument();
     expect(reviewButton()).toBeDisabled();
   });

@@ -398,3 +398,7 @@
     flex-direction: column;
   }
 }
+
+.agentPrompt {
+  margin-top: 0.25rem;
+}

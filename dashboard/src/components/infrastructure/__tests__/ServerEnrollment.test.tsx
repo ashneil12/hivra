@@ -107,6 +107,8 @@ describe("the command panel", () => {
     renderDialog();
     expect(await screen.findByTestId("server-enrollment-command")).toHaveTextContent(ISSUED.command);
     expect(screen.getByRole("button", { name: "Copy the setup command" })).toBeInTheDocument();
+    // A ready-made prompt lets the owner hand the setup to their own coding agent.
+    expect(screen.getByRole("button", { name: "Copy the prompt for your coding agent" })).toBeInTheDocument();
     // The command asks for the code at a prompt, so the panel shows it beside the command.
     expect(screen.getByTestId("server-enrollment-code")).toHaveTextContent(CODE);
     expect(ISSUED.command).not.toContain(CODE);
