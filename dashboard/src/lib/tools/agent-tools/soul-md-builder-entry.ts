@@ -59,6 +59,8 @@ export const SOUL_MD_BUILDER_ENTRY: ToolEntry = {
   ],
   faqCode: ["~/.hermes/SOUL.md", "$HERMES_HOME/SOUL.md", "~/.openclaw/workspace", "OPENCLAW_WORKSPACE_DIR", "/context"],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
     { href: "/pricing", label: "Hivra pricing" },
     { href: "/agents/claude-code", label: "Claude Code on Hivra" },
   ],

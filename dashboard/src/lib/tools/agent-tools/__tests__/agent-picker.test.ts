@@ -272,7 +272,7 @@ describe("catalog entry", () => {
   });
 
   it("links only to routes the existing catalog tests allow", () => {
-    const allowed = new Set(["/pricing", "/agents/claude-code", "/agents/codex", "/blog/claude-max-vs-pro-for-claude-code", "/blog/codex-resume-session"]);
+    const allowed = new Set(["/pricing", "/agents/hermes", "/agents/openclaw", "/compare/openclaw-to-hermes", "/compare/vs-self-hosted", "/agents/claude-code", "/agents/codex", "/blog/claude-max-vs-pro-for-claude-code", "/blog/codex-resume-session"]);
     expect(entry.relatedLinks.length).toBeGreaterThanOrEqual(2);
     for (const link of entry.relatedLinks) expect(allowed.has(link.href)).toBe(true);
   });

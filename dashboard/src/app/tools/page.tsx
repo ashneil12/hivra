@@ -9,6 +9,7 @@ import StructuredData from "@/components/StructuredData";
 import Markup from "@/components/tools/Markup";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { AGENT_TOOL_ENTRIES } from "@/lib/tools/agent-tools/entries";
 import { TOOLS_HUB, TOOL_ENTRIES, nonAffiliationLine, toolOgImage, toolPath } from "@/lib/tools/tool-catalog";
 import ToolsCta from "./ToolsCta";
 import styles from "./tools.module.css";
@@ -59,6 +60,30 @@ const schema = {
   ],
 };
 
+const AGENT_SLUGS = new Set(AGENT_TOOL_ENTRIES.map((entry) => entry.slug));
+const baseEntries = TOOL_ENTRIES.filter((entry) => !AGENT_SLUGS.has(entry.slug));
+const agentEntries = TOOL_ENTRIES.filter((entry) => AGENT_SLUGS.has(entry.slug));
+
+function ToolDirectory({ entries, offset, balanced = false }: { entries: typeof TOOL_ENTRIES; offset: number; balanced?: boolean }) {
+  return (
+    <div className={[editorial.directory, balanced ? styles.directoryBalanced : null].filter(Boolean).join(" ")}>
+      {entries.map((entry, index) => (
+        <Link key={entry.slug} href={toolPath(entry.slug)}>
+          <span>{String(offset + index + 1).padStart(2, "0")}</span>
+          <h3>{entry.name}</h3>
+          <div>
+            <p>{entry.subhead}</p>
+            <span className={editorial.readLink}>
+              Open the tool
+              <ArrowUpRight size={20} aria-hidden="true" />
+            </span>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 export default function ToolsIndexPage() {
   return (
     <PublicSite className={editorial.page} data-page="tools">
@@ -82,21 +107,20 @@ export default function ToolsIndexPage() {
         </header>
 
         <h2 className={styles.directoryHeading}>{TOOLS_HUB.directoryHeading}</h2>
-        <div className={[editorial.directory, styles.directoryBalanced].filter(Boolean).join(" ")}>
-          {TOOL_ENTRIES.map((entry, index) => (
-            <Link key={entry.slug} href={toolPath(entry.slug)}>
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <h3>{entry.name}</h3>
-              <div>
-                <p>{entry.subhead}</p>
-                <span className={editorial.readLink}>
-                  Open the tool
-                  <ArrowUpRight size={20} aria-hidden="true" />
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
+        <ToolDirectory entries={baseEntries} offset={0} balanced />
+
+        {agentEntries.length > 0 && (
+          <>
+            <h2 className={styles.directoryHeading}>Choose, set up and secure your Hermes or OpenClaw agent</h2>
+            <div className={styles.hubIntro}>
+              <p>
+                Which agent fits you, what it costs to run, which model to give it, how to connect it to Telegram or Discord, what to hand it to do,
+                and how to keep it safe. Each tool is free and runs in your browser.
+              </p>
+            </div>
+            <ToolDirectory entries={agentEntries} offset={baseEntries.length} />
+          </>
+        )}
 
         <ToolsCta
           title={

@@ -122,6 +122,8 @@ export const AGENT_SECURITY_CHECK_ENTRY: ToolEntry = {
     "hermes doctor",
   ],
   relatedLinks: [
+    { href: "/agents/hermes", label: "Run Hermes on Hivra" },
+    { href: "/agents/openclaw", label: "Run OpenClaw on Hivra" },
     { href: "/tools/agent-survival-check", label: "Agent survival check" },
     { href: "/pricing", label: "Hivra pricing" },
   ],

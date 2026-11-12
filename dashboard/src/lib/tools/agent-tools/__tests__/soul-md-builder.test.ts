@@ -252,7 +252,7 @@ describe("the catalog entry", () => {
   });
 
   it("keeps related links to routes the catalog tests allow", () => {
-    const allowed = new Set(["/pricing", "/agents/claude-code", "/agents/codex"]);
+    const allowed = new Set(["/pricing", "/agents/hermes", "/agents/openclaw", "/compare/openclaw-to-hermes", "/compare/vs-self-hosted", "/agents/claude-code", "/agents/codex"]);
     expect(entry.relatedLinks.length).toBeGreaterThanOrEqual(2);
     for (const link of entry.relatedLinks) expect(allowed.has(link.href)).toBe(true);
   });
