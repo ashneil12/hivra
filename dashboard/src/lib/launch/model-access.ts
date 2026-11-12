@@ -135,19 +135,27 @@ export function bothWalletsFunded(balance: CreditsBalance): boolean {
   return balance.state === "known" && balance.cardMicroUsd > 0 && balance.hermesosMicroUsd > 0;
 }
 
+/** Ash's wording for the AI connection step (12 Nov 2026), used word for word. */
+export const AI_CONNECTION_QUESTION = "How would you like to connect your agent to AI?";
+const CREDITS_DETAIL = "Use supported AI models through Hivra without configuring a separate model provider API key.";
+const API_KEY_TITLE = "Use my own API key";
+const API_KEY_DETAIL = "Connect a supported AI provider using your own API key.";
+const ACCOUNT_SIGN_IN = {
+  title: "Sign in with my existing account",
+  detail: "Where available, sign in with an eligible Claude or ChatGPT account, subject to the provider's terms.",
+};
+
 function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string; summary: string } {
   const name = PROFILE_DETAILS[profileId].name;
   switch (profileId) {
     case "codex":
       return {
-        title: "Sign in inside Codex after it opens",
-        detail: "Use ChatGPT, or your own OpenAI API key, in its terminal.",
+        ...ACCOUNT_SIGN_IN,
         summary: "Sign in to ChatGPT inside Codex after it opens.",
       };
     case "claude-code":
       return {
-        title: "Sign in inside Claude Code after it opens",
-        detail: "Use your Claude or Anthropic Console account in its terminal.",
+        ...ACCOUNT_SIGN_IN,
         summary: "Sign in with your Anthropic account inside Claude Code after it opens.",
       };
     case "hermes":
@@ -216,7 +224,7 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
     .map(mode => {
       if (!supported.includes(mode)) {
         const copy = mode === "api-key"
-          ? { title: "Use my API key", detail: "" }
+          ? { title: API_KEY_TITLE, detail: "" }
           : { title: "Hivra credits", detail: "" };
         return { mode, ...copy, unavailable: unsupportedReason(profileId, mode), offerAddCredit: false };
       }
@@ -230,20 +238,22 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
       if (mode === "api-key") {
         return {
           mode,
-          title: "Use my API key",
+          title: API_KEY_TITLE,
+          // Some agents only take a Venice key; the existing line says so after Ash's sentence.
           detail: profileId === "codex" || profileId === "deepseek-harness" || profileId === "hermes-computer"
-            ? "A Venice API key. Venice bills your model usage."
-            : "A key from the model provider you use. They bill your model usage.",
+            ? `${API_KEY_DETAIL} A Venice API key. Venice bills your model usage.`
+            : API_KEY_DETAIL,
           unavailable: codexKeyGap,
           offerAddCredit: false,
         };
       }
       const total = totalMicroUsd(context.balance);
-      const detail = context.balance.state === "loading"
+      const balanceLine = context.balance.state === "loading"
         ? "Checking your Hivra credits…"
         : context.balance.state === "unknown"
           ? "Couldn't check your balance. Model usage is paid from your credits."
           : `${formatCredits(total ?? 0)} available. Model usage is paid from your credits at provider rates.`;
+      const detail = `${CREDITS_DETAIL} ${balanceLine}`;
       const providerGap = context.providerComputer && profileId !== "codex"
         ? `Hivra credits can't be set up for ${PROFILE_DETAILS[profileId].name} on a computer in your own cloud yet.`
         : null;

@@ -13,6 +13,7 @@ import {
   modelChoices,
   providerName,
   requiresSavedKey,
+  AI_CONNECTION_QUESTION,
   savedKeyHint,
   savedKeysFor,
   type CreditsBalance,
@@ -203,6 +204,7 @@ export function ModelAccessControl({
 
   return (
     <div className={styles.control}>
+      <p className={styles.question}>{AI_CONNECTION_QUESTION}</p>
       <div className={styles.options} role="group" aria-label="Model access">
         {options.map(option => {
           const selected = access.mode === option.mode;

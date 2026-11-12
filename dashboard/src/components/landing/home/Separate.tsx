@@ -10,7 +10,7 @@ export default function Separate() {
           {SEPARATE.title} <em>{SEPARATE.titleTail}</em>
         </h2>
       </header>
-      <p className={styles.bodyText}>{SEPARATE.body}</p>
+      {SEPARATE.paragraphs.map(text => <p key={text} className={styles.bodyText}>{text}</p>)}
     </section>
   );
 }

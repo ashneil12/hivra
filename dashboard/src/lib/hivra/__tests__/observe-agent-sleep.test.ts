@@ -8,7 +8,14 @@ jest.mock("@/lib/supabase", () => ({
 }));
 
 import { log } from "@/lib/logger";
-import { EVENT_MAX_PAGES, EVENT_PAGE_SIZE, OBSERVE_PAGE_SIZE, runObserveAgentSleepSweep } from "../observe-agent-sleep";
+import {
+  ACTIVITY_MAX_AGE_MS,
+  activitySignalsFromRow,
+  EVENT_MAX_PAGES,
+  EVENT_PAGE_SIZE,
+  OBSERVE_PAGE_SIZE,
+  runObserveAgentSleepSweep,
+} from "../observe-agent-sleep";
 
 const NOW = Date.UTC(2026, 10, 12, 12, 0, 0);
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
@@ -236,5 +243,166 @@ describe("runObserveAgentSleepSweep", () => {
     const summary = await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
     expect(summary).toMatchObject({ scanned: 0, inserted: 0, errors: 1 });
     expect(inserted(calls)).toHaveLength(0);
+  });
+  describe("use readings from hivra_agent_activity", () => {
+    const reading = (extra: Record<string, unknown> = {}) => ({
+      agent_id: "a1",
+      observed_at: iso(5 * 60_000),
+      reachable: true,
+      last_used_at: null,
+      open_connections: 0,
+      active_runs: 0,
+      terminal_attached: false,
+      desktop_attached: false,
+      ...extra,
+    });
+
+    it("turns a fresh reading into known signals", () => {
+      expect(activitySignalsFromRow(reading({ last_used_at: iso(20 * 60_000) }), NOW)).toEqual({
+        lastUsedAt: NOW - 20 * 60_000,
+        terminalAttached: false,
+        desktopAttached: false,
+      });
+      expect(activitySignalsFromRow(reading({ active_runs: 2, open_connections: 1 }), NOW)).toMatchObject({
+        activeRun: true,
+        openConnections: 1,
+      });
+    });
+
+    it.each([
+      ["missing", undefined],
+      ["unreachable", reading({ reachable: false })],
+      ["stale", reading({ observed_at: iso(ACTIVITY_MAX_AGE_MS + 1) })],
+      ["future-dated", reading({ observed_at: iso(-5 * 60_000) })],
+      ["unparseable time", reading({ observed_at: "nope" })],
+    ])("gives no signals for a %s reading", (_label, row) => {
+      expect(activitySignalsFromRow(row as never, NOW)).toEqual({});
+    });
+
+    it("leaves null or broken columns unknown and ignores a use dated after the reading", () => {
+      expect(
+        activitySignalsFromRow(
+          reading({
+            open_connections: null,
+            active_runs: -1,
+            terminal_attached: null,
+            desktop_attached: null,
+            last_used_at: iso(-10 * 60_000),
+          }),
+          NOW,
+        ),
+      ).toEqual({});
+    });
+
+    it("records busy and idle agents from their readings, and keeps unknowns for agents without one", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1"), agent("a2"), agent("a3")] }],
+        hivra_agent_events: [{ data: [] }],
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [
+          {
+            data: [
+              reading({ agent_id: "a1", open_connections: 2, active_runs: 1, terminal_attached: true }),
+              reading({ agent_id: "a2", last_used_at: iso(30 * 60_000) }),
+            ],
+          },
+        ],
+      });
+      mockDb.value = db;
+      const summary = await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(summary.errors).toBe(0);
+
+      const read = calls.find((c) => c.table === "hivra_agent_activity")!;
+      expect(read.ops).toContainEqual(["in", ["agent_id", ["a1", "a2", "a3"]]]);
+
+      const [a1, a2, a3] = inserted(calls);
+      expect(a1.reasons).toEqual(expect.arrayContaining(["open_connections", "active_run", "terminal_attached"]));
+      // Zero app connections and zero chat replies do not prove idle (other runs are not counted).
+      expect(a2.reasons).toEqual(expect.arrayContaining(["unknown_signal:openConnections", "unknown_signal:activeRun"]));
+      expect(a2.reasons).not.toContain("unknown_signal:terminalAttached");
+      // Its last use (30 min ago) is later than "no event in 6 h", so that is its idle time.
+      expect(a2.idle_seconds).toBe(30 * 60);
+      expect(a3.reasons).toEqual(
+        expect.arrayContaining(["unknown_signal:openConnections", "unknown_signal:activeRun", "unknown_signal:terminalAttached"]),
+      );
+    });
+
+    it("counts a desktop as attached when either the sessions or the reading say so", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ data: [] }],
+        hivra_remote_desktop_sessions: [{ error: { message: "boom" } }],
+        hivra_agent_activity: [{ data: [reading({ desktop_attached: true })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(inserted(calls)[0].reasons).toContain("desktop_attached");
+    });
+
+    it("does not let a use reading make idle time known when the events read failed", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ error: { message: "boom" } }],
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [{ data: [reading({ last_used_at: iso(30 * 60_000) })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      const [row] = inserted(calls);
+      expect(row.reasons).toContain("unknown_signal:lastActivityAt");
+      expect(row.idle_seconds).toBeNull();
+    });
+
+    it("only lets a reported use raise the last activity, never lower it", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ data: [{ agent_id: "a1", created_at: iso(2 * 60_000) }] }],
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [{ data: [reading({ last_used_at: iso(30 * 60_000) })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(inserted(calls)[0].idle_seconds).toBe(120);
+    });
+
+    it("keeps idle time unknown when the events read is truncated, even with a fresh use reading", async () => {
+      const full = Array.from({ length: EVENT_PAGE_SIZE }, () => ({ agent_id: "other", created_at: iso(HOUR) }));
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1"), agent("other")] }],
+        hivra_agent_events: Array.from({ length: EVENT_MAX_PAGES }, () => ({ data: full })),
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [{ data: [reading({ last_used_at: iso(30 * 60_000) })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      const a1 = inserted(calls).find((r) => r.agent_id === "a1")!;
+      expect(a1.reasons).toContain("unknown_signal:lastActivityAt");
+      expect(a1.idle_seconds).toBeNull();
+    });
+
+    it("keeps a desktop attached by its session even when the reading says it is not", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ data: [] }],
+        hivra_remote_desktop_sessions: [{ data: [{ computer_id: "a1" }] }],
+        hivra_agent_activity: [{ data: [reading({ desktop_attached: false })] }],
+      });
+      mockDb.value = db;
+      await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(inserted(calls)[0].reasons).toContain("desktop_attached");
+    });
+
+    it("carries on with those signals unknown when the readings cannot be read", async () => {
+      const { db, calls } = fakeDb({
+        hivra_agents: [{ data: [agent("a1")] }],
+        hivra_agent_events: [{ data: [] }],
+        hivra_remote_desktop_sessions: [{ data: [] }],
+        hivra_agent_activity: [{ error: { message: "relation does not exist" } }],
+      });
+      mockDb.value = db;
+      const summary = await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+      expect(summary).toMatchObject({ inserted: 1, errors: 1 });
+      expect(inserted(calls)[0].reasons).toContain("unknown_signal:openConnections");
+    });
   });
 });
