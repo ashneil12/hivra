@@ -544,6 +544,27 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.12.3` builds on `2026.11.12.2` and lets the owner turn on Hermes's own
+restore points (checkpoints) from Hivra's Manage page. Before Hermes changes files in a turn,
+it snapshots the project into its own shadow git store (`~/.hermes/checkpoints`), and the owner
+goes back with `/rollback` or `/undo` in a Hermes chat. Hermes keeps the store, its size cap and
+its pruning. The box gateway (`hivra-chat/server.js`) adds `/api/restore-points`, which reads and
+sets Hermes's `checkpoints.enabled` through `hermes config get`/`hermes config set` as the agent
+user, refuses while Hermes is being updated, and answers 404 on other agents.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, or update any existing computer.
+
+Release `2026.11.12.2` builds on `2026.11.12.1` and keeps Claude Code's per-project
+approvals file, `.claude/settings.local.json`, out of commits made on a computer. "Yes, and
+don't ask again" saves the approved command there, passwords and tokens included. The guest
+installer now adds `**/.claude/settings.local.json` to the agent user's default git ignore
+(`~/.config/git/ignore`), and sets the system `init.templateDir` to a copy of git's stock
+template with a `pre-commit` hook, so every repository created or cloned on the computer
+refuses a commit that stages that file (removing it is still allowed). A repository with
+its own `core.hooksPath` runs its own hooks instead. `hivra-provider-worker.py` advances
+its release labels. This source release does not deploy, install, or update any existing
+computer.
+
 Release `2026.11.12.1` builds on `2026.11.11.7` and lets the owner choose a Hermes
 computer's model from Hivra's Manage page. Hermes keeps its model in its own config
 (`model.default`), the setting its own model picker writes, and uses it for new chats.
