@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 
 import { DEFAULT_WAKE_TOKEN_TTL_SECONDS, MAX_WAKE_TOKEN_TTL_SECONDS, signWakeToken, verifyWakeToken } from "../wake-token";
 
-const SECRET = "test-wake-secret-0123456789abcdef";
+// Generated per run so no credential-shaped literal lives in the tree.
+const SECRET = crypto.randomBytes(24).toString("hex");
 const AGENT = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
 const NOW = Date.UTC(2026, 10, 12, 12, 0, 0);
