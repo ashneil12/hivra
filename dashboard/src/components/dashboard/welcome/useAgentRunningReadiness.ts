@@ -18,6 +18,7 @@ export function useAgentRunningReadiness(agentId: string | null | undefined): He
   const [readyFor, setReadyFor] = useState<string | null>(null);
   const [round, setRound] = useState(0);
   const [stopped, setStopped] = useState<{ agentId: string; round: number } | null>(null);
+  const [failedFor, setFailedFor] = useState<string | null>(null);
   const ready = Boolean(agentId) && readyFor === agentId;
   const gaveUp = !ready && Boolean(agentId) && stopped !== null && stopped.agentId === agentId && stopped.round === round;
 
@@ -39,6 +40,7 @@ export function useAgentRunningReadiness(agentId: string | null | undefined): He
           return;
         }
         if (agent?.status === "error") {
+          setFailedFor(agentId);
           setStopped({ agentId, round });
           return;
         }
@@ -55,5 +57,6 @@ export function useAgentRunningReadiness(agentId: string | null | undefined): He
   }, [agentId, ready, round]);
 
   const recheck = useCallback(() => setRound(value => value + 1), []);
-  return { ready, checking: Boolean(agentId) && !ready && !gaveUp, recheck };
+  const failed = !ready && Boolean(agentId) && failedFor === agentId && gaveUp;
+  return { ready, checking: Boolean(agentId) && !ready && !gaveUp, recheck, failed };
 }

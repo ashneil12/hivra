@@ -10,7 +10,10 @@ import "server-only";
 //   lives 60 s and works once on the bridge.
 // - There is no allow-forever: an allowance is at most one hour.
 
+import { createHash, randomBytes } from "node:crypto";
+
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { trustedAppOrigin } from "@/lib/infrastructure/trusted-app-origin";
 import {
   generateBridgeKey, bridgeArgvHash, execViaRelay, hostRelayStatus, HostRelayError, issueBridgeConfig, mintBridgeTicket,
   revokeRelayConnector,
@@ -168,23 +171,48 @@ export async function readRequestForAgent(userId: string, agentId: string, reque
   return { ok: true, value: request };
 }
 
-export async function enrollComputer(userId: string, label: string, computerId?: string) {
+/** A setup code works once and lasts 15 minutes. */
+export const ENROL_CODE_TTL_MS = 15 * 60_000;
+export const ENROL_CODE_PATTERN = /^hvb_[A-Za-z0-9_-]{32}$/;
+const codeHash = (code: string) => createHash("sha256").update(`local-bridge-enrol|v1|${code}`).digest("hex");
+
+export function bridgeInstallCommand(origin: string, code: string): string {
+  return `curl -fsSL ${origin}/api/hivra/bridge/install | bash -s -- ${code}`;
+}
+
+/**
+ * Sets a computer up (or sets it up again) and returns the one command to paste on it. The
+ * secrets never leave the server here: the command carries a one-time code (stored only as a
+ * hash), and the computer swaps it for its settings once, in `redeemEnrolCode`.
+ */
+export async function enrollComputer(userId: string, label: string, computerId?: string, now: number = Date.now()) {
+  const origin = trustedAppOrigin();
+  if (!origin) return fail(503, "This deployment has no public address to set a computer up from.");
   // A new random key every time. Re-enrolling also raises the generation and tells the relay,
   // so an old config (key and connector secret) stops working, and clears the old allowances.
   const key = generateBridgeKey();
   let computer: BridgeComputer | null;
-  let generation: number;
   if (computerId) {
     computer = await store.loadComputer(userId, computerId);
     if (!computer) return fail(404, "That computer was not found.");
-    generation = await store.bumpGeneration(userId, computer, encryptSecret(key), false);
+    const generation = await store.bumpGeneration(userId, computer, encryptSecret(key), false);
     await store.deleteAllowancesForComputer(userId, computer.id);
     await revokeRelayConnector(computer.id, generation);
   } else {
     computer = await store.insertComputer(userId, label, encryptSecret(key));
-    generation = computer.generation;
   }
-  return { ok: true as const, value: { computer, config: issueBridgeConfig(computer.id, generation, userId, key) } };
+  const code = `hvb_${randomBytes(24).toString("base64url")}`;
+  const expiresAt = new Date(now + ENROL_CODE_TTL_MS).toISOString();
+  await store.setEnrolCode(userId, computer.id, codeHash(code), expiresAt);
+  return { ok: true as const, value: { computer, command: bridgeInstallCommand(origin, code), expiresAt } };
+}
+
+/** The computer swaps its one-time code for its settings, once. Nothing else is returned or logged. */
+export async function redeemEnrolCode(code: string, now: number = Date.now()): Promise<Result<ReturnType<typeof issueBridgeConfig>>> {
+  if (!ENROL_CODE_PATTERN.test(code)) return fail(400, "That code can't be used.");
+  const computer = await store.consumeEnrolCode(codeHash(code), new Date(now).toISOString());
+  if (!computer?.bridge_key_encrypted) return fail(400, "That code has expired or was already used.");
+  return { ok: true, value: issueBridgeConfig(computer.id, computer.generation, computer.user_id, decryptSecret(computer.bridge_key_encrypted)) };
 }
 
 /** One action: raise the generation and tell the relay, which stops the bridge. */

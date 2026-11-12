@@ -13,6 +13,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
+import { agentLinkEndpoint, resyncOwnerKitsForBridge } from "@/lib/agent-links/kit-delivery";
 import { loadOwnedRows } from "@/lib/agent-links/store";
 import { allowanceActive, decideRequest, dispatchRequest, enrollComputer, expireStale, publicRequest, readResultForOwner, revokeAllowance, revokeComputer, withoutOldResult } from "@/lib/local-bridge/service";
 import { listAllowances, listRequests, loadComputers, purgeOldResults } from "@/lib/local-bridge/store";
@@ -25,6 +26,11 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("revoke"), computerId: Uuid }).strict(),
   z.object({ action: z.literal("end_allowance"), agentId: Uuid, computerId: Uuid }).strict(),
 ]);
+/** After an enroll or revoke: every agent's kit learns the new list of bridge computers. */
+const resyncKits = (userId: string, req: NextRequest) => {
+  const endpoint = agentLinkEndpoint(req.nextUrl.origin);
+  runAfterResponse(() => resyncOwnerKitsForBridge(userId, endpoint), { source: "api/hivra/bridge", failureType: "agent_link_kit_sync_skipped", userId });
+};
 const failure = (method: string, failureType: string) => ({ route: "/api/hivra/bridge", method, failureType });
 
 export async function GET(req: NextRequest) {
@@ -83,12 +89,15 @@ export async function POST(req: NextRequest) {
     if (body.action === "enroll") {
       const enrolled = await enrollComputer(userId, body.label ?? "My computer", body.computerId);
       if (!enrolled.ok) return noStore(apiError(enrolled.message, enrolled.status));
-      // The configuration holds this computer's secrets: shown to the owner once, never logged.
-      return noStore(apiSuccess({ computer: { id: enrolled.value.computer.id, name: enrolled.value.computer.label }, config: enrolled.value.config }));
+      resyncKits(userId, req);
+      // No secrets here: the owner gets one command that carries a one-time code. The computer
+      // swaps the code for its settings once (POST /api/hivra/bridge/enrol).
+      return noStore(apiSuccess({ computer: { id: enrolled.value.computer.id, name: enrolled.value.computer.label }, command: enrolled.value.command, expiresAt: enrolled.value.expiresAt }));
     }
     if (body.action === "revoke") {
       const revoked = await revokeComputer(userId, body.computerId);
       if (!revoked.ok) return noStore(apiError(revoked.message, revoked.status));
+      resyncKits(userId, req);
       return noStore(apiSuccess({ revoked: true }));
     }
     await revokeAllowance(userId, body.agentId, body.computerId);
