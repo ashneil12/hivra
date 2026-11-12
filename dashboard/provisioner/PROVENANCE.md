@@ -544,6 +544,15 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.12.2` builds on `2026.11.12.1` and hardens how the Telegram helper
+(`hivra-tg-apply`) writes its environment file. The helper now creates the file in a
+root-only directory and moves it into place atomically, instead of writing it directly
+inside the agent-writable configuration directory. A rename never follows a destination
+symlink, so the helper's root-owned write and its ownership and permission steps can no
+longer be redirected onto another path. Apply, disable, and unknown-action behaviour is
+unchanged. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, or update any existing computer.
+
 Release `2026.11.12.1` builds on `2026.11.11.7` and lets the owner choose a Hermes
 computer's model from Hivra's Manage page. Hermes keeps its model in its own config
 (`model.default`), the setting its own model picker writes, and uses it for new chats.

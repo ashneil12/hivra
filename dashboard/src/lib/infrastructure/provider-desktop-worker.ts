@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.11.12.1.json";
+import release from "../../../provisioner-releases/2026.11.12.2.json";
+import hermesModelRelease from "../../../provisioner-releases/2026.11.12.1.json";
 import hermesRelease from "../../../provisioner-releases/2026.11.11.4.json";
 import chatEffortRelease from "../../../provisioner-releases/2026.11.11.3.json";
 import chromePinRelease from "../../../provisioner-releases/2026.11.11.2.json";
@@ -48,7 +49,7 @@ import { parseProviderDesktopLaunch, type ProviderDesktopLaunch, type ProviderDe
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.11.12.1";
+const VERSION = "2026.11.12.2";
 const PROFILE = "desktop-owned-services-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -60,13 +61,14 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1" | "2026.11.12.2", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   desktopCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
 }).strict(); }
 const CurrentIdentity = identity(VERSION, bundleSha256);
 const Identity = z.union([CurrentIdentity,
+  identity("2026.11.12.1", "d79a91eccf3d7aacc65efe2fdbe55e00f564caabc24f0ff4c0a5a324985d8e1c"),
   identity("2026.09.24.4", "3bc4df89f60582b8f9505e3ab9ee6b5a4a751a2633b2d709a1f4b12549fd3b49"),
   identity("2026.10.07.1", "bbebf7e4d12adbb75069b86f6eb9681d173066437d2b29ce49cff1250159a3d3"),
   identity("2026.10.20.1", "a2fc56f1a4cf4a1d66f17654c441b70c27cc18960c3e48c570b7032976cdde2e"),
@@ -142,7 +144,7 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
       ? { version: 3, agentId: input.agentId, operationId: input.operationId,
         bundle: providerGuestBundleReceipt(input.scope, input.assets), desktopCleanup: { profile: PROFILE, closureSha256 } }
       : input.identity);
-    const maxRunMs = [VERSION, "2026.11.11.4", "2026.11.11.3", "2026.11.11.2", "2026.11.11.1", "2026.11.10.5", "2026.11.10.4", "2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.10.07.1", "2026.09.24.4", "2026.09.24.3", "2026.09.24.2", "2026.09.24.1", "2026.09.22.2", "2026.09.22.1", "2026.09.21.1", "2026.09.15.2", "2026.09.06.3", "2026.09.06.2", "2026.09.06.1", "2026.09.05.10", "2026.09.05.9", "2026.09.05.8"].includes(identity.bundle.provisionerVersion) ? 1_200_000 : 480_000;
+    const maxRunMs = [VERSION, "2026.11.12.1", "2026.11.11.4", "2026.11.11.3", "2026.11.11.2", "2026.11.11.1", "2026.11.10.5", "2026.11.10.4", "2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.10.07.1", "2026.09.24.4", "2026.09.24.3", "2026.09.24.2", "2026.09.24.1", "2026.09.22.2", "2026.09.22.1", "2026.09.21.1", "2026.09.15.2", "2026.09.06.3", "2026.09.06.2", "2026.09.06.1", "2026.09.05.10", "2026.09.05.9", "2026.09.05.8"].includes(identity.bundle.provisionerVersion) ? 1_200_000 : 480_000;
     if (checkedClock.boottimeMs > Number.MAX_SAFE_INTEGER - maxRunMs) throw new Error();
     if (identity.agentId !== input.agentId || identity.operationId !== input.operationId
       || identity.bundle.scopeSha256 !== providerGuestBundleScopeSha256(input.scope)) throw new Error();
@@ -153,6 +155,7 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
     if (Buffer.byteLength(raw) > 128 * 1024) throw new Error();
     const recipe = providerGuestWorkerRecipe(identity.bundle.provisionerVersion);
     const boundRelease = identity.bundle.provisionerVersion === VERSION ? release
+      : identity.bundle.provisionerVersion === "2026.11.12.1" ? hermesModelRelease
       : identity.bundle.provisionerVersion === "2026.11.11.4" ? hermesRelease
       : identity.bundle.provisionerVersion === "2026.11.11.3" ? chatEffortRelease
       : identity.bundle.provisionerVersion === "2026.11.11.2" ? chromePinRelease
