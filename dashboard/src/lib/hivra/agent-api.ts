@@ -1217,6 +1217,27 @@ export async function setBoxModel(boxUrl: string, model: string | null, token?: 
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+// ---- Hermes restore points (Manage → Restore points) ---------------------------
+// Hermes's own checkpoints.enabled. An older connection service answers 404, so
+// `supported` is false and Manage asks for the update instead.
+export async function getBoxRestorePoints(boxUrl: string, token?: string | null): Promise<{ enabled: boolean; supported: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/restore-points`, { cache: "no-store", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { enabled?: boolean; hermesConfig?: boolean; error?: string };
+    if (r.status === 404) return { enabled: false, supported: false, error: null };
+    if (!r.ok) return { enabled: false, supported: false, error: j.error || `HTTP ${r.status}` };
+    return { enabled: j.enabled === true, supported: j.hermesConfig === true, error: null };
+  } catch (e) { return { enabled: false, supported: false, error: (e as Error).message }; }
+}
+export async function setBoxRestorePoints(boxUrl: string, enabled: boolean, token?: string | null): Promise<{ ok: boolean; enabled?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/restore-points`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ enabled }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; enabled?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, enabled: j.enabled === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
 // Manage model-key settings use the server-only delivery flow exposed through
 // agent-model-settings-api.ts; no browser-to-guest credential writes.
 

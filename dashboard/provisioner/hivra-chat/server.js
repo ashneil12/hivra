@@ -1601,6 +1601,39 @@ function handleHermesModelSet(res, body) {
   }, () => { hermesModelWriting = false; jsonRes(res, 503, { ok: false, error: "Hermes did not report its model" }); });
 }
 
+// ---- Hermes restore points (Manage → Restore points) ---------------------------
+// Hermes's own checkpoints: before it changes files in a turn, Hermes snapshots
+// the project into its shadow git store (~/.hermes/checkpoints), and the owner
+// rolls back from any Hermes chat with /rollback (or /undo). Hivra only flips
+// Hermes's own checkpoints.enabled through Hermes's CLI; Hermes keeps the store,
+// its size cap and its pruning. The gateway picks the change up on the next turn.
+function hermesRestorePointsState() {
+  return hermesConfigGet("checkpoints.enabled").then((value) => {
+    const v = String(value || "").trim().toLowerCase();
+    return { enabled: v === "true" || v === "1" || v === "yes" || v === "on" };
+  });
+}
+function handleHermesRestorePointsGet(res) {
+  if (AGENT_KIND !== "hermes") return jsonRes(res, 404, { error: "restore points are a Hermes setting" });
+  hermesRestorePointsState().then((state) => jsonRes(res, 200, { agentKind: AGENT_KIND, hermesConfig: true, ...state }),
+    () => jsonRes(res, 503, { error: "Hermes did not report its restore point setting" }));
+}
+let hermesRestorePointsWriting = false;
+function handleHermesRestorePointsSet(res, body) {
+  if (AGENT_KIND !== "hermes") return jsonRes(res, 404, { ok: false, error: "restore points are a Hermes setting" });
+  let enabled = null;
+  try { const j = JSON.parse(body || "{}"); if (typeof j.enabled === "boolean") enabled = j.enabled; } catch {}
+  if (enabled === null) return jsonRes(res, 400, { ok: false, error: "Say whether restore points should be on or off." });
+  if (hermesRestorePointsWriting) return jsonRes(res, 409, { ok: false, error: "Hermes is already changing this setting. Try again in a moment." });
+  if (agentAppUpdating()) return jsonRes(res, 409, { ok: false, error: "Hermes is being updated. Try again when the update finishes." });
+  hermesRestorePointsWriting = true;
+  execFile(HERMES_BIN, ["config", "set", "checkpoints.enabled", enabled ? "true" : "false"], { env: AGENT_ENV, cwd: HOME, timeout: 30000, maxBuffer: 64 * 1024 }, (err) => {
+    hermesRestorePointsWriting = false;
+    if (err) return jsonRes(res, 500, { ok: false, error: "Hermes could not save the setting. Nothing changed." });
+    jsonRes(res, 200, { ok: true, enabled });
+  });
+}
+
 // ---- alternative LLM provider (Venice byok / managed gateway) ----------------
 // ~/.hivra/llm-provider.json: { provider:"venice", baseUrl, apiKey, model }.
 // Legacy provision/bootstrap and explicit POST /api/llm remain compatible until
@@ -3942,6 +3975,8 @@ const server = http.createServer((req, res) => {
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? (AGENT_KIND === "hermes" ? handleHermesModelGet(res) : handleModelGet(res)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => AGENT_KIND === "hermes" ? handleHermesModelSet(res, b) : handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/restore-points") return authed(req) ? handleHermesRestorePointsGet(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/restore-points") return authed(req) ? readBody(req, (b) => handleHermesRestorePointsSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Alternative LLM provider (Manage tab) — token-gated; GET never echoes the key.
   if (u === "/api/llm" || u === "/api/llm/application") res.setHeader("Cache-Control", "no-store");
   if (u === "/api/llm/application") return handleLlmApplication(req, res);

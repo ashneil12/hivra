@@ -397,6 +397,34 @@ describe("gateway Hermes mount", () => {
     expect(hermesCalls.filter((call) => call[0] === "config")).toEqual([]);
   });
 
+  it("turns Hermes's own restore points on and off through Hermes's config, for the owner only", async () => {
+    const port = await boot("hermes");
+    const post = (body: unknown, auth = true) => request(port, "/api/restore-points", { "Content-Type": "application/json" }, { auth, method: "POST", body: JSON.stringify(body) });
+    expect((await request(port, "/api/restore-points")).json).toEqual({ agentKind: "hermes", hermesConfig: true, enabled: false });
+    expect((await request(port, "/api/restore-points", {}, { auth: false })).status).toBe(401);
+    expect((await post({ enabled: true }, false)).status).toBe(401);
+    expect(await post({ enabled: true })).toMatchObject({ status: 200, json: { ok: true, enabled: true } });
+    expect(hermesCalls).toContainEqual(["config", "set", "checkpoints.enabled", "true"]);
+    expect((await request(port, "/api/restore-points")).json).toMatchObject({ enabled: true });
+    expect(await post({ enabled: false })).toMatchObject({ status: 200, json: { ok: true, enabled: false } });
+    expect(hermesConfig["checkpoints.enabled"]).toBe("false");
+    for (const body of [{}, { enabled: "true" }, { enabled: 1 }]) expect((await post(body)).status).toBe(400);
+    hermesConfigSetFails = true;
+    expect(await post({ enabled: true })).toMatchObject({ status: 500, json: { ok: false } });
+    expect(hermesConfig["checkpoints.enabled"]).toBe("false");
+  });
+
+  it("does not change restore points while Hermes is being updated, or on another agent", async () => {
+    fs.writeFileSync(files().lock, "");
+    const port = await boot("hermes");
+    const saved = await request(port, "/api/restore-points", { "Content-Type": "application/json" }, { method: "POST", body: JSON.stringify({ enabled: true }) });
+    expect(saved).toMatchObject({ status: 409, json: { ok: false } });
+    const openclaw = await boot("openclaw");
+    expect((await request(openclaw, "/api/restore-points")).status).toBe(404);
+    expect((await request(openclaw, "/api/restore-points", { "Content-Type": "application/json" }, { method: "POST", body: JSON.stringify({ enabled: true }) })).status).toBe(404);
+    expect(hermesCalls.filter((call) => call[0] === "config")).toEqual([]);
+  });
+
   it("keeps the per-box model file for agents other than Hermes", async () => {
     const port = await boot("openclaw");
     const saved = await request(port, "/api/model", { "Content-Type": "application/json" }, { method: "POST", body: JSON.stringify({ model: "kimi-k2-6" }) });
