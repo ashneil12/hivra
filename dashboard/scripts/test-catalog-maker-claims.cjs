@@ -50,12 +50,13 @@ async function main() {
     const fails = async (sql, args, why) => assert.rejects(db.query(sql, args), undefined, why);
 
     // ── Claims ───────────────────────────────────────────────────────────────
-    const TOKEN = "0123456789abcdef0123456789abcdef";
+    // The value of a claim's line: 32 hex characters, published in the maker's repository.
+    const CLAIM_VALUE = "0123456789abcdef".repeat(2);
     const claim = "insert into public.hivra_catalog_claims (profile_id, user_id, repo, token) values ($1, $2, $3, $4) returning id, status";
-    const first = await one(claim, ["openclaw", "ana", "openclaw/openclaw", TOKEN]);
+    const first = await one(claim, ["openclaw", "ana", "openclaw/openclaw", CLAIM_VALUE]);
     assert.equal(first.status, "pending");
     await fails(claim, ["openclaw", "ana", "openclaw/openclaw", "f".repeat(32)], "one claim per person and page");
-    await fails(claim, ["openclaw", "ben", "openclaw/openclaw", TOKEN], "a line belongs to one claim");
+    await fails(claim, ["openclaw", "ben", "openclaw/openclaw", CLAIM_VALUE], "a line belongs to one claim");
     await fails(claim, ["openclaw", "ben", "openclaw/openclaw", "not-a-token"], "a line has a fixed shape");
     await fails(claim, ["openclaw", "ben", "https://github.com/openclaw/openclaw", "a".repeat(32)], "a repository is owner/name");
     await fails(claim, ["Open Claw", "ben", "openclaw/openclaw", "a".repeat(32)], "a page id is a slug");

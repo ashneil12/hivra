@@ -88,12 +88,12 @@ describe("what a claim is proven with", () => {
   });
 
   it("wants the line on a line of its own", () => {
-    const token = "0123456789abcdef0123456789abcdef";
-    expect(claimLine(token)).toBe(`hivra-claim=${token}`);
-    expect(proofHasLine(`# Hivra\r\n  hivra-claim=${token}  \r\n`, token)).toBe(true);
-    expect(proofHasLine(`hivra-claim=${token}0`, token)).toBe(false);
-    expect(proofHasLine(`see hivra-claim=${token}`, token)).toBe(false);
-    expect(proofHasLine("", token)).toBe(false);
+    const value = "0123456789abcdef".repeat(2);
+    expect(claimLine(value)).toBe(`hivra-claim=${value}`);
+    expect(proofHasLine(`# Hivra\r\n  hivra-claim=${value}  \r\n`, value)).toBe(true);
+    expect(proofHasLine(`hivra-claim=${value}0`, value)).toBe(false);
+    expect(proofHasLine(`see hivra-claim=${value}`, value)).toBe(false);
+    expect(proofHasLine("", value)).toBe(false);
   });
 });
 
