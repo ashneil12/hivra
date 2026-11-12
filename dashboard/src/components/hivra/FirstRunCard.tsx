@@ -11,13 +11,13 @@ import styles from "./HomeWorkspace.module.css";
 const FIRST_RUN_AGENTS: readonly AgentId[] = ["hermes", "claude-code", "codex"];
 
 /**
- * What each first-run choice does, in plain words. A new person picks by the job
- * they want done; the agent's name sits under it (Ash's wording, 12 Nov 2026).
+ * What each first-run choice does, in Ash's words (12 Nov 2026), used word for
+ * word: the job first, the agent's name under it.
  */
-const FIRST_RUN_JOBS: Partial<Record<AgentId, { job: string; line: string; badge?: string }>> = {
-  hermes: { job: "Research and everyday tasks", line: "Research, compare, write, use tools and run repeat jobs.", badge: "Recommended" },
-  "claude-code": { job: "Code with Claude", line: "Write, fix, test and work through software projects with Claude." },
-  codex: { job: "Code with Codex", line: "Use Codex on a computer dedicated to your coding work." },
+const FIRST_RUN_JOBS: Partial<Record<AgentId, { job: string; agent: string; line: string; badge?: string }>> = {
+  hermes: { job: "Research and automation", agent: "Hermes Agent", badge: "Recommended", line: "Research, browse, write, use tools and automate recurring work." },
+  "claude-code": { job: "Build and code with Claude", agent: "Claude Code", line: "Build software, fix bugs, run tests and work on coding projects." },
+  codex: { job: "Build and code with Codex", agent: "OpenAI Codex", line: "Write, review and test code in a dedicated computer environment." },
 };
 
 /** What Home shows before there is anything to show: one question, three taps.
@@ -35,13 +35,13 @@ export function FirstRunCard() {
   }, []);
 
   const choices = FIRST_RUN_AGENTS.flatMap((id) => AGENTS.find((agent) => agent.id === id) ?? []);
-  // Only a known Free plan gets the line, and never an account whose paid plan is on hold.
+  // Only a known Free plan is asked where its agent runs, and never an account whose paid plan is on hold.
   const showPlanLine = isFreePlanInfo(plan) && !plan?.onHold;
 
   return (
     <section className={styles.firstRun} aria-labelledby="first-run-title">
-      <h1 id="first-run-title" className={styles.firstRunTitle}>What do you want your agent to do?</h1>
-      <p className={styles.firstRunLead}>Choose a job and Hivra will set up a computer for the agent to run on.</p>
+      <h1 id="first-run-title" className={styles.firstRunTitle}>What would you like to work on?</h1>
+      <p className={styles.firstRunLead}>Choose an agent and we&apos;ll help you get it running on a computer of its own.</p>
       <ul className={styles.firstRunChoices}>
         {choices.map((agent) => {
           const job = FIRST_RUN_JOBS[agent.id];
@@ -51,8 +51,8 @@ export function FirstRunCard() {
                 <span className={styles.firstRunName}>{job?.job ?? agent.name}</span>
                 {job ? (
                   <span className={styles.firstRunAgent}>
+                    {job.agent}
                     {job.badge ? <span className={styles.firstRunBadge}>{job.badge}</span> : null}
-                    {agent.name}
                   </span>
                 ) : null}
                 <span className={styles.firstRunTagline}>{job?.line ?? agent.tagline}</span>
@@ -63,15 +63,24 @@ export function FirstRunCard() {
       </ul>
       {showPlanLine ? (
         <div className={styles.firstRunPlan} data-testid="first-run-plan">
-          <h2 className={styles.firstRunWaysTitle}>Choose where your agent&apos;s computer runs</h2>
+          <h2 className={styles.firstRunWaysTitle}>Choose where your agent runs</h2>
+          <p className={styles.firstRunWaysLead}>Every agent needs a computer. Choose how you&apos;d like to run yours.</p>
           <ul className={styles.firstRunWays}>
             <li>
-              <Link href="/dashboard/billing">Hivra Cloud · From $9.99/month</Link>
-              <span>We run and maintain the computer for you. Nothing to install. Includes supported agents and a 7-day money-back guarantee on card payments.</span>
+              <strong>Hivra Cloud</strong>
+              <em>From $9.99/month</em>
+              <span>We provide and maintain the computer for you. There&apos;s no server to set up, and you can access your agent from your browser.</span>
+              <span>Includes supported managed agents.</span>
+              <span>7-day money-back guarantee on card payments.</span>
+              <Link href="/dashboard/billing">Use Hivra Cloud</Link>
             </li>
             <li>
-              <Link href="/dashboard/infrastructure">Your own server · Free</Link>
-              <span>Connect a supported Proxmox VE server you run. Claude Code and Codex can run there. Hermes currently requires Hivra Cloud.</span>
+              <strong>Your own server</strong>
+              <em>No Hivra hosting charge</em>
+              <span>Connect a supported Proxmox VE server you control and use it to run compatible agents.</span>
+              <span>Claude Code and Codex are supported on eligible owner-managed infrastructure. Hermes currently requires Hivra Cloud.</span>
+              <span>You provide the server and cover its running costs.</span>
+              <Link href="/dashboard/infrastructure">Connect my server</Link>
             </li>
           </ul>
         </div>

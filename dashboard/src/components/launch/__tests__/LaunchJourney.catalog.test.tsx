@@ -239,8 +239,8 @@ describe("every catalog agent launches in the Launch journey", () => {
     savedKeys = [VENICE_KEY];
     createAgentMock.mockResolvedValue({ id: AGENT_ID, type: "codex", name: "Codex 1", status: "provisioning", cpu: 1.5, ram: 3 });
     await chooseAgent("Codex");
-    await waitFor(() => expect(modelChoice(/^Use my API key/)).toBeEnabled());
-    fireEvent.click(modelChoice(/^Use my API key/));
+    await waitFor(() => expect(modelChoice(/^Use my own API key/)).toBeEnabled());
+    fireEvent.click(modelChoice(/^Use my own API key/));
 
     expect(screen.getByRole("button", { name: "Use my saved key ••3f2a" })).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeDisabled());
@@ -261,8 +261,8 @@ describe("every catalog agent launches in the Launch journey", () => {
 
   it("keeps a pasted key out of the saved draft", async () => {
     await chooseAgent("Codex");
-    await waitFor(() => expect(modelChoice(/^Use my API key/)).toBeEnabled());
-    fireEvent.click(modelChoice(/^Use my API key/));
+    await waitFor(() => expect(modelChoice(/^Use my own API key/)).toBeEnabled());
+    fireEvent.click(modelChoice(/^Use my own API key/));
     fireEvent.change(screen.getByLabelText("Venice AI API key"), { target: { value: "synthetic-venice-key" } });
     fireEvent.click(screen.getByRole("checkbox", { name: "Save it in my Vault for next time" }));
     await reviewLaunch();
@@ -299,7 +299,7 @@ describe("every catalog agent launches in the Launch journey", () => {
 
     // It gets its model at launch: credits are the default, a Venice key the alternative.
     await waitFor(() => expect(modelChoice(/^Hivra credits/)).toHaveAttribute("aria-pressed", "true"));
-    expect(modelChoice(/^Use my API key/)).not.toBeDisabled();
+    expect(modelChoice(/^Use my own API key/)).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: /^Sign in|^Set up inside|^Add your key inside/ })).not.toBeInTheDocument();
     const review = await reviewLaunch();
     expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4\.1 Flash/)).toBeInTheDocument();
