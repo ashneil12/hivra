@@ -8,7 +8,7 @@
 // records: the job a thing does, the words people search by, how you talk to
 // it, where its maker publishes it, a picture, and a few good first tasks.
 
-import { PROFILE_DETAILS, type LaunchProfileId } from "./contracts";
+import { LAUNCH_PROFILE_IDS, PROFILE_DETAILS, type LaunchProfileId } from "./contracts";
 
 /** Off by default: the catalog view of Launch is unreleased. Client-safe: the
  * NEXT_PUBLIC value is inlined at build time, so read it by its literal name. */
@@ -323,4 +323,33 @@ export function relatedCatalogItems<T extends CatalogItem>(profileId: LaunchProf
   return items
     .filter(item => item.id !== profileId && LAUNCH_CATALOG[item.id].jobs.includes(job))
     .slice(0, limit);
+}
+
+export interface TryNextSuggestion<T extends CatalogItem> {
+  item: T;
+  /** The agent the owner runs that does the same kind of work, by its type name. */
+  because: string | null;
+}
+
+/** Up to `limit` agents the owner does not run yet, for Home's "Try next".
+ * `runningRuntimeIds` are the agent types they run. One that shares a job
+ * with something they run comes first and says which; nothing is suggested to
+ * an owner who runs no agent, because Home sends them to Launch instead. */
+export function tryNextSuggestions<T extends CatalogItem>(
+  items: readonly T[],
+  runningRuntimeIds: readonly string[],
+  limit = 2,
+): TryNextSuggestion<T>[] {
+  const running = new Set(runningRuntimeIds);
+  const runningProfiles = LAUNCH_PROFILE_IDS.filter(id =>
+    PROFILE_DETAILS[id].resourceKind === "agent" && running.has(PROFILE_DETAILS[id].runtimeId));
+  if (runningProfiles.length === 0) return [];
+  const suggestions = items
+    .filter(item => PROFILE_DETAILS[item.id].resourceKind === "agent" && !running.has(PROFILE_DETAILS[item.id].runtimeId))
+    .map(item => {
+      const jobs = LAUNCH_CATALOG[item.id].jobs;
+      const match = runningProfiles.find(id => LAUNCH_CATALOG[id].jobs.some(job => jobs.includes(job)));
+      return { item, because: match ? PROFILE_DETAILS[match].name : null };
+    });
+  return [...suggestions.filter(entry => entry.because), ...suggestions.filter(entry => !entry.because)].slice(0, limit);
 }

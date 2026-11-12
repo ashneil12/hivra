@@ -13,6 +13,7 @@ import {
   primaryCatalogJob,
   relatedCatalogItems,
   searchWords,
+  tryNextSuggestions,
   type CatalogItem,
 } from "../launch-catalog";
 
@@ -130,5 +131,22 @@ describe("searching the catalog", () => {
     expect(ids(relatedCatalogItems("claude-code", ITEMS))).toEqual(["codex"]);
     expect(ids(relatedCatalogItems("hermes-computer", ITEMS))).toEqual(["openclaw", "agent-zero"]);
     expect(relatedCatalogItems("ubuntu-desktop", ITEMS)).toEqual([]);
+  });
+});
+
+describe("what to try next", () => {
+  const suggest = (running: string[], limit?: number) =>
+    tryNextSuggestions(ITEMS, running, limit).map(entry => [entry.item.id, entry.because]);
+
+  it("leads with agents that do a job the owner already uses one for", () => {
+    expect(suggest(["codex"])).toEqual([["claude-code", "Codex"], ["hermes-computer", null]]);
+    expect(suggest(["hermes"])).toEqual([["openclaw", "Hermes"], ["agent-zero", "Hermes"]]);
+    expect(suggest(["hermes"], 3)).toEqual([["openclaw", "Hermes"], ["agent-zero", "Hermes"], ["aeon", "Hermes"]]);
+  });
+
+  it("never suggests what they run, a computer, or anything to someone with no agent", () => {
+    expect(suggest(["codex", "claude-code"], 10).map(([id]) => id)).toEqual(["hermes-computer", "openclaw", "agent-zero", "aeon"]);
+    expect(suggest([])).toEqual([]);
+    expect(suggest(["linux-desktop"])).toEqual([]);
   });
 });

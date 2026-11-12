@@ -135,8 +135,15 @@ tiles Launch already offers.
   the workspace pictures already in the repository; an agent without a picture shows
   its icon on a wash of its catalog colour.
 
-Not built yet: ordering by how many people keep using a thing, "try next" on Home,
-pages a maker can claim and edit, and adding a new agent without a code change.
+- Home gains "Try next" under the owner's own agents and computers: up to two agents
+  they do not run yet, one that does a job they already use an agent for first
+  ("Because you run Codex"). Each opens its page in Launch. Nothing is suggested to an
+  owner who runs no agent, or during a search.
+- The tiles themselves live in `src/components/launch/launch-tiles.ts`, so Home and
+  Launch name and describe a thing in the same words.
+
+Not built yet: ordering by how many people keep using a thing, pages a maker can
+claim and edit, and adding a new agent without a code change.
 
 ---
 
