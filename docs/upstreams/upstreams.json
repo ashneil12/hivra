@@ -41,7 +41,7 @@
       "watch": "tags",
       "tagPattern": "^v0\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "4fc048c00f037e919177850f7c4318e1ca6b5928",
+        "head": "6883919ad90fb11dd9240d8cb1f51b8bbf37c199",
         "latest": "v0.23.1"
       }
     },
@@ -56,7 +56,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d{4}\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "96a52f29220a8b0426123591daea48ce821d6834",
+        "head": "d30e45c3f48eaa570df1f4528bcc50e7b28e6c77",
         "latest": "v2026.11.3"
       }
     },
@@ -86,8 +86,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "927b66497b89542dc1242e26d5735dbf880c829e",
-        "latest": "v2.1.322"
+        "head": "89eb88e3357be13ae7fcf8966144ad32f44def33",
+        "latest": "v2.1.323"
       }
     },
     {
@@ -101,8 +101,8 @@
       "watch": "tags",
       "tagPattern": "^rust-v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "c432cf0253ed90a2f208cc96918091ba1867edd8",
-        "latest": "rust-v0.167.2"
+        "head": "1f175fa3c4af6a3f2e8d51971c3734b4a0aaca6b",
+        "latest": "rust-v0.168.0"
       }
     },
     {
@@ -115,7 +115,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "6c46c097bfc54afbf8330d24813500c102f0f728",
+        "head": "804aa69617cd96628895125c8d7d6bff04fdc8a3",
         "latest": "v1.0.2"
       }
     },
@@ -129,7 +129,7 @@
       "watch": "tags",
       "tagPattern": "^runtime-v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "a87cb10fb4f02dbe35291d274f1bc4f2b7a6e7aa",
+        "head": "30af6692aada4010134cca0f169a71b00609beba",
         "latest": "runtime-v0.1.55"
       }
     },
@@ -172,7 +172,7 @@
       "pinFile": "docs/release/RUNTIME-DISTRIBUTION.md",
       "watch": "head",
       "checked": {
-        "head": "2f792c2f6b15d81dc67856168247b5ca2c5656c8",
+        "head": "a314975ce7bf9aa00baebfef874b6e69474a95cf",
         "latest": "desktop-v0.5.28"
       }
     },
@@ -185,7 +185,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "ab344439a38248bb7088adf247167827e5fe8f4b",
+        "head": "2ddded109bdabfb88cf2190f5c24d95382e2cbe5",
         "latest": null
       }
     },
@@ -254,7 +254,7 @@
       "pinFile": "dashboard/provisioner/remote-desktop/install-omarchy-web.py",
       "watch": "head",
       "checked": {
-        "head": "c7f07906b64dacd5934b04dd90a8a26c481a23f5",
+        "head": "d33f1a9125638ce040b6a279423649db6adaff78",
         "latest": null
       }
     },
@@ -321,7 +321,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "78c73f596e80d7a4c2a061ea794cc683876cfcb2",
+        "head": "5006e4c5d591effc223d33c0757ccb770f5c62e6",
         "latest": "v0.165.1"
       }
     },
@@ -386,7 +386,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "e628f8b4077f443b3c261ccccdfbf7d5cc5ca32b",
+        "head": "9fff4d82260f74291bff2e2058dafe76e1448411",
         "latest": null
       }
     },
@@ -399,7 +399,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "f1a343cbddada0908b33a7c8873bfeb50f85c48d",
+        "head": "66a8639187e9d748ec3dc84675ad3843999b1a01",
         "latest": null
       }
     },
@@ -451,7 +451,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "bfb4e26ce9d55456f21347ce8669e3f3c8675dad",
+        "head": "726c2387608194826411c50429bdd8ebd9c71f25",
         "latest": null
       }
     },
@@ -478,7 +478,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "2a653cea7b2054a2dc9c6419337d3de8031275d6",
+        "head": "f9ef4d8186e17d2fabc1d0ae929ccafc1dfa4785",
         "latest": null
       }
     }
