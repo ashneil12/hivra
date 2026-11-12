@@ -205,7 +205,6 @@ describe("BillingPage", () => {
       },
       credits: {
         balance: 2450,
-        monthlyGrant: 3480,
         unit: "100 credits = $1",
       },
     };
@@ -785,7 +784,6 @@ describe("BillingPage", () => {
       usage: null,
       credits: {
         balance: 0,
-        monthlyGrant: 0,
         unit: "100 credits = $1",
       },
     };
@@ -1978,7 +1976,6 @@ describe("BillingPage", () => {
       },
       credits: {
         balance: 0,
-        monthlyGrant: 0,
         unit: "100 credits = $1",
       },
     };
@@ -2072,7 +2069,6 @@ describe("BillingPage", () => {
       },
       credits: {
         balance: 0,
-        monthlyGrant: 2090,
         unit: "100 credits = $1",
       },
     };
@@ -2278,7 +2274,7 @@ describe("BillingPage", () => {
       subscribed: true,
       plan: { key: "free", name: "Free", price: 0, maxAgents: 1, totalCpu: 0.5, totalRam: 1024, status: "active", currentPeriodEnd: null, source: "free" },
       usage: { agentCount: 0, maxAgents: 1, usedCpu: 0, totalCpu: 0.5, usedRam: 0, totalRam: 1024, instances: [] },
-      credits: { balance: 0, monthlyGrant: 0, unit: "100 credits = $1" },
+      credits: { balance: 0, unit: "100 credits = $1" },
     };
 
     render(<BillingPage />);

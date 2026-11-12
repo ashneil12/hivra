@@ -390,7 +390,9 @@ async function mainDatabase() {
             and roles && array['public', 'authenticated']::name[]`
       )
     ).map((r) => r.tablename);
-    const dependencyTables = ["hermes_instances", "parent_probe", "view_source_probe"];
+    // hivra_agent_events: the later hivra_agent_active_hours view reads it, and this
+    // harness applies later migrations before this one.
+    const dependencyTables = ["hermes_instances", "hivra_agent_events", "parent_probe", "view_source_probe"];
     const heldBefore = tablesOf(keysFor(before, "authenticated"));
     const heldAfter = tablesOf(keysFor(after, "authenticated"));
     assert.ok(heldBefore.length > heldAfter.length, "authenticated lost the tables it had no use for");
