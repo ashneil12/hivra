@@ -11,6 +11,11 @@ import {
   type ToolComponentKey,
 } from "../tool-catalog";
 import { findBannedClaims } from "../copy-rules";
+import { AGENT_TOOL_ENTRIES } from "../agent-tools/entries";
+
+// The six original tools. The agent tools join TOOL_ENTRIES only while their flag is on and are
+// checked as a set in agent-tools/__tests__.
+const AGENT_SLUGS = new Set(AGENT_TOOL_ENTRIES.map((entry) => entry.slug));
 import { CLAUDE_PLAN_FACTS, usd } from "../claude-plan-facts";
 import { agentDeployHref, getAgentSeoEntry, unqualifiedKeepRunningClaims } from "@/lib/hivra/agent-seo-catalog";
 import { unknownDashboardNames } from "@/lib/blog/runtime-facts";
@@ -25,6 +30,13 @@ const COMPONENT_FILES: Record<ToolComponentKey, string> = {
   "limit-reset-calculator": "LimitResetCalculatorTool.tsx",
   "keep-mac-awake": "KeepMacAwakeTool.tsx",
   "tmux-cheat-sheet": "TmuxCheatSheetTool.tsx",
+  "agent-picker": "AgentPickerTool.tsx",
+  "agent-running-cost": "AgentRunningCostTool.tsx",
+  "agent-model-finder": "AgentModelFinderTool.tsx",
+  "agent-job-library": "AgentJobLibraryTool.tsx",
+  "bot-connect-wizard": "BotConnectWizardTool.tsx",
+  "agent-security-check": "AgentSecurityCheckTool.tsx",
+  "soul-md-builder": "SoulMdBuilderTool.tsx",
 };
 
 const COMPONENTS_DIR = path.join(__dirname, "..", "..", "..", "components", "tools");
@@ -61,7 +73,7 @@ function collectStrings(value: unknown, out: string[] = []): string[] {
 
 describe("tools catalog", () => {
   it("has six entries with unique slugs", () => {
-    expect(TOOL_ENTRIES.map((entry) => entry.slug)).toEqual([
+    expect(TOOL_ENTRIES.filter((entry) => !AGENT_SLUGS.has(entry.slug)).map((entry) => entry.slug)).toEqual([
       "claude-code-plan-calculator",
       "agent-survival-check",
       "ai-agent-hosting-cost-calculator",
@@ -235,7 +247,7 @@ describe("tools catalog", () => {
     const WITH_METHOD = TOOL_ENTRIES.filter((entry) => entry.method);
 
     it("is carried by the plan calculator, the keep-awake builder and the tmux cheat sheet", () => {
-      expect(WITH_METHOD.map((entry) => entry.slug)).toEqual(["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]);
+      expect(WITH_METHOD.filter((entry) => !AGENT_SLUGS.has(entry.slug)).map((entry) => entry.slug)).toEqual(["claude-code-plan-calculator", "keep-mac-awake", "tmux-cheat-sheet"]);
     });
 
     it.each(WITH_METHOD)("$slug: method has a heading, an ISO verified date and linked https sources", (entry) => {

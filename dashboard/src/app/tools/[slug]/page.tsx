@@ -6,6 +6,13 @@ import PublicSite from "@/components/public-site/PublicSite";
 import { Breadcrumbs, EditorialQuestions, EditorialRelated } from "@/components/public-editorial/Editorial";
 import editorial from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
+import AgentJobLibraryTool from "@/components/tools/AgentJobLibraryTool";
+import AgentModelFinderTool from "@/components/tools/AgentModelFinderTool";
+import AgentPickerTool from "@/components/tools/AgentPickerTool";
+import AgentRunningCostTool from "@/components/tools/AgentRunningCostTool";
+import AgentSecurityCheckTool from "@/components/tools/AgentSecurityCheckTool";
+import BotConnectWizardTool from "@/components/tools/BotConnectWizardTool";
+import SoulMdBuilderTool from "@/components/tools/SoulMdBuilderTool";
 import AgentSurvivalCheckTool from "@/components/tools/AgentSurvivalCheckTool";
 import FaqAnswer from "@/components/tools/FaqAnswer";
 import HostingCostCalculatorTool from "@/components/tools/HostingCostCalculatorTool";
@@ -38,6 +45,13 @@ const TOOL_COMPONENTS: Record<ToolComponentKey, ComponentType> = {
   "limit-reset-calculator": LimitResetCalculatorTool,
   "keep-mac-awake": KeepMacAwakeTool,
   "tmux-cheat-sheet": TmuxCheatSheetTool,
+  "agent-picker": AgentPickerTool,
+  "agent-running-cost": AgentRunningCostTool,
+  "agent-model-finder": AgentModelFinderTool,
+  "agent-job-library": AgentJobLibraryTool,
+  "bot-connect-wizard": BotConnectWizardTool,
+  "agent-security-check": AgentSecurityCheckTool,
+  "soul-md-builder": SoulMdBuilderTool,
 };
 
 interface ToolPageParams {
