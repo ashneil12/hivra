@@ -17,10 +17,10 @@ test("the hero copy and call to action ship visible, before any script runs", ()
   const markup = renderToStaticMarkup(<Hero />);
   // The words end with the proof list; the illustration after it may animate in.
   const copy = markup.slice(0, markup.indexOf("</ul>"));
-  expect(readable(copy)).toContain("Launch an AI agent.");
+  expect(readable(copy)).toContain("Give your AI agent");
   expect(copy).toContain("Launch an agent");
   expect(copy).toContain("See pricing");
-  expect(readable(copy)).toContain("Pick Claude Code, Codex, Hermes or another agent.");
+  expect(readable(copy)).toContain("without running an agent on your own computer.");
   // Only the illustration may start hidden and animate in; the words never do.
   expect(copy.length).toBeGreaterThan(0);
   expect(copy).not.toMatch(HIDDEN);
@@ -43,7 +43,7 @@ test("pricing ships three offers complete and visible in server HTML", () => {
   const markup = renderToStaticMarkup(<Pricing />);
   expect(markup.match(/<article\b/g)).toHaveLength(3);
   const text = readable(markup);
-  for (const expected of ["Free", "$0", "Hivra Cloud", "$9.99", "2 vCPU and 4 GB of RAM", "More room", "$19.99", "4 vCPU and 8 GB of RAM", "Self-host from GitHub", "Full pricing"]) {
+  for (const expected of ["Your own server", "$0", "Hivra Cloud", "$9.99", "2 vCPU and 4 GB of RAM", "More room", "$19.99", "4 vCPU and 8 GB of RAM", "Self-host from GitHub", "Full pricing"]) {
     expect(text).toContain(expected);
   }
   for (const href of ["/get-started?plan=operator", "/get-started?plan=fleet", "/sign-up", "/pricing", "/terms", "https://github.com/ashneil12/hivra"]) expect(markup).toContain(`href="${href}"`);
