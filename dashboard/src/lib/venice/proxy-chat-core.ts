@@ -9,6 +9,7 @@ import {
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
+import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
   UnsupportedVeniceModelError,
   checkVeniceChatPricingCatalogStaleness,
@@ -348,7 +349,7 @@ export async function authorizeManagedVeniceChat(params: {
     if (error instanceof ManagedVeniceSpendCapError) {
       // Protective cap, not an empty wallet — the key stays active; the user
       // (or ops) raises the cap or waits for the month to roll over.
-      log.warn("Managed Venice request blocked by monthly spend cap", {
+      log.warn("Managed Venice request blocked by a spend cap", {
         source: "managed-venice-chat",
         route: "/api/managed-venice/v1/chat/completions",
         method: "POST",
@@ -365,9 +366,7 @@ export async function authorizeManagedVeniceChat(params: {
           status: 402,
           code: "managed_venice_spend_cap_reached",
           type: "billing_error",
-          message:
-            `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ` +
-            `${managedVeniceTopUpUrl(walletType)}`,
+          message: managedVeniceSpendCapMessage(error, managedVeniceTopUpUrl(walletType)),
         }),
       };
     }
