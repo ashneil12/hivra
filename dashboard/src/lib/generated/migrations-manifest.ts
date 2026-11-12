@@ -429,4 +429,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261112220000", name: "openbot_agent_software" },
   { version: "20261112230000", name: "agent_usage_and_host_costs" },
   { version: "20261113010000", name: "agent_inbox_ask_first" },
+  { version: "20261113020000", name: "hivra_agent_sleep_state" },
 ];
