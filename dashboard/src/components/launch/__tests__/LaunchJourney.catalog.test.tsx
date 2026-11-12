@@ -228,7 +228,7 @@ describe("every catalog agent launches in the Launch journey", () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     await chooseAgent("Claude Code");
 
-    expect(await screen.findByText(/Claude Code on Hivra Cloud needs a paid plan\. Your free account works with your own computer: connect one, or choose a plan\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Claude Code on Hivra Cloud needs a paid plan\. Your free account works with your own server: connect one, or choose a plan\./)).toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
     expect(screen.getByRole("link", { name: /Upgrade to|Review plans/ })).toHaveAttribute("href", expect.stringContaining("/dashboard/billing"));
     expect(screen.getByRole("button", { name: "Set up your own capacity" })).toBeInTheDocument();

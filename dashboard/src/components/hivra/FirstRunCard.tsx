@@ -44,7 +44,7 @@ export function FirstRunCard() {
       </ul>
       {showPlanLine ? (
         <p className={styles.firstRunPlan} data-testid="first-run-plan">
-          Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.{" "}
+          Hivra Cloud is part of a paid plan, from $9.99 a month. On Free, Claude Code and Codex can run on a Proxmox VE server you connect; Hermes needs a plan.{" "}
           <Link href="/dashboard/billing">See plans</Link>
         </p>
       ) : null}
