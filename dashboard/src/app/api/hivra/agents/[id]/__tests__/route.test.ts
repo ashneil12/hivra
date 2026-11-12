@@ -100,9 +100,6 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraApiAllowed: () => true,
-}));
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveProxmoxTargetConfiguration(...args),
@@ -1811,7 +1808,7 @@ describe("GET /api/hivra/agents/[id]", () => {
       mockAgentRow = { ...mockAgentRow, ...patch };
       const response = await GET(makeGetRequest() as never, params);
       expect(response.status).toBe(200);
-      expect(mockAfterResponse).not.toHaveBeenCalled();
+      expect(mockAfterResponse.mock.calls.map(call => call[1]?.failureType)).not.toContain("computer_contract_step_skipped");
       expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
     });
   });

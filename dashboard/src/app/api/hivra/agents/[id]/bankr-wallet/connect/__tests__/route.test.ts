@@ -15,7 +15,6 @@ import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-c
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/hivra/bankr-skills-seed", () => ({
   bankrSkillsDirForType: (type: string) => (type === "codex" || type === "claude-code" ? "/home/bux/.codex/skills" : null),
 }));

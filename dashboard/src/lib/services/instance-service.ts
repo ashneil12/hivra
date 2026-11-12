@@ -1644,16 +1644,9 @@ function resolveInfrastructureProviderForUser(userId: string): "hetzner" | "prox
   // pinned to whichever infra they were provisioned on, no
   // cross-infra migration).
   //
-  // Two opt-out paths:
-  //   1. HERMES_PROXMOX_DISABLED_USER_IDS — emergency allowlist that
-  //      forces a specific user back onto Hetzner if Proxmox provisioning
-  //      breaks for them. Use this if a customer reports failures and we
-  //      want to keep them unblocked while we fix Proxmox.
-  //   2. HERMES_PROXMOX_ENABLED_USER_IDS still works as a *legacy*
-  //      whitelist when the environment is in transition: if it's set,
-  //      ONLY listed users get Proxmox (matches the old behaviour for
-  //      gradual rollout). Once you're ready for full self-serve, unset
-  //      that env var and the whole pool goes Proxmox.
+  // One opt-out: HERMES_PROXMOX_DISABLED_USER_IDS is an emergency list that
+  // forces a specific user back onto Hetzner if Proxmox provisioning breaks
+  // for them, keeping them unblocked while Proxmox is fixed.
   const proxmoxAvailable =
     process.env.HERMES_INFRA_PROVIDER?.trim().toLowerCase() === "proxmox";
   if (!proxmoxAvailable) {
@@ -1666,13 +1659,6 @@ function resolveInfrastructureProviderForUser(userId: string): "hetzner" | "prox
   );
   if (proxmoxDisabledForUser) {
     return "hetzner";
-  }
-
-  // Transitional: when HERMES_PROXMOX_ENABLED_USER_IDS is set, treat it
-  // as a whitelist (old behaviour). Unset → everyone gets Proxmox.
-  const enabledList = process.env.HERMES_PROXMOX_ENABLED_USER_IDS?.trim();
-  if (enabledList) {
-    return envListIncludes(enabledList, userId) ? "proxmox" : "hetzner";
   }
 
   return "proxmox";

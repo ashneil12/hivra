@@ -7,7 +7,6 @@ import { createPortal } from "react-dom";
 import { Bot, Monitor, Search, X } from "lucide-react";
 import { recentShortcutsShown, switcherGroups } from "@/lib/workspace/recent-order";
 import { listRecents } from "@/lib/workspace/recents";
-import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { resourceInventory } from "@/lib/workspace/resource-inventory";
 import {
   filterDashboardResources,
@@ -42,7 +41,7 @@ function useAttachedResources(): DashboardResource[] {
     resourceInventory.getServerSnapshot,
   );
   useEffect(() => {
-    if (isHivraEnabled()) void resourceInventory.load("attached");
+    void resourceInventory.load("attached");
   }, []);
   return useMemo(() => {
     if (!snapshot.attached.hasBody) return [];

@@ -25,7 +25,6 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
   useSearchParams: () => ({ get: (key: string) => mockParams[key] ?? null }),
 }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraEnabled: () => true }));
 jest.mock("@/lib/hivra/chat-readiness", () => ({ inspectChatReadiness: async () => "native_connected" }));
 jest.mock("@/lib/hivra/agent-api", () => ({
   getAgent: () => mockAgentLoad(),

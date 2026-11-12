@@ -12,7 +12,6 @@ const mockFetch = jest.fn();
 const mockWarn = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/logger", () => ({ log: { warn: (...args: unknown[]) => mockWarn(...args) } }));
 jest.mock("@/lib/rate-limit", () => ({ enforceRateLimit: () => ({ success: true }), getIP: () => "127.0.0.1" }));
 jest.mock("@/lib/remote-computers/capability-inspection", () => ({

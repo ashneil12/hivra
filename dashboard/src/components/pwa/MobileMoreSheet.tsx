@@ -16,7 +16,6 @@ import {
   labelForNavigationItem,
   mobileNavigationCopy,
 } from '@/lib/dashboard-navigation';
-import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
 import { isLocalAuthMode } from '@/lib/self-host/config';
 
 export interface MobileMoreSheetProps {
@@ -27,7 +26,6 @@ export interface MobileMoreSheetProps {
   userEmail: string;
   /** The account code the server setup script shows. */
   accountCode?: string | null;
-  resourceKind?: 'agent' | 'computer' | null;
 }
 
 type HostedAccountControls = {
@@ -175,7 +173,7 @@ const SHEET_STYLES = `
 `;
 
 /** Phone "More": every destination that is not on the bottom bar, plus account and theme. */
-export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userName, userEmail, accountCode = null, resourceKind }: MobileMoreSheetProps) {
+export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userName, userEmail, accountCode = null }: MobileMoreSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const pathname = usePathname();
@@ -183,7 +181,6 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
   const text = mobileNavigationCopy(copy);
   const { resolvedTheme, setTheme } = useTheme();
   const [signingOut, setSigningOut] = useState(false);
-  const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
   const localAuth = isLocalAuthMode();
   // On phones this sheet is the only sign-out, so rows enable once ClerkJS loads.
   const [hosted, setHosted] = useState(() => (localAuth ? null : hostedAccountControls()));
@@ -245,9 +242,9 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
         {DASHBOARD_MOBILE_MORE_GROUPS.map((group) => (
           <section key={group.id} className="hivra-more-sheet__group" aria-labelledby={`${titleId}-${group.id}`}>
             <h3 id={`${titleId}-${group.id}`} className="hivra-more-sheet__heading">{text[group.id]}</h3>
-            {filterDashboardNavigation(group.items, workspaceShellEnabled).map((item) => {
+            {filterDashboardNavigation(group.items).map((item) => {
               const Icon = item.icon;
-              const active = isDashboardNavigationItemActive(item, pathname, resourceKind, workspaceShellEnabled);
+              const active = isDashboardNavigationItemActive(item, pathname);
               return (
                 <Link key={item.id} href={item.href} onClick={onClose} className="hivra-more-sheet__row"
                   aria-current={active ? 'page' : undefined}>

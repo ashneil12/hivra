@@ -10,7 +10,6 @@ import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import { SETTLED_AGENT_POLL_MS } from "@/lib/hivra/agent-status-poll";
 import { resetAgentSoftwareForTests } from "@/components/hivra/useAgentSoftware";
 
-const { renderToString } = jest.requireActual("react-dom/server.node") as typeof import("react-dom/server");
 
 const pushMock = jest.fn();
 const mockSearchGet = jest.fn();
@@ -34,9 +33,6 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => ({ get: mockSearchGet }),
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraEnabled: () => true,
-}));
 
 jest.mock("@/lib/hivra/chat-readiness", () => ({
   inspectChatReadiness: (...args: unknown[]) => mockChatReadiness(...args),
@@ -171,14 +167,8 @@ jest.mock("@/components/hivra/AttachedAgentChat", () => ({
     <div data-testid="attached-chat">{agentName} {installationId} via {chatUrl}</div>,
 }));
 
-// Keep the component's build-time flag false so these tests exercise the same
-// hostname-resolved hydration path as Canary, independent of the caller's env.
-const previousHivraEnv = process.env.NEXT_PUBLIC_HIVRA_AGENTS;
-delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
 const AgentPage = jest.requireActual("../page").default as typeof import("../page").default;
 const { FleetControlPane } = jest.requireActual("@/components/hivra/FleetControlPane") as typeof import("@/components/hivra/FleetControlPane");
-if (previousHivraEnv === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
-else process.env.NEXT_PUBLIC_HIVRA_AGENTS = previousHivraEnv;
 
 // A running Proxmox Ubuntu computer with its workspace connection up.
 const CONNECTED_UBUNTU = {
@@ -243,7 +233,6 @@ describe("AgentPage", () => {
       ok: true,
       json: async () => ({ success: true, agentKind: "claude", surfaceAuth: "post-cookie-v1" }),
     }) as unknown as typeof fetch;
-    process.env.NEXT_PUBLIC_HIVRA_AGENTS = "1";
     mockGetAgent.mockResolvedValue({
       id: "agent_123",
       type: "claude-code",
@@ -314,13 +303,6 @@ describe("AgentPage", () => {
     expect(screen.getByText(/customer-host RDP enrolment are not implemented yet/)).toBeVisible();
     expect(screen.queryByTestId("windows-desktop")).not.toBeInTheDocument();
     view.unmount();
-  });
-
-  it("renders neutral feedback until the hostname feature flag resolves after hydration", () => {
-    const serverMarkup = renderToString(<AgentPage />);
-
-    expect(serverMarkup).toContain("Checking availability…");
-    expect(serverMarkup).not.toContain("This preview isn");
   });
 
   it.each(["Settings", "Open Manage"])("shows observed provider readiness and opens %s during installation", async button => {
@@ -824,7 +806,7 @@ describe("AgentPage", () => {
     // Linking isn't offered here: say so, and offer the launch.
     expect(await screen.findByText(/Connecting a desktop to an agent isn’t available here yet/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Launch a new Ubuntu Desktop" }));
-    expect(pushMock).toHaveBeenCalledWith("/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop&hivra=1");
+    expect(pushMock).toHaveBeenCalledWith("/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop");
   });
 
   it("connects an existing desktop to the agent from its Desktop entry", async () => {
@@ -2742,7 +2724,7 @@ describe("AgentPage", () => {
       render(<AgentPage />);
       listed = [];
       fireEvent.click(await screen.findByRole("button", { name: "Agent deleted" }));
-      expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
+      expect(pushMock).toHaveBeenCalledWith("/dashboard");
       await waitFor(() => expect(heldNames()).toEqual([]));
       expect(listReads).toBe(2);
     });
@@ -2761,7 +2743,7 @@ describe("AgentPage", () => {
       render(<AgentPage />);
       listed = [];
       fireEvent.click(await screen.findByRole("button", { name: "Session deleted" }));
-      expect(pushMock).toHaveBeenCalledWith("/dashboard?hivra=1");
+      expect(pushMock).toHaveBeenCalledWith("/dashboard");
       await waitFor(() => expect(heldNames()).toEqual([]));
       expect(listReads).toBe(2);
     });

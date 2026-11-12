@@ -5,8 +5,6 @@ import { NextRequest } from "next/server";
 // logic runs for real; only auth, the flag, storage and the plan are faked.
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
-jest.mock("@/lib/agent-computers/attach-flag", () => ({ isAgentAttachEnabled: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn() }));
 jest.mock("@/lib/agent-computers/attachment-lifecycle-store", () => ({ createAttachmentLifecycleStore: jest.fn() }));
 jest.mock("@/lib/hivra/resource-gate", () => ({ validateAgentResources: jest.fn(), resolvePlanAgentSlots: jest.fn() }));
@@ -19,8 +17,6 @@ jest.mock("@/lib/api-response", () => ({
 }));
 
 import { auth } from "@clerk/nextjs/server";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { resolvePlanAgentSlots, validateAgentResources } from "@/lib/hivra/resource-gate";
@@ -57,8 +53,6 @@ beforeEach(() => {
   computerRow = { id: ID, name: "MY_UBUNTU_DESKTOP", type: "linux-desktop", cpu: 2, ram: 4, deployment_mode: "hivra-managed", status: "running",
     computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, chat_url: "https://box.test" };
   jest.mocked(auth).mockResolvedValue({ userId: OWNER } as Awaited<ReturnType<typeof auth>>);
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
-  jest.mocked(isAgentAttachEnabled).mockReturnValue(true);
   jest.mocked(enforceAuthenticatedRouteRateLimit).mockReturnValue(null);
   jest.mocked(createAttachmentLifecycleStore).mockReturnValue(store as unknown as ReturnType<typeof createAttachmentLifecycleStore>);
   const chain: Record<string, jest.Mock> = {};
@@ -86,14 +80,6 @@ it("refuses a computer whose gateway predates attached agents at the gate and th
   jest.mocked(readAttachedGatewayProtocol).mockResolvedValue("unavailable");
   store.claim.mockResolvedValue({ status: "claimed", operationId: REQUEST, resumed: false });
   expect((await post({ grants: { workspace: true }, reviewSha256: review(true), requestId: REQUEST })).status).toBe(202);
-});
-
-it("is off where attach is not offered: 404 before auth or storage", async () => {
-  jest.mocked(isAgentAttachEnabled).mockReturnValue(false);
-  expect((await get()).status).toBe(404);
-  expect((await post({ grants: { workspace: true }, reviewSha256: "a".repeat(64), requestId: REQUEST })).status).toBe(404);
-  expect(auth).not.toHaveBeenCalled();
-  expect(store.claim).not.toHaveBeenCalled();
 });
 
 it("returns 404 for a foreign or missing computer without any attach call (T1)", async () => {

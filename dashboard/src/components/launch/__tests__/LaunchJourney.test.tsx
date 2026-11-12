@@ -78,7 +78,7 @@ describe("LaunchJourney", () => {
       profile: "ubuntu-desktop",
       start: "1",
     } as Record<string, string>)[key] ?? null);
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
   }
 
   it.each([
@@ -116,7 +116,7 @@ describe("LaunchJourney", () => {
   });
 
   it("gives the forward step a history entry so system back steps back through the journey", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
@@ -133,7 +133,7 @@ describe("LaunchJourney", () => {
   });
 
   it("has two steps, Choose and Review", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     const steps = screen.getByRole("list", { name: "Launch steps" });
     expect(within(steps).getAllByRole("listitem").map(item => item.textContent)).toEqual(["1Choose", "2Review"]);
@@ -143,7 +143,7 @@ describe("LaunchJourney", () => {
   });
 
   it("keeps a quick Back, then forward, on the step the history pop lands on", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -169,7 +169,7 @@ describe("LaunchJourney", () => {
       name: "OpenClaw 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
       capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
     }));
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
     expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "choose");
     expect(screen.queryByRole("heading", { name: /Review and launch/ })).not.toBeInTheDocument();
@@ -182,19 +182,19 @@ describe("LaunchJourney", () => {
       name: "OpenClaw 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
       capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
     }));
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "Review and launch OpenClaw 1" })).toBeInTheDocument();
   });
 
   it("opens Choose again when a plain Launch link is followed from inside the journey", async () => {
-    const view = render(<LaunchJourney />);
+    const view = render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^OpenClaw/ }));
     await screen.findByRole("heading", { name: "Review and launch OpenClaw 1" });
     searchParamsGetMock.mockImplementation((key: string) => (key === "stage" ? "review" : null));
-    view.rerender(<LaunchJourney />);
+    view.rerender(<LaunchJourney legacyHermesLane />);
     searchParamsGetMock.mockReturnValue(null);
-    view.rerender(<LaunchJourney />);
+    view.rerender(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
   });
 
@@ -206,13 +206,13 @@ describe("LaunchJourney", () => {
       name: "Codex 1", resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" },
       capacity: { mode: "hivra-managed", targetId: null }, launchState: "idle",
     }));
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
     expect(screen.getByTestId("launch-journey")).toHaveAttribute("data-stage", "review");
   });
 
   it("lists each setting with its own Change button, and opens only that one", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Hermes/ }));
     await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
@@ -250,7 +250,7 @@ describe("LaunchJourney", () => {
   });
 
   it("switches model access to your own key in one click, and back to credits", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
     await screen.findByRole("heading", { name: "Review and launch Codex 1" });
@@ -264,7 +264,7 @@ describe("LaunchJourney", () => {
   });
 
   it("turns the browser on or off with one click, and Memory has no browser switch", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
     await screen.findByRole("heading", { name: "Review and launch Codex 1" });
@@ -279,7 +279,7 @@ describe("LaunchJourney", () => {
   });
 
   it("fills the name in and lets it be edited inline in Review", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
     const name = await screen.findByRole("textbox", { name: "Agent name" });
@@ -301,12 +301,12 @@ describe("LaunchJourney", () => {
     }));
     fetchPlanStrictMock.mockResolvedValue({ ...PAID_PLAN, name: "Pro", maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4 });
     searchParamsGetMock.mockImplementation((key: string) => ({ draft: draftId, upgraded: "operator" } as Record<string, string>)[key] ?? null);
-    const view = render(<LaunchJourney />);
+    const view = render(<LaunchJourney legacyHermesLane />);
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     await act(async () => { await Promise.resolve(); });
 
     authLoaded = true;
-    view.rerender(<LaunchJourney />);
+    view.rerender(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByText("Pro is active. Continue your Ubuntu Desktop launch.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Small · 2 CPU / 4 GB")).toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -320,7 +320,7 @@ describe("LaunchJourney", () => {
     ["Agent Zero", "Review and launch Agent Zero 1"],
     ["Aeon", "Review and launch Aeon 1"],
   ])("launches %s in this journey instead of sending it to the welcome page", async (tile, heading) => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(screen.queryByRole("link", { name: new RegExp(`^${tile}`) })).not.toBeInTheDocument();
@@ -345,7 +345,7 @@ describe("LaunchJourney", () => {
   it("does not offer the prepared desktop computer where this deployment has no slot", async () => {
     // Production shape before a slot is configured: choosing this one here
     // could only end at a 503.
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(screen.queryByRole("button", { name: /^Omarchy/ })).not.toBeInTheDocument();
@@ -354,7 +354,7 @@ describe("LaunchJourney", () => {
   });
 
   it("keeps the choices a Windows setup must make open, with no Change for where it runs", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     fireEvent.click(screen.getByRole("button", { name: /^Windows/ }));
     await screen.findByRole("heading", { name: /^Review and launch Windows/ });
@@ -368,7 +368,7 @@ describe("LaunchJourney", () => {
   });
 
   it("offers the prepared desktop computer where this deployment holds a slot", async () => {
-    render(<LaunchJourney preparedProfiles={["omarchy"]} />);
+    render(<LaunchJourney legacyHermesLane preparedProfiles={["omarchy"]} />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     expect(await screen.findByRole("button", { name: /^Omarchy/ })).toBeInTheDocument();

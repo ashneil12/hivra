@@ -11,7 +11,6 @@ jest.mock("@clerk/nextjs/server", () => ({
 }));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/hivra/bankr-skills-seed", () => ({ bankrSkillsDirForType: () => "/home/bux/.codex/skills" }));
 jest.mock("@/lib/billing/bankr-instance-wallets", () => ({
   instanceBankrWalletPublicSummary: jest.fn(() => ({ withdrawalDestinationEvm: "0x2222222222222222222222222222222222222222" })),

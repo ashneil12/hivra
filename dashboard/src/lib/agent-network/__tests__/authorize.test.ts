@@ -1,8 +1,5 @@
 import { authorizeNetworkRequest, type AuthorizeRequest, type AuthzStore } from "../authorize";
-import { isAgentNetworkEnabled } from "../flag";
 import { ALICE, BOB, ORG, OTHER_ORG, edge, grant, pick, policy, principal, uuid } from "./fixtures";
-
-const ON = { HERMES_DEPLOY_CHANNEL: "canary" };
 
 function contextFor(options: { current: number; policyRevision?: number; withPolicy?: boolean; orgFound?: boolean } & Record<string, unknown>) {
   const revision = options.policyRevision ?? options.current;
@@ -34,18 +31,8 @@ const request = (extra: Partial<AuthorizeRequest> = {}): AuthorizeRequest => ({
 
 describe("authorizeNetworkRequest", () => {
   it("allows a joined agent with a grant, and records the revision it used", async () => {
-    const decision = await authorizeNetworkRequest(storeReturning(contextFor({ current: 7 })), request(), ON);
+    const decision = await authorizeNetworkRequest(storeReturning(contextFor({ current: 7 })), request());
     expect(decision).toMatchObject({ allow: true, reason: "granted", revision: 7, orgId: ORG });
-  });
-
-  it("is off outside Canary, and never reads the store when off", async () => {
-    const store = storeReturning(contextFor({ current: 7 }));
-    for (const env of [{}, { HERMES_DEPLOY_CHANNEL: "production" }, { HERMES_DEPLOY_CHANNEL: "main" }]) {
-      expect(pick(await authorizeNetworkRequest(store, request(), env))).toEqual({ allow: false, reason: "network_disabled_on_deployment" });
-    }
-    expect(store.getContext).not.toHaveBeenCalled();
-    expect(isAgentNetworkEnabled({})).toBe(false);
-    expect(isAgentNetworkEnabled(ON)).toBe(true);
   });
 
   describe("malformed requests deny before the store is asked", () => {
@@ -64,7 +51,7 @@ describe("authorizeNetworkRequest", () => {
     ];
     it.each(bad)("%s", async (_name, value) => {
       const store = storeReturning(contextFor({ current: 7 }));
-      expect(pick(await authorizeNetworkRequest(store, value as AuthorizeRequest, ON))).toEqual({ allow: false, reason: "malformed_request" });
+      expect(pick(await authorizeNetworkRequest(store, value as AuthorizeRequest))).toEqual({ allow: false, reason: "malformed_request" });
       expect(store.getContext).not.toHaveBeenCalled();
     });
   });
@@ -72,7 +59,7 @@ describe("authorizeNetworkRequest", () => {
   describe("an unavailable or untrustworthy store denies", () => {
     it("when the store throws", async () => {
       const store = { getContext: jest.fn(async () => { throw new Error("db down"); }) };
-      expect(pick(await authorizeNetworkRequest(store, request(), ON))).toEqual({ allow: false, reason: "policy_unavailable" });
+      expect(pick(await authorizeNetworkRequest(store, request()))).toEqual({ allow: false, reason: "policy_unavailable" });
     });
     it.each([
       ["null", null],
@@ -82,41 +69,41 @@ describe("authorizeNetworkRequest", () => {
       ["a subject with an unknown state", { ...contextFor({ current: 7 }), subject: { ...principal(ALICE), state: "owner" } }],
       ["a subject that is not an object", { ...contextFor({ current: 7 }), subject: "alice" }],
     ])("when the store returns %s", async (_name, value) => {
-      expect(pick(await authorizeNetworkRequest(storeReturning(value), request(), ON))).toEqual({ allow: false, reason: "policy_unavailable" });
+      expect(pick(await authorizeNetworkRequest(storeReturning(value), request()))).toEqual({ allow: false, reason: "policy_unavailable" });
     });
   });
 
   it("denies an organization with no policy", async () => {
     const store = storeReturning({ orgFound: false, currentRevision: null, requestedRevision: null, policy: null, subject: null, peer: null });
-    expect(pick(await authorizeNetworkRequest(store, request(), ON))).toEqual({ allow: false, reason: "no_policy" });
+    expect(pick(await authorizeNetworkRequest(store, request()))).toEqual({ allow: false, reason: "no_policy" });
   });
 
   it("denies a principal the context could not find", async () => {
     const store = storeReturning({ ...contextFor({ current: 7 }), subject: null });
-    expect(pick(await authorizeNetworkRequest(store, request(), ON))).toEqual({ allow: false, reason: "unknown_principal" });
+    expect(pick(await authorizeNetworkRequest(store, request()))).toEqual({ allow: false, reason: "unknown_principal" });
   });
 
   it("denies a context whose policy belongs to a different organization", async () => {
     const wrong = { ...contextFor({ current: 7 }), policy: policy({ orgId: OTHER_ORG, revision: 7 }) };
-    expect(pick(await authorizeNetworkRequest(storeReturning(wrong), request(), ON))).toEqual({ allow: false, reason: "unknown_revision" });
+    expect(pick(await authorizeNetworkRequest(storeReturning(wrong), request()))).toEqual({ allow: false, reason: "unknown_revision" });
   });
 
   it("denies a context whose policy is not the revision the caller used", async () => {
     const wrong = contextFor({ current: 7, policyRevision: 6 });
-    expect(pick(await authorizeNetworkRequest(storeReturning(wrong), request(), ON))).toEqual({ allow: false, reason: "unknown_revision" });
+    expect(pick(await authorizeNetworkRequest(storeReturning(wrong), request()))).toEqual({ allow: false, reason: "unknown_revision" });
   });
 
   it("denies a send whose peer the context could not find", async () => {
     const store = storeReturning({ ...contextFor({ current: 7 }), peer: null });
     const send = request({ action: "a2a.send", source: undefined, peerPrincipalId: BOB });
-    expect(pick(await authorizeNetworkRequest(store, send, ON))).toEqual({ allow: false, reason: "unknown_peer" });
+    expect(pick(await authorizeNetworkRequest(store, send))).toEqual({ allow: false, reason: "unknown_peer" });
   });
 
   it("passes the peer only for a send", async () => {
     const store = storeReturning(contextFor({ current: 7 }));
-    await authorizeNetworkRequest(store, request({ peerPrincipalId: BOB }), ON);
+    await authorizeNetworkRequest(store, request({ peerPrincipalId: BOB }));
     expect(store.getContext).toHaveBeenLastCalledWith(expect.objectContaining({ peerPrincipalId: undefined }));
-    await authorizeNetworkRequest(store, request({ action: "a2a.send", source: undefined, peerPrincipalId: BOB }), ON);
+    await authorizeNetworkRequest(store, request({ action: "a2a.send", source: undefined, peerPrincipalId: BOB }));
     expect(store.getContext).toHaveBeenLastCalledWith(expect.objectContaining({ peerPrincipalId: BOB }));
   });
 
@@ -140,20 +127,20 @@ describe("authorizeNetworkRequest", () => {
       const store: AuthzStore = {
         getContext: async (input) => contextFor({ current: 7, policyRevision: input.revision ?? 7 }),
       };
-      const decision = await authorizeNetworkRequest(store, request({ revision: claimed, maxRevisionLag: lag }), ON);
+      const decision = await authorizeNetworkRequest(store, request({ revision: claimed, maxRevisionLag: lag }));
       expect(pick(decision)).toEqual(expected);
       if (usedRevision !== undefined) expect(decision.revision).toBe(usedRevision);
     });
 
     it("a revision the database does not have (null policy) denies", async () => {
       const store = storeReturning(contextFor({ current: 7, withPolicy: false }));
-      expect(pick(await authorizeNetworkRequest(store, request({ revision: 7 }), ON))).toEqual({ allow: false, reason: "unknown_revision" });
+      expect(pick(await authorizeNetworkRequest(store, request({ revision: 7 })))).toEqual({ allow: false, reason: "unknown_revision" });
     });
   });
 
   it("evaluates live principal state however fresh the cached revision is", async () => {
     const suspended = { ...contextFor({ current: 7 }), subject: principal(ALICE, { state: "suspended" }) };
-    expect(pick(await authorizeNetworkRequest(storeReturning(suspended), request({ revision: 7 }), ON))).toEqual({
+    expect(pick(await authorizeNetworkRequest(storeReturning(suspended), request({ revision: 7 })))).toEqual({
       allow: false,
       reason: "principal_not_joined",
     });

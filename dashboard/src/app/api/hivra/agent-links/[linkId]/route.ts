@@ -10,9 +10,7 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
-import { isAgentLinksEnabled } from "@/lib/agent-links/flag";
 import { agentLinkEndpoint, syncAgentLinkKit } from "@/lib/agent-links/kit-delivery";
 import { removeLink } from "@/lib/agent-links/routes";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
@@ -22,7 +20,6 @@ const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ linkId: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host")) || !isAgentLinksEnabled()) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     if (!isSameOriginMutationRequest(req)) return noStore(apiError("Forbidden", 403));

@@ -5,7 +5,6 @@ import { NextRequest } from "next/server";
 const claimMock = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "user_123" }) }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: () => null }));
 jest.mock("@/lib/hivra/prepared-canary-computers", () => ({
   claimPreparedCanaryComputer: (...args: unknown[]) => claimMock(...args),

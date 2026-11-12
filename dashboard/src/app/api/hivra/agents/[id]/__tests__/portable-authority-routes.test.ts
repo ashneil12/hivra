@@ -30,7 +30,6 @@ jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { from: (...args: unknown[]) => mockSupabaseFrom(...args) },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   RATE_LIMIT_PRESETS: { settingsWrite: {} },

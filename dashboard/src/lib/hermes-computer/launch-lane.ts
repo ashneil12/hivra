@@ -2,18 +2,13 @@ import { PROFILE_DETAILS, type LaunchDraft, type LaunchProfileId } from "@/lib/l
 import { freshModelAccess } from "@/lib/launch/model-access";
 
 /**
- * Which launch profile a new Hermes agent uses.
- *
- * "hermes-computer" is Hermes as a Hivra computer (the official Hermes, its own
- * web UI); "hermes" is the Hermes instances lane every Hermes agent used
- * before. Where the computer lane is on for this deployment
- * (isHermesComputerEnabled) every new Hermes agent uses it. Running it needs a
- * plan, the same as every Hivra-run computer, and the launch says so the same
- * way it does for any other agent.
+ * The launch profile every new Hermes agent uses: Hermes as a Hivra computer
+ * (the official Hermes, its own web UI). "hermes" is the instances lane every
+ * Hermes agent used before. Running it needs a plan, the same as every
+ * Hivra-run computer, and the launch says so the same way it does for any
+ * other agent.
  */
-export function hermesLaunchProfile(enabled: boolean): Extract<LaunchProfileId, "hermes" | "hermes-computer"> {
-  return enabled ? "hermes-computer" : "hermes";
-}
+export const HERMES_LAUNCH_PROFILE: Extract<LaunchProfileId, "hermes" | "hermes-computer"> = "hermes-computer";
 
 /**
  * The draft moved to the Hermes lane that applies, when it is a Hermes draft

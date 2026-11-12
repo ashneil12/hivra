@@ -6,9 +6,6 @@ import { Activity, Cpu, DollarSign, CalendarDays, Sparkles, Wrench } from "lucid
 import { Sparkline } from "@/components/stats/Sparkline";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { captureClient } from "@/lib/telemetry/posthog-client";
-import { fetchPlanStrict, isFreePlanInfo, type PlanInfo } from "@/lib/hivra/agent-api";
-import { isUsageUpgradeCtaEnabled } from "@/lib/flags/upgrade-prompts";
-import { UsageUpgradeFooter } from "@/components/billing/UsageUpgradeFooter";
 
 /**
  * "Your agent at work" — the per-user activity surface. Self-fetches
@@ -226,28 +223,6 @@ function HeadlineCard({
 export function AgentActivityPanel() {
   const [activity, setActivity] = useState<AgentActivity | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  // The signed-in user's real plan — drives the free-only upgrade footer. Starts
-  // null (unknown) so the footer never flashes before the plan resolves; a paid
-  // user therefore never sees the pitch. Strict fetch: on error the plan stays
-  // null (unknown ≠ free), so a payer with one failed billing round-trip is
-  // never pitched. Skipped entirely while the flag is off — a dark feature must
-  // not add an API call.
-  const [plan, setPlan] = useState<PlanInfo | null>(null);
-
-  useEffect(() => {
-    if (!isUsageUpgradeCtaEnabled()) return;
-    let alive = true;
-    void fetchPlanStrict()
-      .then((p) => {
-        if (alive) setPlan(p);
-      })
-      .catch(() => {
-        // Unknown plan stays null → footer stays hidden.
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   // Fire once on mount — best-effort, never user-visible if telemetry is down.
   useEffect(() => {
@@ -775,14 +750,6 @@ export function AgentActivityPanel() {
       {/* A user with both metered usage and Hivra boxes sees the recorded
           activity below the usage view. */}
       {activitySection}
-
-      {/*
-        Free→paid Moment #2: show-value-then-ask. We're already in the
-        ready-with-usage branch (hasUsage === true), so this only reaches free
-        users who got real value. Flag default-OFF; isFreePlanInfo gates out
-        paying customers (and null/loading plans).
-      */}
-      {isUsageUpgradeCtaEnabled() && isFreePlanInfo(plan) ? <UsageUpgradeFooter /> : null}
     </div>
   );
 }

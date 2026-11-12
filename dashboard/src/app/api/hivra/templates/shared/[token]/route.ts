@@ -9,8 +9,7 @@
 // returns a key-free llm_config, and exposes no owner identity/PII — so there is
 // nothing private to leak. Private/revoked templates have no token (and are
 // rejected as defense-in-depth) so they remain unreachable. The launch (fork)
-// action stays auth-gated downstream — only this read is public. Still gated by
-// isHivraApiAllowed (the surface is canary-only).
+// action stays auth-gated downstream — only this read is public.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,12 +17,10 @@ export const dynamic = "force-dynamic";
 import type { NextRequest } from "next/server";
 
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { getPublicTemplateByShareToken } from "@/lib/hivra/agent-templates";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { token } = await params;
 
     // No session required: the share_token is the access capability and the

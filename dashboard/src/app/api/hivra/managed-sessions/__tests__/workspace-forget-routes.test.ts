@@ -48,10 +48,8 @@ function mutation(url: string, body: unknown) {
 
 beforeEach(() => {
   mockAuth.mockResolvedValue({ userId: "user_1" });
-  process.env.NEXT_PUBLIC_HIVRA_AGENTS = "1";
   for (const mock of [mockForget, mockList, mockDownload, mockGetSession, mockLoadExpiries]) mock.mockReset();
 });
-afterEach(() => { delete process.env.NEXT_PUBLIC_HIVRA_AGENTS; });
 
 describe("POST /api/hivra/managed-sessions/[id]/forget", () => {
   it("requires the owner to acknowledge that the session may remain at DigitalOcean", async () => {
@@ -70,12 +68,6 @@ describe("POST /api/hivra/managed-sessions/[id]/forget", () => {
     expect(refused.status).toBe(409);
   });
 
-  it("stays unavailable off the Hivra hosts", async () => {
-    delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
-    const response = await forget(mutation(`/api/hivra/managed-sessions/${AGENT}/forget`, { acknowledge: "session-may-remain-at-digitalocean" }), params);
-    expect(response.status).toBe(404);
-    expect(mockAuth).not.toHaveBeenCalled();
-  });
 });
 
 describe("GET /api/hivra/managed-sessions/[id]/workspace", () => {

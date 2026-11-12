@@ -100,7 +100,7 @@ beforeEach(() => {
 });
 
 async function chooseAgent(name: string) {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
   expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
@@ -290,7 +290,7 @@ describe("every catalog agent launches in the Launch journey", () => {
   });
 
   it("offers DeepSeek Harness as a tile, runs it on Hivra credits by default, and launches it on Hivra Cloud", async () => {
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     const tile = screen.getByRole("button", { name: /^DeepSeek Harness/ });
     expect(tile).toHaveTextContent("DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.");

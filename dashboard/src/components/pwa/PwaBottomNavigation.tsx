@@ -14,11 +14,9 @@ import {
   labelForNavigationItem,
   mobileNavigationCopy,
 } from '@/lib/dashboard-navigation';
-import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
 import { MobileMoreSheet } from './MobileMoreSheet';
 
 interface PwaBottomNavigationProps {
-  resourceKind?: 'agent' | 'computer' | null;
   attentionCount?: number;
   userName?: string;
   userEmail?: string;
@@ -116,7 +114,6 @@ const NAV_STYLES = `
 `;
 
 export function PwaBottomNavigation({
-  resourceKind,
   attentionCount = 0,
   userName = '',
   userEmail = '',
@@ -126,8 +123,7 @@ export function PwaBottomNavigation({
   const pathname = usePathname();
   const { copy } = useLocale();
   const text = mobileNavigationCopy(copy);
-  const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
-  const navItems = filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION, workspaceShellEnabled);
+  const navItems = filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION);
   const [moreOpen, setMoreOpen] = useState(false);
   // Any navigation closes the sheet, including back/forward while it is open.
   const [moreRoute, setMoreRoute] = useState(pathname);
@@ -136,7 +132,7 @@ export function PwaBottomNavigation({
     if (moreOpen) setMoreOpen(false);
   }
   const moreActive = DASHBOARD_MOBILE_MORE_NAVIGATION.some((item) =>
-    isDashboardNavigationItemActive(item, pathname, resourceKind, workspaceShellEnabled));
+    isDashboardNavigationItemActive(item, pathname));
 
   return (
     <nav
@@ -165,7 +161,7 @@ export function PwaBottomNavigation({
       <style>{NAV_STYLES}</style>
       {navItems.map((item) => {
         const Icon = item.icon;
-        const active = isDashboardNavigationItemActive(item, pathname, resourceKind, workspaceShellEnabled);
+        const active = isDashboardNavigationItemActive(item, pathname);
         const launch = item.id === 'launch';
         // The tab always asks for the list explicitly; the legacy page
         // ignores ?runtimes=1.
@@ -211,7 +207,6 @@ export function PwaBottomNavigation({
           userName={userName}
           userEmail={userEmail}
           accountCode={accountCode}
-          resourceKind={resourceKind}
         />
       )}
     </nav>

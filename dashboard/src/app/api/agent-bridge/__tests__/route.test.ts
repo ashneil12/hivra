@@ -1,7 +1,6 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
 jest.mock("@/lib/local-bridge/flag", () => ({ isLocalBridgeEnabled: jest.fn() }));
 jest.mock("@/lib/hivra/after-response", () => ({ runAfterResponse: jest.fn() }));
 jest.mock("@/lib/agent-links/store", () => ({ findAgentByKey: jest.fn(), loadOwnedRow: jest.fn() }));
@@ -17,7 +16,6 @@ jest.mock("@/lib/api-response", () => ({
   apiError: (error: string, status: number) => Response.json({ success: false, error }, { status }),
 }));
 
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { findAgentByKey, loadOwnedRow } from "@/lib/agent-links/store";
@@ -38,7 +36,6 @@ function request(method: "GET" | "POST", body?: unknown, key: string | null = KE
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
   jest.mocked(isLocalBridgeEnabled).mockReturnValue(true);
   jest.mocked(findAgentByKey).mockResolvedValue({ agentId: AGENT.id, userId: OWNER });
   jest.mocked(loadOwnedRow).mockResolvedValue(AGENT as never);

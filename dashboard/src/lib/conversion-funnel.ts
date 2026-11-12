@@ -32,7 +32,7 @@ export const FUNNEL_PAID_PLANS = ["operator", "fleet", "command"] as const;
 
 const WEEKLY_COHORT_WEEKS = 8;
 const DAILY_TREND_DAYS = 14;
-/** Exported so the warm-pool campaign uses the same "engaged" window. */
+/** How recent activity must be for a user to count as engaged. */
 export const ENGAGED_POOL_ACTIVITY_DAYS = 7;
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -368,11 +368,8 @@ function fetchPayments(
 /**
  * The engaged-free pool as user ids: free plan + a running (lifecycle_state
  * 'active') instance + last_activity_at on or after the cutoff. Sorted for
- * deterministic ordering — the warm-pool campaign slices this list, so a
- * dry-run preview and the real send must agree on order.
- *
- * Exported for the warm-pool campaign (see warm-pool-campaign-sweep.ts);
- * fetchEngagedFreePool keeps the insights panel on the same definition.
+ * deterministic ordering. fetchEngagedFreePool keeps the insights panel on the
+ * same definition.
  */
 export async function fetchEngagedFreeUserIds(
   client: AdminClient,

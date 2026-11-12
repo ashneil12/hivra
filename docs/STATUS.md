@@ -28,7 +28,7 @@ a free account works with a server the person connects.
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
-| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`) where the flag is on (Canary only for now) and the plan is paid; otherwise they use the current lane |
+| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`) on a paid plan. Live on Canary; it reaches hivra.cloud with the next owner-approved production promotion |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
@@ -45,8 +45,8 @@ Hermes's own web UI behind the Hivra sign-in at `/hermes/`. There is no
 Hivra-built image, fork or patch. Owners update it with `hermes update` in
 Terminal or the Update Hermes button on the agent's Manage tab. It needs
 provisioner release 2026.11.11.4 or later and at least 1 CPU and 2 GB, on a paid
-plan like every Hivra-run computer (there is no free compute). The flag is `isHermesComputerEnabled()` in
-`dashboard/src/lib/hermes-computer/flag.ts`, on for Canary deployments only.
+plan like every Hivra-run computer (there is no free compute). There is no
+deployment switch for it: what Canary runs is what a production promotion ships.
 
 DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
 through Hivra's authenticated gateway. It launches with no browser and gets its

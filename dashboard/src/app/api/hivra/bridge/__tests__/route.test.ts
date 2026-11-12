@@ -2,7 +2,6 @@
 import { NextRequest } from "next/server";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
 jest.mock("@/lib/local-bridge/flag", () => ({ isLocalBridgeEnabled: jest.fn() }));
 jest.mock("@/lib/hivra/after-response", () => ({ runAfterResponse: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn(() => null) }));
@@ -28,7 +27,6 @@ jest.mock("@/lib/api-response", () => ({
 }));
 
 import { auth } from "@clerk/nextjs/server";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { decideRequest, readResultForOwner, revokeComputer } from "@/lib/local-bridge/service";
@@ -47,7 +45,6 @@ const get = () => new NextRequest("https://canary.hermesos.cloud/api/hivra/bridg
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
   jest.mocked(isLocalBridgeEnabled).mockReturnValue(true);
   jest.mocked(isSameOriginMutationRequest).mockReturnValue(true);
   jest.mocked(auth).mockResolvedValue({ userId: "user_owner" } as never);

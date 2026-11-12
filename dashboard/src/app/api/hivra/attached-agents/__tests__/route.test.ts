@@ -4,8 +4,6 @@ import { NextRequest } from "next/server";
 // The Agents list's rows for agents added to a computer (design 5.1, 5.8).
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
-jest.mock("@/lib/agent-computers/attach-flag", () => ({ isAgentAttachEnabled: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn() }));
 jest.mock("@/lib/agent-computers/attachment-lifecycle-store", () => ({ createAttachmentLifecycleStore: jest.fn() }));
 jest.mock("@/lib/hivra/resource-gate", () => ({ validateAgentResources: jest.fn(), resolvePlanAgentSlots: jest.fn() }));
@@ -21,8 +19,6 @@ jest.mock("@/lib/api-response", () => ({
 }));
 
 import { auth } from "@clerk/nextjs/server";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { validateAgentResources } from "@/lib/hivra/resource-gate";
@@ -37,19 +33,11 @@ const get = () => GET(new NextRequest("https://canary.hermesos.cloud/api/hivra/a
 beforeEach(() => {
   jest.resetAllMocks();
   jest.mocked(auth).mockResolvedValue({ userId: "owner-1" } as Awaited<ReturnType<typeof auth>>);
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
-  jest.mocked(isAgentAttachEnabled).mockReturnValue(true);
   jest.mocked(enforceAuthenticatedRouteRateLimit).mockReturnValue(null);
   jest.mocked(createAttachmentLifecycleStore).mockReturnValue({ readOwnerAttached, readTarget } as unknown as ReturnType<typeof createAttachmentLifecycleStore>);
   readTarget.mockResolvedValue(eligibleTarget);
   jest.mocked(validateAgentResources).mockResolvedValue({ ok: true } as Awaited<ReturnType<typeof validateAgentResources>>);
   jest.mocked(readAttachedGatewayProtocol).mockResolvedValue("current");
-});
-
-it("is empty where attach is not offered, without reading storage", async () => {
-  jest.mocked(isAgentAttachEnabled).mockReturnValue(false);
-  expect((await (await get()).json()).data).toEqual({ enabled: false, agents: [], eligibleComputerIds: [], computerReasons: {} });
-  expect(readOwnerAttached).not.toHaveBeenCalled();
 });
 
 it("needs a signed-in owner and reads only that owner's rows", async () => {
