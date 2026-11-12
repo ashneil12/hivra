@@ -1,6 +1,7 @@
 // A maker's claim on a catalog page: read it (GET), get a line to prove it
 // with, or have Hivra look for that line in the maker's repository (POST).
-// Off with the Launch catalog switch. See lib/hivra/catalog-claims.ts.
+// Off unless the maker claims switch is on (which also needs the Launch
+// catalog switch). See lib/hivra/catalog-claims.ts.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { checkClaim, readClaimView, startClaim } from "@/lib/hivra/catalog-claims";
 import { isLaunchProfileId } from "@/lib/launch/contracts";
-import { isLaunchCatalogEnabled } from "@/lib/launch/launch-catalog";
+import { isMakerClaimsEnabled } from "@/lib/launch/launch-catalog";
 
 const BodySchema = z.object({
   profile: z.string().refine(isLaunchProfileId),
@@ -23,7 +24,7 @@ const BodySchema = z.object({
 // GET /api/hivra/catalog/claims?profile=<id>
 export async function GET(request: NextRequest) {
   try {
-    if (!isLaunchCatalogEnabled()) return apiError("Not found", 404);
+    if (!isMakerClaimsEnabled()) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
 
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
 // POST /api/hivra/catalog/claims { profile, action: "start" | "check" }
 export async function POST(request: NextRequest) {
   try {
-    if (!isLaunchCatalogEnabled()) return apiError("Not found", 404);
+    if (!isMakerClaimsEnabled()) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
 
