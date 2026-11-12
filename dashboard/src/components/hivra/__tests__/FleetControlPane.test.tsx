@@ -342,7 +342,7 @@ describe("FleetControlPane", () => {
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
     const line = await screen.findByTestId("first-run-plan");
-    expect(line).toHaveTextContent("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free you can run agents on a computer you connect.");
+    expect(line).toHaveTextContent("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free, Claude Code and Codex can run on a Proxmox VE server you connect; Hermes needs a plan.");
     expect(within(line).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
   });
 

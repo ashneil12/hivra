@@ -17,6 +17,7 @@ import {
 
 import styles from "./Infrastructure.module.css";
 import enrollmentStyles from "./ServerEnrollment.module.css";
+import { serverEnrollmentAgentPrompt } from "@/lib/infrastructure/server-enrollment-agent-prompt";
 import { CopyButton } from "./CopyButton";
 import { ServerEnrollmentCard, useNow } from "./ServerEnrollmentCard";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
@@ -295,10 +296,24 @@ export function ServerEnrollmentDialog({
 
               {scriptOpen ? <ViewScriptFirst issued={ready.issued} /> : null}
 
+              {open ? (
+                <div className={enrollmentStyles.agentPrompt} data-testid="server-enrollment-agent-prompt">
+                  <p className={enrollmentStyles.meta}>
+                    <strong>Use a coding agent?</strong> Copy this prompt into Claude Code, Codex or another agent that can
+                    reach the server. It previews first and leaves the step that gives Hivra access to you.{" "}
+                    <CopyButton
+                      value={serverEnrollmentAgentPrompt({ ...ready.issued, expiresAt: item.expiresAt })}
+                      label="Copy the prompt for your coding agent"
+                      text="Copy prompt"
+                    />
+                  </p>
+                </div>
+              ) : null}
+
               <ul className={enrollmentStyles.notes}>
                 <li>Signed in as root? Leave out <code>sudo</code>.</li>
                 <li>
-                  Works with Ubuntu 22.04 or 24.04 on x86. The server needs a public IPv4 address and must accept SSH from
+                  Works with Ubuntu 22.04 or 24.04 on x86, not a Mac or Windows PC. The server needs a public IPv4 address and must accept SSH from
                   the internet. Home or office machine? Hosted Hivra can&apos;t reach private networks yet.
                 </li>
                 <li>
