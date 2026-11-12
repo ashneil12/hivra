@@ -59,6 +59,15 @@ begin
                               'amountMicroUsd', v_existing_amount);
   end if;
 
+  -- Only accounts created once starter credit existed: accounts that were
+  -- already paying before then are not "new" and get nothing.
+  if not exists (
+    select 1 from public.profiles
+     where user_id = p_user_id and created_at >= timestamptz '2026-11-12 00:00:00+00'
+  ) then
+    return jsonb_build_object('granted', false, 'status', 'not_new_account');
+  end if;
+
   insert into public.managed_venice_wallet_accounts (user_id)
   values (p_user_id)
   on conflict (user_id) do nothing;
