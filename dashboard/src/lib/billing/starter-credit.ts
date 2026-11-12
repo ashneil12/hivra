@@ -34,6 +34,8 @@ export interface StarterCreditDb {
 export interface StarterCreditDeps {
   /** The plan the user holds right now, or null. */
   resolveSubscription?: (userId: string) => Promise<{ plan: string; status: string } | null>;
+  /** When the account signed up, or null when it can't be read. */
+  resolveAccountCreatedAt?: (userId: string) => Promise<Date | null>;
   env?: Record<string, string | undefined>;
   now?: Date;
 }
@@ -52,6 +54,13 @@ async function defaultResolveSubscription(userId: string): Promise<{ plan: strin
   return sub ? { plan: sub.plan, status: sub.status } : null;
 }
 
+async function defaultResolveAccountCreatedAt(userId: string): Promise<Date | null> {
+  const { clerkClient } = await import("@clerk/nextjs/server");
+  const clerk = await clerkClient();
+  const user = await clerk.users.getUser(userId);
+  return typeof user.createdAt === "number" ? new Date(user.createdAt) : null;
+}
+
 /** Grant the one-time starter credit when the user has an active paid plan. Never throws. */
 export async function tryGrantStarterCredit(
   params: { userId: string } & StarterCreditDeps,
@@ -68,9 +77,14 @@ export async function tryGrantStarterCredit(
     const paid = Boolean(sub && sub.plan !== "free" && (sub.status === "active" || sub.status === "trialing"));
     if (!paid) return { attempted: false, skipped: "no_paid_plan" };
 
+    // The SQL function decides whether this sign-up time counts as a new account.
+    const accountCreatedAt = await (params.resolveAccountCreatedAt ?? defaultResolveAccountCreatedAt)(params.userId);
+    if (!accountCreatedAt) return { attempted: false, skipped: "no_account_created_at" };
+
     const { data, error } = await db.rpc("grant_starter_credit", {
       p_user_id: params.userId,
       p_amount_micro_usd: amountMicroUsd,
+      p_account_created_at: accountCreatedAt.toISOString(),
       p_now: (params.now ?? new Date()).toISOString(),
     });
     if (error || !data || typeof data !== "object") {
