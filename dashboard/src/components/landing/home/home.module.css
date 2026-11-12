@@ -159,7 +159,7 @@
   letter-spacing: -0.035em;
   color: var(--text);
 }
-.heroWord { font-style: normal; color: var(--hg-fg); }
+.heroWord { font-style: normal; color: var(--hg-fg); white-space: nowrap; }
 .heroTail {
   position: relative;
   display: block;

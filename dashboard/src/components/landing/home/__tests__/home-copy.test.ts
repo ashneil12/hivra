@@ -138,12 +138,12 @@ describe("homepage copy", () => {
     expect(PRICING.larger.price).toBe(LARGER_PLAN_PRICE);
     expect(PRICING.larger.size).toBe(LARGER_PLAN_SIZE);
     expect(PRICE_CARDS).toEqual(["$9.99/month 2 vCPU and 4 GB of RAM", "$19.99/month 4 vCPU and 8 GB of RAM"]);
-    expect(PRICING.titleTail).toBe(`Hosted from ${ENTRY_PLAN_PRICE} a month.`);
+    expect(PRICING.titleTail).toBe(`Hosted plans start at ${ENTRY_PLAN_PRICE} a month.`);
     expect(PRICING.cloud.href).toBe("/get-started?plan=operator");
     expect(PRICING.larger.href).toBe("/get-started?plan=fleet");
     expect(PRICING.free.href).toBe("/sign-up");
     expect(PRICING.free.selfHost.href).toBe("https://github.com/ashneil12/hivra");
-    expect(STICKY.note).toBe(`Hosted from ${ENTRY_PLAN_PRICE} a month`);
+    expect(STICKY.note).toBe(`Hivra Cloud from ${ENTRY_PLAN_PRICE}/month`);
   });
 
   it("states the guarantee in the shared wording and does not claim a trial, a free hosted plan or annual prices", () => {
@@ -210,10 +210,10 @@ describe("homepage copy", () => {
     // Cards are read by the job they do; the agent's name is the title.
     expect(HOME_AGENTS.map(agent => agent.role)).toEqual([
       "Research and everyday tasks",
-      "Code, with Claude",
-      "Code, with ChatGPT",
-      "Help from your chat apps",
-      "Bigger tasks, step by step",
+      "Code with Claude",
+      "Code with Codex",
+      "Work from your chat apps",
+      "Take on bigger tasks",
     ]);
     // One card, the one most people should start with, carries a badge.
     expect(HOME_AGENTS.filter(agent => agent.badge).map(agent => [agent.id, agent.badge])).toEqual([["hermes", "Recommended"]]);
@@ -237,24 +237,26 @@ describe("homepage copy", () => {
     expect(HOSTED_COMPUTE_NEEDS_PLAN).toBe(rule);
     expect(AGENTS_SECTION.paid).toBe(rule);
     // The closing leads with Hivra Cloud and its guarantee; "free" only comes with its condition, your own server.
-    expect(CLOSING.paid).toContain("Launch on Hivra Cloud with a paid plan");
-    expect(CLOSING.paid).toContain(MONEY_BACK_GUARANTEE);
-    expect(CLOSING.paid).toContain("Sign up free and connect it.");
+    expect(CLOSING.paid).toContain(`Launch with Hivra Cloud from ${ENTRY_PLAN_PRICE} a month, with a ${MONEY_BACK_GUARANTEE}.`);
+    expect(CLOSING.paid).toContain("Connect supported infrastructure with a free Hivra account.");
     expect(AGENTS_SECTION.paid).toContain(`from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
     // "Free" never stands alone: it always names the server you bring (UTAUT2 review, 12 Nov 2026).
-    expect(HERO.proof).toEqual(["Money-back guarantee", "Free on your own server", "Open source"]);
+    expect(HERO.proof).toEqual(["7-day money-back guarantee", "Free on your own server", "Open source"]);
     expect(VISIBLE_COPY.filter(text => /^Free to start$/i.test(text))).toEqual([]);
-    expect(PRICING.free.body).toContain(FREE_ACCOUNT_SENTENCE);
+    // The free card separates the free Hivra account from the server, which the person provides.
+    expect(PRICING.free.per).toBe("Hivra account");
+    expect(PRICING.free.size).toBe("You provide the server");
     const hasRule = HOMEPAGE_FAQ.find(({ q }) => q === "Is Hivra free?");
-    expect(hasRule?.a).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
+    expect(hasRule?.a).toContain("Hivra Cloud is the managed option and requires a paid plan for each computer.");
+    expect(hasRule?.a).toContain("there is no Hivra hosting charge");
     expect(FREE_ACCOUNT_SENTENCE).toBe("A free account works with a computer or server you connect yourself.");
     // No per-agent paid note survives anywhere on the page, and every line that says a computer needs a paid
     // plan says it of every Hivra Cloud computer, never of one agent.
     expect(VISIBLE_COPY.filter(text => /paid size/i.test(text))).toEqual([]);
     expect(HOME_AGENTS.filter(agent => /paid/i.test(`${agent.line} ${agent.note ?? ""}`)).map(agent => agent.id)).toEqual([]);
     const paidLines = VISIBLE_COPY.filter(text => /needs a paid plan/i.test(text));
-    expect(paidLines.length).toBeGreaterThanOrEqual(2);
+    expect(paidLines.length).toBeGreaterThanOrEqual(1);
     for (const text of paidLines) expect(text).toMatch(/Every (?:computer that Hivra Cloud runs for you|Hivra Cloud computer) needs a paid plan/);
   });
 

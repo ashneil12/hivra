@@ -17,10 +17,10 @@ test("the hero copy and call to action ship visible, before any script runs", ()
   const markup = renderToStaticMarkup(<Hero />);
   // The words end with the proof list; the illustration after it may animate in.
   const copy = markup.slice(0, markup.indexOf("</ul>"));
-  expect(readable(copy)).toContain("An AI agent that works for you.");
+  expect(readable(copy)).toContain("Give your AI agent");
   expect(copy).toContain("Launch an agent");
   expect(copy).toContain("See pricing");
-  expect(readable(copy)).toContain("Research, everyday tasks or code.");
+  expect(readable(copy)).toContain("without running an agent on your own computer.");
   // Only the illustration may start hidden and animate in; the words never do.
   expect(copy.length).toBeGreaterThan(0);
   expect(copy).not.toMatch(HIDDEN);

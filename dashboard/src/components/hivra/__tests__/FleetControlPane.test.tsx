@@ -163,7 +163,7 @@ describe("FleetControlPane", () => {
 
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What do you want your agent to do?" })).toBeInTheDocument();
   });
 
   it("says loading rather than 'none' while the fleet is in flight", () => {
@@ -327,8 +327,8 @@ describe("FleetControlPane", () => {
     fetchPlanStrictMock.mockResolvedValue(null);
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument();
-    expect(screen.getByText("Pick what it should do. Hivra sets up its computer, then you just talk to it.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What do you want your agent to do?" })).toBeInTheDocument();
+    expect(screen.getByText("Choose a job and Hivra will set up a computer for the agent to run on.")).toBeInTheDocument();
     expect(screen.getByText("Research and everyday tasks")).toBeInTheDocument();
     expect(screen.getByText("Recommended")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Hermes/ })).toHaveAttribute("href", "/dashboard/launch?profile=hermes");
@@ -344,17 +344,17 @@ describe("FleetControlPane", () => {
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
     const line = await screen.findByTestId("first-run-plan");
-    expect(line).toHaveTextContent("Your account is free. An agent needs a computer to run on, so pick one of two ways:");
-    expect(within(line).getByRole("link", { name: "Hivra Cloud, from $9.99 a month" })).toHaveAttribute("href", "/dashboard/billing");
-    expect(within(line).getByRole("link", { name: "Your own server, free" })).toHaveAttribute("href", "/dashboard/infrastructure");
-    expect(line).toHaveTextContent("Connect a Proxmox VE server you run. Claude Code and Codex work there; Hermes needs Hivra Cloud.");
+    expect(line).toHaveTextContent("Choose where your agent's computer runs");
+    expect(within(line).getByRole("link", { name: "Hivra Cloud · From $9.99/month" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(within(line).getByRole("link", { name: "Your own server · Free" })).toHaveAttribute("href", "/dashboard/infrastructure");
+    expect(line).toHaveTextContent("Connect a supported Proxmox VE server you run. Claude Code and Codex can run there. Hermes currently requires Hivra Cloud.");
   });
 
   it("leaves the plan line out for a paid account", async () => {
     fetchPlanStrictMock.mockResolvedValue({ subscribed: true, name: "Operator", key: "operator" });
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    await screen.findByRole("heading", { name: "Launch your first agent" });
+    await screen.findByRole("heading", { name: "What do you want your agent to do?" });
     await Promise.resolve();
     expect(screen.queryByTestId("first-run-plan")).not.toBeInTheDocument();
   });

@@ -38,13 +38,13 @@ afterEach(() => {
 
 test("the first screen says what it is and asks once", async () => {
   await renderHome();
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("An AI agent that works for you. On a computer of its own.");
-  expect(screen.getByText((_, element) => element?.tagName === "P" && /^Research, everyday tasks or code\./.test(element.textContent ?? ""))).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Give your AI agent a computer of its own.");
+  expect(screen.getByText((_, element) => element?.tagName === "P" && /^Research, code, automate and get work done without running an agent on your own computer\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   const hero = within(document.querySelector("#home-title")?.closest("section") as HTMLElement);
   expect(hero.getByRole("link", { name: "See pricing" })).toHaveAttribute("href", "#pricing");
   expect(hero.getByText("Free on your own server")).toBeInTheDocument();
-  expect(hero.getByText("Money-back guarantee")).toBeInTheDocument();
+  expect(hero.getByText("7-day money-back guarantee")).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Hermes OS is now Hivra/ })).not.toBeInTheDocument();
   expect(document.querySelector("#home-title")?.closest("section")).not.toHaveTextContent(/\$9\.99/);
   expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
@@ -70,11 +70,12 @@ test("the page is short: hero, agents, three steps, pricing, questions and one c
   await renderHome();
   const headings = Array.from(document.querySelectorAll("main h2")).map(node => node.textContent);
   expect(headings).toEqual([
-    "Pick what it should do. We'll give it a computer.",
-    "Three steps. Then just talk to it.",
-    "We run it, or you do. Hosted from $9.99 a month.",
+    "Your agent needs computer access. It doesn't need your computer.",
+    "Choose what you want done. We'll give the agent a computer.",
+    "Three steps. Then it gets to work.",
+    "Use Hivra Cloud, or run it on your own server. Hosted plans start at $9.99 a month.",
     "Questions.",
-    "Launch your first agent.",
+    "Give your agent a computer of its own.",
   ]);
   // The long story lives on its own pages now.
   for (const id of ["why", "fit", "workspace", "open-source"]) expect(document.getElementById(id)).toBeNull();
@@ -139,7 +140,7 @@ test("the page answers its questions and ends on one ask", async () => {
   expect(within(faq).getByRole("heading", { level: 2 })).toHaveTextContent("Questions.");
   expect(faq.querySelectorAll("details")).toHaveLength(HOMEPAGE_FAQ.length);
   const closing = within(document.getElementById("start") as HTMLElement);
-  expect(closing.getByRole("heading", { level: 2 })).toHaveTextContent("Launch your first agent.");
+  expect(closing.getByRole("heading", { level: 2 })).toHaveTextContent("Give your agent a computer of its own.");
   expect(closing.getByText(CLOSING.paid)).toBeInTheDocument();
   expect(closing.getByRole("link", { name: /Launch an agent/ })).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   expect(closing.getByRole("button", { name: /Motion/ })).toBeInTheDocument();
