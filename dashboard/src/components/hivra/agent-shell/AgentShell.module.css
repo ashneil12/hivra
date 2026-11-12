@@ -1,4 +1,8 @@
-/* sidebar | column (title bar, then the page's own rows) */
+/* sidebar | column (the floating pill, then the page's own rows) */
 .shell { position: relative; display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; width: 100%; }
-/* The column is the container the title bar's narrow rules measure. */
-.column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; container-type: inline-size; }
+/* The column is the container the pill measures, and the box the pill and its dropdown float in. */
+.column { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; container-type: inline-size; }
+/* Phones: the page's top edge clears the status bar / notch (the old title bar did this). */
+@media (max-width: 767px) {
+  .column { padding-top: var(--dashboard-page-safe-top, env(safe-area-inset-top, 0px)); }
+}

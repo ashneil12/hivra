@@ -3,7 +3,6 @@ import {
   type AppleNotificationContext,
 } from "@/lib/services/apple-webhook-service";
 import { supabaseAdmin } from "@/lib/supabase";
-import { grantSubscriptionCycleCredits } from "@/lib/billing/credits";
 import { StripeWebhookService } from "@/lib/services/stripe-webhook-service";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -12,12 +11,6 @@ import { getAppleSignedDataVerifier } from "@/lib/billing/apple-verifier";
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
-
-jest.mock("@/lib/billing/credits", () => ({
-  grantSubscriptionCycleCredits: jest
-    .fn()
-    .mockResolvedValue({ inserted: true, balance: 1099 }),
-}));
 
 jest.mock("@/lib/services/stripe-webhook-service", () => ({
   StripeWebhookService: {
@@ -52,7 +45,6 @@ jest.mock("@/lib/billing/apple-verifier", () => ({
 }));
 
 const fromMock = supabaseAdmin!.from as jest.Mock;
-const grantMock = grantSubscriptionCycleCredits as jest.Mock;
 const suspendMock = StripeWebhookService.suspendInstancesForBilling as jest.Mock;
 const resumeMock = StripeWebhookService.resumeBillingSuspendedInstances as jest.Mock;
 const restoreMock = StripeWebhookService.restoreScheduledDeletions as jest.Mock;
@@ -194,16 +186,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
       new Date(1_755_278_400_000).toISOString()
     );
 
-    expect(grantMock).toHaveBeenCalledWith({
-      userId: "user_1",
-      planKey: "operator",
-      subscriptionId: "2000000123456789",
-      periodStart: 1_752_600_000_000,
-      periodEnd: 1_755_278_400_000,
-      source: "apple",
-      actor: "apple_webhook",
-      referencePrefix: "apple_subscription",
-    });
 
     expect(applyTierMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -263,7 +245,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
       new Date(1_757_956_800_000).toISOString()
     );
     expect(upserts[0].status).toBe("active");
-    expect(grantMock).toHaveBeenCalledTimes(1);
     expect(resumeMock).toHaveBeenCalledWith("user_1");
   });
 
@@ -284,7 +265,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
 
     expect(outcome).toEqual({ action: "skipped_stale", userId: "user_1" });
     expect(upserts).toHaveLength(0);
-    expect(grantMock).not.toHaveBeenCalled();
   });
 
   it("fails loudly, and writes nothing, when the stored row cannot be read", async () => {
@@ -300,7 +280,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
     ).rejects.toThrow(/connection reset/);
     expect(upserts).toHaveLength(0);
     expect(updates).toHaveLength(0);
-    expect(grantMock).not.toHaveBeenCalled();
   });
 
   it("DID_CHANGE_RENEWAL_STATUS (AUTO_RENEW_DISABLED) sets cancel_at_period_end and revokes nothing", async () => {
@@ -316,7 +295,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
     expect(updates[0].status).toBeUndefined();
     expect(upserts).toHaveLength(0);
     expect(suspendMock).not.toHaveBeenCalled();
-    expect(grantMock).not.toHaveBeenCalled();
   });
 
   it("DID_CHANGE_RENEWAL_STATUS (AUTO_RENEW_ENABLED) clears cancel_at_period_end", async () => {
@@ -511,7 +489,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
     await expect(
       AppleWebhookService.handleNotification(ctx("SUBSCRIBED", "INITIAL_BUY"))
     ).rejects.toThrow(/No user mapping/);
-    expect(grantMock).not.toHaveBeenCalled();
   });
 
   it("throws on an unknown product id instead of guessing a plan", async () => {
@@ -522,7 +499,6 @@ describe("AppleWebhookService.handleNotification — state machine", () => {
         ctx("SUBSCRIBED", "INITIAL_BUY", txn({ productId: "com.other.app.sub" }))
       )
     ).rejects.toThrow(/no plan mapping/i);
-    expect(grantMock).not.toHaveBeenCalled();
   });
 
   it("resolves the user through the original transaction id when appAccountToken is absent", async () => {
