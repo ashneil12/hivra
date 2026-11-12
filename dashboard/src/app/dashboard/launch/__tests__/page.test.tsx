@@ -496,8 +496,8 @@ describe("LaunchPage", () => {
     // Codex starts on Hivra credits (Venice) by default; signing in or a key
     // are the other two choices, in the same control every agent uses.
     const modelAccess = within(card).getByRole("group", { name: "Model access" });
-    expect(within(modelAccess).getByRole("button", { name: /^Sign in inside Codex after it opens/ })).toHaveAttribute("aria-pressed", "false");
-    expect(within(modelAccess).getByRole("button", { name: /^Use my API key/ })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modelAccess).getByRole("button", { name: /^Sign in with my existing account/ })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modelAccess).getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "false");
     expect(within(modelAccess).getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/balloon|opportunistic|shared scheduling/i)).not.toBeInTheDocument();
 

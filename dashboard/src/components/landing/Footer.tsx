@@ -53,7 +53,8 @@ export default function Footer({ tokenSurfaces = false }: { tokenSurfaces?: bool
     <footer className={styles.footer} data-public-footer>
       <div className={`${styles.footerTop} ${styles.footerCompact}`}>
         <div className={styles.footerInvitation}>
-          <p>Run it with Hivra Cloud, on your own server, or self-host Hivra.</p>
+          <p>Hivra. A computer of its own for every agent.</p>
+          <span className={styles.footerStart}>Run agents with Hivra Cloud or on supported infrastructure you control.</span>
           <PublicLink href="/sign-up" className={styles.footerStartLink}>Sign up free<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" /></PublicLink>
         </div>
         <div className={styles.footerColumns}>

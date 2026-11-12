@@ -316,6 +316,7 @@
 .card:hover .cardArrow { color: var(--text); transform: translate(3px, -3px); }
 .cardName { position: relative; margin-top: 20px; font: 600 28px/1.1 var(--font-display); letter-spacing: -0.03em; }
 .cardLine { position: relative; margin: 14px 0 20px; font-size: 15px; line-height: 1.6; color: var(--muted); }
+.cardDetail { position: relative; display: block; margin: -8px 0 20px; font-size: 14px; line-height: 1.55; color: var(--muted); }
 .cardNote { position: relative; display: block; margin: -8px 0 20px; font: 400 13.5px/1.55 var(--sans); color: var(--text); opacity: 0.82; }
 .cardScreen { position: relative; margin-top: auto; min-height: 80px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--hg-radius-md); background: var(--hg-fill-1); font: 400 12px/1.72 var(--mono); color: var(--faint); }
 .cardScreen p { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.72em; }
@@ -333,7 +334,8 @@
 /* ------------------------------------------------------------ steps -- */
 
 .steps { max-width: calc(var(--max) + 2 * var(--gutter)); margin: 0 auto; padding: clamp(64px, 8vw, 110px) var(--gutter); border-top: 1px solid var(--line); }
-.stepList { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; counter-reset: none; }
+.stepList { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; counter-reset: none; }
+@media (max-width: 1100px) { .stepList { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .step { display: flex; flex-direction: column; gap: 10px; padding: 26px; border: 1px solid var(--line); border-radius: var(--hg-radius-lg); background: var(--hg-glass); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm); }
 .stepNumber { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--hg-stroke-strong); border-radius: 50%; font: 600 13px/1 var(--mono); color: var(--text); }
 .step h3 { margin: 8px 0 0; font: 600 21px/1.2 var(--font-display); letter-spacing: -0.02em; }
@@ -347,6 +349,8 @@
 .priceCard { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 28px; border: 1px solid var(--line); border-radius: var(--hg-radius-xl); background: var(--hg-glass); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm); transition: transform var(--hg-medium) var(--hg-ease), border-color var(--hg-fast) var(--hg-ease); }
 .priceCard:first-child { border-color: var(--hg-stroke-strong); box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg); }
 @media (pointer: fine) { .priceCard:hover { transform: translateY(-3px); border-color: var(--line-2); } }
+.priceTagline { margin: 0; font: 600 13px/1.4 var(--sans); letter-spacing: 0.02em; color: var(--muted); }
+.priceNote { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
 .priceName { margin: 0; font: 600 19px/1.2 var(--font-display); letter-spacing: -0.02em; }
 .priceFigure { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 0; }
 .priceFigure strong { font: 600 clamp(40px, 3.6vw, 52px)/1 var(--font-display); letter-spacing: -0.04em; }
