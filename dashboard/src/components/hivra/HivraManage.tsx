@@ -19,6 +19,7 @@ import { CookieImportModal } from "@/components/instances/CookieImportModal";
 import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
 import { HermesModelSettings } from "./HermesModelSettings";
+import { HermesRestorePoints, restorePointsEnabled } from "./HermesRestorePoints";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
@@ -1240,6 +1241,12 @@ function HivraManageContent({
                   <HermesModelSettings chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
                     running={agent.status === "running" && !agent.activity} disabled={busy} />
                 </div>
+                {restorePointsEnabled() ? (
+                  <div style={card}>
+                    <HermesRestorePoints chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
+                      running={agent.status === "running" && !agent.activity} disabled={busy} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
