@@ -544,6 +544,15 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.12.5` builds on `2026.11.12.4` and hardens how the Telegram helper
+(`hivra-tg-apply`) writes its environment file. The helper now creates the file in a
+root-only directory and moves it into place atomically, instead of writing it directly
+inside the agent-writable configuration directory. A rename never follows a destination
+symlink, so the helper's root-owned write and its ownership and permission steps can no
+longer be redirected onto another path. Apply, disable, and unknown-action behaviour is
+unchanged. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, or update any existing computer.
+
 Release `2026.11.12.4` builds on `2026.11.12.3` and adds OpenBot by CopilotKit as an agent
 kind. The guest installer (`provision-claude-code-box.sh`) installs Docker, pulls CopilotKit's
 official `ghcr.io/copilotkit/openbot` image at its latest release and records it by digest, and
