@@ -8,6 +8,9 @@ import { LaunchJourney } from "../LaunchJourney";
 const fetchPlanStrictMock = jest.fn();
 const summaryMock = jest.fn();
 let aboutParam: string | null = null;
+let useOrder: string[] = [];
+let claimedPages: string[] = [];
+let myClaims: Record<string, { status: string }> = {};
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -43,6 +46,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG = "1";
   aboutParam = null;
+  useOrder = [];
+  claimedPages = [];
+  myClaims = {};
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.history.replaceState(null, "", "/dashboard/launch");
@@ -58,6 +64,11 @@ beforeEach(() => {
     if (url === "/api/vault") return json({ success: true, data: [] });
     if (url === "/api/hivra/agents") return json({ success: true, data: { agents: [] } });
     if (url === "/api/instances?summary=true") return json({ success: true, data: [] });
+    if (url === "/api/hivra/catalog/order") return json({ success: true, data: { order: useOrder } });
+    if (url.startsWith("/api/hivra/catalog/claims?profile=")) {
+      const profileId = url.split("=")[1];
+      return json({ success: true, data: { claim: { profileId, claimed: claimedPages.includes(profileId), mine: myClaims[profileId] ?? null } } });
+    }
     throw new Error(`Unexpected request: ${url}`);
   }) as unknown as typeof fetch;
 });
@@ -168,6 +179,41 @@ describe("the catalog view of Launch", () => {
     expect(page.getByRole("img", { name: "An Ubuntu desktop on a monitor" })).toHaveAttribute("src", "/images/computers/ubuntu-workspace.webp");
     expect(page.queryByText("Made by")).not.toBeInTheDocument();
     expect(page.queryByRole("heading", { name: "Good first tasks" })).not.toBeInTheDocument();
+  });
+
+  it("offers the maker a way to claim the page, and says once it is claimed", async () => {
+    await openLaunch();
+    fireEvent.click(tile("Codex")!);
+    let about = within(screen.getByRole("group", { name: "About Codex" }));
+    expect(about.getByRole("link", { name: "Are you the maker?" })).toHaveAttribute("href", "/dashboard/makers/codex");
+    expect(about.getByText("Hivra wrote this page and is independent of OpenAI.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Everything you can launch/ }));
+    await popLands();
+    claimedPages = ["openclaw"];
+    myClaims = { openclaw: { status: "verified" } };
+    fireEvent.click(tile("OpenClaw")!);
+    about = within(screen.getByRole("group", { name: "About OpenClaw" }));
+    expect(await about.findByText("Hivra wrote this page. Its maker has claimed it.")).toBeInTheDocument();
+    expect(about.getByRole("link", { name: "Your maker page" })).toHaveAttribute("href", "/dashboard/makers/openclaw");
+  });
+
+  it("lists what more people use first once the order is known", async () => {
+    useOrder = ["openclaw", "codex"];
+    await openLaunch();
+    const agents = within(screen.getByRole("region", { name: "An agent" }));
+    expect(await agents.findByText(/The ones more people use come first\./)).toBeInTheDocument();
+    const names = agents.getAllByRole("button").map(button => button.querySelector("strong")?.textContent).filter(Boolean);
+    expect(names.slice(0, 3)).toEqual(["OpenClaw", "Codex", "Claude Code"]);
+  });
+
+  it("keeps the fixed order while nothing is known about use", async () => {
+    await openLaunch();
+    const agents = within(screen.getByRole("region", { name: "An agent" }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/catalog/order", expect.anything()));
+    expect(agents.queryByText(/come first/)).not.toBeInTheDocument();
+    const names = agents.getAllByRole("button").map(button => button.querySelector("strong")?.textContent).filter(Boolean);
+    expect(names.slice(0, 2)).toEqual(["Claude Code", "Codex"]);
   });
 
   it("opens the page a link names", async () => {

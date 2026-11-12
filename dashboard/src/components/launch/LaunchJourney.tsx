@@ -43,6 +43,7 @@ import {
 import { DigitalOceanLaunchPlan, digitalOceanBalanceProblem } from "./DigitalOceanLaunchPlan";
 import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { AttachEntryLink } from "./AttachEntryLink";
+import { fetchCatalogOrder } from "./catalog-claims-client";
 import { LaunchCatalogPage, LaunchCatalogToolbar } from "./LaunchCatalog";
 import { COMPUTER_TILES, offeredAgentTiles, type ChooseTile } from "./launch-tiles";
 import catalogStyles from "./LaunchCatalog.module.css";
@@ -150,6 +151,7 @@ import {
   isCatalogFiltered,
   isLaunchCatalogEnabled,
   NO_CATALOG_FILTER,
+  orderCatalogByUse,
   relatedCatalogItems,
   type CatalogFilter,
 } from "@/lib/launch/launch-catalog";
@@ -793,6 +795,8 @@ export function LaunchJourney(
   const catalogOn = isLaunchCatalogEnabled();
   const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>(NO_CATALOG_FILTER);
   const [aboutId, setAboutId] = useState<LaunchProfileId | null>(null);
+  // Agent types by how many people use each, most first. Empty until it is read, and where nothing is known.
+  const [useOrder, setUseOrder] = useState<readonly string[]>([]);
   const activeStage = resumeChoice ? "resume" : draft?.stage;
   const activeOutcome = activeStage === "launch" ? draft?.launchState : null;
 
@@ -1131,6 +1135,17 @@ export function LaunchJourney(
     window.addEventListener("popstate", syncAbout);
     return () => window.removeEventListener("popstate", syncAbout);
   }, [catalogOn, aboutParam]);
+
+  // The catalog lists what more people use first. The order is shared across
+  // the hosted service, so a self-hosted deployment keeps the fixed order.
+  useEffect(() => {
+    if (!catalogOn || selfHosted) return;
+    const controller = new AbortController();
+    void fetchCatalogOrder(controller.signal).then(order => {
+      if (!controller.signal.aborted) setUseOrder(order);
+    });
+    return () => controller.abort();
+  }, [catalogOn, selfHosted]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -2166,14 +2181,16 @@ export function LaunchJourney(
       </div>
     );
   };
-  const agentTiles = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE });
+  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE });
+  const orderedByUse = catalogOn && useOrder.length > 0;
+  const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);
   const shownAgentTiles = catalogFiltered ? filterCatalog(agentTiles, catalogFilter) : agentTiles;
   const agentSection = shownAgentTiles.length === 0 ? null : (
     <section key="agents" className={styles.chooseSection} aria-labelledby="launch-agents-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-agents-heading">An agent</h2>
-        <p>An AI that works on its own computer.</p>
+        <p>An AI that works on its own computer.{orderedByUse ? " The ones more people use come first." : ""}</p>
       </div>
       <div className={styles.tileGrid}>{shownAgentTiles.map(renderTile)}</div>
       {selfHosted || catalogFiltered ? null : <AttachEntryLink className={styles.attachEntry} />}

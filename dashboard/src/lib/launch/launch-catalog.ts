@@ -325,6 +325,34 @@ export function relatedCatalogItems<T extends CatalogItem>(profileId: LaunchProf
     .slice(0, limit);
 }
 
+/**
+ * The repository an agent's maker publishes it from, as owner/name. This is
+ * where a maker's claim on the page is proven, so a page without one (a
+ * computer, or an agent with no public repository) cannot be claimed.
+ */
+export function catalogSourceRepo(profileId: LaunchProfileId): string | null {
+  if (PROFILE_DETAILS[profileId].resourceKind !== "agent") return null;
+  const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)$/.exec(LAUNCH_CATALOG[profileId].sourceUrl ?? "");
+  return match ? match[1] : null;
+}
+
+/**
+ * Puts the items whose type people use most first. `typeOrder` lists agent
+ * types, most used first; an item whose type is not in it keeps its place
+ * after the ones that are.
+ */
+export function orderCatalogByUse<T extends CatalogItem>(items: readonly T[], typeOrder: readonly string[]): T[] {
+  if (typeOrder.length === 0) return [...items];
+  const rank = (item: T) => {
+    const index = typeOrder.indexOf(PROFILE_DETAILS[item.id].runtimeId);
+    return index === -1 ? typeOrder.length : index;
+  };
+  return items
+    .map((item, position) => ({ item, position }))
+    .sort((a, b) => rank(a.item) - rank(b.item) || a.position - b.position)
+    .map(entry => entry.item);
+}
+
 export interface TryNextSuggestion<T extends CatalogItem> {
   item: T;
   /** The agent the owner runs that does the same kind of work, by its type name. */

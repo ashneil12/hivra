@@ -206,7 +206,56 @@
   white-space: nowrap;
 }
 
+/* ── A maker's page ─────────────────────────────────────────────────────── */
+
+/* A card under a section heading sits closer to it than a card on its own. */
+.flushCard.flushCard { margin-top: 0.75rem; }
+
+.code {
+  display: block;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--etched-border);
+  border-radius: var(--hg-radius-sm);
+  background: var(--hg-fill-2);
+  color: var(--ink-black);
+  font: 400 0.8rem/1.5 var(--font-mono), monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.facts {
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.facts > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.3fr) minmax(0, 1fr);
+  gap: 0.2rem 1rem;
+}
+
+.facts dt { font: 600 0.8rem/1.45 var(--font-sans); }
+.facts dd { margin: 0; color: var(--text-secondary); font-size: 0.86rem; line-height: 1.45; }
+
+.launchButton {
+  margin-top: 0.75rem;
+  display: grid;
+  justify-items: start;
+  gap: 0.6rem;
+}
+
+.launchButton img { display: block; max-width: 100%; height: auto; }
+
+.backRow {
+  margin-top: 1.15rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--etched-border);
+}
+
 @container launch (max-width: 560px) {
+  .facts > div { grid-template-columns: minmax(0, 1fr); }
   .jobs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cover[data-art="true"] { aspect-ratio: 2 / 1; }
   .starters li { flex-wrap: wrap; }
