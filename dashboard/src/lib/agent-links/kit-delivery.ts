@@ -15,10 +15,13 @@ import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-c
 import { buildPinnedGuestHostScript, resolvePinnedGuestTarget } from "@/lib/hivra/pinned-guest-seed";
 import { runProviderAgentGuestScript } from "@/lib/hivra/provider-guest-seed";
 import { log } from "@/lib/logger";
+import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
+import { loadComputers } from "@/lib/local-bridge/store";
 import { computerKindLabel, linkLabel, linkSource } from "./eligibility";
 import { HIVRA_COMPUTERS_CLI, KIT_CLI_VERSION, buildKitGuestScript, parseKitOutput, renderComputersNote,
-  renderComputersSkill, type KitComputer, type KitOutcome, type KitRequest } from "./kit-program";
-import { db, loadKeyRecord, loadLinks, loadOwnedRow, loadOwnedRows, sha256Hex, type OwnedRow } from "./store";
+  renderComputersSkill, type KitBridgeComputer, type KitComputer, type KitOutcome, type KitRequest } from "./kit-program";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
+import { db, loadKeyRecord, loadLinks, markKitDirty, loadOwnedRow, loadOwnedRows, sha256Hex, type OwnedRow } from "./store";
 
 /** One claim covers a round trip; a crashed one is taken over after this. */
 const CLAIM_SECONDS = 45;
@@ -35,17 +38,22 @@ export interface KitDeliveryResult {
 
 /** The kit the agent should have now, with the digest of its non-secret parts. */
 export async function desiredKit(userId: string, agent: OwnedRow, endpoint: string) {
-  const [links, rows] = await Promise.all([loadLinks(userId, { agentId: agent.id }), loadOwnedRows(userId)]);
+  const [links, rows, bridgeRows] = await Promise.all([
+    loadLinks(userId, { agentId: agent.id }), loadOwnedRows(userId),
+    isLocalBridgeEnabled() ? loadComputers(userId) : Promise.resolve([]),
+  ]);
+  const bridgeComputers: KitBridgeComputer[] = bridgeRows.filter((row) => !row.revoked_at)
+    .map((row) => ({ id: row.id, name: linkLabel(row.label) }));
   const byId = new Map(rows.map((row) => [row.id, row]));
   const computers: KitComputer[] = links.flatMap((link) => {
     const row = byId.get(link.computer_id);
     return row ? [{ id: row.id, name: linkLabel(row.name), kind: computerKindLabel(row) }] : [];
   });
-  const mode: KitRequest["mode"] = computers.length > 0 ? "install" : "remove";
-  const note = mode === "install" ? renderComputersNote(String(agent.name ?? "this agent"), computers) : undefined;
-  const skill = mode === "install" ? renderComputersSkill(computers) : undefined;
-  const digest = sha256Hex(JSON.stringify({ v: KIT_CLI_VERSION, mode, endpoint, agentId: agent.id, cli: HIVRA_COMPUTERS_CLI, note, skill }));
-  return { mode, computers, note, skill, digest };
+  const mode: KitRequest["mode"] = computers.length > 0 || bridgeComputers.length > 0 ? "install" : "remove";
+  const note = mode === "install" ? renderComputersNote(String(agent.name ?? "this agent"), computers, bridgeComputers) : undefined;
+  const skill = mode === "install" ? renderComputersSkill(computers, bridgeComputers) : undefined;
+  const digest = sha256Hex(JSON.stringify({ v: KIT_CLI_VERSION, mode, endpoint, agentId: agent.id, cli: HIVRA_COMPUTERS_CLI, note, skill, bridge: bridgeComputers }));
+  return { mode, computers, bridgeComputers, note, skill, digest };
 }
 
 /** Whether the agent's own computer can take its kit right now, and why not. */
@@ -176,4 +184,22 @@ export async function readKitState(userId: string, agent: OwnedRow, endpoint: st
 /** The agent API's address as this deployment serves it. */
 export function agentLinkEndpoint(origin: string): string {
   return `${origin.replace(/\/+$/, "")}/api/agent-link`;
+}
+
+const BRIDGE_SYNC_CONCURRENCY = 4;
+
+/**
+ * A bridge computer was enrolled or revoked: every agent of this owner that can
+ * take a kit has its kit marked out of date (so a stopped agent gets it when it
+ * runs again) and the running ones are brought up to date now. The digest
+ * covers the bridge list, so an agent whose list did not change is left alone.
+ */
+export async function resyncOwnerKitsForBridge(userId: string, endpoint: string): Promise<void> {
+  const agents = (await loadOwnedRows(userId)).filter((row) => linkSource(row).ok);
+  await markKitDirty(userId, agents.map((row) => row.id));
+  await mapWithConcurrencyLimit(agents, BRIDGE_SYNC_CONCURRENCY, (agent) =>
+    syncAgentLinkKit(userId, agent.id, endpoint).catch((error: unknown) => {
+      log.warn("agent link kit sync after bridge change failed", { source: "agent-links/kit", failureType: "agent_link_kit_sync_skipped",
+        userId, agentId: agent.id, errorMessage: error instanceof Error ? error.message : String(error) });
+    }));
 }
