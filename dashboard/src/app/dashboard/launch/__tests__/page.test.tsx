@@ -540,11 +540,10 @@ describe("LaunchPage", () => {
       deployment: { mode: "hivra-managed" },
       launchRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     }));
-    expect(await screen.findByRole("heading", { name: "Codex is being created." })).toBeInTheDocument();
-    expect(routerPushMock).toHaveBeenCalledWith(
-      "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=manage&section=model#model-settings",
-    );
-    expect(screen.getByRole("link", { name: "Open Codex" })).toHaveAttribute(
+    // Launch holds on "setting up" until Codex can answer, rather than leaving at once.
+    expect(await screen.findByRole("heading", { name: / is setting up\.$/ })).toBeInTheDocument();
+    expect(routerPushMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: /^Open .+ now$/ })).toHaveAttribute(
       "href",
       "/dashboard/agent/33333333-3333-4333-8333-333333333333?welcome=1&tab=manage&section=model#model-settings",
     );
@@ -645,9 +644,10 @@ describe("LaunchPage", () => {
     expect(createAgentMock).toHaveBeenCalledTimes(1);
     const launchRequestId = createAgentMock.mock.calls[0][0].launchRequestId;
     expect(findHivraLaunchReceiptMock.mock.calls).toEqual([[launchRequestId], [launchRequestId]]);
-    expect(await screen.findByRole("heading", { name: "Codex is being created." })).toBeInTheDocument();
-    await waitFor(() => expect(routerPushMock).toHaveBeenCalledTimes(1));
-    expect(routerPushMock).toHaveBeenCalledWith(
+    expect(await screen.findByRole("heading", { name: / is setting up\.$/ })).toBeInTheDocument();
+    expect(routerPushMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: /^Open .+ now$/ })).toHaveAttribute(
+      "href",
       "/dashboard/agent/77777777-7777-4777-8777-777777777777?welcome=1&tab=manage&section=model#model-settings",
     );
     expect(createAgentMock).toHaveBeenCalledTimes(1);
@@ -1713,7 +1713,7 @@ describe("LaunchPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Resume same launch" }));
       await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(2));
       expect(createAgentMock.mock.calls[1][0].launchRequestId).toBe(firstRequestId);
-      expect(await screen.findByRole("link", { name: "Open Codex" })).toBeInTheDocument();
+      expect(await screen.findByRole("link", { name: /^Open .+ now$/ })).toBeInTheDocument();
     } finally {
       if (previousMode === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
       else process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = previousMode;
