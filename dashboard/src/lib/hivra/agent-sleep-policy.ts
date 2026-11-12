@@ -45,6 +45,12 @@ export const THRASH_WINDOW_SECONDS = 30 * 60;
 export const THRASH_WAKE_THRESHOLD = 3;
 export const THRASH_MAX_IDLE_SECONDS = 2 * 60 * 60;
 
+/**
+ * A sleep or wake lease older than this has outlived any legitimate hold (a hibernate
+ * script is allowed 280 s, plus its probe) and is settled from the host.
+ */
+export const STALE_SLEEP_LEASE_MS = 6 * 60_000;
+
 /** Kinds that run their own loops, so "idle" cannot be read from outside. */
 export const AUTONOMOUS_KINDS: readonly string[] = ["aeon"];
 /** Kinds with a live display: a paused guest would freeze it, so hibernate only. */

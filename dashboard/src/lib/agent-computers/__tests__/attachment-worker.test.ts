@@ -651,3 +651,74 @@ describe("the pass deadline", () => {
     expect(deps.stage).toHaveBeenLastCalledWith(OWNER, ID, "x86_64", { deadline: NOW + 600_000, now: deps.now, dispatchedAt: null });
   });
 });
+
+describe("a computer that is asleep", () => {
+  const napping = { ...computerRow, sleep_state: "napping" };
+
+  it("is woken for a claim the owner asked for, and the claim works from the fresh row", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.loadComputer.mockResolvedValueOnce(napping).mockResolvedValue({ ...computerRow, sleep_state: "awake" });
+    deps.stage.mockResolvedValue({ state: "boot_unobserved", reason: "boot_unobserved" });
+    const wake = jest.fn().mockResolvedValue({ ok: true });
+    await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, { ...deps, wake });
+    expect(wake).toHaveBeenCalledWith(SOURCE, 25_000);
+    expect(deps.loadComputer).toHaveBeenCalledTimes(2);
+    expect(wake.mock.invocationCallOrder[0]).toBeLessThan(deps.stage.mock.invocationCallOrder[0]);
+    expect(store.refuse).not.toHaveBeenCalled();
+  });
+
+  it("holds the claim, never refuses it, while the computer is still waking", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.loadComputer.mockResolvedValue(napping);
+    const wake = jest.fn().mockResolvedValue({ ok: false });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, { ...deps, wake }))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "computer_asleep" });
+    expect(store.refuse).not.toHaveBeenCalled();
+    expect(deps.stage).not.toHaveBeenCalled();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("holds the claim when the wake throws, and when the pass has no time left to wait", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.loadComputer.mockResolvedValue(napping);
+    const thrown = jest.fn().mockRejectedValue(new Error("down"));
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, { ...deps, wake: thrown }))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "computer_asleep" });
+    const wake = jest.fn().mockResolvedValue({ ok: true });
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, { ...deps, wake, deadline: NOW + 5_000 }))
+      .toEqual({ kind: "attach", id: ID, state: "held", reason: "computer_asleep" });
+    expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("is not woken for a computer that is not running (that is a refusal, not a sleep)", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null, computerStatus: "stopped" }));
+    deps.loadComputer.mockResolvedValue({ ...napping, status: "stopped" });
+    const wake = jest.fn();
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, { ...deps, wake }))
+      .toEqual({ kind: "attach", id: ID, state: "failed", reason: "computer_not_running" });
+    expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("does not take a released step back into a computer that reads as running but is asleep", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ leaseReleased: true, interruptReason: "computer_not_running" }));
+    deps.loadComputer.mockResolvedValue(napping);
+    expect(await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, deps))
+      .toEqual({ kind: "attach", id: ID, state: "interrupted", reason: "computer_not_running" });
+    expect(store.resume).not.toHaveBeenCalled();
+  });
+
+  it("treats a computer row without a sleep state as awake", async () => {
+    const { store, deps } = fakes();
+    store.readState.mockResolvedValue(stateOf({ phase: "claimed", staged: null }));
+    deps.loadComputer.mockResolvedValue(computerRow);
+    deps.stage.mockResolvedValue({ state: "boot_unobserved", reason: "boot_unobserved" });
+    const wake = jest.fn();
+    await progressAttachmentWork({ kind: "attach", ownerId: OWNER, id: ID }, { ...deps, wake });
+    expect(wake).not.toHaveBeenCalled();
+  });
+});

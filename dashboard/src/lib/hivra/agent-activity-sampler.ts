@@ -158,6 +158,8 @@ export async function runAgentActivitySampling(options: AgentActivitySamplingOpt
     .from("hivra_agents")
     .select("id, user_id, type, chat_url, cf_hostname, api_token, computer_profile, computer_substrate")
     .eq("status", "running")
+    // A sleeping computer cannot answer, and a reading of "unreachable" would be a false alarm.
+    .eq("sleep_state", "awake")
     .is("computer_profile", null)
     .not("chat_url", "is", null)
     .order("id", { ascending: true }));

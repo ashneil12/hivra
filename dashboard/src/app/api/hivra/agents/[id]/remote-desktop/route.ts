@@ -14,6 +14,8 @@ import {
 } from "@/app/api/infrastructure/connections/request-security";
 import { remoteDesktopResponse } from "@/app/api/remote-desktop/session-response";
 import { managedHivraProvisionerChannelForServerEnvironment } from "@/lib/hivra/managed-provisioner-channel";
+import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
+import { wakeForUserAction } from "@/lib/hivra/sleep-aware";
 import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { inspectRemoteDesktopCapability } from "@/lib/remote-computers/capability-inspection";
@@ -39,7 +41,7 @@ const AGENT_FIELDS = [
   "proxmox_host", "infrastructure_connection_id", "deployment_target_id",
   "infrastructure_connection_revision", "infrastructure_binding_token_hash",
   "infrastructure_binding_token_enforced",
-  "managed_provisioner_channel",
+  "managed_provisioner_channel", "sleep_state",
 ].join(",");
 
 function controlOrigin(): string | null {
@@ -108,7 +110,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (lookupError) {
     return response({ success: false, error: "Desktop opening is unavailable.", code: "service_unavailable" }, 503);
   }
-  const ownerAgent = agent as unknown as RemoteDesktopAgentRow | null;
+  let ownerAgent = agent as unknown as RemoteDesktopAgentRow | null;
   if (!ownerAgent) return response({ success: false, error: "Computer not found" }, 404);
   // The persisted lifecycle intent wins over an apparently running VM. Never
   // turn deletion/stopping or a foreign operation into an installer attempt.
@@ -117,6 +119,31 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       error: ownerAgent.desired_state === "deleted"
         ? "This computer is marked for deletion. Desktop cannot reopen it or change that request."
         : "This computer is not requested to run. Start it in Manage before opening Desktop." }, 409);
+  }
+  // A sleeping computer cannot answer the desktop check, and its sleep lease
+  // would read as an active operation below. Opening Desktop is the owner's own
+  // action, so it wakes the computer first and then works from the fresh row.
+  if (!isAgentAwake(ownerAgent as { sleep_state?: unknown })) {
+    const wake = await wakeForUserAction(ownerAgent as unknown as { id: string; status: string; sleep_state: string });
+    if (!wake.ok) {
+      return response({ success: false, code: wake.code, error: wake.message }, wake.status);
+    }
+    if (wake.woke) {
+      const { data: refreshed, error: refreshError } = await supabaseAdmin
+        .from("hivra_agents")
+        .select(AGENT_FIELDS)
+        .eq("id", id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (refreshError || !refreshed) {
+        return response({ success: false, error: "Desktop opening is unavailable.", code: "service_unavailable" }, 503);
+      }
+      ownerAgent = refreshed as unknown as RemoteDesktopAgentRow;
+    }
+    if (wake.cold) {
+      return response({ success: false, code: "computer_lifecycle_blocked",
+        error: "This computer is switched off. Start it in Manage before opening Desktop." }, 409);
+    }
   }
   const resumingDesktopPrepare = ownerAgent.operation_kind === "desktop_prepare"
     && z.string().uuid().safeParse(ownerAgent.operation_id).success;

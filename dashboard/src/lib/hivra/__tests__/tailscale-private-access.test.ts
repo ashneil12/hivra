@@ -1,5 +1,7 @@
 /** @jest-environment node */
 jest.mock("server-only", () => ({}));
+// The default wake reads the live agent row; these tests supply their own where it matters.
+jest.mock("@/lib/hivra/sleep-aware", () => ({ wakeAgentForUserAction: jest.fn().mockResolvedValue({ ok: true, woke: false, cold: false }) }));
 
 import { spawnSync } from "node:child_process";
 
@@ -435,5 +437,54 @@ describe("review fixes: disconnect, status extras, reapply, NetBird SSH", () => 
       runHostScript: jest.fn().mockResolvedValue({ ok: true, stdout: stillMissing, stderr: "" }), runHostScriptWithStdin: jest.fn(),
     });
     expect(failed.ok).toBe(false);
+  });
+});
+
+describe("sleeping computers", () => {
+  it("wakes the computer before a connect, and works from the fresh state", async () => {
+    const order: string[] = [];
+    const wake = jest.fn().mockImplementation(async () => { order.push("wake"); return { ok: true }; });
+    const runHostScript = jest.fn().mockImplementation(async () => { order.push("host"); return { ok: true, stdout: connectedDocument ? 'HIVRA_TAILSCALE_STATUS {"BackendState":"Running"}\n' : "", stderr: "" }; });
+    await connectHivraTailscale(agent, "secret", DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, runHostScriptWithStdin: jest.fn().mockResolvedValue({ ok: false, stdout: "", stderr: "" }),
+      now: () => new Date("2026-09-15T12:00:00Z"), wake,
+    }).catch(() => undefined);
+    expect(wake).toHaveBeenCalledWith(agent.id);
+    expect(order[0]).toBe("wake");
+  });
+
+  it.each([
+    ["Tailscale", (deps: object) => connectHivraTailscale(agent, "secret", DEFAULT_TAILSCALE_LOGIN_SERVER, deps)],
+    ["NetBird", (deps: object) => connectHivraNetbird(agent, "setup-key", "https://api.netbird.io", deps)],
+  ])("does not touch the host when the computer is still asleep (%s)", async (_name, connect) => {
+    const runHostScript = jest.fn();
+    const runHostScriptWithStdin = jest.fn();
+    await expect(connect({
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, runHostScriptWithStdin,
+      now: () => new Date(), wake: jest.fn().mockResolvedValue({ ok: false }),
+    })).rejects.toThrow("computer_asleep");
+    expect(runHostScript).not.toHaveBeenCalled();
+    expect(runHostScriptWithStdin).not.toHaveBeenCalled();
+  });
+
+  it("refuses a napping computer on the host instead of waiting on SSH, and never wakes it to read status", async () => {
+    const wake = jest.fn();
+    const runHostScript = jest.fn().mockResolvedValue({ ok: true, stdout: disconnected, stderr: "" });
+    await observeHivraTailscale(agent, DEFAULT_TAILSCALE_LOGIN_SERVER, {
+      resolveContext: jest.fn().mockResolvedValue(context), runHostScript, now: () => new Date(), wake,
+    });
+    expect(wake).not.toHaveBeenCalled();
+    const [script] = runHostScript.mock.calls[0];
+    expect(script).toContain("qmpstatus:");
+    expect(script).toContain("the computer is asleep");
+  });
+
+  it("treats a napping computer as stopped when deleting, so the guest logout is skipped", async () => {
+    const deleting = { ...agent, operation_kind: "delete", operation_id: "22222222-2222-4222-8222-222222222222", desired_state: "deleted" };
+    const runHostScript = jest.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    await prepareHivraTailscaleForDelete(deleting, context, { runHostScript });
+    const [script] = runHostScript.mock.calls[0];
+    expect(script).toContain("qmpstatus:");
+    expect(script).toMatch(/= paused \]; then\n\s+printf '[^\n]*guest_stopped/);
   });
 });

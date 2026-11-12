@@ -146,6 +146,8 @@ export async function runParkIdleHivraAgentsSweep(
     .from("hivra_agents")
     .select("id, user_id, type, vmid, proxmox_host, created_at")
     .eq("status", "running")
+    // Parking shuts a computer down. A sleeping one is the sleep sweep's to manage.
+    .eq("sleep_state", "awake")
     // Managed-fleet policy must never park a VM on user-owned infrastructure.
     .is("deployment_target_id", null)
     .is("first_usage_at", null)
@@ -198,6 +200,8 @@ export async function runParkIdleHivraAgentsSweep(
         .update({ status: "stopped" })
         .eq("id", row.id)
         .eq("status", "running")
+        // A computer that went to sleep since the read is no longer a parking candidate.
+        .eq("sleep_state", "awake")
         // Never flip a row that is mid-operation (a start, resize or update owns it).
         .is("operation_id", null)
         .select("id");

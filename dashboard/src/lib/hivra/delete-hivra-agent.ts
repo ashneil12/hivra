@@ -28,6 +28,7 @@ import {
   type HivraPrivateAccessAgentRow,
 } from "@/lib/hivra/tailscale-private-access";
 import { log } from "@/lib/logger";
+import { wakeForUserAction } from "@/lib/hivra/sleep-aware";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -102,8 +103,16 @@ if qm status "$VMID" >/dev/null 2>&1; then
         && printf '%s' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG" \
         || { echo "VMID $VMID ownership changed before deletion" >&2; exit 1; }
     fi
-    qm stop "$VMID" --timeout 30 >/dev/null 2>&1 || true
-    qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
+    # A hibernated VM holds the config lock "suspended", which refuses stop and
+    # destroy. Ownership was just verified above, so skip the lock for both.
+    LOCK_STATE="$(qm config "$VMID" 2>/dev/null | awk '$1=="lock:"{print $2;exit}' || true)"
+    SKIP_LOCK=""
+    if [ "$LOCK_STATE" = "suspended" ]; then
+      SKIP_LOCK="--skiplock 1"
+    fi
+    # shellcheck disable=SC2086 -- SKIP_LOCK is empty or the two words "--skiplock 1"
+    qm stop "$VMID" --timeout 30 $SKIP_LOCK >/dev/null 2>&1 || true
+    qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1 $SKIP_LOCK >/dev/null 2>&1 || true
     sleep 1
   done
 fi
@@ -136,6 +145,16 @@ export async function deleteProxmoxHivraAgent(
   if (!supabaseAdmin) return fail("Database not configured", 500);
   let deleteLease: { userId: string; agentId: string; operationId: string } | null = null;
   try {
+    // A sleeping computer is woken first, so its guest can answer the private
+    // access logout below. Delete never depends on the wake: a computer that
+    // cannot wake (a lapsed owner, a failed resume) is still destroyed, and the
+    // destroy script skips the config lock of a hibernated one after its tag check.
+    // A retry of a delete that is already requested skips it: a sleep or wake that
+    // ended after the request leaves its transient state behind, and waiting on that
+    // would only slow every retry.
+    if (existingAgent.desired_state !== "deleted") {
+      await wakeForUserAction(existingAgent, { allowLapsed: true }).catch(() => undefined);
+    }
     const operationId = randomUUID();
     const disposition = await requestHivraAgentDelete({
       userId,

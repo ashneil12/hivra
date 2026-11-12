@@ -90,6 +90,7 @@ import {
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { markAgentAwake } from "./sleep-aware";
 import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
@@ -1325,6 +1326,12 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         expectedDesiredState: "stopped",
         status: vmStatus,
       });
+      // A stop that converged here never reached the route's own reset: a computer that was
+      // napping or hibernated when it was switched off must not keep a sleep record, or
+      // Start would refuse it as asleep. Best effort; the sweep also clears these.
+      if (completed && vmStatus === "stopped") {
+        try { await markAgentAwake(row.id); } catch { /* the stop stands */ }
+      }
       return completed
         ? {
             ...base,
@@ -1723,8 +1730,10 @@ export async function runRecoverStuckHivraProvisioningSweep(
     // Desktop preparation has its own evidence rules and candidate cap below,
     // and an attached agent's steps end only through the attach worker's own
     // receipts; their long-lived leases must not be cleared by, or starve,
-    // this limited lifecycle sweep.
-    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)")
+    // this limited lifecycle sweep. A sleep or wake lease is the sleep sweep's
+    // to settle from the host's observed state: this sweep reads the start log,
+    // which a sleep never writes, and could end such a lease as an error.
+    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach,sleep,wake)")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
     // intentionally retained leases must not fill the oldest-12 snapshot/

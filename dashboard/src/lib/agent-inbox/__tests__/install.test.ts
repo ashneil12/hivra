@@ -1,5 +1,6 @@
 jest.mock("server-only", () => ({}));
-jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
+const mockDb: { current: unknown } = { current: null };
+jest.mock("@/lib/supabase", () => ({ get supabaseAdmin() { return mockDb.current; } }));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
 jest.mock("@/lib/hivra/pinned-guest-seed", () => ({ buildPinnedGuestHostScript: jest.fn(), resolvePinnedGuestTarget: jest.fn() }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
@@ -63,5 +64,28 @@ describe("sweepInboxInstalls", () => {
   it("does nothing while the switch is off", async () => {
     delete process.env.HIVRA_INBOX_ANSWERS;
     await expect(sweepInboxInstalls()).resolves.toEqual({ state: "off" });
+  });
+});
+
+describe("sweepInboxInstalls and sleeping computers", () => {
+  const env = { answers: process.env.HIVRA_INBOX_ANSWERS, origin: process.env.NEXT_PUBLIC_APP_URL };
+  afterEach(() => {
+    mockDb.current = null;
+    if (env.answers === undefined) delete process.env.HIVRA_INBOX_ANSWERS; else process.env.HIVRA_INBOX_ANSWERS = env.answers;
+    if (env.origin === undefined) delete process.env.NEXT_PUBLIC_APP_URL; else process.env.NEXT_PUBLIC_APP_URL = env.origin;
+  });
+
+  it("only lists computers that are awake, so a sleeping one is never tried or counted as a failed attempt", async () => {
+    process.env.HIVRA_INBOX_ANSWERS = "1";
+    process.env.NEXT_PUBLIC_APP_URL = "https://canary.example.com";
+    const eqCalls: Array<[string, unknown]> = [];
+    const query: Record<string, unknown> = {};
+    query.select = () => query;
+    query.eq = (column: string, value: unknown) => { eqCalls.push([column, value]); return query; };
+    query.order = () => query;
+    query.limit = () => Promise.resolve({ data: [], error: null });
+    mockDb.current = { from: (table: string) => { expect(table).toBe("hivra_agents"); return query; } };
+    await expect(sweepInboxInstalls()).resolves.toEqual({ state: "ran", tried: 0, installed: 0, failed: 0 });
+    expect(eqCalls).toEqual([["type", "hermes"], ["status", "running"], ["sleep_state", "awake"]]);
   });
 });

@@ -32,6 +32,7 @@ import {
 import { z } from "zod";
 import { readJson } from "@/lib/client/read-json";
 
+export type AgentSleepPolicy = "off" | "t1" | "t3" | "full";
 export type AgentStatus = "provisioning" | "running" | "stopped" | "error" | "deleted";
 
 export interface HivraAgent {
@@ -96,6 +97,16 @@ export interface HivraAgent {
   /** The agents list's stored summary of this agent's software (Claude Code /
    *  Codex version against Hivra's tested one). Absent where not covered. */
   agent_software?: AgentSoftwareSummary | null;
+  /** Sleep: awake, draining, napping, hibernating, hibernated, waking or
+   *  wake_failed. `status` stays `running` while the agent sleeps. Absent from
+   *  an older server, which reads as awake. */
+  sleep_state?: string | null;
+  /** Bumped on every sleep or wake change (a bigint, so a number or a string). */
+  sleep_generation?: number | string | null;
+  /** "Sleep when idle": `full` lets it nap, `off` keeps it awake. */
+  sleep_policy?: AgentSleepPolicy | null;
+  /** "Keep awake": this agent never sleeps. */
+  always_on?: boolean | null;
 }
 
 export interface HivraAgentSnapshot {
@@ -629,6 +640,67 @@ export const snapshotAgent = async (id: string): Promise<void> => { await agentA
 export const restoreAgentSnapshot = async (id: string, snapshotId: string): Promise<void> => {
   await agentAction(id, "restore", { snapshotId });
 };
+
+/** How a wake request ended: up, still waking (ask again), or not possible. */
+export type WakeAgentResult =
+  | { state: "awake"; wakeMs: number | null }
+  | { state: "waking" }
+  | { state: "failed"; message: string };
+
+/**
+ * Wake a sleeping agent. The server waits up to 45 seconds: 200 means it is up,
+ * 202 means still waking. A network failure or any other answer is "failed",
+ * never a throw, so the page can show a plain message and a button to try again.
+ */
+export async function wakeAgent(id: string, signal?: AbortSignal): Promise<WakeAgentResult> {
+  try {
+    const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/wake`, {
+      method: "POST", cache: "no-store", signal,
+    });
+    const j = await readJson(r);
+    const data = j?.success === true && j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : null;
+    if (r.ok && data) {
+      if (r.status === 202 || data.state === "waking") return { state: "waking" };
+      const wakeMs = Number(data.wakeMs);
+      return { state: "awake", wakeMs: Number.isFinite(wakeMs) && wakeMs >= 0 ? wakeMs : null };
+    }
+    return { state: "failed", message: typeof j?.error === "string" && j.error ? j.error : "Your agent could not be woken up. Try again in a moment." };
+  } catch {
+    return { state: "failed", message: "Could not reach Hivra to wake your agent. Check your connection and try again." };
+  }
+}
+
+/** The manual test sleep. Throws an Error with a plain message when it cannot. */
+export async function sleepAgentNow(id: string, tier: "nap" | "hibernate"): Promise<{ outcome: string; reason: string | null }> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier }),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not put your agent to sleep.");
+  const data = j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : {};
+  return { outcome: typeof data.outcome === "string" ? data.outcome : "unknown", reason: typeof data.reason === "string" ? data.reason : null };
+}
+
+/** Save "Sleep when idle" (sleep_policy) and/or "Keep awake" (always_on). */
+export async function saveAgentSleepSettings(
+  id: string,
+  patch: { sleep_policy?: "off" | "full"; always_on?: boolean },
+): Promise<{ sleep_policy: AgentSleepPolicy | null; always_on: boolean }> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep-settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not save this setting.");
+  const data = j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : {};
+  return {
+    sleep_policy: ["off", "t1", "t3", "full"].includes(String(data.sleep_policy)) ? data.sleep_policy as AgentSleepPolicy : null,
+    always_on: data.always_on === true,
+  };
+}
 
 const ProviderResizeViewResponseSchema = z.object({
   operation: ProviderResizeOperationViewSchema.nullable(),
