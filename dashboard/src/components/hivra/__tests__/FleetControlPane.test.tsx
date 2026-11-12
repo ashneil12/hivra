@@ -328,7 +328,9 @@ describe("FleetControlPane", () => {
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
     expect(screen.getByRole("heading", { name: "Launch your first agent" })).toBeInTheDocument();
-    expect(screen.getByText("Pick one and you'll be chatting in a couple of minutes.")).toBeInTheDocument();
+    expect(screen.getByText("Pick what it should do. Hivra sets up its computer, then you just talk to it.")).toBeInTheDocument();
+    expect(screen.getByText("Research and everyday tasks")).toBeInTheDocument();
+    expect(screen.getByText("Recommended")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Hermes/ })).toHaveAttribute("href", "/dashboard/launch?profile=hermes");
     expect(screen.getByRole("link", { name: /Claude Code/ })).toHaveAttribute("href", "/dashboard/launch?profile=claude-code");
     expect(screen.getByRole("link", { name: /Codex/ })).toHaveAttribute("href", "/dashboard/launch?profile=codex");
@@ -337,13 +339,15 @@ describe("FleetControlPane", () => {
     expect(screen.queryByTestId("onboarding-checklist-stub")).not.toBeInTheDocument();
   });
 
-  it("says what Free includes, with a link to the plans, once the plan is known", async () => {
+  it("offers a free account its two ways to run an agent, once the plan is known", async () => {
     fetchPlanStrictMock.mockResolvedValue({ subscribed: false, name: "Free", key: "free" });
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
     const line = await screen.findByTestId("first-run-plan");
-    expect(line).toHaveTextContent("Hivra Cloud is part of a paid plan, from $9.99 a month. On Free, Claude Code and Codex can run on a Proxmox VE server you connect; Hermes needs a plan.");
-    expect(within(line).getByRole("link", { name: "See plans" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(line).toHaveTextContent("Your account is free. An agent needs a computer to run on, so pick one of two ways:");
+    expect(within(line).getByRole("link", { name: "Hivra Cloud, from $9.99 a month" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(within(line).getByRole("link", { name: "Your own server, free" })).toHaveAttribute("href", "/dashboard/infrastructure");
+    expect(line).toHaveTextContent("Connect a Proxmox VE server you run. Claude Code and Codex work there; Hermes needs Hivra Cloud.");
   });
 
   it("leaves the plan line out for a paid account", async () => {

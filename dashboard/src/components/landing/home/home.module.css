@@ -310,6 +310,7 @@
 .card:hover .cardEdge, .card:focus-visible .cardEdge { transform: scaleY(1); }
 .cardTop { position: relative; display: flex; align-items: center; gap: 10px; }
 .cardDot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: dot-pulse 2s ease-in-out infinite; }
+.cardBadge { padding: 2px 10px; border: 1px solid var(--hg-stroke-strong); border-radius: 999px; background: var(--hg-fill-2); font: 600 11px/1.6 var(--sans); letter-spacing: 0.04em; color: var(--text); }
 .cardRole { position: relative; display: block; margin-top: 8px; font: 600 11px/1.5 var(--sans); letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); }
 .cardArrow { margin-left: auto; color: var(--muted); transition: transform var(--hg-medium) var(--hg-ease), color var(--hg-fast); }
 .card:hover .cardArrow { color: var(--text); transform: translate(3px, -3px); }

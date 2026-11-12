@@ -53,8 +53,8 @@ export default function Footer({ tokenSurfaces = false }: { tokenSurfaces?: bool
     <footer className={styles.footer} data-public-footer>
       <div className={`${styles.footerTop} ${styles.footerCompact}`}>
         <div className={styles.footerInvitation}>
-          <p>Free to start.</p>
-          <span className={styles.footerStart}>Sign up, then connect your own cloud or server. Self-hosting is free too.</span>
+          <p>Free on your own server.</p>
+          <span className={styles.footerStart}>Sign up, then connect a server you run. Self-hosting is free too.</span>
           <PublicLink href="/sign-up" className={styles.footerStartLink}>Sign up free<ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" /></PublicLink>
         </div>
         <div className={styles.footerColumns}>

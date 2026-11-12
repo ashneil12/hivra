@@ -38,14 +38,15 @@ afterEach(() => {
 
 test("the first screen says what it is and asks once", async () => {
   await renderHome();
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Launch an AI agent. On a computer of its own.");
-  expect(screen.getByText((_, element) => element?.tagName === "P" && /^Pick Claude Code, Codex, Hermes or another agent\./.test(element.textContent ?? ""))).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("An AI agent that works for you. On a computer of its own.");
+  expect(screen.getByText((_, element) => element?.tagName === "P" && /^Research, everyday tasks or code\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   const hero = within(document.querySelector("#home-title")?.closest("section") as HTMLElement);
   expect(hero.getByRole("link", { name: "See pricing" })).toHaveAttribute("href", "#pricing");
-  expect(hero.getByText("Free to start")).toBeInTheDocument();
+  expect(hero.getByText("Free on your own server")).toBeInTheDocument();
+  expect(hero.getByText("Money-back guarantee")).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: /Hermes OS is now Hivra/ })).not.toBeInTheDocument();
-  expect(document.querySelector("#home-title")?.closest("section")).not.toHaveTextContent(/\$9\.99|money-back/);
+  expect(document.querySelector("#home-title")?.closest("section")).not.toHaveTextContent(/\$9\.99/);
   expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
   expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
 });
@@ -69,9 +70,9 @@ test("the page is short: hero, agents, three steps, pricing, questions and one c
   await renderHome();
   const headings = Array.from(document.querySelectorAll("main h2")).map(node => node.textContent);
   expect(headings).toEqual([
-    "Pick an agent. We'll give it a computer.",
+    "Pick what it should do. We'll give it a computer.",
     "Three steps. Then just talk to it.",
-    "Free to start. Hosted from $9.99 a month.",
+    "We run it, or you do. Hosted from $9.99 a month.",
     "Questions.",
     "Launch your first agent.",
   ]);
@@ -118,7 +119,7 @@ test("pricing shows the three offers that can be had today and links straight to
   await renderHome();
   const pricing = within(document.getElementById("pricing") as HTMLElement);
   expect(pricing.getAllByRole("article")).toHaveLength(3);
-  expect(pricing.getAllByRole("heading", { level: 3 }).map(heading => heading.textContent)).toEqual(["Free", "Hivra Cloud", "More room"]);
+  expect(pricing.getAllByRole("heading", { level: 3 }).map(heading => heading.textContent)).toEqual(["Hivra Cloud", "More room", "Your own server"]);
   expect(pricing.getByRole("link", { name: /Get started/ })).toHaveAttribute("href", "/get-started?plan=operator");
   expect(pricing.getByRole("link", { name: /Choose this size/ })).toHaveAttribute("href", "/get-started?plan=fleet");
   expect(pricing.getByRole("link", { name: /Sign up free/ })).toHaveAttribute("href", "/sign-up");
