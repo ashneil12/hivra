@@ -291,7 +291,14 @@ export function makeHostHarness(): HostHarness {
       // The script writes to /run and talks to /var/run/qemu-server; point both at the temp directory.
       // The script goes in on stdin, as the real transport does.
       const qemuDir = path.join(runDir, "qemu-server");
-      const local = script.replaceAll("/var/run/qemu-server", "@@QEMU@@").replaceAll("/run/", `${runDir}/`).replaceAll("@@QEMU@@", qemuDir);
+      // "/run/lock" with no trailing slash (the host helper's lock directory) must move too, or a run
+      // depends on the real /run/lock of whatever machine runs the tests.
+      const local = script
+        .replaceAll("/var/run/qemu-server", "@@QEMU@@")
+        .replaceAll("/run/lock", "@@LOCK@@")
+        .replaceAll("/run/", `${runDir}/`)
+        .replaceAll("@@QEMU@@", qemuDir)
+        .replaceAll("@@LOCK@@", path.join(runDir, "lock"));
       const pidFile = path.join(dir, "qemu.pid");
       rmSync(pidFile, { force: true });
       const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID)], { stdio: "ignore", timeout: 15_000 });

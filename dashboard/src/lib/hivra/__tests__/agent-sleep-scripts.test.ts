@@ -15,6 +15,11 @@ const ADMISSION = (dir: string): WakeAdmission => ({
 
 const hasTools = ["bash", "python3", "perl"].every((cmd) => spawnSync("which", [cmd]).status === 0);
 const host = hasTools ? describe : describe.skip;
+// A receipt that does not parse fails the test; show what the script printed so the cause is in the log.
+function explain<T>(run: { stdout: string; stderr?: string }, parsed: T | null): T | null {
+  if (parsed === null) console.warn(`unparsed receipt\n--- stdout\n${run.stdout}\n--- stderr\n${run.stderr ?? ""}`);
+  return parsed;
+}
 
 describe("script construction", () => {
   it("refuses a missing or odd binding tag and a bad VMID", () => {
@@ -103,7 +108,7 @@ host("sleep script against a stub host", () => {
   const hib = (manual = false) => buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "hibernate", manual });
   const withProbe = (state: HostState, overrides: Record<string, unknown> = {}): HostState =>
     ({ ...state, probeStdout: probeLine(overrides) });
-  const receipt = (run: { stdout: string }) => parseSleepReceipt(run.stdout, VMID);
+  const receipt = (run: { stdout: string; stderr?: string }) => explain(run, parseSleepReceipt(run.stdout, VMID));
   const noMutation = (calls: string[]) =>
     expect(calls.filter((c) => /^(qm (suspend|resume|start|set)|qmp (stop|cont)|qga )/.test(c))).toEqual([]);
 
@@ -325,7 +330,7 @@ host("wake script against a stub host", () => {
   const wake = () => buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION(h.provisionerDir) });
   // Short waits for the cases that run a wait out: one second for the guest agent, two polls for a start.
   const quick = (script: string) => script.replace("AGENT_WAIT=8", "AGENT_WAIT=1").replace("seq 1 30", "seq 1 2");
-  const receipt = (run: { stdout: string }) => parseWakeReceipt(run.stdout, VMID);
+  const receipt = (run: { stdout: string; stderr?: string }) => explain(run, parseWakeReceipt(run.stdout, VMID));
   const none = (calls: string[]) =>
     expect(calls.filter((c) => /^(qm (resume|start|set)|qmp cont)/.test(c))).toEqual([]);
   const fixups = (calls: string[]) => calls.filter((c) => c.startsWith("qga exec "));
