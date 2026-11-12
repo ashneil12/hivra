@@ -29,7 +29,7 @@ jest.mock("@/lib/api-response", () => ({
 import { auth } from "@clerk/nextjs/server";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
-import { decideRequest, readResultForOwner, revokeComputer } from "@/lib/local-bridge/service";
+import { decideRequest, enrollComputer, readResultForOwner, revokeComputer } from "@/lib/local-bridge/service";
 import { purgeOldResults } from "@/lib/local-bridge/store";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { GET, POST } from "../route";
@@ -100,6 +100,16 @@ describe("/api/hivra/bridge", () => {
     jest.mocked(decideRequest).mockResolvedValue({ ok: true, value: { request: { id: REQUEST_ID } as never, dispatchNow: true } });
     await POST(post({ action: "decide", requestId: REQUEST_ID, decision: "allow_hour" }));
     expect(runAfterResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it("set up returns the one command and its expiry, never the settings", async () => {
+    jest.mocked(enrollComputer).mockResolvedValue({
+      ok: true, value: { computer: { id: "c1", label: "Mac" } as never, command: "curl -fsSL https://x.test/api/hivra/bridge/install | bash -s -- hvb_x", expiresAt: "2026-11-12T10:15:00Z" },
+    } as never);
+    const response = await POST(post({ action: "enroll", label: "Mac" }));
+    const data = (await response.json()).data;
+    expect(data).toEqual({ computer: { id: "c1", name: "Mac" }, command: expect.stringContaining("hvb_"), expiresAt: "2026-11-12T10:15:00Z" });
+    expect(JSON.stringify(data)).not.toMatch(/bridgeKey|secret|config/);
   });
 
   it("has no allow-forever decision", async () => {
