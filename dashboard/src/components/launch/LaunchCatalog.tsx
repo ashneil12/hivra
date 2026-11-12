@@ -13,6 +13,7 @@ import { makerPageHref, type CatalogClaimView } from "@/lib/hivra/catalog-claim-
 import { PROFILE_DETAILS, profileHasBrowser, runsOnHivraCloudOnly, type LaunchProfileId } from "@/lib/launch/contracts";
 import {
   catalogSourceRepo,
+  isMakerClaimsEnabled,
   LAUNCH_CATALOG,
   primaryCatalogJob,
   type CatalogFilter,
@@ -188,8 +189,9 @@ export function LaunchCatalogPage({ profileId, name, description, icon: Icon, fi
     headingRef.current?.focus();
     captureLaunchEventOnce(`catalog-page:${profileId}`, "launch_catalog_page_viewed", { profile_id: profileId });
   }, [profileId]);
-  // A page can be claimed where Hivra can read its maker's repository, on the hosted service.
-  const claimable = catalogSourceRepo(profileId) !== null && !selfHosted;
+  // A page can be claimed where Hivra can read its maker's repository, on the
+  // hosted service, and only while maker claims are turned on.
+  const claimable = isMakerClaimsEnabled() && catalogSourceRepo(profileId) !== null && !selfHosted;
   const [claimRead, setClaimRead] = useState<CatalogClaimView | null>(null);
   useEffect(() => {
     if (!claimable) return;

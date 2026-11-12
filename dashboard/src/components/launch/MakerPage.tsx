@@ -4,7 +4,7 @@
 // walks them through proving it: a file in the project's repository holding a
 // line Hivra gave them. After that it shows how the agent is used on Hivra, a
 // launch button for their README, and that earnings are not turned on.
-// Reached from the entry's page in Launch; off with the Launch catalog switch.
+// Reached from the entry's page in Launch; off unless maker claims are turned on.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";

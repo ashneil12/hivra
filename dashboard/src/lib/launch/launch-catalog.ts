@@ -17,6 +17,16 @@ export function isLaunchCatalogEnabled(value: string | undefined = process.env.N
   return flag === "1" || flag === "true";
 }
 
+/** Off by default, and off whenever the catalog view is: a maker claiming a
+ * catalog page is its own step, turned on separately from the new Launch. */
+export function isMakerClaimsEnabled(
+  value: string | undefined = process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS,
+  catalog: string | undefined = process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG,
+): boolean {
+  const flag = value?.trim().toLowerCase();
+  return isLaunchCatalogEnabled(catalog) && (flag === "1" || flag === "true");
+}
+
 export type CatalogJobId = "coding" | "research" | "messages" | "automation" | "assistant";
 
 /** The jobs people browse by, in the order they are shown. */

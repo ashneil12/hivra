@@ -15,8 +15,14 @@ jest.mock("@/components/launch/MakerPage", () => ({
 const open = (profile: string) => MakerPageRoute({ params: Promise.resolve({ profile }) });
 
 describe("the maker page route", () => {
-  beforeEach(() => { process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG = "1"; });
-  afterEach(() => { delete process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG; });
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG = "1";
+    process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS = "1";
+  });
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG;
+    delete process.env.NEXT_PUBLIC_HIVRA_MAKER_CLAIMS;
+  });
 
   it("shows the page for an agent whose maker publishes a repository", async () => {
     render(await open("openclaw"));
@@ -30,8 +36,11 @@ describe("the maker page route", () => {
     await expect(open("omarchy")).rejects.toThrow("NEXT_NOT_FOUND");
   });
 
-  it("is not there while the catalog switch is off", async () => {
-    delete process.env.NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG;
+  it.each([
+    ["the maker claims switch", "NEXT_PUBLIC_HIVRA_MAKER_CLAIMS"],
+    ["the catalog switch", "NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG"],
+  ])("is not there while %s is off", async (_words, name) => {
+    delete process.env[name];
     await expect(open("openclaw")).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });
