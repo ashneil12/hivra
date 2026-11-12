@@ -38,7 +38,7 @@ const byMode = (profileId: LaunchProfileId, context: ModelAccessContext = CONTEX
 
 describe("the model access choices", () => {
   it("shows every agent the same three choices, and says why one can't be used", () => {
-    for (const profileId of ["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon"] as const) {
+    for (const profileId of ["claude-code", "codex", "hermes", "openclaw", "agent-zero", "openbot", "aeon"] as const) {
       expect(modelAccessOptions(profileId, CONTEXT).map(option => option.mode)).toEqual(["native", "api-key", "credits"]);
     }
     expect(byMode("claude-code")["api-key"].unavailable).toMatch(/Not available for Claude Code\. Use Hivra credits/);
@@ -151,7 +151,7 @@ describe("Hivra's model access default", () => {
   const HERE = { selfHosted: false };
 
   it("starts every agent that can use credits on credits, even at $0", () => {
-    for (const profileId of ["codex", "claude-code", "hermes", "openclaw", "agent-zero", "aeon"] as const) {
+    for (const profileId of ["codex", "claude-code", "hermes", "openclaw", "agent-zero", "openbot", "aeon"] as const) {
       expect(recommendedModelAccessMode(profileId, HERE)).toBe("credits");
     }
   });
