@@ -18,7 +18,7 @@
 
 export const AGENT_CLI_NAMES = ["claude-code", "codex"] as const;
 export type AgentCliName = (typeof AGENT_CLI_NAMES)[number];
-export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes"] as const;
+export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes", "openbot"] as const;
 export type AgentAppName = (typeof AGENT_APP_NAMES)[number];
 /** What Hivra updates on the agent: its CLI or its hosted app. */
 export type AgentSoftwareName = AgentCliName | AgentAppName;
@@ -37,6 +37,8 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   "agent-zero": /^sha256:[0-9a-f]{64}$/,
   // Hermes Agent's release, as `hermes --version` prints it (vX.Y.Z).
   hermes: CLI_VERSION,
+  // OpenBot's release (x.y.z).
+  openbot: CLI_VERSION,
 };
 
 /**
@@ -46,9 +48,14 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
  */
 export const HERMES_UPDATE_TARGET = "latest";
 
+/** Apps Hivra pins no version for: their owners update to the upstream's latest release. */
+export function isLatestTargetApp(name: AgentSoftwareName | null | undefined): name is "hermes" | "openbot" {
+  return name === "hermes" || name === "openbot";
+}
+
 /** A version in this software's own form; for Hermes only the literal update target `latest`, since Hivra pins no Hermes version. */
 export function isAgentSoftwareTarget(name: AgentSoftwareName, value: unknown): value is string {
-  return name === "hermes" ? value === HERMES_UPDATE_TARGET : isAgentSoftwareVersion(name, value);
+  return isLatestTargetApp(name) ? value === HERMES_UPDATE_TARGET : isAgentSoftwareVersion(name, value);
 }
 
 /** A version in the form this software names its versions. */
@@ -121,7 +128,7 @@ export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null
   return null;
 }
 
-export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
+export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
 
 /** The runtime updater's host-validated agent app line, each version in its app's own form. */
 export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null {
@@ -203,7 +210,7 @@ export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): 
  * update is refused), computers and every other kind of computer are not
  * covered.
  */
-export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes"] as const;
+export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot"] as const;
 export type AgentSoftwareType = (typeof AGENT_SOFTWARE_TYPES)[number];
 
 /** The agentKind each covered agent's connection service reports on /api/meta. */
@@ -214,6 +221,7 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
   hermes: "hermes",
+  openbot: "openbot",
 };
 
 /**
@@ -250,7 +258,7 @@ export function agentSoftwareSubject(row: {
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
   const cli = type === "claude-code" || type === "codex" ? type : null;
-  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" ? type : null;
+  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" || type === "openbot" ? type : null;
   return {
     type,
     cli,
@@ -467,7 +475,7 @@ function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareVie
 
 /** What the owner should see about this agent's software right now. */
 export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
-  if (input.subject.app === "hermes") return deriveHermesSoftware(input);
+  if (isLatestTargetApp(input.subject.app)) return deriveHermesSoftware(input);
   const { subject, status, tested, record, now } = input;
   const previous = input.previous ?? [];
   if (status !== "running") return { kind: "not_running" };

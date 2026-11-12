@@ -52,6 +52,14 @@ const AGENT_ZERO_PORT = Number(process.env.AGENT_ZERO_PORT) || 50080;
 // Host/Origin and peer, so this gateway presents exactly that and is the only way in.
 const HERMES_PORT = Number(process.env.HERMES_DASHBOARD_PORT) || 9119;
 const HERMES_WEBAPP_PORT = Number(process.env.HERMES_WEBAPP_PORT) || 9120;
+// OpenBot by CopilotKit, official and unmodified, on loopback OPENBOT_PORT. It
+// has no base path, so on an OpenBot computer it is served at the ROOT of this
+// origin: every path this gateway does not own goes to OpenBot, behind the same
+// token gate. It runs single-user and trusts only loopback callers addressed to
+// loopback, so the gateway presents OpenBot's own Host and Origin. /openbot/ is
+// the entry the agent page opens: a one-time setup page for the CopilotKit
+// Intelligence key OpenBot needs before it starts, then a redirect to /.
+const OPENBOT_PORT = Number(process.env.OPENBOT_PORT) || 3101;
 // Attached mode (design 5.4): the same gateway code runs as an attached agent's
 // own sandboxed instance on a computer its owner already has. Its root-written
 // unit sets these; nothing in the agent's writable HOME can change them.
@@ -87,6 +95,7 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "openclaw" ? "openclaw"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
   : _agentKindRaw === "hermes" ? "hermes"
+  : _agentKindRaw === "openbot" ? "openbot"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -203,16 +212,17 @@ function agentCliUpdateRefusal() {
 const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
-  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] } : null;
+  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] }
+  : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
-// What an update status may name as its target. Hermes has no Hivra pin: its
-// update is always to whatever Hermes itself publishes as latest.
-const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/ };
+const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+// What an update status may name as its target. Hermes and OpenBot have no
+// Hivra pin: their update is always to whatever upstream publishes as latest.
+const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/ };
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -1875,8 +1885,8 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") {
-    // Aeon + OpenClaw + Agent Zero + Hermes are hosted dashboards, not chat-CLI agents — no
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") {
+    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot are hosted dashboards, not chat-CLI agents — no
     // /api/chat surface; the user works in the agent's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
@@ -2573,6 +2583,137 @@ function hermesProxy(req, res) {
   return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
 }
 
+// ---- OpenBot (CopilotKit) at the box root --------------------------------
+const OPENBOT_ENTRY = "/openbot";
+const OPENBOT_SETUP = "/openbot/setup";
+const OPENBOT_KEY_FILE = path.join(HOME, ".hivra", "openbot-intelligence-key");
+const OPENBOT_KEY_RE = /^[A-Za-z0-9_.-]{8,512}$/;
+// Paths this gateway answers itself on an OpenBot computer; every other path
+// is OpenBot's. None of them is an OpenBot route (its API lives under other
+// /api names and /api/auth), and /api/browser is OpenBot's here: an OpenBot
+// computer has no box browser stack.
+const OPENBOT_GATEWAY_PATHS = ["/healthz", "/auth/bootstrap", "/api/meta", "/api/llm", "/api/model", "/api/restrict",
+  "/api/sessions", "/api/mcp", "/api/file", "/api/files", "/api/upload", "/api/terminal", "/api/telegram", "/api/skills",
+  "/api/login", "/api/git", "/api/cookies", "/api/claude-app", "/api/chat", "/terminal", "/box-terminal", "/vnc",
+  "/desktop", "/workspace", OPENBOT_ENTRY];
+function openbotGatewayPath(u) {
+  return OPENBOT_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+function openbotKeySaved() {
+  try {
+    const fd = fs.openSync(OPENBOT_KEY_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      if (!fs.fstatSync(fd).isFile()) return false;
+      const buffer = Buffer.alloc(600);
+      const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      return OPENBOT_KEY_RE.test(buffer.subarray(0, size).toString("ascii").trim());
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+// OpenBot accepts a browser request only from its own origin, addressed to its
+// own loopback name. The gate has already authenticated the owner (and checked
+// that a cookie mutation or WebSocket comes from this box's own HTTPS origin),
+// so a request from this origin presents OpenBot's; any other Origin is passed
+// on as it came and OpenBot refuses it.
+const OPENBOT_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
+function openbotHeaders(req) {
+  const set = {};
+  for (const name of OPENBOT_DROPPED_HEADERS) set[name] = null;
+  if (req.headers.origin !== undefined) {
+    let own = false;
+    try { own = new URL(String(req.headers.origin)).host.toLowerCase() === String(req.headers.host || "").trim().toLowerCase(); } catch {}
+    if (own) set.origin = "http://127.0.0.1:" + OPENBOT_PORT;
+  }
+  return set;
+}
+function openbotAnswers(done) {
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({ host: "127.0.0.1", port: OPENBOT_PORT, method: "GET", path: "/",
+    headers: { host: "127.0.0.1:" + OPENBOT_PORT, accept: "text/html" }, timeout: 3000 }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+function openbotPage(res, status, title, body, refreshSeconds) {
+  // same-origin, not no-referrer: a form post under no-referrer carries
+  // Origin: null, which the gate (rightly) refuses as a cookie mutation.
+  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'" });
+  res.end("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    + (refreshSeconds ? "<meta http-equiv=\"refresh\" content=\"" + refreshSeconds + ";url=" + OPENBOT_ENTRY + "/\">" : "")
+    + "<title>" + title + "</title><style>"
+    + ":root{color-scheme:light dark;--bg:#fafafa;--fg:#161616;--muted:#6b6b6b;--line:#e2e2e2;--accent:#6e56cf}"
+    + "@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#ededed;--muted:#9a9a9a;--line:#2a2a2a;--accent:#9e8cfc}}"
+    + "body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;box-sizing:border-box}"
+    + "main{max-width:440px;width:100%}h1{font-size:20px;margin:0 0 8px}p{color:var(--muted);margin:0 0 16px}a{color:var(--accent)}"
+    + "input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:transparent;color:var(--fg);font:inherit}"
+    + "button{margin-top:12px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}"
+    + ".err{color:#d4423b}</style></head><body><main>" + body + "</main></body></html>");
+}
+function openbotSetupForm(res, error) {
+  return openbotPage(res, error ? 400 : 200, "Set up OpenBot",
+    "<h1>One step before OpenBot starts</h1>"
+    + "<p>OpenBot keeps its conversations and memory in CopilotKit Intelligence, so it needs a key from your CopilotKit project. CopilotKit has a free plan.</p>"
+    + "<p>Sign in at <a href=\"https://intelligence.copilotkit.ai\" target=\"_blank\" rel=\"noopener noreferrer\">intelligence.copilotkit.ai</a>, open your project's API Keys and copy the key that starts with <code>cpk-</code>.</p>"
+    + (error ? "<p class=\"err\">" + error + "</p>" : "")
+    + "<form method=\"post\" action=\"" + OPENBOT_SETUP + "\"><input name=\"key\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"cpk-…\" aria-label=\"CopilotKit Intelligence key\" required>"
+    + "<button type=\"submit\">Start OpenBot</button></form>");
+}
+// GET /openbot/: the setup form until a key is saved, a short wait while
+// OpenBot starts, then OpenBot itself at /. GET /openbot/setup always shows the
+// form (to replace the key).
+function openbotEntry(req, res, u) {
+  if (!authed(req)) return denyHtml(res);
+  if (req.method !== "GET" && req.method !== "HEAD") return jsonRes(res, 405, { error: "method not allowed" });
+  if (u === OPENBOT_SETUP || u === OPENBOT_SETUP + "/" || !openbotKeySaved()) return openbotSetupForm(res, null);
+  if (agentAppHold(req, res)) return;
+  openbotAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(res, 200, "Starting OpenBot", "<h1>Starting OpenBot…</h1><p>The first start sets up its database and takes about a minute. This page opens OpenBot when it is ready.</p>", 5);
+  });
+}
+function openbotSaveKey(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => { body += chunk; if (body.length > 4096) { tooBig = true; req.destroy(); } });
+  req.on("end", () => {
+    if (tooBig) return;
+    const key = String(new URLSearchParams(body).get("key") || "").trim();
+    if (!OPENBOT_KEY_RE.test(key)) return openbotSetupForm(res, "That doesn't look like a CopilotKit key. Copy it again from your project's API Keys.");
+    try {
+      fs.mkdirSync(path.join(HOME, ".hivra"), { recursive: true, mode: 0o700 });
+      const staged = OPENBOT_KEY_FILE + ".next";
+      fs.rmSync(staged, { force: true });
+      fs.writeFileSync(staged, key + "\n", { mode: 0o600, flag: "wx" });
+      fs.renameSync(staged, OPENBOT_KEY_FILE);
+    } catch (error) {
+      console.warn("hivra-chat: could not save the OpenBot key: " + ((error && error.code) || error));
+      return openbotSetupForm(res, "The key could not be saved. Try again.");
+    }
+    // A waiting service picks the key up within seconds; a running one is
+    // restarted so a replaced key takes effect.
+    execFile("sudo", ["-n", "/usr/local/bin/hivra-openbot-apply", "restart"], { env: AGENT_ENV, timeout: 60000 }, (err) => {
+      if (err) console.warn("hivra-chat: hivra-openbot-apply restart failed: " + (err.code || err.message));
+    });
+    res.writeHead(303, { Location: OPENBOT_ENTRY + "/", "Cache-Control": "no-store" });
+    res.end();
+  });
+}
+function openbotProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  // Before the key is saved OpenBot is not running: a page load goes to setup.
+  if ((req.method === "GET" || req.method === "HEAD") && String(req.headers.accept || "").includes("text/html") && !openbotKeySaved()) {
+    res.writeHead(303, { Location: OPENBOT_ENTRY + "/", "Cache-Control": "no-store" });
+    return res.end();
+  }
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, OPENBOT_PORT, null, false, openbotHeaders(req));
+}
+
 // ---- terminals on owner-only unix sockets -----------------------------------
 // ttyd serves the agent terminal and the computer's shell on unix sockets owned
 // by bux in bux-owned 0700 runtime folders, so no other local user or service
@@ -2753,7 +2894,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -3898,6 +4039,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
   }
   if (req.method === "POST" && u === "/auth/bootstrap") return handleAuthBootstrap(req, res);
+  if (AGENT_KIND === "openbot" && !ATTACHED) {
+    if (req.method === "POST" && u === OPENBOT_SETUP) return openbotSaveKey(req, res);
+    if (u === OPENBOT_ENTRY || u.startsWith(OPENBOT_ENTRY + "/")) return openbotEntry(req, res, u);
+    if (!openbotGatewayPath(u)) return openbotProxy(req, res);
+  }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
   // controls, so these land on the box root — this chat server — and die as 404s.
@@ -4017,8 +4163,8 @@ const server = http.createServer((req, res) => {
     }
   }
   if (req.method === "GET" && u === "/api/login/status") return authed(req) ? handleLoginStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
   // Introspection endpoints (token-gated): chat history, file browser, skills.
   if (req.method === "GET" && (u === "/api/sessions" || u.startsWith("/api/sessions/"))) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
@@ -4098,6 +4244,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
+  else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
   if (isAgentAppPort(port)) {
@@ -4127,6 +4274,9 @@ server.on("upgrade", (req, socket, head) => {
   // none) and reads its path prefix from X-Forwarded-Prefix.
   const hermesWs = hermesMounted(u);
   const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port) : null;
+  // OpenBot's live sockets present its own loopback Host and (from this origin) Origin.
+  const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
+  const openbotSet = openbotWs ? openbotHeaders(req) : null;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4142,6 +4292,7 @@ server.on("upgrade", (req, socket, head) => {
       const key = k.toLowerCase();
       if (a0Ws && key === "cookie") continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
+      if (openbotWs && (key === "host" || key in openbotSet)) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;
@@ -4156,6 +4307,10 @@ server.on("upgrade", (req, socket, head) => {
     if (hermesWs) {
       hdr += "host: 127.0.0.1:" + port + "\r\n";
       for (const [name, value] of Object.entries(hermesSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
+    }
+    if (openbotWs) {
+      hdr += "host: 127.0.0.1:" + port + "\r\n";
+      for (const [name, value] of Object.entries(openbotSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";

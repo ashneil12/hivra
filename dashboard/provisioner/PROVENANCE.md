@@ -544,6 +544,19 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.12.4` builds on `2026.11.12.3` and adds OpenBot by CopilotKit as an agent
+kind. The guest installer (`provision-claude-code-box.sh`) installs Docker, pulls CopilotKit's
+official `ghcr.io/copilotkit/openbot` image at its latest release and records it by digest, and
+runs it on the computer's loopback (port 3101) in OpenBot's single-user mode under
+`hivra-openbot.service`. OpenBot will not start without a CopilotKit Intelligence key, so the box
+gateway (`hivra-chat/server.js`) shows a one-step page at `/openbot/` to paste it, keeps it on the
+computer at `~/.hivra/openbot-intelligence-key` (0600), and then serves OpenBot's own workspace at
+the root of the computer's address behind the Hivra sign-in. `hivra-agent-app-update.sh` updates
+it to upstream's latest image, backing up its database first and putting the previous image and
+data back if the new one does not start. The typed installer, host provisioner, guest runtime
+update, receipt and agent shell learn the kind. `hivra-provider-worker.py` advances its release
+labels. This source release does not deploy, install, or update any existing computer.
+
 Release `2026.11.12.3` builds on `2026.11.12.2` and lets the owner turn on Hermes's own
 restore points (checkpoints) from Hivra's Manage page. Before Hermes changes files in a turn,
 it snapshots the project into its own shadow git store (`~/.hermes/checkpoints`), and the owner

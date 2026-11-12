@@ -11,7 +11,7 @@ import { ProviderGuestWorkerVersion, providerGuestWorkerRecipe } from "./provide
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
 const safeText = (max: number) => z.string().refine(value => Buffer.byteLength(value) <= max && !/[\u0000-\u001f\u007f]/.test(value));
-const Launch = z.object({ version: z.literal(1), agentKind: z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "hermes"]),
+const Launch = z.object({ version: z.literal(1), agentKind: z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "hermes"]),
   computerSubstrate: z.literal("provider-vm"), wantBrowser: z.boolean().nullable(), modelKey: safeText(8192),
   modelBaseUrl: safeText(2048), model: safeText(256),
   tunnelToken: z.string().regex(/^[A-Za-z0-9._=-]{1,8192}$/).nullable(),

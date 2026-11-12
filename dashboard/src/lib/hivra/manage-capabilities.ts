@@ -322,6 +322,8 @@ function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): Manage
   }
   // Official Hermes, updated by its own `hermes update`: nothing Hivra vetted.
   if (row.type === "hermes") return { name: "hermes", vetted: null };
+  // OpenBot likewise follows upstream's latest release.
+  if (row.type === "openbot") return { name: "openbot", vetted: null };
   return null;
 }
 
