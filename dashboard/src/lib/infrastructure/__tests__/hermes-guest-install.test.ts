@@ -21,10 +21,10 @@ const block = script.slice(start, script.indexOf("\nfi\n", script.indexOf("ok \"
 describe("Hermes guest install", () => {
   it("has a Hermes block, accepted as an agent kind and never given the browser stack", () => {
     expect(start).toBeGreaterThan(0);
-    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server) ;;");
+    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|linux-desktop|linux-server) ;;");
     expect(script).toContain('[ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0');
     // Not given the Hivra clean-assistant prompt rewrite that coding agents get.
-    expect(script).toContain('[ "$AGENT_KIND" != "hermes" ] && ! is_linux_computer; then\nsay "6/7');
+    expect(script).toContain('[ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && ! is_linux_computer; then\nsay "6/7');
   });
 
   it("downloads the official installer over HTTPS to a file and runs it as the agent user, never as root or piped", () => {
@@ -96,7 +96,7 @@ describe("Hermes guest install", () => {
     for (const name of ["hivra-install-agent.py", "hivra-provision-on-host.sh", "hivra-provider-worker.py", "hivra-runtime-receipt.py"]) {
       expect(fs.readFileSync(path.join(PROVISIONER, name), "utf8")).toContain("hermes");
     }
-    expect(fs.readFileSync(path.join(PROVISIONER, "hivra-update-guest-runtime.sh"), "utf8")).toContain("name=hermes version=");
+    expect(fs.readFileSync(path.join(PROVISIONER, "hivra-update-guest-runtime.sh"), "utf8")).toContain("name=(hermes|openbot) version=");
     expect(fs.readFileSync(path.join(PROVISIONER, "hivra-guest-runtime-update.sh"), "utf8")).toContain("target=latest");
   });
 

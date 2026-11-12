@@ -122,7 +122,7 @@ export function legacyNativeCliBody(input: {
 
 /** The OpenClaw / Agent Zero / Aeon form (DashboardAgentLaunchForm). */
 export function legacyDashboardAgentBody(input: {
-  agentId: "openclaw" | "agent-zero" | "aeon";
+  agentId: "openclaw" | "agent-zero" | "openbot" | "aeon";
   agentName: string;
   resolvedCpu: number;
   resolvedRam: number;
@@ -134,7 +134,7 @@ export function legacyDashboardAgentBody(input: {
 }): Record<string, unknown> {
   const { agentId, wantManaged, cardMicro, hermesosMicro } = input;
   const launchWalletType: "card" | "hermesos" = cardMicro <= 0 && hermesosMicro > 0 ? "hermesos" : "card";
-  const llmForLaunch = (agentId === "openclaw" || agentId === "agent-zero") && wantManaged
+  const llmForLaunch = (agentId === "openclaw" || agentId === "agent-zero" || agentId === "openbot") && wantManaged
     ? { provider: "venice" as const, mode: "managed" as const, walletType: launchWalletType }
     : undefined;
   return JSON.parse(JSON.stringify({

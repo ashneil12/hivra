@@ -1,4 +1,4 @@
-// Apply every migration up to 20261112210000 in PostgreSQL/WASM (the new one
+// Apply every migration up to 20261112230000 in PostgreSQL/WASM (the new one
 // twice, proving it re-runs), with a managed inference key already linked to an
 // agent before it runs, then check: the existing link is backfilled into the
 // key's metadata; new agents stamp their key; a bad or foreign key never blocks
@@ -11,7 +11,7 @@ const path = require("node:path");
 const { PGlite } = require("@electric-sql/pglite");
 
 const MIGRATIONS = path.resolve(__dirname, "../supabase/migrations");
-const TARGET = "20261112210000_agent_usage_and_host_costs.sql";
+const TARGET = "20261112230000_agent_usage_and_host_costs.sql";
 
 async function rejects(db, sql, pattern, label) {
   let error = null;

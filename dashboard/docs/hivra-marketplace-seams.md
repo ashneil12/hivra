@@ -23,7 +23,7 @@ deploy in one click, publish your own, and monetise usage (settled in $HermesOS)
 
 ## Usage and cost records in place now (no payouts)
 
-Added 2026-11-12 (migration `20261112210000_agent_usage_and_host_costs`). Records
+Added 2026-11-12 (migration `20261112230000_agent_usage_and_host_costs`). Records
 only: nothing here bills, pays or switches anything on. Service role only.
 
 | Record | What it holds |

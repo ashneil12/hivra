@@ -8,6 +8,8 @@ import {
   compareSoftwareVersions,
   deriveAgentSoftware,
   effectiveAgentCliAutoUpdate,
+  isAgentSoftwareTarget,
+  isAgentSoftwareVersion,
   parseAgentAppReport,
   parseAgentCliMeta,
   parseAgentCliReport,
@@ -82,6 +84,7 @@ describe("agentSoftwareSubject", () => {
     expect(agentSoftwareSubject({ type: "aeon", computer_substrate: "proxmox-kvm" })).toEqual({ type: "aeon", cli: null, app: "aeon", software: "aeon", gatewayKind: "aeon" });
     expect(agentSoftwareSubject({ type: "agent-zero" })).toMatchObject({ app: "agent-zero", software: "agent-zero", gatewayKind: "agent-zero" });
     expect(agentSoftwareSubject({ type: "openclaw" })).toMatchObject({ cli: null, app: "openclaw", software: "openclaw" });
+    expect(agentSoftwareSubject({ type: "openbot" })).toEqual({ type: "openbot", cli: null, app: "openbot", software: "openbot", gatewayKind: "openbot" });
   });
   it.each([
     ["DeepSeek, whose update is refused", { type: "deepseek-harness" }],
@@ -97,7 +100,7 @@ describe("agentSoftwareSubject", () => {
 });
 
 describe("agentSoftwareSubject on My cloud", () => {
-  it.each(["claude-code", "codex", "aeon", "openclaw", "agent-zero"])("covers a My cloud %s agent", (type) => {
+  it.each(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot"])("covers a My cloud %s agent", (type) => {
     expect(agentSoftwareSubject({ type, computer_substrate: "provider-vm" })).toMatchObject({ type });
   });
 
@@ -338,6 +341,30 @@ describe("automatic updates", () => {
     expect(agentCliAutoUpdateGate({ kind: "update_rolled_back", target: TESTED, installed: "0.149.0" }, null, TESTED)).toEqual({ ok: false, skip: "paused" });
     // A pause for an older target doesn't hold a newer one.
     expect(agentCliAutoUpdateGate({ kind: "behind", installed: "0.149.0" }, { auto_paused_target: "0.148.0", auto_paused_reason: "failed" }, TESTED)).toEqual({ ok: true });
+  });
+});
+
+describe("OpenBot (updated to upstream's latest release, never pinned by Hivra)", () => {
+  const openbot = agentSoftwareSubject({ type: "openbot", computer_substrate: "proxmox-kvm" }) as AgentSoftwareSubject;
+  const view = (record: AgentSoftwareRecord | null, status = "running") =>
+    deriveAgentSoftware({ subject: openbot, status, tested: null, record, now: NOW });
+  const base = { observation: "reported", installed_version: "1.0.2", observed_at: ago(MIN) } as const;
+
+  it("reports an x.y.z version and only `latest` as its update target", () => {
+    expect(isAgentSoftwareVersion("openbot", "1.0.2")).toBe(true);
+    expect(isAgentSoftwareVersion("openbot", "latest")).toBe(false);
+    expect(isAgentSoftwareTarget("openbot", "latest")).toBe(true);
+    expect(isAgentSoftwareTarget("openbot", "1.0.3")).toBe(false);
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=openbot version=1.0.2 target=latest state=scheduled"))
+      .toEqual({ name: "openbot", version: "1.0.2", target: "latest", state: "scheduled" });
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=openbot version=1.0.2 target=1.0.3 state=scheduled")).toBeNull();
+  });
+
+  it("shows the installed version with nothing to be behind", () => {
+    expect(view(base)).toEqual({ kind: "current", installed: "1.0.2" });
+    expect(view(base, "stopped")).toEqual({ kind: "not_running" });
+    expect(view(null)).toEqual({ kind: "checking" });
+    expect(agentSoftwareBadge(view(base))).toBeNull();
   });
 });
 

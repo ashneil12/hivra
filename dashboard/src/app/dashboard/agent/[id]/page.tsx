@@ -1,7 +1,7 @@
 "use client";
 
 // Hivra per-agent view — Chat (<Agent> session) · Computer (Desktop,
-// Browser, Files, Terminal) · Settings, in the agent sidebar and one title bar. Server-backed: polls the agent until provisioning finishes, then the
+// Browser, Files, Terminal) · Settings, in the agent sidebar and one floating pill. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -43,10 +43,10 @@ import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
-import { CommandPanelDock } from "@/components/hivra/command-panel/CommandPanel";
 import type { ManageSectionId } from "@/lib/hivra/manage-sections";
 import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
 import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
+import { AgentQuickSettings } from "@/components/hivra/agent-shell/quick-settings";
 import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
@@ -1074,7 +1074,7 @@ export default function AgentPage() {
     setManageSectionRequest((current) => ({ section: "updates", id: (current?.id ?? 0) + 1 }));
     selectTab("manage");
   }, [selectTab]);
-  // The command panel's Model and Computer size open their Manage section.
+  // The pill's quick settings (Model, Computer size, Updates) open their Manage section.
   const openManageSection = useCallback((section: ManageSectionId) => {
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("section", section);
@@ -1288,7 +1288,7 @@ export default function AgentPage() {
     </SurfaceCodeBoundary>
   );
 
-  // The page's own rows under the title bar: the channel nudge, then the work
+  // The page's own rows under the floating pill: the channel nudge, then the work
   // pane that holds every surface (mounted and retained exactly as before).
   const content = (
     <>
@@ -1308,15 +1308,6 @@ export default function AgentPage() {
         />
       ) : null}
 
-      <CommandPanelDock
-        agent={agent}
-        surfaces={tabs.map((t) => t.id)}
-        activeSurface={effectiveTab}
-        onOpenSurface={selectTab}
-        onOpenManageSection={openManageSection}
-        onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
-        onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
-      >
       <div id={WORK_PANE_ID} className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
@@ -1461,7 +1452,7 @@ export default function AgentPage() {
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
@@ -1555,7 +1546,6 @@ export default function AgentPage() {
           )
         ) : null}
       </div>
-      </CommandPanelDock>
     </>
   );
 
@@ -1580,24 +1570,40 @@ export default function AgentPage() {
           {content}
         </>
       ) : (
-        <AgentShell
-          name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
-          status={provisioning ? activity.label : agent.status}
-          nameTitle={isComputer ? undefined : computerNote}
-          switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
-          titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
-          surfaces={tabs}
-          groups={surfaceGroups}
-          active={effectiveTab}
-          onSelect={selectTab}
-          chatSurface="chat"
-          panelId={WORK_PANE_ID}
-          exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
-          surfaceNote={{ browser: "View only" }}
-          homeLabel={isDashboard ? def?.name : undefined}
+        <AgentQuickSettings
+          key={agent.id}
+          agent={agent}
+          surfaces={tabs.map((t) => t.id)}
+          enabled={!isComputer && agent.status === "running"}
+          onOpenSurface={selectTab}
+          onOpenManageSection={openManageSection}
+          onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+          onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
         >
-          {content}
-        </AgentShell>
+          {({ settings, busy, suggestion }) => (
+          <AgentShell
+            name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
+            status={provisioning ? activity.label : agent.status}
+            nameTitle={isComputer ? undefined : computerNote}
+            switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
+            titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
+            surfaces={tabs}
+            groups={surfaceGroups}
+            active={effectiveTab}
+            onSelect={selectTab}
+            chatSurface="chat"
+            panelId={WORK_PANE_ID}
+            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+            surfaceNote={{ browser: "View only" }}
+            homeLabel={isDashboard ? def?.name : undefined}
+            quickSettings={settings}
+            busy={busy}
+            suggestion={suggestion}
+          >
+            {content}
+          </AgentShell>
+          )}
+        </AgentQuickSettings>
       )}
 
       {paywallOpen ? (

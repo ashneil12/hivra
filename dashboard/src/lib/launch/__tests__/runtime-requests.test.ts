@@ -149,6 +149,8 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
     ["openclaw", true, 0, 5_000_000],
     ["agent-zero", true, 0, 0],
     ["agent-zero", false, 1, 1],
+    ["openbot", true, 0, 0],
+    ["openbot", false, 1, 1],
     ["aeon", true, 5_000_000, 5_000_000],
     ["aeon", false, 0, 0],
   ] as const)("sends %s with credits %s (card %d, token %d) exactly as the form did", (type, credits, card, token) => {
