@@ -39,6 +39,8 @@ function setup(overrides: Partial<AgentPillProps> = {}) {
 }
 
 const handle = () => screen.getByRole("button", { name: /Show controls$/ });
+/** A new status shows once it has held this long. */
+const settle = () => act(() => { jest.advanceTimersByTime(1200); });
 const dialog = () => screen.queryByRole("dialog", { name: "Hermes 1 controls" });
 
 beforeEach(() => {
@@ -109,15 +111,24 @@ describe("AgentPill", () => {
     menu.remove();
   });
 
-  it("closes when focus moves into an iframe", () => {
+  it("stays open when an embedded page takes focus, and closes on a click over the work pane", () => {
     setup();
     fireEvent.click(handle());
     const frame = document.createElement("iframe");
     document.body.appendChild(frame);
     frame.focus();
     fireEvent.blur(window);
-    expect(dialog()).not.toBeInTheDocument();
+    expect(dialog()).toBeInTheDocument();
     frame.remove();
+
+    // The pane below is covered while it is open: the press alone does nothing,
+    // the click closes it, and nothing reaches the page underneath.
+    const scrim = screen.getByTestId("agent-pill-scrim");
+    fireEvent.pointerDown(scrim);
+    expect(dialog()).toBeInTheDocument();
+    fireEvent.click(scrim);
+    expect(dialog()).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-pill-scrim")).not.toBeInTheDocument();
   });
 
   it("lists every view, marks the open one, focuses it, and closes after a choice", () => {
@@ -248,12 +259,15 @@ describe("AgentPill", () => {
 });
 
 describe("AgentPill status", () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+
   it("shows the busy word with the orb, and the status word while setting up", () => {
     const view = setup({ busy: "Updating" });
     expect(handle()).toHaveTextContent("Updating");
     expect(screen.getByTestId("orb")).toBeInTheDocument();
     expect(handle()).toHaveAccessibleName("Hermes 1, Updating. Show controls");
     view.rerenderWith({ busy: null, status: "provisioning" });
+    settle();
     expect(handle()).toHaveTextContent("provisioning");
     expect(screen.getByTestId("orb")).toBeInTheDocument();
   });
@@ -262,14 +276,44 @@ describe("AgentPill status", () => {
     const view = setup();
     expect(handle()).not.toHaveTextContent(/running/i);
     view.rerenderWith({ status: "stopped" });
+    settle();
     expect(handle()).toHaveTextContent("stopped");
     expect(screen.queryByTestId("orb")).not.toBeInTheDocument();
   });
 
+  it("holds still while the status flickers, and shows a change once it stays", () => {
+    const view = setup({ status: "starting" });
+    expect(handle()).toHaveTextContent("starting");
+    view.rerenderWith({ status: "running" });
+    act(() => { jest.advanceTimersByTime(600); });
+    view.rerenderWith({ status: "starting" });
+    act(() => { jest.advanceTimersByTime(600); });
+    view.rerenderWith({ status: "running" });
+    act(() => { jest.advanceTimersByTime(600); });
+    // Never long enough to count: still starting, no Ready flash.
+    expect(handle()).toHaveTextContent("starting");
+    expect(screen.getByTestId("orb")).toBeInTheDocument();
+    act(() => { jest.advanceTimersByTime(700); });
+    expect(handle()).not.toHaveTextContent("starting");
+    expect(handle()).toHaveTextContent("Ready");
+  });
+
+  it("shows an action the moment it starts, and keeps it through a short gap", () => {
+    const view = setup();
+    view.rerenderWith({ busy: "Restarting" });
+    expect(handle()).toHaveTextContent("Restarting");
+    view.rerenderWith({ busy: null });
+    act(() => { jest.advanceTimersByTime(500); });
+    view.rerenderWith({ busy: "Restarting" });
+    act(() => { jest.advanceTimersByTime(2000); });
+    expect(handle()).toHaveTextContent("Restarting");
+    expect(handle()).not.toHaveTextContent("Ready");
+  });
+
   it("says Ready for four seconds after it finishes working, then fades back to the dot", () => {
-    jest.useFakeTimers();
     const view = setup({ busy: "Updating" });
     view.rerenderWith({ busy: null });
+    settle();
     expect(handle()).toHaveTextContent("Ready");
     act(() => { jest.advanceTimersByTime(3900); });
     expect(handle()).toHaveTextContent("Ready");
