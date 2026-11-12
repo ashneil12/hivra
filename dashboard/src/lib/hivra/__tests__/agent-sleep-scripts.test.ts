@@ -15,9 +15,9 @@ const ADMISSION = (dir: string): WakeAdmission => ({
 
 const hasTools = ["bash", "python3", "perl"].every((cmd) => spawnSync("which", [cmd]).status === 0);
 const host = hasTools ? describe : describe.skip;
-// A receipt that does not parse fails the test; show what the script printed so the cause is in the log.
 function explain<T>(run: { stdout: string; stderr?: string }, parsed: T | null): T | null {
-  if (parsed === null) console.warn(`unparsed receipt\n--- stdout\n${run.stdout}\n--- stderr\n${run.stderr ?? ""}`);
+  // Every receipt these tests read must parse, so a null fails here with the output in the message.
+  if (parsed === null) throw new Error(`unparsed receipt\n--- stdout\n${run.stdout}\n--- stderr\n${(run.stderr ?? "").slice(-4000)}`);
   return parsed;
 }
 
