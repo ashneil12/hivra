@@ -176,6 +176,19 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(screen.getByRole("heading", { name: "Your agent's computer is ready." })).toBeInTheDocument();
   }, 15000);
 
+  it("says plainly when a launch failed instead of waiting", async () => {
+    agentStatus = "error";
+    render(<LaunchJourney legacyHermesLane />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
+    await reviewLaunch();
+    fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
+
+    await screen.findByRole("heading", { name: "Claude Code 1 couldn't start." }, { timeout: 8000 });
+    expect(screen.getByTestId("launch-primary-action")).toHaveTextContent("Open Claude Code 1");
+    expect(screen.queryByText(/Waiting for it to answer/)).not.toBeInTheDocument();
+  }, 15000);
+
   it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {
     summaryMock.mockResolvedValue(balance(0));
     await chooseAgent("Hermes");

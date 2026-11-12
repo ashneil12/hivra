@@ -635,7 +635,7 @@ type ResumeChoice = { stored: LaunchDraft; fresh: LaunchDraft };
 type LaunchedScreenProps = {
   name: string;
   href: string;
-  readiness: { ready: boolean; checking: boolean; recheck: () => void };
+  readiness: { ready: boolean; checking: boolean; recheck: () => void; failed?: boolean };
   /** The primary action once the agent answers. */
   readyLabel: string;
   /** A secondary link shown once ready, when the agent has one. */
@@ -648,7 +648,20 @@ type LaunchedScreenProps = {
  * action is offered only once the agent can answer; until then the owner can
  * still open it to watch it start. */
 function LaunchedScreen({ name, href, readiness, readyLabel, extraLink, onLeave, onStartNew }: LaunchedScreenProps) {
-  const { ready, checking, recheck } = readiness;
+  const { ready, checking, recheck, failed } = readiness;
+  if (failed) {
+    return (
+      <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading" aria-live="polite">
+        <span className={styles.eyebrow}>Didn&apos;t start</span>
+        <h1 id="launch-accepted-heading">{name} couldn&apos;t start.</h1>
+        <p>Something went wrong while setting up its computer. Open it to see what happened and remove it, then try again.</p>
+        <Link className={styles.secondaryAction} data-testid="launch-primary-action" href={href} onClick={onLeave}>
+          Open {name}
+        </Link>
+        <button type="button" className={styles.outcomeLink} onClick={onStartNew}>Launch something else</button>
+      </section>
+    );
+  }
   return (
     <section className={`${styles.stage} ${styles.outcome}`} aria-labelledby="launch-accepted-heading" aria-live="polite">
       <span className={styles.successIcon}><Check size={24} aria-hidden /></span>
