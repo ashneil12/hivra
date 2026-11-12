@@ -33,6 +33,7 @@ export const AGENT_TILES: readonly ChooseTile[] = ([
   { id: "openclaw", name: "OpenClaw", description: "An agent you reach from your messaging apps, on a computer that stays on.", icon: Cpu },
   { id: "agent-zero", name: "Agent Zero", description: "An autonomous agent with its own dashboard and browser.", icon: Orbit },
   { id: "openbot", name: "OpenBot", description: "CopilotKit's open-source AI coworkers, in OpenBot's own workspace.", icon: Users },
+  { id: "nuphos", name: "Nuphos", description: "Claude Code your team chats with from the Nuphos app, on its own computer.", icon: Users },
   { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
   { id: "deepseek-harness", name: "DeepSeek Harness", description: "DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.", icon: Waves },
 ] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);

@@ -71,7 +71,7 @@ HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
 AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|hermes|openbot|linux-desktop|linux-server) ;;
+  claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
@@ -123,6 +123,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0
 # OpenBot ships its OWN browser inside its container — never the box CDP stack.
 [ "$AGENT_KIND" = "openbot" ] && WANT_BROWSER=0
+# Nuphos runs its agent inside its own runtime container, with no box browser.
+[ "$AGENT_KIND" = "nuphos" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
 # The desktop-free Linux server has no browser stack either.
@@ -1463,6 +1465,87 @@ if ! visudo -cf /etc/sudoers.d/hivra-openbot >/dev/null 2>&1; then warn "hivra-o
 ok "OpenBot service + restart helper installed (127.0.0.1:${OB_PORT}, served at the box root)"
 fi
 
+if [ "$AGENT_KIND" = "nuphos" ]; then
+say "5g/7  Nuphos (official runtime image, its own console)"
+# ===========================================================================
+# Nuphos (github.com/nuphos/nuphos, Apache-2.0) is a team chat for coding
+# agents: people chat from the Nuphos apps with their own Nuphos account, and
+# the agent runs on a "runtime" they connect. Nuphos publishes that runtime as
+# one official image (Claude Code variant here). Hivra pulls the latest release
+# unmodified and runs it on host networking bound to loopback :NU_PORT. The box
+# gateway serves the runtime's own console at the ROOT of the box origin behind
+# the token gate (the owner sets its password there and presses "Connect to
+# Nuphos"), and passes WebSocket upgrades of /acp straight through, because
+# Nuphos's servers connect there with a team key the runtime checks itself.
+# Owners update with the Update button (the app updater pulls the latest image).
+NU_PORT="${NUPHOS_PORT:-3102}"
+NU_ROOT="/opt/nuphos"
+NU_REPO="ghcr.io/nuphos/runtime"
+NU_TAG="latest-claude-code"
+
+if ! command -v docker >/dev/null 2>&1; then
+  say "installing Docker from Ubuntu's signed package repository"
+  apt_get install -y docker.io || die "docker.io package installation failed"
+fi
+systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
+systemctl is-active --quiet docker || die "Docker service is not active"
+ok "docker present ($(docker --version 2>/dev/null | head -1 || echo '?'))"
+
+install -d -o root -g root -m 0700 "${NU_ROOT}"
+# The latest upstream release, run by its digest so a restart never changes version.
+docker pull "${NU_REPO}:${NU_TAG}" >/tmp/nuphos-pull.log 2>&1 \
+  || die "Nuphos runtime image pull failed (see /tmp/nuphos-pull.log)"
+NU_IMAGE="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${NU_REPO}:${NU_TAG}" 2>/dev/null \
+  | grep -m1 -E "^${NU_REPO}@sha256:[0-9a-f]{64}$" || true)"
+[ -n "$NU_IMAGE" ] || die "Nuphos runtime image digest is unavailable after pull"
+NU_VERSION="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$NU_IMAGE" 2>/dev/null \
+  | sed -n 's/^OPENAB_RUNTIME_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)"
+[ -n "$NU_VERSION" ] || die "Nuphos runtime image names no release version"
+printf '%s\n' "$NU_IMAGE" > "${NU_ROOT}/image.next"
+chmod 0600 "${NU_ROOT}/image.next"
+mv -f -- "${NU_ROOT}/image.next" "${NU_ROOT}/image"
+record_agent_app nuphos "$NU_VERSION"
+ok "Nuphos runtime ${NU_VERSION} pulled (${NU_IMAGE})"
+
+install -d -o root -g root -m 0755 /usr/local/sbin
+cat > /usr/local/sbin/hivra-nuphos-run <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=/opt/nuphos
+PORT="${NUPHOS_PORT:-3102}"
+[[ "$PORT" =~ ^[0-9]{2,5}$ ]] || { echo "invalid Nuphos port" >&2; exit 1; }
+image="$(head -n 1 "$ROOT/image")"
+[[ "$image" =~ ^ghcr\.io/nuphos/runtime@sha256:[0-9a-f]{64}$ ]] || { echo "invalid Nuphos image" >&2; exit 1; }
+/usr/bin/docker rm -f hivra-nuphos >/dev/null 2>&1 || true
+# The runtime keeps its console password, team bindings and the agent's
+# sign-in under /home/node, so that volume must persist.
+exec /usr/bin/docker run --rm --name hivra-nuphos --network host \
+  --cap-drop ALL --security-opt no-new-privileges \
+  -e GATEWAY_LISTEN="127.0.0.1:${PORT}" \
+  -v hivra-nuphos-home:/home/node -v hivra-nuphos-workspace:/workspace "$image"
+RUNNER
+chmod 0755 /usr/local/sbin/hivra-nuphos-run
+
+cat > /etc/systemd/system/hivra-nuphos.service <<UNIT
+[Unit]
+Description=Hivra Nuphos (Nuphos runtime on 127.0.0.1:${NU_PORT}, console at the box root)
+After=network-online.target docker.service
+Requires=docker.service
+[Service]
+Environment=NUPHOS_PORT=${NU_PORT}
+TimeoutStartSec=0
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/sbin/hivra-nuphos-run
+ExecStop=-/usr/bin/docker stop -t 25 hivra-nuphos
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 /etc/systemd/system/hivra-nuphos.service
+ok "Nuphos service installed (127.0.0.1:${NU_PORT}, console at the box root)"
+fi
+
 # ===========================================================================
 if [ "$AGENT_KIND" = "hermes" ]; then
 say "5e/7  Hermes Agent (official installer + Hermes's own web UI)"
@@ -1644,7 +1727,7 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && ! is_linux_computer; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1804,6 +1887,12 @@ if [ "$AGENT_KIND" = "openbot" ]; then
   systemctl enable --now hivra-openbot.service >/dev/null 2>&1 \
     || die "OpenBot service did not start"
   ok "hivra-openbot enabled + started (waits for the owner's CopilotKit Intelligence key)"
+fi
+
+if [ "$AGENT_KIND" = "nuphos" ]; then
+  systemctl enable --now hivra-nuphos.service >/dev/null 2>&1 \
+    || die "Nuphos service did not start"
+  ok "hivra-nuphos enabled + started (console on 127.0.0.1:${NUPHOS_PORT:-3102})"
 fi
 
 if [ "$AGENT_KIND" = "hermes" ]; then
@@ -1978,6 +2067,10 @@ elif [ "$AGENT_KIND" = "openbot" ]; then
   # then the gateway's setup page is the readiness gate.
   wait_for_http "http://127.0.0.1:${HIVRA_CHAT_PORT}/healthz" || die "Hivra gateway did not become ready"
   ok "OpenBot passed runtime-specific readiness (waiting for its Intelligence key)"
+elif [ "$AGENT_KIND" = "nuphos" ]; then
+  systemctl is-active --quiet hivra-nuphos.service || die "Nuphos service is not active"
+  wait_for_http "http://127.0.0.1:${NUPHOS_PORT:-3102}/" 90 || die "Nuphos runtime console did not become ready within 3 minutes"
+  ok "Nuphos passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "hermes" ]; then
   systemctl is-active --quiet bux-hermes.service || die "Hermes service is not active"
   # The first start loads Hermes's Python environment; allow up to 3 minutes.
@@ -2010,6 +2103,8 @@ if [ "$AGENT_KIND" = "agent-zero" ]; then
   RECEIPT_ARGS+=(--agent-zero-image "$A0_IMAGE")
 elif [ "$AGENT_KIND" = "openbot" ]; then
   RECEIPT_ARGS+=(--agent-zero-image "$OB_IMAGE")
+elif [ "$AGENT_KIND" = "nuphos" ]; then
+  RECEIPT_ARGS+=(--agent-zero-image "$NU_IMAGE")
 fi
 RECEIPT_RESULT="$(python3 "$SRC_DIR/hivra-runtime-receipt.py" "${RECEIPT_ARGS[@]}")" \
   || die "installed runtime receipt generation failed"
@@ -2033,6 +2128,9 @@ elif [ "$AGENT_KIND" = "hermes" ]; then
 elif [ "$AGENT_KIND" = "openbot" ]; then
   LOGIN_HINT="open the agent page (/openbot/) and paste a CopilotKit Intelligence key once; a managed model is pre-seeded"
   STATUS_HINT="systemctl status hivra-openbot --no-pager; docker logs --tail 40 hivra-openbot 2>&1 | tail -40; curl -fsS http://127.0.0.1:${OPENBOT_PORT:-3101}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "nuphos" ]; then
+  LOGIN_HINT="open the agent page (/nuphos/), set the runtime console password, then press Connect to Nuphos and sign in to Claude from the Nuphos app"
+  STATUS_HINT="systemctl status hivra-nuphos --no-pager; docker logs --tail 40 hivra-nuphos 2>&1 | tail -40; curl -fsS http://127.0.0.1:${NUPHOS_PORT:-3102}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"

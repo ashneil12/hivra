@@ -122,7 +122,7 @@ export function legacyNativeCliBody(input: {
 
 /** The OpenClaw / Agent Zero / Aeon form (DashboardAgentLaunchForm). */
 export function legacyDashboardAgentBody(input: {
-  agentId: "openclaw" | "agent-zero" | "openbot" | "aeon";
+  agentId: "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon";
   agentName: string;
   resolvedCpu: number;
   resolvedRam: number;

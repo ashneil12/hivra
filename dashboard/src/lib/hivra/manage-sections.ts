@@ -109,7 +109,7 @@ export interface ManageCapabilities {
    * version Hivra has tested. Hermes and OpenBot have none: they are updated by Hermes's own
    * updater, so `vetted` is null.
    */
-  agentApp: { name: "aeon" | "openclaw" | "agent-zero" | "hermes" | "openbot"; vetted: string | null } | null;
+  agentApp: { name: "aeon" | "openclaw" | "agent-zero" | "hermes" | "openbot" | "nuphos"; vetted: string | null } | null;
   /** The Agents section (adding an agent to this computer). */
   attachAgents: boolean;
   /** What the agent is told about its computer (Computer Contract). */
