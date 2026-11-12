@@ -13,6 +13,8 @@ export interface GridAgent {
   line: string;
   /** A limit worth seeing before the click. */
   note?: string;
+  /** A short label on the card's top edge, for the one agent most people should start with. */
+  badge?: string;
   href: string;
   screen: readonly string[];
 }
@@ -80,6 +82,7 @@ function Card({ agent, index, inView }: { agent: GridAgent; index: number; inVie
         <span className={styles.cardEdge} aria-hidden="true" />
         <span className={styles.cardTop}>
           <span className={styles.cardDot} aria-hidden="true" />
+          {agent.badge ? <span className={styles.cardBadge}>{agent.badge}</span> : null}
           <ArrowUpRight className={styles.cardArrow} size={18} aria-hidden="true" />
         </span>
         <span className={styles.cardName}>{agent.name}</span>

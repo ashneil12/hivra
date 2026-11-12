@@ -45,7 +45,6 @@ describe("GET /api/billing/entitlements", () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: mockUserId });
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 0,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
     (deriveReservedCreditBalance as jest.Mock).mockResolvedValue(0);
@@ -203,7 +202,6 @@ describe("GET /api/billing/entitlements", () => {
 
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 500,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
@@ -245,7 +243,6 @@ describe("GET /api/billing/entitlements", () => {
 
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 500,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
     (deriveReservedCreditBalance as jest.Mock).mockResolvedValue(350);

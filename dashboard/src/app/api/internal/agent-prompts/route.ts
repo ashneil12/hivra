@@ -41,6 +41,7 @@ const Payload = z.discriminatedUnion("event", [
     command_complete: z.boolean().optional(),
     choices: z.array(z.string().max(16)).max(4).optional(),
     session_id: z.string().max(200).optional(),
+    tool: z.string().max(40).optional(),
     ttl_seconds: z.number().int().positive().max(MAX_TTL_SECONDS).optional(),
   }),
   z.object({
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
     const payload = parsed.data;
 
     if (payload.event === "prompt.pending") {
-      await recordPending(computer, {
+      const answer = await recordPending(computer, {
         promptId: payload.prompt_id,
         kind: payload.kind,
         summary: payload.summary,
@@ -85,8 +86,9 @@ export async function POST(request: NextRequest) {
         choices: payload.choices,
         sessionId: payload.session_id,
         ttlSeconds: payload.ttl_seconds,
+        tool: payload.tool,
       });
-      return apiSuccess({ recorded: true });
+      return apiSuccess(answer ? { recorded: true, answer } : { recorded: true });
     }
     if (payload.event === "prompt.resolved") {
       await recordResolved(computer, payload.prompt_id, payload.outcome ?? "resolved");

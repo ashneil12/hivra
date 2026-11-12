@@ -76,6 +76,14 @@ existing computer stays Canary-only even then (see Next, item 5).
   Omarchy computer a site holds); Hivra-managed Windows; macOS computers; custom
   images.
 - Complete self-hosting (Phase 4).
+- **Agent and app directory, and creators earning from usage.** A public,
+  searchable directory of the agents and apps Hivra can launch, built to be
+  found by search engines and AI assistants, with a page per agent. Later,
+  the people who make an agent can earn a share of what it earns, split by
+  how much each one is used. Usage and server-cost records are in place
+  (see [the marketplace seams](dashboard/docs/hivra-marketplace-seams.md));
+  nothing is paid or switched on. Needs: owner decisions on the share and
+  payouts, then engineering.
 
 **Not planned:** replacing an agent's own interface with a Hivra chat. Hermes,
 Agent Zero and other agents with their own interface keep it as the main one.
