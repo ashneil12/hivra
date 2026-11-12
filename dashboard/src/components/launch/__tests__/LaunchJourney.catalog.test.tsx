@@ -62,7 +62,7 @@ function balance(cardUsd: number, tokenUsd = 0) {
 let savedKeys: Array<typeof VENICE_KEY>;
 let instanceBodies: Array<Record<string, unknown>>;
 let workspaceReady: boolean;
-let agentStatus: "provisioning" | "running";
+let agentStatus: "provisioning" | "running" | "error";
 let resolveInstance: ((response: Response) => void) | null;
 
 function json(body: unknown, status = 200): Response {
@@ -174,6 +174,19 @@ describe("every catalog agent launches in the Launch journey", () => {
     const start = await screen.findByRole("link", { name: /Open my agent/ }, { timeout: 8000 });
     expect(start).toHaveAttribute("href", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=terminal`);
     expect(screen.getByRole("heading", { name: "Your agent's computer is ready." })).toBeInTheDocument();
+  }, 15000);
+
+  it("says plainly when a launch failed instead of waiting", async () => {
+    agentStatus = "error";
+    render(<LaunchJourney legacyHermesLane />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    fireEvent.click(screen.getByRole("button", { name: /^Claude Code/ }));
+    await reviewLaunch();
+    fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
+
+    await screen.findByRole("heading", { name: "Claude Code 1 couldn't start." }, { timeout: 8000 });
+    expect(screen.getByTestId("launch-primary-action")).toHaveTextContent("Open Claude Code 1");
+    expect(screen.queryByText(/Waiting for it to answer/)).not.toBeInTheDocument();
   }, 15000);
 
   it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {

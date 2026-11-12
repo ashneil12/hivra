@@ -25,6 +25,8 @@ export type HermesWorkspaceReadiness = {
   checking: boolean;
   /** Start another bounded round of checks after they stopped. */
   recheck: () => void;
+  /** The launch failed for good (the record says error): no check will help. */
+  failed?: boolean;
 };
 
 /** Whether a new Hermes agent's workspace answers: the login URL route has
