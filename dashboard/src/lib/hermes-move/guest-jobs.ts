@@ -346,6 +346,11 @@ REMOVE_ENV_PREFIX = ("API_SERVER_",)
 MANAGED_EXTRA_REMOVE = {"HERMES_INFERENCE_PROVIDER"}
 OLD_HOME = "/home/hermes/.hermes"
 NEW_HOME = "/home/bux/.hermes"
+# The old container's user home was /home/hermes; on the new computer it is /home/bux. The old .env
+# points PATH, XDG_* and the tool dirs (npm, pip, cargo, gh, ...) into it, and a path left there
+# breaks the agent: bux cannot create /home/hermes, so the gateway's chat channels crash-loop.
+OLD_USER_RE = re.compile(r"/home/hermes(?![A-Za-z0-9_.-])")
+NEW_USER_HOME = "/home/bux"
 BASE_RE = re.compile(r"^https://[A-Za-z0-9.:/_-]+$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]+$")
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -398,6 +403,8 @@ def rewrite_env(path, managed, wiring):
             line = "VENICE_API_KEY=" + wiring["openai_api_key"]
         elif managed and k == "VENICE_BASE_URL":
             line = "VENICE_BASE_URL=" + wiring["openai_base_url"]
+        else:
+            line = OLD_USER_RE.sub(NEW_USER_HOME, line)
         out.append(line)
     write_secret(path, "\n".join(out) + ("\n" if out else ""))
     return removed
@@ -414,12 +421,12 @@ def rewrite_paths(path):
     if not os.path.isfile(path):
         return False
     text = read_text(path)
-    if OLD_HOME not in text:
+    if not OLD_USER_RE.search(text):
         return False
     st = os.stat(path)
     tmp = path + ".next"
     with open(tmp, "w") as fh:
-        fh.write(text.replace(OLD_HOME, NEW_HOME))
+        fh.write(OLD_USER_RE.sub(NEW_USER_HOME, text))
     os.chmod(tmp, st.st_mode & 0o777)
     os.replace(tmp, path)
     return True
@@ -469,8 +476,10 @@ def verify(home, expected_path):
         bad.append("chats: %d of %d" % (got["sessions"], ec["sessions"]))
     if got["messages"] < ec["messages"]:
         bad.append("messages: %d of %d" % (got["messages"], ec["messages"]))
+    # At least as many: the official install ships its own bundled skills, often newer and more of
+    # them than the old image had, and the import keeps every one the owner had.
     for k, label in (("skills", "skills"), ("cronJobs", "scheduled tasks"), ("profiles", "profiles")):
-        if got[k] != ec[k]:
+        if got[k] < ec[k]:
             bad.append("%s: %d of %d" % (label, got[k], ec[k]))
     gone = set(REMOVE_ENV_EXACT) | (MANAGED_EXTRA_REMOVE if managed else set())
     have = set(got["envKeys"])
