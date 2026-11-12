@@ -66,6 +66,28 @@ select p.host_id, p.monthly_cost_minor, p.currency, h.active_hours,
   from price p left join hours h on h.host_id = p.host_id;
 ```
 
+### Month report by agent type (read-only)
+
+Added 2026-11-13 (migration `20261113021500_usage_by_user_and_type`). Still
+records and reading only.
+
+| Piece | What it does |
+|---|---|
+| `managed_venice_proxy_keys.metadata->>'agentType'` | The type of the agent a managed inference key belongs to, stamped next to `agentId`, so usage keeps its type after the agent is deleted. |
+| `hivra_usage_by_user_and_type(from, to)` | One row per person and agent type between two times: agents, active hours, managed inference requests with charged and upstream cost, run events. Service role only. |
+| `src/lib/billing/usage-share.ts` | Pure what-if sums: subscriptions, minus payment fees, minus servers, then a share of what is left split by use. Each paying person's part follows what they pay and is divided between the agent types they used, by active hours. A paying person with no measured use leaves their part unassigned. |
+| `/dashboard/ops/margins` | Operator-only page over those sums for one month. The share is typed in and has no default; with none typed the page shows usage and margins only. |
+
+The page counts subscriptions at the monthly list price for the people on a paid
+plan today, so earlier months are approximate. It warns when server prices are
+missing, when a currency has no rate, and when paid-plan accounts have no payment
+on record.
+
+```sql
+-- The rows behind the page for one month.
+select * from public.hivra_usage_by_user_and_type('2026-11-01', '2026-12-01');
+```
+
 ---
 
 ## What the marketplace adds later (NOT now)
