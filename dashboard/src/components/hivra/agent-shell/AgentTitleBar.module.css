@@ -11,7 +11,13 @@
 .iconButton { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--hg-radius-sm); background: transparent; color: var(--hg-text-3); text-decoration: none; cursor: pointer; transition: background var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease); }
 .iconButton:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
 .iconButton:disabled { opacity: .5; cursor: default; }
-.iconButton:focus-visible, .segment:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
+.iconButton:focus-visible, .segment:focus-visible, .back:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
+
+/* "‹ Hermes": one obvious way back to the agent's own view from Computer, Browser or Settings. */
+.back { display: inline-flex; align-items: center; flex-shrink: 0; gap: 2px; max-width: 40%; height: 28px; padding: 0 10px 0 6px; border: 0; border-radius: var(--hg-radius-sm); background: var(--hg-fill-2); color: var(--hg-text); font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background var(--hg-fast) var(--hg-ease); }
+.back span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.back svg { flex-shrink: 0; }
+.back:hover { background: var(--hg-fill-hover); }
 
 /* Monocode's "Sessions | Explorer | Changes": text buttons, the active one on a fill. */
 .segments { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -21,7 +27,7 @@
 .segment[aria-selected="true"] { background: var(--hg-fill-2); color: var(--hg-text); }
 .segment svg { flex-shrink: 0; opacity: .75; }
 
-@media (prefers-reduced-motion: reduce) { .iconButton, .segment { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .iconButton, .segment, .back { transition: none; } }
 
 /* Narrow panes: the views keep their icons and lose their words, so the row stays one row. */
 @container (max-width: 640px) {
@@ -39,6 +45,7 @@
 @media (pointer: coarse) {
   .iconButton { width: 44px; height: 44px; }
   .segment { height: 44px; min-width: 44px; }
+  .back { height: 44px; }
 }
 /* Phones: the bar is the page's top edge, so it clears the status bar / notch. */
 @media (max-width: 767px) {

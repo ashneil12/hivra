@@ -51,6 +51,18 @@ describe("AgentTitleBar", () => {
     expect(onSelect).toHaveBeenLastCalledWith("files");
   });
 
+  it("offers the way back only when it is given one, at the start of the row", () => {
+    const onClick = jest.fn();
+    const view = render(bar());
+    expect(screen.queryByRole("button", { name: /^Back to/ })).not.toBeInTheDocument();
+    view.rerender(bar({ back: { label: "Hermes", onClick } }));
+    const back = screen.getByRole("button", { name: "Back to Hermes" });
+    expect(back).toHaveTextContent("Hermes");
+    expect(screen.getByRole("banner").firstElementChild).toBe(back);
+    fireEvent.click(back);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it("names the settings pane Settings inside its group", () => {
     render(bar({ surfaces: [all[3], { id: "files" as Id, label: "Files", icon: null }], active: "manage", groupLabel: "Settings" }));
     expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");

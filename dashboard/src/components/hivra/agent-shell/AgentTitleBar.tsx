@@ -3,7 +3,7 @@
 // Adapted from MonoCode (MIT License, Copyright (c) 2026 Nick); see THIRD_PARTY_LICENSES/monocode.txt.
 
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { Download, PanelLeft } from "lucide-react";
+import { ChevronLeft, Download, PanelLeft } from "lucide-react";
 import { StatusText } from "@/components/ui/StatusText";
 import { statusTone } from "@/components/hivra/ResourceSwitcher";
 import { SurfaceActions } from "@/components/hivra/SurfaceActions";
@@ -33,6 +33,8 @@ export interface AgentTitleBarProps<T extends string> {
   exportHref?: string;
   /** The button that brings the sidebar back: when it is collapsed, or a drawer. */
   sidebarToggle?: { onClick: () => void; controlsId: string; expanded: boolean };
+  /** The way back to the agent's own view (its chat or its web UI) from Computer, Browser or Settings. */
+  back?: { label: string; onClick: () => void };
 }
 
 /**
@@ -46,7 +48,7 @@ export interface AgentTitleBarProps<T extends string> {
  */
 export function AgentTitleBar<T extends string>({
   name, status, nameTitle, extras, groupLabel, surfaces, active, onSelect, panelId, actionSurface,
-  note, exportHref, sidebarToggle,
+  note, exportHref, sidebarToggle, back,
 }: AgentTitleBarProps<T>) {
   const tablist = useRef<HTMLDivElement>(null);
   const showViews = surfaces.length > 1;
@@ -66,6 +68,11 @@ export function AgentTitleBar<T extends string>({
         <button type="button" className={styles.iconButton} onClick={sidebarToggle.onClick}
           aria-label="Show sidebar" title="Show sidebar" aria-controls={sidebarToggle.controlsId} aria-expanded={sidebarToggle.expanded}>
           <PanelLeft size={16} aria-hidden="true" />
+        </button>
+      ) : null}
+      {back ? (
+        <button type="button" className={styles.back} onClick={back.onClick} aria-label={`Back to ${back.label}`} title={`Back to ${back.label}`}>
+          <ChevronLeft size={15} aria-hidden="true" /><span>{back.label}</span>
         </button>
       ) : null}
 
