@@ -476,7 +476,7 @@ describe('ClientLayoutWrapper', () => {
       );
       expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
       expect(screen.queryByTestId('home-continue')).not.toBeInTheDocument();
-      await waitFor(() => expect(screen.getByText('Launch your first agent')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText('What do you want your agent to do?')).toBeInTheDocument());
       expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
     } finally {
       global.fetch = originalFetch;
