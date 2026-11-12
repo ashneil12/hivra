@@ -1,7 +1,7 @@
 "use client";
 
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
-import { formatWakeSeconds } from "./useAgentWake";
+import { formatWakeSeconds, type AgentRestingReason } from "./useAgentWake";
 
 const panelStyle = {
   flex: 1,
@@ -36,11 +36,18 @@ export function AgentWakePanel({
   name,
   failure,
   onRetry,
+  resting = null,
 }: {
   name: string;
   /** A plain message when the wake did not work. */
   failure: string | null;
   onRetry: () => void;
+  /**
+   * Set while the page leaves the agent asleep on purpose: the owner put it to
+   * sleep for a test, or it napped while this page sat open. Nothing is waking
+   * yet, so the panel says so and offers the button.
+   */
+  resting?: AgentRestingReason | null;
 }) {
   if (failure) {
     return (
@@ -52,6 +59,23 @@ export function AgentWakePanel({
           <p style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>{failure}</p>
         </div>
         <button type="button" onClick={onRetry} style={buttonStyle}>Try again</button>
+      </div>
+    );
+  }
+  if (resting) {
+    return (
+      <div style={panelStyle}>
+        <div role="status" aria-live="polite">
+          <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", marginBottom: 8 }}>
+            Your agent is napping
+          </div>
+          <p style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
+            {resting === "manual"
+              ? `You put ${name} to sleep for a test. It stays asleep until you wake it.`
+              : `${name} napped while nobody was using it. It wakes up as soon as you use this page.`}
+          </p>
+        </div>
+        <button type="button" onClick={onRetry} style={buttonStyle}>Wake it up</button>
       </div>
     );
   }

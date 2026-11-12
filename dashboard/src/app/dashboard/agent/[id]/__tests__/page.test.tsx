@@ -2832,6 +2832,21 @@ describe("AgentPage", () => {
       await waitFor(() => expect(screen.queryByText("Your agent could not wake up")).not.toBeInTheDocument());
     });
 
+    it("does not wake an agent that napped while the page sat open until its owner comes back", async () => {
+      mockGetAgent.mockResolvedValueOnce(awakeRow).mockResolvedValue(napping);
+      render(<AgentPage />);
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      // The page's next read finds the agent napping.
+      fireEvent(document, new Event("visibilitychange"));
+      expect(await screen.findByText("Your agent is napping")).toBeVisible();
+      expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
+      expect(mockWakeAgent).not.toHaveBeenCalled();
+      // The owner is back: it wakes once.
+      fireEvent.pointerDown(window);
+      await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText("Waking up your agent")).toBeVisible();
+    });
+
     it("leaves an agent that reads awake alone, and ignores sleep entirely with the switch off", async () => {
       mockGetAgent.mockResolvedValue(awakeRow);
       const view = render(<AgentPage />);

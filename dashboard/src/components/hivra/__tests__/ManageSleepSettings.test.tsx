@@ -4,6 +4,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ManageSleepSettings } from "../manage/ManageSleepSettings";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 
+const mockHold = jest.fn();
+const mockRelease = jest.fn();
+jest.mock("../useAgentWake", () => ({
+  holdAutoWake: (...args: unknown[]) => mockHold(...args),
+  releaseAutoWake: (...args: unknown[]) => mockRelease(...args),
+}));
+
 const mockSave = jest.fn();
 const mockSleep = jest.fn();
 const mockWake = jest.fn();
@@ -79,6 +86,27 @@ describe("ManageSleepSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Hibernate now" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("busy right now"));
     expect(mockSleep).toHaveBeenLastCalledWith("agent-1", "hibernate");
+  });
+
+  it("tells the agent page not to wake the agent again after a sleep the owner asked for", async () => {
+    mockSleep.mockResolvedValueOnce({ outcome: "slept", reason: null }).mockResolvedValueOnce({ outcome: "not_idle", reason: "active_runs" });
+    render(<ManageSleepSettings agent={agent()} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Nap now" }));
+    await screen.findByText("Your agent is napping.");
+    expect(mockHold).toHaveBeenCalledWith("agent-1");
+    mockHold.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Hibernate now" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("busy right now"));
+    // It stayed awake, so there is nothing to hold.
+    expect(mockHold).not.toHaveBeenCalled();
+  });
+
+  it("lets the page wake the agent again once the owner presses Wake", async () => {
+    mockWake.mockResolvedValue({ state: "awake", wakeMs: 900 });
+    render(<ManageSleepSettings agent={agent({ sleep_state: "napping" })} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Wake" }));
+    await screen.findByText("Your agent is awake.");
+    expect(mockRelease).toHaveBeenCalledWith("agent-1");
   });
 
   it("offers Wake, and not the sleep buttons, while the agent is asleep", async () => {

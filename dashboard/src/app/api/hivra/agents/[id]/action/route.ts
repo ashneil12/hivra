@@ -101,7 +101,7 @@ import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-su
 import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import { lifecycleBusyResponse, lifecycleFailureResponse } from "@/lib/hivra/lifecycle-failure-reason";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
-import { markAgentAwake, wakeForUserAction } from "@/lib/hivra/sleep-aware";
+import { markAgentAwake, wakeForUserAction, type WakeForActionResult } from "@/lib/hivra/sleep-aware";
 import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
@@ -556,11 +556,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // A sleeping computer is woken before any action touches it: its guest
     // cannot answer while it is napping, and a hibernated one holds a config
     // lock that refuses qm set and qm destroy. Awake computers pass straight
-    // through. Stop and Force off stay open to an owner whose plan has lapsed,
-    // because their scripts handle a napping or hibernated computer themselves.
+    // through. Stop and Force off never wake it first: their scripts switch off
+    // a napping computer and discard a hibernation themselves, so a computer
+    // whose wake is failing, refused or full can still be switched off, and a
+    // plain Stop does not pay for a full memory restore before shutting down.
     {
       const stopping = action === "stop" || action === "force_stop";
-      const wake = await wakeForUserAction(agent, { allowLapsed: stopping });
+      const wake: WakeForActionResult = stopping
+        ? { ok: true, woke: false, cold: false }
+        : await wakeForUserAction(agent);
       if (!wake.ok) return apiError(wake.message, wake.status, undefined, { code: wake.code });
       if (wake.woke) {
         // The wake changed the row (its lease, its sleep state); act on the fresh copy.
@@ -575,6 +579,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       if (wake.cold && action === "update_runtime") {
         return apiError("This computer is switched off. Start it before updating its connection service.", 409, undefined, { code: "not_running" });
+      }
+      // A stopped computer holds no saved memory and nothing napping. A stale sleep
+      // record left on one (a stop that could not reset it) goes back to awake here,
+      // best effort, so the sweep never has to heal a stopped row.
+      if (action === "start" && agent.status !== "running" && !isAgentAwake(agent)) {
+        await markAgentAwake(String(agent.id));
       }
     }
     // The in-place connection-service update is shared with the automatic
@@ -693,7 +703,9 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       // computer in between. Stop only needs the computer off, and its script handles a
       // napping or hibernated one itself. Every other action needs it awake, so give the
       // lease back untouched and ask the caller to try again once it is up.
-      if (operationKind !== "stop" && supabaseAdmin) {
+      // A computer that was not running when the row was read (a start of a stopped
+      // one) is not napping; a stale sleep record on it is not a reason to refuse.
+      if (operationKind !== "stop" && agent.status === "running" && supabaseAdmin) {
         const { data: live, error: liveError } = await supabaseAdmin
           .from("hivra_agents")
           .select("sleep_state")

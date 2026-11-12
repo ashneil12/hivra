@@ -90,6 +90,7 @@ import {
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { markAgentAwake } from "./sleep-aware";
 import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
@@ -1325,6 +1326,12 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         expectedDesiredState: "stopped",
         status: vmStatus,
       });
+      // A stop that converged here never reached the route's own reset: a computer that was
+      // napping or hibernated when it was switched off must not keep a sleep record, or
+      // Start would refuse it as asleep. Best effort; the sweep also clears these.
+      if (completed && vmStatus === "stopped") {
+        try { await markAgentAwake(row.id); } catch { /* the stop stands */ }
+      }
       return completed
         ? {
             ...base,

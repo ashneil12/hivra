@@ -12,6 +12,7 @@ import {
 } from "./agent-sleep";
 import { ensureHivraAgentAwake, type AgentRow, type EnsureAwakeResult } from "./agent-wake";
 import { STALE_LEASE_MS, reconcileAgentSleep, sleepLeaseKind } from "./sleep-reconcile";
+import { markAgentAwake } from "./sleep-aware";
 
 // The host state script, its parser and the lease rules live in sleep-reconcile.ts; they
 // are re-exported here because this is where the sweep's callers and tests look for them.
@@ -140,6 +141,8 @@ export interface SleepIdleSweepSummary {
   reason?: string;
   wakes: { due: number; awake: number; waking: number; failed: number; cold: number };
   leases: { stale: number; settled: number; left: number };
+  /** Stopped computers whose leftover sleep record was put back to awake. */
+  stoppedReset?: number;
   /** Agents checked against their host for record drift, and what came of it. */
   drift: { checked: number; settled: number; consistent: number; left: number; woke: number };
   hibernate: SweepStepCounts;
@@ -159,6 +162,7 @@ function emptySummary(mode: SleepMode): SleepIdleSweepSummary {
     skipped: false,
     wakes: { due: 0, awake: 0, waking: 0, failed: 0, cold: 0 },
     leases: { stale: 0, settled: 0, left: 0 },
+    stoppedReset: 0,
     drift: { checked: 0, settled: 0, consistent: 0, left: 0, woke: 0 },
     hibernate: emptyCounts(),
     nap: emptyCounts(),
@@ -462,6 +466,41 @@ async function reconcileDrift(ctx: Context): Promise<void> {
   if (background.length > 0) await untilDeadline(ctx, Promise.allSettled(background));
 }
 
+/** A stopped computer has nothing napping; how many leftover records are reset per run. */
+const STOPPED_RESET_MAX_PER_RUN = 10;
+
+/**
+ * A stopped computer whose sleep record is not awake (its stop could not reset it) can
+ * never be started: Start refuses a computer it believes is asleep. The drift queries only
+ * look at running agents, so this puts those records back to awake. Compare-and-set on the
+ * generation, no host call, and it never touches status.
+ */
+async function resetStoppedSleepRecords(ctx: Context): Promise<void> {
+  const { data, error } = await ctx.db
+    .from("hivra_agents")
+    .select("id")
+    .eq("status", "stopped")
+    .is("operation_id", null)
+    .in("sleep_state", ["draining", "napping", "hibernating", "hibernated", "waking", "wake_failed"])
+    .limit(STOPPED_RESET_MAX_PER_RUN);
+  if (error) {
+    fail(ctx, "failed to load stopped computers with a sleep record", error, "sleep_sweep_stopped_query_failed");
+    return;
+  }
+  for (const row of (data ?? []) as Array<{ id?: unknown }>) {
+    if (remaining(ctx) < 2_000) return;
+    if (typeof row.id !== "string") continue;
+    if (await markAgentAwake(row.id)) {
+      ctx.summary.stoppedReset = (ctx.summary.stoppedReset ?? 0) + 1;
+      log.warn("a stopped computer still had a sleep record and it was put back to awake", {
+        source: LOG_SOURCE,
+        failureType: "sleep_sweep_stopped_record_reset",
+        instanceId: row.id,
+      });
+    }
+  }
+}
+
 // --- Steps 3 and 4: hibernate and nap -----------------------------------------
 
 async function loadHosts(ctx: Context): Promise<Map<string, HostInfo> | null> {
@@ -495,6 +534,7 @@ function toCandidates(rows: Array<{ id: string; proxmox_host: string | null }>, 
 async function loadHibernateCandidates(ctx: Context, hosts: Map<string, HostInfo>): Promise<Candidate[]> {
   const timings = resolveSleepTimings(ctx.env);
   const cutoff = new Date(ctx.now() - timings.hibernateAfterSeconds * 1000).toISOString();
+  const horizonEnd = new Date(ctx.now() + timings.horizonSeconds * 1000).toISOString();
   let query = ctx.db
     .from("hivra_agents")
     .select("id, proxmox_host")
@@ -506,7 +546,10 @@ async function loadHibernateCandidates(ctx: Context, hosts: Map<string, HostInfo
     .eq("computer_substrate", "proxmox-kvm")
     .is("deployment_target_id", null)
     .eq("always_on", false)
-    .lte("sleep_tier_changed_at", cutoff);
+    .lte("sleep_tier_changed_at", cutoff)
+    // A nap with a job inside the horizon would be woken again at once: sleepHivraAgent
+    // refuses it (job_soon) before any host call, so it must not take a candidate slot.
+    .or(`next_wake_at.is.null,next_wake_at.gt.${horizonEnd}`);
   const policies = policyFilter(ctx.mode, "hibernate");
   if (policies) query = query.in("sleep_policy", policies);
   const { data, error } = await query
@@ -601,8 +644,11 @@ async function loadNapCandidates(ctx: Context, hosts: Map<string, HostInfo>): Pr
   return shuffle(candidates.filter((c) => !active.has(c.id)));
 }
 
-function touchedHost(outcome: SleepOutcome): boolean {
+function touchedHost(outcome: SleepOutcome, tier: "nap" | "hibernate"): boolean {
   if (outcome.outcome === "ineligible") return false;
+  // A napping agent with a job inside the horizon is refused before any host call. (A
+  // nap's job_soon comes from the live probe, which did reach the host.)
+  if (tier === "hibernate" && outcome.outcome === "not_idle" && outcome.reason === "job_soon") return false;
   if (outcome.outcome === "skipped" && CHEAP_SKIPS.has(outcome.reason ?? "")) return false;
   return true;
 }
@@ -643,8 +689,9 @@ async function runHostWork(
     if (ctx.summary.timedOut) return;
     if (work >= HOST_WORK_CAP || calls >= HOST_CALL_CAP) return;
     const counts = tier === "nap" ? summary.nap : summary.hibernate;
-    if (tier === "nap") {
-      const until = cooldowns.get(candidate.id);
+    const cooldownKey = tier === "nap" ? candidate.id : `hibernate:${candidate.id}`;
+    {
+      const until = cooldowns.get(cooldownKey);
       if (until !== undefined && until > ctx.now()) continue;
     }
     if (remaining(ctx) < (tier === "nap" ? MIN_NAP_START_MS : MIN_HIBERNATE_START_MS)) {
@@ -672,9 +719,12 @@ async function runHostWork(
       }
       const outcome = done.value;
       tally(counts, outcome);
-      if (touchedHost(outcome)) work += 1;
-      if (tier === "nap" && (outcome.outcome === "not_idle" || outcome.outcome === "aborted")) {
-        cooldowns.set(candidate.id, ctx.now() + NOT_IDLE_COOLDOWN_MS);
+      if (touchedHost(outcome, tier)) work += 1;
+      // A hibernate that was refused or found the agent in use is not retried every minute
+      // either, or the same agents at the head of the oldest-first list would take every slot.
+      if (outcome.outcome === "not_idle" || outcome.outcome === "aborted"
+        || (tier === "hibernate" && outcome.outcome === "ineligible")) {
+        cooldowns.set(cooldownKey, ctx.now() + NOT_IDLE_COOLDOWN_MS);
       }
       if (outcome.outcome === "failed") {
         log.warn("sweep sleep failed", {
@@ -764,6 +814,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     ["scheduled wakes", runScheduledWakes],
     ["stale lease recovery", recoverStaleLeases],
     ["record drift", reconcileDrift],
+    ["stopped sleep records", resetStoppedSleepRecords],
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
   ];
   for (const [name, step] of steps) {
@@ -784,7 +835,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     summary.reason = mode === "off" ? "sleep_mode_off" : "observe_mode_only";
   }
   const acted =
-    summary.wakes.due + summary.leases.stale + summary.drift.checked + summary.hibernate.attempted + summary.nap.attempted > 0;
+    summary.wakes.due + summary.leases.stale + summary.drift.checked + (summary.stoppedReset ?? 0) + summary.hibernate.attempted + summary.nap.attempted > 0;
   if (acted) {
     log.info("sleep sweep finished", {
       source: LOG_SOURCE,
@@ -792,6 +843,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
       wakes: summary.wakes,
       leases: summary.leases,
       drift: summary.drift,
+      stoppedReset: summary.stoppedReset,
       hibernate: summary.hibernate,
       nap: summary.nap,
       timedOut: summary.timedOut,

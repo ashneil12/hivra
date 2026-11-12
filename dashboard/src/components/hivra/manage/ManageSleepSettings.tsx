@@ -10,6 +10,7 @@ import {
   type HivraAgent,
 } from "@/lib/hivra/agent-api";
 import { agentSleepView } from "@/lib/hivra/agent-sleep-ui";
+import { holdAutoWake, releaseAutoWake } from "../useAgentWake";
 import { manageButtonGhost, manageCard, manageDisabled, manageLabel, manageMuted, manageSpin } from "./manage-styles";
 
 type Busy = "policy" | "always_on" | "nap" | "hibernate" | "wake" | null;
@@ -92,6 +93,8 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
     setNote(null);
     try {
       const result = await sleepAgentNow(agent.id, tier);
+      // The owner asked for this sleep: the page must not wake the agent again by itself.
+      if (result.outcome === "slept") holdAutoWake(agent.id);
       setNote(sleepNote(tier, result.outcome));
       onChanged();
     } catch (cause) {
@@ -106,6 +109,7 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
     setBusy("wake");
     setError(null);
     setNote(null);
+    releaseAutoWake(agent.id);
     const result = await wakeAgent(agent.id);
     if (result.state === "failed") setError(result.message);
     else setNote(result.state === "awake" ? "Your agent is awake." : "Your agent is still waking up.");

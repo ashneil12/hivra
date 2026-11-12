@@ -95,7 +95,7 @@ describe("waking a sleeping computer before an action", () => {
     expect(mockWake).not.toHaveBeenCalled();
   });
 
-  it.each(["start", "stop", "restart", "force_stop", "force_restart", "resize", "snapshot", "restore", "update_runtime"])(
+  it.each(["start", "restart", "force_restart", "resize", "snapshot", "restore", "update_runtime"])(
     "%s asks for the wake, and does nothing else while the computer is still waking", async (action) => {
       mockWake.mockResolvedValue({ ok: false, reason: "waking", status: 503, code: "computer_asleep",
         message: "Your computer is still waking up. Try again in a few seconds." });
@@ -104,24 +104,34 @@ describe("waking a sleeping computer before an action", () => {
       const body = await response.json();
       expect(body.code).toBe("computer_asleep");
       expect(body.error).toMatch(/still waking up/);
-      expect(mockWake).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-1", sleep_state: "napping" }), expect.any(Object));
+      expect(mockWake).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-1", sleep_state: "napping" }));
       expect(mockRpc).not.toHaveBeenCalled();
       expect(mockRun).not.toHaveBeenCalled();
       expect(mockUpdateRuntime).not.toHaveBeenCalled();
     });
 
-  it("lets only Stop and Force off go ahead for an owner whose plan has lapsed", async () => {
-    await send({ action: "stop" });
-    await send({ action: "force_stop" });
+  it.each(["stop", "force_stop"])("%s never asks for a wake, so a stuck or refused wake cannot block it", async (action) => {
+    mockWake.mockResolvedValue({ ok: false, reason: "failed", status: 503, code: "computer_asleep",
+      message: "Your computer could not wake up just now. Try again in a moment." });
+    mockRow = { ...asleep, sleep_state: "hibernated" };
+    const response = await send({ action });
+    expect(response.status).toBe(200);
+    expect(mockWake).not.toHaveBeenCalled();
+    expect(mockRun).toHaveBeenCalled();
+    expect(String(mockRun.mock.calls[0][0])).toContain("qm unlock");
+    expect(mockMarkAwake).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("still wakes for every other action, with no lapse exemption", async () => {
     await send({ action: "restart" });
-    const allowLapsed = mockWake.mock.calls.map(([, options]) => (options as { allowLapsed: boolean }).allowLapsed);
-    expect(allowLapsed).toEqual([true, true, false]);
+    const allowLapsed = mockWake.mock.calls.map(([, options]) => (options as { allowLapsed?: boolean } | undefined)?.allowLapsed);
+    expect(allowLapsed).toEqual([undefined]);
   });
 
   it("works from a fresh copy of the row after a wake", async () => {
-    mockWake.mockResolvedValue({ ok: true, woke: true, cold: false });
+    mockWake.mockImplementation(async () => { mockRow = { ...mockRow, sleep_state: "awake" }; return { ok: true, woke: true, cold: false }; });
     const callsBefore = mockSingle.mock.calls.length;
-    expect((await send({ action: "stop" })).status).toBe(200);
+    expect((await send({ action: "restart" })).status).toBe(200);
     // The first read loads the agent; the second is the reload after the wake.
     expect(mockSingle.mock.calls.length - callsBefore).toBeGreaterThanOrEqual(2);
   });
@@ -129,12 +139,12 @@ describe("waking a sleeping computer before an action", () => {
   it("does not reload the row when nothing was woken", async () => {
     mockRow = { ...asleep, sleep_state: "awake" };
     mockSingle.mockClear();
-    expect((await send({ action: "stop" })).status).toBe(200);
+    expect((await send({ action: "restart" })).status).toBe(200);
     const readsOfTheAgent = mockSingle.mock.calls.length;
     mockSingle.mockClear();
-    mockWake.mockResolvedValue({ ok: true, woke: true, cold: false });
-    expect((await send({ action: "stop" })).status).toBe(200);
-    expect(mockSingle.mock.calls.length).toBe(readsOfTheAgent + 1);
+    mockWake.mockImplementation(async () => { mockRow = { ...mockRow, sleep_state: "awake" }; return { ok: true, woke: true, cold: false }; });
+    expect((await send({ action: "restart" })).status).toBe(200);
+    expect(mockSingle.mock.calls.length).toBeGreaterThan(readsOfTheAgent);
   });
 
   it("puts the sleep record back to awake once a computer is switched off", async () => {
@@ -151,6 +161,15 @@ describe("waking a sleeping computer before an action", () => {
     expect(response.status).toBe(409);
     expect((await response.json()).code).toBe("not_running");
     expect(mockUpdateRuntime).not.toHaveBeenCalled();
+  });
+
+  it("starts a stopped computer whose sleep record was left napping, and resets the record", async () => {
+    // A stop that could not reset the record left status stopped with a napping sleep state.
+    mockRow = { ...asleep, status: "stopped", desired_state: "stopped", sleep_state: "napping" };
+    const response = await send({ action: "start" });
+    expect(response.status).toBe(200);
+    expect(mockMarkAwake).toHaveBeenCalledWith("agent-1");
+    expect(mockRun).toHaveBeenCalled();
   });
 
   it("goes ahead with Start for a computer that was off with nothing saved", async () => {
@@ -191,6 +210,14 @@ describe("a computer that falls asleep between the wake check and the lease", ()
     expect(released()).toHaveLength(1);
     expect(released()[0][1]).toMatchObject({ p_mark_error: false });
     expect(mockRun).not.toHaveBeenCalled();
+  });
+
+  it("does not refuse Start of a stopped computer over a leftover sleep record", async () => {
+    mockSingle.mockImplementation(async () => ({ data: { ...asleep, status: "stopped", desired_state: "stopped", sleep_state: "hibernated" }, error: null }));
+    const response = await send({ action: "start" });
+    expect(response.status).toBe(200);
+    expect(released()).toHaveLength(0);
+    expect(mockRun).toHaveBeenCalled();
   });
 
   it("lets Stop go ahead, because its script handles a napping or hibernated computer itself", async () => {

@@ -42,6 +42,11 @@ import {
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
+const mockMarkAgentAwake = jest.fn();
+jest.mock("@/lib/hivra/sleep-aware", () => ({
+  markAgentAwake: (...args: unknown[]) => mockMarkAgentAwake(...args),
+}));
+
 jest.mock("@/lib/hivra/agent-events", () => ({
   logHivraAgentEvent: jest.fn().mockResolvedValue(undefined),
 }));
@@ -612,6 +617,43 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
       expectedDesiredState: "stopped",
       status: "stopped",
     }));
+  });
+
+  it("puts a napping or hibernated agent's sleep record back to awake when its stale stop converges", async () => {
+    mockMarkAgentAwake.mockResolvedValue(true);
+    installSupabase([buildStuckRow({
+      status: "running",
+      desired_state: "stopped",
+      operation_kind: "stop",
+      sleep_state: "napping",
+      allocation_operation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    })]);
+    mockedRunScript.mockResolvedValue({
+      ok: true,
+      stdout: ["HIVRA_RECOVERY_VM exists", "HIVRA_RECOVERY_VM_STATUS stopped", "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+        "HIVRA_RECOVERY_OWNERSHIP match", "HIVRA_RECOVERY_OPERATION_RECEIPT missing", ""].join("\n"),
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    await runRecoverStuckHivraProvisioningSweep();
+    expect(mockMarkAgentAwake).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  it("leaves the sleep record alone when a stale stop found the computer still running", async () => {
+    installSupabase([buildStuckRow({
+      status: "running",
+      desired_state: "stopped",
+      operation_kind: "stop",
+      sleep_state: "napping",
+      allocation_operation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    })]);
+    mockedRunScript.mockResolvedValue({
+      ok: true,
+      stdout: ["HIVRA_RECOVERY_VM exists", "HIVRA_RECOVERY_VM_STATUS running", "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+        "HIVRA_RECOVERY_OWNERSHIP match", "HIVRA_RECOVERY_OPERATION_RECEIPT missing", ""].join("\n"),
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+    await runRecoverStuckHivraProvisioningSweep();
+    expect(mockMarkAgentAwake).not.toHaveBeenCalled();
   });
 
   // An attached agent's steps (design 5.5) hold the computer's lease until the

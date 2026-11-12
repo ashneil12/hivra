@@ -893,7 +893,7 @@ export default function AgentPage() {
   // the sleep switch off, every agent reads as awake and none of this runs.
   const sleepView = agent?.id === id ? agentSleepView(agent) : "awake";
   const awake = sleepView === "awake";
-  const wake = useAgentWake(id, sleepView, agent?.id === id ? agent.sleep_state : undefined, () => setReloadKey((k) => k + 1));
+  const wake = useAgentWake(id, sleepView, agent?.id === id ? agent.sleep_state : undefined, () => setReloadKey((k) => k + 1), agent?.id === id);
   // The surfaces start fresh after every wake: their connections died with the sleep.
   const wakeEpoch = agentSleepUiEnabled() && agent?.id === id ? sleepGenerationOf(agent) : 0;
   const surfaceEpoch = wakeEpoch ? `:g${wakeEpoch}` : "";
@@ -1401,7 +1401,7 @@ export default function AgentPage() {
           </div>
         ) : null}
         {showManage ? null : !awake ? (
-          <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} />
+          <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} resting={wake.resting} />
         ) : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">

@@ -24,6 +24,19 @@ describe("AgentWakePanel", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it("says the agent is napping, and does not say it is waking, while the page holds it asleep", () => {
+    const onRetry = jest.fn();
+    const { container, rerender } = render(<AgentWakePanel name="Atlas" failure={null} onRetry={onRetry} resting="idle" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Your agent is napping");
+    expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
+    expect(screen.getByText(/Atlas napped while nobody was using it/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Wake it up" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    rerender(<AgentWakePanel name="Atlas" failure={null} onRetry={onRetry} resting="manual" />);
+    expect(screen.getByText(/You put Atlas to sleep for a test/)).toBeVisible();
+    expect(container.textContent).not.toMatch(/[-–—]/);
+  });
+
   it("tells how long the wake took", () => {
     render(<WokeUpNote ms={1400} />);
     expect(screen.getByRole("status")).toHaveTextContent("Woke up in 1.4 s");
