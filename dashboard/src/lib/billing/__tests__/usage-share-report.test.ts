@@ -81,14 +81,14 @@ describe("loadUsageShareReport", () => {
         apple_iap_subscriptions: [{ user_id: "b" }],
         hivra_host_costs: [
           // newest first, as the query orders them
-          { host_id: "pve11", monthly_cost_minor: 20000, currency: "USD", effective_from: "2026-11-01" },
-          { host_id: "pve11", monthly_cost_minor: 15000, currency: "USD", effective_from: "2026-06-01" },
-          { host_id: "pve12", monthly_cost_minor: 10000, currency: "EUR", effective_from: "2026-01-01" },
-          { host_id: "pve13", monthly_cost_minor: 5000, currency: "GBP", effective_from: "2026-01-01" },
+          { host_id: "host-a", monthly_cost_minor: 20000, currency: "USD", effective_from: "2026-11-01" },
+          { host_id: "host-a", monthly_cost_minor: 15000, currency: "USD", effective_from: "2026-06-01" },
+          { host_id: "host-b", monthly_cost_minor: 10000, currency: "EUR", effective_from: "2026-01-01" },
+          { host_id: "host-c", monthly_cost_minor: 5000, currency: "GBP", effective_from: "2026-01-01" },
         ],
         proxmox_hosts: [
-          { id: "pve11", status: "active" }, { id: "pve12", status: "active" },
-          { id: "pve14", status: "active" }, { id: "pve9", status: "maintenance" },
+          { id: "host-a", status: "active" }, { id: "host-b", status: "active" },
+          { id: "host-d", status: "active" }, { id: "host-e", status: "maintenance" },
         ],
       },
       [
@@ -111,7 +111,7 @@ describe("loadUsageShareReport", () => {
       missingRates: ["GBP"],
       hostsPriced: 3,
       activeHosts: 3,
-      unpricedHosts: ["pve14"],
+      unpricedHosts: ["host-d"],
     });
     expect(report.preview.netMinor).toBe(5899 - 1470 - 31000);
     expect(report.preview.poolMinor).toBe(0);
@@ -132,7 +132,7 @@ describe("loadUsageShareReport", () => {
           { user_id: "a", plan: "operator", stripe_subscription_id: "sub_1" },
           { user_id: "b", plan: "command", stripe_subscription_id: "sub_2" },
         ],
-        hivra_host_costs: [{ host_id: "pve11", monthly_cost_minor: 899, currency: "USD", effective_from: "2026-01-01" }],
+        hivra_host_costs: [{ host_id: "host-a", monthly_cost_minor: 899, currency: "USD", effective_from: "2026-01-01" }],
       },
       [
         { user_id: "a", agent_type: "hermes", agents: 1, active_hours: 4, inference_requests: 0, inference_charged_micro_usd: 0, inference_cost_micro_usd: 0, run_events: 1 },

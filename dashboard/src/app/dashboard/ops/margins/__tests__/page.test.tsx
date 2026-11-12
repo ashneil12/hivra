@@ -86,7 +86,7 @@ describe("OpsMarginsPage", () => {
         ],
         { sharePercent: 10, feePercent: 0, feeFixedMinor: 0, serverCostMinor: 0 },
       ),
-      serverCosts: { includedMinorUsd: 0, byCurrency: {}, missingRates: [], hostsPriced: 0, activeHosts: 2, unpricedHosts: ["pve11", "pve12"] },
+      serverCosts: { includedMinorUsd: 0, byCurrency: {}, missingRates: [], hostsPriced: 0, activeHosts: 2, unpricedHosts: ["host-a", "host-b"] },
       unbilledPaidPlans: 4,
     });
 
