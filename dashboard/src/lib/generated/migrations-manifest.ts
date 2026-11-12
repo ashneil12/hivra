@@ -425,7 +425,7 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261112180000", name: "provider_release_admission_2026_11_12_2" },
   { version: "20261112190000", name: "provider_release_admission_2026_11_12_3" },
   { version: "20261112200000", name: "agent_inbox_prompts" },
-  { version: "20261112200000", name: "starter_credit" },
   { version: "20261112210000", name: "provider_release_admission_2026_11_12_4" },
   { version: "20261112220000", name: "openbot_agent_software" },
+  { version: "20261112230000", name: "starter_credit" },
 ];
