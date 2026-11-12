@@ -35,7 +35,7 @@ const source = (relativePath: string) =>
 const updaterSource = () =>
   `${source("hivra-update-guest-runtime.sh")}\n${source("hivra-guest-runtime-update.sh")}`;
 const LEGACY_RUNTIME_IDS = [
-  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "deepseek-harness",
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "hermes", "deepseek-harness",
 ];
 
 // Releases before 2026.10.20.2 lack agent-app-versions.json, which the aeon,
@@ -229,6 +229,7 @@ describe("portable provisioner source contract", () => {
         "aeon",
         "openclaw",
         "agent-zero",
+        "openbot",
         "hermes",
         "deepseek-harness",
         "linux-desktop",
@@ -256,7 +257,7 @@ describe("portable provisioner source contract", () => {
     const hostProvisioner = source("hivra-provision-on-host.sh");
     const runtimeInstaller = source("provision-claude-code-box.sh");
     expect(hostProvisioner).toContain(
-      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|deepseek-harness|linux-desktop|linux-server)',
+      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|deepseek-harness|linux-desktop|linux-server)',
     );
     for (const agentKind of ["codex", "aeon", "openclaw", "agent-zero", "hermes"]) {
       expect(runtimeInstaller).toContain(`[ "$AGENT_KIND" = "${agentKind}" ]`);
@@ -951,7 +952,7 @@ describe("deepseek-harness provisioner minimum", () => {
   });
 
   it("skips an older managed host in placement and leaves other runtimes' lists alone", () => {
-    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("claude-code")).toEqual(compatibleProxmoxVersionsForRuntime(null));
     expect(compatibleProxmoxVersionsForRuntime("codex")).toEqual(compatibleProxmoxVersionsForRuntime(null));
   });
@@ -982,7 +983,7 @@ describe("linux-server provisioner minimum", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
       .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
-    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
     // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));
@@ -996,7 +997,7 @@ describe("linux-server provisioner minimum", () => {
   it("wraps the accepted AGENT_KIND values with the same shell, Python and gateway allowlists", () => {
     expect(source("hivra-install-agent.py")).toContain('LINUX_COMPUTER_KINDS = {"linux-desktop", "linux-server"}');
     expect(source("hivra-runtime-receipt.py")).toContain('"linux-desktop", "linux-server"), required=True');
-    expect(source("hivra-agent-shell")).toContain("aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server)");
+    expect(source("hivra-agent-shell")).toContain("aeon|openclaw|agent-zero|hermes|openbot|linux-desktop|linux-server)");
     expect(source("hivra-chat/server.js")).toContain('["deepseek-harness", "linux-desktop", "linux-server"].includes(process.env.HIVRA_AGENT_KIND)');
   });
 });

@@ -1,4 +1,5 @@
 import { AGENTS, BASE_FLOOR, canLaunchAgent, getAgent, hostingDisclaimer, isPoolExempt, resizeFloor } from "../agent-catalog";
+import { isOpenBotAgentEnabled } from "../openbot-flag";
 import { WELCOME_AGENT_TYPES } from "@/lib/welcome-agent-catalog";
 
 describe("Hivra agent catalog", () => {
@@ -154,6 +155,40 @@ describe("Hivra agent catalog", () => {
     // Paid tier required: the 2/4 footprint can't fit the free pool.
     expect(canLaunchAgent(agentZero!, "free")).toEqual({ ok: false, reason: "Needs Pro" });
     expect(canLaunchAgent(agentZero!, "pro")).toEqual({ ok: true });
+  });
+
+  it("defines OpenBot as a dashboard agent that is launchable only behind its flag", () => {
+    const openbot = getAgent("openbot");
+
+    expect(openbot).toMatchObject({
+      id: "openbot",
+      name: "OpenBot",
+      vendor: "CopilotKit",
+      surface: "dashboard",
+      browser: false,
+      minPlan: "pro",
+      weight: 2,
+      badge: "Coworkers",
+      accent: "#6e56cf",
+      dashboardPort: 3101,
+      managedVenice: true,
+      llm: { wire: "openai", providers: ["venice"] },
+      available: isOpenBotAgentEnabled(),
+    });
+    expect(openbot!.cliKind).toBeUndefined();
+    expect(isPoolExempt("openbot")).toBe(false);
+    expect(resizeFloor("openbot", false)).toEqual({ cpu: 1, ram: 3 });
+    expect(AGENTS.some((agent) => agent.id === "openbot")).toBe(isOpenBotAgentEnabled());
+    const copy = hostingDisclaimer(openbot);
+    expect(copy).toContain("official OpenBot image from CopilotKit");
+    expect(copy).toContain("Hivra administrators retain infrastructure access");
+    expect(copy).not.toMatch(/[\u2013\u2014]/);
+    expect(hostingDisclaimer(openbot, "self-managed")).toContain("Hivra does not become the host operator");
+  });
+
+  it("keeps OpenBot out of the launch picker while its flag is off", () => {
+    expect(getAgent("openbot")).toBeDefined();
+    if (!isOpenBotAgentEnabled()) expect(canLaunchAgent(getAgent("openbot")!, "pro")).toEqual({ ok: false, reason: "Coming soon" });
   });
 
   it("lists DeepSeek Harness as a launchable dashboard agent that keeps its floor", () => {

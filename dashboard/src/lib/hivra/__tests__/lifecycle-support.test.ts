@@ -115,7 +115,7 @@ describe("restore points, folder recovery and the in-place update", () => {
     expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness" })).toBeNull();
     expect(runtimeUpdateRefusal({ ...ubuntu, type: "deepseek-harness", computer_substrate: "provider-vm" })).toBe("my-cloud");
     // A My cloud agent updates through the provider lane; a My cloud desktop does not yet.
-    for (const type of ["claude-code", "codex", "aeon", "openclaw", "agent-zero"]) {
+    for (const type of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot"]) {
       expect(runtimeUpdateRefusal({ ...ubuntu, type, computer_profile: null, computer_substrate: "provider-vm" })).toBeNull();
     }
     expect(runtimeUpdateRefusal({ ...ubuntu, computer_profile: "windows" })).toBe("prepared");

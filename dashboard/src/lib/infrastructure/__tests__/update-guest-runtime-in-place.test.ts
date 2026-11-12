@@ -325,6 +325,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
       "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=2026.9.33 state=current",
       "HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled",
       "HIVRA_AGENT_APP name=hermes version=unknown target=latest state=running",
+      "HIVRA_AGENT_APP name=openbot version=1.0.2 target=latest state=scheduled",
     ]) {
       const run = runHelper({ guestStdout: `${valid}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
       expect(run.status).toBe(0);
@@ -337,6 +338,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
       `HIVRA_AGENT_APP name=hermes version=1.0.0 target=1.0.1 state=scheduled`,
       "HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled; reboot",
       "HIVRA_AGENT_APP name=hermes version=latest target=latest state=current",
+      `HIVRA_AGENT_APP name=openbot version=${digest("d")} target=latest state=scheduled`,
       "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled",
     ]) {
       const other = runHelper({ guestStdout: `${forged}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });

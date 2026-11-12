@@ -42,6 +42,7 @@ const HIVRA_CLI_TYPES = new Set([
   "codex",
   "openclaw",
   "agent-zero",
+  "openbot",
 ]);
 const HIVRA_DASHBOARD_TYPES = new Set(["aeon", "deepseek-harness"]);
 const HIVRA_COMPUTER_TYPES = new Set(["linux-desktop"]);

@@ -83,7 +83,7 @@ case "$kind" in
     if [ "$surface" = agent ]; then persist hivra-agent "agent-$slot" "$cli"; fi
     exec "$cli" "$@"
     ;;
-  aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server)
+  aeon|openclaw|agent-zero|hermes|openbot|linux-desktop|linux-server)
     # Dashboard runtimes and Linux computers do not impersonate a coding-agent
     # CLI. Their agent terminal is an ordinary owner shell.
     persist hivra-agent "agent-$slot" ""
