@@ -238,6 +238,9 @@ jobs:
       - name: Needs you add-on for Hermes (hivra-inbox plugin)
         run: python3 -I -B scripts/test-hermes-inbox-plugin.py
 
+      - name: Ask me first hook for Claude Code
+        run: python3 -I -B scripts/test-hivra-ask-hook.py
+
       - name: Attached DNS relay (T36)
         run: docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-dns-relay.py
 

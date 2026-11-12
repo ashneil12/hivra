@@ -62,7 +62,7 @@ echo ${INSTALLED_MARKER} ${version}
 `;
 }
 
-interface InstallRow { agent_id: string; version: string | null; attempted_at: string | null; attempts: number }
+export interface InstallRow { agent_id: string; version: string | null; attempted_at: string | null; attempts: number }
 
 /** Minutes to wait before trying a computer again: 15, 30, 60 ... up to 6 hours. */
 export function retryAfterMinutes(attempts: number): number {
@@ -96,14 +96,17 @@ export async function sweepInboxInstalls(now = new Date()): Promise<InstallSweep
     .limit(200);
   if (error) throw new Error(`could not list Hermes computers: ${error.message}`);
   const rows = (agents ?? []) as Record<string, unknown>[];
-  if (!rows.length) return { state: "ran", tried: 0, installed: 0, failed: 0 };
 
-  const { data: installs, error: installError } = await db
-    .from("agent_inbox_installs")
-    .select("agent_id, version, attempted_at, attempts")
-    .in("agent_id", rows.map((row) => String(row.id)));
-  if (installError) throw new Error(`could not read installs: ${installError.message}`);
-  const byAgent = new Map(((installs ?? []) as InstallRow[]).map((row) => [row.agent_id, row]));
+  let installs: InstallRow[] = [];
+  if (rows.length) {
+    const { data, error: installError } = await db
+      .from("agent_inbox_installs")
+      .select("agent_id, version, attempted_at, attempts")
+      .in("agent_id", rows.map((row) => String(row.id)));
+    if (installError) throw new Error(`could not read installs: ${installError.message}`);
+    installs = (data ?? []) as InstallRow[];
+  }
+  const byAgent = new Map(installs.map((row) => [row.agent_id, row]));
   const due = rows.filter((row) => needsInstall(byAgent.get(String(row.id)), now.getTime())).slice(0, MAX_PER_RUN);
 
   let installed = 0;
@@ -134,13 +137,14 @@ export async function sweepInboxInstalls(now = new Date()): Promise<InstallSweep
   return { state: "ran", tried: due.length, installed, failed };
 }
 
-async function runOnComputer(userId: string, agent: Record<string, unknown>, guestScript: string): Promise<{ ok: boolean; detail: string }> {
+/** Runs a root script on the computer through the pinned guest route; ok when stdout carries `expect`. */
+export async function runOnComputer(userId: string, agent: Record<string, unknown>, guestScript: string, expect = `${INSTALLED_MARKER} ${INBOX_PLUGIN_VERSION}`): Promise<{ ok: boolean; detail: string }> {
   const context = await resolveHivraAgentExecutionContext(userId, agent as unknown as Parameters<typeof resolveHivraAgentExecutionContext>[1]);
   const pinned = resolvePinnedGuestTarget({ ip: agent.ip as string | null, vmid: agent.vmid as number | null }, context);
   if (!pinned.ok) return { ok: false, detail: `computer identity not verified (${pinned.reason})` };
   const result = await runProxmoxHostScript(buildPinnedGuestHostScript(pinned.target, guestScript), context.env, GUEST_TIMEOUT_MS);
   const stdout = result.stdout ?? "";
-  if (result.ok && stdout.includes(`${INSTALLED_MARKER} ${INBOX_PLUGIN_VERSION}`)) return { ok: true, detail: "" };
+  if (result.ok && stdout.includes(expect)) return { ok: true, detail: "" };
   const stderr = ((result as { stderr?: string }).stderr ?? "").trim().split("\n").slice(-2).join(" ");
   return { ok: false, detail: stderr || (result as { error?: string }).error || "install did not finish" };
 }
