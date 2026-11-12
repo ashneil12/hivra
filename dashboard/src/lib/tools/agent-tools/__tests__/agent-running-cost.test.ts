@@ -27,6 +27,10 @@ import { AGENT_RUNNING_COST_ENTRY, RUNNING_COST_EXAMPLE_INPUTS } from "../agent-
 
 const ALLOWED_RELATED = new Set([
   "/pricing",
+  "/agents/hermes",
+  "/agents/openclaw",
+  "/compare/openclaw-to-hermes",
+  "/compare/vs-self-hosted",
   "/agents/claude-code",
   "/agents/codex",
   "/tools/claude-code-plan-calculator",

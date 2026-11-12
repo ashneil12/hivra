@@ -23,6 +23,7 @@ import PlanCalculatorTool from "@/components/tools/PlanCalculatorTool";
 import TmuxCheatSheetTool from "@/components/tools/TmuxCheatSheetTool";
 import { buildAbsoluteTitleMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { TOOL_PAGE_LAST_MODIFIED } from "@/lib/seo-lastmod";
 import {
   TOOL_ENTRIES,
   TOOLS_HUB,
@@ -99,6 +100,8 @@ export default async function ToolPage({ params }: ToolPageParams) {
         description: entry.metaDescription,
         url: pageUrl,
         isAccessibleForFree: true,
+        inLanguage: "en",
+        ...(TOOL_PAGE_LAST_MODIFIED[entry.slug] ? { dateModified: TOOL_PAGE_LAST_MODIFIED[entry.slug] } : {}),
         offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
         publisher: { "@type": "Organization", name: "Hivra", url: SITE_URL },
       },

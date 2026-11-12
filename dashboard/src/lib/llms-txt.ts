@@ -25,6 +25,7 @@ import {
 } from "@/lib/blog/plan-facts";
 import { ECOSYSTEM_STAGES } from "@/lib/ecosystem-map";
 import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
+import { isAgentToolsEnabled } from "@/lib/tools/agent-tools-flag";
 
 export interface LlmsTxtSection {
   heading: string;
@@ -55,7 +56,7 @@ const ECOSYSTEM_NEXT_NAMES = joinNames(
  */
 export function llmsTxtSections(
   phase: HivraTokenPhase = getHivraTokenPhase(),
-  { restricted = false, tokenSurfaces = true }: { restricted?: boolean; tokenSurfaces?: boolean } = {}
+  { restricted = false, tokenSurfaces = true, agentTools = isAgentToolsEnabled() }: { restricted?: boolean; tokenSurfaces?: boolean; agentTools?: boolean } = {}
 ): readonly LlmsTxtSection[] {
   const { tokenomicsNote } = getTokenPhaseCopy(phase).llmsTxt;
   return [
@@ -68,6 +69,17 @@ export function llmsTxtSections(
         { label: "Free tools", path: "/tools", note: "Keep-awake commands, a tmux cheat sheet, Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator. Free, with no signup" },
         { label: "Keep a Mac awake (caffeinate)", path: "/tools/keep-mac-awake", note: "Builds the caffeinate (macOS) or systemd-inhibit (Linux) command that keeps a laptop awake while an agent runs, and lists what it does not cover" },
         { label: "tmux cheat sheet", path: "/tools/tmux-cheat-sheet", note: "tmux commands and keys with copy buttons, plus running AI coding agents in named sessions" },
+        ...(agentTools
+          ? [
+              { label: "Hermes vs OpenClaw agent picker", path: "/tools/hermes-vs-openclaw", note: "Six questions to choose between Hermes, OpenClaw, Agent Zero, Claude Code and Codex, with the tradeoffs stated" },
+              { label: "AI agent running cost calculator", path: "/tools/ai-agent-running-cost-calculator", note: "Monthly cost of one always-on agent split into server, model usage and your own time" },
+              { label: "Free and cheap models for AI agents", path: "/tools/best-free-models-for-ai-agents", note: "A filterable table of tool-calling models with prices, context size and privacy" },
+              { label: "AI agent jobs library", path: "/tools/ai-agent-use-cases", note: "Forty copy-and-paste jobs to hand an AI agent, with schedules and what each needs connected" },
+              { label: "Telegram and Discord bot setup", path: "/tools/telegram-discord-bot-setup", note: "Step-by-step bot creation, a credential format check and a Discord invite link builder" },
+              { label: "AI agent security checklist", path: "/tools/ai-agent-security-checklist", note: "Twelve checks for a self-run agent, with the fix for each" },
+              { label: "SOUL.md generator", path: "/tools/soul-md-generator", note: "Builds a SOUL.md for Hermes or OpenClaw from a short form" },
+            ]
+          : []),
         { label: "Ecosystem", path: "/ecosystem", note: "What is available now, what is planned next and then, and what is still research, with the status of each product" },
         { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks and several agents on one account, and which agent and plan each depends on" },
         { label: "About", path: "/about", note: "How Hivra began as HermesOS, what it does today and what it is not, its open source code, what it costs, where it is going and how to contact it" },
