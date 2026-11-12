@@ -591,7 +591,12 @@ export async function runLifecycleEmailSweep(opts?: {
       instances: instancesByUser.get(userId) ?? [],
       now,
     });
-    const unsent = due.filter((d) => !alreadySent.has(`${userId}:${d.key}`));
+    // The first-win launch email says the same thing as day1_idle; one is enough.
+    const unsent = due.filter(
+      (d) =>
+        !alreadySent.has(`${userId}:${d.key}`) &&
+        !(d.key === "day1_idle" && alreadySent.has(`${userId}:first_win_launch`))
+    );
     if (due.length > 0 && unsent.length === 0) {
       summary.skipped_already_sent += 1;
       continue;

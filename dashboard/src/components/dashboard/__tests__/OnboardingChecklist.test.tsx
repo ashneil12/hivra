@@ -106,25 +106,29 @@ describe("OnboardingChecklist", () => {
     expect(screen.getAllByText("Pro")).toHaveLength(2);
   });
 
-  it("marks the first-message item done from the HivraChat localStorage marker", async () => {
+  it("hides for good once a first message was sent (HivraChat localStorage marker)", async () => {
     window.localStorage.setItem("hermes:first_message_sent:box-1", new Date().toISOString());
 
     render(<OnboardingChecklist instances={[freshInstance()]} />);
 
-    expect(await screen.findByText("2 of 5 done")).toBeInTheDocument();
+    await waitFor(() => expect(listAgentsResult).toHaveBeenCalled());
+    await waitFor(() => expect(fetchPlan).toHaveBeenCalled());
+    expect(screen.queryByTestId("onboarding-checklist")).not.toBeInTheDocument();
   });
 
-  it("marks the first-message item done from first_usage_at when no local marker exists", async () => {
+  it("hides for good once a Hermes instance has first_usage_at", async () => {
     render(
       <OnboardingChecklist
         instances={[freshInstance({ first_usage_at: "2026-06-10T00:00:00.000Z" })]}
       />,
     );
 
-    expect(await screen.findByText("2 of 5 done")).toBeInTheDocument();
+    await waitFor(() => expect(listAgentsResult).toHaveBeenCalled());
+    await waitFor(() => expect(fetchPlan).toHaveBeenCalled());
+    expect(screen.queryByTestId("onboarding-checklist")).not.toBeInTheDocument();
   });
 
-  it("marks the first-message item done from a Hivra agent first_usage_at when no local marker exists", async () => {
+  it("hides for good once a Hivra agent has first_usage_at", async () => {
     (listAgentsResult as jest.Mock).mockResolvedValue({
       agents: [{ ...RUNNING_BOX, first_usage_at: "2026-06-10T00:00:00.000Z" }],
       error: null,
@@ -132,7 +136,9 @@ describe("OnboardingChecklist", () => {
 
     render(<OnboardingChecklist instances={[freshInstance()]} />);
 
-    expect(await screen.findByText("2 of 5 done")).toBeInTheDocument();
+    await waitFor(() => expect(listAgentsResult).toHaveBeenCalled());
+    await waitFor(() => expect(fetchPlan).toHaveBeenCalled());
+    expect(screen.queryByTestId("onboarding-checklist")).not.toBeInTheDocument();
   });
 
   it("marks the channel item done when a running box reports Telegram connected", async () => {
