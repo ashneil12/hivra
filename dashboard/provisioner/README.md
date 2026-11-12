@@ -517,6 +517,11 @@ update them yet.
   through `/api/model`, which runs `hermes config get`/`hermes config set` as the agent
   user. It applies to new chats, like Hermes's own model picker. A Hermes the owner pointed
   at another provider in Hermes itself is left alone (the endpoint answers 409).
+- **Git guard for Claude Code approvals (`2026.11.12.2`).** New computers ignore
+  `.claude/settings.local.json` in the agent user's git ignore, and every repository
+  created or cloned there gets a `pre-commit` hook (system `init.templateDir`) that refuses
+  a commit staging that file. Claude Code's "don't ask again" saves approved commands,
+  passwords included, in it. Existing computers are unchanged.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

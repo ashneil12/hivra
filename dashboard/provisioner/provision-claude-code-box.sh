@@ -1557,6 +1557,61 @@ start_native_terminals() {
 }
 install_native_terminals
 
+# Keep Claude Code's per-project approvals out of commits. "Yes, and don't ask
+# again" saves the approved command, passwords and tokens included, to
+# .claude/settings.local.json. Claude Code adds that path to the global git
+# ignore the first time it writes the file, but not for a file created another
+# way or one a repository already tracks, and a fresh computer starts with no
+# ignore at all. Two layers, both box-wide and both inert for other files:
+#  1. the agent user's default git ignore (~/.config/git/ignore, the file
+#     Claude Code itself appends to) lists the path, so `git add -A` skips it;
+#  2. every repository created or cloned on the computer gets a pre-commit hook
+#     (system init.templateDir, a copy of git's stock template plus the hook)
+#     that refuses a commit staging that file. Deleting it is still allowed.
+# A repository that sets its own core.hooksPath runs its own hooks instead.
+install_git_secret_guard() {
+  local template=/usr/local/share/hivra/git-template ignore_dir="${AGENT_HOME}/.config/git"
+  local ignore="$ignore_dir/ignore" pattern='**/.claude/settings.local.json'
+  install -d -o root -g root -m 0755 /usr/local/share/hivra
+  rm -rf "$template"
+  if [ -d /usr/share/git-core/templates ]; then
+    cp -a /usr/share/git-core/templates "$template"
+  else
+    install -d -o root -g root -m 0755 "$template"
+  fi
+  install -d -o root -g root -m 0755 "$template/hooks"
+  cat >"$template/hooks/pre-commit" <<'HOOK'
+#!/bin/sh
+# Hivra: refuse to commit Claude Code's local approvals file. "Don't ask again"
+# saves approved commands there, passwords and tokens included.
+blocked="$(git diff --cached --name-only --diff-filter=ACMR -z \
+  | tr '\0' '\n' | grep -E '(^|/)\.claude/settings\.local\.json$')"
+[ -z "$blocked" ] && exit 0
+{
+  echo "Hivra: commit blocked. These files hold Claude Code's saved approvals,"
+  echo "which can include passwords and tokens, and must not be committed:"
+  printf '%s\n' "$blocked" | sed 's/^/  /'
+  echo "Unstage them with: git rm --cached <path>"
+  echo "Then add '.claude/settings.local.json' to .gitignore."
+} >&2
+exit 1
+HOOK
+  chown root:root "$template/hooks/pre-commit"
+  chmod 0755 "$template/hooks/pre-commit"
+  git config --system init.templateDir "$template"
+  local dir
+  for dir in "${AGENT_HOME}/.config" "$ignore_dir"; do
+    [ -d "$dir" ] || install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0700 "$dir"
+  done
+  if ! { [ -f "$ignore" ] && grep -qxF "$pattern" "$ignore"; }; then
+    printf '%s\n' "$pattern" >>"$ignore"
+  fi
+  chown "${AGENT_USER}:${AGENT_USER}" "$ignore"
+  chmod 0644 "$ignore"
+}
+install_git_secret_guard
+ok "git guard: .claude/settings.local.json is ignored and refused at commit"
+
 # ===========================================================================
 say "7/7  enable + start the services"
 # ===========================================================================
