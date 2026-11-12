@@ -1,0 +1,46 @@
+/* Styles for the model finder only. Colours come from the same variables the tools module uses. */
+
+.srOnly { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.search { max-width:420px; }
+
+.statusLine { margin:0 0 12px; font-size:15px; line-height:1.6; color:var(--ink-black); }
+
+.phoneSort { display:none; gap:12px; align-items:end; margin-bottom:16px; }
+.phoneSort > div:first-child { flex:1 1 auto; min-width:0; }
+
+.modelTable { min-width:860px; }
+.modelTable caption { text-align:left; padding:0 0 10px; font-size:13px; line-height:1.6; color:var(--text-muted); caption-side:top; }
+.modelTable thead th { white-space:nowrap; padding:6px 8px; }
+.modelTable th[scope="row"] { text-align:left; font-size:14px; font-weight:600; color:var(--ink-black); padding:12px 16px; border-bottom:1px solid var(--etched-border); vertical-align:top; min-width:200px; }
+.modelTable tbody tr:last-child th,.modelTable tbody tr:last-child td { border-bottom:0; }
+.modelTable .num { text-align:right; white-space:nowrap; }
+.modelTable th.num button { margin-left:auto; }
+
+.sortButton { display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:0 8px; font:12px/1.4 var(--font-sans); color:var(--text-muted); background:transparent; border:0; cursor:pointer; text-align:left; }
+.sortButton:hover { color:var(--ink-black); }
+.sortButton:focus-visible { outline:2px solid var(--gold-leaf); outline-offset:-2px; }
+th[aria-sort="ascending"] .sortButton,th[aria-sort="descending"] .sortButton { color:var(--ink-black); font-weight:600; }
+.arrow { display:inline-block; width:10px; text-align:center; }
+
+.tag { display:inline-block; margin:0 4px 4px 0; padding:1px 7px; font-size:12px; line-height:1.6; color:var(--ink-black); border:1px solid var(--etched-border); white-space:nowrap; }
+.tagFree { border-color:var(--gold-leaf); }
+.cost { font-weight:600; color:var(--ink-black); }
+.rowLink { display:inline-flex; align-items:center; min-height:44px; font-size:13px; color:var(--ink-black); text-decoration:underline; text-underline-offset:3px; white-space:nowrap; }
+.rowLink:hover { color:var(--gold-leaf); }
+.empty { padding:24px 16px; font-size:15px; color:var(--text-secondary); }
+.where { white-space:nowrap; }
+
+@media(max-width:720px) {
+  .phoneSort { display:flex; }
+  .modelTable { min-width:0; }
+  .modelTable thead { display:none; }
+  .modelTable caption { display:block; }
+  .modelTable tbody tr { display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; padding:14px 14px 10px; border-bottom:1px solid var(--etched-border); }
+  .modelTable tbody tr:last-child { border-bottom:0; }
+  .modelTable th[scope="row"] { grid-column:1 / -1; display:block; min-width:0; padding:0 0 4px; border:0; font-size:15px; }
+  .modelTable td { display:block; padding:0; border:0; min-width:0; font-size:14px; }
+  .modelTable td::before { content:attr(data-label); display:block; font-size:12px; line-height:1.5; color:var(--text-muted); }
+  .modelTable .num { text-align:left; }
+  .modelTable td[data-wide="true"] { grid-column:1 / -1; }
+  .modelTable td:empty { display:none; }
+}
