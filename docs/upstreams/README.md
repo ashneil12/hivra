@@ -48,7 +48,7 @@ are now in `upstreams.json` as `inspiration`, so the weekly check watches them.
 
 | Project | Taken | Why |
 | --- | --- | --- |
-| Self-hosted managed agents (Anthropic and Google) | A guide, off by default (`NEXT_PUBLIC_HIVRA_MANAGED_AGENTS_GUIDE`) | Both vendors' workers run on any Linux machine that stays on. The guide stays off until both workers have been run on a real Hivra computer. |
+| Self-hosted managed agents (Anthropic and Google) | A guide on the blog | Both vendors' workers run on any Linux machine that stays on. The guide says they have not yet been run on a real Hivra computer. |
 | huntaway (MIT) | Passed to the sleep/wake work | Per-harness idle detection and runaway-process killing fit the sleep observer. |
 | Rakazo (Apache-2.0) | Watched | A catalog candidate (always-on bots with their own computer, Docker quick start). Not offered yet. |
 | Rowboat (Apache-2.0) | Watched | Competitor that hosts Hermes and OpenClaw or connects agents elsewhere. |
