@@ -76,6 +76,8 @@ export interface TelegramSleepContext {
   config: TelegramWakeConfig;
   row: TelegramWakeRow;
   hostAllowed: boolean;
+  /** The live channel covered, from the agent's wake profile (HIVRA_AGENT_PROFILES on). Absent: "hermes:telegram". */
+  tag?: string;
 }
 
 /**
@@ -112,6 +114,7 @@ export function telegramCoverageFor(
     },
     probe,
     nowMs,
+    ...(context.tag === undefined ? {} : { tag: context.tag }),
   });
 }
 

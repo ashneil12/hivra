@@ -51,6 +51,9 @@ jest.mock("../telegram-wake/lifecycle", () => ({
   markTelegramPendingArm: (...a: unknown[]) => mockPending(...a),
 }));
 
+const mockEndpoints = jest.fn();
+jest.mock("../agent-profiles/resolve", () => ({ resolveChatEndpoints: (...a: unknown[]) => mockEndpoints(...a) }));
+
 import { sleepHivraAgent } from "../agent-sleep";
 import { probeLine } from "./sleep-stub-host.fixtures";
 
@@ -219,5 +222,56 @@ describe("sleepHivraAgent with Telegram wake", () => {
     });
     await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "aborted", reason: "recheck_not_idle" });
     expect(mockPending).not.toHaveBeenCalled();
+  });
+});
+
+describe("sleepHivraAgent with agent wake profiles on", () => {
+  const profilesOn = { ...canary, HIVRA_AGENT_PROFILES: "on" };
+  const ocProbe = (over: Record<string, unknown> = {}) => ({ liveChannels: ["openclaw:telegram"], telegram: tgFacts, ...over });
+  const probeScript = () => String(mockRunScript.mock.calls[0][0]);
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ type: "openclaw" }), error: null });
+    mockHostRow.mockResolvedValue({ data: host, error: null });
+    mockListRows.mockReturnValue({ data: [], error: null });
+    mockLapsed.mockResolvedValue(false);
+    mockResolveTarget.mockResolvedValue({ ok: true, target });
+    mockClaim.mockResolvedValue(4);
+    mockFinish.mockResolvedValue(true);
+    mockLogEvent.mockResolvedValue(true);
+    mockContext.mockResolvedValue(context);
+    mockClear.mockResolvedValue(true);
+    mockPending.mockResolvedValue(true);
+    mockEndpoints.mockResolvedValue([{ p: "telegram", ports: [443], a: ["0A0200C0"] }]);
+    stubScripts({ probe: probeLine(ocProbe()), sleep: sleepReceipt({ probe: probeObject(ocProbe()) }), wake: wakeReceipt() });
+  });
+
+  it("covers OpenClaw's own Telegram bot through its profile, with the profile probe on both sides", async () => {
+    await expect(sleepHivraAgent(AGENT_ID, { now, env: profilesOn, tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "slept" });
+    expect(probeScript()).toContain("PROFILE_B64");
+    expect(sleepScript()).toContain("PROFILE_B64");
+    expect(sleepScript()).toContain("HIVRA_COVERED_CHANNELS='openclaw:telegram'");
+    expect(sleepScript()).toContain(`my %allowed = map { $_ => 1 } ("openclaw:telegram");`);
+    expect(mockPending).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  it("with profiles off, OpenClaw's bot keeps it awake as before, and nothing is resolved", async () => {
+    await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "not_idle", reason: "live_channels" });
+    expect(probeScript()).not.toContain("PROFILE_B64");
+    expect(mockEndpoints).not.toHaveBeenCalled();
+  });
+
+  it("never covers an unknown chat connection, or Telegram on a type whose profile declares none", async () => {
+    stubScripts({ probe: probeLine(ocProbe({ liveChannels: ["openclaw:telegram", "unknown:telegram"] })) });
+    await expect(sleepHivraAgent(AGENT_ID, { now, env: profilesOn, tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "not_idle", reason: "live_channels" });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ type: "codex" }), error: null });
+    stubScripts({ probe: probeLine(telegramProbe()) });
+    await expect(sleepHivraAgent(AGENT_ID, { now, env: profilesOn, tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "not_idle", reason: "live_channels" });
+    expect(mockClear).not.toHaveBeenCalled();
+  });
+
+  it("probes with an empty safety net when the chat services cannot be resolved", async () => {
+    mockEndpoints.mockRejectedValue(new Error("dns"));
+    await expect(sleepHivraAgent(AGENT_ID, { now, env: profilesOn, tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "slept" });
   });
 });

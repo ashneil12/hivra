@@ -77,6 +77,30 @@ describe("availability", () => {
   });
 });
 
+describe("with agent wake profiles on", () => {
+  const profilesEnv = { ...env, HIVRA_AGENT_PROFILES: "on" };
+  it("offers the switch to OpenClaw and reads its token from where its profile says", async () => {
+    await expect(readTelegramWakeView(agent({ type: "openclaw" }), "user-1", { env: profilesEnv })).resolves.toMatchObject({ available: true });
+    await expect(readTelegramWakeView(agent({ type: "codex" }), "user-1", { env: profilesEnv })).resolves.toMatchObject({ available: false });
+    const fetchImpl = fetchWith(200, { ok: true, result: { id: 99 } });
+    await expect(enableTelegramWake(agent({ type: "openclaw" }), "user-1", { env: profilesEnv, fetchImpl })).resolves.toMatchObject({ ok: true });
+    const script = String(mockRunScript.mock.calls[0][0]);
+    expect(script).toContain("hivra-tg-token-read v1 (profile)");
+    expect(script).toContain("botToken");
+    expect(script).not.toContain(".hermes/.env");
+  });
+
+  it("still lets the owner turn it off after profiles go off, so the stored token is forgotten", async () => {
+    stored = { agent_id: AGENT, enabled: true, token_enc: "enc", state: "pending_arm" };
+    // Profiles off: OpenClaw is no longer a Telegram wake kind, but the switch stays so it can be turned off.
+    await expect(readTelegramWakeView(agent({ type: "openclaw" }), "user-1", { env })).resolves.toEqual({ available: true, enabled: true, armed: false });
+    await expect(enableTelegramWake(agent({ type: "openclaw" }), "user-1", { env })).resolves.toMatchObject({ ok: false, code: "not_available" });
+    await expect(disableTelegramWake(agent({ type: "openclaw" }), { env })).resolves.toMatchObject({ ok: true, view: { available: false, enabled: false } });
+    expect(stored).toMatchObject({ enabled: false });
+    await expect(readTelegramWakeView(agent({ type: "openclaw" }), "user-1", { env })).resolves.toMatchObject({ available: false });
+  });
+});
+
 describe("enable", () => {
   it("reads the token once, checks it with getMe, and stores it encrypted with its fingerprint", async () => {
     const fetchImpl = fetchWith(200, { ok: true, result: { id: 99 } });
