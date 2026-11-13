@@ -37,6 +37,42 @@ script only says where to look.
 | Project | Why |
 | --- | --- |
 | Nightly Labs OpenBot | PolyForm Noncommercial since 0.1.12. Hivra runs CopilotKit OpenBot (MIT) instead. |
+| beam-cloud/beta9 | AGPL. Ideas only: lazy image mounts that stream blocks on first read, for fast wakes. No code taken. |
+| reliant-labs/reliant | BSL. Ideas only: the owner picks the idle time before a computer sleeps. No code taken. |
+| julianosig/easi.run | AGPL. Ideas only: a per-agent browser the owner can take over for a login or captcha, then hand back. No code taken. |
+
+## Finds of 2026-11-12
+
+Projects from a scan of competitors and open-source tools. The MIT and Apache ones
+are now in `upstreams.json` as `inspiration`, so the weekly check watches them.
+
+| Project | Taken | Why |
+| --- | --- | --- |
+| Self-hosted managed agents (Anthropic and Google) | A guide, off by default (`NEXT_PUBLIC_HIVRA_MANAGED_AGENTS_GUIDE`) | Both vendors' workers run on any Linux machine that stays on. The guide stays off until both workers have been run on a real Hivra computer. |
+| huntaway (MIT) | Passed to the sleep/wake work | Per-harness idle detection and runaway-process killing fit the sleep observer. |
+| Rakazo (Apache-2.0) | Watched | A catalog candidate (always-on bots with their own computer, Docker quick start). Not offered yet. |
+| Rowboat (Apache-2.0) | Watched | Competitor that hosts Hermes and OpenClaw or connects agents elsewhere. |
+| muster, Muxflow (MIT) | Watched | Phone alerts when an agent needs you and pasting screenshots into remote sessions. Hivra's Needs-you inbox covers the first; the second is a chat attachment idea. |
+| safeagents (Apache-2.0) | Watched | A tool-call checking proxy owners could install themselves. Not wired in. |
+
+## Check of 2026-11-12 (second run, evening)
+
+This run came the same day as the first full check, so it covers about half a
+day of upstream work. No licence changes anywhere: every repository checked
+still carries the licence recorded in `upstreams.json`.
+
+| Repository | Hivra uses | What moved | Decision |
+| --- | --- | --- | --- |
+| hardbeat920/monocode | ported chat UI | nothing | MonoCode Hub fork is already level with upstream main. |
+| anthropics/claude-code | 2.1.292 | 2.1.323 | Take with the next provisioner release (now 2.1.323 rather than 2.1.322). New opt-in Code Mode and plugin version ranges; the rest are fixes. |
+| openai/codex | 0.149.1 | 0.168.0 | Still needs a live test first. 0.168.0 adds provider browsing in the TUI, runtime auth across backend paths and more Guardian review work. |
+| NousResearch/hermes-agent | latest (installer) | 117 commits, no new release | Nothing to do. Mostly security fixes: credential refs withheld from MCP stdio children, Google OAuth redaction, Skills Hub redirect checks, gateway `/stop` authorisation, dashboard logout. Owners get them with `hermes update`. |
+| openclaw/openclaw | 2026.6.10 | 34 commits, no new release | Unchanged decision (live test first). Includes a fix for updating from 2026.11.3 when Workboard is installed. |
+| CopilotKit/openbot | latest image | 8 commits, no new release | Keep holding `latest`; consider pinning v1.0.2. |
+| nuphos/nuphos | latest image | 2 commits | Fine as is. |
+| block/buzz, block/buzz-app | desktop 0.5.20 | fixes; buzz-app added an upgrade guide for old Buzz app users | Leave; the move to buzz-app is still open. |
+| selkies-project/selkies | image digest | HTTPS on a second port | Leave the pinned digest. |
+| Inspiration projects | designs only | small changes | Nothing to merge. |
 
 ## Check of 2026-11-12
 
