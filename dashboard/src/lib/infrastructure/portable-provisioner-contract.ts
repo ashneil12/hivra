@@ -8,7 +8,7 @@
 import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
 import agentAppVersions from "../../../provisioner/agent-app-versions.json";
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.12.5";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.13.6";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -87,6 +87,12 @@ export const PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS = [
   "2026.11.12.2",
   "2026.11.12.3",
   "2026.11.12.4",
+  "2026.11.12.5",
+  "2026.11.13.1",
+  "2026.11.13.2",
+  "2026.11.13.3",
+  "2026.11.13.4",
+  "2026.11.13.5",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function isCompatibleProxmoxProvisionerVersion(version: unknown): version is string {
@@ -244,6 +250,12 @@ const PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS = [
   "2026.11.12.2",
   "2026.11.12.3",
   "2026.11.12.4",
+  "2026.11.12.5",
+  "2026.11.13.1",
+  "2026.11.13.2",
+  "2026.11.13.3",
+  "2026.11.13.4",
+  "2026.11.13.5",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 
@@ -284,6 +296,12 @@ const PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS = [
   "2026.11.12.2",
   "2026.11.12.3",
   "2026.11.12.4",
+  "2026.11.12.5",
+  "2026.11.13.1",
+  "2026.11.13.2",
+  "2026.11.13.3",
+  "2026.11.13.4",
+  "2026.11.13.5",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
@@ -324,11 +342,71 @@ const PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS = [
   "2026.11.12.2",
   "2026.11.12.3",
   "2026.11.12.4",
+  "2026.11.12.5",
+  "2026.11.13.1",
+  "2026.11.13.2",
+  "2026.11.13.3",
+  "2026.11.13.4",
+  "2026.11.13.5",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsHostCapacityAdmission(version: unknown): boolean {
   return (PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS as readonly unknown[]).includes(version);
 }
+
+/** Releases whose bundle carries the host wake proxy (hivra-wake-proxy.py, its
+ * helper and forwarder units, the per-computer host connector unit and the
+ * ingress tmpfiles). Shipping them changes nothing on a host: only the separate,
+ * flag-gated wake-proxy install step copies them into place. */
+export const PORTABLE_HIVRA_WAKE_PROXY_VERSIONS = [
+  "2026.11.13.1",
+  "2026.11.13.2",
+  "2026.11.13.3",
+  "2026.11.13.4",
+  "2026.11.13.5",
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+] as const;
+export function provisionerSupportsWakeProxy(version: unknown): boolean {
+  return (PORTABLE_HIVRA_WAKE_PROXY_VERSIONS as readonly unknown[]).includes(version);
+}
+
+/** Releases whose wake proxy can call Hivra with a host credential (wake-report
+ * after a nap resume, wake-request for a computer it cannot resume). The
+ * install step only sends a credential to a host on one of these. */
+export const PORTABLE_HIVRA_HOST_CREDENTIAL_VERSIONS = [
+  "2026.11.13.3",
+  "2026.11.13.4",
+  "2026.11.13.5",
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+] as const;
+export function provisionerSupportsHostCredential(version: unknown): boolean {
+  return (PORTABLE_HIVRA_HOST_CREDENTIAL_VERSIONS as readonly unknown[]).includes(version);
+}
+
+/** Releases whose bundle carries the host wake doorbell (hivra-wake-doorbell.py
+ * and its unit) and whose wake helper lets it ask for a wake. Shipping them
+ * changes nothing on a host: only the separate, flag-gated doorbell install
+ * step (HIVRA_WAKE_DOORBELLS) copies them into place. */
+export const PORTABLE_HIVRA_WAKE_DOORBELL_VERSIONS = [
+  "2026.11.13.4",
+  "2026.11.13.5",
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+] as const;
+export function provisionerSupportsWakeDoorbell(version: unknown): boolean {
+  return (PORTABLE_HIVRA_WAKE_DOORBELL_VERSIONS as readonly unknown[]).includes(version);
+}
+
+/** The cloudflared release the wake-proxy install step puts on a host as
+ * /usr/local/bin/hivra-cloudflared (the per-computer host connector). Same
+ * version the guests run. The digest is the one cloudflare publishes in the
+ * release notes for this exact asset; the install step refuses any download
+ * that does not hash to it. Not part of the provisioner bundle. */
+export const HIVRA_HOST_CLOUDFLARED_RELEASE = {
+  version: "2026.8.2",
+  asset: "cloudflared-linux-amd64",
+  url: "https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-linux-amd64",
+  sha256: "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2",
+} as const;
 
 /** Legacy provider runtimes; desktop admission is separately version-bound. */
 export const PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS = [
@@ -346,12 +424,12 @@ export function providerProvisionerSupportsCatalogRuntime(version: unknown, runt
     ? version === PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION
     : (PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).includes(runtime));
 }
-export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
 
 /** Native launch compatibility is not model-key delivery capability. Only the
  * reviewed atomic model-settings release can opt into launch-time custody.
  * Actual guest capability and receipt checks still run before key delivery. */
-export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
 export function supportsModelSettingsProvisionerVersion(version: unknown): version is string {
   return (PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -359,7 +437,7 @@ export function supportsModelSettingsProvisionerVersion(version: unknown): versi
 /** Releases whose host script and guest installer carry the agent-run
  * reporter (launch document v4). A predecessor ignores the credential, so the
  * control plane does not issue one to a host known to run an older bundle. */
-export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5"] as const;
+export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6"] as const;
 export function provisionerSupportsActivityTelemetry(version: unknown): version is string {
   return (PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -525,6 +603,13 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "hivra-update-guest-runtime.sh",
   "hivra-guest-runtime-update.sh",
   "hivra-tg-apply",
+  "hivra-wake-proxy.py",
+  "hivra-wake-proxy.service",
+  "hivra-wake-helper.service",
+  "hivra-cf-template.service",
+  "hivra-ingress.tmpfiles.conf",
+  "hivra-wake-doorbell.py",
+  "hivra-wake-doorbell.service",
   "local-browser-keeper.py",
   "prepare-proxmox-host.sh",
   "provision-claude-code-box.sh",

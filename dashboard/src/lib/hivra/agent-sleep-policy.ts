@@ -59,6 +59,25 @@ export const DESKTOP_KINDS: readonly string[] = ["linux-desktop"];
 export const SOCKET_CHANNELS: readonly string[] = ["discord", "whatsapp", "slack"];
 
 /**
+ * The idle probe's live channel tags as plain channel names, for
+ * `SleepSignals.socketChannels`: "hermes:discord" and "hermes:discord:down"
+ * both become "discord", "openclaw:slack" becomes "slack", and the Hivra
+ * Telegram bridge ("telegram:bux-tg") becomes "telegram". Undefined in, undefined
+ * out: a missing probe stays unknown and never reads as "no channels".
+ */
+export function socketChannelsFromProbe(liveChannels: readonly string[] | null | undefined): string[] | undefined {
+  if (!Array.isArray(liveChannels)) return undefined;
+  const names = new Set<string>();
+  for (const tag of liveChannels) {
+    if (typeof tag !== "string") continue;
+    const parts = tag.split(":");
+    const name = parts[0] === "hermes" || parts[0] === "openclaw" ? parts[1] : parts[0];
+    if (name) names.add(name.toLowerCase());
+  }
+  return [...names].sort();
+}
+
+/**
  * Everything known about one agent. Every field may be undefined, meaning
  * unknown. `null` on `lastActivityAt` / `nextScheduledJobAt` means known to be
  * "never" / "nothing scheduled".

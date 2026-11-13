@@ -14,6 +14,7 @@ import {
 } from "@/lib/hivra/agent-api";
 import { agentSleepView, telegramWakeUiEnabled } from "@/lib/hivra/agent-sleep-ui";
 import { holdAutoWake, releaseAutoWake } from "../useAgentWake";
+import { ManageChannelWake } from "./ManageChannelWake";
 import { manageButtonGhost, manageCard, manageDisabled, manageLabel, manageMuted, manageSpin } from "./manage-styles";
 
 type Busy = "policy" | "always_on" | "telegram" | "nap" | "hibernate" | "wake" | null;
@@ -209,6 +210,7 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
             </div>
           </div>
         ) : null}
+        <ManageChannelWake agentId={agent.id} disabled={!idle} onChanged={onChanged} />
         <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 12, display: "grid", gap: 8 }}>
           <div style={manageMuted}>For testing: put this agent to sleep now, or wake it.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

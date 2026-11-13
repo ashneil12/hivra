@@ -31,7 +31,11 @@ export type AgentWakeClaim = "claimed" | "awake" | "busy" | "refused";
 export type AgentWakeFinishResult = "awake" | "wake_failed";
 
 export type AgentSleepEventKind = "nap" | "hibernate" | "wake" | "abort" | "fail" | "reconcile";
-export type AgentSleepEventTrigger = "sweep" | "manual" | "open" | "action" | "schedule" | "reconcile" | "telegram";
+export type AgentSleepEventTrigger = "sweep" | "manual" | "open" | "action" | "schedule" | "reconcile" | "telegram"
+  /** A request to the agent's public address, through host ingress. */
+  | "ingress"
+  /** A message on a channel other than Telegram, through channel wake. */
+  | "channel";
 
 export interface AgentSleepEvent {
   agentId: string;

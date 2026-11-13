@@ -251,6 +251,46 @@ if [ -n "$ACTIVITY_CREDENTIAL_JSON" ]; then
   ACTIVITY_CREDENTIAL_JSON=""
 fi
 
+# Host ingress: the host runs this computer's connector (hivra-cf@<vmid>, into
+# the host wake proxy) and the guest connector is off with no token. Never bring
+# a guest connector back here; put the host's ARP/IP pin back (it does not
+# survive a host reboot), make sure the host connector runs, and report the
+# unchanged stable URL. Only a route whose hostname is this computer's counts.
+INGRESS_ROUTE="/etc/hivra/ingress/routes/${VMID}.json"
+INGRESS_ROUTE_HOST=""
+if [ -f "$INGRESS_ROUTE" ] && [ -n "${HIVRA_TUNNEL_URL:-}" ]; then
+  INGRESS_ROUTE_HOST="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("hostname",""))' "$INGRESS_ROUTE" 2>/dev/null || true)"
+fi
+TUNNEL_URL_HOST="${HIVRA_TUNNEL_URL:-}"
+TUNNEL_URL_HOST="${TUNNEL_URL_HOST#https://}"
+TUNNEL_URL_HOST="${TUNNEL_URL_HOST%%/*}"
+if [ -n "$INGRESS_ROUTE_HOST" ] && [ "$INGRESS_ROUTE_HOST" = "$TUNNEL_URL_HOST" ]; then
+  INGRESS_PIN="/etc/hivra/ingress/pins/${VMID}.nft"
+  INGRESS_NEIGH="/etc/hivra/ingress/pins/${VMID}.neigh"
+  if [ -f "$INGRESS_PIN" ]; then nft -f "$INGRESS_PIN" >/dev/null 2>&1 || echo "[hivra-start] host ingress pin could not be applied" >&2; fi
+  if [ -f "$INGRESS_NEIGH" ]; then
+    PIN_IP=""; PIN_MAC=""; PIN_BRIDGE=""
+    read -r PIN_IP PIN_MAC PIN_BRIDGE < "$INGRESS_NEIGH" || true
+    if [[ "$PIN_IP" =~ ^[0-9.]{7,15}$ ]] && [[ "$PIN_MAC" =~ ^[0-9a-f]{2}(:[0-9a-f]{2}){5}$ ]] && [[ "$PIN_BRIDGE" =~ ^[A-Za-z0-9_.-]{1,15}$ ]]; then
+      ip neigh replace "$PIN_IP" lladdr "$PIN_MAC" dev "$PIN_BRIDGE" nud permanent >/dev/null 2>&1 || true
+    fi
+  fi
+  systemctl start "hivra-cf@${VMID}.service" >/dev/null 2>&1 || true
+  INGRESS_READY=0
+  for _ in $(seq 1 60); do
+    if curl -fsS -m 8 "${HIVRA_TUNNEL_URL%/}/healthz" >/dev/null 2>&1; then INGRESS_READY=1; break; fi
+    sleep 5
+  done
+  if [ "$INGRESS_READY" != "1" ]; then
+    publish_result "$(printf '{"vmid":%s,"ip":"%s","chat_url":"%s","ready":false,"error":"host ingress health check timed out"}' "$VMID" "$IP" "${HIVRA_TUNNEL_URL}")"
+    echo "[hivra-start] host ingress health check timed out for VMID $VMID" >&2
+    exit 1
+  fi
+  publish_result "$(printf '{"vmid":%s,"ip":"%s","chat_url":"%s","ready":true}' "$VMID" "$IP" "${HIVRA_TUNNEL_URL}")"
+  echo "[hivra-start] vmid=$VMID HOST INGRESS chat_url=${HIVRA_TUNNEL_URL}" >&2
+  exit 0
+fi
+
 # Named-tunnel boxes keep a STABLE URL across restarts: the hivra-cf-tunnel unit
 # auto-starts on boot. Just reconnect it + report the unchanged stable URL.
 NAMED="$("${GSSH[@]}" "ubuntu@${IP}" 'test -f /etc/hivra-cf-token.env && echo yes || echo no' 2>/dev/null || echo no)"

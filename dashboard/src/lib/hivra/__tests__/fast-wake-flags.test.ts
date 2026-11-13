@@ -17,6 +17,15 @@ describe("fast wake flags", () => {
     expect(parseFastWakeFlags("all").size).toBe(6);
   });
 
+  it("turns on the ingress ticket only when it is named, never through all", () => {
+    expect(parseFastWakeFlags("all").has("ingress_ticket")).toBe(false);
+    expect(isFastWakeEnabled("ingress_ticket", "all")).toBe(false);
+    expect(isFastWakeEnabled("ingress_ticket", "all,ingress_ticket")).toBe(true);
+    expect(isFastWakeEnabled("ingress_ticket", " Ingress_Ticket ")).toBe(true);
+    expect([...parseFastWakeFlags("ingress_ticket")]).toEqual(["ingress_ticket"]);
+    expect(parseFastWakeFlags("all,ingress_ticket").size).toBe(7);
+  });
+
   it("reads the server flag when no value is given", () => {
     const previous = process.env.HIVRA_FAST_WAKE;
     try {

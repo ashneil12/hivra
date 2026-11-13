@@ -20,17 +20,26 @@ export type FastWakeFeature =
   /** Write the wake event after the answer is sent. */
   | "deferred_log"
   /** The page sends its wake request while it reads the agent for the first time. */
-  | "early_wake";
+  | "early_wake"
+  /**
+   * The server wakes through the host ingress ticket before falling back to
+   * SSH. Only on when named: "all" does not turn it on.
+   */
+  | "ingress_ticket";
 
 const FEATURES: readonly FastWakeFeature[] = [
-  "timing", "fast_healthz", "fast_qm", "early_finish", "deferred_log", "early_wake",
+  "timing", "fast_healthz", "fast_qm", "early_finish", "deferred_log", "early_wake", "ingress_ticket",
 ];
+
+/** Features "all" leaves out: they must be named, so setting "all" earlier never turns them on later. */
+const NAMED_ONLY: readonly FastWakeFeature[] = ["ingress_ticket"];
 
 /** The features a flag value turns on. Anything not on the list is ignored. */
 export function parseFastWakeFlags(value: string | undefined | null): ReadonlySet<FastWakeFeature> {
   const names = String(value ?? "").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean);
-  if (names.includes("all")) return new Set(FEATURES);
-  return new Set(FEATURES.filter((feature) => names.includes(feature)));
+  const all = names.includes("all");
+  return new Set(FEATURES.filter((feature) =>
+    names.includes(feature) || (all && !NAMED_ONLY.includes(feature))));
 }
 
 /** Whether one change is on. The server's flag is read when no value is given. */

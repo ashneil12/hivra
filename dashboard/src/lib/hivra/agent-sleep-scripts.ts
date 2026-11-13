@@ -25,10 +25,12 @@
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
+  HOST_VM_CONTROL_INGRESS_PROGRAM,
   HOST_VM_CONTROL_PREFIX,
   HOST_VM_CONTROL_PROGRAM,
   HOST_VM_CONTROL_SOCKETS_PROGRAM,
 } from "@/lib/hivra/sleep/host-vm-control-program";
+import { INGRESS_PROXY_CLI, INGRESS_STATE_DIR, ingressStatsShell } from "@/lib/hivra/ingress/proxy-stats";
 import {
   IDLE_PROBE_PREFIX,
   IDLE_PROBE_PROGRAM,
@@ -36,11 +38,20 @@ import {
   IDLE_PROBE_VERSION,
   TELEGRAM_ENV_VALUE_PY,
 } from "@/lib/hivra/sleep/idle-probe-program";
+import { type TelegramProbeFacts } from "@/lib/hivra/telegram-wake/coverage";
+import { parseChannelProbeFacts, type ChannelProbeFacts } from "@/lib/hivra/sleep/idle-probe-program";
+import { CHANNEL_WAKE_CHANNEL_NAMES, type ChannelWakeChannel } from "@/lib/hivra/channel-wake/config";
 import {
-  TELEGRAM_WAKE_COVERABLE_CHANNELS,
+  GENERIC_CHANNEL_SPECS,
+  TELEGRAM_CHANNEL_SPEC,
   allowedCoveredChannels,
-  type TelegramProbeFacts,
-} from "@/lib/hivra/telegram-wake/coverage";
+  channelFpsEnv,
+  channelFpsPython,
+  channelGatePerl,
+  coverableProbeTags,
+  genericChannelSpec,
+} from "@/lib/hivra/channel-wake/registry";
+import type { ChannelWakeSpec } from "@/lib/hivra/channel-wake/types";
 
 export const SLEEP_RESULT_PREFIX = "HIVRA_SLEEP_RESULT ";
 export const WAKE_RESULT_PREFIX = "HIVRA_WAKE_RESULT ";
@@ -152,8 +163,11 @@ trap 'exit 143' TERM`;
  * the helper's fixup also drops stale outbound :443 connections in the guest;
  * without it this is the plain helper every script carried before.
  */
-function ctlShell(killStaleSockets = false): string {
-  return `HOST_CTL_PROGRAM=${shellQuote(killStaleSockets ? HOST_VM_CONTROL_SOCKETS_PROGRAM : HOST_VM_CONTROL_PROGRAM)}
+function ctlShell(killStaleSockets = false, hostIngress = false): string {
+  const program = hostIngress
+    ? HOST_VM_CONTROL_INGRESS_PROGRAM
+    : killStaleSockets ? HOST_VM_CONTROL_SOCKETS_PROGRAM : HOST_VM_CONTROL_PROGRAM;
+  return `HOST_CTL_PROGRAM=${shellQuote(program)}
 CTL_OK=false
 CTL_REASON=helper_failed
 CTL_STATUS=""
@@ -209,6 +223,58 @@ qga_lock() {
 qga_unlock() {
   flock -u 7 >/dev/null 2>&1 || true
   exec 7>&-
+}`;
+}
+
+/** How long the nap gives the proxy to finish the requests it is serving before the computer stops. */
+export const INGRESS_DRAIN_MS = 2000;
+
+/**
+ * Host ingress: the computer's public connector runs on the host, in front of
+ * the wake proxy. Only scripts for such a computer carry this. The proxy only
+ * ever resumes a VM whose nap marker holds the running QEMU's pid, so the nap
+ * writes the marker after the stop, and every wake and hibernate removes it.
+ */
+function ingressShell(): string {
+  return `INGRESS_CLI=${INGRESS_PROXY_CLI}
+INGRESS_MARKER="${INGRESS_STATE_DIR}/napped-$VMID"
+INGRESS_OUT=""
+INGRESS_ERR=""
+# ingress_ctl <limit s> <cmd> [ms]: one request to the proxy's root helper. Exit 0 ok, 1 refused, anything else unreachable.
+ingress_ctl() {
+  local limit="$1" cmd="$2" rc=0
+  shift 2
+  INGRESS_OUT="$(command timeout -k 2 "$limit" python3 -I -B "$INGRESS_CLI" ctl "$cmd" "$VMID" "$@" 2>/dev/null </dev/null)" || rc=$?
+  return "$rc"
+}
+# New requests wait at the proxy, and the ones in flight finish. Open websockets or streams mean busy.
+ingress_drain() {
+  local rc=0
+  ingress_ctl 12 drain ${INGRESS_DRAIN_MS} || rc=$?
+  [ "$rc" = 0 ] && return 0
+  INGRESS_ERR=ingress_down
+  if [ "$rc" = 1 ]; then
+    case "$INGRESS_OUT" in *'"error":"busy"'*) INGRESS_ERR=ingress_busy ;; esac
+  fi
+  return 1
+}
+ingress_undrain() { ingress_ctl 8 undrain >/dev/null 2>&1 || true; }
+# The marker holds the running QEMU's pid, so the proxy never trusts one an earlier QEMU left.
+ingress_mark() {
+  local pid tmp
+  [ -d "${INGRESS_STATE_DIR}" ] || return 1
+  pid="$(head -c 32 "/var/run/qemu-server/$VMID.pid" 2>/dev/null | tr -dc 0-9)"
+  [ -n "$pid" ] && [ -d "/proc/$pid" ] || return 1
+  tmp="$INGRESS_MARKER.tmp.$$"
+  if printf '%s\\n' "$pid" >"$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$INGRESS_MARKER"; then return 0; fi
+  rm -f "$tmp"
+  return 1
+}
+ingress_unmark() { rm -f "$INGRESS_MARKER" "$INGRESS_MARKER".tmp.* 2>/dev/null || true; }
+# A computer the proxy could not wake is never left paused: resume it here.
+ingress_resume() {
+  ctl 10 qmp "$VMID" cont 5
+  [ "$CTL_OK" = true ] || qm resume "$VMID" >/dev/null 2>&1 || true
 }`;
 }
 
@@ -363,7 +429,7 @@ const PLAIN_CHANNEL_CHECK = "$busy = 1 if @$channels;";
  * .env with the fingerprint in HIVRA_TG_FP, Hermes polls, and config.yaml has
  * no token of its own. The same rules as telegramWakeCoverage().
  */
-const COVERED_CHANNEL_CHECK = String.raw`my %allowed = map { $_ => 1 } (${TELEGRAM_WAKE_COVERABLE_CHANNELS.map((c) => JSON.stringify(c)).join(", ")});
+const COVERED_CHANNEL_CHECK = String.raw`my %allowed = map { $_ => 1 } (${[TELEGRAM_CHANNEL_SPEC.probeTag].map((c) => JSON.stringify(c)).join(", ")});
 my %covered = map { $_ => 1 } grep { $allowed{$_} } split /,/, ($ENV{HIVRA_COVERED_CHANNELS} // "");
 my $fp = $ENV{HIVRA_TG_FP} // "";
 my $tg = $d->{telegram};
@@ -381,12 +447,51 @@ export function probeCheckPerl(covered: boolean): string {
   return PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => (covered ? COVERED_CHANNEL_CHECK : PLAIN_CHANNEL_CHECK));
 }
 
-function probeShell(manual: boolean, coverage: TelegramSleepCoverage | null = null): string {
+/** Where the channel fingerprint lines go in the probe: just before the OpenClaw read, as the Telegram facts do. */
+const CHANNEL_FPS_ANCHOR = `oc = rjson(HOME + "/.openclaw/openclaw.json", 262144)\n`;
+
+/** The probe a sleep runs: Telegram facts when Telegram is covered, and fingerprints for the generic channels asked about. */
+export function idleProbeProgramFor(
+  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[] } = {},
+  specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
+): string {
+  const base = options.telegram === true ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM;
+  const channels = options.channels ?? [];
+  if (channels.length === 0) return base;
+  if (!base.includes(CHANNEL_FPS_ANCHOR)) throw new Error("idle probe: channel anchor missing");
+  return base.replace(CHANNEL_FPS_ANCHOR, () => channelFpsPython(channels, specs) + CHANNEL_FPS_ANCHOR);
+}
+
+/** The coverage a sleep script carries: the legacy Telegram-only form, the general form, or none. */
+type ScriptCoverage =
+  | { kind: "telegram"; coverage: TelegramSleepCoverage }
+  | { kind: "channels"; coverage: ChannelSleepCoverage; specs: readonly ChannelWakeSpec[] };
+
+function probeShell(manual: boolean, scriptCoverage: ScriptCoverage | null = null): string {
+  if (scriptCoverage?.kind === "channels") return channelProbeShell(manual, scriptCoverage.coverage, scriptCoverage.specs);
+  const coverage = scriptCoverage?.coverage ?? null;
   return `PROBE_PROGRAM=${shellQuote(coverage ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM)}
 MANUAL=${manual ? 1 : 0}${coverage ? `
 HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
 HIVRA_TG_FP=${shellQuote(coverage.fingerprint)}` : ""}
-run_probe() {
+${probeFunctionsShell(coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : "", probeCheckPerl(coverage !== null))}`;
+}
+
+/** The general form: every covered channel is checked by its own predicate (see channelGatePerl). */
+function channelProbeShell(manual: boolean, coverage: ChannelSleepCoverage, specs: readonly ChannelWakeSpec[]): string {
+  const generic = coverage.channels
+    .map((tag) => specs.find((spec) => spec.probeTag === tag)?.channel)
+    .filter((channel): channel is ChannelWakeChannel => Boolean(channel));
+  const program = idleProbeProgramFor({ telegram: coverage.channels.includes(TELEGRAM_CHANNEL_SPEC.probeTag), channels: generic }, specs);
+  return `PROBE_PROGRAM=${shellQuote(program)}
+MANUAL=${manual ? 1 : 0}
+HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
+HIVRA_CHANNEL_FPS=${shellQuote(channelFpsEnv(coverage.fingerprints))}
+${probeFunctionsShell(' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_CHANNEL_FPS="$HIVRA_CHANNEL_FPS"', PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => channelGatePerl(specs)))}`;
+}
+
+function probeFunctionsShell(checkEnv: string, checkPerl: string): string {
+  return `run_probe() {
   local out lines line
   PROBE_JSON=null
   qga_lock || return 1
@@ -400,8 +505,8 @@ run_probe() {
     || { PROBE_JSON=null; return 1; }
 }
 probe_blocker() {
-  HIVRA_PROBE="$PROBE_JSON"${coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : ""} /usr/bin/perl -MJSON::PP - "$MANUAL" <<'HIVRA_PROBE_CHECK'
-${probeCheckPerl(coverage !== null)}
+  HIVRA_PROBE="$PROBE_JSON"${checkEnv} /usr/bin/perl -MJSON::PP - "$MANUAL" <<'HIVRA_PROBE_CHECK'
+${checkPerl}
 HIVRA_PROBE_CHECK
 }
 # Runs the probe once and finishes the script, leaving the computer as it is, unless it is idle.
@@ -429,9 +534,14 @@ probe_or_finish() {
  */
 export function buildIdleProbeHostScript(
   target: { vmid: number; bindingTag: string | null },
-  options: { telegram?: boolean } = {},
+  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[]; ingressStats?: boolean } = {},
+  specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
 ): string {
-  return buildGuestReadHostScript(target, options.telegram === true ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM);
+  const script = buildGuestReadHostScript(target, idleProbeProgramFor(options, specs));
+  // Host ingress: the wake proxy's own view of the computer (requests in flight, open streams, last
+  // verified use) rides in the same SSH call, as one HIVRA_INGRESS_STATS line after the probe's.
+  return options.ingressStats === true ? `${script}${ingressStatsShell(String(target.vmid))}
+` : script;
 }
 
 /**
@@ -440,6 +550,17 @@ export function buildIdleProbeHostScript(
  * Refusals print one HIVRA_IDLE_REFUSED line.
  */
 function buildGuestReadHostScript(target: { vmid: number; bindingTag: string | null }, program: string): string {
+  return `${guestReadHead(target)}run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} || refuse guest_unreachable
+`;
+}
+
+/**
+ * Everything a guest read does before it runs its program: the binding check,
+ * the plain-running check, the vmid-bound exec helpers and the guest agent
+ * lock (fd 7). Shared by the reads that print their answer and the credential
+ * handoff that never does.
+ */
+function guestReadHead(target: { vmid: number; bindingTag: string | null }): string {
   const tag = assertTarget(target.vmid, target.bindingTag);
   return `set -euo pipefail
 VMID=${target.vmid}
@@ -468,7 +589,6 @@ install -d -m 0755 /run/lock
 # Taken only now, so a refusal never waits on it. No other script reads this computer's guest agent meanwhile.
 exec 7>/run/lock/hivra-qga-${target.vmid}.lock
 flock -x -w ${QGA_LOCK_WAIT_SECONDS} 7 || refuse guest_busy
-run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} || refuse guest_unreachable
 `;
 }
 
@@ -530,6 +650,94 @@ export function parseTelegramTokenRead(stdout: string): TelegramTokenRead {
 }
 
 // ---------------------------------------------------------------------------
+// Channel credential read and handoff (host doorbells)
+// ---------------------------------------------------------------------------
+
+const CRED_ENV_KEY = /^[A-Z][A-Z0-9_]{1,63}$/;
+const CRED_PREFIX = /^HIVRA_[A-Z_]{1,40} $/;
+
+export interface ChannelCredReadSpec {
+  /** The keys whose values make the credential fingerprint, in the probe's order (the spec's credKeys). */
+  fpKeys: readonly string[];
+  /** Every ~/.hermes/.env key the host side needs; a missing one is left out. */
+  keys: readonly string[];
+  /** The answer line's prefix, e.g. "HIVRA_EMAIL_CRED ". */
+  prefix: string;
+  /** The refusal line's prefix, e.g. "HIVRA_EMAIL_CRED_NONE ". */
+  nonePrefix: string;
+  /**
+   * Optional Python run after the values are read, before the line is
+   * printed; it may add entries to `values` (lower-case keys starting with
+   * "_", never secrets of its own). Absent, the program is unchanged.
+   */
+  extraPython?: string;
+}
+
+/**
+ * A guest program that reads a channel's settings from ~/.hermes/.env, with
+ * the parser the idle probe fingerprints, and prints one line:
+ * prefix + {"fp": <the probe's fingerprint of fpKeys>, "values": {key: value}}.
+ * Without every fpKey it prints the refusal line instead. Its output is a
+ * credential: a host script must hand it to a host service and never print
+ * it (buildGuestCredHandoffHostScript).
+ */
+export function buildChannelCredReadProgram(spec: ChannelCredReadSpec): string {
+  const keys = [...spec.keys];
+  if (spec.fpKeys.length === 0 || ![...spec.fpKeys, ...keys].every((key) => CRED_ENV_KEY.test(key))
+    || !spec.fpKeys.every((key) => keys.includes(key))) {
+    throw new Error("Invalid channel credential read.");
+  }
+  if (!CRED_PREFIX.test(spec.prefix) || !CRED_PREFIX.test(spec.nonePrefix) || spec.prefix === spec.nonePrefix) {
+    throw new Error("Invalid channel credential read.");
+  }
+  if (spec.extraPython !== undefined && (spec.extraPython.trim() === "" || spec.extraPython.includes("\0") || /HIVRA_/.test(spec.extraPython))) {
+    throw new Error("Invalid channel credential read.");
+  }
+  return String.raw`import hashlib, json, os, re, sys
+# hivra-channel-cred-read v1. Runs as root via the guest agent. Prints one line for the host, which never shows it.
+${TELEGRAM_ENV_VALUE_PY}
+def none(why):
+    sys.stdout.write("${spec.nonePrefix}" + why + "\n")
+    sys.exit(0)
+try:
+    fd = os.open("/home/bux/.hermes/.env", os.O_RDONLY | os.O_NOFOLLOW)
+    try: text = os.read(fd, 65536).decode("utf-8", "replace")
+    finally: os.close(fd)
+except OSError:
+    none("no_env")
+fp_vals = [env_value(text, k) or "" for k in ${JSON.stringify(spec.fpKeys)}]
+if not all(fp_vals): none("missing")
+fp = hashlib.sha256("\n".join(fp_vals).encode("utf-8")).hexdigest()[:16]
+values = {}
+for k in ${JSON.stringify(keys)}:
+    v = env_value(text, k)
+    if v: values[k] = v
+${spec.extraPython === undefined ? "" : `${spec.extraPython.replace(/\n+$/, "")}\n`}sys.stdout.write("${spec.prefix}" + json.dumps({"fp": fp, "values": values}, separators=(",", ":")) + "\n")
+`;
+}
+
+/**
+ * Runs a credential read program in the exact, plainly running VM (the same
+ * checks and lock as every guest read) and pipes its answer straight into
+ * `handoff`, a host command that reads it on stdin. The answer is held in a
+ * shell variable only, never printed, written to a file or put in argv; the
+ * script prints only what the handoff prints. Refusals print one
+ * HIVRA_IDLE_REFUSED line, as the probe's do.
+ */
+export function buildGuestCredHandoffHostScript(
+  target: { vmid: number; bindingTag: string | null },
+  program: string,
+  handoff: { preflight: string; command: string },
+): string {
+  return `${guestReadHead(target)}${handoff.preflight}
+HIVRA_CRED_OUT="$(run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} 2>/dev/null)" || refuse guest_unreachable
+exec 7>&-
+printf '%s\\n' "$HIVRA_CRED_OUT" | ${handoff.command} || true
+HIVRA_CRED_OUT=""
+`;
+}
+
+// ---------------------------------------------------------------------------
 // Probe parser and verdict
 // ---------------------------------------------------------------------------
 
@@ -558,6 +766,21 @@ export interface IdleProbe {
   sysTimers?: number;
   /** Only when the probe was asked for Telegram wake facts. */
   telegram?: TelegramProbeFacts;
+  /** Only when the probe was asked for channel wake fingerprints: per channel, the credential fingerprint or null. */
+  channelFps?: Partial<Record<ChannelWakeChannel, string | null>>;
+  /** The probe's per-channel facts, kept only alongside channelFps (a channel wake probe). */
+  channelFacts?: ChannelProbeFacts;
+}
+
+function validateChannelFps(value: unknown): Partial<Record<ChannelWakeChannel, string | null>> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out: Partial<Record<ChannelWakeChannel, string | null>> = {};
+  for (const [key, fp] of Object.entries(value as Record<string, unknown>)) {
+    if (!(CHANNEL_WAKE_CHANNEL_NAMES as readonly string[]).includes(key)) return null;
+    if (fp !== null && (typeof fp !== "string" || !PROBE_FINGERPRINT.test(fp))) return null;
+    out[key as ChannelWakeChannel] = fp;
+  }
+  return out;
 }
 
 const PROBE_FINGERPRINT = /^[0-9a-f]{16}$/;
@@ -607,6 +830,10 @@ export function validateIdleProbe(value: unknown): IdleProbe | null {
       || (row.sysTimers !== undefined && !isCount(row.sysTimers))) return null;
   const telegram = row.telegram === undefined ? undefined : validateTelegramFacts(row.telegram);
   if (telegram === null) return null;
+  const channelFps = row.channelFps === undefined ? undefined : validateChannelFps(row.channelFps);
+  if (channelFps === null) return null;
+  // Facts are read only for a channel wake probe. Malformed facts are dropped, and an adapter that needs them stays uncovered.
+  const channelFacts = channelFps ? parseChannelProbeFacts(row.channelFacts) ?? undefined : undefined;
   return {
     v: row.v,
     errors: errors as string[],
@@ -628,6 +855,8 @@ export function validateIdleProbe(value: unknown): IdleProbe | null {
     ms: row.ms,
     ...(row.sysTimers === undefined ? {} : { sysTimers: row.sysTimers }),
     ...(telegram ? { telegram } : {}),
+    ...(channelFps ? { channelFps } : {}),
+    ...(channelFacts ? { channelFacts } : {}),
   };
 }
 
@@ -659,8 +888,10 @@ export interface IdleVerdictOptions {
   horizonS: number;
   /** The VM's CPU cores. */
   cores: number;
-  /** Live channels a Telegram wake covers (see telegram-wake/coverage.ts). Only allowlisted names count. */
+  /** Live channels a wake covers (see channel-wake/registry.ts). Only allowlisted names count. */
   coveredChannels?: readonly string[];
+  /** The generic channel specs the allowlist is built from. The registry's own by default (tests pass others). */
+  channelSpecs?: readonly ChannelWakeSpec[];
 }
 
 export interface IdleVerdict {
@@ -698,7 +929,7 @@ export function idleVerdict(probeInput: unknown, options: IdleVerdictOptions): I
 
   if (probe.activeRuns > 0) reasons.push("active_runs");
   if (probe.cliProcesses > 0) reasons.push("cli_process");
-  const covered = allowedCoveredChannels(options.coveredChannels);
+  const covered = allowedCoveredChannels(options.coveredChannels, options.channelSpecs);
   if (probe.liveChannels.some((channel) => !covered.includes(channel))) reasons.push("live_channels");
 
   const probeNowMs = Date.parse(probe.now);
@@ -741,12 +972,46 @@ function assertCoverage(coverage: TelegramSleepCoverage | null | undefined): Tel
   if (!coverage) return null;
   const channels = coverage.channels;
   if (!Array.isArray(channels) || channels.length === 0
-      || channels.some((c) => !TELEGRAM_WAKE_COVERABLE_CHANNELS.includes(c))
+      || channels.some((c) => c !== TELEGRAM_CHANNEL_SPEC.probeTag)
       || new Set(channels).size !== channels.length
       || typeof coverage.fingerprint !== "string" || !PROBE_FINGERPRINT.test(coverage.fingerprint)) {
     throw new Error("Invalid Telegram wake coverage.");
   }
   return { channels: [...channels], fingerprint: coverage.fingerprint };
+}
+
+/**
+ * What the server checked before a sleep that covers channels beyond
+ * Telegram: the covered probe tags, and per covered channel the credential
+ * fingerprint the host must see again (Telegram's token fingerprint too).
+ */
+export interface ChannelSleepCoverage {
+  channels: string[];
+  fingerprints: Partial<Record<ChannelWakeChannel, string>>;
+}
+
+function assertChannelCoverage(
+  coverage: ChannelSleepCoverage | null | undefined,
+  specs: readonly ChannelWakeSpec[],
+): ChannelSleepCoverage | null {
+  if (!coverage) return null;
+  const channels = coverage.channels;
+  const allowed = coverableProbeTags(specs);
+  const fps = coverage.fingerprints;
+  const fail = () => { throw new Error("Invalid channel wake coverage."); };
+  if (!Array.isArray(channels) || channels.length === 0 || new Set(channels).size !== channels.length
+      || channels.some((c) => !allowed.includes(c)) || !fps || typeof fps !== "object") fail();
+  const out: Partial<Record<ChannelWakeChannel, string>> = {};
+  for (const tag of channels) {
+    const channel = tag === TELEGRAM_CHANNEL_SPEC.probeTag ? "telegram" : specs.find((spec) => spec.probeTag === tag)?.channel;
+    const fp = channel ? fps[channel] : undefined;
+    if (!channel || typeof fp !== "string" || !PROBE_FINGERPRINT.test(fp)) fail();
+    out[channel as ChannelWakeChannel] = fp as string;
+  }
+  // A fingerprint for a channel that is not covered would be checked for nothing: refuse it.
+  if (Object.keys(fps).length !== Object.keys(out).length) fail();
+  if (!channels.some((tag) => tag !== TELEGRAM_CHANNEL_SPEC.probeTag && genericChannelSpec(specs.find((s) => s.probeTag === tag)?.channel, specs))) fail();
+  return { channels: [...channels], fingerprints: out };
 }
 
 export interface SleepHostScriptInput {
@@ -757,11 +1022,31 @@ export interface SleepHostScriptInput {
   manual: boolean;
   /** Live channels a Telegram wake covers. Off (null) by default: every live channel keeps the agent awake. */
   telegramCoverage?: TelegramSleepCoverage | null;
+  /**
+   * Live channels covered when at least one channel other than Telegram is
+   * covered. Never together with telegramCoverage; a sleep that covers only
+   * Telegram uses telegramCoverage, so its script is exactly as before.
+   */
+  channelCoverage?: ChannelSleepCoverage | null;
   /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
   fastConfigRead?: boolean;
+  /**
+   * The computer's public connector runs on the host (host ingress). A nap
+   * drains the wake proxy first and leaves its nap marker; a hibernate removes
+   * the marker. Off by default.
+   */
+  hostIngress?: boolean;
 }
 
-function napBody(): string {
+function coversTelegram(coverage: ScriptCoverage | null): boolean {
+  if (!coverage) return false;
+  return coverage.kind === "telegram" || Object.prototype.hasOwnProperty.call(coverage.coverage.fingerprints, "telegram");
+}
+
+function napBody(hostIngress = false, serverDisarm = false): string {
+  // Telegram covered: the sweep arms its webhook during the nap, and only Hivra can take it down, so the
+  // proxy is told to send a client wake to Hivra instead of resuming the computer itself.
+  const napped = serverDisarm ? "napped server-disarm" : "napped";
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -770,21 +1055,50 @@ if [ "$FROM" != awake ]; then finish false not_sleepable "$FROM"; fi
 STEP="$(now_ms)"
 probe_or_finish
 mark probe "$STEP"
-# QMP stop, then query-status in the same session: the helper says ok only when the computer reports paused.
+${hostIngress ? `# The host connector must be serving, and the proxy holds new requests back before the computer stops.
+STEP="$(now_ms)"
+systemctl is-active --quiet "hivra-cf@$VMID.service" </dev/null || finish false ingress_down "$FROM"
+ingress_drain || finish false "$INGRESS_ERR" "$FROM"
+mark drain "$STEP"
+` : ""}# QMP stop, then query-status in the same session: the helper says ok only when the computer reports paused.
 STEP="$(now_ms)"
 ctl 10 qmp "$VMID" stop 5
 mark suspend "$STEP"
 if [ "$CTL_OK" != true ]; then
   STOP_REASON="$CTL_REASON"
   observe
-  # Whatever else the computer now reports, it is never resumed from here.
+${hostIngress ? `  # Paused after all: the proxy gets its marker, so it can still wake it. Otherwise requests flow again.
+  if [ "$OBS" = napping ] && ingress_mark && ingress_ctl 8 ${napped} >/dev/null 2>&1; then :; else
+    ingress_unmark
+    # Paused with no marker the proxy would never wake it: resume it here.
+    if [ "$OBS" = napping ]; then ingress_resume; observe; fi
+    ingress_undrain
+  fi
+` : ""}  # Whatever else the computer now reports, it is never resumed from here.
   if [ "$STOP_REASON" = unconfirmed ]; then finish false suspend_unconfirmed "$OBS"; fi
   finish false suspend_failed "$OBS"
 fi
-finish true napped napping`;
+${hostIngress ? `# The marker, then napped (which also ends the drain). A proxy that cannot wake it gets it back running.
+STEP="$(now_ms)"
+if ! ingress_mark; then
+  ingress_unmark
+  ingress_resume
+  ingress_undrain
+  observe
+  finish false ingress_marker_failed "$OBS"
+fi
+if ! ingress_ctl 8 ${napped}; then
+  ingress_unmark
+  ingress_resume
+  ingress_undrain
+  observe
+  finish false ingress_down "$OBS"
+fi
+mark marker "$STEP"
+` : ""}finish true napped napping`;
 }
 
-function hibernateBody(): string {
+function hibernateBody(hostIngress = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -836,12 +1150,21 @@ if [ "$ONBOOT_WAS" = 1 ]; then
   if ! qm set "$VMID" --onboot 0 >/dev/null; then rm -f "$ONBOOT_MARK"; finish false onboot_failed "$FROM"; fi
   ONBOOT_PENDING=1
 fi
-STEP="$(now_ms)"
+${hostIngress ? `# A running computer: the proxy holds new requests back first, and open streams or requests mean busy.
+# (Autostart, if turned off above, comes back on the way out: the computer is still up.)
+if [ "$FROM" = awake ]; then
+  ingress_drain || finish false "$INGRESS_ERR" "$FROM"
+fi
+` : ""}STEP="$(now_ms)"
 RC=0
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
 mark hibernate "$STEP"
-HAS_VMSTATE=0
+${hostIngress ? `# Only a computer that is still paused keeps its nap marker; the proxy never resumes any other.
+[ "$OBS" = napping ] || ingress_unmark
+# Still running: requests flow again.
+if [ "$FROM" = awake ] && [ "$OBS" = awake ]; then ingress_undrain; fi
+` : ""}HAS_VMSTATE=0
 if printf '%s\\n' "$CONFIG" | grep '^vmstate:' >/dev/null; then HAS_VMSTATE=1; fi
 if [ "$OBS" = hibernated ] && [ "$HAS_VMSTATE" = 1 ]; then
   ONBOOT_PENDING=0
@@ -867,11 +1190,20 @@ finish false hibernate_unconfirmed "$OBS"`;
  * receipt), act, confirm.
  * Prints one HIVRA_SLEEP_RESULT line.
  */
-export function buildSleepHostScript(input: SleepHostScriptInput): string {
+export function buildSleepHostScript(
+  input: SleepHostScriptInput,
+  specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
+): string {
   const tag = assertTarget(input.vmid, input.bindingTag);
   if (input.tier !== "nap" && input.tier !== "hibernate") throw new Error("Invalid sleep tier.");
   const nap = input.tier === "nap";
-  const coverage = assertCoverage(input.telegramCoverage);
+  const telegramCoverage = assertCoverage(input.telegramCoverage);
+  const channelCoverage = assertChannelCoverage(input.channelCoverage, specs);
+  if (telegramCoverage && channelCoverage) throw new Error("Invalid channel wake coverage.");
+  const hostIngress = input.hostIngress === true;
+  const coverage: ScriptCoverage | null = channelCoverage
+    ? { kind: "channels", coverage: channelCoverage, specs }
+    : telegramCoverage ? { kind: "telegram", coverage: telegramCoverage } : null;
   return `set -euo pipefail
 VMID=${input.vmid}
 EXPECTED_BINDING_TAG=${shellQuote(tag)}
@@ -884,12 +1216,13 @@ ${ctlShell()}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
 ${probeShell(input.manual === true, coverage)}
-install -d -m 0755 /run/lock
+${hostIngress ? `${ingressShell()}
+` : ""}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
 flock -x -n 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${nap ? napBody() : hibernateBody()}
+${nap ? napBody(hostIngress, hostIngress && coversTelegram(coverage)) : hibernateBody(hostIngress)}
 `;
 }
 
@@ -915,6 +1248,13 @@ export interface WakeHostScriptInput {
   fastConfigRead?: boolean;
   /** The guest fixup also drops stale outbound :443 connections (frozen long polls). Off by default. */
   killStaleSockets?: boolean;
+  /**
+   * The computer's public connector runs on the host (host ingress): the wake
+   * removes the proxy's nap marker once the computer runs, and the fixup sets
+   * the clock and drops dead sockets but never touches the guest's tunnel.
+   * Off by default.
+   */
+  hostIngress?: boolean;
 }
 
 function assertAdmission(admission: WakeAdmission): void {
@@ -963,7 +1303,7 @@ capacity_inputs() {
 }`;
 }
 
-function wakeBody(): string {
+function wakeBody(hostIngress = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -1033,7 +1373,9 @@ case "$ST/$QMP/$LOCK" in
     ;;
 esac
 mark resume "$STEP"
-# From here the computer is running. A failed fixup leaves it running and says what failed.
+${hostIngress ? `# Running now: the proxy stops answering for it as asleep and forwards again.
+ingress_unmark
+` : ""}# From here the computer is running. A failed fixup leaves it running and says what failed.
 # One guest exec over the guest agent socket: set the clock from this host, kill the tunnel hard, restart it.
 # After a restore the agent may need a few seconds to answer; the helper retries until AGENT_WAIT runs out.
 STEP="$(now_ms)"
@@ -1069,18 +1411,19 @@ EXPECTED_BINDING_TAG=${shellQuote(tag)}
 # The host script itself arrives on stdin, so no command may read it.
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${receiptShell("wake")}
-${ctlShell(input.killStaleSockets === true)}
+${ctlShell(input.killStaleSockets === true, input.hostIngress === true)}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
 ${wakeAdmissionShell(input.admission, input.fastConfigRead === true)}
-install -d -m 0755 /run/lock
+${input.hostIngress === true ? `${ingressShell()}
+` : ""}install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:
 # it would see a computer that is about to be paused and report it awake. It
 # waits a little, then says busy with what the host shows, and changes nothing.
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${wakeBody()}
+${wakeBody(input.hostIngress === true)}
 `;
 }
 

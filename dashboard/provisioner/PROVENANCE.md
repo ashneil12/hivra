@@ -544,6 +544,87 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.6` builds on `2026.11.13.5` and hardens the host wake proxy, the doorbell and their units
+after review. Changed: `hivra-wake-proxy.py`, `hivra-wake-doorbell.py`, `hivra-wake-proxy.service`,
+`hivra-wake-helper.service`, `hivra-cf-template.service`, `hivra-wake-doorbell.service`, plus the documents, the
+version and the provider worker's release labels; no file is added (the bundle is at the worker's file cap). The helper reports a computer
+napped only when its marker is valid and QEMU says paused (a computer resumed some other way has its marker removed
+under the per-VM lock), and the forwarder may no longer ask Hivra for a wake (`request`) at all. Bad owner proofs
+count per VM and per client address, so one client's junk cannot lock the owner out. A new `apply-pins` command, run at
+boot by the `hivra-ingress-pins.service` oneshot that the wake-proxy install step writes, puts every host-ingress
+computer's ARP/IP pin back before the proxy and the host connectors start. The doorbell connects only to a mail server with a globally routable address (resolved and
+connected to by that address), and a ring that never reached Hivra no longer gives up after `FIRE_MAX`: it keeps
+asking every `FIRE_SLOW` seconds until Hivra says the computer is awake or a wake disarms it. Every new daemon unit
+sets `StartLimitIntervalSec=0`, so it never stays failed; the doorbell may run 64 tasks. Nothing is installed by
+bundle sync; the units take effect on the next wake-proxy or doorbell install step. No guest asset changes. This
+source release does not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.13.5` builds on `2026.11.13.4` and teaches the host wake doorbell Discord. Only
+`hivra-wake-doorbell.py` changes, plus the documents, the version and the provider worker's release labels.
+Before a Discord-covered computer sleeps, Hivra's arm host script reads the bot token and Hermes's Discord reply
+settings inside the computer through the vmid-bound guest exec and pipes them to the doorbell's root-only control
+socket, as for email; the token lives in the doorbell's memory only. The doorbell checks the bot's login budget
+(`GET /gateway/bot`, `session_start_limit`), opens its own gateway session (a small standard-library RFC 6455
+client, intents GUILDS, GUILD_MESSAGES and DIRECT_MESSAGES only, never MESSAGE_CONTENT) and answers armed only
+after READY. A DM, a mention, a reply to the bot, or a message in a free-response channel (or a thread under one,
+or a thread the bot owns) from someone other than a bot asks the wake proxy's helper for a wake-request, then sends
+one typing indicator to that channel; it never posts a message. After the disarm it stays connected for about 90
+seconds, then closes. Dropped sessions resume; fresh logins are capped per arm and need budget left; a session
+that cannot be kept, a refused token or a spent budget rings instead. Email behaviour is unchanged. Nothing is
+installed by bundle sync. No guest asset changes. This source release does not deploy, install, enable or start
+anything on a host or computer.
+
+Release `2026.11.13.4` builds on `2026.11.13.3` and teaches the host wake proxy client wakes.
+A per-host level, set with `ctl client-wake ticket|auth` (default `ticket`, kept in
+`/run/hivra-ingress-state`), decides what may resume a napped computer: at `ticket` only a server
+ticket; at `auth` also a request whose `Authorization: Bearer`, or `POST /auth/bootstrap` form token
+(body at most 16 KB), hashes to the route's optional `bearer_sha256`. The root helper checks the
+proof; the forwarder never sees the hash. A cookie or a webhook signature header never wakes a
+computer and never moves the idle signal (`last_authed_at`), which now moves only on a verified
+ticket, bearer or bootstrap. A browser asking for a napped computer is redirected to the route's
+optional `wake_url`. A nap that says `server-disarm` makes client wakes go to Hivra as a
+`wake-request` instead of a local resume. Routes without the new fields behave exactly as before.
+
+The same release adds the host wake doorbell:
+`hivra-wake-doorbell.py` (Python standard library) and `hivra-wake-doorbell.service`, which runs it as its
+own unprivileged user. Before an email-covered computer sleeps, Hivra's arm host script reads the mail
+settings inside the computer through the vmid-bound guest exec and pipes them to the doorbell's root-only
+control socket; they live in the doorbell's memory only and never reach Hivra. The doorbell takes the
+INBOX baseline with STATUS, watches read-only (EXAMINE, IDLE or NOOP, UID FETCH of BODY.PEEK header
+fields; SELECT, STORE and every other mailbox-changing command are refused before they are sent), and for
+a sender Hermes would answer asks the wake proxy's helper for a wake-request. `hivra-wake-proxy.py` lets
+the doorbell's user send only `request` (always as "doorbell") and `health` on the helper's socket.
+Nothing is installed by bundle sync: the doorbell's own install step (HIVRA_WAKE_DOORBELLS) does that.
+`hivra-provider-worker.py` advances its release labels. No guest asset changes. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.13.3` builds on `2026.11.13.2` and lets the host wake proxy call Hivra with a
+host credential: after it resumes a napped computer it reports the wake (`wake-report`), and for a
+valid ticket to a computer that is not running (a hibernated one) it asks Hivra to wake it
+(`wake-request`). The root helper reads the credential from `/etc/hivra/ingress/host-credential.json`
+(written root only by the flag-gated install step) and signs each call; it still has no network of its
+own, so the unprivileged forwarder sends the finished, single-use signed request and never holds the
+credential. Without that file the proxy calls nothing, exactly as before. A browser asking for a
+computer that is starting now gets a self-refreshing "waking up" page. `hivra-provider-worker.py`
+advances its release labels. No guest asset changes. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
+Release `2026.11.13.2` builds on `2026.11.13.1` and teaches `hivra-start-on-host.sh` about host
+ingress: when `/etc/hivra/ingress/routes/<vmid>.json` names the computer's own hostname, a start
+puts the host's ARP/IP pin back, starts `hivra-cf@<vmid>` and reports the unchanged stable URL
+instead of restarting a guest connector (the guest's connector is off and has no token in that
+mode). Without such a route file the script behaves exactly as before. No guest asset changes.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
+Release `2026.11.13.1` builds on `2026.11.12.5` and adds the host wake proxy as inert bundle
+files: `hivra-wake-proxy.py` (Python standard library only), `hivra-wake-helper.service`,
+`hivra-wake-proxy.service`, `hivra-cf-template.service` (installed as `hivra-cf@.service`) and
+`hivra-ingress.tmpfiles.conf`. No guest asset changes. The host connector unit runs a pinned
+cloudflared that a separate install step downloads and verifies; the bundle carries no
+cloudflared binary. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.12.5` builds on `2026.11.12.4` and adds Nuphos as an agent kind. The guest
 installer (`provision-claude-code-box.sh`) installs Docker, pulls Nuphos's official runtime image
 (`ghcr.io/nuphos/runtime:latest-claude-code`) and records it by digest, and runs it on the

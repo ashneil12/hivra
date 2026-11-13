@@ -558,6 +558,53 @@ update them yet.
   latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
+- **Host wake proxy (shipped, not installed).** From `2026.11.13.1` the bundle carries
+  `hivra-wake-proxy.py` with its units `hivra-wake-helper.service` (root: route files,
+  nap markers, per-VM lock and QMP `cont`, unix sockets only) and
+  `hivra-wake-proxy.service` (the `hivra-ingress` user: `127.0.0.1:8080` and
+  `[::1]:8080`, no capabilities), the per-computer host connector unit
+  `hivra-cf-template.service` (installed as `hivra-cf@.service`: cloudflared with
+  `--protocol http2`, its token read from the 0600 `/etc/hivra/ingress/<vmid>.env`,
+  never argv) and `hivra-ingress.tmpfiles.conf`. Bundle sync only stores them; nothing
+  runs until the separate, flag-gated wake-proxy install step copies them into place.
+  The proxy resumes only a paused VM whose nap marker holds the running QEMU pid, answers
+  an unknown host or a napping computer with 503, and wakes only on a signed, short-lived,
+  single-use `POST /__hivra/wake` ticket.
+- **Host wake proxy client wakes (shipped, dark).** From `2026.11.13.4`, `ctl client-wake auth`
+  lets the owner's bearer (or the dashboard's `/auth/bootstrap` form) resume a napped computer
+  when its route carries `bearer_sha256`; the default level `ticket` keeps tickets as the only wake.
+  Cookies and webhook signature headers never wake and never refresh the idle signal. Browsers
+  asking for a napped computer go to the route's `wake_url`. A nap marked `server-disarm`
+  (Telegram armed) sends client wakes to Hivra's `wake-request` instead.
+- **Host wake doorbell (shipped, dark).** From `2026.11.13.4`, the bundle carries
+  `hivra-wake-doorbell.py` and its unit. The doorbell install step (HIVRA_WAKE_DOORBELLS lists a
+  channel) installs it as user `hivra-doorbell` next to a running wake proxy. For email, the arm
+  host script hands the computer's own IMAP settings to it over its root-only socket before the
+  stop; it watches INBOX read-only and rings the wake proxy's helper (`request`, as "doorbell") for
+  mail from a sender Hermes would answer. A restart rings for every computer it had armed.
+- **Host wake doorbell for Discord (shipped, dark).** From `2026.11.13.5`, with
+  HIVRA_WAKE_DOORBELLS listing `discord`, the arm host script hands the computer's own bot token and
+  reply settings to the doorbell before the stop. The doorbell holds its own gateway session (READY
+  before the stop, no message-content intent), rings for a DM, a mention, a reply to the bot or a
+  free-response channel, sends one typing indicator and never posts. It stays connected about 90
+  seconds after the disarm. Agents are covered only with Hermes's own missed-message catch-up on and
+  a DM channel listed for it.
+- **Host ingress hardening (shipped, dark).** From `2026.11.13.6`, `hivra-ingress-pins.service`
+  (written and enabled by the wake-proxy install step; it runs `hivra-wake-proxy.py apply-pins`) re-applies each host-ingress computer's ARP/IP pin at boot
+  before the proxy and connectors start; the helper treats a running computer as not napped; the
+  forwarder cannot ask for wakes; the doorbell only reaches public mail servers and keeps ringing until
+  Hivra answers; the daemons never stop restarting.
+- **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
+  (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
+  the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks
+  `POST /api/hivra/ingress/wake-request` to wake a computer it cannot resume itself. Calls are
+  signed with the host credential (HMAC of host id and generation; revoked by moving the
+  generation on). No credential file: no calls, unchanged behaviour.
+- **Host ingress at start (shipped, dark).** From `2026.11.13.2`, `hivra-start-on-host.sh`
+  checks for `/etc/hivra/ingress/routes/<vmid>.json`. When it names the computer's own
+  hostname (the per-agent cutover wrote it), the start re-applies the host's ARP/IP pin
+  from `/etc/hivra/ingress/pins/`, starts the host connector `hivra-cf@<vmid>` and checks the
+  stable URL, and never restarts the guest connector. No route file: unchanged behaviour.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

@@ -10,8 +10,14 @@
 // The host gate in the sleep script (agent-sleep-scripts.ts) checks the same
 // probe facts against the same list, so the two answers agree.
 
-/** The only channels a wake can ever cover. Both gates refuse anything else. */
-export const TELEGRAM_WAKE_COVERABLE_CHANNELS: readonly string[] = ["hermes:telegram"];
+import { TELEGRAM_CHANNEL_SPEC } from "@/lib/hivra/channel-wake/registry";
+
+/**
+ * The channels a Telegram wake can cover: Telegram's own probe tag, from the
+ * channel wake registry. Both gates refuse anything else. Other channels are
+ * covered by their own adapters (channel-wake/registry.ts), never by Telegram.
+ */
+export const TELEGRAM_WAKE_COVERABLE_CHANNELS: readonly string[] = [TELEGRAM_CHANNEL_SPEC.probeTag];
 
 /** What the idle probe reports about Hermes' Telegram setup. Never the token. */
 export interface TelegramProbeFacts {

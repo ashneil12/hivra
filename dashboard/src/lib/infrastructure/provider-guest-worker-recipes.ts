@@ -440,6 +440,36 @@ const recipes = Object.freeze({
     workerSha256: "6900bb616ab7449874567c8ed33f780dc8a6fce571786f1fd5cd468d29899a92",
     workerSize: 45216,
   }),
+  "2026.11.13.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release ships the host wake proxy as inert host files. The worker only advances its release labels.
+    workerSha256: "3177774e1a7a6ea88f95362ba4f7a167f53636525ef03beb96c105a2d55eb052",
+    workerSize: 45216,
+  }),
+  "2026.11.13.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the start helper about host ingress. The worker only advances its release labels.
+    workerSha256: "5f3df66045f47cbf8fc303f7ae094f8403615d78657a888028c8faa31cc87a37",
+    workerSize: 45216,
+  }),
+  "2026.11.13.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets the host wake proxy call Hivra with a host credential. The worker only advances its release labels.
+    workerSha256: "4c8558bea03db55790d1d4bfc086f52bf39ba2eed07425a2b183a57776c58954",
+    workerSize: 45216,
+  }),
+  "2026.11.13.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake proxy client wakes and ships the host wake doorbell as inert host files. The worker only advances its release labels.
+    workerSha256: "b16aec8710cb07252e0e20919a3c71273664f7f983acb9d1bf7921ce3829d66f",
+    workerSize: 45216,
+  }),
+  "2026.11.13.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake doorbell Discord. The worker only advances its release labels.
+    workerSha256: "dac65199affccaf5ed37a46a4ac8651384cffe04b15a4901acd697b17cb30b10",
+    workerSize: 45216,
+  }),
+  "2026.11.13.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens the host wake proxy, the doorbell and their units. The worker only advances its release labels.
+    workerSha256: "2e3996e3ce750eb2be92b7ae2f168b94c2951db333b913fcb3f99d6a830c6ab1",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

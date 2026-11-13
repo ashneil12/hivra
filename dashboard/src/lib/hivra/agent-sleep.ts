@@ -38,19 +38,28 @@ import {
   type ObservedSleepState,
   type SleepReceipt,
 } from "./agent-sleep-scripts";
+import { type TelegramSleepContext } from "./telegram-wake/lifecycle";
+import { TELEGRAM_ADAPTER } from "./channel-wake/adapters/telegram";
 import {
-  markTelegramPendingArm,
-  readTelegramSleepContext,
-  telegramCoverageFor,
-  telegramWebhookIsClear,
-  type TelegramSleepContext,
-} from "./telegram-wake/lifecycle";
+  armChannelsBeforeSleep,
+  channelCoverageFor,
+  channelSleepCoverage,
+  markChannelsAfterSleep,
+  readGenericChannelSleepContexts,
+  undoChannelArms,
+  type ChannelCoverage,
+  type GenericChannelContext,
+  type PreSleepArm,
+} from "./channel-wake/lifecycle";
 import {
   readHivraAgentRow,
   resolveSleepTarget,
   runWakeHostScript,
   type AgentRow,
 } from "./agent-wake";
+import { listTunnelConnections } from "@/lib/services/cloudflare-tunnel";
+import { loadAgentIngressState } from "./ingress/wake-client";
+import { buildIngressVmStatsHostScript, parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
 
 /**
  * Put an agent to sleep: nap (pause, RAM stays) or hibernate (RAM saved to
@@ -65,6 +74,8 @@ import {
  */
 
 const LOG_SOURCE = "agent-sleep";
+
+type SleepTarget = Extract<Awaited<ReturnType<typeof resolveSleepTarget>>, { ok: true }>["target"];
 
 export const DEFAULT_NAP_AFTER_SECONDS = 300;
 export const DEFAULT_HIBERNATE_AFTER_SECONDS = 900;
@@ -280,6 +291,28 @@ export async function readSleepHostRow(row: AgentRow): Promise<SleepHostRow | nu
 }
 
 // ---------------------------------------------------------------------------
+// Host ingress idle check
+// ---------------------------------------------------------------------------
+
+/**
+ * What the host's wake proxy says against a nap: unknown (no stats), requests
+ * in flight or open streams, or a verified use (ticket, bearer, bootstrap)
+ * inside the idle window. Unauthenticated traffic never counts. null when
+ * nothing does. Pure.
+ */
+export function ingressIdleBlocker(
+  stats: IngressProxyVmStats | null,
+  options: { manual: boolean; nowMs: number; idleWindowMs: number },
+): string | null {
+  if (!stats) return "ingress_stats_unavailable";
+  if (stats.inflight > 0 || stats.streams > 0) return "ingress_active";
+  if (!options.manual && stats.lastAuthedAtMs !== null && options.nowMs - stats.lastAuthedAtMs < options.idleWindowMs) {
+    return "ingress_recent_use";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Sleep
 // ---------------------------------------------------------------------------
 
@@ -370,7 +403,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     }
   }
 
-  let target;
+  let target: SleepTarget;
   try {
     const resolved = await resolveSleepTarget(row, LOG_SOURCE);
     if (!resolved.ok) return { outcome: "skipped", reason: `target_${resolved.code}` };
@@ -380,16 +413,51 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   }
   if (!target.bindingTag) return { outcome: "ineligible", reason: "binding_not_enforced", reasons: ["binding_not_enforced"] };
 
+  // Host ingress: an agent whose public connector runs on the host sleeps only
+  // while ingress may act on it, and never while an enable or rollback holds it.
+  // Read only when ingress was ever configured here; unreadable keeps it awake.
+  const ingress = await loadAgentIngressState(agentId, {
+    vmid: target.vmid,
+    hostId: String(target.executionContext?.host ?? ""),
+    env,
+    nowMs: now(),
+  });
+  if (ingress.kind === "error") return { outcome: "skipped", reason: "ingress_unreadable" };
+  const hostIngress = ingress.kind === "row" && ingress.state.hostIngress;
+  if (ingress.kind === "row") {
+    if (ingress.state.leaseHeld) return { outcome: "skipped", reason: "ingress_operation" };
+    if (ingress.state.needsAwake) return { outcome: "ineligible", reason: "ingress_needs_awake", reasons: ["ingress_needs_awake"] };
+  }
+  // A nap behind the host's proxy needs the host connector to be the only one
+  // at the edge: a second connector (a guest one come back, or anyone else's)
+  // would serve requests straight to a paused computer.
+  if (hostIngress && tier === "nap") {
+    try {
+      const live = (await listTunnelConnections(String(row.cf_tunnel_id ?? ""))).filter((c) => c.connections > 0);
+      if (live.length !== 1) return { outcome: "not_idle", reason: "ingress_connectors", reasons: ["ingress_connectors"] };
+    } catch {
+      return { outcome: "skipped", reason: "ingress_connectors_unknown" };
+    }
+  }
+
   // Telegram wake: read only when the server switch is fully on and the owner
   // opted in. Without it every live channel keeps the agent awake, as before.
   let telegram: TelegramSleepContext | null = null;
+  // Every other channel: read only when the channel wake switches are on and an adapter exists.
+  let genericChannels: GenericChannelContext[] = [];
   if (state === "awake") {
     try {
-      telegram = await readTelegramSleepContext(agentId, host?.sleep_mode ?? null, env);
+      telegram = await TELEGRAM_ADAPTER.readSleepContext(agentId, host?.sleep_mode ?? null, env);
     } catch {
       telegram = null;
     }
+    try {
+      genericChannels = await readGenericChannelSleepContexts(agentId, host?.sleep_mode ?? null, { env });
+    } catch {
+      genericChannels = [];
+    }
   }
+  const channelContexts = { telegram, generic: genericChannels };
   const verdictOptions = (cores: number, coveredChannels: string[] = []) => ({
     manual,
     nowMs: now(),
@@ -404,10 +472,17 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   // paused); it was idle when it napped and its next job is guarded above.
   let verdict: IdleVerdict | null = null;
   let covered: string[] = [];
+  let coverage: ChannelCoverage = { covered: [], telegram: false, generic: [] };
+  let preSleepArms: PreSleepArm[] = [];
   if (state === "awake") {
+    const channelProbeOptions = genericChannels.length > 0
+      ? { telegram: Boolean(telegram), channels: genericChannels.map((c) => c.adapter.channel) }
+      : telegram ? { telegram: true } : {};
+    // Host ingress: the proxy's own view of the computer rides in the same SSH call.
+    const probeOptions = hostIngress ? { ...channelProbeOptions, ingressStats: true } : channelProbeOptions;
     try {
       const run = await runProxmoxHostScript(
-        buildIdleProbeHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }, telegram ? { telegram: true } : {}),
+        buildIdleProbeHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }, probeOptions),
         target.env,
         { timeoutMs: PROBE_TIMEOUT_MS },
       );
@@ -415,167 +490,263 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       if (!probe) {
         return { outcome: "skipped", reason: parseIdleProbeRefusal(run?.stdout ?? "") ?? "probe_unavailable" };
       }
-      covered = telegramCoverageFor(telegram, probe, now());
+      coverage = channelCoverageFor(channelContexts, probe, now());
+      covered = coverage.covered;
       verdict = idleVerdict(probe, verdictOptions(probe.cpus, covered));
       if (!verdict.idle) {
         return { outcome: "not_idle", reason: verdict.reasons[0], reasons: verdict.reasons, nextJobAt: verdict.nextJobAt };
+      }
+      if (hostIngress) {
+        const blocker = ingressIdleBlocker(parseIngressVmStats(run?.stdout ?? "", target.vmid), {
+          manual,
+          nowMs: now(),
+          idleWindowMs: timings.napAfterSeconds * 1000,
+        });
+        if (blocker === "ingress_stats_unavailable") return { outcome: "skipped", reason: blocker };
+        if (blocker) return { outcome: "not_idle", reason: blocker, reasons: [blocker] };
       }
     } catch {
       return { outcome: "skipped", reason: "probe_unavailable" };
     }
     // A covered bot must have no webhook before it sleeps: a webhook set by
     // someone else would never be ours to replace, and the agent stays awake.
-    if (telegram && covered.length > 0 && !(await telegramWebhookIsClear(telegram).catch(() => false))) {
+    if (telegram && coverage.telegram && !(await TELEGRAM_ADAPTER.verifyClear(telegram).catch(() => false))) {
       return { outcome: "not_idle", reason: "telegram_webhook_set", reasons: ["telegram_webhook_set"] };
     }
-  }
-
-  const operationId = randomUUID();
-  const generation = await claimAgentSleep({ agentId, operationId, tier, expectedGeneration });
-  if (generation === null) return { outcome: "skipped", reason: "claim_refused" };
-
-  // From here the lease is ours. Every path below gives it back.
-  const finish = async (result: AgentSleepFinishResult): Promise<boolean> =>
-    finishAgentSleep({ agentId, operationId, result });
-  const record = async (kind: AgentSleepEventKind, toState: string, reason: string, detail: Record<string, number | string | boolean | null>) => {
-    await logAgentSleepEvent({
-      agentId,
-      kind,
-      trigger,
-      fromState: state,
-      toState,
-      generation,
-      durationMs: now() - startedAt,
-      reason,
-      detail: { tier, manual, ...detail },
-    });
-  };
-
-  // The host's own answer when the script could not tell us: wake it, so it
-  // ends up awake, and read the state the wake reports.
-  // A script that is still running on the host (the wake script says busy then)
-  // will move the computer after this call returns, so no state observed now can
-  // be recorded. The lease stays and the sweep settles it from the host once the
-  // computer has stopped changing.
-  const leaveLease = async (reason: string, recovered: boolean): Promise<SleepOutcome> => {
-    await record("fail", "unknown", reason, { recovered });
-    log.warn("agent sleep left its lease for the sweep: state unknown", {
-      source: LOG_SOURCE,
-      failureType: "agent_sleep_state_unknown",
-      instanceId: agentId,
-      reason,
-    });
-    return { outcome: "failed", reason, ms: now() - startedAt };
-  };
-  const recoverByWaking = async (reason: string): Promise<SleepOutcome> => {
-    // A hibernation that lost its receipt may be saved to disk: that wake is a restore.
-    const run = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
-    const busy = run.receipt?.reason === "busy";
-    const observed = run.receipt && !busy ? stateFromObserved(run.receipt.to === "cold" ? "awake" : run.receipt.to) : null;
-    if (!observed) return leaveLease(reason, false);
-    const finished = await finish(observed);
-    if (!finished) return leaveLease(reason, false);
-    await record("fail", observed, reason, { recovered: true });
-    return { outcome: "failed", state: observed, reason, ms: now() - startedAt };
-  };
-
-  let receipt: SleepReceipt | null = null;
-  try {
-    const script = buildSleepHostScript({
-      vmid: target.vmid,
-      bindingTag: target.bindingTag,
-      tier,
-      manual,
-      ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
-      ...(telegram && covered.length > 0 && telegram.row.token_fp
-        ? { telegramCoverage: { channels: covered, fingerprint: telegram.row.token_fp } }
-        : {}),
-    });
-    const run = await runProxmoxHostScript(script, target.env, {
-      timeoutMs: tier === "hibernate" ? HIBERNATE_SCRIPT_TIMEOUT_MS : NAP_SCRIPT_TIMEOUT_MS,
-    });
-    receipt = parseSleepReceipt(run?.stdout ?? "", target.vmid);
-  } catch {
-    receipt = null;
-  }
-
-  if (!receipt) return recoverByWaking("no_receipt");
-
-  if (!receipt.ok) {
-    // Another script holds this computer. What the host shows now is not where it will end up.
-    if (receipt.reason === "busy") {
-      await record("abort", "unknown", "busy", { ...receiptDetail(receipt), lease_left: true });
-      return { outcome: "aborted", reason: "busy", ms: now() - startedAt };
+    // Channels that cannot arm late arm now, before the lease and the stop. A failed arm keeps the agent awake.
+    if (coverage.generic.length > 0) {
+      const armed = await armChannelsBeforeSleep(coverage, { vmid: target.vmid, bindingTag: target.bindingTag, env: target.env })
+        .catch(() => ({ ok: false as const, reason: "channel_arm_failed" }));
+      if (!armed.ok) return { outcome: "not_idle", reason: armed.reason, reasons: [armed.reason] };
+      preSleepArms = armed.arms;
     }
-    const observed = stateFromObserved(receipt.to);
-    if (!observed) return recoverByWaking(receipt.reason);
-    const finishedAbort = await finish(observed);
-    if (!finishedAbort) return leaveLease(receipt.reason, false);
-    await record(ABORT_REASONS.has(receipt.reason) ? "abort" : "fail", observed, receipt.reason, receiptDetail(receipt));
-    return {
-      outcome: ABORT_REASONS.has(receipt.reason) ? "aborted" : "failed",
-      state: observed,
-      reason: receipt.reason,
-      ms: now() - startedAt,
-    };
   }
 
-  // The script says it slept. Check the probe it carried against the full
-  // rules (idle window, load, job horizon); a computer that should not have
-  // slept is woken at once.
-  // The same Telegram rules as the host gate, on the probe the script itself ran.
-  const finalCovered = receipt.probe && covered.length > 0 ? telegramCoverageFor(telegram, receipt.probe, now()) : [];
-  const finalVerdict = receipt.probe ? idleVerdict(receipt.probe, verdictOptions(receipt.probe.cpus, finalCovered)) : verdict;
-  if (receipt.probe && finalVerdict && !finalVerdict.idle) {
-    const woke = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
-    const observed = woke.receipt && woke.receipt.reason !== "busy"
-      ? stateFromObserved(woke.receipt.to === "cold" ? "awake" : woke.receipt.to)
-      : null;
-    if (observed === "awake") {
-      if (!(await finish("awake"))) return leaveLease("recheck_finish_not_recorded", false);
-      await record("abort", "awake", "recheck_not_idle", receiptDetail(receipt, { blockers: finalVerdict.reasons.join(",") }));
-      return { outcome: "aborted", state: "awake", reason: "recheck_not_idle", reasons: finalVerdict.reasons, ms: now() - startedAt };
-    }
-    // It could not be woken. It is asleep as the script said, or unreadable.
-    if (!observed) return recoverByWaking("recheck_wake_failed");
-  }
-
-  // Asleep with Telegram covered: the sweep sets the wake webhook once the nap is
-  // old enough. Marked while this sleep still holds the agent, so a sleep that
-  // cannot record its finish still leaves the row waiting. If the mark cannot
-  // be written, the agent would sleep deaf to its bot, so it is woken instead.
-  if (finalCovered.length > 0 && !(await markTelegramPendingArm(agentId).catch(() => false))) {
-    log.warn("telegram wake could not be marked after a sleep; waking the agent", {
-      source: LOG_SOURCE,
-      failureType: "telegram_wake_mark_failed",
-      instanceId: agentId,
-    });
-    return recoverByWaking("telegram_mark_failed");
-  }
-
-  const slept: AgentSleepFinishResult = tier === "nap" ? "napping" : "hibernated";
-  const finished = await finish(slept);
-  if (!finished) {
-    log.warn("agent slept but the lease was not released", {
-      source: LOG_SOURCE,
-      failureType: "agent_sleep_finish_not_recorded",
-      instanceId: agentId,
-    });
-    await record("fail", slept, "finish_not_recorded", receiptDetail(receipt));
-    return { outcome: "failed", reason: "finish_not_recorded", ms: now() - startedAt };
-  }
-  await record(tier, slept, tier === "nap" ? "napped" : "hibernated", receiptDetail(receipt, finalCovered.length > 0 ? { tg_covered: true } : {}));
-
-  // Wake it ahead of its next job.
-  let nextJobAt: string | null | undefined;
-  if (finalVerdict) {
-    nextJobAt = finalVerdict.nextJobAt;
-    const wakeAt = nextJobAt ? new Date(Date.parse(nextJobAt) - SCHEDULED_WAKE_LEAD_SECONDS * 1000).toISOString() : null;
+  // A napping host-ingress computer may have been resumed by its proxy for a
+  // client and be in use through it: the proxy's own view decides before any
+  // tier moves it (the guest probe above runs only on an awake computer).
+  if (hostIngress && state !== "awake") {
     try {
-      await supabaseAdmin?.from("hivra_agents").update({ next_wake_at: wakeAt }).eq("id", agentId).eq("sleep_state", slept);
+      const run = await runProxmoxHostScript(buildIngressVmStatsHostScript(target.vmid), target.env, { timeoutMs: PROBE_TIMEOUT_MS });
+      const blocker = ingressIdleBlocker(parseIngressVmStats(run?.stdout ?? "", target.vmid), {
+        manual,
+        nowMs: now(),
+        idleWindowMs: timings.napAfterSeconds * 1000,
+      });
+      if (blocker === "ingress_stats_unavailable") return { outcome: "skipped", reason: blocker };
+      if (blocker) return { outcome: "not_idle", reason: blocker, reasons: [blocker] };
     } catch {
-      // The sweep still wakes it on demand; a missed schedule only delays a job.
+      return { outcome: "skipped", reason: "ingress_stats_unavailable" };
     }
   }
-  return { outcome: "slept", state: slept, nextJobAt, ms: now() - startedAt };
+
+  const sleepRow: AgentRow = row;
+  const sleepTarget: SleepTarget = target;
+  const sleepGeneration: number = expectedGeneration;
+  if (preSleepArms.length === 0) return sleepAfterChecks(sleepRow, sleepTarget, sleepGeneration);
+  // Arms made before the stop: undone when the agent is known to be awake;
+  // otherwise recorded as armed, so a sleeping agent can be heard and the
+  // sweep takes down any arm left on an agent that turns out awake.
+  const outcome = await sleepAfterChecks(sleepRow, sleepTarget, sleepGeneration).catch(async (error: unknown) => {
+    await markChannelsAfterSleep(agentId, coverage, preSleepArms, { now }).catch(() => false);
+    throw error;
+  });
+  if (outcome.outcome === "slept") return outcome;
+  if (outcome.state === "napping" || outcome.state === "hibernated" || (outcome.outcome === "failed" && !outcome.state)) {
+    await markChannelsAfterSleep(agentId, coverage, preSleepArms, { now }).catch(() => false);
+  } else {
+    await undoChannelArms(preSleepArms);
+  }
+  return outcome;
+
+  // Takes its inputs as parameters so their checked (non-null) types hold inside.
+  async function sleepAfterChecks(row: AgentRow, target: SleepTarget, expectedGeneration: number): Promise<SleepOutcome> {
+    const operationId = randomUUID();
+    const generation = await claimAgentSleep({ agentId, operationId, tier, expectedGeneration });
+    if (generation === null) return { outcome: "skipped", reason: "claim_refused" };
+
+    // From here the lease is ours. Every path below gives it back.
+    const finish = async (result: AgentSleepFinishResult): Promise<boolean> =>
+      finishAgentSleep({ agentId, operationId, result });
+
+    // An ingress enable or rollback may have taken its lease between the read
+    // above and this claim (it re-checks the sleep lease after taking its own,
+    // so one of the two always sees the other). Only read when ingress was
+    // ever configured here; then the computer is left exactly as it is.
+    {
+      const again = await loadAgentIngressState(agentId, {
+        vmid: target.vmid,
+        hostId: String(target.executionContext?.host ?? ""),
+        env,
+        nowMs: now(),
+      });
+      if (again.kind === "error" || (again.kind === "row" && (again.state.leaseHeld || again.state.needsAwake || again.state.hostIngress !== hostIngress))) {
+        const reason = again.kind === "row" && again.state.leaseHeld ? "ingress_operation" : "ingress_changed";
+        await finish(state === "napping" ? "napping" : "awake");
+        return { outcome: "aborted", state: state === "napping" ? "napping" : "awake", reason, ms: now() - startedAt };
+      }
+    }
+    const record = async (kind: AgentSleepEventKind, toState: string, reason: string, detail: Record<string, number | string | boolean | null>) => {
+      await logAgentSleepEvent({
+        agentId,
+        kind,
+        trigger,
+        fromState: state,
+        toState,
+        generation,
+        durationMs: now() - startedAt,
+        reason,
+        detail: { tier, manual, ...detail },
+      });
+    };
+
+    // The host's own answer when the script could not tell us: wake it, so it
+    // ends up awake, and read the state the wake reports.
+    // A script that is still running on the host (the wake script says busy then)
+    // will move the computer after this call returns, so no state observed now can
+    // be recorded. The lease stays and the sweep settles it from the host once the
+    // computer has stopped changing.
+    const leaveLease = async (reason: string, recovered: boolean): Promise<SleepOutcome> => {
+      await record("fail", "unknown", reason, { recovered });
+      log.warn("agent sleep left its lease for the sweep: state unknown", {
+        source: LOG_SOURCE,
+        failureType: "agent_sleep_state_unknown",
+        instanceId: agentId,
+        reason,
+      });
+      return { outcome: "failed", reason, ms: now() - startedAt };
+    };
+    const recoverByWaking = async (reason: string): Promise<SleepOutcome> => {
+      // A hibernation that lost its receipt may be saved to disk: that wake is a restore.
+      const run = await runWakeHostScript(row, target, { restore: tier === "hibernate", ...(hostIngress ? { hostIngress: true } : {}) });
+      const busy = run.receipt?.reason === "busy";
+      const observed = run.receipt && !busy ? stateFromObserved(run.receipt.to === "cold" ? "awake" : run.receipt.to) : null;
+      if (!observed) return leaveLease(reason, false);
+      const finished = await finish(observed);
+      if (!finished) return leaveLease(reason, false);
+      await record("fail", observed, reason, { recovered: true });
+      return { outcome: "failed", state: observed, reason, ms: now() - startedAt };
+    };
+
+    let receipt: SleepReceipt | null = null;
+    // A coverage with any channel beyond Telegram goes to the host in the general form.
+    const sleepCoverage = channelSleepCoverage(coverage, telegram?.row.token_fp ?? null);
+    if (coverage.generic.length > 0 && !sleepCoverage) return recoverByWaking("channel_coverage_invalid");
+    try {
+      const script = buildSleepHostScript({
+        vmid: target.vmid,
+        bindingTag: target.bindingTag,
+        tier,
+        manual,
+        ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
+        ...(hostIngress ? { hostIngress: true } : {}),
+        ...(sleepCoverage
+          ? { channelCoverage: sleepCoverage }
+          : telegram && covered.length > 0 && telegram.row.token_fp
+            ? { telegramCoverage: { channels: covered, fingerprint: telegram.row.token_fp } }
+            : {}),
+      });
+      const run = await runProxmoxHostScript(script, target.env, {
+        timeoutMs: tier === "hibernate" ? HIBERNATE_SCRIPT_TIMEOUT_MS : NAP_SCRIPT_TIMEOUT_MS,
+      });
+      receipt = parseSleepReceipt(run?.stdout ?? "", target.vmid);
+    } catch {
+      receipt = null;
+    }
+
+    if (!receipt) return recoverByWaking("no_receipt");
+
+    if (!receipt.ok) {
+      // Another script holds this computer. What the host shows now is not where it will end up.
+      if (receipt.reason === "busy") {
+        await record("abort", "unknown", "busy", { ...receiptDetail(receipt), lease_left: true });
+        return { outcome: "aborted", reason: "busy", ms: now() - startedAt };
+      }
+      const observed = stateFromObserved(receipt.to);
+      if (!observed) return recoverByWaking(receipt.reason);
+      const finishedAbort = await finish(observed);
+      if (!finishedAbort) return leaveLease(receipt.reason, false);
+      await record(ABORT_REASONS.has(receipt.reason) ? "abort" : "fail", observed, receipt.reason, receiptDetail(receipt));
+      return {
+        outcome: ABORT_REASONS.has(receipt.reason) ? "aborted" : "failed",
+        state: observed,
+        reason: receipt.reason,
+        ms: now() - startedAt,
+      };
+    }
+
+    // The script says it slept. Check the probe it carried against the full
+    // rules (idle window, load, job horizon); a computer that should not have
+    // slept is woken at once.
+    // The same Telegram rules as the host gate, on the probe the script itself ran.
+    const finalCoverage: ChannelCoverage = receipt.probe && covered.length > 0
+      ? channelCoverageFor(channelContexts, receipt.probe, now())
+      : { covered: [], telegram: false, generic: [] };
+    const finalCovered = finalCoverage.covered;
+    const finalVerdict = receipt.probe ? idleVerdict(receipt.probe, verdictOptions(receipt.probe.cpus, finalCovered)) : verdict;
+    if (receipt.probe && finalVerdict && !finalVerdict.idle) {
+      const woke = await runWakeHostScript(row, target, { restore: tier === "hibernate", ...(hostIngress ? { hostIngress: true } : {}) });
+      const observed = woke.receipt && woke.receipt.reason !== "busy"
+        ? stateFromObserved(woke.receipt.to === "cold" ? "awake" : woke.receipt.to)
+        : null;
+      if (observed === "awake") {
+        if (!(await finish("awake"))) return leaveLease("recheck_finish_not_recorded", false);
+        await record("abort", "awake", "recheck_not_idle", receiptDetail(receipt, { blockers: finalVerdict.reasons.join(",") }));
+        return { outcome: "aborted", state: "awake", reason: "recheck_not_idle", reasons: finalVerdict.reasons, ms: now() - startedAt };
+      }
+      // It could not be woken. It is asleep as the script said, or unreadable.
+      if (!observed) return recoverByWaking("recheck_wake_failed");
+    }
+
+    // Asleep with Telegram covered: the sweep sets the wake webhook once the nap is
+    // old enough. Marked while this sleep still holds the agent, so a sleep that
+    // cannot record its finish still leaves the row waiting. If the mark cannot
+    // be written, the agent would sleep deaf to its bot, so it is woken instead.
+    if (finalCoverage.telegram && !(await TELEGRAM_ADAPTER.armLater(agentId).catch(() => false))) {
+      log.warn("telegram wake could not be marked after a sleep; waking the agent", {
+        source: LOG_SOURCE,
+        failureType: "telegram_wake_mark_failed",
+        instanceId: agentId,
+      });
+      return recoverByWaking("telegram_mark_failed");
+    }
+    // Every other covered channel: arms made before the stop are recorded, and late arms are marked for the sweep.
+    if (coverage.generic.length > 0 && !(await markChannelsAfterSleep(agentId, coverage, preSleepArms, { now }).catch(() => false))) {
+      log.warn("channel wake could not be marked after a sleep; waking the agent", {
+        source: LOG_SOURCE,
+        failureType: "channel_wake_mark_failed",
+        instanceId: agentId,
+      });
+      return recoverByWaking("channel_mark_failed");
+    }
+
+    const slept: AgentSleepFinishResult = tier === "nap" ? "napping" : "hibernated";
+    const finished = await finish(slept);
+    if (!finished) {
+      log.warn("agent slept but the lease was not released", {
+        source: LOG_SOURCE,
+        failureType: "agent_sleep_finish_not_recorded",
+        instanceId: agentId,
+      });
+      await record("fail", slept, "finish_not_recorded", receiptDetail(receipt));
+      return { outcome: "failed", reason: "finish_not_recorded", ms: now() - startedAt };
+    }
+    await record(tier, slept, tier === "nap" ? "napped" : "hibernated", receiptDetail(receipt, {
+      ...(finalCoverage.telegram ? { tg_covered: true } : {}),
+      ...(coverage.generic.length > 0 ? { ch_covered: coverage.generic.map((c) => c.adapter.channel).join(",") } : {}),
+    }));
+
+    // Wake it ahead of its next job.
+    let nextJobAt: string | null | undefined;
+    if (finalVerdict) {
+      nextJobAt = finalVerdict.nextJobAt;
+      const wakeAt = nextJobAt ? new Date(Date.parse(nextJobAt) - SCHEDULED_WAKE_LEAD_SECONDS * 1000).toISOString() : null;
+      try {
+        await supabaseAdmin?.from("hivra_agents").update({ next_wake_at: wakeAt }).eq("id", agentId).eq("sleep_state", slept);
+      } catch {
+        // The sweep still wakes it on demand; a missed schedule only delays a job.
+      }
+    }
+    return { outcome: "slept", state: slept, nextJobAt, ms: now() - startedAt };
+  }
 }

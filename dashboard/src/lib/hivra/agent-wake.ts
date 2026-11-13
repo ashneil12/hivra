@@ -21,11 +21,12 @@ import {
 import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
 import { isFastWakeEnabled } from "./fast-wake-flags";
 import {
-  disarmTelegramForWake,
-  rearmTelegramAfterFailedWake,
-  settleTelegramAfterWake,
-  type TelegramDisarm,
-} from "./telegram-wake/lifecycle";
+  disarmChannelsForWake,
+  rearmChannelsAfterFailedWake,
+  settleChannelsAfterWake,
+  type ChannelDisarms,
+} from "./channel-wake/lifecycle";
+import { loadAgentIngressState, wakeViaIngress, type LoadedIngressState } from "./ingress/wake-client";
 
 /**
  * Wake an agent that is asleep, and say when it can be used.
@@ -161,7 +162,7 @@ export interface WakeScriptRun {
 export async function runWakeHostScript(
   row: AgentRow,
   target: HivraLifecycleTarget,
-  options: { restore: boolean; killStaleSockets?: boolean },
+  options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
   let script: string;
@@ -173,6 +174,8 @@ export async function runWakeHostScript(
       ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
       // A wake that took a Telegram wake row back also drops the guest's dead long polls, so the bot polls again at once.
       ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
+      // The host runs this computer's public connector: drop the proxy's nap marker, and never touch the guest's tunnel.
+      ...(options.hostIngress === true ? { hostIngress: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
@@ -250,14 +253,14 @@ interface WakeOutcome {
   detail: WakeDetail;
 }
 
-/** Runs the wake, and puts a Telegram webhook it took down back in line when the wake fails. */
+/** Runs the wake, and puts channel arms it took down (a Telegram webhook, say) back in line when the wake fails. */
 async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome> {
-  const telegram: { disarm: TelegramDisarm | null } = { disarm: null };
-  const outcome = await performWakeSteps(row, agentId, telegram);
-  if (outcome.result === "wake_failed" && telegram.disarm) {
-    await rearmTelegramAfterFailedWake(agentId, telegram.disarm).catch(() => undefined);
-  } else if (outcome.result === "awake" && telegram.disarm) {
-    await settleTelegramAfterWake(agentId, telegram.disarm).catch(() => undefined);
+  const channels: { disarm: ChannelDisarms | null } = { disarm: null };
+  const outcome = await performWakeSteps(row, agentId, channels);
+  if (outcome.result === "wake_failed" && channels.disarm) {
+    await rearmChannelsAfterFailedWake(agentId, channels.disarm).catch(() => undefined);
+  } else if (outcome.result === "awake" && channels.disarm) {
+    await settleChannelsAfterWake(agentId, channels.disarm).catch(() => undefined);
   }
   return outcome;
 }
@@ -265,7 +268,7 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
 async function performWakeSteps(
   row: AgentRow,
   agentId: string,
-  telegram: { disarm: TelegramDisarm | null },
+  channels: { disarm: ChannelDisarms | null },
 ): Promise<WakeOutcome> {
   const fromState = String(row.sleep_state);
   // Only a nap is known to be a quick resume. A hibernation, and a wake that
@@ -280,6 +283,18 @@ async function performWakeSteps(
     const resolved = await resolveSleepTarget(row, LOG_SOURCE);
     if (!resolved.ok) return failed(`target_${resolved.code}`);
     const target = resolved.target;
+    // Host ingress (only read when it was ever configured here). A row that
+    // cannot be read, or a cutover left half done, gets the ingress wake: it
+    // removes the proxy's nap marker (harmless when there is none) and leaves
+    // the guest's tunnel alone (it may be the host's, or off); the public
+    // health check below says whether the agent answers.
+    const ingress: LoadedIngressState = await loadAgentIngressState(agentId, {
+      vmid: target.vmid,
+      hostId: String(target.executionContext?.host ?? ""),
+    });
+    const hostIngress = ingress.kind === "error"
+      || (ingress.kind === "row" && (ingress.state.hostIngress || ingress.state.interrupted));
+    if (hostIngress) detail.host_ingress = true;
 
     if (restore) {
       // A restore claims host RAM all at once. Take a slot first, so a crowd of
@@ -299,16 +314,53 @@ async function performWakeSteps(
       }
     }
 
-    // Admitted: take a Telegram wake webhook down before the computer runs again,
-    // so Hermes polls cleanly and finds every queued message. A refused wake
-    // returned above, and leaves the webhook armed.
-    telegram.disarm = await disarmTelegramForWake(agentId);
-    if (telegram.disarm) {
-      detail.tg_disarm_ms = telegram.disarm.ms;
-      detail.tg_disarm_ok = telegram.disarm.ok;
+    // Admitted: take every channel's wake arm down before the computer runs
+    // again (a Telegram webhook, so Hermes polls cleanly and finds every queued
+    // message). In parallel, each time-boxed; none can stop the wake. A refused
+    // wake returned above, and leaves the arms as they are.
+    channels.disarm = await disarmChannelsForWake(agentId);
+    const tgDisarm = channels.disarm.telegram;
+    if (tgDisarm) {
+      detail.tg_disarm_ms = tgDisarm.ms;
+      detail.tg_disarm_ok = tgDisarm.ok;
+    }
+    if (channels.disarm.generic.length > 0) {
+      detail.ch_disarm_ms = channels.disarm.ms;
+      detail.ch_disarm_ok = channels.disarm.generic.every((d) => d.ok);
     }
 
-    const run = await runWakeHostScript(row, target, { restore, ...(telegram.disarm ? { killStaleSockets: true } : {}) });
+    // The ticket fast path: a napping computer behind the host's wake proxy is
+    // resumed by the proxy itself, which answers once the guest is healthy, so
+    // neither SSH nor the public health check is needed. Anything but a good
+    // receipt falls back to the SSH wake below. The channel arms are down first.
+    if (!restore && ingress.kind === "row" && ingress.state.acts && isFastWakeEnabled("ingress_ticket")) {
+      const ticket = await wakeViaIngress({
+        agentId,
+        vmid: target.vmid,
+        hostname: row.cf_hostname,
+        tunnelId: row.cf_tunnel_id,
+        generation: ingress.state.row.generation,
+      });
+      detail.ticket_ms = ticket.ms;
+      if (ticket.ok) {
+        detail.via = "ingress";
+        detail.proxy_ms = ticket.receipt.ms;
+        detail.cont_ms = ticket.receipt.contMs;
+        detail.guest_ms = ticket.receipt.guestMs;
+        return { result: "awake", reason: ticket.receipt.woke === "nap" ? "resumed" : "already", cold: false, detail };
+      }
+      detail.ticket_failed = ticket.reason;
+      if (ticket.ok === false && ticket.status !== undefined) detail.ticket_status = ticket.status;
+    }
+
+    // Any socket-based channel that was armed (Telegram's long poll included)
+    // means the guest holds dead sockets: drop them, so it reconnects at once.
+    const run = await runWakeHostScript(row, target, {
+      restore,
+      ...(channels.disarm.killStaleSockets ? { killStaleSockets: true } : {}),
+      ...(hostIngress ? { hostIngress: true } : {}),
+    });
+    if (hostIngress) detail.via = "ssh";
     detail.script_ms = run.ms;
     if (run.sshReadyMs !== undefined) detail.ssh_ready_ms = run.sshReadyMs;
     if (!run.receipt) return failed(run.runError ?? "no_receipt");

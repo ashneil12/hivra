@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { buildProviderGuestRuntimeProbe, parseProviderGuestRuntimeReceipt, type ProviderGuestRuntimeProbe } from "../provider-guest-runtime";
 import { providerGuestBundleScopeSha256 } from "../provider-guest-bundle";
 import { receiverFixture } from "./first-boot-receiver.fixtures";
@@ -28,6 +29,25 @@ it("selects the standalone access service in the signed runtime probe", () => {
   const plan = buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), accessMode: "direct-https" });
   expect(plan.accessMode).toBe("direct-https");
   expect(plan.script).toContain('"hivra-direct-access.service" if EXPECTED["accessMode"] == "direct-https"');
+});
+it("checks the host-only ingress listener instead of the guest tunnel for host ingress, and leaves the other modes unchanged", () => {
+  const original = '        access_unit = "hivra-direct-access.service" if EXPECTED["accessMode"] == "direct-https" else "hivra-cf-tunnel.service"\n';
+  for (const accessMode of [undefined, "cloudflare-named", "direct-https"] as const) {
+    const plan = buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), ...(accessMode ? { accessMode } : {}) });
+    expect(plan.script).toContain(original);
+    expect(plan.script).not.toContain("hivra-ingress.socket");
+  }
+  // Digests taken before host ingress existed: the original modes send the same bytes.
+  const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+  expect(digest(buildProviderGuestRuntimeProbe(runtimeProbeFixture()).script))
+    .toBe("9e8fa43e41df8d2d5efceaed951d572d52ac912cf01d84bacb685007a6f7c3bd");
+  expect(digest(buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), accessMode: "direct-https", captureBootId: true }).script))
+    .toBe("6631220e6cb0e7367e7883001709495ffcbcaed3274b1ee775118736607e1d11");
+  const plan = buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), accessMode: "host-ingress" });
+  expect(plan.accessMode).toBe("host-ingress");
+  expect(plan.script).toContain('        access_unit = "hivra-ingress.socket"\n        units = [');
+  expect(plan.script).not.toContain("hivra-cf-tunnel.service");
+  expect(() => buildProviderGuestRuntimeProbe({ ...runtimeProbeFixture(), accessMode: "guest-ingress" as never })).toThrow();
 });
 it("runs the actual generated recipes and filesystem guards without network or systemd calls", async () => {
   const scripts = Object.fromEntries((["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos"] as const)
