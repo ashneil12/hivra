@@ -39,3 +39,23 @@ it("arms only an asleep agent with no operation, after the nap rule, under the a
   expect(sql).toContain("where agent_id = p_agent_id and arm_id = p_arm_id and state = 'arming' for update");
   expect(sql).toContain("to service_role");
 });
+
+describe("arming again after a failed wake", () => {
+  const laterName = "20261113101000_hivra_agent_telegram_wake_after_failed_wake.sql";
+  const later = fs.readFileSync(path.join(dir, laterName), "utf8");
+
+  it("comes after the table it changes", () => {
+    expect(laterName > name).toBe(true);
+  });
+
+  it("only widens the claim's sleep states to wake_failed, and stays service-role only", () => {
+    expect(later).toMatch(/create or replace function public\.claim_hivra_agent_tg_arm/);
+    expect(later).toContain("a.operation_id is not null or a.sleep_state not in ('napping', 'hibernated', 'wake_failed')");
+    const body = (text: string) => /create or replace function public\.claim_hivra_agent_tg_arm[\s\S]*?\n\$\$;/.exec(text)![0]
+      .split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+    expect(body(later).replace(", 'wake_failed'", "")).toBe(body(sql));
+    expect(later).toContain("revoke all on function public.claim_hivra_agent_tg_arm(uuid, uuid, integer) from public, anon, authenticated");
+    expect(later).toContain("grant execute on function public.claim_hivra_agent_tg_arm(uuid, uuid, integer) to service_role");
+    expect(later).not.toMatch(/create table|drop table|create policy/i);
+  });
+});

@@ -14,7 +14,7 @@
 //       QMP greeting, qmp_capabilities, then the command, then query-status to
 //       confirm (stop must end paused, cont must end running). Async events are
 //       skipped by name, and every wait has a deadline.
-//   fixup <vmid> <agent_wait_s> [sockets]
+//   fixup <vmid> <agent_wait_s>
 //       The guest fixups after any wake, in ONE guest exec over the guest agent
 //       socket: set the clock from the host (the guest cannot reach NTP and its
 //       clock froze), hard-kill the tunnel (cloudflared never reconnects by
@@ -23,6 +23,11 @@
 //       retried until the deadline. A socket failure falls back to a
 //       timeout-wrapped `qm guest exec`. Access is serialised with a per-VM
 //       flock, and every socket is closed in a finally.
+//
+// HOST_VM_CONTROL_SOCKETS_PROGRAM is the same program with one more guest
+// step in its fixup (see WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE). It is sent
+// only by a wake that asks for it, so every other script carries the plain
+// program unchanged.
 //
 // The receipt carries ok, a reason (lower case words), the QMP status where it
 // applies, how the fixup ran (via), the number of tries, and step timings in
@@ -36,11 +41,11 @@ export const WAKE_FIXUP_COMMAND_TEMPLATE =
 
 /**
  * The same command with one more step before the tunnel restart, used only
- * when the wake asks for it (`fixup <vmid> <wait> sockets`): drop every
- * established outbound connection to port 443. A paused guest's long polls
- * (Telegram bots) and keep-alive pools are dead on the far side, and the
- * programs holding them would otherwise wait 30 s or more to notice. A guest
- * whose ss cannot kill sockets just skips the step.
+ * by HOST_VM_CONTROL_SOCKETS_PROGRAM: drop every established outbound
+ * connection to port 443. A paused guest's long polls (Telegram bots) and
+ * keep-alive pools are dead on the far side, and the programs holding them
+ * would otherwise wait 30 s or more to notice. A guest whose ss cannot kill
+ * sockets just skips the step.
  */
 export const WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE =
   "date -s @<epoch> >/dev/null; ss -K state established '( dport = :443 )' >/dev/null 2>&1 || true; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel";
@@ -51,7 +56,6 @@ QEMU_DIR = "/var/run/qemu-server"
 LOCK_DIR = "/run/lock"
 PREFIX = "HIVRA_VM_CTL "
 FIXUP_TEMPLATE = "date -s @%s >/dev/null; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel"
-FIXUP_SOCKETS_TEMPLATE = "date -s @%s >/dev/null; ss -K state established '( dport = :443 )' >/dev/null 2>&1 || true; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel"
 MAX_LINE = 4 * 1024 * 1024
 SYNC_TIMEOUT = 1.0
 CALL_TIMEOUT = 5.0
@@ -244,7 +248,7 @@ def qga_attempt(vmid, agent_deadline, rec):
         rec["synced"] = True
         t1 = mono()
         # The clock the guest is given is the host's, read as late as possible.
-        cmd = rec["_template"] % host_epoch()
+        cmd = FIXUP_TEMPLATE % host_epoch()
         pid = qga_call(ch, {"execute": "guest-exec", "arguments": {
             "path": "/bin/sh", "arg": ["-c", cmd], "capture-output": False}}, mono() + CALL_TIMEOUT)
         if not isinstance(pid, dict) or not isinstance(pid.get("pid"), int):
@@ -276,7 +280,7 @@ def qga_attempt(vmid, agent_deadline, rec):
 
 def qm_fallback(vmid, rec):
     t1 = mono()
-    cmd = rec["_template"] % host_epoch()
+    cmd = FIXUP_TEMPLATE % host_epoch()
     argv = ["timeout", "-k", "2", str(FALLBACK_TIMEOUT + 3), "qm", "guest", "exec", vmid,
             "--timeout", str(FALLBACK_TIMEOUT), "--", "/bin/sh", "-c", cmd]
     try:
@@ -365,11 +369,10 @@ def main(argv):
                 raise Fail("usage")
             rec["action"] = argv[2]
             op_qmp(vmid, argv[2], timeout_s, rec)
-        elif op == "fixup" and len(argv) in (3, 4):
+        elif op == "fixup" and len(argv) == 3:
             wait_s = float(argv[2])
-            if not 0.2 <= wait_s <= 120 or (len(argv) == 4 and argv[3] != "sockets"):
+            if not 0.2 <= wait_s <= 120:
                 raise Fail("usage")
-            rec["_template"] = FIXUP_SOCKETS_TEMPLATE if len(argv) == 4 else FIXUP_TEMPLATE
             op_fixup(vmid, wait_s, rec)
         else:
             raise Fail("usage")
@@ -380,7 +383,6 @@ def main(argv):
     except Exception:
         reason = "internal_error"
     rec.pop("_t_agent", None)
-    rec.pop("_template", None)
     rec.pop("synced", None)
     rec["ok"] = reason == "ok"
     rec["reason"] = reason
@@ -391,6 +393,18 @@ def main(argv):
 
 main(sys.argv[1:])
 `;
+
+/** A guest template as the program spells it: the epoch is python's %s. */
+function programFixupLine(template: string): string {
+  return `FIXUP_TEMPLATE = "${template.replace("<epoch>", "%s")}"`;
+}
+
+/** The program with the socket step in its fixup. Only its FIXUP_TEMPLATE line differs. */
+export const HOST_VM_CONTROL_SOCKETS_PROGRAM = (() => {
+  const plain = programFixupLine(WAKE_FIXUP_COMMAND_TEMPLATE);
+  if (HOST_VM_CONTROL_PROGRAM.split(plain).length !== 2) throw new Error("host helper fixup line not found");
+  return HOST_VM_CONTROL_PROGRAM.replace(plain, () => programFixupLine(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE));
+})();
 
 export type VmControlOp = "qmp" | "fixup";
 

@@ -20,8 +20,12 @@ import {
 } from "./agent-sleep-store";
 import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
 import { isFastWakeEnabled } from "./fast-wake-flags";
-import { resolveTelegramWakeConfig } from "./telegram-wake/config";
-import { disarmTelegramForWake, rearmTelegramAfterFailedWake, type TelegramDisarm } from "./telegram-wake/lifecycle";
+import {
+  disarmTelegramForWake,
+  rearmTelegramAfterFailedWake,
+  settleTelegramAfterWake,
+  type TelegramDisarm,
+} from "./telegram-wake/lifecycle";
 
 /**
  * Wake an agent that is asleep, and say when it can be used.
@@ -157,7 +161,7 @@ export interface WakeScriptRun {
 export async function runWakeHostScript(
   row: AgentRow,
   target: HivraLifecycleTarget,
-  options: { restore: boolean },
+  options: { restore: boolean; killStaleSockets?: boolean },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
   let script: string;
@@ -167,8 +171,8 @@ export async function runWakeHostScript(
       bindingTag: target.bindingTag,
       admission: buildWakeAdmissionFor(target),
       ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
-      // With Telegram wake on, the guest also drops its dead long polls, so a bot polls again at once.
-      ...(resolveTelegramWakeConfig() ? { killStaleSockets: true } : {}),
+      // A wake that took a Telegram wake row back also drops the guest's dead long polls, so the bot polls again at once.
+      ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
@@ -252,6 +256,8 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
   const outcome = await performWakeSteps(row, agentId, telegram);
   if (outcome.result === "wake_failed" && telegram.disarm) {
     await rearmTelegramAfterFailedWake(agentId, telegram.disarm).catch(() => undefined);
+  } else if (outcome.result === "awake" && telegram.disarm) {
+    await settleTelegramAfterWake(agentId, telegram.disarm).catch(() => undefined);
   }
   return outcome;
 }
@@ -302,7 +308,7 @@ async function performWakeSteps(
       detail.tg_disarm_ok = telegram.disarm.ok;
     }
 
-    const run = await runWakeHostScript(row, target, { restore });
+    const run = await runWakeHostScript(row, target, { restore, ...(telegram.disarm ? { killStaleSockets: true } : {}) });
     detail.script_ms = run.ms;
     if (run.sshReadyMs !== undefined) detail.ssh_ready_ms = run.sshReadyMs;
     if (!run.receipt) return failed(run.runError ?? "no_receipt");

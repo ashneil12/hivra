@@ -32,6 +32,10 @@ import {
  * a webhook someone else set: that blocks the bot for a day and wakes the
  * agent so it keeps working. Three failed arms do the same. A 429 waits as
  * long as Telegram says.
+ *
+ * A wake takes the row back to idle and keeps pending_since as a mark. If the
+ * wake failed, or was cut off, and the agent is still asleep, the mark brings
+ * the row back to waiting to be armed, so the agent is never left deaf.
  */
 
 const LOG_SOURCE = "telegram-wake-sweep";
@@ -59,6 +63,8 @@ export interface TelegramSweepCounts {
   disarm_failed: number;
   wiped: number;
   woke: number;
+  /** Rows a wake took back whose agent is still asleep, put back to waiting to be armed. */
+  rearmed: number;
 }
 
 export interface TelegramSweepOptions extends TelegramWakeDeps {
@@ -77,7 +83,7 @@ interface AgentFacts {
 }
 
 function emptyCounts(): TelegramSweepCounts {
-  return { rows: 0, armed: 0, undone: 0, retry: 0, blocked: 0, disarmed: 0, disarm_failed: 0, wiped: 0, woke: 0 };
+  return { rows: 0, armed: 0, undone: 0, retry: 0, blocked: 0, disarmed: 0, disarm_failed: 0, wiped: 0, woke: 0, rearmed: 0 };
 }
 
 async function readAgents(ids: string[]): Promise<Map<string, AgentFacts>> {
@@ -103,9 +109,12 @@ async function readHostModes(agents: Iterable<AgentFacts>): Promise<Map<string, 
   return out;
 }
 
+/** A wake that failed may have left the computer paused or saved, so it counts as asleep here. */
+const ASLEEP_STATES = new Set(["napping", "hibernated", "wake_failed"]);
+
 const isAsleep = (agent: AgentFacts | undefined): boolean =>
   !!agent && agent.status === "running" && agent.desired_state === "running" && agent.operation_id == null
-  && (agent.sleep_state === "napping" || agent.sleep_state === "hibernated");
+  && ASLEEP_STATES.has(String(agent.sleep_state));
 
 function blocked(row: TelegramWakeRow, nowMs: number): boolean {
   if (!row.blocked_until) return false;
@@ -238,7 +247,11 @@ async function settleRow(
       return;
     }
     case "armed":
-      if (wanted) return;
+      if (wanted) {
+        // Touched so the next run reads other armed rows first.
+        await updateTelegramWakeRow(row.agent_id, ["armed"], {}, { armId: row.arm_id });
+        return;
+      }
       if (await disarmRow(row, "idle", options, counts)) wakeIfAsleep();
       return;
     case "disarm_failed":
@@ -247,11 +260,40 @@ async function settleRow(
       return;
     case "idle":
       // The owner opted out and every webhook is down: forget the token.
-      if (!row.enabled && row.token_enc) {
-        if (await updateTelegramWakeRow(row.agent_id, ["idle"], { token_enc: null, token_fp: null, bot_id: null })) counts.wiped += 1;
+      if (!row.enabled) {
+        const hadToken = Boolean(row.token_enc);
+        if (hadToken || row.pending_since) {
+          const patch = { token_enc: null, token_fp: null, bot_id: null, pending_since: null };
+          if (await updateTelegramWakeRow(row.agent_id, ["idle"], patch) && hadToken) counts.wiped += 1;
+        }
+        return;
       }
+      if (row.pending_since) return settleTakenBack(row, asleep, wanted, nowMs, counts, wakeIfAsleep);
       return;
   }
+}
+
+/**
+ * An idle row a wake took back (pending_since is the mark), once no operation
+ * is in flight. Still asleep: the wake failed or was cut off, so arm again, or
+ * when the bot may not be armed, wake the agent. Awake or stopped: clear the mark.
+ */
+async function settleTakenBack(
+  row: TelegramWakeRow,
+  asleep: boolean,
+  wanted: boolean,
+  nowMs: number,
+  counts: TelegramSweepCounts,
+  wakeIfAsleep: () => void,
+): Promise<void> {
+  if (wanted) {
+    const back = await updateTelegramWakeRow(row.agent_id, ["idle"], {
+      state: "pending_arm", pending_since: new Date(nowMs).toISOString(), next_attempt_at: null,
+    });
+    if (back) counts.rearmed += 1;
+    return;
+  }
+  if (await updateTelegramWakeRow(row.agent_id, ["idle"], { pending_since: null }) && asleep) wakeIfAsleep();
 }
 
 /** One pass over the rows that have work. Never throws. */
@@ -259,7 +301,7 @@ export async function runTelegramWakeSweep(options: TelegramSweepOptions): Promi
   const counts = emptyCounts();
   const config = resolveTelegramWakeConfig(options.env ?? process.env);
   try {
-    const rows = await readTelegramWakeWorkRows(ROWS_PER_RUN);
+    const rows = await readTelegramWakeWorkRows(ROWS_PER_RUN, (options.now ?? Date.now)());
     counts.rows = rows.length;
     if (rows.length === 0) return counts;
     const agents = await readAgents(rows.map((row) => row.agent_id));

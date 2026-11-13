@@ -10,8 +10,11 @@
 // never parsed or logged: at most 64 KB of it is read and thrown away.
 
 export const runtime = "nodejs";
-// The wake runs after the answer: a restore can take 120 s plus the health check.
-export const maxDuration = 180;
+// The wake runs after the answer. Its worst case is a hibernated agent: the
+// host slot, the webhook delete (up to 5 s), the restore (up to 120 s), the
+// health check (up to 30 s) and the database calls, so 300 s leaves room. A
+// wake cut off anyway leaves the row marked, and the sweep arms the bot again.
+export const maxDuration = 300;
 
 import { createHash, timingSafeEqual } from "node:crypto";
 import { after, NextResponse, type NextRequest } from "next/server";
@@ -23,6 +26,8 @@ import { readTelegramWakeRow, type TelegramWakeRow } from "@/lib/hivra/telegram-
 const LOG_SOURCE = "telegram-wake-webhook";
 const MAX_BODY_BYTES = 64 * 1024;
 const SECRET_HEADER = "x-telegram-bot-api-secret-token";
+/** The only shape telegramWakeSecretToken makes. Anything else is refused before any database read. */
+const SECRET_SHAPE = /^[0-9a-f]{64}$/;
 
 function answer(status: 401 | 503): NextResponse {
   return NextResponse.json({ ok: false }, { status, headers: { "Cache-Control": "no-store", ...(status === 503 ? { "Retry-After": "5" } : {}) } });
@@ -58,7 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ age
     const { agentId } = await params;
     const secret = telegramWakeSecret();
     const given = req.headers.get(SECRET_HEADER) ?? "";
-    if (!secret || !isAgentUuid(agentId) || !given) return answer(401);
+    if (!secret || !isAgentUuid(agentId) || !SECRET_SHAPE.test(given)) return answer(401);
 
     let row: TelegramWakeRow | null;
     try {

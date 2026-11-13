@@ -53,9 +53,11 @@ jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: (...a: unknown[]) => 
 const order: string[] = [];
 const mockDisarm = jest.fn();
 const mockRearm = jest.fn();
+const mockSettle = jest.fn();
 jest.mock("../telegram-wake/lifecycle", () => ({
   disarmTelegramForWake: (...a: unknown[]) => mockDisarm(...a),
   rearmTelegramAfterFailedWake: (...a: unknown[]) => mockRearm(...a),
+  settleTelegramAfterWake: (...a: unknown[]) => mockSettle(...a),
 }));
 
 import { ensureHivraAgentAwake } from "../agent-wake";
@@ -120,6 +122,7 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
       return disarmed;
     });
     mockRearm.mockResolvedValue(undefined);
+    mockSettle.mockResolvedValue(undefined);
     mockReadRow.mockResolvedValue({ data: row(), error: null });
   });
   afterEach(() => { process.env = { ...saved }; });
@@ -135,6 +138,8 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
     expect(order).toEqual(["admission", "disarm_done", "host_script"]);
     expect(mockDisarm).toHaveBeenCalledWith(AGENT_ID);
     expect(mockRearm).not.toHaveBeenCalled();
+    // The wake succeeded, so the "taken back" mark on the row is cleared.
+    expect(mockSettle).toHaveBeenCalledWith(AGENT_ID, expect.objectContaining({ previous: "armed" }));
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
       trigger: "telegram",
       detail: expect.objectContaining({ tg_disarm_ms: 37, tg_disarm_ok: true }),
@@ -163,6 +168,7 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
     const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "telegram", ...fast });
     expect(result).toEqual({ state: "failed", reason: "resume_failed" });
     expect(mockRearm).toHaveBeenCalledWith(AGENT_ID, disarmed);
+    expect(mockSettle).not.toHaveBeenCalled();
   });
 
   it("goes on with the wake when the delete failed, and says so in the event", async () => {
@@ -172,16 +178,18 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.objectContaining({ tg_disarm_ok: false }) }));
   });
 
-  it("adds nothing to the event when there was no webhook, and kills stale sockets only with the switch on", async () => {
+  it("adds nothing to the event when there was no webhook, and kills stale sockets only for a wake that took a row back", async () => {
+    process.env.HIVRA_TELEGRAM_WAKE = "on";
+    process.env.HIVRA_TELEGRAM_WAKE_SECRET = "x".repeat(40);
+    process.env.HIVRA_TELEGRAM_WAKE_BASE_URL = "https://hooks.example.test/api/webhooks/telegram-wake";
+    // Configured, but this agent never opted in: its guest is left alone.
     mockDisarm.mockResolvedValue(null);
     await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
     const detail = mockLogEvent.mock.calls[0][0].detail;
     expect(detail).not.toHaveProperty("tg_disarm_ms");
-    expect(String(mockRunScript.mock.calls[0][0])).not.toContain('fixup "$VMID" "$AGENT_WAIT" sockets');
-    process.env.HIVRA_TELEGRAM_WAKE = "on";
-    process.env.HIVRA_TELEGRAM_WAKE_SECRET = "x".repeat(40);
-    process.env.HIVRA_TELEGRAM_WAKE_BASE_URL = "https://hooks.example.test/api/webhooks/telegram-wake";
+    expect(String(mockRunScript.mock.calls[0][0])).not.toContain("ss -K state established");
+    mockDisarm.mockResolvedValue(disarmed);
     await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
-    expect(String(mockRunScript.mock.calls[1][0])).toContain('fixup "$VMID" "$AGENT_WAIT" sockets');
+    expect(String(mockRunScript.mock.calls[1][0])).toContain("ss -K state established");
   });
 });

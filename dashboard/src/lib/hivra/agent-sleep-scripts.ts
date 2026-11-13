@@ -24,7 +24,11 @@
 
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
-import { HOST_VM_CONTROL_PREFIX, HOST_VM_CONTROL_PROGRAM } from "@/lib/hivra/sleep/host-vm-control-program";
+import {
+  HOST_VM_CONTROL_PREFIX,
+  HOST_VM_CONTROL_PROGRAM,
+  HOST_VM_CONTROL_SOCKETS_PROGRAM,
+} from "@/lib/hivra/sleep/host-vm-control-program";
 import {
   IDLE_PROBE_PREFIX,
   IDLE_PROBE_PROGRAM,
@@ -144,9 +148,12 @@ trap 'exit 143' TERM`;
 /**
  * Runs the host helper (QMP and guest agent sockets) and reads its one receipt
  * line into CTL_* variables with perl, never trusting its shape: anything that
- * is not exactly one valid line reads as a failed helper.
+ * is not exactly one valid line reads as a failed helper. With killStaleSockets
+ * the helper's fixup also drops stale outbound :443 connections in the guest;
+ * without it this is the plain helper every script carried before.
  */
-const CTL_SHELL = `HOST_CTL_PROGRAM=${shellQuote(HOST_VM_CONTROL_PROGRAM)}
+function ctlShell(killStaleSockets = false): string {
+  return `HOST_CTL_PROGRAM=${shellQuote(killStaleSockets ? HOST_VM_CONTROL_SOCKETS_PROGRAM : HOST_VM_CONTROL_PROGRAM)}
 CTL_OK=false
 CTL_REASON=helper_failed
 CTL_STATUS=""
@@ -203,18 +210,14 @@ qga_unlock() {
   flock -u 7 >/dev/null 2>&1 || true
   exec 7>&-
 }`;
+}
 
 /**
  * Fast answers to `qm config <vmid>` and `qm status <vmid>` from the files the
  * CLI itself reads, for the binding check (when switched on) and the admission
  * helper. Anything they cannot answer exactly goes to the real CLI.
  */
-const FAST_QM_SHELL = `# The admission helper reads every VM with qm config and qm status. The CLI costs
-# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
-# These two answer from the files the CLI itself reads, and hand anything they
-# cannot answer exactly back to the real CLI. The binding check may use the config
-# reader too: a missing file goes to the CLI, which then fails as before.
-PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
+const FAST_QM_FUNCTIONS = `PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
 QEMU_RUN_DIR=/var/run/qemu-server
 hivra_fast_qm() {
   local f pid
@@ -244,6 +247,21 @@ hivra_fast_qm() {
   fi
   command timeout -k 5 30 qm "$@" </dev/null
 }`;
+
+/** With fast_qm on: the functions ahead of the binding check, which uses the config reader too. */
+const FAST_QM_SHELL = `# The admission helper reads every VM with qm config and qm status. The CLI costs
+# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
+# These two answer from the files the CLI itself reads, and hand anything they
+# cannot answer exactly back to the real CLI. The binding check may use the config
+# reader too: a missing file goes to the CLI, which then fails as before.
+${FAST_QM_FUNCTIONS}`;
+
+/** With fast_qm off: the functions inside the admission shell, for the helper only, as before. */
+const ADMISSION_FAST_QM_SHELL = `# The admission helper reads every VM with qm config and qm status. The CLI costs
+# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
+# For the helper only, these two answer from the files the CLI itself reads, and
+# hand anything they cannot answer exactly back to the real CLI.
+${FAST_QM_FUNCTIONS}`;
 
 function stateShell(fastConfig: boolean): string {
   return `# One config read serves the binding check and the first state read.
@@ -862,9 +880,9 @@ TIER=${input.tier}
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${buildVmidBoundGuestExecPrelude()}
 ${receiptShell("sleep")}
-${CTL_SHELL}
-${FAST_QM_SHELL}
-${stateShell(input.fastConfigRead === true)}
+${ctlShell()}
+${input.fastConfigRead === true ? `${FAST_QM_SHELL}
+` : ""}${stateShell(input.fastConfigRead === true)}
 ${probeShell(input.manual === true, coverage)}
 install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
@@ -910,13 +928,15 @@ function assertAdmission(admission: WakeAdmission): void {
   if (!ok) throw new Error("Invalid wake admission policy.");
 }
 
-function wakeAdmissionShell(admission: WakeAdmission): string {
+/** fastQmDefined: FAST_QM_SHELL already came earlier in the script, so it is not repeated here. */
+function wakeAdmissionShell(admission: WakeAdmission, fastQmDefined: boolean): string {
   return `PROVISIONER_DIR=${shellQuote(admission.provisionerDirectory)}
 HOST_RESERVE_MB=${admission.hostReserveMb}
 ENFORCE_CEILINGS=${admission.enforceCeilings ? 1 : 0}
 CPU_DENSITY_MILLI=${admission.cpuDensityMilli}
 MEMORY_DENSITY_MILLI=${admission.memoryDensityMilli}
-run_admission() {
+${fastQmDefined ? "" : `${ADMISSION_FAST_QM_SHELL}
+`}run_admission() {
   (
     qm() { hivra_fast_qm "$@"; }
     export -f qm hivra_fast_qm
@@ -943,7 +963,7 @@ capacity_inputs() {
 }`;
 }
 
-function wakeBody(killStaleSockets: boolean): string {
+function wakeBody(): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -1017,7 +1037,7 @@ mark resume "$STEP"
 # One guest exec over the guest agent socket: set the clock from this host, kill the tunnel hard, restart it.
 # After a restore the agent may need a few seconds to answer; the helper retries until AGENT_WAIT runs out.
 STEP="$(now_ms)"
-ctl $((AGENT_WAIT + 45)) fixup "$VMID" "$AGENT_WAIT"${killStaleSockets ? " sockets" : ""}
+ctl $((AGENT_WAIT + 45)) fixup "$VMID" "$AGENT_WAIT"
 VIA="$CTL_VIA"
 TRIES="$CTL_TRIES"
 if [ -n "$CTL_STEPS" ]; then STEPS="\${STEPS:+$STEPS,}$CTL_STEPS"; fi
@@ -1049,10 +1069,10 @@ EXPECTED_BINDING_TAG=${shellQuote(tag)}
 # The host script itself arrives on stdin, so no command may read it.
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${receiptShell("wake")}
-${CTL_SHELL}
-${FAST_QM_SHELL}
-${stateShell(input.fastConfigRead === true)}
-${wakeAdmissionShell(input.admission)}
+${ctlShell(input.killStaleSockets === true)}
+${input.fastConfigRead === true ? `${FAST_QM_SHELL}
+` : ""}${stateShell(input.fastConfigRead === true)}
+${wakeAdmissionShell(input.admission, input.fastConfigRead === true)}
 install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:
 # it would see a computer that is about to be paused and report it awake. It
@@ -1060,7 +1080,7 @@ install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${wakeBody(input.killStaleSockets === true)}
+${wakeBody()}
 `;
 }
 

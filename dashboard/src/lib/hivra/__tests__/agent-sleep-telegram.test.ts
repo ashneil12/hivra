@@ -173,6 +173,24 @@ describe("sleepHivraAgent with Telegram wake", () => {
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "nap", detail: expect.objectContaining({ tg_covered: true }) }));
   });
 
+  it("marks the row while the sleep still holds the agent, so a finish that is not recorded still leaves it waiting", async () => {
+    mockFinish.mockResolvedValue(false);
+    await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "failed", reason: "finish_not_recorded" });
+    expect(mockPending).toHaveBeenCalledWith(AGENT_ID);
+    expect(mockPending.mock.invocationCallOrder[0]).toBeLessThan(mockFinish.mock.invocationCallOrder[0]);
+  });
+
+  it("wakes the agent instead of leaving it asleep and deaf when the row cannot be marked", async () => {
+    for (const marked of [() => Promise.resolve(false), () => Promise.reject(new Error("db"))]) {
+      mockPending.mockImplementationOnce(marked);
+      mockFinish.mockClear();
+      mockRunScript.mockClear();
+      await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "failed", state: "awake", reason: "telegram_mark_failed" });
+      expect(mockRunScript.mock.calls.some((c) => String(c[0]).includes("HIVRA_WAKE_RESULT"))).toBe(true);
+      expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
+    }
+  });
+
   it("stays awake when the bot already has a webhook, before any lease", async () => {
     mockClear.mockResolvedValue(false);
     await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "not_idle", reason: "telegram_webhook_set" });

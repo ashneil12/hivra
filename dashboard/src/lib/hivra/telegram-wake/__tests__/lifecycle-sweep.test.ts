@@ -7,13 +7,15 @@ jest.mock("@/lib/logger", () => ({ log: mockLog }));
 
 type Row = Record<string, unknown> & { agent_id: string; state: string };
 const rows = new Map<string, Row>();
+const updates: Array<{ id: string; from: string[]; patch: Record<string, unknown>; options?: unknown }> = [];
 const mockClaim = jest.fn();
 const mockFinish = jest.fn();
 jest.mock("../store", () => ({
   readTelegramWakeRow: async (id: string) => rows.get(id) ?? null,
   tryReadTelegramWakeRow: async (id: string) => rows.get(id) ?? null,
-  readTelegramWakeWorkRows: async () => [...rows.values()].filter((r) => r.state !== "idle" || (!r.enabled && r.token_enc)),
-  updateTelegramWakeRow: async (id: string, from: string[], patch: Record<string, unknown>) => {
+  readTelegramWakeWorkRows: async () => [...rows.values()].filter((r) => r.state !== "idle" || r.pending_since || (!r.enabled && r.token_enc)),
+  updateTelegramWakeRow: async (id: string, from: string[], patch: Record<string, unknown>, options?: unknown) => {
+    updates.push({ id, from, patch, options });
     const row = rows.get(id);
     if (!row || !from.includes(row.state)) return false;
     Object.assign(row, patch);
@@ -40,7 +42,7 @@ jest.mock("@/lib/supabase", () => ({
 }));
 
 import { encryptSecret } from "@/lib/crypto";
-import { disarmTelegramForWake, rearmTelegramAfterFailedWake } from "../lifecycle";
+import { disarmTelegramForWake, rearmTelegramAfterFailedWake, settleTelegramAfterWake } from "../lifecycle";
 import { runTelegramWakeSweep } from "../sweep";
 import { telegramWakeSecretToken } from "../config";
 
@@ -83,6 +85,7 @@ beforeAll(() => { process.env.ENCRYPTION_KEY = "ab".repeat(32); });
 beforeEach(() => {
   rows.clear();
   agents.clear();
+  updates.length = 0;
   jest.clearAllMocks();
   agents.set(AGENT, { status: "running", desired_state: "running", sleep_state: "napping", operation_id: null, proxmox_host: "local" });
 });
@@ -127,6 +130,28 @@ describe("disarm on wake", () => {
     const disarm = await disarmTelegramForWake(AGENT, { env, fetchImpl: telegram({}).fetchImpl });
     await rearmTelegramAfterFailedWake(AGENT, disarm, { now: () => NOW });
     expect(rows.get(AGENT)).toMatchObject({ state: "pending_arm", pending_since: new Date(NOW).toISOString() });
+  });
+
+  it("leaves an idle row marked as taken back, and a wake that succeeds clears the mark", async () => {
+    rows.set(AGENT, row());
+    const disarm = await disarmTelegramForWake(AGENT, { env, fetchImpl: telegram({}).fetchImpl, now: () => NOW });
+    expect(rows.get(AGENT)).toMatchObject({ state: "idle", pending_since: new Date(NOW).toISOString() });
+    await settleTelegramAfterWake(AGENT, disarm);
+    expect(rows.get(AGENT)).toMatchObject({ state: "idle", pending_since: null });
+  });
+
+  it("marks a waiting row too when a wake clears it", async () => {
+    rows.set(AGENT, row({ state: "pending_arm" }));
+    await disarmTelegramForWake(AGENT, { env, fetchImpl: telegram({}).fetchImpl, now: () => NOW });
+    expect(rows.get(AGENT)).toMatchObject({ state: "idle", pending_since: new Date(NOW).toISOString() });
+  });
+
+  it("leaves a failed delete for the sweep after a failed wake, since its webhook may still be set", async () => {
+    rows.set(AGENT, row());
+    const tg = telegram({ deleteWebhook: [{ status: 500, body: { ok: false } }, { status: 500, body: { ok: false } }] });
+    const disarm = await disarmTelegramForWake(AGENT, { env, fetchImpl: tg.fetchImpl });
+    await rearmTelegramAfterFailedWake(AGENT, disarm, { now: () => NOW });
+    expect(rows.get(AGENT)!.state).toBe("disarm_failed");
   });
 });
 
@@ -247,6 +272,60 @@ describe("sweep arming", () => {
     const counts = await sweep(telegram({}).fetchImpl);
     expect(rows.get(AGENT)!.token_enc).toBeNull();
     expect(counts.wiped).toBe(1);
+  });
+
+  it("arms the bot of an agent whose wake failed, since its computer may still be asleep", async () => {
+    rows.set(AGENT, row({ state: "pending_arm" }));
+    agents.set(AGENT, { status: "running", desired_state: "running", sleep_state: "wake_failed", operation_id: null, proxmox_host: "local" });
+    const tg = telegram({ getWebhookInfo: [{ status: 200, body: { ok: true, result: { url: "" } } }] });
+    const counts = await sweep(tg.fetchImpl);
+    expect(mockClaim).toHaveBeenCalled();
+    expect(counts.armed).toBe(1);
+  });
+
+  it("puts a row a failed or cut-off wake took back to waiting while the agent is still asleep", async () => {
+    for (const sleepState of ["wake_failed", "napping", "hibernated"]) {
+      rows.set(AGENT, row({ state: "idle", pending_since: new Date(NOW - 300_000).toISOString() }));
+      agents.set(AGENT, { status: "running", desired_state: "running", sleep_state: sleepState, operation_id: null, proxmox_host: "local" });
+      const tg = telegram({});
+      const counts = await sweep(tg.fetchImpl);
+      expect(tg.calls).toEqual([]);
+      expect(rows.get(AGENT)).toMatchObject({ state: "pending_arm", pending_since: new Date(NOW).toISOString(), next_attempt_at: null });
+      expect(counts.rearmed).toBe(1);
+      expect(wake).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leaves a taken-back row alone while the wake still holds the agent", async () => {
+    rows.set(AGENT, row({ state: "idle" }));
+    agents.set(AGENT, { status: "running", desired_state: "running", sleep_state: "waking", operation_id: "op", proxmox_host: "local" });
+    await sweep(telegram({}).fetchImpl);
+    expect(rows.get(AGENT)).toMatchObject({ state: "idle", pending_since: expect.any(String) });
+  });
+
+  it("clears the mark when the agent is awake, without waking anything", async () => {
+    rows.set(AGENT, row({ state: "idle" }));
+    agents.set(AGENT, { status: "running", desired_state: "running", sleep_state: "awake", operation_id: null, proxmox_host: "local" });
+    const counts = await sweep(telegram({}).fetchImpl);
+    expect(rows.get(AGENT)).toMatchObject({ state: "idle", pending_since: null });
+    expect(counts.rearmed).toBe(0);
+    expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("wakes an agent left asleep whose bot may not be armed again (blocked)", async () => {
+    rows.set(AGENT, row({ state: "idle", blocked_until: new Date(NOW + 60_000).toISOString() }));
+    const counts = await sweep(telegram({}).fetchImpl);
+    expect(rows.get(AGENT)).toMatchObject({ state: "idle", pending_since: null });
+    expect(wake).toHaveBeenCalledWith(AGENT);
+    expect(counts).toMatchObject({ rearmed: 0, woke: 1 });
+  });
+
+  it("touches an armed row it leaves in place, so other armed rows get their turn", async () => {
+    rows.set(AGENT, row({ state: "armed" }));
+    const tg = telegram({});
+    await sweep(tg.fetchImpl);
+    expect(tg.calls).toEqual([]);
+    expect(updates).toEqual([{ id: AGENT, from: ["armed"], patch: {}, options: { armId: row().arm_id } }]);
   });
 
   it("stops when the budget is nearly gone", async () => {

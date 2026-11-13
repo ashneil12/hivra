@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { wakeAgent, type WakeAgentResult } from "@/lib/hivra/agent-api";
 import { isFastWakeEnabled } from "@/lib/hivra/fast-wake-flags";
-import type { AgentSleepView } from "@/lib/hivra/agent-sleep-ui";
+import { agentSleepUiEnabled, type AgentSleepView } from "@/lib/hivra/agent-sleep-ui";
 
 /** How long "Woke up in 1.4 s" stays on screen. */
 export const WOKE_NOTE_MS = 4_000;
@@ -94,7 +94,8 @@ export function useAgentWake(
   // A page opened afresh wakes a sleeping agent at once anyway, so the request can go out
   // beside the first read instead of after it. An agent that is awake answers at once.
   useEffect(() => {
-    if (loaded || !isFastWakeEnabled("early_wake", process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE)) return;
+    // Without the sleep screens every agent reads as awake, so the answer would only be thrown away.
+    if (loaded || !agentSleepUiEnabled() || !isFastWakeEnabled("early_wake", process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE)) return;
     if (earlyRef.current?.agentId === agentId) return;
     earlyRef.current = { agentId, answer: wakeAgent(agentId) };
   }, [agentId, loaded]);

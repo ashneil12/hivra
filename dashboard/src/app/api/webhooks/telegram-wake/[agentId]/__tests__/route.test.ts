@@ -71,6 +71,14 @@ describe("POST /api/webhooks/telegram-wake/[agentId]", () => {
     expect(afterTasks).toHaveLength(0);
   });
 
+  it("refuses a header that is not the secret's shape before any database read", async () => {
+    for (const given of ["junk", header().toUpperCase(), header().slice(0, -1), `${header()}0`, " ".repeat(64)]) {
+      expect((await call(AGENT, { "x-telegram-bot-api-secret-token": given })).status).toBe(401);
+    }
+    expect(mockReadRow).not.toHaveBeenCalled();
+    expect(afterTasks).toHaveLength(0);
+  });
+
   it("refuses everything when the server has no secret", async () => {
     delete process.env.HIVRA_TELEGRAM_WAKE_SECRET;
     expect((await call(AGENT, { "x-telegram-bot-api-secret-token": header() })).status).toBe(401);

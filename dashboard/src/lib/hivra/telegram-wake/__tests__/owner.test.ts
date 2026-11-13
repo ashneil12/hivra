@@ -100,6 +100,18 @@ describe("enable", () => {
     expect(mockSave).not.toHaveBeenCalled();
   });
 
+  it("waits while an earlier webhook may still be set, so its token is not replaced under it", async () => {
+    for (const state of ["arming", "armed", "disarm_failed"]) {
+      stored = { agent_id: AGENT, enabled: true, token_enc: "enc", state };
+      await expect(enableTelegramWake(agent(), "user-1", { env })).resolves.toMatchObject({ ok: false, status: 409, code: "settling" });
+    }
+    expect(mockRunScript).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
+    stored = { agent_id: AGENT, enabled: false, token_enc: null, state: "idle" };
+    const fetchImpl = fetchWith(200, { ok: true, result: { id: 99 } });
+    await expect(enableTelegramWake(agent(), "user-1", { env, fetchImpl })).resolves.toMatchObject({ ok: true });
+  });
+
   it("is refused when the feature is off", async () => {
     await expect(enableTelegramWake(agent(), "user-1", { env: {} })).resolves.toMatchObject({ ok: false, status: 409, code: "not_available" });
     expect(mockRunScript).not.toHaveBeenCalled();

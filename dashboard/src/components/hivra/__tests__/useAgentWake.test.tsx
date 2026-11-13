@@ -143,13 +143,24 @@ describe("useAgentWake: a hold from an earlier visit", () => {
 
 describe("useAgentWake: the early wake switch", () => {
   const previous = process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE;
+  const previousSleep = process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+  beforeEach(() => { process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = "1"; });
   afterEach(() => {
     if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE;
     else process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE = previous;
+    if (previousSleep === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+    else process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = previousSleep;
   });
 
   it("is off by default: nothing is sent before the first read", () => {
     delete process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE;
+    mount({ view: "awake", loaded: false });
+    expect(mockWakeAgent).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing early while the sleep screens are off, even with the switch on", () => {
+    process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE = "early_wake";
+    delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
     mount({ view: "awake", loaded: false });
     expect(mockWakeAgent).not.toHaveBeenCalled();
   });

@@ -9,8 +9,8 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
-  HOST_VM_CONTROL_PREFIX, HOST_VM_CONTROL_PROGRAM, parseVmControlReceipt, type VmControlReceipt,
-  WAKE_FIXUP_COMMAND_TEMPLATE, WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE,
+  HOST_VM_CONTROL_PREFIX, HOST_VM_CONTROL_PROGRAM, HOST_VM_CONTROL_SOCKETS_PROGRAM, parseVmControlReceipt,
+  type VmControlReceipt, WAKE_FIXUP_COMMAND_TEMPLATE, WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE,
 } from "../host-vm-control-program";
 
 jest.setTimeout(40_000);
@@ -47,8 +47,8 @@ esac
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-function program(edits: Array<[string, string]> = []): string {
-  let text = HOST_VM_CONTROL_PROGRAM.replaceAll("/var/run/qemu-server", dir).replaceAll("/run/lock", path.join(dir, "lock"));
+function program(edits: Array<[string, string]> = [], base = HOST_VM_CONTROL_PROGRAM): string {
+  let text = base.replaceAll("/var/run/qemu-server", dir).replaceAll("/run/lock", path.join(dir, "lock"));
   for (const [from, to] of edits) {
     if (!text.includes(from)) throw new Error(`test edit not found: ${from}`);
     text = text.replace(from, to);
@@ -58,11 +58,11 @@ function program(edits: Array<[string, string]> = []): string {
 
 interface Ran { code: number | null; stdout: string; receipt: VmControlReceipt; ms: number; calls: string[] }
 
-function runHelper(args: string[], options: { edits?: Array<[string, string]>; qm?: string } = {}): Promise<Ran> {
+function runHelper(args: string[], options: { edits?: Array<[string, string]>; qm?: string; base?: string } = {}): Promise<Ran> {
   writeFileSync(path.join(dir, "calls.log"), "");
   const started = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", ["-I", "-B", "-c", program(options.edits), ...args], {
+    const child = spawn("python3", ["-I", "-B", "-c", program(options.edits, options.base), ...args], {
       env: { PATH: `${bin}:/usr/bin:/bin`, LC_ALL: "C", STUB_DIR: dir, QM_MODE: options.qm ?? "ok" } as unknown as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -602,14 +602,22 @@ describe("parseVmControlReceipt", () => {
 
 describe("host helper: fixup templates", () => {
   // The exported templates document what runs in the guest; the program carries its own copy.
-  const programTemplate = (name: string) => {
-    const m = new RegExp(`^${name} = "(.*)"$`, "m").exec(HOST_VM_CONTROL_PROGRAM);
+  const programTemplate = (text: string) => {
+    const m = /^FIXUP_TEMPLATE = "(.*)"$/m.exec(text);
     return m ? m[1].replace("%s", "<epoch>") : null;
   };
 
-  it("keeps the program's two templates identical to the exported ones", () => {
-    expect(programTemplate("FIXUP_TEMPLATE")).toBe(WAKE_FIXUP_COMMAND_TEMPLATE);
-    expect(programTemplate("FIXUP_SOCKETS_TEMPLATE")).toBe(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE);
+  it("keeps each program's template identical to the exported one", () => {
+    expect(programTemplate(HOST_VM_CONTROL_PROGRAM)).toBe(WAKE_FIXUP_COMMAND_TEMPLATE);
+    expect(programTemplate(HOST_VM_CONTROL_SOCKETS_PROGRAM)).toBe(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE);
+  });
+
+  it("the sockets program differs from the plain one only in its template line", () => {
+    const plain = HOST_VM_CONTROL_PROGRAM.split("\n");
+    const sockets = HOST_VM_CONTROL_SOCKETS_PROGRAM.split("\n");
+    expect(sockets).toHaveLength(plain.length);
+    const differing = plain.filter((line, i) => line !== sockets[i]);
+    expect(differing).toEqual([expect.stringMatching(/^FIXUP_TEMPLATE = /)]);
   });
 
   it("differs only by the guarded socket step before the tunnel restart", () => {
@@ -632,21 +640,20 @@ describe("host helper: fixup templates", () => {
 suite("host helper: fixup with stale sockets", () => {
   const SOCKETS = /^date -s @(\d{10})\.(\d{9}) >\/dev\/null; ss -K state established '\( dport = :443 \)' >\/dev\/null 2>&1 \|\| true; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel$/;
 
-  it("sends the socket step only when asked", async () => {
+  it("sends the socket step only from the sockets program", async () => {
     const qga = await qgaServer({});
     try {
       const plain = await runHelper(["fixup", VMID, "5"]);
       expect(plain.receipt.ok).toBe(true);
       expect(FIXUP.test(qga.execs[0].arg[1])).toBe(true);
-      const withSockets = await runHelper(["fixup", VMID, "5", "sockets"]);
+      const withSockets = await runHelper(["fixup", VMID, "5"], { base: HOST_VM_CONTROL_SOCKETS_PROGRAM });
       expect(withSockets.receipt).toMatchObject({ ok: true, reason: "ok", via: "socket" });
       expect(SOCKETS.test(qga.execs[1].arg[1])).toBe(true);
-      expect(withSockets.stdout).not.toContain("_template");
     } finally { await qga.close(); }
   });
 
-  it("refuses any other fourth argument", async () => {
-    const r = await runHelper(["fixup", VMID, "5", "everything"]);
+  it("takes no fourth argument, as before", async () => {
+    const r = await runHelper(["fixup", VMID, "5", "sockets"], { base: HOST_VM_CONTROL_SOCKETS_PROGRAM });
     expect(r.receipt).toMatchObject({ ok: false, reason: "usage" });
   });
 });

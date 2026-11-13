@@ -25,8 +25,10 @@ import {
  *
  * Wake: after admission and before the host resumes the computer, the webhook
  * is deleted, so Hermes finds plain polling and every queued message when it
- * comes back. If the wake then fails, the row goes back to waiting for the
- * sweep, so the agent is never left asleep and deaf.
+ * comes back. The row is left idle with pending_since kept as a mark: "taken
+ * back for a wake". A wake that succeeds clears the mark. If the wake fails,
+ * or is cut off before it can say so, the sweep finds the mark and arms the
+ * bot again while the agent is still asleep, so it is never left deaf.
  *
  * The bot token is decrypted only for a Telegram call and is never logged.
  */
@@ -121,10 +123,15 @@ export async function telegramWebhookIsClear(context: TelegramSleepContext, deps
   return info.ok && info.result?.url === "";
 }
 
-/** After a covered sleep: the sweep arms the bot once the nap is old enough. */
+/**
+ * After a covered sleep: the sweep arms the bot once the nap is old enough.
+ * The sleep checked just before that the bot had no webhook, so any row state
+ * but an arm in flight is safe to move. An arm cannot be in flight for an agent
+ * that was awake, except one that went stale, which the sweep takes back.
+ */
 export async function markTelegramPendingArm(agentId: string, deps: TelegramWakeDeps = {}): Promise<boolean> {
   const now = deps.now ?? Date.now;
-  return updateTelegramWakeRow(agentId, ["idle", "pending_arm"], {
+  return updateTelegramWakeRow(agentId, ["idle", "pending_arm", "armed", "disarm_failed"], {
     state: "pending_arm",
     pending_since: new Date(now()).toISOString(),
     next_attempt_at: null,
@@ -161,15 +168,17 @@ export async function disarmTelegramForWake(agentId: string, deps: TelegramWakeD
     const row = await tryReadTelegramWakeRow(agentId);
     if (!row || row.state === "idle") return null;
     const previous = row.state;
+    // The mark the sweep looks for if this wake never finishes.
+    const takenBack = new Date(startedAt).toISOString();
     if (previous === "pending_arm") {
-      await updateTelegramWakeRow(agentId, ["pending_arm"], { state: "idle", pending_since: null, next_attempt_at: null });
+      await updateTelegramWakeRow(agentId, ["pending_arm"], { state: "idle", pending_since: takenBack, next_attempt_at: null });
       return { previous, called: false, ok: true, ms: now() - startedAt };
     }
     const token = decryptTelegramToken(row);
     const deleted = token ? await deleteWakeWebhook(token, deps) : { ok: false, reason: "token_unreadable" };
     if (deleted.ok) {
       // An arm still in flight finds the row changed and takes its own webhook down again.
-      await updateTelegramWakeRow(agentId, WEBHOOK_STATES, { state: "idle", pending_since: null, next_attempt_at: null, last_error: null });
+      await updateTelegramWakeRow(agentId, WEBHOOK_STATES, { state: "idle", pending_since: takenBack, next_attempt_at: null, last_error: null });
     } else {
       await updateTelegramWakeRow(agentId, WEBHOOK_STATES, { state: "disarm_failed", last_error: `disarm_${deleted.reason}`.slice(0, 40) });
       log.warn("telegram webhook not deleted before a wake; the sweep retries", {
@@ -187,7 +196,9 @@ export async function disarmTelegramForWake(agentId: string, deps: TelegramWakeD
 
 /**
  * A wake that failed after the webhook came down: the computer may still be
- * asleep, so the row waits for the sweep to arm the bot again.
+ * asleep, so the row waits for the sweep to arm the bot again. A failed delete
+ * stays as it is: its webhook may still be set, and the sweep deletes it
+ * first, then arms again if the agent is still asleep.
  */
 export async function rearmTelegramAfterFailedWake(
   agentId: string,
@@ -196,11 +207,17 @@ export async function rearmTelegramAfterFailedWake(
 ): Promise<void> {
   if (!disarm) return;
   const now = deps.now ?? Date.now;
-  await updateTelegramWakeRow(agentId, ["idle", "disarm_failed"], {
+  await updateTelegramWakeRow(agentId, ["idle"], {
     state: "pending_arm",
     pending_since: new Date(now()).toISOString(),
     next_attempt_at: null,
   });
+}
+
+/** A wake that succeeded after taking the row back: the agent is awake, so the mark goes. */
+export async function settleTelegramAfterWake(agentId: string, disarm: TelegramDisarm | null): Promise<void> {
+  if (!disarm) return;
+  await updateTelegramWakeRow(agentId, ["idle"], { pending_since: null });
 }
 
 /**

@@ -62,6 +62,8 @@ export const SWEEP_BUDGET_MS = 50_000;
 export const HIBERNATE_HARD_LIMIT_MS = 285_000;
 /** Scheduled wakes may use at most this much of the budget, so sleeping still gets a turn. */
 const WAKE_STEP_BUDGET_MS = 22_000;
+/** The Telegram webhook step's own share of the run, so a slow Telegram never starves the sleep step after it. */
+const TELEGRAM_STEP_BUDGET_MS = 10_000;
 const WAKE_MAX_PER_RUN = 10;
 const WAKE_CONCURRENCY = 4;
 /** A wake that failed is retried by the schedule only after this long. */
@@ -488,10 +490,11 @@ async function reconcileDrift(ctx: Context): Promise<void> {
 
 /** Sets wake webhooks on bots of agents asleep long enough, and takes down any that should not be there. */
 async function runTelegramWakes(ctx: Context): Promise<void> {
+  const stepDeadline = Math.min(ctx.deadline, ctx.now() + TELEGRAM_STEP_BUDGET_MS);
   ctx.summary.telegram = await runTelegramWakeSweep({
     env: ctx.env,
     now: ctx.now,
-    timeLeft: () => remaining(ctx),
+    timeLeft: () => stepDeadline - ctx.now(),
     // The whole wake runs alongside the rest of the run, which waits for it before answering.
     wake: (agentId) => {
       ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "telegram", waitMs: 120_000 }).catch(() => undefined));

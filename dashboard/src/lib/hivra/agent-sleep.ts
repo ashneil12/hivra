@@ -540,6 +540,19 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     if (!observed) return recoverByWaking("recheck_wake_failed");
   }
 
+  // Asleep with Telegram covered: the sweep sets the wake webhook once the nap is
+  // old enough. Marked while this sleep still holds the agent, so a sleep that
+  // cannot record its finish still leaves the row waiting. If the mark cannot
+  // be written, the agent would sleep deaf to its bot, so it is woken instead.
+  if (finalCovered.length > 0 && !(await markTelegramPendingArm(agentId).catch(() => false))) {
+    log.warn("telegram wake could not be marked after a sleep; waking the agent", {
+      source: LOG_SOURCE,
+      failureType: "telegram_wake_mark_failed",
+      instanceId: agentId,
+    });
+    return recoverByWaking("telegram_mark_failed");
+  }
+
   const slept: AgentSleepFinishResult = tier === "nap" ? "napping" : "hibernated";
   const finished = await finish(slept);
   if (!finished) {
@@ -552,8 +565,6 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     return { outcome: "failed", reason: "finish_not_recorded", ms: now() - startedAt };
   }
   await record(tier, slept, tier === "nap" ? "napped" : "hibernated", receiptDetail(receipt, finalCovered.length > 0 ? { tg_covered: true } : {}));
-  // Asleep with Telegram covered: the sweep sets the wake webhook once the nap is old enough.
-  if (finalCovered.length > 0) await markTelegramPendingArm(agentId).catch(() => false);
 
   // Wake it ahead of its next job.
   let nextJobAt: string | null | undefined;

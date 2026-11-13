@@ -65,16 +65,36 @@ export async function tryReadTelegramWakeRow(agentId: string): Promise<TelegramW
   }
 }
 
-/** Rows that are not idle, or that still hold a token after the owner opted out. For the sweep. */
-export async function readTelegramWakeWorkRows(limit: number): Promise<TelegramWakeRow[]> {
-  const { data, error } = await db()
+/**
+ * The rows the sweep looks at, up to `limit` of each kind, the ones with work
+ * first: waiting to be armed (and not backing off), an arm in flight, a failed
+ * delete, an idle row a wake took back (pending_since kept as the mark), and
+ * a token still held after the owner opted out. Then the armed rows, oldest
+ * check first: the sweep touches each one it checks, so a fleet of armed rows
+ * rotates and never crowds out the rest.
+ */
+export async function readTelegramWakeWorkRows(limit: number, nowMs: number = Date.now()): Promise<TelegramWakeRow[]> {
+  const now = new Date(nowMs).toISOString();
+  const work = await db()
     .from(TABLE)
     .select(COLUMNS)
-    .or("state.neq.idle,and(enabled.eq.false,token_enc.not.is.null)")
+    .or([
+      "state.in.(arming,disarm_failed)",
+      `and(state.eq.pending_arm,or(next_attempt_at.is.null,next_attempt_at.lte."${now}"))`,
+      "and(state.eq.idle,pending_since.not.is.null)",
+      "and(enabled.eq.false,token_enc.not.is.null)",
+    ].join(","))
     .order("updated_at", { ascending: true })
     .limit(limit);
-  if (error) throw new Error("telegram_wake_read_failed");
-  return (data ?? []) as TelegramWakeRow[];
+  if (work.error) throw new Error("telegram_wake_read_failed");
+  const armed = await db()
+    .from(TABLE)
+    .select(COLUMNS)
+    .eq("state", "armed")
+    .order("updated_at", { ascending: true })
+    .limit(limit);
+  if (armed.error) throw new Error("telegram_wake_read_failed");
+  return [...((work.data ?? []) as TelegramWakeRow[]), ...((armed.data ?? []) as TelegramWakeRow[])];
 }
 
 /** Opt in (or refresh the token): enabled, idle, with no block or failures. */

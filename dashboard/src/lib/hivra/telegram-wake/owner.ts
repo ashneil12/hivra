@@ -114,6 +114,8 @@ async function readTokenFromComputer(agent: AgentRow): Promise<{ ok: true; token
   }
 }
 
+const WEBHOOK_STATES: readonly TelegramWakeState[] = ["arming", "armed", "disarm_failed"];
+
 export async function enableTelegramWake(agent: AgentRow, userId: string, deps: OwnerDeps = {}): Promise<TelegramWakeChange> {
   const env = deps.env ?? process.env;
   if (!(await availability(agent, userId, env))) {
@@ -121,6 +123,12 @@ export async function enableTelegramWake(agent: AgentRow, userId: string, deps: 
   }
   if (agent.status !== "running" || !isAgentAwake(agent)) {
     return refuse(409, "not_awake", "Your agent needs to be awake to turn this on. Open it and try again.");
+  }
+  // A webhook that may still be set is taken down by the sweep with the token it
+  // was set with. Saving now would replace that token and leave the webhook behind.
+  const current = await readTelegramWakeRow(String(agent.id)).catch(() => null);
+  if (current && WEBHOOK_STATES.includes(current.state)) {
+    return refuse(409, "settling", "This setting is still settling. Try again in a minute.");
   }
   const read = await readTokenFromComputer(agent);
   if (!read.ok) {
