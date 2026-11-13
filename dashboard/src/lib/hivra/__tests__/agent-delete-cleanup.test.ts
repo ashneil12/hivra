@@ -16,6 +16,10 @@ jest.mock("@/lib/remote-computers/session-broker", () => ({
 jest.mock("@/lib/hivra/private-access-store", () => ({
   clearHivraPrivateAccessAfterDelete: (...args: unknown[]) => mockPrivateAccessClear(...args),
 }));
+const mockIngressRelease = jest.fn();
+jest.mock("@/lib/hivra/ingress/rollback", () => ({
+  releaseHostIngressOnDelete: (...args: unknown[]) => mockIngressRelease(...args),
+}));
 import { cleanupHivraAgentAccess } from "../agent-delete-cleanup";
 
 const input = { userId: "owner", agentId: "11111111-1111-4111-8111-111111111111", operationId: "22222222-2222-4222-8222-222222222222", tunnelId: "tunnel", hostname: "box.example.test", llmConfig: null as unknown };
@@ -25,6 +29,7 @@ beforeEach(() => {
   mockRevoke.mockReset().mockResolvedValue({ revoked: true });
   mockDesktopRevoke.mockReset().mockResolvedValue({ ok: true, revoked: true });
   mockPrivateAccessClear.mockReset().mockResolvedValue(true);
+  mockIngressRelease.mockReset().mockResolvedValue(undefined);
 });
 
 it("clears the exact owner's private-access authority before managed keys and tunnel cleanup", async () => {
@@ -86,4 +91,10 @@ it("propagates managed-key revocation failure without leaking a backend error", 
 it("does not swallow unverified tunnel cleanup", async () => {
   mockTunnel.mockRejectedValue(new Error("provider failure"));
   await expect(cleanupHivraAgentAccess(input)).rejects.toMatchObject({ stage: "tunnel" });
+});
+
+it("stops a host-ingress connector before the tunnel is deleted", async () => {
+  await cleanupHivraAgentAccess(input);
+  expect(mockIngressRelease).toHaveBeenCalledWith({ agentId: input.agentId, hostname: input.hostname });
+  expect(mockIngressRelease.mock.invocationCallOrder[0]).toBeLessThan(mockTunnel.mock.invocationCallOrder[0]);
 });

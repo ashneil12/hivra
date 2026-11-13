@@ -445,6 +445,11 @@ const recipes = Object.freeze({
     workerSha256: "3177774e1a7a6ea88f95362ba4f7a167f53636525ef03beb96c105a2d55eb052",
     workerSize: 45216,
   }),
+  "2026.11.13.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the start helper about host ingress. The worker only advances its release labels.
+    workerSha256: "5f3df66045f47cbf8fc303f7ae094f8403615d78657a888028c8faa31cc87a37",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

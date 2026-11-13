@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.13.1.json";
+import currentRelease from "../../../provisioner-releases/2026.11.13.2.json";
+import wakeProxyRelease from "../../../provisioner-releases/2026.11.13.1.json";
 import nuphosRelease from "../../../provisioner-releases/2026.11.12.5.json";
 import openbotRelease from "../../../provisioner-releases/2026.11.12.4.json";
 import restorePointsRelease from "../../../provisioner-releases/2026.11.12.3.json";
@@ -104,8 +105,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.13.1"
+  const release = identity.bundle.provisionerVersion === "2026.11.13.2"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.1"
+      ? wakeProxyRelease
     : identity.bundle.provisionerVersion === "2026.11.12.5"
       ? nuphosRelease
     : identity.bundle.provisionerVersion === "2026.11.12.4"
