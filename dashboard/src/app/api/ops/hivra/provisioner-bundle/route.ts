@@ -9,6 +9,7 @@ import {
 } from "@/lib/hivra/managed-provisioner-bundle-sync";
 import { managedHivraProvisionerChannelForServerEnvironment } from "@/lib/hivra/managed-provisioner-channel";
 import { isHostWakeProxyAction, runHostWakeProxyAction } from "@/lib/hivra/ingress/host-wake-proxy";
+import { isDoorbellAction, runDoorbellAction } from "@/lib/hivra/channel-wake/doorbell-host";
 import { log } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,23 @@ export async function POST(req: NextRequest) {
   const target = typeof body.target === "string" ? body.target.trim().toLowerCase() : "";
   if (!isSafeManagedProvisionerTargetId(target)) {
     return apiError("target must be an explicit configured Proxmox host id", 400);
+  }
+
+  if (isDoorbellAction(body.action)) {
+    // The host wake doorbell's install step (HIVRA_WAKE_DOORBELLS), separate from bundle sync too.
+    const action = body.action;
+    try {
+      const channel = managedHivraProvisionerChannelForServerEnvironment(process.env);
+      const result = await runDoorbellAction({ action, channel, targetId: target });
+      log.info("host wake doorbell operation complete", {
+        source: SOURCE, target, channel, action, ok: result.ok, resultStatus: result.result?.status, step: result.result?.step,
+      });
+      if (!result.ok) return apiError(result.error ?? "Doorbell operation failed", result.httpStatus ?? 503, result);
+      return apiSuccess(result);
+    } catch (error) {
+      log.error("host wake doorbell operation failed", error, { source: SOURCE, target, action });
+      return apiError("Doorbell operation failed", 500);
+    }
   }
 
   if (body.action !== undefined) {

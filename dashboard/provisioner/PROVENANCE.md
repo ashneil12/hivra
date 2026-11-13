@@ -544,6 +544,19 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.4` builds on `2026.11.13.3` and adds the host wake doorbell:
+`hivra-wake-doorbell.py` (Python standard library) and `hivra-wake-doorbell.service`, which runs it as its
+own unprivileged user. Before an email-covered computer sleeps, Hivra's arm host script reads the mail
+settings inside the computer through the vmid-bound guest exec and pipes them to the doorbell's root-only
+control socket; they live in the doorbell's memory only and never reach Hivra. The doorbell takes the
+INBOX baseline with STATUS, watches read-only (EXAMINE, IDLE or NOOP, UID FETCH of BODY.PEEK header
+fields; SELECT, STORE and every other mailbox-changing command are refused before they are sent), and for
+a sender Hermes would answer asks the wake proxy's helper for a wake-request. `hivra-wake-proxy.py` lets
+the doorbell's user send only `request` (always as "doorbell") and `health` on the helper's socket.
+Nothing is installed by bundle sync: the doorbell's own install step (HIVRA_WAKE_DOORBELLS) does that.
+`hivra-provider-worker.py` advances its release labels. No guest asset changes. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.13.3` builds on `2026.11.13.2` and lets the host wake proxy call Hivra with a
 host credential: after it resumes a napped computer it reports the wake (`wake-report`), and for a
 valid ticket to a computer that is not running (a hibernated one) it asks Hivra to wake it
