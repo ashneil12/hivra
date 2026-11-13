@@ -6,7 +6,9 @@ import { providerGuestBundleScopeSha256 } from "./provider-guest-bundle";
 import { parseProviderGuestWorkerReceipt, type ProviderGuestWorkerIdentity } from "./provider-guest-worker";
 
 const Runtime = z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes"]);
-const AccessMode = z.enum(["cloudflare-named", "direct-https"]);
+// "host-ingress": the agent's tunnel runs on the host, and the guest serves the
+// host through the host-only hivra-ingress.socket (lib/hivra/ingress).
+const AccessMode = z.enum(["cloudflare-named", "direct-https", "host-ingress"]);
 export type ProviderGuestRuntimeProbe = {
   scope: FirstBootOperationScope; identity: ProviderGuestWorkerIdentity;
   runtime: z.infer<typeof Runtime>;
@@ -30,6 +32,14 @@ function checked(input: ProviderGuestRuntimeProbe) {
   const captureBootId = z.literal(true).optional().parse(input.captureBootId);
   return { identity, runtime: Runtime.parse(input.runtime),
     accessMode: AccessMode.parse(input.accessMode ?? "cloudflare-named"), ...(captureBootId ? { captureBootId } : {}) };
+}
+
+// The access unit check. The two original modes keep their exact original line;
+// host ingress checks the guest's host-only listener instead of the guest tunnel.
+function accessUnitLine(mode: z.infer<typeof AccessMode>): string {
+  return mode === "host-ingress"
+    ? `        access_unit = "hivra-ingress.socket"\n`
+    : `        access_unit = "hivra-direct-access.service" if EXPECTED["accessMode"] == "direct-https" else "hivra-cf-tunnel.service"\n`;
 }
 
 /** Read-only, fixed recipe for an original successfully stopped installer.
@@ -153,8 +163,7 @@ def inspect():
         kind = read_file(AGENT_HOME + "/.hivra/agent-kind", user.pw_uid, (0o600, 0o644), 64).decode("ascii").strip()
         if kind != EXPECTED["runtime"]:
             raise ValueError()
-        access_unit = "hivra-direct-access.service" if EXPECTED["accessMode"] == "direct-https" else "hivra-cf-tunnel.service"
-        units = ["bux-hivra-chat.service", "bux-ttyd.service", "bux-box-ttyd.service", access_unit]
+${accessUnitLine(expected.accessMode)}        units = ["bux-hivra-chat.service", "bux-ttyd.service", "bux-box-ttyd.service", access_unit]
         extra = {"aeon": "bux-aeon.service", "openclaw": "bux-openclaw.service", "agent-zero": "hivra-agent-zero.service", "openbot": "hivra-openbot.service", "nuphos": "hivra-nuphos.service", "hermes": "bux-hermes.service"}.get(kind)
         if extra:
             units.append(extra)
