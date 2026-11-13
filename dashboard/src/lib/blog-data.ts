@@ -45,7 +45,6 @@ import { article as cursorCloudAgents } from "./blog/articles/cursor-cloud-agent
 import { article as cursorVsClaudeCode } from "./blog/articles/cursor-vs-claude-code";
 import { article as isOpenclawFree } from "./blog/articles/is-openclaw-free-what-it-costs-to-run";
 import { article as runManagedAgentsOnYourOwnComputer } from "./blog/articles/run-managed-agents-on-your-own-computer";
-import { MANAGED_AGENTS_GUIDE_SLUG, isManagedAgentsGuideEnabled } from "./blog/managed-agents-guide-flag";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -94,8 +93,7 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "cursor-cloud-agents": cursorCloudAgents,
   "cursor-vs-claude-code": cursorVsClaudeCode,
   "is-openclaw-free-what-it-costs-to-run": isOpenclawFree,
-  // Off by default: NEXT_PUBLIC_HIVRA_MANAGED_AGENTS_GUIDE.
-  ...(isManagedAgentsGuideEnabled() ? { [MANAGED_AGENTS_GUIDE_SLUG]: runManagedAgentsOnYourOwnComputer } : {}),
+  "run-managed-agents-on-your-own-computer": runManagedAgentsOnYourOwnComputer,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(
