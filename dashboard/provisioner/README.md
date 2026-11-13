@@ -558,6 +558,18 @@ update them yet.
   latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
+- **Host wake proxy (shipped, not installed).** From `2026.11.13.1` the bundle carries
+  `hivra-wake-proxy.py` with its units `hivra-wake-helper.service` (root: route files,
+  nap markers, per-VM lock and QMP `cont`, unix sockets only) and
+  `hivra-wake-proxy.service` (the `hivra-ingress` user: `127.0.0.1:8080` and
+  `[::1]:8080`, no capabilities), the per-computer host connector unit
+  `hivra-cf-template.service` (installed as `hivra-cf@.service`: cloudflared with
+  `--protocol http2`, its token read from the 0600 `/etc/hivra/ingress/<vmid>.env`,
+  never argv) and `hivra-ingress.tmpfiles.conf`. Bundle sync only stores them; nothing
+  runs until the separate, flag-gated wake-proxy install step copies them into place.
+  The proxy resumes only a paused VM whose nap marker holds the running QEMU pid, answers
+  an unknown host or a napping computer with 503, and wakes only on a signed, short-lived,
+  single-use `POST /__hivra/wake` ticket.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

@@ -544,6 +544,14 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.1` builds on `2026.11.12.5` and adds the host wake proxy as inert bundle
+files: `hivra-wake-proxy.py` (Python standard library only), `hivra-wake-helper.service`,
+`hivra-wake-proxy.service`, `hivra-cf-template.service` (installed as `hivra-cf@.service`) and
+`hivra-ingress.tmpfiles.conf`. No guest asset changes. The host connector unit runs a pinned
+cloudflared that a separate install step downloads and verifies; the bundle carries no
+cloudflared binary. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.12.5` builds on `2026.11.12.4` and adds Nuphos as an agent kind. The guest
 installer (`provision-claude-code-box.sh`) installs Docker, pulls Nuphos's official runtime image
 (`ghcr.io/nuphos/runtime:latest-claude-code`) and records it by digest, and runs it on the

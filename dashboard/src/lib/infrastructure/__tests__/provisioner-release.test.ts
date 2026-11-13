@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.12.5.json";
+import release from "../../../../provisioner-releases/2026.11.13.1.json";
+import nuphosRelease from "../../../../provisioner-releases/2026.11.12.5.json";
 import openbotRelease from "../../../../provisioner-releases/2026.11.12.4.json";
 import restorePointsRelease from "../../../../provisioner-releases/2026.11.12.3.json";
 import gitGuardRelease from "../../../../provisioner-releases/2026.11.12.2.json";
@@ -43,6 +44,7 @@ import {
   portableProvisionerSupportsCatalogRuntime,
   supportsModelSettingsProvisionerVersion,
   providerProvisionerSupportsCatalogRuntime,
+  provisionerSupportsWakeProxy,
 } from "../portable-provisioner-contract";
 
 it("binds every reviewed portable provisioner asset to the immutable current release", () => {
@@ -246,9 +248,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -656,9 +658,9 @@ it("adds OpenBot (CopilotKit) in 2026.11.12.4, keeping 2026.11.12.3 admitted and
 });
 
 it("adds Nuphos in 2026.11.12.5, keeping 2026.11.12.4 admitted and no new asset", () => {
-  expect(release.version).toBe("2026.11.12.5");
-  expect(release.files.map(file => file.path)).toEqual(openbotRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== openbotRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(nuphosRelease.version).toBe("2026.11.12.5");
+  expect(nuphosRelease.files.map(file => file.path)).toEqual(openbotRelease.files.map(file => file.path));
+  const changed = nuphosRelease.files.filter(file => file.sha256 !== openbotRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // The guest installer, box gateway, updater and the places that list agent kinds learn nuphos.
   expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-agent-app-update.sh", "hivra-agent-shell", "hivra-chat/server.js",
@@ -676,10 +678,39 @@ it("adds Nuphos in 2026.11.12.5, keeping 2026.11.12.4 admitted and no new asset"
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.12.4", "openbot")).toBe(true);
 });
 
+it("ships the host wake proxy in 2026.11.13.1 as five new host files, keeping 2026.11.12.5 admitted and every guest asset unchanged", () => {
+  expect(release.version).toBe("2026.11.13.1");
+  const wakeProxyFiles = ["hivra-wake-proxy.py", "hivra-wake-proxy.service", "hivra-wake-helper.service",
+    "hivra-cf-template.service", "hivra-ingress.tmpfiles.conf"];
+  const previous = nuphosRelease.files.map(file => file.path);
+  expect(release.files.map(file => file.path).filter(file => !previous.includes(file))).toEqual(wakeProxyFiles);
+  expect(previous.filter(file => !release.files.some(entry => entry.path === file))).toEqual([]);
+  const changed = release.files.filter(file => previous.includes(file.path)
+    && file.sha256 !== nuphosRelease.files.find(entry => entry.path === file.path)!.sha256).map(file => file.path).sort();
+  // Only the documents, the version and the provider worker's release labels move.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py"]);
+  // Its tests never ship.
+  expect(release.files.map(file => file.path)).not.toContain("test_hivra_wake_proxy.py");
+  // The host connector keeps its token out of argv and speaks HTTP/2 to the edge.
+  const connector = readFileSync("provisioner/hivra-cf-template.service", "utf8");
+  expect(connector).toContain("ExecStart=/usr/local/bin/hivra-cloudflared tunnel --no-autoupdate --protocol http2 run\n");
+  expect(connector).toContain("EnvironmentFile=/etc/hivra/ingress/%i.env\n");
+  expect(connector).not.toMatch(/--token|TUNNEL_TOKEN=/);
+  expect(provisionerSupportsWakeProxy("2026.11.13.1")).toBe(true);
+  expect(provisionerSupportsWakeProxy("2026.11.12.5")).toBe(false);
+  for (const version of ["2026.11.12.5", "2026.11.13.1"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(version, "nuphos")).toBe(true);
+  }
+});
+
 it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
   // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
-  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
 });
 
 it("keeps the current bundle inside the file count the provider worker accepts in a manifest", () => {
