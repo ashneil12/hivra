@@ -152,5 +152,5 @@ echo "Commands you approve in Hivra start there. To allow more folders, edit \"a
 echo "  $config"
 echo "(your whole home folder is not allowed), then restart the bridge."
 echo
-echo "To stop it: $stop_hint"
+if [ "$started" = yes ]; then echo "To stop it: $stop_hint"; else echo "To stop it: press Ctrl-C in the terminal running it."; fi
 echo "Pressing Revoke in Hivra also turns it off. Nothing runs here until you approve it in Hivra."
