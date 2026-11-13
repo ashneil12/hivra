@@ -331,7 +331,7 @@ function parsePreservationReceipt(
  * readings, and rolls back on any mismatch. An id with no configuration of
  * its own is still refused before any SSH.
  */
-function targetIsConfigured(targetId: string, env: NodeJS.ProcessEnv): boolean {
+export function targetIsConfigured(targetId: string, env: NodeJS.ProcessEnv): boolean {
   if (resolveProxmoxTargetCandidateIds(env).includes(targetId)) return true;
   return hasExplicitTargetScopedIdentity(env, targetId);
 }
