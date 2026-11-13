@@ -62,7 +62,8 @@ export const SOCKET_CHANNELS: readonly string[] = ["discord", "whatsapp", "slack
  * The idle probe's live channel tags as plain channel names, for
  * `SleepSignals.socketChannels`: "hermes:discord" and "hermes:discord:down"
  * both become "discord", "openclaw:slack" becomes "slack", and the Hivra
- * Telegram bridge ("telegram:bux-tg") becomes "telegram". Undefined in, undefined
+ * Telegram bridge ("telegram:bux-tg") becomes "telegram", and the chat safety
+ * net's "unknown:slack" becomes "slack". Undefined in, undefined
  * out: a missing probe stays unknown and never reads as "no channels".
  */
 export function socketChannelsFromProbe(liveChannels: readonly string[] | null | undefined): string[] | undefined {
@@ -71,7 +72,9 @@ export function socketChannelsFromProbe(liveChannels: readonly string[] | null |
   for (const tag of liveChannels) {
     if (typeof tag !== "string") continue;
     const parts = tag.split(":");
-    const name = parts[0] === "hermes" || parts[0] === "openclaw" ? parts[1] : parts[0];
+    // "<agent>:<platform>[:down]" (any agent's profile tag, and the safety net's "unknown:<platform>"),
+    // except the Hivra bridge, whose tag starts with its platform.
+    const name = parts.length >= 2 && parts[0] !== "telegram" ? parts[1] : parts[0];
     if (name) names.add(name.toLowerCase());
   }
   return [...names].sort();

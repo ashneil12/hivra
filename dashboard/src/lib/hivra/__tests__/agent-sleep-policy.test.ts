@@ -301,6 +301,8 @@ describe("socketChannelsFromProbe", () => {
     expect(socketChannelsFromProbe(["hermes:discord:down", "hermes:discord", "openclaw:slack", "telegram:bux-tg", "hermes:whatsapp_cloud"]))
       .toEqual(["discord", "slack", "telegram", "whatsapp_cloud"]);
     expect(socketChannelsFromProbe([])).toEqual([]);
+    // Any agent's profile tag, and the chat safety net's unknown channel, name their platform second.
+    expect(socketChannelsFromProbe(["unknown:discord", "nuphos:app", "openclaw:telegram"])).toEqual(["app", "discord", "telegram"]);
     expect(socketChannelsFromProbe(undefined)).toBeUndefined();
     expect(socketChannelsFromProbe(null)).toBeUndefined();
   });

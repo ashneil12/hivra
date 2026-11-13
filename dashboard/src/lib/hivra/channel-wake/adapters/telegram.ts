@@ -40,7 +40,7 @@ export const TELEGRAM_ADAPTER = {
     probe: { liveChannels: readonly string[]; telegram?: TelegramProbeFacts | null } | null,
     nowMs: number,
   ): boolean {
-    if (!context || !probe || !probe.liveChannels.includes(TELEGRAM_CHANNEL_SPEC.probeTag)) return false;
+    if (!context || !probe || !probe.liveChannels.includes(context.tag ?? TELEGRAM_CHANNEL_SPEC.probeTag)) return false;
     const blockers = telegramCoverageBlockers({
       configured: true,
       hostAllowed: context.hostAllowed,
@@ -52,6 +52,7 @@ export const TELEGRAM_ADAPTER = {
       },
       probe,
       nowMs,
+      ...(context.tag === undefined ? {} : { tag: context.tag }),
     });
     return blockers.every((reason) => reason === "other_channel");
   },
