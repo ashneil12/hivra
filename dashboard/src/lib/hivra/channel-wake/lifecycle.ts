@@ -25,6 +25,7 @@ import type {
 import { TELEGRAM_ADAPTER, type TelegramDisarm, type TelegramSleepContext } from "./adapters/telegram";
 import { MATRIX_ADAPTER } from "./adapters/matrix-pusher";
 import { EMAIL_IMAP_ADAPTER } from "./adapters/email-imap";
+import { DISCORD_DOORBELL_ADAPTER } from "./adapters/discord-doorbell";
 import type { ChannelSleepCoverage } from "../agent-sleep-scripts";
 import type { TelegramProbeFacts } from "../telegram-wake/coverage";
 
@@ -56,11 +57,11 @@ export const CHANNEL_WAKES_PER_HOUR = 6;
 const HOUR_MS = 60 * 60_000;
 
 /**
- * The generic adapters, by channel: Matrix and email today (Discord is a later
- * package); each one also adds its spec to registry.ts. None of them acts
- * unless the channel wake switches are configured.
+ * The generic adapters, by channel: Matrix, email and Discord; each one also
+ * adds its spec to registry.ts. None of them acts unless the channel wake
+ * switches are configured (email and Discord also need HIVRA_WAKE_DOORBELLS).
  */
-export const CHANNEL_WAKE_ADAPTERS: readonly ChannelWakeAdapter[] = [MATRIX_ADAPTER, EMAIL_IMAP_ADAPTER];
+export const CHANNEL_WAKE_ADAPTERS: readonly ChannelWakeAdapter[] = [MATRIX_ADAPTER, EMAIL_IMAP_ADAPTER, DISCORD_DOORBELL_ADAPTER];
 
 type Env = Record<string, string | undefined>;
 

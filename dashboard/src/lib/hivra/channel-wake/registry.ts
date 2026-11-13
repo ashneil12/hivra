@@ -3,8 +3,8 @@
 //
 // Telegram is the first entry. Its server side is the telegram-wake module,
 // unchanged, and its host check is the same expression the Telegram-only gate
-// has always used. Every other channel is a generic spec: Matrix and email
-// today, Discord later. A generic spec only acts when the channel wake switches
+// has always used. Every other channel is a generic spec: Matrix, email and
+// Discord. A generic spec only acts when the channel wake switches
 // are on and the owner opted in; a Telegram-only sleep never reads this list,
 // so its scripts are unchanged.
 //
@@ -98,8 +98,46 @@ export const EMAIL_CHANNEL_SPEC: ChannelWakeSpec = {
   hostFactsPerl: `defined($f) && defined($f->{imapHost}) && !ref($f->{imapHost}) && $f->{imapHost} ne ""`,
 };
 
+/**
+ * Discord, through the host wake doorbell (WP12): before the stop, the arm
+ * host script reads the bot token and Hermes's reply settings inside the
+ * computer and hands them to the doorbell, which opens its own gateway session
+ * and answers once Discord said READY. A DM, a mention, a reply to the bot or a
+ * message in a free-response channel asks Hivra for the wake.
+ *
+ * The message that woke the agent reaches Hermes only through Discord's
+ * replay (a short nap) or Hermes's own catch-up (DISCORD_MISSED_MESSAGE_BACKFILL,
+ * off by default), and that catch-up reads DMs only from channels it lists.
+ * So it is covered only while the probe sees the catch-up on and, as Hermes
+ * always accepts DMs, at least one channel listed for it. OpenClaw's Discord
+ * (openclaw:discord) has no catch-up and is never covered. The doorbell switch
+ * (HIVRA_WAKE_DOORBELLS) is checked by the adapter.
+ */
+export const DISCORD_CHANNEL_SPEC: ChannelWakeSpec = {
+  channel: "discord",
+  probeTag: "hermes:discord",
+  detector: "host-doorbell",
+  catchUp: "needs-config:DISCORD_MISSED_MESSAGE_BACKFILL",
+  needsServerDisarm: false,
+  socketBased: true,
+  credKeys: ["DISCORD_BOT_TOKEN"],
+  coverageBlockers(input: ChannelCoverageInput): string[] {
+    const reasons = standardChannelBlockers(DISCORD_CHANNEL_SPEC, input);
+    const facts = input.probe?.channelFacts?.discord;
+    if (!facts) reasons.push("no_discord_facts");
+    else {
+      if (!facts.backfill) reasons.push("backfill_off");
+      if (facts.dmsAllowed && facts.backfillChannels === 0) reasons.push("dm_not_backfilled");
+    }
+    return reasons;
+  },
+  hostFactsPerl: String.raw`defined($f) && JSON::PP::is_bool($f->{backfill}) && $f->{backfill}
+        && JSON::PP::is_bool($f->{dmsAllowed}) && defined($f->{backfillChannels}) && !ref($f->{backfillChannels})
+        && $f->{backfillChannels} =~ /\A[0-9]{1,6}\z/ && (!$f->{dmsAllowed} || $f->{backfillChannels} > 0)`,
+};
+
 /** The channels with a generic adapter; order is the gate's order. */
-export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [MATRIX_CHANNEL_SPEC, EMAIL_CHANNEL_SPEC];
+export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [MATRIX_CHANNEL_SPEC, EMAIL_CHANNEL_SPEC, DISCORD_CHANNEL_SPEC];
 
 /** Every probe tag a wake can ever cover. Both gates refuse anything else. */
 export function coverableProbeTags(specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS): string[] {

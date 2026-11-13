@@ -172,10 +172,10 @@ const gateEnv = { HIVRA_COVERED_CHANNELS: "hermes:telegram", HIVRA_TG_FP: FP };
   });
 
   it("refuses names that are not on the allowlist, whatever the server passes", () => {
-    const probe = probeJson({ liveChannels: ["hermes:discord"] });
-    expect(perlGate(probe, { HIVRA_COVERED_CHANNELS: "hermes:discord", HIVRA_TG_FP: FP })).toBe("active");
+    const probe = probeJson({ liveChannels: ["hermes:slack"] });
+    expect(perlGate(probe, { HIVRA_COVERED_CHANNELS: "hermes:slack", HIVRA_TG_FP: FP })).toBe("active");
     expect(idleVerdict(validateIdleProbe(probe), {
-      manual: false, nowMs: Date.parse("2026-11-13T10:00:00Z"), idleWindowS: 300, horizonS: 1200, cores: 2, coveredChannels: ["hermes:discord"],
+      manual: false, nowMs: Date.parse("2026-11-13T10:00:00Z"), idleWindowS: 300, horizonS: 1200, cores: 2, coveredChannels: ["hermes:slack"],
     }).reasons).toContain("live_channels");
   });
 

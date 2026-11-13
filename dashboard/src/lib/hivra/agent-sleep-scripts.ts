@@ -665,6 +665,12 @@ export interface ChannelCredReadSpec {
   prefix: string;
   /** The refusal line's prefix, e.g. "HIVRA_EMAIL_CRED_NONE ". */
   nonePrefix: string;
+  /**
+   * Optional Python run after the values are read, before the line is
+   * printed; it may add entries to `values` (lower-case keys starting with
+   * "_", never secrets of its own). Absent, the program is unchanged.
+   */
+  extraPython?: string;
 }
 
 /**
@@ -682,6 +688,9 @@ export function buildChannelCredReadProgram(spec: ChannelCredReadSpec): string {
     throw new Error("Invalid channel credential read.");
   }
   if (!CRED_PREFIX.test(spec.prefix) || !CRED_PREFIX.test(spec.nonePrefix) || spec.prefix === spec.nonePrefix) {
+    throw new Error("Invalid channel credential read.");
+  }
+  if (spec.extraPython !== undefined && (spec.extraPython.trim() === "" || spec.extraPython.includes("\0") || /HIVRA_/.test(spec.extraPython))) {
     throw new Error("Invalid channel credential read.");
   }
   return String.raw`import hashlib, json, os, re, sys
@@ -703,7 +712,7 @@ values = {}
 for k in ${JSON.stringify(keys)}:
     v = env_value(text, k)
     if v: values[k] = v
-sys.stdout.write("${spec.prefix}" + json.dumps({"fp": fp, "values": values}, separators=(",", ":")) + "\n")
+${spec.extraPython === undefined ? "" : `${spec.extraPython.replace(/\n+$/, "")}\n`}sys.stdout.write("${spec.prefix}" + json.dumps({"fp": fp, "values": values}, separators=(",", ":")) + "\n")
 `;
 }
 

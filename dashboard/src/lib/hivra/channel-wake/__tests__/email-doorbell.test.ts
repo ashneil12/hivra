@@ -49,7 +49,7 @@ function bashSyntaxOk(script: string): boolean {
 describe("the doorbell switch", () => {
   it("is off unless HIVRA_WAKE_DOORBELLS lists a known channel", () => {
     expect([...parseWakeDoorbells(undefined)]).toEqual([]);
-    expect([...parseWakeDoorbells(" Email, discord ,nope")]).toEqual(["email"]);
+    expect([...parseWakeDoorbells(" Email, slack ,nope")]).toEqual(["email"]);
     expect(wakeDoorbellEnabled("email", {})).toBe(false);
     expect(wakeDoorbellEnabled("email", ON)).toBe(true);
     expect(anyWakeDoorbellEnabled({ HIVRA_WAKE_DOORBELLS: "nope" })).toBe(false);
