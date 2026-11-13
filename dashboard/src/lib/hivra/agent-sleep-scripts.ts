@@ -24,8 +24,23 @@
 
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
-import { HOST_VM_CONTROL_PREFIX, HOST_VM_CONTROL_PROGRAM } from "@/lib/hivra/sleep/host-vm-control-program";
-import { IDLE_PROBE_PREFIX, IDLE_PROBE_PROGRAM, IDLE_PROBE_VERSION } from "@/lib/hivra/sleep/idle-probe-program";
+import {
+  HOST_VM_CONTROL_PREFIX,
+  HOST_VM_CONTROL_PROGRAM,
+  HOST_VM_CONTROL_SOCKETS_PROGRAM,
+} from "@/lib/hivra/sleep/host-vm-control-program";
+import {
+  IDLE_PROBE_PREFIX,
+  IDLE_PROBE_PROGRAM,
+  IDLE_PROBE_TELEGRAM_PROGRAM,
+  IDLE_PROBE_VERSION,
+  TELEGRAM_ENV_VALUE_PY,
+} from "@/lib/hivra/sleep/idle-probe-program";
+import {
+  TELEGRAM_WAKE_COVERABLE_CHANNELS,
+  allowedCoveredChannels,
+  type TelegramProbeFacts,
+} from "@/lib/hivra/telegram-wake/coverage";
 
 export const SLEEP_RESULT_PREFIX = "HIVRA_SLEEP_RESULT ";
 export const WAKE_RESULT_PREFIX = "HIVRA_WAKE_RESULT ";
@@ -133,9 +148,12 @@ trap 'exit 143' TERM`;
 /**
  * Runs the host helper (QMP and guest agent sockets) and reads its one receipt
  * line into CTL_* variables with perl, never trusting its shape: anything that
- * is not exactly one valid line reads as a failed helper.
+ * is not exactly one valid line reads as a failed helper. With killStaleSockets
+ * the helper's fixup also drops stale outbound :443 connections in the guest;
+ * without it this is the plain helper every script carried before.
  */
-const CTL_SHELL = `HOST_CTL_PROGRAM=${shellQuote(HOST_VM_CONTROL_PROGRAM)}
+function ctlShell(killStaleSockets = false): string {
+  return `HOST_CTL_PROGRAM=${shellQuote(killStaleSockets ? HOST_VM_CONTROL_SOCKETS_PROGRAM : HOST_VM_CONTROL_PROGRAM)}
 CTL_OK=false
 CTL_REASON=helper_failed
 CTL_STATUS=""
@@ -192,8 +210,61 @@ qga_unlock() {
   flock -u 7 >/dev/null 2>&1 || true
   exec 7>&-
 }`;
+}
 
-const STATE_SHELL = `# One config read serves the binding check and the first state read.
+/**
+ * Fast answers to `qm config <vmid>` and `qm status <vmid>` from the files the
+ * CLI itself reads, for the binding check (when switched on) and the admission
+ * helper. Anything they cannot answer exactly goes to the real CLI.
+ */
+const FAST_QM_FUNCTIONS = `PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
+QEMU_RUN_DIR=/var/run/qemu-server
+hivra_fast_qm() {
+  local f pid
+  if [ "$#" = 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+    case "$1" in
+      config)
+        f="$PVE_QEMU_CONF_DIR/$2.conf"
+        # Pending changes are applied in the CLI's answer, so a file with any goes to the CLI.
+        # Snapshot sections are not part of the current config.
+        if [ -r "$f" ] && ! grep -q '^\\[PENDING\\]' "$f"; then
+          awk '/^\\[/ {exit} /^#/ {next} NF {print}' "$f"
+          return 0
+        fi
+        ;;
+      status)
+        f="$QEMU_RUN_DIR/$2.pid"
+        if [ ! -e "$f" ]; then echo "status: stopped"; return 0; fi
+        pid="$(head -c 32 "$f" 2>/dev/null | tr -dc 0-9)"
+        if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
+          echo "status: running"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  command timeout -k 5 30 qm "$@" </dev/null
+}`;
+
+/** With fast_qm on: the functions ahead of the binding check, which uses the config reader too. */
+const FAST_QM_SHELL = `# The admission helper reads every VM with qm config and qm status. The CLI costs
+# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
+# These two answer from the files the CLI itself reads, and hand anything they
+# cannot answer exactly back to the real CLI. The binding check may use the config
+# reader too: a missing file goes to the CLI, which then fails as before.
+${FAST_QM_FUNCTIONS}`;
+
+/** With fast_qm off: the functions inside the admission shell, for the helper only, as before. */
+const ADMISSION_FAST_QM_SHELL = `# The admission helper reads every VM with qm config and qm status. The CLI costs
+# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
+# For the helper only, these two answer from the files the CLI itself reads, and
+# hand anything they cannot answer exactly back to the real CLI.
+${FAST_QM_FUNCTIONS}`;
+
+function stateShell(fastConfig: boolean): string {
+  return `# One config read serves the binding check and the first state read.
 read_state() {
   local out
   ST=""; QMP=""; LOCK=none
@@ -226,15 +297,16 @@ observe() { if read_state; then OBS="$(tier_of)"; else OBS=unknown; fi; }
 require_binding() {
   [ -n "$EXPECTED_BINDING_TAG" ] || finish false binding_missing
   local tags
-  CONFIG="$(qm config "$VMID" 2>/dev/null)" || finish false unreachable
+  CONFIG="$(${fastConfig ? "hivra_fast_qm" : "qm"} config "$VMID" 2>/dev/null)" || finish false unreachable
   tags="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
   printf '%s\\n' "$tags" | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
     || finish false binding_mismatch
   CONFIG_FRESH=1
 }`;
+}
 
 /** Checks the instantaneous signals of a probe. Prints ok, active or invalid. */
-const PROBE_CHECK_PERL = String.raw`use strict;
+const PROBE_CHECK_PERL_BASE = String.raw`use strict;
 use warnings;
 use JSON::PP;
 use B;
@@ -261,7 +333,7 @@ for my $key (qw(activeRuns cliProcesses)) {
 }
 my $channels = $d->{liveChannels};
 unless (ref($channels) eq "ARRAY") { print "invalid\n"; exit 0; }
-$busy = 1 if @$channels;
+__CHANNEL_CHECK__
 # The only error that does not make the answer unknown is a failed timer count.
 my $errs = $d->{errors};
 unless (ref($errs) eq "ARRAY") { print "invalid\n"; exit 0; }
@@ -282,9 +354,38 @@ unless ($manual) {
 }
 print $busy ? "active\n" : "ok\n";`;
 
-function probeShell(manual: boolean): string {
-  return `PROBE_PROGRAM=${shellQuote(IDLE_PROBE_PROGRAM)}
-MANUAL=${manual ? 1 : 0}
+const PLAIN_CHANNEL_CHECK = "$busy = 1 if @$channels;";
+
+/**
+ * The channel rule when a Telegram wake covers the agent: a live channel keeps
+ * it awake unless it is on the allowlist, named in HIVRA_COVERED_CHANNELS, and
+ * the probe's Telegram facts match what the server checked: the token is in
+ * .env with the fingerprint in HIVRA_TG_FP, Hermes polls, and config.yaml has
+ * no token of its own. The same rules as telegramWakeCoverage().
+ */
+const COVERED_CHANNEL_CHECK = String.raw`my %allowed = map { $_ => 1 } (${TELEGRAM_WAKE_COVERABLE_CHANNELS.map((c) => JSON.stringify(c)).join(", ")});
+my %covered = map { $_ => 1 } grep { $allowed{$_} } split /,/, ($ENV{HIVRA_COVERED_CHANNELS} // "");
+my $fp = $ENV{HIVRA_TG_FP} // "";
+my $tg = $d->{telegram};
+my $tg_ok = $fp =~ /\A[0-9a-f]{16}\z/ && ref($tg) eq "HASH"
+    && defined($tg->{hermesFp}) && !ref($tg->{hermesFp}) && $tg->{hermesFp} eq $fp
+    && JSON::PP::is_bool($tg->{hermesTokenInEnv}) && $tg->{hermesTokenInEnv}
+    && JSON::PP::is_bool($tg->{hermesWebhookMode}) && !$tg->{hermesWebhookMode}
+    && JSON::PP::is_bool($tg->{hermesConfigToken}) && !$tg->{hermesConfigToken};
+for my $c (@$channels) {
+    $busy = 1 unless $tg_ok && defined($c) && !ref($c) && $covered{$c};
+}`;
+
+/** The probe check. With nothing covered it is exactly the check every sleep used before. */
+export function probeCheckPerl(covered: boolean): string {
+  return PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => (covered ? COVERED_CHANNEL_CHECK : PLAIN_CHANNEL_CHECK));
+}
+
+function probeShell(manual: boolean, coverage: TelegramSleepCoverage | null = null): string {
+  return `PROBE_PROGRAM=${shellQuote(coverage ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM)}
+MANUAL=${manual ? 1 : 0}${coverage ? `
+HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
+HIVRA_TG_FP=${shellQuote(coverage.fingerprint)}` : ""}
 run_probe() {
   local out lines line
   PROBE_JSON=null
@@ -299,8 +400,8 @@ run_probe() {
     || { PROBE_JSON=null; return 1; }
 }
 probe_blocker() {
-  HIVRA_PROBE="$PROBE_JSON" /usr/bin/perl -MJSON::PP - "$MANUAL" <<'HIVRA_PROBE_CHECK'
-${PROBE_CHECK_PERL}
+  HIVRA_PROBE="$PROBE_JSON"${coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : ""} /usr/bin/perl -MJSON::PP - "$MANUAL" <<'HIVRA_PROBE_CHECK'
+${probeCheckPerl(coverage !== null)}
 HIVRA_PROBE_CHECK
 }
 # Runs the probe once and finishes the script, leaving the computer as it is, unless it is idle.
@@ -326,7 +427,19 @@ probe_or_finish() {
  * refused with one HIVRA_IDLE_REFUSED line instead, because its guest agent
  * cannot answer.
  */
-export function buildIdleProbeHostScript(target: { vmid: number; bindingTag: string | null }): string {
+export function buildIdleProbeHostScript(
+  target: { vmid: number; bindingTag: string | null },
+  options: { telegram?: boolean } = {},
+): string {
+  return buildGuestReadHostScript(target, options.telegram === true ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM);
+}
+
+/**
+ * The shared body of a host script that runs one python program inside a VM
+ * that is plainly running, behind the binding check and the guest agent lock.
+ * Refusals print one HIVRA_IDLE_REFUSED line.
+ */
+function buildGuestReadHostScript(target: { vmid: number; bindingTag: string | null }, program: string): string {
   const tag = assertTarget(target.vmid, target.bindingTag);
   return `set -euo pipefail
 VMID=${target.vmid}
@@ -355,8 +468,65 @@ install -d -m 0755 /run/lock
 # Taken only now, so a refusal never waits on it. No other script reads this computer's guest agent meanwhile.
 exec 7>/run/lock/hivra-qga-${target.vmid}.lock
 flock -x -w ${QGA_LOCK_WAIT_SECONDS} 7 || refuse guest_busy
-run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(IDLE_PROBE_PROGRAM)} || refuse guest_unreachable
+run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} || refuse guest_unreachable
 `;
+}
+
+// ---------------------------------------------------------------------------
+// Telegram token read (wake-on-message opt-in)
+// ---------------------------------------------------------------------------
+
+export const TELEGRAM_TOKEN_PREFIX = "HIVRA_TG_TOKEN ";
+export const TELEGRAM_TOKEN_NONE_PREFIX = "HIVRA_TG_TOKEN_NONE ";
+
+/**
+ * Reads TELEGRAM_BOT_TOKEN from ~/.hermes/.env inside the guest, with the same
+ * parser the idle probe fingerprints, and prints it on one line only when it
+ * has a bot token's shape. Anything else prints a reason and no token.
+ */
+export const TELEGRAM_TOKEN_READ_PROGRAM = String.raw`import os, re, sys
+# hivra-tg-token-read v1. Runs as root via the guest agent. Prints the token line and nothing else.
+${TELEGRAM_ENV_VALUE_PY}
+def none(why):
+    sys.stdout.write("${TELEGRAM_TOKEN_NONE_PREFIX}" + why + "\n")
+    sys.exit(0)
+try:
+    fd = os.open("/home/bux/.hermes/.env", os.O_RDONLY | os.O_NOFOLLOW)
+    try: text = os.read(fd, 65536).decode("utf-8", "replace")
+    finally: os.close(fd)
+except OSError:
+    none("no_env")
+tok = env_value(text, "TELEGRAM_BOT_TOKEN")
+if not tok: none("no_token")
+if env_value(text, "TELEGRAM_WEBHOOK_URL"): none("webhook_mode")
+if not re.match(r"^\d{6,}:[A-Za-z0-9_-]{30,}$", tok): none("bad_shape")
+sys.stdout.write("${TELEGRAM_TOKEN_PREFIX}" + tok + "\n")
+`;
+
+/** Runs the token read in the VM. Refusals print one HIVRA_IDLE_REFUSED line, as the probe's do. */
+export function buildTelegramTokenReadHostScript(target: { vmid: number; bindingTag: string | null }): string {
+  return buildGuestReadHostScript(target, TELEGRAM_TOKEN_READ_PROGRAM);
+}
+
+export type TelegramTokenRead = { ok: true; token: string } | { ok: false; reason: string };
+
+/** Strict read of the token script's answer. The token itself is never part of a failure. */
+export function parseTelegramTokenRead(stdout: string): TelegramTokenRead {
+  if (typeof stdout !== "string") return { ok: false, reason: "no_answer" };
+  const lines = stdout.split("\n").map((line) => line.replace(/\r$/, ""));
+  const tokens = lines.filter((line) => line.startsWith(TELEGRAM_TOKEN_PREFIX));
+  const nones = lines.filter((line) => line.startsWith(TELEGRAM_TOKEN_NONE_PREFIX));
+  if (tokens.length === 1 && nones.length === 0) {
+    const token = tokens[0].slice(TELEGRAM_TOKEN_PREFIX.length);
+    if (/^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(token)) return { ok: true, token };
+    return { ok: false, reason: "bad_shape" };
+  }
+  if (tokens.length === 0 && nones.length === 1) {
+    const reason = nones[0].slice(TELEGRAM_TOKEN_NONE_PREFIX.length).trim();
+    return { ok: false, reason: /^[a-z_]{1,40}$/.test(reason) ? reason : "no_answer" };
+  }
+  const refused = parseIdleProbeRefusal(stdout);
+  return { ok: false, reason: refused ?? "no_answer" };
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +556,24 @@ export interface IdleProbe {
   now: string;
   ms: number;
   sysTimers?: number;
+  /** Only when the probe was asked for Telegram wake facts. */
+  telegram?: TelegramProbeFacts;
+}
+
+const PROBE_FINGERPRINT = /^[0-9a-f]{16}$/;
+
+function validateTelegramFacts(value: unknown): TelegramProbeFacts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if ((row.hermesFp !== null && (typeof row.hermesFp !== "string" || !PROBE_FINGERPRINT.test(row.hermesFp)))
+      || typeof row.hermesTokenInEnv !== "boolean" || typeof row.hermesWebhookMode !== "boolean"
+      || typeof row.hermesConfigToken !== "boolean") return null;
+  return {
+    hermesFp: row.hermesFp,
+    hermesTokenInEnv: row.hermesTokenInEnv,
+    hermesWebhookMode: row.hermesWebhookMode,
+    hermesConfigToken: row.hermesConfigToken,
+  };
 }
 
 const ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
@@ -417,6 +605,8 @@ export function validateIdleProbe(value: unknown): IdleProbe | null {
       || !Array.isArray(load) || load.length !== 3 || !load.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= COUNT_MAX)
       || !isCount(row.cpus) || !isCount(row.uptimeS, 10 ** 10) || !isCount(row.ms, 10 ** 7)
       || (row.sysTimers !== undefined && !isCount(row.sysTimers))) return null;
+  const telegram = row.telegram === undefined ? undefined : validateTelegramFacts(row.telegram);
+  if (telegram === null) return null;
   return {
     v: row.v,
     errors: errors as string[],
@@ -437,6 +627,7 @@ export function validateIdleProbe(value: unknown): IdleProbe | null {
     now: row.now,
     ms: row.ms,
     ...(row.sysTimers === undefined ? {} : { sysTimers: row.sysTimers }),
+    ...(telegram ? { telegram } : {}),
   };
 }
 
@@ -468,6 +659,8 @@ export interface IdleVerdictOptions {
   horizonS: number;
   /** The VM's CPU cores. */
   cores: number;
+  /** Live channels a Telegram wake covers (see telegram-wake/coverage.ts). Only allowlisted names count. */
+  coveredChannels?: readonly string[];
 }
 
 export interface IdleVerdict {
@@ -505,7 +698,8 @@ export function idleVerdict(probeInput: unknown, options: IdleVerdictOptions): I
 
   if (probe.activeRuns > 0) reasons.push("active_runs");
   if (probe.cliProcesses > 0) reasons.push("cli_process");
-  if (probe.liveChannels.length > 0) reasons.push("live_channels");
+  const covered = allowedCoveredChannels(options.coveredChannels);
+  if (probe.liveChannels.some((channel) => !covered.includes(channel))) reasons.push("live_channels");
 
   const probeNowMs = Date.parse(probe.now);
   let nextJobAt: string | null = null;
@@ -537,12 +731,34 @@ export function idleVerdict(probeInput: unknown, options: IdleVerdictOptions): I
 // Sleep host script
 // ---------------------------------------------------------------------------
 
+/** What the server checked before a sleep with a Telegram wake: the covered channels and the token fingerprint. */
+export interface TelegramSleepCoverage {
+  channels: string[];
+  fingerprint: string;
+}
+
+function assertCoverage(coverage: TelegramSleepCoverage | null | undefined): TelegramSleepCoverage | null {
+  if (!coverage) return null;
+  const channels = coverage.channels;
+  if (!Array.isArray(channels) || channels.length === 0
+      || channels.some((c) => !TELEGRAM_WAKE_COVERABLE_CHANNELS.includes(c))
+      || new Set(channels).size !== channels.length
+      || typeof coverage.fingerprint !== "string" || !PROBE_FINGERPRINT.test(coverage.fingerprint)) {
+    throw new Error("Invalid Telegram wake coverage.");
+  }
+  return { channels: [...channels], fingerprint: coverage.fingerprint };
+}
+
 export interface SleepHostScriptInput {
   vmid: number;
   bindingTag: string | null;
   tier: SleepScriptTier;
   /** A manual test sleep ignores the open page's own connections. */
   manual: boolean;
+  /** Live channels a Telegram wake covers. Off (null) by default: every live channel keeps the agent awake. */
+  telegramCoverage?: TelegramSleepCoverage | null;
+  /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
+  fastConfigRead?: boolean;
 }
 
 function napBody(): string {
@@ -655,6 +871,7 @@ export function buildSleepHostScript(input: SleepHostScriptInput): string {
   const tag = assertTarget(input.vmid, input.bindingTag);
   if (input.tier !== "nap" && input.tier !== "hibernate") throw new Error("Invalid sleep tier.");
   const nap = input.tier === "nap";
+  const coverage = assertCoverage(input.telegramCoverage);
   return `set -euo pipefail
 VMID=${input.vmid}
 EXPECTED_BINDING_TAG=${shellQuote(tag)}
@@ -663,9 +880,10 @@ TIER=${input.tier}
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${buildVmidBoundGuestExecPrelude()}
 ${receiptShell("sleep")}
-${CTL_SHELL}
-${STATE_SHELL}
-${probeShell(input.manual === true)}
+${ctlShell()}
+${input.fastConfigRead === true ? `${FAST_QM_SHELL}
+` : ""}${stateShell(input.fastConfigRead === true)}
+${probeShell(input.manual === true, coverage)}
 install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
@@ -693,6 +911,10 @@ export interface WakeHostScriptInput {
   vmid: number;
   bindingTag: string | null;
   admission: WakeAdmission;
+  /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
+  fastConfigRead?: boolean;
+  /** The guest fixup also drops stale outbound :443 connections (frozen long polls). Off by default. */
+  killStaleSockets?: boolean;
 }
 
 function assertAdmission(admission: WakeAdmission): void {
@@ -706,47 +928,15 @@ function assertAdmission(admission: WakeAdmission): void {
   if (!ok) throw new Error("Invalid wake admission policy.");
 }
 
-function wakeAdmissionShell(admission: WakeAdmission): string {
+/** fastQmDefined: FAST_QM_SHELL already came earlier in the script, so it is not repeated here. */
+function wakeAdmissionShell(admission: WakeAdmission, fastQmDefined: boolean): string {
   return `PROVISIONER_DIR=${shellQuote(admission.provisionerDirectory)}
 HOST_RESERVE_MB=${admission.hostReserveMb}
 ENFORCE_CEILINGS=${admission.enforceCeilings ? 1 : 0}
 CPU_DENSITY_MILLI=${admission.cpuDensityMilli}
 MEMORY_DENSITY_MILLI=${admission.memoryDensityMilli}
-# The admission helper reads every VM with qm config and qm status. The CLI costs
-# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
-# For the helper only, these two answer from the files the CLI itself reads, and
-# hand anything they cannot answer exactly back to the real CLI.
-PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
-QEMU_RUN_DIR=/var/run/qemu-server
-hivra_fast_qm() {
-  local f pid
-  if [ "$#" = 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
-    case "$1" in
-      config)
-        f="$PVE_QEMU_CONF_DIR/$2.conf"
-        # Pending changes are applied in the CLI's answer, so a file with any goes to the CLI.
-        # Snapshot sections are not part of the current config.
-        if [ -r "$f" ] && ! grep -q '^\\[PENDING\\]' "$f"; then
-          awk '/^\\[/ {exit} /^#/ {next} NF {print}' "$f"
-          return 0
-        fi
-        ;;
-      status)
-        f="$QEMU_RUN_DIR/$2.pid"
-        if [ ! -e "$f" ]; then echo "status: stopped"; return 0; fi
-        pid="$(head -c 32 "$f" 2>/dev/null | tr -dc 0-9)"
-        if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] \
-            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
-            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
-          echo "status: running"
-          return 0
-        fi
-        ;;
-    esac
-  fi
-  command timeout -k 5 30 qm "$@" </dev/null
-}
-run_admission() {
+${fastQmDefined ? "" : `${ADMISSION_FAST_QM_SHELL}
+`}run_admission() {
   (
     qm() { hivra_fast_qm "$@"; }
     export -f qm hivra_fast_qm
@@ -879,9 +1069,10 @@ EXPECTED_BINDING_TAG=${shellQuote(tag)}
 # The host script itself arrives on stdin, so no command may read it.
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${receiptShell("wake")}
-${CTL_SHELL}
-${STATE_SHELL}
-${wakeAdmissionShell(input.admission)}
+${ctlShell(input.killStaleSockets === true)}
+${input.fastConfigRead === true ? `${FAST_QM_SHELL}
+` : ""}${stateShell(input.fastConfigRead === true)}
+${wakeAdmissionShell(input.admission, input.fastConfigRead === true)}
 install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:
 # it would see a computer that is about to be paused and report it awake. It

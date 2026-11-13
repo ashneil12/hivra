@@ -1,19 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import {
+  getTelegramWakeSetting,
   saveAgentSleepSettings,
+  saveTelegramWakeSetting,
   sleepAgentNow,
   wakeAgent,
   type AgentSleepPolicy,
   type HivraAgent,
+  type TelegramWakeSetting,
 } from "@/lib/hivra/agent-api";
-import { agentSleepView } from "@/lib/hivra/agent-sleep-ui";
+import { agentSleepView, telegramWakeUiEnabled } from "@/lib/hivra/agent-sleep-ui";
 import { holdAutoWake, releaseAutoWake } from "../useAgentWake";
 import { manageButtonGhost, manageCard, manageDisabled, manageLabel, manageMuted, manageSpin } from "./manage-styles";
 
-type Busy = "policy" | "always_on" | "nap" | "hibernate" | "wake" | null;
+type Busy = "policy" | "always_on" | "telegram" | "nap" | "hibernate" | "wake" | null;
 
 /** Plain words for how a manual sleep ended. */
 function sleepNote(tier: "nap" | "hibernate", outcome: string): string {
@@ -62,6 +65,17 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Only asked for when its switches are on, and shown only for an agent with a Telegram bot.
+  const [telegram, setTelegram] = useState<{ agentId: string; setting: TelegramWakeSetting } | null>(null);
+  useEffect(() => {
+    if (!telegramWakeUiEnabled()) return;
+    let live = true;
+    getTelegramWakeSetting(agent.id)
+      .then((setting) => { if (live) setTelegram({ agentId: agent.id, setting }); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [agent.id]);
+  const telegramSetting = telegram?.agentId === agent.id ? telegram.setting : null;
 
   // What was just saved shows at once; until then the agent's own row says.
   const own = saved?.agentId === agent.id ? saved : null;
@@ -78,6 +92,22 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
     try {
       const result = await saveAgentSleepSettings(agent.id, patch);
       setSaved({ agentId: agent.id, policy: result.sleep_policy, alwaysOn: result.always_on });
+      onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this setting.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveTelegram = async (enabled: boolean) => {
+    if (busy) return;
+    setBusy("telegram");
+    setError(null);
+    setNote(null);
+    try {
+      const setting = await saveTelegramWakeSetting(agent.id, enabled);
+      setTelegram({ agentId: agent.id, setting });
       onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this setting.");
@@ -159,6 +189,26 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
             </div>
           </div>
         </div>
+        {telegramSetting?.available ? (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, borderTop: "1px solid var(--etched-border)", paddingTop: 12 }}>
+            <Switch
+              checked={telegramSetting.enabled}
+              label="Wake on Telegram messages"
+              disabled={!idle}
+              busy={busy === "telegram"}
+              onToggle={() => void saveTelegram(!telegramSetting.enabled)}
+            />
+            <div style={{ display: "grid", gap: 2 }}>
+              <div style={{ fontSize: 12.5, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 6 }}>
+                Wake on Telegram messages
+                {busy === "telegram" ? <Loader2 size={12} style={{ ...manageSpin, color: "var(--text-muted)" }} /> : null}
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                Your agent can sleep while connected to Telegram, and a new message wakes it in a few seconds.
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 12, display: "grid", gap: 8 }}>
           <div style={manageMuted}>For testing: put this agent to sleep now, or wake it.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

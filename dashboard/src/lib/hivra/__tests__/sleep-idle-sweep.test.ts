@@ -73,6 +73,11 @@ jest.mock("../agent-sleep-store", () => ({
   logAgentSleepEvent: (...args: unknown[]) => mockLogEvent(...args),
 }));
 
+const mockTelegramSweep = jest.fn();
+jest.mock("../telegram-wake/sweep", () => ({
+  runTelegramWakeSweep: (...args: unknown[]) => mockTelegramSweep(...args),
+}));
+
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -154,6 +159,7 @@ beforeEach(() => {
   mockMarkAwake.mockResolvedValue(true);
   mockRunScript.mockResolvedValue({ ok: true, stdout: "" });
   mockTarget.mockResolvedValue({ ok: true, target: { vmid: VMID, bindingTag: TAG, env: { host: "h" } } });
+  mockTelegramSweep.mockResolvedValue({ rows: 0 });
 });
 
 describe("runSleepIdleSweep: switches", () => {
@@ -204,6 +210,23 @@ describe("runSleepIdleSweep: switches", () => {
     expect(summary.nap.candidates).toBe(0);
     expect(callsFor("hivra_agents").some((c) => isCandidateQuery(c, "awake"))).toBe(false);
     expect(mockSleep).not.toHaveBeenCalled();
+  });
+});
+
+describe("Telegram wake webhooks step", () => {
+  it.each([undefined, ""])("never runs, and adds nothing to the summary, without the server secret (%p)", async (secret) => {
+    const summary = await run({ HIVRA_SLEEP_MODE: "canary", HIVRA_TELEGRAM_WAKE: "on", HIVRA_TELEGRAM_WAKE_SECRET: secret });
+    expect(mockTelegramSweep).not.toHaveBeenCalled();
+    expect(summary).not.toHaveProperty("telegram");
+  });
+
+  it("runs with the secret set, even while the mode drains, with its own share of the budget", async () => {
+    const summary = await run({ HIVRA_SLEEP_MODE: "canary", HIVRA_TELEGRAM_WAKE: "off", HIVRA_TELEGRAM_WAKE_SECRET: "x".repeat(40) });
+    expect(mockTelegramSweep).toHaveBeenCalledTimes(1);
+    expect(summary.telegram).toEqual({ rows: 0 });
+    const { timeLeft } = mockTelegramSweep.mock.calls[0][0] as { timeLeft: () => number };
+    expect(timeLeft()).toBeGreaterThan(0);
+    expect(timeLeft()).toBeLessThanOrEqual(10_000);
   });
 });
 

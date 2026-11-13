@@ -5,6 +5,7 @@ import { revokeManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-broker";
 import { readStoredLlmConfig } from "./agent-llm";
 import { clearHivraPrivateAccessAfterDelete } from "./private-access-store";
+import { releaseTelegramWakeOnDelete } from "./telegram-wake/lifecycle";
 
 export class HivraAgentDeleteCleanupError extends Error {
   constructor(public readonly stage: "remote_desktop" | "private_access" | "managed_key" | "tunnel") {
@@ -55,4 +56,7 @@ export async function cleanupHivraAgentAccess(input: {
   } catch {
     throw new HivraAgentDeleteCleanupError("tunnel");
   }
+  // Best effort, never blocks the delete: a Telegram wake webhook comes down
+  // and its token is forgotten. Does nothing unless Telegram wake is configured.
+  await releaseTelegramWakeOnDelete(input.agentId);
 }

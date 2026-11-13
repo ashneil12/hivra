@@ -354,6 +354,117 @@ describe("ensureHivraAgentAwake", () => {
   });
 });
 
+describe("ensureHivraAgentAwake with the fast wake switches", () => {
+  const previous = process.env.HIVRA_FAST_WAKE;
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockLapsed.mockResolvedValue(false);
+    mockClaim.mockResolvedValue("claimed");
+    mockFinish.mockResolvedValue(true);
+    mockLogEvent.mockResolvedValue(true);
+    mockResolveTarget.mockResolvedValue({ ok: true, target });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "" });
+    mockSsrfFetch.mockResolvedValue({ status: 200 });
+    mockReadRow
+      .mockResolvedValueOnce({ data: row(), error: null })
+      .mockResolvedValue({ data: row({ sleep_state: "awake", sleep_generation: 6 }), error: null });
+  });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.HIVRA_FAST_WAKE;
+    else process.env.HIVRA_FAST_WAKE = previous;
+  });
+
+  it("with every switch off, runs the script and records the event exactly as before", async () => {
+    delete process.env.HIVRA_FAST_WAKE;
+    const background = jest.fn();
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", onBackground: background, ...fast });
+    expect(mockRunScript.mock.calls[0][2]).toEqual({ timeoutMs: 60_000 });
+    const script = String(mockRunScript.mock.calls[0][0]);
+    expect(script).toContain('CONFIG="$(qm config "$VMID" 2>/dev/null)" || finish false unreachable');
+    expect(script).not.toContain('CONFIG="$(hivra_fast_qm config');
+    expect(background).not.toHaveBeenCalled();
+    const detail = mockLogEvent.mock.calls[0][0].detail;
+    expect(detail).not.toHaveProperty("host_ms");
+    expect(detail).not.toHaveProperty("ssh_ready_ms");
+  });
+
+  it("timing: records the host's own time and when SSH was ready", async () => {
+    process.env.HIVRA_FAST_WAKE = "timing";
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "", sshReadyMs: 310 });
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(mockRunScript.mock.calls[0][2]).toEqual({ timeoutMs: 60_000, reportTimings: true });
+    expect(mockLogEvent.mock.calls[0][0].detail).toEqual(expect.objectContaining({ host_ms: 900, ssh_ready_ms: 310 }));
+  });
+
+  it("early_finish: asks for the answer once the whole receipt line is in", async () => {
+    process.env.HIVRA_FAST_WAKE = "early_finish";
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(mockRunScript.mock.calls[0][2]).toEqual({
+      timeoutMs: 60_000, earlyFinishMarker: "HIVRA_WAKE_RESULT", earlyFinishOnLine: true,
+    });
+  });
+
+  it("fast_qm: the binding check reads the config file", async () => {
+    process.env.HIVRA_FAST_WAKE = "fast_qm";
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(String(mockRunScript.mock.calls[0][0])).toContain('CONFIG="$(hivra_fast_qm config "$VMID" 2>/dev/null)" || finish false unreachable');
+  });
+
+  it("deferred_log: answers before the event is written, and hands the write to after()", async () => {
+    process.env.HIVRA_FAST_WAKE = "deferred_log";
+    let release: (value: unknown) => void = () => undefined;
+    mockLogEvent.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const background = jest.fn();
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", onBackground: background, ...fast });
+    expect(result).toEqual(expect.objectContaining({ state: "awake", reason: "resumed" }));
+    // The lease was given back before the answer.
+    expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
+    expect(background).toHaveBeenCalledTimes(1);
+    release(true);
+    await background.mock.calls[0][0];
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "wake", generation: 6 }));
+  });
+
+  it("deferred_log: still awaits the event when there is no after() to hand it to", async () => {
+    process.env.HIVRA_FAST_WAKE = "deferred_log";
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(mockLogEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("deferred_log: a write that fails after the answer does not throw", async () => {
+    process.env.HIVRA_FAST_WAKE = "deferred_log";
+    mockLogEvent.mockRejectedValue(new Error("log down"));
+    const background = jest.fn();
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", onBackground: background, ...fast }))
+      .resolves.toEqual(expect.objectContaining({ state: "awake" }));
+    await expect(background.mock.calls[0][0]).resolves.toBeUndefined();
+  });
+
+  it("deferred_log: reads the row at once when the lease could not be given back", async () => {
+    process.env.HIVRA_FAST_WAKE = "deferred_log";
+    mockFinish.mockResolvedValue(false);
+    const background = jest.fn();
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", onBackground: background, ...fast }))
+      .resolves.toEqual(expect.objectContaining({ state: "awake" }));
+    expect(background).not.toHaveBeenCalled();
+    expect(mockLogEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("deferred_log: a wake that outlives the wait awaits its own event inside the background work", async () => {
+    process.env.HIVRA_FAST_WAKE = "deferred_log";
+    let release: (value: unknown) => void = () => undefined;
+    mockRunScript.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    const background = jest.fn();
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20, onBackground: background, ...fast });
+    expect(result).toEqual({ state: "waking", reason: "in_progress" });
+    release({ ok: true, stdout: wakeReceipt(), stderr: "" });
+    await background.mock.calls[0][0];
+    // Only the wake itself was handed on; its event was written inside it.
+    expect(background).toHaveBeenCalledTimes(1);
+    expect(mockLogEvent).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("pollPublicHealthz", () => {
   it("counts any code below 500 as up, and refuses a hostname that is not one", async () => {
     const fetchImpl = jest.fn().mockResolvedValue({ status: 401 });
@@ -374,6 +485,17 @@ describe("pollPublicHealthz", () => {
     const down = await pollPublicHealthz("a.example.test", { fetchImpl: jest.fn().mockResolvedValue({ status: 502 }), intervalMs: 5, budgetMs: 30 });
     expect(down.up).toBe(false);
     expect(down.attempts).toBeGreaterThan(1);
+  });
+
+  it("polls every 150 ms for the first seconds when asked, and at the normal interval otherwise", async () => {
+    const slow = await pollPublicHealthz("a.example.test", { fetchImpl: jest.fn().mockRejectedValue(new Error("down")), budgetMs: 1000 });
+    expect(slow.attempts).toBe(1);
+    const quick = await pollPublicHealthz("a.example.test", {
+      fetchImpl: jest.fn().mockRejectedValue(new Error("down")), budgetMs: 1000, fastStart: true,
+    });
+    expect(quick.up).toBe(false);
+    expect(quick.attempts).toBeGreaterThanOrEqual(4);
+    expect(quick.ms).toBeLessThan(1000);
   });
 });
 

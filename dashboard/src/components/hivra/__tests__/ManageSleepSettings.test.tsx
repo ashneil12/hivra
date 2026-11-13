@@ -14,7 +14,11 @@ jest.mock("../useAgentWake", () => ({
 const mockSave = jest.fn();
 const mockSleep = jest.fn();
 const mockWake = jest.fn();
+const mockGetTelegram = jest.fn();
+const mockSaveTelegram = jest.fn();
 jest.mock("@/lib/hivra/agent-api", () => ({
+  getTelegramWakeSetting: (...args: unknown[]) => mockGetTelegram(...args),
+  saveTelegramWakeSetting: (...args: unknown[]) => mockSaveTelegram(...args),
   saveAgentSleepSettings: (...args: unknown[]) => mockSave(...args),
   sleepAgentNow: (...args: unknown[]) => mockSleep(...args),
   wakeAgent: (...args: unknown[]) => mockWake(...args),
@@ -122,5 +126,56 @@ describe("ManageSleepSettings", () => {
   it("uses no dashes in its copy", () => {
     const { container } = render(<ManageSleepSettings agent={agent()} onChanged={jest.fn()} />);
     expect(container.textContent).not.toMatch(/[-–—]/);
+  });
+});
+
+describe("ManageSleepSettings: Wake on Telegram messages", () => {
+  const saved = { sleep: process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP, tg: process.env.NEXT_PUBLIC_HIVRA_TELEGRAM_WAKE };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = "1";
+    process.env.NEXT_PUBLIC_HIVRA_TELEGRAM_WAKE = "1";
+    mockGetTelegram.mockResolvedValue({ available: true, enabled: false, armed: false });
+  });
+  afterAll(() => {
+    for (const [name, value] of [["NEXT_PUBLIC_HIVRA_AGENT_SLEEP", saved.sleep], ["NEXT_PUBLIC_HIVRA_TELEGRAM_WAKE", saved.tg]] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  it("asks nothing and shows nothing with its switch off", async () => {
+    delete process.env.NEXT_PUBLIC_HIVRA_TELEGRAM_WAKE;
+    render(<ManageSleepSettings agent={agent()} onChanged={jest.fn()} />);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockGetTelegram).not.toHaveBeenCalled();
+    expect(screen.queryByRole("switch", { name: "Wake on Telegram messages" })).toBeNull();
+  });
+
+  it("stays hidden for an agent without Telegram", async () => {
+    mockGetTelegram.mockResolvedValue({ available: false, enabled: false, armed: false });
+    render(<ManageSleepSettings agent={agent()} onChanged={jest.fn()} />);
+    await waitFor(() => expect(mockGetTelegram).toHaveBeenCalledWith("agent-1"));
+    expect(screen.queryByRole("switch", { name: "Wake on Telegram messages" })).toBeNull();
+  });
+
+  it("shows one plain switch with one sentence, and turns it on", async () => {
+    mockSaveTelegram.mockResolvedValue({ available: true, enabled: true, armed: false });
+    const onChanged = jest.fn();
+    render(<ManageSleepSettings agent={agent()} onChanged={onChanged} />);
+    const toggle = await screen.findByRole("switch", { name: "Wake on Telegram messages" });
+    expect(screen.getByText("Your agent can sleep while connected to Telegram, and a new message wakes it in a few seconds.")).toBeVisible();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    expect(mockSaveTelegram).toHaveBeenCalledWith("agent-1", true);
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("says plainly why it could not be turned on", async () => {
+    mockSaveTelegram.mockRejectedValue(new Error("Your agent needs to be awake to turn this on. Open it and try again."));
+    render(<ManageSleepSettings agent={agent()} onChanged={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Wake on Telegram messages" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your agent needs to be awake");
   });
 });

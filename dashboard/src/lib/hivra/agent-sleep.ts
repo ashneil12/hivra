@@ -9,6 +9,7 @@ import { bankrSkillsDirForType } from "./bankr-skills-seed";
 import { coerceSkillIds } from "./template-skills";
 import { resolveHivraProxmoxHost } from "./proxmox-target";
 import { isStartBlockedForLapse } from "./lapse-gate";
+import { isFastWakeEnabled } from "./fast-wake-flags";
 import {
   AUTONOMOUS_KINDS,
   DESKTOP_KINDS,
@@ -37,6 +38,13 @@ import {
   type ObservedSleepState,
   type SleepReceipt,
 } from "./agent-sleep-scripts";
+import {
+  markTelegramPendingArm,
+  readTelegramSleepContext,
+  telegramCoverageFor,
+  telegramWebhookIsClear,
+  type TelegramSleepContext,
+} from "./telegram-wake/lifecycle";
 import {
   readHivraAgentRow,
   resolveSleepTarget,
@@ -372,22 +380,34 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   }
   if (!target.bindingTag) return { outcome: "ineligible", reason: "binding_not_enforced", reasons: ["binding_not_enforced"] };
 
-  const verdictOptions = (cores: number) => ({
+  // Telegram wake: read only when the server switch is fully on and the owner
+  // opted in. Without it every live channel keeps the agent awake, as before.
+  let telegram: TelegramSleepContext | null = null;
+  if (state === "awake") {
+    try {
+      telegram = await readTelegramSleepContext(agentId, host?.sleep_mode ?? null, env);
+    } catch {
+      telegram = null;
+    }
+  }
+  const verdictOptions = (cores: number, coveredChannels: string[] = []) => ({
     manual,
     nowMs: now(),
     idleWindowS: timings.napAfterSeconds,
     horizonS: timings.horizonSeconds,
     cores,
+    ...(coveredChannels.length > 0 ? { coveredChannels } : {}),
   });
 
   // The live check comes first, before any lease: an agent that is in use is
   // left alone without a trace. A napping agent cannot be probed (its guest is
   // paused); it was idle when it napped and its next job is guarded above.
   let verdict: IdleVerdict | null = null;
+  let covered: string[] = [];
   if (state === "awake") {
     try {
       const run = await runProxmoxHostScript(
-        buildIdleProbeHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }),
+        buildIdleProbeHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }, telegram ? { telegram: true } : {}),
         target.env,
         { timeoutMs: PROBE_TIMEOUT_MS },
       );
@@ -395,12 +415,18 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       if (!probe) {
         return { outcome: "skipped", reason: parseIdleProbeRefusal(run?.stdout ?? "") ?? "probe_unavailable" };
       }
-      verdict = idleVerdict(probe, verdictOptions(probe.cpus));
+      covered = telegramCoverageFor(telegram, probe, now());
+      verdict = idleVerdict(probe, verdictOptions(probe.cpus, covered));
       if (!verdict.idle) {
         return { outcome: "not_idle", reason: verdict.reasons[0], reasons: verdict.reasons, nextJobAt: verdict.nextJobAt };
       }
     } catch {
       return { outcome: "skipped", reason: "probe_unavailable" };
+    }
+    // A covered bot must have no webhook before it sleeps: a webhook set by
+    // someone else would never be ours to replace, and the agent stays awake.
+    if (telegram && covered.length > 0 && !(await telegramWebhookIsClear(telegram).catch(() => false))) {
+      return { outcome: "not_idle", reason: "telegram_webhook_set", reasons: ["telegram_webhook_set"] };
     }
   }
 
@@ -455,7 +481,16 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
 
   let receipt: SleepReceipt | null = null;
   try {
-    const script = buildSleepHostScript({ vmid: target.vmid, bindingTag: target.bindingTag, tier, manual });
+    const script = buildSleepHostScript({
+      vmid: target.vmid,
+      bindingTag: target.bindingTag,
+      tier,
+      manual,
+      ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
+      ...(telegram && covered.length > 0 && telegram.row.token_fp
+        ? { telegramCoverage: { channels: covered, fingerprint: telegram.row.token_fp } }
+        : {}),
+    });
     const run = await runProxmoxHostScript(script, target.env, {
       timeoutMs: tier === "hibernate" ? HIBERNATE_SCRIPT_TIMEOUT_MS : NAP_SCRIPT_TIMEOUT_MS,
     });
@@ -488,7 +523,9 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   // The script says it slept. Check the probe it carried against the full
   // rules (idle window, load, job horizon); a computer that should not have
   // slept is woken at once.
-  const finalVerdict = receipt.probe ? idleVerdict(receipt.probe, verdictOptions(receipt.probe.cpus)) : verdict;
+  // The same Telegram rules as the host gate, on the probe the script itself ran.
+  const finalCovered = receipt.probe && covered.length > 0 ? telegramCoverageFor(telegram, receipt.probe, now()) : [];
+  const finalVerdict = receipt.probe ? idleVerdict(receipt.probe, verdictOptions(receipt.probe.cpus, finalCovered)) : verdict;
   if (receipt.probe && finalVerdict && !finalVerdict.idle) {
     const woke = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
     const observed = woke.receipt && woke.receipt.reason !== "busy"
@@ -503,6 +540,19 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     if (!observed) return recoverByWaking("recheck_wake_failed");
   }
 
+  // Asleep with Telegram covered: the sweep sets the wake webhook once the nap is
+  // old enough. Marked while this sleep still holds the agent, so a sleep that
+  // cannot record its finish still leaves the row waiting. If the mark cannot
+  // be written, the agent would sleep deaf to its bot, so it is woken instead.
+  if (finalCovered.length > 0 && !(await markTelegramPendingArm(agentId).catch(() => false))) {
+    log.warn("telegram wake could not be marked after a sleep; waking the agent", {
+      source: LOG_SOURCE,
+      failureType: "telegram_wake_mark_failed",
+      instanceId: agentId,
+    });
+    return recoverByWaking("telegram_mark_failed");
+  }
+
   const slept: AgentSleepFinishResult = tier === "nap" ? "napping" : "hibernated";
   const finished = await finish(slept);
   if (!finished) {
@@ -514,7 +564,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     await record("fail", slept, "finish_not_recorded", receiptDetail(receipt));
     return { outcome: "failed", reason: "finish_not_recorded", ms: now() - startedAt };
   }
-  await record(tier, slept, tier === "nap" ? "napped" : "hibernated", receiptDetail(receipt));
+  await record(tier, slept, tier === "nap" ? "napped" : "hibernated", receiptDetail(receipt, finalCovered.length > 0 ? { tg_covered: true } : {}));
 
   // Wake it ahead of its next job.
   let nextJobAt: string | null | undefined;

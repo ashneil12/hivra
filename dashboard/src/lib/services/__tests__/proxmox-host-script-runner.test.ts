@@ -86,6 +86,7 @@ jest.mock("ssh2", () => {
 });
 
 import {
+  markerSeen,
   normalizeProxmoxSshHostFingerprint,
   runProxmoxHostScript,
 } from "../proxmox-instance-service";
@@ -275,6 +276,45 @@ describe("runProxmoxHostScript earlyFinishMarker", () => {
     expect(Date.now() - start).toBeLessThan(2_000);
   }, 10_000);
 
+  it("with earlyFinishOnLine, waits for the newline after a marker that arrived in the middle of its line", async () => {
+    connectBehaviors.push((client) => {
+      client.__handlers.get("ready")?.();
+    });
+    const promise = runProxmoxHostScript("dummy-script", process.env, {
+      timeoutMs: 5_000,
+      earlyFinishMarker: "HIVRA_WAKE_RESULT",
+      earlyFinishOnLine: true,
+    });
+    const client = await waitForStreamHandlers();
+    let resolved = false;
+    void promise.then(() => { resolved = true; });
+
+    // The chunk ends inside the receipt: answering now would cut its JSON.
+    client.__stream.__dataHandlers.forEach((h) => h(Buffer.from('HIVRA_WAKE_RESULT {"ok":tr')));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(resolved).toBe(false);
+
+    client.__stream.__dataHandlers.forEach((h) => h(Buffer.from('ue,"vmid":1234}\n')));
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe('HIVRA_WAKE_RESULT {"ok":true,"vmid":1234}\n');
+    expect(client.__stream.__closeHandlers).toHaveLength(1);
+    expect(result).not.toHaveProperty("sshReadyMs");
+  }, 10_000);
+
+  it("reports when SSH was ready only when asked", async () => {
+    connectBehaviors.push((client) => {
+      client.__handlers.get("ready")?.();
+    });
+    const promise = runProxmoxHostScript("dummy-script", process.env, { timeoutMs: 5_000, reportTimings: true });
+    const client = await waitForStreamHandlers();
+    client.__stream.__closeHandlers.forEach((handler) => handler(0));
+    const result = await promise;
+    expect(result.ok).toBe(true);
+    expect(typeof result.sshReadyMs).toBe("number");
+    expect(result.sshReadyMs).toBeGreaterThanOrEqual(0);
+  }, 10_000);
+
   it("terminates and rejects when combined stdout and stderr exceed the capture budget", async () => {
     connectBehaviors.push((client) => {
       client.__handlers.get("ready")?.();
@@ -341,4 +381,19 @@ describe("runProxmoxHostScript earlyFinishMarker", () => {
     client.__stream.__closeHandlers.forEach((handler) => handler(0));
     await expect(promise).resolves.toMatchObject({ ok: true });
   }, 10_000);
+});
+
+describe("markerSeen", () => {
+  it("matches anywhere by default, as the provisioning marker always has", () => {
+    expect(markerSeen("x HIVRA_WAKE_RESULT {", "HIVRA_WAKE_RESULT", false)).toBe(true);
+    expect(markerSeen("nothing yet", "HIVRA_WAKE_RESULT", false)).toBe(false);
+  });
+
+  it("needs a newline after the marker when the whole line is asked for", () => {
+    expect(markerSeen("HIVRA_WAKE_RESULT {\"ok\":tr", "HIVRA_WAKE_RESULT", true)).toBe(false);
+    // A newline before the marker does not count.
+    expect(markerSeen("noise\nHIVRA_WAKE_RESULT {", "HIVRA_WAKE_RESULT", true)).toBe(false);
+    expect(markerSeen("noise\nHIVRA_WAKE_RESULT {}\n", "HIVRA_WAKE_RESULT", true)).toBe(true);
+    expect(markerSeen("HIVRA_WAKE_RESULT\n", "HIVRA_WAKE_RESULT", true)).toBe(true);
+  });
 });

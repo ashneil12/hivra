@@ -30,6 +30,8 @@ export interface HostState {
   startNoop?: boolean;
   setFail?: boolean;
   pingFail?: boolean;
+  /** qm config fails, as for a VM this host does not have. */
+  configFail?: boolean;
   /** QMP: refuse connections, fail or ignore a stop or a cont. */
   qmpDown?: boolean;
   qmpStopFail?: boolean;
@@ -70,6 +72,7 @@ if a[0] == "status":
     out("status: " + s["status"])
     if "--verbose" in a and s["qmp"]: out("qmpstatus: " + s["qmp"])
 elif a[0] == "config":
+    if s.get("configFail"): sys.exit(2)
     out("boot: order=scsi0")
     out("cores: 2")
     out("ide2: local-lvm:vm-%s-cloudinit,media=cdrom" % a[1])
