@@ -5,7 +5,7 @@
 //
 // Switch:
 //   HIVRA_WAKE_DOORBELLS  comma-separated channels whose host doorbell may act,
-//                         e.g. "email". Empty (the default) means none: no
+//                         e.g. "email,discord". Empty (the default) means none: no
 //                         adapter arms a doorbell and the install step refuses.
 //
 // Credentials. The arm host script reads the computer's mail settings through
@@ -26,7 +26,7 @@ import { EMAIL_CHANNEL_SPEC } from "./registry";
 
 type Env = Record<string, string | undefined>;
 
-export const WAKE_DOORBELL_CHANNELS = ["email"] as const;
+export const WAKE_DOORBELL_CHANNELS = ["email", "discord"] as const;
 export type WakeDoorbellChannel = (typeof WAKE_DOORBELL_CHANNELS)[number];
 
 /** The doorbell channels HIVRA_WAKE_DOORBELLS lists. Unknown names are dropped. */
@@ -112,7 +112,8 @@ export type DoorbellArmResult =
 
 const REASON = /^[a-z0-9_]{1,40}$/;
 
-function singleLine(stdout: string, prefix: string): Record<string, unknown> | null {
+/** The one line of JSON after `prefix` in a host script's output, or null (none, several, or not an object). */
+export function doorbellAnswerLine(stdout: string, prefix: string): Record<string, unknown> | null {
   const lines = String(stdout ?? "").split("\n").map((line) => line.replace(/\r$/, "")).filter((line) => line.startsWith(prefix));
   if (lines.length !== 1) return null;
   try {
@@ -124,7 +125,7 @@ function singleLine(stdout: string, prefix: string): Record<string, unknown> | n
 }
 
 export function parseDoorbellArmOutput(stdout: string, expected: { vmid: number; armId: string }): DoorbellArmResult {
-  const answer = singleLine(stdout, DOORBELL_ARM_PREFIX);
+  const answer = doorbellAnswerLine(stdout, DOORBELL_ARM_PREFIX);
   if (!answer) return { ok: false, reason: parseIdleProbeRefusal(stdout) ?? "no_answer" };
   if (answer.ok !== true) {
     return { ok: false, reason: typeof answer.error === "string" && REASON.test(answer.error) ? answer.error : "refused" };
@@ -159,7 +160,7 @@ printf '${DOORBELL_DISARM_PREFIX}%s\\n' "$OUT"
 }
 
 export function parseDoorbellDisarmOutput(stdout: string): { ok: boolean; was: string | null } {
-  const answer = singleLine(stdout, DOORBELL_DISARM_PREFIX);
+  const answer = doorbellAnswerLine(stdout, DOORBELL_DISARM_PREFIX);
   if (!answer || answer.ok !== true) return { ok: false, was: null };
   return { ok: true, was: typeof answer.was === "string" && REASON.test(answer.was) ? answer.was : null };
 }

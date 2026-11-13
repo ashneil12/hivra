@@ -544,6 +544,21 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.5` builds on `2026.11.13.4` and teaches the host wake doorbell Discord. Only
+`hivra-wake-doorbell.py` changes, plus the documents, the version and the provider worker's release labels.
+Before a Discord-covered computer sleeps, Hivra's arm host script reads the bot token and Hermes's Discord reply
+settings inside the computer through the vmid-bound guest exec and pipes them to the doorbell's root-only control
+socket, as for email; the token lives in the doorbell's memory only. The doorbell checks the bot's login budget
+(`GET /gateway/bot`, `session_start_limit`), opens its own gateway session (a small standard-library RFC 6455
+client, intents GUILDS, GUILD_MESSAGES and DIRECT_MESSAGES only, never MESSAGE_CONTENT) and answers armed only
+after READY. A DM, a mention, a reply to the bot, or a message in a free-response channel (or a thread under one,
+or a thread the bot owns) from someone other than a bot asks the wake proxy's helper for a wake-request, then sends
+one typing indicator to that channel; it never posts a message. After the disarm it stays connected for about 90
+seconds, then closes. Dropped sessions resume; fresh logins are capped per arm and need budget left; a session
+that cannot be kept, a refused token or a spent budget rings instead. Email behaviour is unchanged. Nothing is
+installed by bundle sync. No guest asset changes. This source release does not deploy, install, enable or start
+anything on a host or computer.
+
 Release `2026.11.13.4` builds on `2026.11.13.3` and teaches the host wake proxy client wakes.
 A per-host level, set with `ctl client-wake ticket|auth` (default `ticket`, kept in
 `/run/hivra-ingress-state`), decides what may resume a napped computer: at `ticket` only a server

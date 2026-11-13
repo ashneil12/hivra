@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.13.4.json";
+import currentRelease from "../../../provisioner-releases/2026.11.13.5.json";
+import doorbellRelease from "../../../provisioner-releases/2026.11.13.4.json";
 import hostCredentialRelease from "../../../provisioner-releases/2026.11.13.3.json";
 import hostIngressStartRelease from "../../../provisioner-releases/2026.11.13.2.json";
 import wakeProxyRelease from "../../../provisioner-releases/2026.11.13.1.json";
@@ -107,8 +108,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.13.4"
+  const release = identity.bundle.provisionerVersion === "2026.11.13.5"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.4"
+      ? doorbellRelease
     : identity.bundle.provisionerVersion === "2026.11.13.3"
       ? hostCredentialRelease
     : identity.bundle.provisionerVersion === "2026.11.13.2"

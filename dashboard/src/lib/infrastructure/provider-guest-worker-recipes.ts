@@ -460,6 +460,11 @@ const recipes = Object.freeze({
     workerSha256: "b16aec8710cb07252e0e20919a3c71273664f7f983acb9d1bf7921ce3829d66f",
     workerSize: 45216,
   }),
+  "2026.11.13.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake doorbell Discord. The worker only advances its release labels.
+    workerSha256: "dac65199affccaf5ed37a46a4ac8651384cffe04b15a4901acd697b17cb30b10",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

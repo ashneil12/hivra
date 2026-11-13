@@ -582,6 +582,13 @@ update them yet.
   host script hands the computer's own IMAP settings to it over its root-only socket before the
   stop; it watches INBOX read-only and rings the wake proxy's helper (`request`, as "doorbell") for
   mail from a sender Hermes would answer. A restart rings for every computer it had armed.
+- **Host wake doorbell for Discord (shipped, dark).** From `2026.11.13.5`, with
+  HIVRA_WAKE_DOORBELLS listing `discord`, the arm host script hands the computer's own bot token and
+  reply settings to the doorbell before the stop. The doorbell holds its own gateway session (READY
+  before the stop, no message-content intent), rings for a DM, a mention, a reply to the bot or a
+  free-response channel, sends one typing indicator and never posts. It stays connected about 90
+  seconds after the disarm. Agents are covered only with Hermes's own missed-message catch-up on and
+  a DM channel listed for it.
 - **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
   (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
   the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks

@@ -11,6 +11,7 @@ import { readChannelWakeRows, updateChannelWakeRow, type ChannelWakeRow } from "
 import { runMatrixPusherProgram } from "./adapters/matrix-pusher";
 import { matrixPushkey, matrixPushUrl, type MatrixPusherRequest, type MatrixPusherResult } from "./adapters/matrix-pusher-program";
 import { readEmailOptIn, type EmailOptInRead } from "./adapters/email-imap";
+import { readDiscordOptIn, type DiscordOptInRead } from "./adapters/discord-doorbell";
 import { wakeDoorbellEnabled } from "./doorbell-scripts";
 
 /**
@@ -32,6 +33,12 @@ import { wakeDoorbellEnabled } from "./doorbell-scripts";
  * off forgets the opt-in; an arm left on the doorbell comes down with the wake
  * the caller starts. Email also needs HIVRA_WAKE_DOORBELLS to list email.
  *
+ * Discord works like email: the probe gives the token's fingerprint and the
+ * catch-up facts (never the token), and the doorbell is armed at each sleep.
+ * It is refused while Hermes's own catch-up is off or lists no DM channel,
+ * because the agent would never sleep on it. Needs HIVRA_WAKE_DOORBELLS to
+ * list discord.
+ *
  * Dark unless HIVRA_CHANNEL_WAKE, HIVRA_CHANNEL_WAKE_SECRET,
  * HIVRA_CHANNEL_WAKE_CHANNELS (naming the channel) and
  * HIVRA_CHANNEL_WAKE_BASE_URL are configured.
@@ -41,7 +48,7 @@ const LOG_SOURCE = "channel-wake-owner";
 const TABLE = "hivra_agent_channel_wake";
 
 /** Channels with an owner switch. */
-export const OWNER_SWITCH_CHANNELS: readonly ChannelWakeChannel[] = ["matrix", "email"];
+export const OWNER_SWITCH_CHANNELS: readonly ChannelWakeChannel[] = ["matrix", "email", "discord"];
 /** Agent kinds that can have one. */
 const COVERED_KINDS: readonly string[] = ["hermes"];
 
@@ -64,6 +71,7 @@ export interface ChannelOwnerDeps {
   env?: Env;
   runPusher?: (target: { vmid: number; bindingTag: string | null; env: unknown }, request: MatrixPusherRequest) => Promise<MatrixPusherResult>;
   readEmail?: (target: { vmid: number; bindingTag: string | null; env: unknown }) => Promise<EmailOptInRead>;
+  readDiscord?: (target: { vmid: number; bindingTag: string | null; env: unknown }) => Promise<DiscordOptInRead>;
   newArmId?: () => string;
   now?: () => number;
 }
@@ -79,6 +87,7 @@ function switchConfig(channel: ChannelWakeChannel, env: Env) {
   const pushUrl = channel === "matrix" ? matrixPushUrl(config.baseUrl) : null;
   if (channel === "matrix" && !pushUrl) return null;
   if (channel === "email" && !wakeDoorbellEnabled("email", env)) return null;
+  if (channel === "discord" && !wakeDoorbellEnabled("discord", env)) return null;
   return { config, pushUrl };
 }
 
@@ -128,6 +137,14 @@ const MATRIX_MESSAGES: Record<string, string> = {
 const EMAIL_MESSAGES: Record<string, string> = {
   no_email: "Your agent has no email account set up yet. Connect email first.",
   no_imap_host: "Your agent's email has no IMAP server set. Connect email again.",
+  asleep: "Your agent needs to be awake to turn this on. Open it and try again.",
+  guest_busy: "Your agent is busy. Try again in a moment.",
+};
+
+const DISCORD_MESSAGES: Record<string, string> = {
+  no_discord: "Your agent has no Discord bot set up yet. Connect Discord first.",
+  backfill_off: "Turn on Discord catch-up in your agent first (DISCORD_MISSED_MESSAGE_BACKFILL), so it reads the messages that woke it.",
+  dm_not_backfilled: "List your Discord DM channel for catch-up in your agent first (DISCORD_MISSED_MESSAGE_BACKFILL_CHANNELS), so DMs that wake it are read.",
   asleep: "Your agent needs to be awake to turn this on. Open it and try again.",
   guest_busy: "Your agent is busy. Try again in a moment.",
 };
@@ -203,6 +220,20 @@ export async function enableChannelWake(agent: AgentRow, channel: ChannelWakeCha
     return { ok: true, view: viewOf(channel, true, { enabled: true }), wake: false };
   }
 
+  if (channel === "discord") {
+    const read = await (deps.readDiscord ?? readDiscordOptIn)(target);
+    if (!read.ok) {
+      return refuse(409, read.reason.slice(0, 40), DISCORD_MESSAGES[read.reason] ?? "Could not read your agent's Discord settings. Try again in a moment.");
+    }
+    // The arm id is set by each sleep's doorbell arm; the opt-in keeps the token's fingerprint only.
+    const saved = await saveOptIn({
+      agent_id: agentId, channel, cred_fp: read.fp, arm_id: null,
+      arm_data: { optedInAt: new Date(now()).toISOString() },
+    }, new Date(now()).toISOString());
+    if (!saved) return refuse(503, "not_saved", "Could not save this setting.");
+    return { ok: true, view: viewOf(channel, true, { enabled: true }), wake: false };
+  }
+
   const armId = (deps.newArmId ?? randomUUID)();
   const runPusher = deps.runPusher ?? runMatrixPusherProgram;
   const result = await runPusher(target, {
@@ -256,7 +287,7 @@ export async function disableChannelWake(agent: AgentRow, channel: ChannelWakeCh
   if (!off) return refuse(409, "changed", "This setting just changed. Try again.");
 
   const awake = agent.status === "running" && isAgentAwake(agent);
-  // Email set nothing up at opt-in; a doorbell arm comes down with the wake the caller starts.
+  // Email and Discord set nothing up at opt-in; a doorbell arm comes down with the wake the caller starts.
   if (awake && channel === "matrix") {
     const target = await targetOf(agent);
     const removed = target ? await (deps.runPusher ?? runMatrixPusherProgram)(target, { op: "remove" }) : { ok: false as const, reason: "no_target" };

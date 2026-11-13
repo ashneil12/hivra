@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hivra wake doorbell: watches a sleeping computer's mailbox from the host.
+"""Hivra wake doorbell: watches a sleeping computer's mailbox or Discord bot from the host.
 
 Python 3 standard library only. One file, three entry points:
 
@@ -11,7 +11,7 @@ Python 3 standard library only. One file, three entry points:
   ctl      One JSON request read from stdin (never argv) to the doorbell;
            prints the JSON answer. Exit 0 when ok, 1 when the doorbell said
            no, 2 when it could not be reached.
-  arm-from-guest <vmid> <arm_id> <fingerprint>
+  arm-from-guest <vmid> <arm_id> <fingerprint> [email|discord]
            Used by Hivra's arm host script: reads the one credential line the
            guest's read program printed (stdin), checks its fingerprint is the
            one the owner opted in with, and arms the doorbell. Prints one
@@ -52,13 +52,34 @@ rings. A doorbell that restarts has lost the credentials it held, so it rings
 for every computer its state file says was armed. The state file holds only
 vmids and arm ids.
 
+Discord (the same service, its own section below). The arm host script reads
+the bot token and Hermes's Discord reply settings from the computer's own
+~/.hermes/.env the same way and hands them over the same socket; the token
+lives in memory only. The doorbell checks the bot's login budget
+(GET /gateway/bot session_start_limit), opens its own gateway session and
+answers armed only once Discord said READY, so a message sent during the stop
+is already seen. It asks only for the GUILDS, GUILD_MESSAGES and
+DIRECT_MESSAGES intents, never MESSAGE_CONTENT. A message wakes when it is not
+from the bot itself and is a DM, mentions the bot, replies to the bot, is in a
+free-response channel (or a thread under one, or a thread the bot owns), or
+when Hermes answers without a mention; another bot's message only as
+DISCORD_ALLOW_BOTS says. On a wake it asks for the wake as for mail, then sends
+one typing indicator to that channel (POST /channels/{id}/typing). It never
+posts a message: a reply would hide that message from Hermes's own catch-up.
+After the disarm it stays connected for DISCORD_LINGER seconds while the agent
+comes back, then closes. A dropped session is resumed where Discord allows;
+fresh logins are capped per arm and need budget left, and a session that
+cannot be kept for WATCH_FAIL seconds, a refused token, or a spent budget ring.
+
 Nothing host-specific lives in this file, and nothing secret is ever logged.
 """
 
 import asyncio
+import base64
 import email.parser
 import email.policy
 import email.utils
+import hashlib
 import json
 import os
 import pwd
@@ -70,8 +91,9 @@ import stat
 import struct
 import sys
 import time
+import urllib.parse
 
-VERSION = "hivra-wake-doorbell/1"
+VERSION = "hivra-wake-doorbell/2"
 
 CTL_TIMEOUT = 5.0
 CTL_MAX_LINE = 64 * 1024
@@ -92,6 +114,30 @@ WATCHDOG_SECONDS = 5.0
 HELPER_CTL = "/run/hivra-ingress/ctl.sock"
 ARM_PREFIX = "HIVRA_DOORBELL_ARM "
 CRED_PREFIX = "HIVRA_EMAIL_CRED "
+DISCORD_CRED_PREFIX = "HIVRA_DISCORD_CRED "
+CRED_PREFIXES = {"email": (CRED_PREFIX, "HIVRA_EMAIL_CRED_NONE "), "discord": (DISCORD_CRED_PREFIX, "HIVRA_DISCORD_CRED_NONE ")}
+
+# Discord. Public endpoints only; nothing host-specific.
+DISCORD_REST_BASE = "https://discord.com/api/v10"
+DISCORD_GATEWAY_HOST_SUFFIX = ".discord.gg"
+# GUILDS (thread and channel names) | GUILD_MESSAGES | DIRECT_MESSAGES. Never MESSAGE_CONTENT (privileged).
+DISCORD_INTENTS = (1 << 0) | (1 << 9) | (1 << 12)
+DISCORD_LINGER = 90.0
+# Fresh logins left in the bot's daily budget below which the doorbell refuses to arm (Hermes needs its own).
+DISCORD_MIN_LOGINS = 100
+# Fresh logins one arm may make (the first one included); every other reconnect resumes.
+DISCORD_MAX_IDENTIFIES = 4
+DISCORD_MAX_MESSAGE = 8 * 1024 * 1024
+DISCORD_MAX_HTTP = 1024 * 1024
+DISCORD_MAX_MAP = 50_000
+DISCORD_USER_AGENT = "DiscordBot (hivra-wake-doorbell, 2)"
+# Close codes after which the token or the session settings will not work again.
+DISCORD_FATAL_CLOSES = frozenset((4004, 4010, 4011, 4012, 4013, 4014))
+# Close codes after which the session cannot be resumed.
+DISCORD_FRESH_CLOSES = frozenset((4007, 4009))
+DISCORD_BOT_SHAPE_RE = re.compile(r"^[A-Za-z0-9._-]{20,200}$")
+SNOWFLAKE_RE = re.compile(r"^[0-9]{5,25}$")
+WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # Only these IMAP commands are ever sent. Nothing here can change a mailbox.
 ALLOWED_COMMANDS = frozenset(("CAPABILITY", "STARTTLS", "LOGIN", "STATUS", "EXAMINE", "UID FETCH", "IDLE", "NOOP", "LOGOUT"))
@@ -138,8 +184,14 @@ class Config(object):
         self.arm_timeout = ARM_TIMEOUT
         self.connect_timeout = CONNECT_TIMEOUT
         self.command_timeout = COMMAND_TIMEOUT
+        self.discord_rest = DISCORD_REST_BASE
+        self.discord_linger = DISCORD_LINGER
+        self.discord_min_logins = DISCORD_MIN_LOGINS
+        self.discord_max_identifies = DISCORD_MAX_IDENTIFIES
         # Tests only: a CA file for a test TLS mailbox.
         self.test_ca_file = None
+        # Tests only: accept a gateway address that is not wss://*.discord.gg (a loopback fake).
+        self.test_any_gateway = False
         self.clock = uptime
         for key, value in overrides.items():
             if not hasattr(self, key):
@@ -195,7 +247,10 @@ def parse_arm(request):
     arm_id = request.get("arm_id")
     if vmid is None or not isinstance(arm_id, str) or not ARM_ID_RE.match(arm_id):
         raise BadRequest()
-    if request.get("channel") != "email":
+    channel = request.get("channel")
+    if channel == "discord":
+        return parse_discord_arm(request, vmid, arm_id)
+    if channel != "email":
         raise BadRequest()
     imap = request.get("imap")
     if not isinstance(imap, dict):
@@ -226,9 +281,47 @@ def parse_arm(request):
         if entry:
             listed.add(entry)
     return {
-        "vmid": vmid, "arm_id": arm_id,
+        "vmid": vmid, "arm_id": arm_id, "channel": "email",
         "imap": {"host": host, "port": port, "security": security, "verify": verify, "user": user, "password": password},
         "self": own, "allowed": frozenset(listed),
+    }
+
+
+def channel_key(value):
+    """A free-response channel entry as Hermes compares it: an id, or a name without its leading #."""
+    return value.strip().lstrip("#").strip().lower()
+
+
+def parse_discord_arm(request, vmid, arm_id):
+    """The Discord arm request, checked. Raises BadRequest. The token is only ever checked, never echoed."""
+    rules = request.get("discord")
+    if not isinstance(rules, dict):
+        raise BadRequest()
+    token = clean_text(rules.get("token"), 200)
+    if not DISCORD_BOT_SHAPE_RE.match(token):
+        raise BadRequest()
+    flags = {}
+    for key in ("require_mention", "thread_require_mention", "wake_all_guild"):
+        value = rules.get(key)
+        if not isinstance(value, bool):
+            raise BadRequest()
+        flags[key] = value
+    allow_bots = rules.get("allow_bots")
+    if allow_bots not in ("none", "mentions", "all"):
+        raise BadRequest()
+    free = rules.get("free_channels", [])
+    if not isinstance(free, list) or len(free) > 500:
+        raise BadRequest()
+    listed = set()
+    for entry in free:
+        if not isinstance(entry, str) or len(entry) > 100 or any(ch in entry for ch in "\r\n\x00"):
+            raise BadRequest()
+        key = channel_key(entry)
+        if key:
+            listed.add(key)
+    return {
+        "vmid": vmid, "arm_id": arm_id, "channel": "discord", "token": token,
+        "rules": dict(flags, allow_bots=allow_bots, free_channels=frozenset(listed)),
     }
 
 
@@ -553,6 +646,25 @@ class Watch(object):
                 "uidnext": self.next_uid, "fired": self.fired_reason, "requests": self.requests,
                 "last_state": (self.last_answer or {}).get("state")}
 
+    def armed_answer(self):
+        return {"ok": True, "vmid": self.vmid, "arm_id": self.arm_id, "uidvalidity": self.uidvalidity, "uidnext": self.next_uid,
+                "idle": "IDLE" in self.imap.capabilities}
+
+    def armed_log(self):
+        return {"idle": "IDLE" in self.imap.capabilities}
+
+    async def halt(self, close_code=None):
+        """Service shutdown: stops the task and the mailbox connection, keeping the state as it is."""
+        task, self.task = self.task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if self.imap is not None:
+            await self.imap.close()
+
     async def connect(self):
         imap = Imap(self.cfg, self.params)
         try:
@@ -674,6 +786,652 @@ class Watch(object):
             self.imap = None
 
 
+# ---------------------------------------------------------------- Discord
+
+class DiscordError(Exception):
+    def __init__(self, reason):
+        Exception.__init__(self, reason)
+        self.reason = reason
+
+
+def discord_message_wakes(message, bot_id, rules, threads, names):
+    """Whether Hermes would answer this MESSAGE_CREATE, as far as the host can tell. Waking once too often only costs a wake."""
+    if not isinstance(message, dict) or not bot_id:
+        return False
+    author = message.get("author") if isinstance(message.get("author"), dict) else {}
+    author_id = str(author.get("id") or "")
+    if not author_id or author_id == bot_id:
+        return False
+    # Ordinary messages and replies; system notices (joins, pins, thread starts) never wake.
+    if message.get("type", 0) not in (0, 19):
+        return False
+    content = message.get("content") if isinstance(message.get("content"), str) else ""
+    mentions = message.get("mentions") if isinstance(message.get("mentions"), list) else []
+    mentioned = any(isinstance(m, dict) and str(m.get("id") or "") == bot_id for m in mentions) \
+        or ("<@%s>" % bot_id) in content or ("<@!%s>" % bot_id) in content
+    ref = message.get("referenced_message")
+    replied = isinstance(ref, dict) and isinstance(ref.get("author"), dict) and str(ref["author"].get("id") or "") == bot_id
+    if author.get("bot") or message.get("webhook_id"):
+        if rules["allow_bots"] == "none":
+            return False
+        if rules["allow_bots"] == "mentions":
+            return mentioned
+    if not message.get("guild_id"):
+        return True
+    if mentioned or replied:
+        return True
+    if rules["wake_all_guild"] or not rules["require_mention"]:
+        return True
+    free = rules["free_channels"]
+    if "*" in free:
+        return True
+    channel_id = str(message.get("channel_id") or "")
+    parent, owner = threads.get(channel_id, (None, None))
+    for cid in (channel_id, parent):
+        if cid and (cid in free or names.get(cid) in free):
+            return True
+    return parent is not None and owner == bot_id and not rules["thread_require_mention"]
+
+
+def tls_context_for(cfg):
+    if cfg.test_ca_file:
+        return ssl.create_default_context(cafile=cfg.test_ca_file)
+    return ssl.create_default_context()
+
+
+async def open_stream(cfg, url):
+    """(reader, writer, Host header, request path) for an http(s) or ws(s) address."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port
+    except ValueError:
+        raise DiscordError("bad_address")
+    if parts.scheme not in ("https", "wss", "http", "ws") or not parts.hostname:
+        raise DiscordError("bad_address")
+    secure = parts.scheme in ("https", "wss")
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(
+            parts.hostname, port or (443 if secure else 80), ssl=tls_context_for(cfg) if secure else None,
+            server_hostname=parts.hostname if secure else None, limit=64 * 1024), cfg.connect_timeout)
+    except (OSError, asyncio.TimeoutError, ssl.SSLError, ValueError):
+        raise DiscordError("connect_failed")
+    host = parts.hostname if port is None else "%s:%d" % (parts.hostname, port)
+    return reader, writer, host, (parts.path or "/") + ("?" + parts.query if parts.query else "")
+
+
+async def read_http_head(reader, timeout):
+    """The status code and headers (lower-case names) of one HTTP/1.1 response."""
+    try:
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout)
+    except (asyncio.LimitOverrunError, asyncio.IncompleteReadError, OSError, ConnectionError, asyncio.TimeoutError):
+        raise DiscordError("http_failed")
+    lines = head[:-4].decode("latin-1").split("\r\n")
+    status = re.match(r"^HTTP/1\.[01] ([0-9]{3})", lines[0])
+    if not status:
+        raise DiscordError("http_failed")
+    headers = {}
+    for line in lines[1:]:
+        name, _, value = line.partition(":")
+        headers[name.strip().lower()] = value.strip()
+    return int(status.group(1)), headers
+
+
+def dechunk(data):
+    out = []
+    pos = 0
+    try:
+        while True:
+            end = data.index(b"\r\n", pos)
+            size = int(data[pos:end].split(b";")[0].strip(), 16)
+            if size == 0:
+                return b"".join(out)
+            out.append(data[end + 2:end + 2 + size])
+            pos = end + 2 + size + 2
+    except ValueError:
+        raise DiscordError("http_failed")
+
+
+def close_writer(writer):
+    try:
+        writer.close()
+    except (OSError, RuntimeError):
+        pass
+
+
+async def discord_http(cfg, method, path, token, body=None):
+    """One REST call to Discord: (status, JSON body or None). Raises DiscordError when it cannot be made."""
+    reader, writer, host, full = await open_stream(cfg, cfg.discord_rest.rstrip("/") + path)
+    try:
+        payload = b"" if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
+        head = ("%s %s HTTP/1.1\r\nHost: %s\r\nAuthorization: Bot %s\r\nUser-Agent: %s\r\nAccept: application/json\r\n"
+                "Content-Length: %d\r\nConnection: close\r\n%s\r\n"
+                % (method, full, host, token, DISCORD_USER_AGENT, len(payload),
+                   "Content-Type: application/json\r\n" if body is not None else ""))
+        try:
+            writer.write(head.encode("latin-1") + payload)
+            await asyncio.wait_for(writer.drain(), cfg.command_timeout)
+        except (OSError, ConnectionError, asyncio.TimeoutError):
+            raise DiscordError("http_failed")
+        status, headers = await read_http_head(reader, cfg.command_timeout)
+        chunks, total = [], 0
+        while True:
+            try:
+                part = await asyncio.wait_for(reader.read(65536), cfg.command_timeout)
+            except (OSError, ConnectionError, asyncio.TimeoutError):
+                raise DiscordError("http_failed")
+            if not part:
+                break
+            total += len(part)
+            if total > DISCORD_MAX_HTTP:
+                raise DiscordError("http_too_large")
+            chunks.append(part)
+        data = b"".join(chunks)
+        if "chunked" in headers.get("transfer-encoding", "").lower():
+            data = dechunk(data)
+        try:
+            parsed = json.loads(data.decode("utf-8")) if data else None
+        except (ValueError, UnicodeDecodeError):
+            parsed = None
+        return status, parsed
+    finally:
+        close_writer(writer)
+
+
+def mask_bytes(payload, mask):
+    if not payload:
+        return b""
+    size = len(payload)
+    key = (mask * (size // 4 + 1))[:size]
+    return (int.from_bytes(payload, "big") ^ int.from_bytes(key, "big")).to_bytes(size, "big")
+
+
+class WebSocket(object):
+    """A small RFC 6455 client: masked text frames out, whole messages in, pings answered."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.reader = None
+        self.writer = None
+        self.closed = False
+
+    async def connect(self, url):
+        self.reader, self.writer, host, path = await open_stream(self.cfg, url)
+        key = base64.b64encode(os.urandom(16))
+        request = ("GET %s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+                   "Sec-WebSocket-Version: 13\r\nUser-Agent: %s\r\n\r\n" % (path, host, key.decode("ascii"), DISCORD_USER_AGENT))
+        try:
+            self.writer.write(request.encode("latin-1"))
+            await asyncio.wait_for(self.writer.drain(), self.cfg.command_timeout)
+        except (OSError, ConnectionError, asyncio.TimeoutError):
+            raise DiscordError("connect_failed")
+        status, headers = await read_http_head(self.reader, self.cfg.command_timeout)
+        accept = base64.b64encode(hashlib.sha1(key + WS_GUID).digest()).decode("ascii")
+        if status != 101 or headers.get("sec-websocket-accept") != accept:
+            raise DiscordError("upgrade_refused")
+
+    async def send_frame(self, opcode, payload):
+        if self.writer is None or self.closed:
+            raise DiscordError("connection_lost")
+        size = len(payload)
+        if size < 126:
+            head = struct.pack("!BB", 0x80 | opcode, 0x80 | size)
+        elif size < 65536:
+            head = struct.pack("!BBH", 0x80 | opcode, 0x80 | 126, size)
+        else:
+            head = struct.pack("!BBQ", 0x80 | opcode, 0x80 | 127, size)
+        mask = os.urandom(4)
+        try:
+            self.writer.write(head + mask + mask_bytes(payload, mask))
+            await asyncio.wait_for(self.writer.drain(), self.cfg.command_timeout)
+        except (OSError, ConnectionError, asyncio.TimeoutError, RuntimeError):
+            raise DiscordError("connection_lost")
+
+    async def send_json(self, value):
+        await self.send_frame(0x1, json.dumps(value, separators=(",", ":")).encode("utf-8"))
+
+    async def read_exact(self, size, timeout):
+        try:
+            return await asyncio.wait_for(self.reader.readexactly(size), timeout)
+        except (asyncio.IncompleteReadError, OSError, ConnectionError, asyncio.TimeoutError):
+            raise DiscordError("connection_lost")
+
+    async def recv(self, timeout):
+        """One whole message: ("text", str), ("close", code), or ("skipped", None) for a binary or oversized one."""
+        parts, total, kind, oversized = [], 0, None, False
+        while True:
+            first, second = struct.unpack("!BB", await self.read_exact(2, timeout))
+            opcode, size = first & 0x0F, second & 0x7F
+            if second & 0x80:
+                raise DiscordError("bad_frame")
+            if size == 126:
+                size = struct.unpack("!H", await self.read_exact(2, timeout))[0]
+            elif size == 127:
+                size = struct.unpack("!Q", await self.read_exact(8, timeout))[0]
+            if opcode >= 0x8:
+                if size > 125:
+                    raise DiscordError("bad_frame")
+                payload = await self.read_exact(size, timeout) if size else b""
+                if opcode == 0x8:
+                    self.closed = True
+                    return "close", struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1005
+                if opcode == 0x9:
+                    await self.send_frame(0xA, payload)
+                continue
+            if opcode in (0x1, 0x2) and kind is None:
+                kind = opcode
+            elif opcode != 0x0 or kind is None:
+                raise DiscordError("bad_frame")
+            total += size
+            oversized = oversized or total > DISCORD_MAX_MESSAGE
+            remaining = size
+            while remaining:
+                chunk = await self.read_exact(min(remaining, 65536), timeout)
+                remaining -= len(chunk)
+                if not oversized:
+                    parts.append(chunk)
+            if oversized:
+                parts = []
+            if first & 0x80:
+                break
+        if oversized or kind != 0x1:
+            return "skipped", None
+        try:
+            return "text", b"".join(parts).decode("utf-8")
+        except UnicodeDecodeError:
+            return "skipped", None
+
+    async def close(self, code):
+        if self.writer is None:
+            return
+        if not self.closed:
+            self.closed = True
+            try:
+                self.writer.write(struct.pack("!BB", 0x88, 0x82) + b"\x00\x00\x00\x00" + struct.pack("!H", code))
+                await asyncio.wait_for(self.writer.drain(), 2.0)
+            except (OSError, ConnectionError, asyncio.TimeoutError, RuntimeError):
+                pass
+        close_writer(self.writer)
+        self.writer = None
+        self.reader = None
+
+
+class DiscordWatch(object):
+    """One armed computer's Discord bot: its token (memory only), its own gateway session, and the ring."""
+
+    def __init__(self, doorbell, arm):
+        self.doorbell = doorbell
+        self.cfg = doorbell.cfg
+        self.vmid = arm["vmid"]
+        self.arm_id = arm["arm_id"]
+        self.token = arm["token"]
+        self.rules = arm["rules"]
+        self.state = "arming"
+        # The email watch's mailbox connection; a Discord watch never has one.
+        self.imap = None
+        self.ws = None
+        self.task = None
+        self.ring_task = None
+        self.linger_task = None
+        self.ready = None
+        # 4000 leaves the session resumable; a disarm ends it with 1000.
+        self.close_code = 4000
+        self.bot_id = None
+        self.gateway_url = None
+        self.session_id = None
+        self.resume_url = None
+        self.seq = None
+        self.identifies = 0
+        self.login_remaining = None
+        self.heartbeat_acked = True
+        self.threads = {}
+        self.names = {}
+        self.fired_reason = None
+        self.fired_at = None
+        self.requests = 0
+        self.last_answer = None
+        self.typing = None
+
+    def view(self):
+        return {"vmid": self.vmid, "arm_id": self.arm_id, "channel": "discord", "state": self.state,
+                "session": self.session_id is not None, "identifies": self.identifies,
+                "login_remaining": self.login_remaining, "fired": self.fired_reason, "requests": self.requests,
+                "typing": self.typing, "last_state": (self.last_answer or {}).get("state")}
+
+    def armed_answer(self):
+        return {"ok": True, "vmid": self.vmid, "arm_id": self.arm_id, "channel": "discord",
+                "login_remaining": self.login_remaining}
+
+    def armed_log(self):
+        return {"channel": "discord", "identifies": self.identifies}
+
+    def gateway_ok(self, url):
+        if not isinstance(url, str) or len(url) > 512:
+            return False
+        try:
+            parts = urllib.parse.urlsplit(url)
+            parts.port
+        except ValueError:
+            return False
+        if self.cfg.test_any_gateway:
+            return parts.scheme in ("ws", "wss") and bool(parts.hostname)
+        host = (parts.hostname or "").lower()
+        return parts.scheme == "wss" and host.endswith(DISCORD_GATEWAY_HOST_SUFFIX) and not parts.username
+
+    async def check_budget(self):
+        """GET /gateway/bot: the token works, the gateway address, and fresh logins left today. Raises DiscordError."""
+        status, body = await discord_http(self.cfg, "GET", "/gateway/bot", self.token)
+        if status == 401:
+            raise DiscordError("token_refused")
+        if status == 429:
+            raise DiscordError("rate_limited")
+        if status != 200 or not isinstance(body, dict):
+            raise DiscordError("gateway_unavailable")
+        limit = body.get("session_start_limit")
+        remaining = limit.get("remaining") if isinstance(limit, dict) else None
+        if isinstance(remaining, bool) or not isinstance(remaining, int):
+            raise DiscordError("gateway_unavailable")
+        self.login_remaining = remaining
+        if remaining < self.cfg.discord_min_logins:
+            raise DiscordError("login_budget")
+        if not self.gateway_ok(body.get("url")):
+            raise DiscordError("bad_gateway")
+        self.gateway_url = body["url"]
+
+    async def arm(self):
+        """Checks the budget, opens the gateway session, and returns once Discord said READY. Raises DiscordError."""
+        await self.check_budget()
+        loop = asyncio.get_running_loop()
+        self.ready = loop.create_future()
+        self.task = loop.create_task(self.run())
+        await self.ready
+
+    def start(self):
+        """The session already runs from the arm."""
+
+    def fail_ready(self, reason):
+        if self.ready is not None and not self.ready.done():
+            self.ready.set_exception(DiscordError(reason))
+
+    async def run(self):
+        try:
+            kind, detail, established = await self.session(False)
+            if not established:
+                self.fail_ready(detail)
+                return
+            await self.keep(kind, detail)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # an unexpected fault must still end in a ring, never a deaf computer
+            log("discord_fault", vmid=self.vmid, kind=type(error).__name__)
+            self.fail_ready("fault")
+            self.fire("fault")
+
+    async def keep(self, kind, detail):
+        """After a session ends while armed: resume it, or log in afresh within the budget, or ring."""
+        failing_since = None
+        attempt = 0
+        while self.state == "armed":
+            if kind == "fatal":
+                self.fire(detail)
+                return
+            if kind == "fresh":
+                self.session_id = None
+                self.seq = None
+            backoff = self.cfg.reconnect_backoff
+            await asyncio.sleep(backoff[min(attempt, len(backoff) - 1)])
+            if self.state != "armed":
+                return
+            if self.session_id is None:
+                if self.identifies >= self.cfg.discord_max_identifies:
+                    self.fire("login_budget")
+                    return
+                try:
+                    await self.check_budget()
+                except DiscordError as error:
+                    if error.reason in ("login_budget", "token_refused"):
+                        self.fire(error.reason)
+                        return
+                    kind, detail, established = "lost", error.reason, False
+                else:
+                    kind, detail, established = await self.session(False)
+            else:
+                kind, detail, established = await self.session(True)
+            log("discord_session_ended", vmid=self.vmid, kind=kind, reason=detail, established=established)
+            if established:
+                failing_since, attempt = None, 0
+                continue
+            now = self.cfg.clock()
+            failing_since = now if failing_since is None else failing_since
+            if now - failing_since >= self.cfg.watch_fail:
+                self.fire("watch_failed")
+                return
+            attempt += 1
+
+    def after_close(self, code):
+        if code in DISCORD_FATAL_CLOSES:
+            return "fatal", "token_refused" if code == 4004 else "gateway_refused"
+        if code in DISCORD_FRESH_CLOSES:
+            return "fresh", "session_expired"
+        return "resume", "closed"
+
+    def take_ready(self, data):
+        user = data.get("user") if isinstance(data, dict) else None
+        bot_id = str(user.get("id") or "") if isinstance(user, dict) else ""
+        session_id = data.get("session_id") if isinstance(data, dict) else None
+        if not SNOWFLAKE_RE.match(bot_id) or not isinstance(session_id, str) or not 0 < len(session_id) <= 128:
+            return False
+        self.bot_id = bot_id
+        self.session_id = session_id
+        resume = data.get("resume_gateway_url")
+        self.resume_url = resume if self.gateway_ok(resume) else None
+        return True
+
+    async def heartbeat(self, ws, interval):
+        """Beats every interval; a beat that was never acknowledged means a dead link, so the socket is dropped."""
+        await asyncio.sleep(interval * (0.2 + 0.6 * (os.urandom(1)[0] / 255.0)))
+        while True:
+            if not self.heartbeat_acked:
+                log("discord_zombie", vmid=self.vmid)
+                if ws.writer is not None:
+                    close_writer(ws.writer)
+                return
+            self.heartbeat_acked = False
+            try:
+                await ws.send_json({"op": 1, "d": self.seq})
+            except DiscordError:
+                return
+            await asyncio.sleep(interval)
+
+    async def session(self, resume):
+        """One gateway connection, until it ends. (kind, reason, established): kind is resume, fresh, fatal or lost."""
+        url = self.resume_url if resume and self.resume_url else self.gateway_url
+        ws = WebSocket(self.cfg)
+        self.ws = ws
+        beat = None
+        established = False
+        try:
+            await ws.connect(url.rstrip("/") + "/?v=10&encoding=json")
+            kind, text = await ws.recv(self.cfg.command_timeout)
+            hello = self.decode(text) if kind == "text" else None
+            data = hello.get("d") if hello and hello.get("op") == 10 else None
+            interval = data.get("heartbeat_interval") if isinstance(data, dict) else None
+            if isinstance(interval, bool) or not isinstance(interval, (int, float)) or not 0 < interval <= 600_000:
+                return "lost", "no_hello", False
+            interval = max(interval / 1000.0, 0.05)
+            self.heartbeat_acked = True
+            beat = asyncio.get_running_loop().create_task(self.heartbeat(ws, interval))
+            if resume and self.session_id:
+                await ws.send_json({"op": 6, "d": {"token": self.token, "session_id": self.session_id, "seq": self.seq}})
+            else:
+                self.identifies += 1
+                await ws.send_json({"op": 2, "d": {"token": self.token, "intents": DISCORD_INTENTS, "large_threshold": 50,
+                                                   "properties": {"os": "linux", "browser": "hivra-doorbell",
+                                                                  "device": "hivra-doorbell"}}})
+            while True:
+                kind, text = await ws.recv(interval * 2 + 10.0)
+                if kind == "close":
+                    out = self.after_close(text)
+                    return out[0], out[1], established
+                payload = self.decode(text) if kind == "text" else None
+                if payload is None:
+                    continue
+                seq = payload.get("s")
+                if isinstance(seq, int) and not isinstance(seq, bool):
+                    self.seq = seq
+                op = payload.get("op")
+                if op == 0:
+                    event = payload.get("t")
+                    if event == "READY":
+                        if not self.take_ready(payload.get("d")):
+                            return "fatal", "bad_ready", established
+                        established = True
+                        if self.state == "arming":
+                            self.state = "armed"
+                            if self.ready is not None and not self.ready.done():
+                                self.ready.set_result(True)
+                    elif event == "RESUMED":
+                        established = True
+                    else:
+                        self.on_dispatch(event, payload.get("d"))
+                elif op == 1:
+                    await ws.send_json({"op": 1, "d": self.seq})
+                elif op == 11:
+                    self.heartbeat_acked = True
+                elif op == 7:
+                    return "resume", "reconnect", established
+                elif op == 9:
+                    return ("resume" if payload.get("d") is True else "fresh"), "invalid_session", established
+        except DiscordError as error:
+            return "lost", error.reason, established
+        finally:
+            if beat is not None:
+                beat.cancel()
+            await ws.close(self.close_code)
+            if self.ws is ws:
+                self.ws = None
+
+    @staticmethod
+    def decode(text):
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def remember_thread(self, item):
+        if not isinstance(item, dict) or len(self.threads) >= DISCORD_MAX_MAP:
+            return
+        tid, parent = str(item.get("id") or ""), str(item.get("parent_id") or "")
+        if SNOWFLAKE_RE.match(tid) and SNOWFLAKE_RE.match(parent):
+            self.threads[tid] = (parent, str(item.get("owner_id") or ""))
+
+    def remember_name(self, item):
+        if not isinstance(item, dict) or len(self.names) >= DISCORD_MAX_MAP:
+            return
+        cid, name = str(item.get("id") or ""), item.get("name")
+        if SNOWFLAKE_RE.match(cid) and isinstance(name, str) and len(name) <= 100:
+            self.names[cid] = channel_key(name)
+
+    def on_dispatch(self, event, data):
+        if not isinstance(data, dict):
+            return
+        if event == "MESSAGE_CREATE":
+            if self.state == "armed" and discord_message_wakes(data, self.bot_id, self.rules, self.threads, self.names):
+                channel_id = str(data.get("channel_id") or "")
+                self.fire("message", channel_id if SNOWFLAKE_RE.match(channel_id) else None)
+        elif event == "GUILD_CREATE":
+            for item in (data.get("channels") or [])[:5000] if isinstance(data.get("channels"), list) else []:
+                self.remember_name(item)
+            for item in (data.get("threads") or [])[:5000] if isinstance(data.get("threads"), list) else []:
+                self.remember_thread(item)
+        elif event in ("CHANNEL_CREATE", "CHANNEL_UPDATE"):
+            self.remember_name(data)
+        elif event in ("THREAD_CREATE", "THREAD_UPDATE"):
+            self.remember_thread(data)
+        elif event == "THREAD_LIST_SYNC":
+            for item in (data.get("threads") or [])[:5000] if isinstance(data.get("threads"), list) else []:
+                self.remember_thread(item)
+        elif event in ("THREAD_DELETE", "CHANNEL_DELETE"):
+            self.threads.pop(str(data.get("id") or ""), None)
+            self.names.pop(str(data.get("id") or ""), None)
+
+    def fire(self, reason, channel_id=None):
+        """Starts ringing (once). The gateway session stays up until the disarm's linger ends."""
+        if self.state != "armed":
+            return
+        self.state = "fired"
+        self.fired_reason = reason
+        self.fired_at = self.cfg.clock()
+        self.doorbell.persist()
+        log("ring", vmid=self.vmid, reason=reason, channel="discord")
+        self.ring_task = asyncio.get_running_loop().create_task(self.ring(channel_id))
+
+    async def ring(self, channel_id):
+        while self.state == "fired":
+            answer = await self.doorbell.request_wake(self.vmid)
+            self.requests += 1
+            self.last_answer = answer
+            log("wake_request", vmid=self.vmid, ok=bool(answer and answer.get("ok")),
+                state=(answer or {}).get("state"), error=(answer or {}).get("error"))
+            if channel_id and self.typing is None and answer and answer.get("ok") and self.token:
+                await self.send_typing(channel_id)
+            if self.cfg.clock() - self.fired_at >= self.cfg.fire_max:
+                self.state = "expired"
+                log("ring_expired", vmid=self.vmid, requests=self.requests)
+                self.doorbell.forget(self)
+                await self.stop()
+                return
+            await asyncio.sleep(self.cfg.fire_retry)
+
+    async def send_typing(self, channel_id):
+        """One typing indicator, so the sender sees the agent coming. Never a message."""
+        try:
+            status, _ = await asyncio.wait_for(
+                discord_http(self.cfg, "POST", "/channels/%s/typing" % channel_id, self.token), self.cfg.command_timeout)
+            self.typing = status
+        except (DiscordError, asyncio.TimeoutError):
+            self.typing = 0
+        log("discord_typing", vmid=self.vmid, status=self.typing)
+
+    def linger(self):
+        """The disarm: stop ringing, stay connected while the agent comes back, then close."""
+        self.state = "lingering"
+        current = asyncio.current_task()
+        if self.ring_task is not None and self.ring_task is not current:
+            self.ring_task.cancel()
+        self.doorbell.lingering[self.vmid] = self
+        self.linger_task = asyncio.get_running_loop().create_task(self.end_linger())
+
+    async def end_linger(self):
+        await asyncio.sleep(self.cfg.discord_linger)
+        if self.doorbell.lingering.get(self.vmid) is self:
+            del self.doorbell.lingering[self.vmid]
+        await self.stop()
+
+    async def halt(self, close_code):
+        current = asyncio.current_task()
+        self.close_code = close_code
+        for task in (self.ring_task, self.linger_task, self.task):
+            if task is not None and task is not current and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        if self.ws is not None:
+            await self.ws.close(close_code)
+            self.ws = None
+
+    async def stop(self):
+        if self.state != "expired":
+            self.state = "disarmed"
+        await self.halt(1000)
+        self.token = None
+        self.fail_ready("stopped")
+        if self.ready is not None and self.ready.done() and not self.ready.cancelled():
+            self.ready.exception()
+
+
 # ---------------------------------------------------------------- the service
 
 def peer_uid(writer):
@@ -719,6 +1477,8 @@ class Doorbell(object):
     def __init__(self, cfg):
         self.cfg = cfg
         self.watches = {}
+        # Discord sessions kept open for a while after their disarm, by vmid.
+        self.lingering = {}
         self.server = None
         self.restored = []
 
@@ -747,15 +1507,10 @@ class Doorbell(object):
             self.server = None
         for watch in list(self.watches.values()):
             # Keeps the armed list on disk: a restart rings for each of them.
-            task, watch.task = watch.task, None
-            if task is not None:
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            if watch.imap is not None:
-                await watch.imap.close()
+            await watch.halt(4000)
+        for watch in list(self.lingering.values()):
+            await watch.stop()
+        self.lingering.clear()
 
     def read_state(self):
         try:
@@ -823,14 +1578,17 @@ class Doorbell(object):
                 helper = await self.helper_health()
                 return {"ok": True, "version": VERSION, "armed": sum(1 for w in self.watches.values() if w.state == "armed"),
                         "fired": sum(1 for w in self.watches.values() if w.state == "fired"),
+                        "lingering": len(self.lingering),
                         "helper": bool(helper and helper.get("ok")), "credential": bool(helper and helper.get("credential"))}
             if command == "status":
                 if request.get("vmid") is None:
-                    return {"ok": True, "vms": {str(v): w.view() for v, w in sorted(self.watches.items())}}
+                    held = dict(self.lingering)
+                    held.update(self.watches)
+                    return {"ok": True, "vms": {str(v): w.view() for v, w in sorted(held.items())}}
                 vmid = parse_vmid(request.get("vmid"))
                 if vmid is None:
                     return {"ok": False, "error": "bad_vmid"}
-                watch = self.watches.get(vmid)
+                watch = self.watches.get(vmid) or self.lingering.get(vmid)
                 return {"ok": True, "vmid": vmid, "state": watch.state if watch else "none",
                         **({"watch": watch.view()} if watch else {})}
             if command == "arm":
@@ -858,7 +1616,11 @@ class Doorbell(object):
         previous = self.watches.pop(vmid, None)
         if previous is not None:
             await previous.stop()
-        watch = Watch(self, arm)
+        lingering = self.lingering.pop(vmid, None)
+        if lingering is not None:
+            # One doorbell session per computer: the old one closes before the new one logs in.
+            await lingering.stop()
+        watch = DiscordWatch(self, arm) if arm["channel"] == "discord" else Watch(self, arm)
         t0 = mono()
         try:
             await asyncio.wait_for(watch.arm(), self.cfg.arm_timeout)
@@ -866,7 +1628,7 @@ class Doorbell(object):
             await watch.stop()
             self.persist()
             return {"ok": False, "vmid": vmid, "error": "arm_timeout"}
-        except ImapError as error:
+        except (ImapError, DiscordError) as error:
             await watch.stop()
             self.persist()
             log("arm_failed", vmid=vmid, reason=error.reason)
@@ -874,9 +1636,8 @@ class Doorbell(object):
         self.watches[vmid] = watch
         watch.start()
         self.persist()
-        log("armed", vmid=vmid, ms=int((mono() - t0) * 1000), idle="IDLE" in watch.imap.capabilities)
-        return {"ok": True, "vmid": vmid, "arm_id": watch.arm_id, "uidvalidity": watch.uidvalidity, "uidnext": watch.next_uid,
-                "idle": "IDLE" in watch.imap.capabilities}
+        log("armed", vmid=vmid, ms=int((mono() - t0) * 1000), **watch.armed_log())
+        return watch.armed_answer()
 
     async def disarm(self, request):
         vmid = parse_vmid(request.get("vmid"))
@@ -891,7 +1652,10 @@ class Doorbell(object):
             return {"ok": True, "vmid": vmid, "was": "other_arm"}
         was = watch.state
         del self.watches[vmid]
-        await watch.stop()
+        if isinstance(watch, DiscordWatch):
+            watch.linger()
+        else:
+            await watch.stop()
         self.persist()
         log("disarmed", vmid=vmid, was=was)
         return {"ok": True, "vmid": vmid, "was": was}
@@ -990,11 +1754,30 @@ def truthy(value, default):
     return str(value).strip().lower() in ("true", "1", "yes")
 
 
-def arm_request_from_guest(lines, vmid, arm_id, fingerprint):
+def discord_arm_request(values, vmid, arm_id):
+    """The Discord arm request from the computer's .env values, read the way Hermes reads them."""
+    get = lambda key: values.get(key) if isinstance(values.get(key), str) else ""
+    allow_bots = get("DISCORD_ALLOW_BOTS").strip().lower() or "none"
+    return {
+        "cmd": "arm", "vmid": vmid, "arm_id": arm_id, "channel": "discord",
+        "discord": {
+            "token": get("DISCORD_BOT_TOKEN").strip(),
+            "require_mention": get("DISCORD_REQUIRE_MENTION").strip().lower() not in ("false", "0", "no", "off"),
+            "thread_require_mention": get("DISCORD_THREAD_REQUIRE_MENTION").strip().lower() in ("true", "1", "yes", "on"),
+            "allow_bots": allow_bots if allow_bots in ("none", "mentions", "all") else "none",
+            "free_channels": env_list(get("DISCORD_FREE_RESPONSE_CHANNELS"))[:500],
+            # config.yaml sets reply rules the host cannot read exactly: then every guild message wakes.
+            "wake_all_guild": get("_yaml_gates") == "1",
+        },
+    }
+
+
+def arm_request_from_guest(lines, vmid, arm_id, fingerprint, channel="email"):
     """Builds the arm request from the guest read program's output. (request, None) or (None, reason)."""
-    found = [line[len(CRED_PREFIX):] for line in lines if line.startswith(CRED_PREFIX)]
+    prefix, none_prefix = CRED_PREFIXES[channel]
+    found = [line[len(prefix):] for line in lines if line.startswith(prefix)]
     if len(found) != 1:
-        none = [line for line in lines if line.startswith("HIVRA_EMAIL_CRED_NONE ")]
+        none = [line for line in lines if line.startswith(none_prefix)]
         reason = none[0].split(" ", 1)[1].strip() if len(none) == 1 else "no_answer"
         return None, reason if re.match(r"^[a-z_]{1,40}$", reason) else "no_answer"
     try:
@@ -1004,6 +1787,13 @@ def arm_request_from_guest(lines, vmid, arm_id, fingerprint):
     values = doc.get("values") if isinstance(doc, dict) else None
     if not isinstance(values, dict) or doc.get("fp") != fingerprint:
         return None, "credential_changed"
+    if channel == "discord":
+        request = discord_arm_request(values, vmid, arm_id)
+        try:
+            parse_arm(request)
+        except BadRequest:
+            return None, "bad_settings"
+        return request, None
     get = lambda key: values.get(key) if isinstance(values.get(key), str) else None
     address = (get("EMAIL_ADDRESS") or "").strip()
     port_text = (get("EMAIL_IMAP_PORT") or "993").strip()
@@ -1033,15 +1823,16 @@ def arm_from_guest_main(argv, cfg=None):
     def emit(answer):
         sys.stdout.write(ARM_PREFIX + json.dumps(answer, separators=(",", ":"), sort_keys=True) + "\n")
 
-    vmid = parse_vmid(argv[0]) if len(argv) == 3 else None
-    if vmid is None or not ARM_ID_RE.match(argv[1]) or not FP_RE.match(argv[2]):
+    vmid = parse_vmid(argv[0]) if len(argv) in (3, 4) else None
+    channel = argv[3] if len(argv) == 4 else "email"
+    if vmid is None or not ARM_ID_RE.match(argv[1]) or not FP_RE.match(argv[2]) or channel not in CRED_PREFIXES:
         emit({"ok": False, "error": "bad_arguments"})
         return 2
     raw = sys.stdin.buffer.read(CTL_MAX_LINE + 1)
     if len(raw) > CTL_MAX_LINE:
         emit({"ok": False, "error": "bad_answer"})
         return 1
-    request, reason = arm_request_from_guest(raw.decode("utf-8", "replace").splitlines(), vmid, argv[1], argv[2])
+    request, reason = arm_request_from_guest(raw.decode("utf-8", "replace").splitlines(), vmid, argv[1], argv[2], channel)
     raw = None
     if request is None:
         emit({"ok": False, "vmid": vmid, "error": reason})
@@ -1051,7 +1842,7 @@ def arm_from_guest_main(argv, cfg=None):
     if answer is None:
         emit({"ok": False, "vmid": vmid, "error": "doorbell_unreachable"})
         return 2
-    keep = ("ok", "vmid", "arm_id", "uidvalidity", "uidnext", "idle", "error")
+    keep = ("ok", "vmid", "arm_id", "uidvalidity", "uidnext", "idle", "channel", "login_remaining", "error")
     emit({key: answer.get(key) for key in keep if key in answer})
     return 0 if answer.get("ok") else 1
 
@@ -1065,7 +1856,7 @@ def main(argv):
         return ctl_main()
     if mode == "arm-from-guest":
         return arm_from_guest_main(argv[1:])
-    sys.stderr.write("usage: hivra-wake-doorbell.py serve | ctl < request.json | arm-from-guest <vmid> <arm_id> <fp>\n")
+    sys.stderr.write("usage: hivra-wake-doorbell.py serve | ctl < request.json | arm-from-guest <vmid> <arm_id> <fp> [email|discord]\n")
     return 2
 
 
