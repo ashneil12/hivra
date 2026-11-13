@@ -456,7 +456,7 @@ const recipes = Object.freeze({
     workerSize: 45216,
   }),
   "2026.11.13.4": Object.freeze({
-    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake proxy client wakes. The worker only advances its release labels.
+    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake proxy client wakes and ships the host wake doorbell as inert host files. The worker only advances its release labels.
     workerSha256: "b16aec8710cb07252e0e20919a3c71273664f7f983acb9d1bf7921ce3829d66f",
     workerSize: 45216,
   }),

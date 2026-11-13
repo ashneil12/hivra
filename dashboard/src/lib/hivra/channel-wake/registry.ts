@@ -3,8 +3,8 @@
 //
 // Telegram is the first entry. Its server side is the telegram-wake module,
 // unchanged, and its host check is the same expression the Telegram-only gate
-// has always used. Every other channel is a generic spec: Matrix today, email
-// and Discord later. A generic spec only acts when the channel wake switches
+// has always used. Every other channel is a generic spec: Matrix and email
+// today, Discord later. A generic spec only acts when the channel wake switches
 // are on and the owner opted in; a Telegram-only sleep never reads this list,
 // so its scripts are unchanged.
 //
@@ -70,8 +70,36 @@ export const MATRIX_CHANNEL_SPEC: ChannelWakeSpec = {
         && JSON::PP::is_bool($f->{passwordLogin}) && !$f->{passwordLogin}`,
 };
 
+/**
+ * Email, through the host wake doorbell (WP11): before the stop, the arm host
+ * script reads the mail settings inside the computer and hands them to the
+ * doorbell on the host, which records the INBOX baseline and watches it
+ * read-only while the agent sleeps. A message from a sender Hermes would
+ * answer asks Hivra for the wake. Hermes catches up by itself (it searches
+ * UNSEEN on every poll). Covered only while the probe sees the same address,
+ * password and IMAP host as at opt-in, and an IMAP host at all. The doorbell
+ * switch (HIVRA_WAKE_DOORBELLS) is checked by the adapter.
+ */
+export const EMAIL_CHANNEL_SPEC: ChannelWakeSpec = {
+  channel: "email",
+  probeTag: "hermes:email",
+  detector: "host-doorbell",
+  catchUp: "native",
+  needsServerDisarm: false,
+  socketBased: false,
+  credKeys: ["EMAIL_ADDRESS", "EMAIL_PASSWORD", "EMAIL_IMAP_HOST"],
+  coverageBlockers(input: ChannelCoverageInput): string[] {
+    const reasons = standardChannelBlockers(EMAIL_CHANNEL_SPEC, input);
+    const facts = input.probe?.channelFacts?.email;
+    if (!facts) reasons.push("no_email_facts");
+    else if (!facts.imapHost) reasons.push("no_imap_host");
+    return reasons;
+  },
+  hostFactsPerl: `defined($f) && defined($f->{imapHost}) && !ref($f->{imapHost}) && $f->{imapHost} ne ""`,
+};
+
 /** The channels with a generic adapter; order is the gate's order. */
-export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [MATRIX_CHANNEL_SPEC];
+export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [MATRIX_CHANNEL_SPEC, EMAIL_CHANNEL_SPEC];
 
 /** Every probe tag a wake can ever cover. Both gates refuse anything else. */
 export function coverableProbeTags(specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS): string[] {

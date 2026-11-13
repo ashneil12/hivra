@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 76219,
-      "sha256": "b0b011a512db4c80b48cca6ddd5bf88069115f9306dbfdaa0ef95228d31100b2"
+      "bytes": 77198,
+      "sha256": "5e562e3df9d6a15f111a4b15ff5ebacc2954e56ef1e8853caa83b28679d8faa0"
     },
     {
       "path": "README.md",
-      "bytes": 45963,
-      "sha256": "a919a6d72584185d98e25dcb875fef390f60112b5d7ab5992642e1d1278d6a41"
+      "bytes": 46526,
+      "sha256": "2eb07a39a98bbf3ac3d48fd19098bae7e0a7e5c058a8c2568fc930b842e387de"
     },
     {
       "path": "VERSION",
@@ -279,8 +279,8 @@
     },
     {
       "path": "hivra-wake-proxy.py",
-      "bytes": 90346,
-      "sha256": "fa9b7c6c4f79f7566b714d796483c2151477cfb5b111f38169a76cf93fd760eb"
+      "bytes": 91148,
+      "sha256": "ec64a0243b5547258e485987fd54756483a44101b44453abc59e4b7954ca5dda"
     },
     {
       "path": "hivra-wake-proxy.service",
@@ -301,6 +301,16 @@
       "path": "hivra-ingress.tmpfiles.conf",
       "bytes": 676,
       "sha256": "c75705ea4efaee11bb3315bbbd0f39e08f32bfadfe5fc51dcd4a2224c7bde4c2"
+    },
+    {
+      "path": "hivra-wake-doorbell.py",
+      "bytes": 43689,
+      "sha256": "dc664f6a837f6117f446c751445b475877fe7d755ecd05f993051faa99aca3de"
+    },
+    {
+      "path": "hivra-wake-doorbell.service",
+      "bytes": 1597,
+      "sha256": "3f8c630685ed299791270ceadcf1d10e67081d8aa751df3ffb1c5efdc517a129"
     },
     {
       "path": "local-browser-keeper.py",

@@ -1,5 +1,6 @@
 -- Admit the reviewed 2026.11.13.4 provider bundle (the host wake proxy learns client wakes: bearer and
--- bootstrap proofs, browser redirects, server-disarm naps; no guest asset changes) without
+-- bootstrap proofs, browser redirects, server-disarm naps; the bundle also ships the host wake doorbell
+-- as two inert host files; no guest asset changes) without
 -- invalidating existing computers. The TypeScript identities and manifest ship with the release; this keeps SQL admission and the identity gates in
 -- step. The bundle digest is the manifest digest recorded in provider-desktop-worker.ts and
 -- provider-native-worker.ts.
@@ -16,10 +17,10 @@ begin
      '''2026.11.13.3'',''2026.11.13.4'''),
     ('public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)',
      '(p_identity->''bundle''->>''bundleSha256''=''f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.3'')',
-     '(p_identity->''bundle''->>''bundleSha256''=''f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.3'') or (p_identity->''bundle''->>''bundleSha256''=''99c3dc6ad3546e85ef23aa8d0eb060f1351a104bfca94451c4b6e52693d22f40'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.4'')'),
+     '(p_identity->''bundle''->>''bundleSha256''=''f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.3'') or (p_identity->''bundle''->>''bundleSha256''=''b5266ae6dc98bef2f4134be25ac540703d3a8e641e8129ddd02caaaa747e3716'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.4'')'),
     ('public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)',
      '(p_identity->''bundle''->>''bundleSha256''=''f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.3'')',
-     '(p_identity->''bundle''->>''bundleSha256''=''f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.3'') or (p_identity->''bundle''->>''bundleSha256''=''99c3dc6ad3546e85ef23aa8d0eb060f1351a104bfca94451c4b6e52693d22f40'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.4'')')
+     '(p_identity->''bundle''->>''bundleSha256''=''f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.3'') or (p_identity->''bundle''->>''bundleSha256''=''b5266ae6dc98bef2f4134be25ac540703d3a8e641e8129ddd02caaaa747e3716'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.13.4'')')
   ) as patches(signature, anchor, addition)
   loop
     definition := pg_get_functiondef(signature::regprocedure);

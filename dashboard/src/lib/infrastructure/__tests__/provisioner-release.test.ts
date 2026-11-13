@@ -48,6 +48,7 @@ import {
   supportsModelSettingsProvisionerVersion,
   providerProvisionerSupportsCatalogRuntime,
   provisionerSupportsHostCredential,
+  provisionerSupportsWakeDoorbell,
   provisionerSupportsWakeProxy,
 } from "../portable-provisioner-contract";
 
@@ -757,21 +758,41 @@ it("lets the host wake proxy call Hivra in 2026.11.13.3, keeping 2026.11.13.2 ad
   }
 });
 
-it("teaches the host wake proxy client wakes in 2026.11.13.4, keeping 2026.11.13.3 admitted and every guest asset unchanged", () => {
+it("teaches the host wake proxy client wakes and ships the host wake doorbell in 2026.11.13.4 as two new host files, keeping 2026.11.13.3 admitted and every guest asset unchanged", () => {
   expect(release.version).toBe("2026.11.13.4");
-  expect(release.files.map(file => file.path)).toEqual(hostCredentialRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== hostCredentialRelease.files.find(entry => entry.path === file.path)!.sha256)
-    .map(file => file.path).sort();
-  // Only the wake proxy, the documents, the version and the provider worker's release labels move.
+  const doorbellFiles = ["hivra-wake-doorbell.py", "hivra-wake-doorbell.service"];
+  const previous = hostCredentialRelease.files.map(file => file.path);
+  expect(release.files.map(file => file.path).filter(file => !previous.includes(file))).toEqual(doorbellFiles);
+  expect(previous.filter(file => !release.files.some(entry => entry.path === file))).toEqual([]);
+  const changed = release.files.filter(file => previous.includes(file.path)
+    && file.sha256 !== hostCredentialRelease.files.find(entry => entry.path === file.path)!.sha256).map(file => file.path).sort();
+  // The wake proxy learns client wakes and the doorbell's role; the documents, the version and the worker's labels move.
   expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "hivra-wake-proxy.py"]);
   const proxy = readFileSync("provisioner/hivra-wake-proxy.py", "utf8");
   expect(proxy).toContain('CLIENT_WAKE_DEFAULT = "ticket"');
   expect(proxy).not.toContain("\u0000");
   // The helper's unit is unchanged: the level lives in the state directory it may already write.
   expect(readFileSync("provisioner/hivra-wake-helper.service", "utf8")).toContain("-/run/hivra-ingress-state");
+  // Its tests never ship.
+  expect(release.files.map(file => file.path)).not.toContain("test_hivra_wake_doorbell.py");
+  const doorbell = readFileSync("provisioner/hivra-wake-doorbell.py", "utf8");
+  const unit = readFileSync("provisioner/hivra-wake-doorbell.service", "utf8");
+  expect(doorbell).not.toContain("\u0000");
+  // Its own unprivileged user, no capabilities; it reaches the helper only through the wake proxy's group.
+  expect(unit).toContain("User=hivra-doorbell\n");
+  expect(unit).toContain("SupplementaryGroups=hivra-ingress\n");
+  expect(unit).toContain("CapabilityBoundingSet=\nAmbientCapabilities=\nNoNewPrivileges=yes\n");
+  // Read-only IMAP: the command allowlist has nothing that changes a mailbox.
+  const allowed = /ALLOWED_COMMANDS = frozenset\(\(([^)]*)\)\)/.exec(doorbell)?.[1] ?? "";
+  for (const verb of ["SELECT", "STORE", "EXPUNGE", "COPY", "MOVE", "APPEND", "DELETE", "CLOSE"]) expect(allowed).not.toContain(`"${verb}"`);
+  expect(allowed).toContain('"EXAMINE"');
+  // The helper lets the doorbell's user ask for a wake and read health, nothing more.
+  expect(proxy).toContain('DOORBELL_COMMANDS = frozenset(("health", "request"))');
+  expect(provisionerSupportsWakeDoorbell("2026.11.13.4")).toBe(true);
+  expect(provisionerSupportsWakeDoorbell("2026.11.13.3")).toBe(false);
   for (const version of ["2026.11.13.3", "2026.11.13.4"]) {
-    expect(provisionerSupportsWakeProxy(version)).toBe(true);
     expect(provisionerSupportsHostCredential(version)).toBe(true);
+    expect(provisionerSupportsWakeProxy(version)).toBe(true);
     expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
     expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
     expect(provisionerSupportsActivityTelemetry(version)).toBe(true);

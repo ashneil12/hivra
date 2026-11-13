@@ -371,6 +371,17 @@ export function provisionerSupportsHostCredential(version: unknown): boolean {
   return (PORTABLE_HIVRA_HOST_CREDENTIAL_VERSIONS as readonly unknown[]).includes(version);
 }
 
+/** Releases whose bundle carries the host wake doorbell (hivra-wake-doorbell.py
+ * and its unit) and whose wake helper lets it ask for a wake. Shipping them
+ * changes nothing on a host: only the separate, flag-gated doorbell install
+ * step (HIVRA_WAKE_DOORBELLS) copies them into place. */
+export const PORTABLE_HIVRA_WAKE_DOORBELL_VERSIONS = [
+  PORTABLE_HIVRA_PROVISIONER_VERSION,
+] as const;
+export function provisionerSupportsWakeDoorbell(version: unknown): boolean {
+  return (PORTABLE_HIVRA_WAKE_DOORBELL_VERSIONS as readonly unknown[]).includes(version);
+}
+
 /** The cloudflared release the wake-proxy install step puts on a host as
  * /usr/local/bin/hivra-cloudflared (the per-computer host connector). Same
  * version the guests run. The digest is the one cloudflare publishes in the
@@ -583,6 +594,8 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "hivra-wake-helper.service",
   "hivra-cf-template.service",
   "hivra-ingress.tmpfiles.conf",
+  "hivra-wake-doorbell.py",
+  "hivra-wake-doorbell.service",
   "local-browser-keeper.py",
   "prepare-proxmox-host.sh",
   "provision-claude-code-box.sh",

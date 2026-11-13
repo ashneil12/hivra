@@ -10,10 +10,12 @@ import { channelWakeHostAllowed, resolveChannelWakeConfig, type ChannelWakeChann
 import { readChannelWakeRows, updateChannelWakeRow, type ChannelWakeRow } from "./store";
 import { runMatrixPusherProgram } from "./adapters/matrix-pusher";
 import { matrixPushkey, matrixPushUrl, type MatrixPusherRequest, type MatrixPusherResult } from "./adapters/matrix-pusher-program";
+import { readEmailOptIn, type EmailOptInRead } from "./adapters/email-imap";
+import { wakeDoorbellEnabled } from "./doorbell-scripts";
 
 /**
  * The owner's "Wake on <channel> messages" switch for one agent, for the
- * generic channels. Only Matrix has one today.
+ * generic channels: Matrix and email.
  *
  * Matrix: turning it on runs a program in the agent's own computer, while it
  * is awake, that adds Hivra's pusher on the agent's homeserver with the
@@ -24,6 +26,12 @@ import { matrixPushkey, matrixPushUrl, type MatrixPusherRequest, type MatrixPush
  * pusher if the computer is awake. A pusher left behind is removed by its
  * homeserver on its next push, which the route answers with "rejected".
  *
+ * Email: turning it on runs the idle probe in the awake computer, asking only
+ * for email's credential fingerprint and IMAP host name; the row keeps those.
+ * Nothing is set up anywhere until a sleep arms the host doorbell. Turning it
+ * off forgets the opt-in; an arm left on the doorbell comes down with the wake
+ * the caller starts. Email also needs HIVRA_WAKE_DOORBELLS to list email.
+ *
  * Dark unless HIVRA_CHANNEL_WAKE, HIVRA_CHANNEL_WAKE_SECRET,
  * HIVRA_CHANNEL_WAKE_CHANNELS (naming the channel) and
  * HIVRA_CHANNEL_WAKE_BASE_URL are configured.
@@ -33,7 +41,7 @@ const LOG_SOURCE = "channel-wake-owner";
 const TABLE = "hivra_agent_channel_wake";
 
 /** Channels with an owner switch. */
-export const OWNER_SWITCH_CHANNELS: readonly ChannelWakeChannel[] = ["matrix"];
+export const OWNER_SWITCH_CHANNELS: readonly ChannelWakeChannel[] = ["matrix", "email"];
 /** Agent kinds that can have one. */
 const COVERED_KINDS: readonly string[] = ["hermes"];
 
@@ -55,6 +63,7 @@ type Env = Record<string, string | undefined>;
 export interface ChannelOwnerDeps {
   env?: Env;
   runPusher?: (target: { vmid: number; bindingTag: string | null; env: unknown }, request: MatrixPusherRequest) => Promise<MatrixPusherResult>;
+  readEmail?: (target: { vmid: number; bindingTag: string | null; env: unknown }) => Promise<EmailOptInRead>;
   newArmId?: () => string;
   now?: () => number;
 }
@@ -69,6 +78,7 @@ function switchConfig(channel: ChannelWakeChannel, env: Env) {
   if (!config || !config.channels.has(channel) || !isOwnerSwitchChannel(channel)) return null;
   const pushUrl = channel === "matrix" ? matrixPushUrl(config.baseUrl) : null;
   if (channel === "matrix" && !pushUrl) return null;
+  if (channel === "email" && !wakeDoorbellEnabled("email", env)) return null;
   return { config, pushUrl };
 }
 
@@ -111,6 +121,13 @@ const MATRIX_MESSAGES: Record<string, string> = {
   token_rejected: "Your Matrix homeserver did not accept your agent's access token. Connect Matrix again.",
   homeserver_unreachable: "Your agent could not reach its Matrix homeserver. Try again in a moment.",
   homeserver_error: "Your Matrix homeserver refused the request. Try again in a moment.",
+  asleep: "Your agent needs to be awake to turn this on. Open it and try again.",
+  guest_busy: "Your agent is busy. Try again in a moment.",
+};
+
+const EMAIL_MESSAGES: Record<string, string> = {
+  no_email: "Your agent has no email account set up yet. Connect email first.",
+  no_imap_host: "Your agent's email has no IMAP server set. Connect email again.",
   asleep: "Your agent needs to be awake to turn this on. Open it and try again.",
   guest_busy: "Your agent is busy. Try again in a moment.",
 };
@@ -172,6 +189,20 @@ export async function enableChannelWake(agent: AgentRow, channel: ChannelWakeCha
   const target = await targetOf(agent);
   if (!target) return refuse(409, "not_awake", "Your agent needs to be awake to turn this on. Open it and try again.");
 
+  if (channel === "email") {
+    const read = await (deps.readEmail ?? readEmailOptIn)(target);
+    if (!read.ok) {
+      return refuse(409, read.reason.slice(0, 40), EMAIL_MESSAGES[read.reason] ?? "Could not read your agent's email settings. Try again in a moment.");
+    }
+    // The arm id is set by each sleep's doorbell arm; the opt-in keeps the fingerprint and the host name only.
+    const saved = await saveOptIn({
+      agent_id: agentId, channel, cred_fp: read.fp, arm_id: null,
+      arm_data: { imapHost: read.imapHost, optedInAt: new Date(now()).toISOString() },
+    }, new Date(now()).toISOString());
+    if (!saved) return refuse(503, "not_saved", "Could not save this setting.");
+    return { ok: true, view: viewOf(channel, true, { enabled: true }), wake: false };
+  }
+
   const armId = (deps.newArmId ?? randomUUID)();
   const runPusher = deps.runPusher ?? runMatrixPusherProgram;
   const result = await runPusher(target, {
@@ -225,7 +256,8 @@ export async function disableChannelWake(agent: AgentRow, channel: ChannelWakeCh
   if (!off) return refuse(409, "changed", "This setting just changed. Try again.");
 
   const awake = agent.status === "running" && isAgentAwake(agent);
-  if (awake) {
+  // Email set nothing up at opt-in; a doorbell arm comes down with the wake the caller starts.
+  if (awake && channel === "matrix") {
     const target = await targetOf(agent);
     const removed = target ? await (deps.runPusher ?? runMatrixPusherProgram)(target, { op: "remove" }) : { ok: false as const, reason: "no_target" };
     if (!removed.ok) {

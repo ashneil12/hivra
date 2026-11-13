@@ -70,10 +70,10 @@ describe("only Telegram on: byte-identical scripts", () => {
     expect(idleProbeProgramFor({ telegram: true })).toBe(IDLE_PROBE_TELEGRAM_PROGRAM);
   });
 
-  it("keeps Telegram's own allowlist to Telegram; the general one adds Matrix", () => {
+  it("keeps Telegram's own allowlist to Telegram; the general one adds Matrix and email", () => {
     // The Telegram-only gate (probeCheckPerl(true)) never reads the general registry.
     expect(TELEGRAM_WAKE_COVERABLE_CHANNELS).toEqual(["hermes:telegram"]);
-    expect(CHANNEL_WAKE_COVERABLE).toEqual(["hermes:telegram", "hermes:matrix"]);
+    expect(CHANNEL_WAKE_COVERABLE).toEqual(["hermes:telegram", "hermes:matrix", "hermes:email"]);
     expect(probeCheckPerl(true)).toContain(`my %allowed = map { $_ => 1 } ("hermes:telegram");`);
     // The general gate's Telegram check is the legacy one, word for word.
     expect(probeCheckPerl(true)).toContain(TELEGRAM_HOST_CHECK_PERL);
@@ -93,7 +93,7 @@ describe("registry", () => {
     expect(coverableProbeTags(SPECS)).toEqual(["hermes:telegram", "hermes:email"]);
     expect(channelGatePerl(SPECS)).toContain(`my %allowed = map { $_ => 1 } ("hermes:telegram", "hermes:email");`);
     expect(allowedCoveredChannels(["hermes:email", "hermes:discord", "hermes:email"], SPECS)).toEqual(["hermes:email"]);
-    expect(allowedCoveredChannels(["hermes:email"])).toEqual([]);
+    expect(allowedCoveredChannels(["hermes:discord"])).toEqual([]);
   });
 
   it("refuses bad specs and bad fingerprints", () => {
@@ -144,7 +144,8 @@ describe("the probe answer", () => {
 
   it("server verdict: covered only through the spec list", () => {
     const opts = { manual: false, nowMs: Date.parse(base.now), idleWindowS: 60, horizonS: 60, cores: 2 };
-    expect(idleVerdict(base, { ...opts, coveredChannels: ["hermes:email"] }).reasons).toEqual(["live_channels"]);
+    // Discord has no spec in the registry yet, so naming it covers nothing.
+    expect(idleVerdict({ ...base, liveChannels: ["hermes:discord"] }, { ...opts, coveredChannels: ["hermes:discord"] }).reasons).toEqual(["live_channels"]);
     expect(idleVerdict(base, { ...opts, coveredChannels: ["hermes:email"], channelSpecs: SPECS }).idle).toBe(true);
     // A union: one uncovered live channel still blocks.
     expect(idleVerdict({ ...base, liveChannels: ["hermes:email", "hermes:discord"] },

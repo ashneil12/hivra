@@ -576,6 +576,12 @@ update them yet.
   Cookies and webhook signature headers never wake and never refresh the idle signal. Browsers
   asking for a napped computer go to the route's `wake_url`. A nap marked `server-disarm`
   (Telegram armed) sends client wakes to Hivra's `wake-request` instead.
+- **Host wake doorbell (shipped, dark).** From `2026.11.13.4`, the bundle carries
+  `hivra-wake-doorbell.py` and its unit. The doorbell install step (HIVRA_WAKE_DOORBELLS lists a
+  channel) installs it as user `hivra-doorbell` next to a running wake proxy. For email, the arm
+  host script hands the computer's own IMAP settings to it over its root-only socket before the
+  stop; it watches INBOX read-only and rings the wake proxy's helper (`request`, as "doorbell") for
+  mail from a sender Hermes would answer. A restart rings for every computer it had armed.
 - **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
   (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
   the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks

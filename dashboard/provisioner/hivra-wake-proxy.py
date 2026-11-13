@@ -8,7 +8,9 @@ Python 3 standard library only. One file, three entry points:
            per-VM locks and QMP. Listens on a unix socket (ctl.sock) and
            answers one JSON line per connection. The peer is identified with
            SO_PEERCRED: root may send every command, the forwarder's user only
-           wake (with a ticket), status and health, anyone else is refused.
+           wake (with a ticket), status and health, the wake doorbell's user
+           (hivra-wake-doorbell.py) only request and health; anyone else is
+           refused.
   proxy    Runs as an unprivileged user (hivra-wake-proxy.service). Listens on
            127.0.0.1:8080 and [::1]:8080 for the host connector
            (hivra-cf@<vmid>), finds the computer from the Host header and
@@ -167,6 +169,8 @@ MAX_VMID = 999_999_999
 ROOT_COMMANDS = frozenset(("wake", "status", "drain", "undrain", "napped", "stats", "reload", "health", "request",
                            "authed", "client-wake"))
 FORWARDER_COMMANDS = frozenset(("wake", "status", "health", "request", "authed"))
+# The wake doorbell may only ask Hivra for a wake (always as "doorbell") and read health.
+DOORBELL_COMMANDS = frozenset(("health", "request"))
 FWD_COMMANDS = frozenset(("drain", "undrain", "napped", "stats", "reload", "health", "post"))
 HIVRA_PATHS = frozenset((WAKE_REPORT_PATH, WAKE_REQUEST_PATH))
 
@@ -189,6 +193,8 @@ class Config(object):
         self.forwarder_user = "hivra-ingress"
         self.root_uids = (0,)
         self.forwarder_uid = None
+        self.doorbell_user = "hivra-doorbell"
+        self.doorbell_uid = None
         self.allow_loopback_guests = False
         self.fixup = True
         self.head_timeout = HEAD_TIMEOUT
@@ -231,6 +237,14 @@ class Config(object):
             return self.forwarder_uid
         try:
             return pwd.getpwnam(self.forwarder_user).pw_uid
+        except KeyError:
+            return None
+
+    def resolved_doorbell_uid(self):
+        if self.doorbell_uid is not None:
+            return self.doorbell_uid
+        try:
+            return pwd.getpwnam(self.doorbell_user).pw_uid
         except KeyError:
             return None
 
@@ -1021,6 +1035,9 @@ class Helper(object):
         forwarder = self.cfg.resolved_forwarder_uid()
         if forwarder is not None and uid == forwarder:
             return "forwarder"
+        doorbell = self.cfg.resolved_doorbell_uid()
+        if doorbell is not None and uid == doorbell:
+            return "doorbell"
         return None
 
     async def start(self):
@@ -1073,7 +1090,7 @@ class Helper(object):
 
     async def dispatch(self, role, request):
         command = request.get("cmd")
-        allowed = ROOT_COMMANDS if role == "root" else FORWARDER_COMMANDS
+        allowed = ROOT_COMMANDS if role == "root" else DOORBELL_COMMANDS if role == "doorbell" else FORWARDER_COMMANDS
         if command not in allowed:
             return {"ok": False, "error": "forbidden" if command in ROOT_COMMANDS else "unknown_command"}
         try:
@@ -1263,6 +1280,8 @@ class Helper(object):
             if vmid not in self.routes:
                 return {"ok": False, "vmid": vmid, "error": "unknown_vmid"}
             reason = "client"
+        elif role == "doorbell":
+            reason = "doorbell"
         elif not (isinstance(reason, str) and reason in REQUEST_REASONS):
             reason = "ctl"
         return await self.request_wake(vmid, reason)

@@ -550,6 +550,17 @@ export function buildIdleProbeHostScript(
  * Refusals print one HIVRA_IDLE_REFUSED line.
  */
 function buildGuestReadHostScript(target: { vmid: number; bindingTag: string | null }, program: string): string {
+  return `${guestReadHead(target)}run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} || refuse guest_unreachable
+`;
+}
+
+/**
+ * Everything a guest read does before it runs its program: the binding check,
+ * the plain-running check, the vmid-bound exec helpers and the guest agent
+ * lock (fd 7). Shared by the reads that print their answer and the credential
+ * handoff that never does.
+ */
+function guestReadHead(target: { vmid: number; bindingTag: string | null }): string {
   const tag = assertTarget(target.vmid, target.bindingTag);
   return `set -euo pipefail
 VMID=${target.vmid}
@@ -578,7 +589,6 @@ install -d -m 0755 /run/lock
 # Taken only now, so a refusal never waits on it. No other script reads this computer's guest agent meanwhile.
 exec 7>/run/lock/hivra-qga-${target.vmid}.lock
 flock -x -w ${QGA_LOCK_WAIT_SECONDS} 7 || refuse guest_busy
-run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} || refuse guest_unreachable
 `;
 }
 
@@ -637,6 +647,85 @@ export function parseTelegramTokenRead(stdout: string): TelegramTokenRead {
   }
   const refused = parseIdleProbeRefusal(stdout);
   return { ok: false, reason: refused ?? "no_answer" };
+}
+
+// ---------------------------------------------------------------------------
+// Channel credential read and handoff (host doorbells)
+// ---------------------------------------------------------------------------
+
+const CRED_ENV_KEY = /^[A-Z][A-Z0-9_]{1,63}$/;
+const CRED_PREFIX = /^HIVRA_[A-Z_]{1,40} $/;
+
+export interface ChannelCredReadSpec {
+  /** The keys whose values make the credential fingerprint, in the probe's order (the spec's credKeys). */
+  fpKeys: readonly string[];
+  /** Every ~/.hermes/.env key the host side needs; a missing one is left out. */
+  keys: readonly string[];
+  /** The answer line's prefix, e.g. "HIVRA_EMAIL_CRED ". */
+  prefix: string;
+  /** The refusal line's prefix, e.g. "HIVRA_EMAIL_CRED_NONE ". */
+  nonePrefix: string;
+}
+
+/**
+ * A guest program that reads a channel's settings from ~/.hermes/.env, with
+ * the parser the idle probe fingerprints, and prints one line:
+ * prefix + {"fp": <the probe's fingerprint of fpKeys>, "values": {key: value}}.
+ * Without every fpKey it prints the refusal line instead. Its output is a
+ * credential: a host script must hand it to a host service and never print
+ * it (buildGuestCredHandoffHostScript).
+ */
+export function buildChannelCredReadProgram(spec: ChannelCredReadSpec): string {
+  const keys = [...spec.keys];
+  if (spec.fpKeys.length === 0 || ![...spec.fpKeys, ...keys].every((key) => CRED_ENV_KEY.test(key))
+    || !spec.fpKeys.every((key) => keys.includes(key))) {
+    throw new Error("Invalid channel credential read.");
+  }
+  if (!CRED_PREFIX.test(spec.prefix) || !CRED_PREFIX.test(spec.nonePrefix) || spec.prefix === spec.nonePrefix) {
+    throw new Error("Invalid channel credential read.");
+  }
+  return String.raw`import hashlib, json, os, re, sys
+# hivra-channel-cred-read v1. Runs as root via the guest agent. Prints one line for the host, which never shows it.
+${TELEGRAM_ENV_VALUE_PY}
+def none(why):
+    sys.stdout.write("${spec.nonePrefix}" + why + "\n")
+    sys.exit(0)
+try:
+    fd = os.open("/home/bux/.hermes/.env", os.O_RDONLY | os.O_NOFOLLOW)
+    try: text = os.read(fd, 65536).decode("utf-8", "replace")
+    finally: os.close(fd)
+except OSError:
+    none("no_env")
+fp_vals = [env_value(text, k) or "" for k in ${JSON.stringify(spec.fpKeys)}]
+if not all(fp_vals): none("missing")
+fp = hashlib.sha256("\n".join(fp_vals).encode("utf-8")).hexdigest()[:16]
+values = {}
+for k in ${JSON.stringify(keys)}:
+    v = env_value(text, k)
+    if v: values[k] = v
+sys.stdout.write("${spec.prefix}" + json.dumps({"fp": fp, "values": values}, separators=(",", ":")) + "\n")
+`;
+}
+
+/**
+ * Runs a credential read program in the exact, plainly running VM (the same
+ * checks and lock as every guest read) and pipes its answer straight into
+ * `handoff`, a host command that reads it on stdin. The answer is held in a
+ * shell variable only, never printed, written to a file or put in argv; the
+ * script prints only what the handoff prints. Refusals print one
+ * HIVRA_IDLE_REFUSED line, as the probe's do.
+ */
+export function buildGuestCredHandoffHostScript(
+  target: { vmid: number; bindingTag: string | null },
+  program: string,
+  handoff: { preflight: string; command: string },
+): string {
+  return `${guestReadHead(target)}${handoff.preflight}
+HIVRA_CRED_OUT="$(run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c ${shellQuote(program)} 2>/dev/null)" || refuse guest_unreachable
+exec 7>&-
+printf '%s\\n' "$HIVRA_CRED_OUT" | ${handoff.command} || true
+HIVRA_CRED_OUT=""
+`;
 }
 
 // ---------------------------------------------------------------------------

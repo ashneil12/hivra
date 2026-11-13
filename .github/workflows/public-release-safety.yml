@@ -75,6 +75,9 @@ jobs:
       - name: Guard the host wake proxy (fake QMP, fake guest, temporary routes)
         run: python3 -I -B dashboard/provisioner/test_hivra_wake_proxy.py
 
+      - name: Guard the host wake doorbell (fake IMAP server, fake wake helper)
+        run: python3 -I -B dashboard/provisioner/test_hivra_wake_doorbell.py
+
       - name: Preserve exact portable release bytes including bundled documentation
         run: node --test scripts/release/portable-bundle-immutability.test.mjs
 
