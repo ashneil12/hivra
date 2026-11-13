@@ -76,6 +76,10 @@ function receiptShell(kind: "sleep" | "wake"): string {
 # backwards under NTP. A reading that still goes backwards is reported as 0.
 now_ms() { local up; read -r up _ </proc/uptime || { echo 0; return; }; echo $(( 10#\${up/./} * 10 )); }
 since_ms() { local d=$(( $(now_ms) - $1 )); [ "$d" -ge 0 ] || d=0; echo "$d"; }
+# A hibernate that turned autostart off leaves this mark, so the wake turns it back on and nothing else.
+ONBOOT_MARK_DIR=/var/lib/hivra-sleep
+ONBOOT_MARK="$ONBOOT_MARK_DIR/onboot-$VMID"
+START_ERR="/run/lock/hivra-start-$VMID.err"
 T0="$(now_ms)"
 STEPS=""
 OK=false
@@ -112,7 +116,7 @@ on_exit() {
   if [ "\${ONBOOT_PENDING:-0}" = 1 ]; then
     observe >/dev/null 2>&1 || true
     case "$OBS" in
-      awake|napping) if [ "\${ONBOOT_WAS:-}" = 1 ]; then qm set "$VMID" --onboot 1 >/dev/null 2>&1 || true; fi ;;
+      awake|napping) if [ "\${ONBOOT_WAS:-}" = 1 ]; then qm set "$VMID" --onboot 1 >/dev/null 2>&1 && rm -f "$ONBOOT_MARK" || true; fi ;;
     esac
   fi
   if [ "$EMITTED" = 0 ]; then OK=false; emit; fi
@@ -609,8 +613,13 @@ pool_gate || finish false "$POOL_REASON" "$FROM"
 mark pool "$STEP"
 ONBOOT_WAS="$(printf '%s\\n' "$VM_CONFIG" | awk '$1=="onboot:" {print $2; exit}')"
 # A host that restarts must not resume a saved computer by itself, and the lock blocks this change afterwards.
-if ! qm set "$VMID" --onboot 0 >/dev/null; then finish false onboot_failed "$FROM"; fi
-ONBOOT_PENDING=1
+# Only an autostart that is on is turned off, and a mark on the host says so, so the wake gives back exactly that.
+if [ "$ONBOOT_WAS" = 1 ]; then
+  install -d -m 0700 "$ONBOOT_MARK_DIR" || finish false onboot_failed "$FROM"
+  : >"$ONBOOT_MARK" || finish false onboot_failed "$FROM"
+  if ! qm set "$VMID" --onboot 0 >/dev/null; then rm -f "$ONBOOT_MARK"; finish false onboot_failed "$FROM"; fi
+  ONBOOT_PENDING=1
+fi
 STEP="$(now_ms)"
 RC=0
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
@@ -624,7 +633,7 @@ if [ "$OBS" = hibernated ] && [ "$HAS_VMSTATE" = 1 ]; then
 fi
 # Not saved. A computer that is still up gets its autostart back.
 case "$OBS" in
-  awake|napping) if [ "$ONBOOT_WAS" = 1 ]; then qm set "$VMID" --onboot 1 >/dev/null 2>&1 || true; fi ;;
+  awake|napping) if [ "$ONBOOT_WAS" = 1 ]; then qm set "$VMID" --onboot 1 >/dev/null 2>&1 && rm -f "$ONBOOT_MARK" || true; fi ;;
 esac
 if [ "$RC" = 124 ] || [ "$RC" = 137 ]; then finish false hibernate_timeout "$OBS"; fi
 if [ "$RC" != 0 ]; then finish false hibernate_failed "$OBS"; fi
@@ -703,6 +712,48 @@ HOST_RESERVE_MB=${admission.hostReserveMb}
 ENFORCE_CEILINGS=${admission.enforceCeilings ? 1 : 0}
 CPU_DENSITY_MILLI=${admission.cpuDensityMilli}
 MEMORY_DENSITY_MILLI=${admission.memoryDensityMilli}
+# The admission helper reads every VM with qm config and qm status. The CLI costs
+# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
+# For the helper only, these two answer from the files the CLI itself reads, and
+# hand anything they cannot answer exactly back to the real CLI.
+PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
+QEMU_RUN_DIR=/var/run/qemu-server
+hivra_fast_qm() {
+  local f pid
+  if [ "$#" = 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+    case "$1" in
+      config)
+        f="$PVE_QEMU_CONF_DIR/$2.conf"
+        # Pending changes are applied in the CLI's answer, so a file with any goes to the CLI.
+        # Snapshot sections are not part of the current config.
+        if [ -r "$f" ] && ! grep -q '^\\[PENDING\\]' "$f"; then
+          awk '/^\\[/ {exit} /^#/ {next} NF {print}' "$f"
+          return 0
+        fi
+        ;;
+      status)
+        f="$QEMU_RUN_DIR/$2.pid"
+        if [ ! -e "$f" ]; then echo "status: stopped"; return 0; fi
+        pid="$(head -c 32 "$f" 2>/dev/null | tr -dc 0-9)"
+        if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
+          echo "status: running"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  command timeout -k 5 30 qm "$@" </dev/null
+}
+run_admission() {
+  (
+    qm() { hivra_fast_qm "$@"; }
+    export -f qm hivra_fast_qm
+    export PVE_QEMU_CONF_DIR QEMU_RUN_DIR
+    bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
+  )
+}
 # The same reading of the VM's own config as the start helper.
 capacity_inputs() {
   TARGET_FLOOR_MB="$(printf '%s\\n' "$CONFIG" | awk '$1=="balloon:" {print $2; exit}')"
@@ -751,14 +802,16 @@ case "$ST/$QMP/$LOCK" in
     read_state || finish false state_unreadable
     [ "$(tier_of)" = hibernated ] || finish false state_changed "$(tier_of)"
     ADMIT="$(now_ms)"
-    if ! bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \\
+    if ! run_admission "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \\
         "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0 </dev/null >&2; then
       finish false capacity hibernated
     fi
     mark admission "$ADMIT"
     # The VM process outlives this script, so it must not inherit the lock descriptors.
     START="$(now_ms)"
-    if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 7>&- 8>&- 9>&- >/dev/null </dev/null; then
+    # Nor its stderr: the start leaves processes behind that held it, and with it
+    # the SSH session, open for about 25 s after the computer was already up.
+    if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 7>&- 8>&- 9>&- >/dev/null 2>"$START_ERR" </dev/null; then
       observe
       finish false start_failed "$OBS"
     fi
@@ -773,7 +826,10 @@ case "$ST/$QMP/$LOCK" in
     [ "$OBS" = awake ] || finish false start_unconfirmed "$OBS"
     flock -u 8
     exec 8>&-
-    qm set "$VMID" --onboot 1 >/dev/null 2>&1 || true
+    # Autostart comes back only if the hibernate turned it off.
+    if [ -e "$ONBOOT_MARK" ]; then
+      qm set "$VMID" --onboot 1 >/dev/null 2>&1 && rm -f "$ONBOOT_MARK" || true
+    fi
     ;;
   running/running/none)
     WOKE_REASON=already

@@ -862,6 +862,8 @@ describe("time budget", () => {
     mockSleep.mockImplementation(() => new Promise(() => undefined));
     const stuck = run({ HIVRA_SLEEP_MODE: "canary" });
     await jest.advanceTimersByTimeAsync(286_000);
+    // The run's clock is fixed here, so the final wait for the cut-off hibernate runs its own full limit.
+    await jest.advanceTimersByTimeAsync(286_000);
     const cut = await stuck;
     expect(cut.timedOut).toBe(true);
     expect(cut.hibernate).toMatchObject({ attempted: 1, failed: 1 });
@@ -875,12 +877,40 @@ describe("time budget", () => {
     });
     mockSleep.mockImplementation(() => new Promise(() => undefined));
     const pending = run({ HIVRA_SLEEP_MODE: "canary" }, { budgetMs: 20_100 });
+    let settled = false;
+    void pending.then(() => { settled = true; });
     await jest.advanceTimersByTimeAsync(21_000);
+    // Past the budget the run starts nothing new, but it does not answer while the cut-off nap still runs:
+    // a function that has answered is frozen, and the nap would stall with it.
+    expect(settled).toBe(false);
+    expect(mockSleep).toHaveBeenCalledTimes(1);
+    // The run's clock is fixed here, so the final wait runs its full limit from when it starts.
+    await jest.advanceTimersByTimeAsync(290_000);
     const summary = await pending;
     expect(summary.timedOut).toBe(true);
     expect(summary.nap).toMatchObject({ attempted: 1, failed: 1 });
     // The second agent is left for the next run.
     expect(mockSleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a scheduled wake that outlives its step before answering", async () => {
+    jest.useFakeTimers();
+    setTables({
+      wakes: { data: [{ id: id(1), sleep_state: "hibernated", sleep_tier_changed_at: iso(30 * MIN), next_wake_at: iso(0) }] },
+    });
+    let finishWake: (v: unknown) => void = () => undefined;
+    mockEnsure.mockImplementation(async (_id: string, opts: { onBackground?: (work: Promise<unknown>) => void }) => {
+      opts.onBackground?.(new Promise((resolve) => { finishWake = resolve; }));
+      return { state: "waking" };
+    });
+    const pending = run({ HIVRA_SLEEP_MODE: "canary" });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await jest.advanceTimersByTimeAsync(120_000);
+    expect(settled).toBe(false);
+    finishWake({ state: "awake" });
+    const summary = await pending;
+    expect(summary.wakes).toMatchObject({ due: 1, waking: 1 });
   });
 });
 
