@@ -2,8 +2,6 @@
 // newcomer should read it. The index renders one section per topic, and each section has an anchor (#topic-<slug>) that
 // article pages link back to, so posts on one subject point at each other through a real hub.
 
-import { MANAGED_AGENTS_GUIDE_SLUG, isManagedAgentsGuideEnabled } from "./managed-agents-guide-flag";
-
 export type BlogTopic = {
   slug: string;
   title: string;
@@ -46,7 +44,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "claude-max-vs-pro-for-claude-code",
       "codex-pricing-by-chatgpt-plan",
       "cursor-cloud-agents",
-      ...(isManagedAgentsGuideEnabled() ? [MANAGED_AGENTS_GUIDE_SLUG] : []),
+      "run-managed-agents-on-your-own-computer",
       "ai-agent-api-cost-optimization",
       "byo-api-key-explained",
     ],

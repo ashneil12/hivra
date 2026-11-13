@@ -2,9 +2,8 @@ import { BlogArticle } from "../types";
 import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 
 // Written 2026-11-12, the day both vendors let managed agents run their tools on
-// machines the customer controls. Off by default behind
-// NEXT_PUBLIC_HIVRA_MANAGED_AGENTS_GUIDE (lib/blog/managed-agents-guide-flag.ts)
-// until someone has run both workers on a real Hivra computer.
+// machines the customer controls. Live since 2026-11-13 (Ash: leave it on); the
+// copy says plainly that neither worker has been run on a Hivra computer yet.
 //
 // Vendor facts read 12 November 2026 from the vendors' own pages:
 // - https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes
@@ -23,7 +22,7 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 //   --root-dir does not confine execute_bash, agent antigravity-preview-05-2026)
 //
 // Caveat, same rule as cursor-cloud-agents: do NOT claim either worker has been
-// tested on a Hivra computer until it has. The flag stays off until then.
+// tested on a Hivra computer until it has.
 
 const CLAUDE_SELF_HOSTED = "https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes";
 const CLAUDE_CHOOSING = "https://platform.claude.com/docs/en/managed-agents/choosing-an-environment";
