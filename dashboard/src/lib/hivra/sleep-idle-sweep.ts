@@ -17,6 +17,19 @@ import { telegramWakeCleanupEnabled } from "./telegram-wake/config";
 import { runTelegramWakeSweep, type TelegramSweepCounts } from "./telegram-wake/sweep";
 import { channelWakeCleanupEnabled } from "./channel-wake/config";
 import { runChannelWakeSweep, type ChannelSweepCounts } from "./channel-wake/sweep";
+import { disarmChannelsForWake, settleChannelsAfterWake } from "./channel-wake/lifecycle";
+import { logAgentSleepEvent, parseSleepGeneration, reconcileAgentSleepState } from "./agent-sleep-store";
+import { resolveSleepTarget } from "./agent-wake";
+import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { agentIngressStateFrom, hostIngressConfigured } from "./ingress/wake-client";
+import type { AgentIngressRow } from "./ingress/store";
+import type { IngressHostRow } from "./ingress/config";
+import {
+  buildIngressSweepHostScript,
+  parseIngressMarkers,
+  parseIngressStatsLine,
+  proxyWakeAfter,
+} from "./ingress/proxy-stats";
 
 // The host state script, its parser and the lease rules live in sleep-reconcile.ts; they
 // are re-exported here because this is where the sweep's callers and tests look for them.
@@ -121,9 +134,13 @@ const CHEAP_SKIPS = new Set([
 const cooldowns = new Map<string, number>();
 const leaseCooldowns = new Map<string, number>();
 const driftCooldowns = new Map<string, number>();
+/** A kill-switch wake is not started again for the same agent inside this (best effort, per server instance). */
+const INGRESS_KILL_WAKE_COOLDOWN_MS = 5 * 60_000;
+const ingressCooldowns = new Map<string, number>();
 /** Test support: forgets which agents were found busy. */
 export function resetSleepSweepCooldowns(): void {
   cooldowns.clear();
+  ingressCooldowns.clear();
   leaseCooldowns.clear();
   driftCooldowns.clear();
 }
@@ -159,6 +176,8 @@ export interface SleepIdleSweepSummary {
   telegram?: TelegramSweepCounts;
   /** Other channels' wake arms, and deferred channel wakes. Only when channel wake is configured. */
   channel?: ChannelSweepCounts;
+  /** Host ingress: agents woken by the kill switch, and proxy wakes caught up. Only when host ingress is configured. */
+  ingress?: IngressSweepCounts;
   timedOut: boolean;
   elapsedMs: number;
   errors: number;
@@ -506,6 +525,163 @@ async function runTelegramWakes(ctx: Context): Promise<void> {
       ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "telegram", waitMs: 120_000 }).catch(() => undefined));
     },
   });
+}
+
+// --- Step 2f: host ingress ----------------------------------------------------
+
+export interface IngressSweepCounts {
+  /** Host-served agents asleep while ingress may not act on them, woken. */
+  killSwitchWakes: number;
+  /** Hosts asked for their proxy's recent wakes, and napping records set awake from them. */
+  hostsRead: number;
+  reconciled: number;
+  errors: number;
+}
+
+const INGRESS_KILL_WAKES_PER_RUN = 10;
+const INGRESS_HOSTS_PER_RUN = 10;
+const INGRESS_STEP_BUDGET_MS = 10_000;
+const INGRESS_SCRIPT_TIMEOUT_MS = 20_000;
+
+/**
+ * Two jobs for agents whose public connector runs on the host:
+ *   - The kill switch: a host-served agent that is asleep while ingress may not
+ *     act on it (HIVRA_HOST_INGRESS or the host's ingress_mode off, or a row
+ *     that is not cut over) is woken, because nothing would wake it.
+ *   - Proxy wakes: a napping record whose proxy shows a wake after the nap was
+ *     recorded, and no marker left, is set awake with trigger ingress, one SSH
+ *     call per host. That beats the 15-minute drift check.
+ * Only ever moves agents toward awake.
+ */
+async function runHostIngress(ctx: Context): Promise<void> {
+  const counts: IngressSweepCounts = { killSwitchWakes: 0, hostsRead: 0, reconciled: 0, errors: 0 };
+  ctx.summary.ingress = counts;
+  const stepDeadline = Math.min(ctx.deadline, ctx.now() + INGRESS_STEP_BUDGET_MS);
+  const { data: ingressData, error: ingressError } = await ctx.db
+    .from("hivra_agent_ingress")
+    .select("agent_id, vmid, host_id, mode, phase, metrics_port, generation, last_error, lease_id, lease_expires_at, updated_at")
+    .neq("mode", "guest")
+    .limit(500);
+  if (ingressError) {
+    counts.errors += 1;
+    fail(ctx, "failed to load host ingress rows", ingressError, "sleep_sweep_ingress_query_failed");
+    return;
+  }
+  const ingressRows = (ingressData ?? []) as AgentIngressRow[];
+  if (ingressRows.length === 0) return;
+  const byAgent = new Map(ingressRows.map((row) => [String(row.agent_id), row]));
+  const { data: agentData, error: agentError } = await ctx.db
+    .from("hivra_agents")
+    .select("*")
+    .in("id", [...byAgent.keys()])
+    .eq("status", "running")
+    .eq("desired_state", "running")
+    .is("operation_id", null)
+    .in("sleep_state", ["napping", "hibernated", "wake_failed"]);
+  if (agentError) {
+    counts.errors += 1;
+    fail(ctx, "failed to load host ingress agents", agentError, "sleep_sweep_ingress_agents_failed");
+    return;
+  }
+  const agents = (agentData ?? []) as AgentRow[];
+  if (agents.length === 0) return;
+  const { data: hostData, error: hostError } = await ctx.db.from("proxmox_hosts").select("id, ingress_mode");
+  if (hostError) {
+    counts.errors += 1;
+    fail(ctx, "failed to load hosts for host ingress", hostError, "sleep_sweep_ingress_hosts_failed");
+    return;
+  }
+  const hosts = new Map(((hostData ?? []) as Array<IngressHostRow & { id: string }>).map((h) => [String(h.id), h]));
+
+  const killWakes: string[] = [];
+  const napping = new Map<string, AgentRow[]>();
+  for (const agent of agents) {
+    const id = String(agent.id);
+    const ingressRow = byAgent.get(id);
+    if (!ingressRow) continue;
+    const hostId = resolveHivraProxmoxHost(typeof agent.proxmox_host === "string" ? agent.proxmox_host : null);
+    const state = agentIngressStateFrom(ingressRow, hosts.get(hostId) ?? null, {
+      vmid: Number(agent.vmid),
+      hostId,
+      env: ctx.env,
+      nowMs: ctx.now(),
+    });
+    if (state.needsAwake) killWakes.push(id);
+    else if (state.acts && agent.sleep_state === "napping") {
+      const list = napping.get(hostId) ?? [];
+      list.push(agent);
+      napping.set(hostId, list);
+    }
+  }
+
+  const dueKillWakes = killWakes.filter((id) => (ingressCooldowns.get(id) ?? 0) <= ctx.now());
+  for (const id of dueKillWakes.slice(0, INGRESS_KILL_WAKES_PER_RUN)) {
+    ingressCooldowns.set(id, ctx.now() + INGRESS_KILL_WAKE_COOLDOWN_MS);
+    counts.killSwitchWakes += 1;
+    log.warn("a host-served agent was asleep while host ingress may not act on it; waking it", {
+      source: LOG_SOURCE,
+      failureType: "sleep_sweep_ingress_kill_switch_wake",
+      instanceId: id,
+    });
+    ctx.pending.push(ensureHivraAgentAwake(id, { trigger: "ingress", waitMs: 120_000 }).catch(() => undefined));
+  }
+
+  const hostEntries = [...napping.entries()].slice(0, INGRESS_HOSTS_PER_RUN);
+  await pool(hostEntries, 3, async ([, rows]) => {
+    if (stepDeadline - ctx.now() < 3_000) return;
+    try {
+      const done = await untilDeadline(ctx, reconcileProxyWakes(ctx, rows, counts), stepDeadline);
+      if (done.timedOut) counts.errors += 1;
+    } catch (error) {
+      counts.errors += 1;
+      fail(ctx, "host ingress proxy read failed", error, "sleep_sweep_ingress_host_failed");
+    }
+  });
+}
+
+/** One host: read the proxy's wakes and markers in one call, and set awake every napping record the proxy woke. */
+async function reconcileProxyWakes(ctx: Context, rows: AgentRow[], counts: IngressSweepCounts): Promise<void> {
+  const resolved = await resolveSleepTarget(rows[0], LOG_SOURCE);
+  if (!resolved.ok) return;
+  const vmids = rows.map((row) => Number(row.vmid)).filter((vmid) => Number.isSafeInteger(vmid) && vmid >= 100);
+  if (vmids.length === 0) return;
+  const run = await runProxmoxHostScript(buildIngressSweepHostScript(vmids), resolved.target.env, {
+    timeoutMs: INGRESS_SCRIPT_TIMEOUT_MS,
+  });
+  counts.hostsRead += 1;
+  const stats = parseIngressStatsLine(run?.stdout ?? "");
+  const markers = parseIngressMarkers(run?.stdout ?? "");
+  if (!stats) return;
+  for (const row of rows) {
+    const agentId = String(row.id);
+    const vmid = Number(row.vmid);
+    // Still marked: the proxy has not resumed it. No answer about the marker: leave it to the drift check.
+    if (markers.get(vmid) !== false) continue;
+    const napAt = Date.parse(String(row.sleep_tier_changed_at));
+    const wake = proxyWakeAfter(stats.vms.get(vmid), napAt);
+    if (!wake) continue;
+    const generation = parseSleepGeneration(row.sleep_generation);
+    if (generation === null) continue;
+    if (!(await reconcileAgentSleepState({ agentId, expectedGeneration: generation, to: "awake" }))) continue;
+    counts.reconciled += 1;
+    await logAgentSleepEvent({
+      agentId,
+      kind: "wake",
+      trigger: "ingress",
+      fromState: "napping",
+      toState: "awake",
+      generation: generation + 1,
+      reason: "proxy_wake",
+      detail: { proxy_from: wake.from, woke: wake.woke, proxy_ms: wake.ms, lag_ms: Math.max(0, ctx.now() - wake.atMs) },
+    });
+    // It runs again: take any channel wake arm down, as every other wake does.
+    try {
+      const disarms = await disarmChannelsForWake(agentId);
+      await settleChannelsAfterWake(agentId, disarms);
+    } catch {
+      // The channel sweep cleans up an arm left on an awake agent.
+    }
+  }
 }
 
 // --- Step 2e: channel wakes ---------------------------------------------------
@@ -881,6 +1057,9 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
       : []),
     ...(channelWakeCleanupEnabled(env)
       ? ([["channel wakes", runChannelWakes]] as Array<[string, (c: Context) => Promise<void>]>)
+      : []),
+    ...(hostIngressConfigured(env)
+      ? ([["host ingress", runHostIngress]] as Array<[string, (c: Context) => Promise<void>]>)
       : []),
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
   ];
