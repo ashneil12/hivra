@@ -2239,6 +2239,10 @@ describe("InstanceService.createInstance rollback handling", () => {
       update: jest.fn().mockReturnThis(),
       eq: updateEq,
     };
+    // After the rollback deletes the server, the creation-receipt pointer is cleared.
+    const receiptClearEq = jest.fn().mockResolvedValue({ error: null });
+    const receiptClearUpdate = jest.fn().mockReturnValue({ eq: receiptClearEq });
+    const receiptClearQuery = { update: receiptClearUpdate };
 
     let hermesInstancesCall = 0;
     const proxmoxHostsRegistry = createEmptyProxmoxHostsRegistry();
@@ -2251,6 +2255,7 @@ describe("InstanceService.createInstance rollback handling", () => {
         if (hermesInstancesCall === 2) return resourceUsageQuery;
         if (hermesInstancesCall === 3) return insertQuery;
         if (hermesInstancesCall === 4) return updateQuery;
+        if (hermesInstancesCall === 5) return receiptClearQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
       throw new Error(`Unexpected table lookup: ${tableName}`);
@@ -2273,6 +2278,11 @@ describe("InstanceService.createInstance rollback handling", () => {
     // Server got rolled back — passes the freshly-created serverId, not 0.
     expect(deleteHetznerServer).toHaveBeenCalledWith(314159);
     expect(deleteHetznerServer).toHaveBeenCalledTimes(1);
+    // The row must not keep pointing at the server that was just deleted (F090).
+    expect(receiptClearUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ hetzner_server_id: null })
+    );
+    expect(receiptClearEq).toHaveBeenCalledWith("id", "inst_orphan_hz");
 
     expect(result).toEqual(
       expect.objectContaining({
