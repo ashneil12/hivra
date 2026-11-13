@@ -35,7 +35,7 @@ import { buildChannelCredReadProgram, buildIdleProbeHostScript } from "../../age
 import { PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES } from "@/lib/infrastructure/portable-provisioner-contract";
 
 const AGENT = "00000000-0000-4000-8000-0000000a0011";
-const ARM = "0f0e0d0c-0b0a-4908-8706-050403020100";
+const ARM = "00000000-0000-4fdd-85f4-f955ee4104e2";
 const FP = "0123456789abcdef";
 const DOORBELL_PY = path.join(process.cwd(), "provisioner/hivra-wake-doorbell.py");
 const target = { vmid: 1234, bindingTag: "hivra-binding-test", env: { host: "x" } };

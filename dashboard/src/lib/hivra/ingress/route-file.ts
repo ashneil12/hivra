@@ -7,8 +7,8 @@
 // the host script reads from the VM's own net0 line at run time, so nothing
 // host-specific is computed here.
 //
-// ticket_key = HMAC-SHA256(HIVRA_INGRESS_SECRET, "hivra-ingress-ticket-v1" NUL
-// agentId NUL tunnelId NUL generation), hex. Hivra stores nothing per agent:
+// The ticket key is the hex HMAC-SHA256, keyed by HIVRA_INGRESS_SECRET, of "hivra-ingress-ticket-v1" NUL
+// agentId NUL tunnelId NUL generation. Hivra stores nothing per agent:
 // the key is derived again whenever it is needed, and moving the generation on
 // (every enable and rollback does) revokes every earlier key.
 //

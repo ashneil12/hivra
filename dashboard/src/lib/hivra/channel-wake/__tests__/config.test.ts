@@ -13,9 +13,9 @@ import {
 
 const LONG = "s".repeat(40);
 const SHORT = "s".repeat(31);
-const AGENT = "11111111-2222-4333-8444-555555555555";
-const ARM_A = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-const ARM_B = "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff";
+const AGENT = "00000000-0000-4cf4-8c47-32fd3b8f8a55";
+const ARM_A = "00000000-0000-4fea-8ccd-25ce867dc960";
+const ARM_B = "00000000-0000-4e81-8e29-974dd58a6f49";
 
 const env = (mode: string | undefined, channels: string | undefined, seed: string | undefined) => ({
   HIVRA_CHANNEL_WAKE: mode,

@@ -53,7 +53,7 @@ import { ARM_MAX_FAILURES, runChannelWakeSweep } from "../sweep";
 import { standardChannelBlockers } from "../registry";
 import type { ChannelWakeAdapter } from "../types";
 
-const AGENT = "11111111-2222-4333-8444-555555555555";
+const AGENT = "00000000-0000-4cf4-8c47-32fd3b8f8a55";
 const FP = "fedcba9876543210";
 const SEED = "s".repeat(40);
 const ENV_ON = { HIVRA_CHANNEL_WAKE: "on", HIVRA_CHANNEL_WAKE_CHANNELS: "email,matrix", HIVRA_CHANNEL_WAKE_SECRET: SEED };
@@ -283,7 +283,7 @@ describe("the sweep", () => {
   it("takes down an arm left on an awake agent", async () => {
     mockAgents.set(AGENT, { status: "running", sleep_state: "awake", operation_id: null });
     const email = adapter("email");
-    mockRows.push(row("email", { state: "armed", arm_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" }));
+    mockRows.push(row("email", { state: "armed", arm_id: "00000000-0000-4fea-8ccd-25ce867dc960" }));
     const { wake, result } = run([email]);
     expect((await result)?.disarmed).toBe(1);
     expect(email.disarmForWake).toHaveBeenCalled();

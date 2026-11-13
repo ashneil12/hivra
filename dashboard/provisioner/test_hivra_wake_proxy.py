@@ -859,7 +859,7 @@ class HivraCallTests(ProxyTestCase):
 
     def test_forwarder_sends_only_signed_calls_to_hivra_paths(self):
         headers = {name: "x" for name in proxy.SIGNED_HEADERS}
-        for url in (self.hivra.origin + "/elsewhere", "http://10.0.0.1/api/hivra/ingress/wake-report",
+        for url in (self.hivra.origin + "/elsewhere", "http://10.250.0.1/api/hivra/ingress/wake-report",
                     "https://example.test.evil/api/hivra/ingress/wake-report/x", None):
             answer = self.h.ctl({"cmd": "post", "url": url, "headers": headers, "body": "{}"}, path=self.h.cfg.fwd_path)
             self.assertEqual(answer["error"], "bad_call", url)
@@ -1245,7 +1245,7 @@ class UnitTests(unittest.TestCase):
 
     def test_route_validation(self):
         cfg = proxy.Config(allow_loopback_guests=False)
-        good = {"vmid": 300, "hostname": "a.example.test", "binding_tag": TAG, "guest_ip": "10.1.2.3",
+        good = {"vmid": 300, "hostname": "a.example.test", "binding_tag": TAG, "guest_ip": "10.251.2.3",
                 "ticket_key": "ab" * 32}
         self.assertEqual(proxy.parse_route(cfg, good, 300)["guest_port"], 18080)
         for field, value in (("guest_ip", "127.0.0.1"), ("guest_ip", "8.8.8.8"), ("guest_ip", "10.0.0.x"),

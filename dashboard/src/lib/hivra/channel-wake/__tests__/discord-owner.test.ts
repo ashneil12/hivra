@@ -26,7 +26,7 @@ import { createEmailImapAdapter } from "../adapters/email-imap";
 import { disarmChannelsForWake } from "../lifecycle";
 
 const AGENT = "00000000-0000-4000-8000-0000000a0022";
-const ARM = "0f0e0d0c-0b0a-4908-8706-050403020100";
+const ARM = "00000000-0000-4fdd-85f4-f955ee4104e2";
 const FP = "0123456789abcdef";
 const ENV = {
   HIVRA_CHANNEL_WAKE: "on",

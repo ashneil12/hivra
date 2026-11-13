@@ -30,7 +30,7 @@ LOGS = []
 doorbell.log = lambda event, **fields: LOGS.append(json.dumps(dict(fields, event=event)))
 
 VMID = 1234
-ARM_ID = "0f0e0d0c-0b0a-4908-8706-050403020100"
+ARM_ID = "00000000-0000-4fdd-85f4-f955ee4104e2"
 MAILBOX = "agent@example.test"
 OWNER = "owner@example.test"
 
@@ -269,7 +269,7 @@ class ArmTests(DoorbellTestCase):
 
     def test_resolves_to_a_global_address_only(self):
         cfg = doorbell.Config(allow_private_imap=False, connect_timeout=2.0)
-        for host in ("127.0.0.1", "10.0.0.5", "169.254.1.1", "100.64.0.1", "::1"):
+        for host in ("127.0.0.1", "10.250.0.5", "169.254.1.1", "100.64.0.1", "::1"):
             with self.assertRaises(doorbell.ImapError) as caught:
                 asyncio.run(doorbell.resolve_public(host, 993, cfg))
             self.assertEqual(caught.exception.reason, "address_refused")

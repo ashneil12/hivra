@@ -3,8 +3,8 @@
 // verification) take their database reads as functions, so they test without
 // a database; the database-backed versions are at the bottom.
 //
-// credential = HMAC-SHA256(HIVRA_INGRESS_SECRET, "hivra-ingress-host-v1" NUL
-// hostId NUL generation), hex. Hivra stores no credential, only the generation
+// The credential is the hex HMAC-SHA256, keyed by HIVRA_INGRESS_SECRET, of "hivra-ingress-host-v1" NUL
+// hostId NUL generation. Hivra stores no credential, only the generation
 // it currently honours (proxmox_hosts.ingress_credential_generation, 0 = none
 // issued). The host keeps the credential in a root-only file, written over SSH
 // stdin by the wake proxy install step, never in argv or a log. Moving the

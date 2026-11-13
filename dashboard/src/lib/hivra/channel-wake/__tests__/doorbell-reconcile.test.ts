@@ -6,8 +6,8 @@ import { buildDoorbellArmsScript, parseDoorbellArms } from "../doorbell-scripts"
 import { DOORBELL_RECONCILE_INTERVAL_MS, reconcileDoorbellArms } from "../doorbell-reconcile";
 import type { ChannelWakeAgentFacts, ChannelWakeRow } from "../store";
 
-const ARM = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-const OTHER_ARM = "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const ARM = "00000000-0000-4fea-8ccd-25ce867dc960";
+const OTHER_ARM = "00000000-0000-444e-8495-0040dd178a63";
 const agentId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 const row = (n: number, over: Partial<ChannelWakeRow> = {}) => ({
