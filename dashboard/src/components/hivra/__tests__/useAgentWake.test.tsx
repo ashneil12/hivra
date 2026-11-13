@@ -104,6 +104,33 @@ describe("useAgentWake: an agent that naps while the page sits open", () => {
     act(() => { document.dispatchEvent(new Event("visibilitychange")); });
     await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
   });
+
+  it("wakes it when the owner clicks into the agent's own frame", async () => {
+    const frame = document.createElement("iframe");
+    document.body.appendChild(frame);
+    try {
+      const { result, rerender } = mount({ view: "awake" });
+      rerender({ view: "asleep", state: "napping" });
+      await waitFor(() => expect(result.current.resting).toBe("idle"));
+      act(() => {
+        frame.focus();
+        window.dispatchEvent(new Event("blur"));
+      });
+      await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
+    } finally {
+      frame.remove();
+    }
+  });
+
+  it("stays asleep when the window loses focus to another app", async () => {
+    const { result, rerender } = mount({ view: "awake" });
+    rerender({ view: "asleep", state: "napping" });
+    await waitFor(() => expect(result.current.resting).toBe("idle"));
+    act(() => { window.dispatchEvent(new Event("blur")); });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mockWakeAgent).not.toHaveBeenCalled();
+    expect(result.current.resting).toBe("idle");
+  });
 });
 
 describe("useAgentWake: a hold from an earlier visit", () => {
