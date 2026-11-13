@@ -15,6 +15,8 @@ import { STALE_LEASE_MS, reconcileAgentSleep, sleepLeaseKind } from "./sleep-rec
 import { markAgentAwake } from "./sleep-aware";
 import { telegramWakeCleanupEnabled } from "./telegram-wake/config";
 import { runTelegramWakeSweep, type TelegramSweepCounts } from "./telegram-wake/sweep";
+import { channelWakeCleanupEnabled } from "./channel-wake/config";
+import { runChannelWakeSweep, type ChannelSweepCounts } from "./channel-wake/sweep";
 
 // The host state script, its parser and the lease rules live in sleep-reconcile.ts; they
 // are re-exported here because this is where the sweep's callers and tests look for them.
@@ -64,6 +66,8 @@ export const HIBERNATE_HARD_LIMIT_MS = 285_000;
 const WAKE_STEP_BUDGET_MS = 22_000;
 /** The Telegram webhook step's own share of the run, so a slow Telegram never starves the sleep step after it. */
 const TELEGRAM_STEP_BUDGET_MS = 10_000;
+/** The other channels' step gets the same share. */
+const CHANNEL_STEP_BUDGET_MS = 10_000;
 const WAKE_MAX_PER_RUN = 10;
 const WAKE_CONCURRENCY = 4;
 /** A wake that failed is retried by the schedule only after this long. */
@@ -153,6 +157,8 @@ export interface SleepIdleSweepSummary {
   nap: SweepStepCounts;
   /** Telegram wake webhooks set and taken down. Only when that feature is configured. */
   telegram?: TelegramSweepCounts;
+  /** Other channels' wake arms, and deferred channel wakes. Only when channel wake is configured. */
+  channel?: ChannelSweepCounts;
   timedOut: boolean;
   elapsedMs: number;
   errors: number;
@@ -500,6 +506,22 @@ async function runTelegramWakes(ctx: Context): Promise<void> {
       ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "telegram", waitMs: 120_000 }).catch(() => undefined));
     },
   });
+}
+
+// --- Step 2e: channel wakes ---------------------------------------------------
+
+/** Arms, cleans up and runs deferred wakes for every channel but Telegram. */
+async function runChannelWakes(ctx: Context): Promise<void> {
+  const stepDeadline = Math.min(ctx.deadline, ctx.now() + CHANNEL_STEP_BUDGET_MS);
+  const counts = await runChannelWakeSweep({
+    env: ctx.env,
+    now: ctx.now,
+    timeLeft: () => stepDeadline - ctx.now(),
+    wake: (agentId) => {
+      ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "channel", waitMs: 120_000 }).catch(() => undefined));
+    },
+  });
+  if (counts) ctx.summary.channel = counts;
 }
 
 /** A stopped computer has nothing napping; how many leftover records are reset per run. */
@@ -856,6 +878,9 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     ["stopped sleep records", resetStoppedSleepRecords],
     ...(telegramWakeCleanupEnabled(env)
       ? ([["telegram wake webhooks", runTelegramWakes]] as Array<[string, (c: Context) => Promise<void>]>)
+      : []),
+    ...(channelWakeCleanupEnabled(env)
+      ? ([["channel wakes", runChannelWakes]] as Array<[string, (c: Context) => Promise<void>]>)
       : []),
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
   ];
