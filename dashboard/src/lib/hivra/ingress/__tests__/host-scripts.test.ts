@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   assertHostCloudflaredRelease,
+  buildHostCredentialRemoveScript,
   buildHostWakeProxyInstallScript,
   buildHostWakeProxyRemoveScript,
   buildHostWakeProxyStatusScript,
@@ -39,7 +40,7 @@ const DIGESTS = Object.fromEntries(
   HOST_WAKE_PROXY_BUNDLE_FILES.map((name) => [name, sha(FILE_CONTENT[name])]),
 ) as Record<HostWakeProxyBundlePath, string>;
 
-function installScript(extra: { forceHealthFailure?: boolean; cloudflared?: HostCloudflaredRelease; healthDeadlineSeconds?: number } = {}) {
+function installScript(extra: { forceHealthFailure?: boolean; cloudflared?: HostCloudflaredRelease; healthDeadlineSeconds?: number; hostCredential?: boolean } = {}) {
   return buildHostWakeProxyInstallScript({
     targetId: TARGET,
     channel: "default",
@@ -48,7 +49,20 @@ function installScript(extra: { forceHealthFailure?: boolean; cloudflared?: Host
     cloudflared: extra.cloudflared ?? FIXTURE_CF,
     forceHealthFailure: extra.forceHealthFailure,
     healthDeadlineSeconds: extra.healthDeadlineSeconds,
+    ...(extra.hostCredential ? { hostCredential: true } : {}),
   });
+}
+
+// A neutral credential document for a fixture host; the material is made per run.
+function credentialDoc(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    host_id: TARGET,
+    generation: 3,
+    credential: sha(`fixture material ${Math.random()}`),
+    origin: "https://app.example.test",
+    ...overrides,
+  };
 }
 
 describe("host wake proxy scripts (pure)", () => {
@@ -106,8 +120,23 @@ describe("host wake proxy scripts (pure)", () => {
     ).toContain("BUNDLE='/root/hivra-provisioner-canary'");
   });
 
+  it("adds the credential step only when asked, reading the document from stdin", () => {
+    const plain = installScript();
+    const withCredential = installScript({ hostCredential: true });
+    for (const marker of ["CRED_", "host-credential", "head -c"]) expect(plain).not.toContain(marker);
+    expect(withCredential).toContain('CRED_IN="$(head -c 4097)"');
+    expect(withCredential).toContain("'/etc/hivra/ingress/host-credential.json'");
+    expect(withCredential).not.toContain("\0");
+    expect(() => execFileSync("bash", ["-n"], { input: withCredential })).not.toThrow();
+    // It is written only after the proxy proved healthy.
+    expect(withCredential.indexOf("CRED_STATE=written")).toBeGreaterThan(withCredential.indexOf("until health_ok; do"));
+    expect(withCredential.indexOf("CRED_STATE=written")).toBeLessThan(withCredential.indexOf("COMMITTED=1"));
+  });
+
   it("matches the reviewed snapshots", () => {
     expect(installScript()).toMatchSnapshot("install");
+    expect(installScript({ hostCredential: true })).toMatchSnapshot("install-with-credential");
+    expect(buildHostCredentialRemoveScript(TARGET)).toMatchSnapshot("credential-remove");
     expect(buildHostWakeProxyStatusScript(TARGET, FIXTURE_CF)).toMatchSnapshot("status");
     expect(buildHostWakeProxyRemoveScript(TARGET)).toMatchSnapshot("remove");
   });
@@ -117,6 +146,9 @@ describe("host wake proxy scripts (pure)", () => {
       status: "installed", step: "health", changed: true, ms: 812,
     });
     expect(parseHostWakeProxyResult("HIVRA_WAKE_PROXY_RESULT status=refused step=dependents changed=0 ms=3\n")?.status).toBe("refused");
+    expect(parseHostWakeProxyResult("HIVRA_WAKE_PROXY_RESULT status=unchanged step=credential changed=0 cloudflared=2026.8.2 credential=written ms=40\n")).toEqual({
+      status: "unchanged", step: "credential", changed: false, ms: 40, credential: "written",
+    });
     expect(parseHostWakeProxyResult("HIVRA_WAKE_PROXY_RESULT status=bogus step=x changed=0 ms=1\n")).toBeNull();
     expect(parseHostWakeProxyResult("")).toBeNull();
     expect(
@@ -184,7 +216,8 @@ const STUBS: Record<string, string> = {
 type FakeHost = {
   root: string;
   state: string;
-  run: (script: string, env?: Record<string, string>) => { status: number | null; stdout: string; stderr: string };
+  /** With stdin, the script runs as `bash -c` and reads stdin itself, as runProxmoxHostScriptWithStdin does. */
+  run: (script: string, env?: Record<string, string>, stdin?: string) => { status: number | null; stdout: string; stderr: string };
   file: (hostPath: string) => string;
   exists: (hostPath: string) => boolean;
   writeHostFile: (hostPath: string, content: string) => void;
@@ -226,9 +259,10 @@ function fakeHost(): FakeHost {
   return {
     root,
     state,
-    run: (script, env = {}) => {
-      const result = spawnSync("bash", ["-s"], {
-        input: relocate(script, root),
+    run: (script, env = {}, stdin) => {
+      const relocated = relocate(script, root);
+      const result = spawnSync("bash", stdin === undefined ? ["-s"] : ["-c", relocated], {
+        input: stdin === undefined ? relocated : stdin,
         env: {
           PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
           FAKE_STATE: state,
@@ -348,6 +382,67 @@ describe("host wake proxy scripts (on a fake host)", () => {
     expect(existsSync(path.join(host.state, "user"))).toBe(false);
     expect(existsSync(path.join(host.state, "active.hivra-wake-proxy.service"))).toBe(false);
     expect(existsSync(path.join(host.state, "enabled.hivra-wake-helper.service"))).toBe(false);
+  });
+
+  it("writes the host credential from stdin, root only, once the proxy is healthy, and converges", () => {
+    const host = newHost();
+    const doc = credentialDoc();
+    const stdin = `${JSON.stringify(doc)}\n`;
+    const first = host.run(installScript({ hostCredential: true }), {}, stdin);
+    expect(first.stderr).toBe("");
+    expect(first.status).toBe(0);
+    expect(parseHostWakeProxyResult(first.stdout)).toMatchObject({ status: "installed", credential: "written" });
+    const dest = "/etc/hivra/ingress/host-credential.json";
+    expect(JSON.parse(host.file(dest))).toEqual(doc);
+    expect(statSync(path.join(host.root, dest.slice(1))).mode & 0o777).toBe(0o600);
+    // The credential is never echoed.
+    expect(first.stdout + first.stderr).not.toContain(doc.credential);
+
+    const again = host.run(installScript({ hostCredential: true }), {}, stdin);
+    expect(parseHostWakeProxyResult(again.stdout)).toMatchObject({ status: "unchanged", changed: false, credential: "unchanged" });
+
+    // A new generation replaces the file without restarting anything.
+    const log = path.join(host.state, "systemctl.log");
+    writeFileSync(log, "");
+    const rotated = credentialDoc({ generation: 4 });
+    const third = host.run(installScript({ hostCredential: true }), {}, `${JSON.stringify(rotated)}\n`);
+    expect(parseHostWakeProxyResult(third.stdout)).toMatchObject({ status: "unchanged", credential: "written" });
+    expect(JSON.parse(host.file(dest))).toEqual(rotated);
+    expect(readFileSync(log, "utf8")).not.toMatch(/^(restart|start|daemon-reload) /m);
+
+    const removed = host.run(buildHostCredentialRemoveScript(TARGET));
+    expect(parseHostWakeProxyResult(removed.stdout)).toMatchObject({ status: "removed", changed: true });
+    expect(host.exists(dest)).toBe(false);
+    expect(parseHostWakeProxyResult(host.run(buildHostCredentialRemoveScript(TARGET)).stdout)?.status).toBe("absent");
+  });
+
+  it("refuses a credential document for another host, or a malformed one, before changing anything", () => {
+    for (const stdin of [
+      JSON.stringify(credentialDoc({ host_id: "otherhost" })),
+      JSON.stringify(credentialDoc({ origin: "http://app.example.test" })),
+      JSON.stringify({ ...credentialDoc(), extra: true }),
+      JSON.stringify(credentialDoc({ credential: "short" })),
+      "not json",
+      "",
+      "x".repeat(5000),
+    ]) {
+      const host = newHost();
+      const run = host.run(installScript({ hostCredential: true }), {}, stdin);
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain("host credential document is invalid");
+      expect(parseHostWakeProxyResult(run.stdout)).toMatchObject({ status: "failed", step: "credential", changed: false, credential: "none" });
+      expect(host.exists(UNIT_DEST)).toBe(false);
+      expect(host.exists("/etc/hivra/ingress/host-credential.json")).toBe(false);
+    }
+  });
+
+  it("puts the previous credential back when the install rolls back", () => {
+    const host = newHost();
+    const first = credentialDoc();
+    expect(host.run(installScript({ hostCredential: true }), {}, JSON.stringify(first)).status).toBe(0);
+    const run = host.run(installScript({ hostCredential: true, forceHealthFailure: true }), {}, JSON.stringify(credentialDoc({ generation: 9 })));
+    expect(parseHostWakeProxyResult(run.stdout)).toMatchObject({ status: "rolled_back", step: "health" });
+    expect(JSON.parse(host.file("/etc/hivra/ingress/host-credential.json"))).toEqual(first);
   });
 
   it("refuses to remove while a computer has a route, and removes cleanly otherwise", () => {

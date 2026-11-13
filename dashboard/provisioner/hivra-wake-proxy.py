@@ -20,6 +20,18 @@ Python 3 standard library only. One file, three entry points:
            answer. Exit 0 when ok, 1 when the helper said no, 2 when the
            helper could not be reached.
 
+Calls to Hivra (only once the install step wrote a host credential to
+/etc/hivra/ingress/host-credential.json; without it the proxy calls nothing).
+The helper reads the credential and signs each call; it has no network of its
+own, so it hands the finished request to the forwarder (`post` on fwd.sock),
+which sends it. The internet-facing forwarder never holds the credential, only
+single-use signed requests bound to one path and body. Each call is a signed
+POST (see sign_request):
+  wake-report   after the helper resumed a napped VM, so Hivra sets the agent
+                awake and takes its channel wake arms down at once.
+  wake-request  `request` on the control socket, and a valid ticket for a VM
+                that is not running (hibernated): Hivra runs its normal wake.
+
 Fail toward awake. The proxy only ever resumes (QMP cont) a VM that is paused
 AND carries a valid nap marker (/run/hivra-ingress-state/napped-<vmid> holding
 the running QEMU pid). A paused VM without one is never touched, an unknown
@@ -33,12 +45,14 @@ Headers, cookies and bodies are never logged.
 """
 
 import asyncio
+import base64
 import collections
 import concurrent.futures
 import errno
 import fcntl
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import os
@@ -51,9 +65,11 @@ import stat
 import struct
 import sys
 import time
+import urllib.error
+import urllib.request
 from urllib.parse import unquote
 
-VERSION = "hivra-wake-proxy/1"
+VERSION = "hivra-wake-proxy/2"
 
 MAX_HEAD = 32 * 1024
 HEAD_TIMEOUT = 10.0
@@ -85,6 +101,15 @@ WATCHDOG_SECONDS = 5.0
 WAKES_KEPT = 20
 MAX_QMP_LINE = 1024 * 1024
 RETRY_DELAY = 0.05
+CREDENTIAL_MAX_BYTES = 4096
+HIVRA_CALL_TIMEOUT = 5.0
+HIVRA_ANSWER_MAX = 16 * 1024
+REPORT_ATTEMPTS = 3
+REPORT_BACKOFF = (0.5, 2.0)
+REQUEST_MIN_INTERVAL = 5.0
+WAKE_REPORT_PATH = "/api/hivra/ingress/wake-report"
+WAKE_REQUEST_PATH = "/api/hivra/ingress/wake-request"
+REQUEST_REASONS = frozenset(("ticket", "client", "doorbell", "ctl"))
 
 # The guest fixup after a proxy wake: the host's clock, then drop the paused
 # guest's dead :443 connections. It never touches the guest's tunnel unit,
@@ -95,6 +120,10 @@ VMID_RE = re.compile(r"^[0-9]{3,9}$")
 HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
 TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 HEX_64_128_RE = re.compile(r"^[0-9a-f]{64,128}$")
+HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
+HOST_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+ORIGIN_RE = re.compile(r"^https://[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
+TEST_ORIGIN_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAC_RE = re.compile(r"^[0-9a-f]{64}$")
 EXP_RE = re.compile(r"^[0-9]{1,12}$")
@@ -103,9 +132,10 @@ PID_RE = re.compile(rb"^\s*([0-9]{1,10})\s*$")
 MIN_VMID = 100
 MAX_VMID = 999_999_999
 
-ROOT_COMMANDS = frozenset(("wake", "status", "drain", "undrain", "napped", "stats", "reload", "health"))
-FORWARDER_COMMANDS = frozenset(("wake", "status", "health"))
-FWD_COMMANDS = frozenset(("drain", "undrain", "napped", "stats", "reload", "health"))
+ROOT_COMMANDS = frozenset(("wake", "status", "drain", "undrain", "napped", "stats", "reload", "health", "request"))
+FORWARDER_COMMANDS = frozenset(("wake", "status", "health", "request"))
+FWD_COMMANDS = frozenset(("drain", "undrain", "napped", "stats", "reload", "health", "post"))
+HIVRA_PATHS = frozenset((WAKE_REPORT_PATH, WAKE_REQUEST_PATH))
 
 mono = time.monotonic
 
@@ -132,6 +162,9 @@ class Config(object):
         self.vm_lock_wait = VM_LOCK_WAIT
         self.drain_lease = DRAIN_LEASE
         self.health_deadline = HEALTH_DEADLINE
+        self.credential_path = "/etc/hivra/ingress/host-credential.json"
+        # Tests only: lets the credential name a plain-http loopback origin.
+        self.allow_test_origin = False
         for key, value in overrides.items():
             if not hasattr(self, key):
                 raise TypeError("unknown config key: %s" % key)
@@ -365,6 +398,101 @@ class ReplaySet(object):
             return "replay_full"
         self.seen[key] = max(exp, now + REPLAY_WINDOW)
         return "ok"
+
+
+# ---------------------------------------------------------------- calls to Hivra (blocking; run in threads)
+
+def load_credential(cfg):
+    """The host credential document, or None when there is none or it is not exactly what the install step writes."""
+    try:
+        info = os.lstat(cfg.credential_path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > CREDENTIAL_MAX_BYTES:
+            return None
+        with open(cfg.credential_path, "rb") as handle:
+            doc = json.loads(handle.read(CREDENTIAL_MAX_BYTES + 1).decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or sorted(doc) != ["credential", "generation", "host_id", "origin", "version"]:
+        return None
+    generation = doc.get("generation")
+    origin = doc.get("origin")
+    if doc.get("version") != 1 or not isinstance(doc.get("host_id"), str) or not HOST_ID_RE.match(doc["host_id"]) \
+            or isinstance(generation, bool) or not isinstance(generation, int) or not 1 <= generation <= 1000000000 \
+            or not isinstance(doc.get("credential"), str) or not HEX_64_RE.match(doc["credential"]) \
+            or not isinstance(origin, str) \
+            or not (ORIGIN_RE.match(origin) or (cfg.allow_test_origin and TEST_ORIGIN_RE.match(origin))):
+        return None
+    return doc
+
+
+def sign_request(credential, path, body, timestamp, nonce):
+    """The signature Hivra checks (src/lib/hivra/ingress/host-credential.ts, signHostRequest)."""
+    message = "\n".join(("hivra-ingress-host-request-v1", path, credential["host_id"], str(credential["generation"]),
+                          str(timestamp), nonce, hashlib.sha256(body).hexdigest()))
+    return hmac.new(bytes.fromhex(credential["credential"]), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A signed call goes to exactly one place: a redirect is an error, never followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def signed_call(cfg, path, payload):
+    """The finished, signed request for one call to Hivra, or None without a credential. Runs in the helper."""
+    credential = load_credential(cfg)
+    if credential is None:
+        return None
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    timestamp = int(time.time())
+    nonce = base64.urlsafe_b64encode(os.urandom(18)).decode("ascii").rstrip("=")
+    return {"url": credential["origin"] + path, "body": body, "headers": {
+        "X-Hivra-Host": credential["host_id"],
+        "X-Hivra-Generation": str(credential["generation"]),
+        "X-Hivra-Timestamp": str(timestamp),
+        "X-Hivra-Nonce": nonce,
+        "X-Hivra-Signature": sign_request(credential, path, body.encode("utf-8"), timestamp, nonce),
+    }}
+
+
+SIGNED_HEADERS = frozenset(("X-Hivra-Host", "X-Hivra-Generation", "X-Hivra-Timestamp", "X-Hivra-Nonce", "X-Hivra-Signature"))
+
+
+def call_target_ok(cfg, url):
+    """Only Hivra's two host paths, on an https origin (a loopback http one in tests)."""
+    for path in HIVRA_PATHS:
+        if isinstance(url, str) and url.endswith(path):
+            origin = url[:-len(path)]
+            return bool(ORIGIN_RE.match(origin) or (cfg.allow_test_origin and TEST_ORIGIN_RE.match(origin)))
+    return False
+
+
+def post_json(url, headers, body):
+    """One POST, no proxy, no redirect. {"ok", "status", "answer"} or {"ok": False, "error"}. Runs in the forwarder; never logs."""
+    request = urllib.request.Request(url, data=body.encode("utf-8"), method="POST",
+                                     headers=dict(headers, **{"Content-Type": "application/json", "User-Agent": VERSION}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(request, timeout=HIVRA_CALL_TIMEOUT) as response:
+            status, raw = response.status, response.read(HIVRA_ANSWER_MAX)
+    except urllib.error.HTTPError as error:
+        status = error.code
+        try:
+            raw = error.read(HIVRA_ANSWER_MAX)
+        except (OSError, ValueError):
+            raw = b""
+        finally:
+            error.close()
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException):
+        return {"ok": False, "error": "unreachable"}
+    try:
+        answer = json.loads(raw.decode("utf-8")) if raw else {}
+    except ValueError:
+        answer = {}
+    if not isinstance(answer, dict):
+        answer = {}
+    return {"ok": 200 <= status < 300 and answer.get("ok") is True, "status": status, "answer": answer}
 
 
 # ---------------------------------------------------------------- QMP and the guest agent (blocking; run in threads)
@@ -758,6 +886,8 @@ class Helper(object):
         self.pending = {}
         self.background = set()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="hivra-wake-helper")
+        self.requests = {}
+        self.request_last = {}
         self.server = None
 
     def role(self, uid):
@@ -825,8 +955,9 @@ class Helper(object):
         try:
             if command == "health":
                 forwarder = await unix_request(self.cfg.fwd_path, {"cmd": "health"}, CTL_TIMEOUT)
+                credential = await asyncio.get_running_loop().run_in_executor(self.pool, load_credential, self.cfg)
                 return {"ok": True, "version": VERSION, "routes": len(self.routes),
-                        "forwarder": bool(forwarder and forwarder.get("ok"))}
+                        "forwarder": bool(forwarder and forwarder.get("ok")), "credential": credential is not None}
             if command == "reload":
                 return await self.reload()
             if command == "stats" and request.get("vmid") is None:
@@ -841,6 +972,8 @@ class Helper(object):
                 return {"ok": True, "vmid": vmid, "napped": state == "valid", "route": vmid in self.routes}
             if command == "stats":
                 return await self.stats(vmid)
+            if command == "request":
+                return await self.request(role, vmid, request)
             if command == "drain":
                 ms = request.get("ms", 2000)
                 if isinstance(ms, bool) or not isinstance(ms, int) or not 0 <= ms <= DRAIN_MAX_MS:
@@ -899,7 +1032,13 @@ class Helper(object):
             task = asyncio.get_running_loop().create_task(self.run_wake(vmid, route, source))
             self.pending[vmid] = task
             task.add_done_callback(lambda _task, key=vmid: self.pending.pop(key, None))
-        return dict(await asyncio.shield(task))
+        result = dict(await asyncio.shield(task))
+        if source == "ticket" and not result.get("ok") and result.get("reason") == "qmp_socket_missing":
+            # A signed wake for a VM that is not running at all (hibernated): only Hivra can start it.
+            asked = await self.request_wake(vmid, "ticket")
+            if asked.get("ok"):
+                return {"ok": False, "vmid": vmid, "error": "waking", "requested": True, "state": asked.get("state")}
+        return result
 
     async def run_wake(self, vmid, route, source):
         loop = asyncio.get_running_loop()
@@ -907,17 +1046,96 @@ class Helper(object):
         result = await loop.run_in_executor(self.pool, wake_vm, self.cfg, vmid, route["binding_tag"])
         result["ms"] = int((mono() - t0) * 1000)
         if result["ok"]:
-            self.wakes[vmid].append({"at": round(time.time(), 3), "from": source, "woke": result["woke"],
-                                     "ms": result["ms"]})
+            entry = {"at": round(time.time(), 3), "from": source, "woke": result["woke"], "ms": result["ms"]}
+            self.wakes[vmid].append(entry)
+            if result["woke"] == "nap":
+                self.spawn(self.report_wake(vmid, entry))
         else:
             result["error"] = result["reason"]
         log("wake", vmid=vmid, source=source, ok=result["ok"], woke=result["woke"], reason=result["reason"],
             ms=result["ms"], cont_ms=result["cont_ms"], lock_ms=result["lock_ms"])
         if result["ok"] and result["woke"] == "nap" and self.cfg.fixup:
-            fixup = loop.create_task(self.run_fixup(vmid))
-            self.background.add(fixup)
-            fixup.add_done_callback(self.background.discard)
+            self.spawn(self.run_fixup(vmid))
         return result
+
+    async def call(self, path, payload):
+        """Sign one call here, have the forwarder send it. {"ok", "status", "answer"} or {"ok": False, "error"}."""
+        signed = await asyncio.get_running_loop().run_in_executor(self.pool, signed_call, self.cfg, path, payload)
+        if signed is None:
+            return {"ok": False, "error": "no_credential"}
+        answer = await unix_request(self.cfg.fwd_path, dict(signed, cmd="post"), HIVRA_CALL_TIMEOUT + 2.0)
+        return answer if answer is not None else {"ok": False, "error": "forwarder_down"}
+
+    async def request(self, role, vmid, request):
+        """`request`: ask Hivra to wake a VM. The forwarder may ask only for its own routes, as a client wake."""
+        reason = request.get("from")
+        if role == "forwarder":
+            if vmid not in self.routes:
+                return {"ok": False, "vmid": vmid, "error": "unknown_vmid"}
+            reason = "client"
+        elif not (isinstance(reason, str) and reason in REQUEST_REASONS):
+            reason = "ctl"
+        return await self.request_wake(vmid, reason)
+
+    async def request_wake(self, vmid, reason):
+        """wake-request to Hivra, at most one in flight per VM and one per REQUEST_MIN_INTERVAL; a repeat gets the last answer."""
+        last = self.request_last.get(vmid)
+        if last is not None and mono() - last[0] < REQUEST_MIN_INTERVAL:
+            return dict(last[1], throttled=True)
+        task = self.requests.get(vmid)
+        if task is None:
+            task = asyncio.get_running_loop().create_task(self.run_request(vmid, reason))
+            self.requests[vmid] = task
+            task.add_done_callback(lambda _task, key=vmid: self.requests.pop(key, None))
+        return dict(await asyncio.shield(task))
+
+    async def run_request(self, vmid, reason):
+        t0 = mono()
+        try:
+            outcome = await self.call(WAKE_REQUEST_PATH, {"vmid": vmid, "reason": reason})
+        except Exception as error:
+            outcome = {"ok": False, "error": type(error).__name__}
+        answer = outcome.get("answer") if isinstance(outcome.get("answer"), dict) else {}
+        state = answer.get("state") if isinstance(answer.get("state"), str) and re.match(r"^[a-z_]{1,24}$", answer.get("state")) else None
+        result = {"ok": bool(outcome.get("ok")), "vmid": vmid, "state": state}
+        if not result["ok"]:
+            error = outcome.get("error") or answer.get("error") or "status_%s" % outcome.get("status")
+            result["error"] = error if isinstance(error, str) and re.match(r"^[a-z0-9_]{1,32}$", error) else "refused"
+        log("wake_request", vmid=vmid, reason=reason, ok=result["ok"], state=state, status=outcome.get("status"),
+            error=result.get("error"), ms=int((mono() - t0) * 1000))
+        # A host with no credential asks again at once once it has one; anything else is held for the interval.
+        if result.get("error") != "no_credential":
+            self.request_last[vmid] = (mono(), result)
+        return result
+
+    async def report_wake(self, vmid, entry):
+        """wake-report to Hivra after a nap was resumed here. Retried on a network error or a 5xx; silent without a credential."""
+        payload = {"vmid": vmid, "woke": entry["woke"], "at": entry["at"], "from": entry["from"]}
+        outcome = {}
+        for attempt in range(REPORT_ATTEMPTS):
+            try:
+                outcome = await self.call(WAKE_REPORT_PATH, payload)
+            except Exception as error:
+                outcome = {"ok": False, "error": type(error).__name__}
+            if outcome.get("ok") or outcome.get("error") == "no_credential":
+                break
+            status = outcome.get("status")
+            if isinstance(status, int) and 400 <= status < 500:
+                break
+            if attempt + 1 < REPORT_ATTEMPTS:
+                await asyncio.sleep(REPORT_BACKOFF[min(attempt, len(REPORT_BACKOFF) - 1)])
+        if outcome.get("error") != "no_credential":
+            answer = outcome.get("answer") if isinstance(outcome.get("answer"), dict) else {}
+            action = answer.get("action") if isinstance(answer.get("action"), str) and re.match(r"^[a-z_]{1,24}$", answer.get("action")) else None
+            log("wake_report", vmid=vmid, ok=bool(outcome.get("ok")), status=outcome.get("status"), action=action,
+                attempts=attempt + 1)
+        return outcome
+
+    def spawn(self, coro):
+        task = asyncio.get_running_loop().create_task(coro)
+        self.background.add(task)
+        task.add_done_callback(self.background.discard)
+        return task
 
     async def run_fixup(self, vmid):
         try:
@@ -1033,6 +1251,10 @@ ASLEEP_PAGE = (b"<!doctype html><html><head><meta charset=\"utf-8\"><meta http-e
                b"<title>Waking up</title></head><body><p>This computer is asleep. It will be back in a moment.</p>"
                b"</body></html>\n")
 
+WAKING_PAGE = (b"<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"5\">"
+               b"<title>Waking up</title></head><body><p>This computer is waking up. This page will refresh in a moment.</p>"
+               b"</body></html>\n")
+
 
 class Forwarder(object):
     def __init__(self, cfg):
@@ -1136,6 +1358,8 @@ class Forwarder(object):
             return {"ok": False, "error": "unknown_command"}
         if command == "health":
             return {"ok": True, "version": VERSION, "routes": len(self.by_vmid), "listeners": len(self.bound)}
+        if command == "post":
+            return await self.post(request)
         if command == "reload":
             self.refresh_routes(force=True)
             self.napped_cache.clear()
@@ -1158,6 +1382,16 @@ class Forwarder(object):
         self.napped_cache.pop(vmid, None)
         log(command, vmid=vmid)
         return {"ok": True, "vmid": vmid}
+
+    async def post(self, request):
+        """Send one call the helper signed. Only to Hivra's host paths, only the signed headers; never logged."""
+        url, headers, body = request.get("url"), request.get("headers"), request.get("body")
+        if not call_target_ok(self.cfg, url) or not isinstance(body, str) or len(body) > CREDENTIAL_MAX_BYTES \
+                or not isinstance(headers, dict) or set(headers) != SIGNED_HEADERS \
+                or not all(isinstance(value, str) and len(value) <= 128 and "\r" not in value and "\n" not in value
+                           for value in headers.values()):
+            return {"ok": False, "error": "bad_call"}
+        return await asyncio.get_running_loop().run_in_executor(None, post_json, url, headers, body)
 
     def undrain(self, vmid):
         handle = self.draining.pop(vmid, None)
@@ -1261,6 +1495,15 @@ class Forwarder(object):
         else:
             await self.reply(writer, 503, {"error": "asleep"}, extra=extra)
 
+    async def waking(self, request, writer):
+        """503 with Retry-After: 5. A browser gets a page that refreshes itself; an API call or a webhook gets JSON."""
+        accept = ",".join(request.header("accept")).lower()
+        extra = ("Retry-After: 5",)
+        if "text/html" in accept:
+            await self.reply(writer, 503, WAKING_PAGE, "text/html; charset=utf-8", extra)
+        else:
+            await self.reply(writer, 503, {"error": "unreachable"}, extra=extra)
+
     async def is_napped(self, vmid):
         """A marker exists and the helper says it is valid. Unknown (helper down) counts as napped: no request reaches a paused VM."""
         try:
@@ -1358,7 +1601,8 @@ class Forwarder(object):
                     asyncio.open_connection(route["guest_ip"], route["guest_port"], limit=MAX_RESPONSE_HEAD),
                     GUEST_CONNECT_TIMEOUT)
             except (OSError, asyncio.TimeoutError):
-                await self.reply(writer, 503, {"error": "unreachable"}, extra=("Retry-After: 5",))
+                # A computer that is starting (a hibernated one being restored) is not up yet.
+                await self.waking(request, writer)
                 return
             guest_writer.write(rebuild_head(request))
             await guest_writer.drain()
@@ -1479,7 +1723,7 @@ def ctl_main(argv, cfg=None):
             sys.stderr.write("bad ms\n")
             return 2
         request["ms"] = int(argv[2])
-    timeout = CTL_TIMEOUT + request.get("ms", 0) / 1000.0 + (15.0 if argv[0] == "wake" else 0.0)
+    timeout = CTL_TIMEOUT + request.get("ms", 0) / 1000.0 + (15.0 if argv[0] in ("wake", "request") else 0.0)
     answer = asyncio.run(unix_request(cfg.ctl_path, request, timeout))
     if answer is None:
         sys.stdout.write('{"error":"unreachable","ok":false}\n')

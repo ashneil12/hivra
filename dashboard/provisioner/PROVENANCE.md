@@ -544,6 +544,17 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.3` builds on `2026.11.13.2` and lets the host wake proxy call Hivra with a
+host credential: after it resumes a napped computer it reports the wake (`wake-report`), and for a
+valid ticket to a computer that is not running (a hibernated one) it asks Hivra to wake it
+(`wake-request`). The root helper reads the credential from `/etc/hivra/ingress/host-credential.json`
+(written root only by the flag-gated install step) and signs each call; it still has no network of its
+own, so the unprivileged forwarder sends the finished, single-use signed request and never holds the
+credential. Without that file the proxy calls nothing, exactly as before. A browser asking for a
+computer that is starting now gets a self-refreshing "waking up" page. `hivra-provider-worker.py`
+advances its release labels. No guest asset changes. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
 Release `2026.11.13.2` builds on `2026.11.13.1` and teaches `hivra-start-on-host.sh` about host
 ingress: when `/etc/hivra/ingress/routes/<vmid>.json` names the computer's own hostname, a start
 puts the host's ARP/IP pin back, starts `hivra-cf@<vmid>` and reports the unchanged stable URL

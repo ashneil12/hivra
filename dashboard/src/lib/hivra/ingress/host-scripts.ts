@@ -27,6 +27,7 @@ import {
   type ManagedHivraProvisionerChannel,
 } from "@/lib/hivra/managed-provisioner-channel";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
+import { HOST_CREDENTIAL_PATH } from "@/lib/hivra/ingress/host-credential";
 
 export const WAKE_PROXY_RESULT_MARKER = "HIVRA_WAKE_PROXY_RESULT";
 export const WAKE_PROXY_STATUS_MARKER = "HIVRA_WAKE_PROXY_STATUS";
@@ -47,6 +48,25 @@ export const HOST_WAKE_PROXY_BUNDLE_FILES: readonly HostWakeProxyBundlePath[] =
 export const HOST_CLOUDFLARED_PATH = "/usr/local/bin/hivra-cloudflared";
 export const HOST_WAKE_PROXY_LIB_DIR = "/usr/local/lib/hivra-ingress";
 export const HOST_WAKE_PROXY_UNITS = ["hivra-wake-helper.service", "hivra-wake-proxy.service"] as const;
+export const HOST_CREDENTIAL_MAX_BYTES = 4096;
+
+/**
+ * Checks the credential document read from stdin and writes it normalised:
+ * exactly the five fields, this host's id, a 64-hex credential and an https
+ * origin. argv: input file, output file, expected host id.
+ */
+const CREDENTIAL_CHECK_PY = [
+  "import json,re,sys",
+  "raw=open(sys.argv[1],'rb').read()",
+  `assert len(raw)<=${HOST_CREDENTIAL_MAX_BYTES}`,
+  "d=json.loads(raw.decode('utf-8'))",
+  "assert isinstance(d,dict) and sorted(d)==['credential','generation','host_id','origin','version']",
+  "assert d['version']==1 and d['host_id']==sys.argv[3]",
+  "assert type(d['generation']) is int and 1<=d['generation']<=1000000000",
+  "assert isinstance(d['credential'],str) and re.fullmatch('[0-9a-f]{64}',d['credential'])",
+  "assert isinstance(d['origin'],str) and re.fullmatch('https://[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]',d['origin'])",
+  "open(sys.argv[2],'w').write(json.dumps(d,sort_keys=True,separators=(',',':'))+'\\n')",
+].join("; ");
 
 /** The pinned cloudflared the host connector runs. */
 export type HostCloudflaredRelease = {
@@ -67,6 +87,13 @@ export type HostWakeProxyInstallInput = {
   forceHealthFailure?: boolean;
   /** How long the services get to become healthy. Default 30 s. */
   healthDeadlineSeconds?: number;
+  /**
+   * HIVRA_INGRESS_HOST_CREDENTIAL: the script reads the host credential
+   * document (host-credential.ts) from stdin and writes it, root only, to
+   * HOST_CREDENTIAL_PATH once the proxy is healthy. It is never in the script
+   * or its argv. Absent: the script is exactly as before.
+   */
+  hostCredential?: boolean;
 };
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
@@ -152,6 +179,41 @@ export function buildHostWakeProxyInstallScript(input: HostWakeProxyInstallInput
     (entry, index) =>
       `place_file "$BUNDLE/${entry.bundlePath}" ${shellQuote(entry.dest)} ${entry.mode} ${index}`,
   ).join("\n");
+  // The host credential step. Every piece is empty without it, so the script is byte-identical to before.
+  const credential = input.hostCredential === true;
+  const credentialRead = credential
+    ? `CRED_DEST=${shellQuote(HOST_CREDENTIAL_PATH)}
+CRED_STATE=none
+# The credential document arrives on stdin only: never in the script, its argv or a log.
+CRED_IN="$(head -c ${HOST_CREDENTIAL_MAX_BYTES + 1})"
+`
+    : "";
+  const credentialEmit = credential ? " credential=%s" : "";
+  const credentialEmitArg = credential ? ` "$CRED_STATE"` : "";
+  const credentialCheck = credential
+    ? `STEP=credential
+printf '%s' "$CRED_IN" > "$STAGE/host-credential.in"
+CRED_IN=""
+python3 -I -c ${shellQuote(CREDENTIAL_CHECK_PY)} "$STAGE/host-credential.in" "$STAGE/host-credential.json" "$EXPECTED_HOSTNAME" 2>/dev/null \\
+  || { echo "host credential document is invalid" >&2; exit 1; }
+rm -f -- "$STAGE/host-credential.in"
+`
+    : "";
+  const credentialPlace = credential
+    ? `STEP=credential
+install -d -m 0700 -o root -g root /etc/hivra/ingress
+if [ -f "$CRED_DEST" ] && [ ! -L "$CRED_DEST" ] && cmp -s -- "$STAGE/host-credential.json" "$CRED_DEST"; then
+  CRED_STATE=unchanged
+else
+  TOUCHED=1
+  if [ -e "$CRED_DEST" ] || [ -L "$CRED_DEST" ]; then cp -a -- "$CRED_DEST" "$STAGE/prev.cred"; fi
+  printf '%s\\n' "$CRED_DEST" > "$STAGE/dest.cred"
+  install -m 0600 -o root -g root -- "$STAGE/host-credential.json" "$CRED_DEST.hivra-new"
+  mv -f -- "$CRED_DEST.hivra-new" "$CRED_DEST"
+  CRED_STATE=written
+fi
+`
+    : "";
 
   return `${prelude(input.targetId)}umask 022
 MARK=${shellQuote(WAKE_PROXY_RESULT_MARKER)}
@@ -162,7 +224,7 @@ CF_VERSION=${shellQuote(cloudflared.version)}
 CF_URL=${shellQuote(cloudflared.url)}
 CF_SHA256=${shellQuote(cloudflared.sha256)}
 FORCE_HEALTH_FAILURE=${input.forceHealthFailure ? "1" : "0"}
-STEP=preflight
+${credentialRead}STEP=preflight
 CHANGED=0
 TOUCHED=0
 COMMITTED=0
@@ -174,7 +236,7 @@ PROXY_WAS_ACTIVE=0
 HELPER_WAS_ENABLED=0
 PROXY_WAS_ENABLED=0
 emit() {
-  printf '%s status=%s step=%s changed=%s cloudflared=%s ms=%s\\n' "$MARK" "$1" "$STEP" "$CHANGED" "$CF_VERSION" "$(( $(uptime_ms) - STARTED_MS ))"
+  printf '%s status=%s step=%s changed=%s cloudflared=%s${credentialEmit} ms=%s\\n' "$MARK" "$1" "$STEP" "$CHANGED" "$CF_VERSION"${credentialEmitArg} "$(( $(uptime_ms) - STARTED_MS ))"
 }
 digest_of() { sha256sum < "$1" | cut -d' ' -f1; }
 # Write DEST from SRC only when it differs; keep the previous file for rollback.
@@ -272,7 +334,7 @@ if [ "$PROXY_WAS_ACTIVE" = 0 ] && ss -Hltn '( sport = :8080 )' | grep -q .; then
   echo "port 8080 is already in use on this host" >&2; exit 1
 fi
 STAGE="$(mktemp -d /root/.hivra-wake-proxy-install.XXXXXXXX)"
-STEP=cloudflared
+${credentialCheck}STEP=cloudflared
 NEED_CF=1
 if [ -f "$CF_BIN" ] && [ ! -L "$CF_BIN" ] && [ "$(digest_of "$CF_BIN")" = "$CF_SHA256" ]; then NEED_CF=0; fi
 if [ "$NEED_CF" = 1 ]; then
@@ -323,7 +385,7 @@ until health_ok; do
   if [ "$FORCE_HEALTH_FAILURE" = 1 ] || [ "$(uptime_ms)" -ge "$HEALTH_DEADLINE_MS" ]; then echo "wake proxy health check failed" >&2; exit 1; fi
   sleep 0.5
 done
-COMMITTED=1
+${credentialPlace}COMMITTED=1
 if [ "$CHANGED" = 1 ]; then emit installed; else emit unchanged; fi
 `;
 }
@@ -406,11 +468,34 @@ if [ "$CHANGED" = 1 ]; then emit removed; else emit absent; fi
 `;
 }
 
+/**
+ * Remove the host credential file (revoke-host-credential). The server has
+ * already moved the generation on, so this only tidies a credential that no
+ * longer works. Touches nothing else.
+ */
+export function buildHostCredentialRemoveScript(targetId: string): string {
+  assertTarget(targetId);
+  return `${prelude(targetId)}MARK=${shellQuote(WAKE_PROXY_RESULT_MARKER)}
+STEP=credential
+CHANGED=0
+emit() {
+  printf '%s status=%s step=%s changed=%s ms=%s\\n' "$MARK" "$1" "$STEP" "$CHANGED" "$(( $(uptime_ms) - STARTED_MS ))"
+}
+trap 'status=$?; trap - EXIT; if [ "$status" != 0 ]; then emit failed; fi; exit "$status"' EXIT
+CRED_DEST=${shellQuote(HOST_CREDENTIAL_PATH)}
+if [ -e "$CRED_DEST" ] || [ -L "$CRED_DEST" ]; then CHANGED=1; rm -f -- "$CRED_DEST"; fi
+trap - EXIT
+if [ "$CHANGED" = 1 ]; then emit removed; else emit absent; fi
+`;
+}
+
 export type HostWakeProxyResult = {
   status: "installed" | "unchanged" | "rolled_back" | "failed" | "removed" | "absent" | "refused";
   step: string;
   changed: boolean;
   ms: number;
+  /** Only when the install wrote the host credential step: what it did with the credential file. */
+  credential?: "none" | "unchanged" | "written";
 };
 
 const RESULT_STATUSES = new Set<HostWakeProxyResult["status"]>([
@@ -422,13 +507,14 @@ export function parseHostWakeProxyResult(stdout: string): HostWakeProxyResult | 
   const lines = stdout.split("\n").filter((line) => line.startsWith(`${WAKE_PROXY_RESULT_MARKER} `));
   const line = lines[lines.length - 1];
   if (!line) return null;
-  const match = line.match(/ status=([a-z_]+) step=([a-z_]+) changed=([01])(?: cloudflared=\S+)? ms=(-?[0-9]+)$/);
+  const match = line.match(/ status=([a-z_]+) step=([a-z_]+) changed=([01])(?: cloudflared=\S+)?(?: credential=(none|unchanged|written))? ms=(-?[0-9]+)$/);
   if (!match || !RESULT_STATUSES.has(match[1] as HostWakeProxyResult["status"])) return null;
   return {
     status: match[1] as HostWakeProxyResult["status"],
     step: match[2],
     changed: match[3] === "1",
-    ms: Number(match[4]),
+    ms: Number(match[5]),
+    ...(match[4] ? { credential: match[4] as HostWakeProxyResult["credential"] } : {}),
   };
 }
 

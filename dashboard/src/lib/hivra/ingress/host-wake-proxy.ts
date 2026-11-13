@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import {
+  buildHostCredentialRemoveScript,
   buildHostWakeProxyInstallScript,
   buildHostWakeProxyRemoveScript,
   buildHostWakeProxyStatusScript,
@@ -13,7 +14,13 @@ import {
   type HostWakeProxyResult,
   type HostWakeProxyStatus,
 } from "@/lib/hivra/ingress/host-scripts";
-import { hostWakeProxyEnabled, ingressHostAllowed, type IngressHostRow } from "@/lib/hivra/ingress/config";
+import {
+  hostWakeProxyEnabled,
+  ingressHostAllowed,
+  ingressHostCredentialEnabled,
+  type IngressHostRow,
+} from "@/lib/hivra/ingress/config";
+import { issueHostCredential, revokeHostCredential } from "@/lib/hivra/ingress/host-credential-store";
 import {
   isSafeManagedProvisionerTargetId,
   targetIsConfigured,
@@ -22,15 +29,22 @@ import type { ManagedHivraProvisionerChannel } from "@/lib/hivra/managed-provisi
 import { loadPortableProvisionerBundle } from "@/lib/infrastructure/connection-preparation";
 import {
   PORTABLE_HIVRA_PROVISIONER_VERSION,
+  provisionerSupportsHostCredential,
   provisionerSupportsWakeProxy,
 } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
   resolveProxmoxTargetConfiguration,
   runProxmoxHostScript,
+  runProxmoxHostScriptWithStdin,
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 
-export const HOST_WAKE_PROXY_ACTIONS = ["install-wake-proxy", "wake-proxy-status", "remove-wake-proxy"] as const;
+export const HOST_WAKE_PROXY_ACTIONS = [
+  "install-wake-proxy",
+  "wake-proxy-status",
+  "remove-wake-proxy",
+  "revoke-host-credential",
+] as const;
 export type HostWakeProxyAction = (typeof HOST_WAKE_PROXY_ACTIONS)[number];
 
 export function isHostWakeProxyAction(value: unknown): value is HostWakeProxyAction {
@@ -46,13 +60,19 @@ export type HostWakeProxyActionResult = {
   httpStatus?: number;
   result?: HostWakeProxyResult;
   status?: HostWakeProxyStatus;
+  /** revoke-host-credential: the generation now honoured, and whether the host's file is gone. */
+  credentialGeneration?: number;
+  hostFileRemoved?: boolean;
   error?: string;
 };
 
 type Dependencies = {
   loadBundle: typeof loadPortableProvisionerBundle;
   runHostScript: typeof runProxmoxHostScript;
+  runHostScriptWithStdin: typeof runProxmoxHostScriptWithStdin;
   loadHostRow: (targetId: string) => Promise<IngressHostRow | null>;
+  issueCredential: typeof issueHostCredential;
+  revokeCredential: typeof revokeHostCredential;
   env: NodeJS.ProcessEnv;
 };
 
@@ -70,7 +90,10 @@ async function loadHostRowFromDb(targetId: string): Promise<IngressHostRow | nul
 const DEFAULT_DEPENDENCIES: Dependencies = {
   loadBundle: loadPortableProvisionerBundle,
   runHostScript: runProxmoxHostScript,
+  runHostScriptWithStdin: runProxmoxHostScriptWithStdin,
   loadHostRow: loadHostRowFromDb,
+  issueCredential: issueHostCredential,
+  revokeCredential: revokeHostCredential,
   env: process.env,
 };
 
@@ -115,7 +138,11 @@ export async function runHostWakeProxyAction(
     return { ...base, ok: false, httpStatus: 400, error: "Target is not in the configured managed host rotation." };
   }
 
+  if (action === "revoke-host-credential") return revokeAction(base, deps);
+
   let script: string;
+  // Only with HIVRA_INGRESS_HOST_CREDENTIAL: the credential document, sent on stdin.
+  let stdin: string | null = null;
   if (action === "install-wake-proxy") {
     if (!hostWakeProxyEnabled(deps.env)) {
       return { ...base, ok: false, httpStatus: 409, error: "HIVRA_HOST_WAKE_PROXY_ENABLED is off." };
@@ -127,12 +154,23 @@ export async function runHostWakeProxyAction(
     if (!ingressHostAllowed(hostRow, deps.env)) {
       return { ...base, ok: false, httpStatus: 409, error: "Host ingress is off for this host." };
     }
+    if (ingressHostCredentialEnabled(deps.env)) {
+      if (!provisionerSupportsHostCredential(PORTABLE_HIVRA_PROVISIONER_VERSION)) {
+        return { ...base, ok: false, httpStatus: 409, error: "This provisioner release's wake proxy cannot use a host credential." };
+      }
+      const issued = await deps.issueCredential(targetId, deps.env);
+      if (!issued.ok) {
+        return { ...base, ok: false, httpStatus: 409, error: `Host credential could not be issued (${issued.reason}).` };
+      }
+      stdin = `${JSON.stringify(issued.document)}\n`;
+    }
     script = buildHostWakeProxyInstallScript({
       targetId,
       channel,
       bundleVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
       fileDigests: await reviewedWakeProxyDigests(deps.loadBundle),
       forceHealthFailure: input.forceHealthFailure === true,
+      ...(stdin !== null ? { hostCredential: true } : {}),
     });
   } else if (action === "remove-wake-proxy") {
     script = buildHostWakeProxyRemoveScript(targetId);
@@ -141,10 +179,13 @@ export async function runHostWakeProxyAction(
   }
 
   const candidate = resolveProxmoxTargetConfiguration(deps.env, targetId);
-  const run = await deps.runHostScript(script, candidate.env, {
+  const runOptions = {
     timeoutMs: action === "install-wake-proxy" ? INSTALL_TIMEOUT_MS : SHORT_TIMEOUT_MS,
     maxOutputBytes: MAX_OUTPUT_BYTES,
-  });
+  };
+  const run = stdin !== null
+    ? await deps.runHostScriptWithStdin(script, stdin, candidate.env, runOptions)
+    : await deps.runHostScript(script, candidate.env, runOptions);
   const detail = run.error ?? (run.stderr.slice(-300) || undefined);
 
   if (action === "wake-proxy-status") {
@@ -169,4 +210,33 @@ export async function runHostWakeProxyAction(
     };
   }
   return { ...base, ok: true, result };
+}
+
+/**
+ * revoke-host-credential: moves the host's credential generation on, so the
+ * credential it holds stops working at once, then removes the file from the
+ * host. Needs no flag: revoking is always safe, and the sweep still catches up
+ * proxy wakes without it. The next install with the flag on issues a new one.
+ */
+async function revokeAction(
+  base: { action: HostWakeProxyAction; targetId: string; channel: ManagedHivraProvisionerChannel },
+  deps: Dependencies,
+): Promise<HostWakeProxyActionResult> {
+  const revoked = await deps.revokeCredential(base.targetId);
+  if (!revoked.ok) return { ...base, ok: false, httpStatus: 409, error: `Host credential could not be revoked (${revoked.reason}).` };
+  const candidate = resolveProxmoxTargetConfiguration(deps.env, base.targetId);
+  const run = await deps.runHostScript(buildHostCredentialRemoveScript(base.targetId), candidate.env, {
+    timeoutMs: SHORT_TIMEOUT_MS,
+    maxOutputBytes: MAX_OUTPUT_BYTES,
+  });
+  const result = parseHostWakeProxyResult(run.stdout) ?? undefined;
+  const hostFileRemoved = run.ok && (result?.status === "removed" || result?.status === "absent");
+  // The revocation already holds: the file left behind is only a credential that no longer works.
+  return {
+    ...base,
+    ok: true,
+    credentialGeneration: revoked.generation,
+    hostFileRemoved,
+    ...(result ? { result } : {}),
+  };
 }

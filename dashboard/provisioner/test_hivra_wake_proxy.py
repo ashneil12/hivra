@@ -649,7 +649,261 @@ class PeerTests(unittest.TestCase):
             h.close()
 
 
+# A fixed signing vector, shared with src/lib/hivra/ingress/__tests__/host-credential.test.ts:
+# both sides must sign a host call to Hivra byte for byte the same way.
+VECTOR_MATERIAL = "0123456789abcdef" * 4
+VECTOR_SIGNATURE = "6d5dd47b6da966cafc529097f666b90949ec3096e3fac30aa1872534dbaa65b5"
+
+
+def expected_signature(material, path, host_id, generation, timestamp, nonce, body):
+    """Hivra's check, written out independently of the proxy's sign_request."""
+    import hashlib
+    import hmac as hmac_module
+    lines = ["hivra-ingress-host-request-v1", path, host_id, str(generation), str(timestamp), nonce,
+             hashlib.sha256(body).hexdigest()]
+    return hmac_module.new(bytes.fromhex(material), "\n".join(lines).encode(), hashlib.sha256).hexdigest()
+
+
+class FakeHivra(object):
+    """Hivra's two host routes on loopback: checks every signature and answers from a script of statuses."""
+
+    def __init__(self, material, host_id="fixturehost", generation=2):
+        import http.server
+        self.material, self.host_id, self.generation = material, host_id, generation
+        self.calls = []
+        self.statuses = []
+        self.answer = {"ok": True, "state": "waking", "action": "reconciled"}
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                headers = {key.lower(): value for key, value in self.headers.items()}
+                good = headers.get("x-hivra-signature") == expected_signature(
+                    outer.material, self.path, headers.get("x-hivra-host", ""), headers.get("x-hivra-generation", ""),
+                    headers.get("x-hivra-timestamp", ""), headers.get("x-hivra-nonce", ""), body)
+                outer.calls.append({"path": self.path, "headers": headers, "body": json.loads(body), "signed": good})
+                status = outer.statuses.pop(0) if outer.statuses else 200
+                if not good:
+                    status = 401
+                data = json.dumps(outer.answer if status == 200 else {"ok": False, "error": "nope"}).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.origin = "http://127.0.0.1:%d" % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def wait_for(self, count, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while len(self.calls) < count and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return self.calls
+
+
+class HivraCallTests(ProxyTestCase):
+    def overrides(self):
+        self.cred_dir = tempfile.TemporaryDirectory()
+        return {"allow_test_origin": True, "credential_path": os.path.join(self.cred_dir.name, "host-credential.json")}
+
+    def setUp(self):
+        ProxyTestCase.setUp(self)
+        self.material = secrets.token_hex(32)
+        self.hivra = FakeHivra(self.material)
+        self.saved_backoff = proxy.REPORT_BACKOFF
+        proxy.REPORT_BACKOFF = (0.01, 0.01)
+
+    def tearDown(self):
+        proxy.REPORT_BACKOFF = self.saved_backoff
+        self.hivra.close()
+        ProxyTestCase.tearDown(self)
+        self.cred_dir.cleanup()
+
+    def write_credential(self, **changes):
+        doc = {"version": 1, "host_id": "fixturehost", "generation": 2, "credential": self.material,
+               "origin": self.hivra.origin}
+        doc.update(changes)
+        with open(self.h.cfg.credential_path, "w") as handle:
+            json.dump(doc, handle)
+
+    def stop_vm(self, vmid=VMID):
+        """The VM is not running at all (hibernated): no QMP socket."""
+        qemu = self.h.qemu[vmid]
+        qemu.close()
+        for path in (qemu.qmp_path, qemu.qga_path):
+            os.unlink(path)
+
+    def test_nap_wake_is_reported_signed(self):
+        self.write_credential()
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.wake()), 200)
+        calls = self.hivra.wait_for(1)
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertEqual(call["path"], "/api/hivra/ingress/wake-report")
+        self.assertTrue(call["signed"])
+        self.assertEqual(call["headers"]["x-hivra-host"], "fixturehost")
+        self.assertEqual(call["headers"]["x-hivra-generation"], "2")
+        self.assertLessEqual(abs(int(call["headers"]["x-hivra-timestamp"]) - time.time()), 5)
+        self.assertEqual(call["body"]["vmid"], VMID)
+        self.assertEqual(call["body"]["woke"], "nap")
+        self.assertEqual(call["body"]["from"], "ticket")
+        # The credential never reaches a log line.
+        self.assertFalse(any(self.material in line for line in LOGS))
+
+    def test_no_credential_no_call_and_already_awake_not_reported(self):
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.wake()), 200)
+        self.assertFalse(self.h.ctl({"cmd": "health"})["credential"])
+        self.write_credential()
+        self.assertTrue(self.h.ctl({"cmd": "health"})["credential"])
+        # Already running: nothing was resumed, so there is nothing to report.
+        self.assertEqual(json.loads(body_of(self.h.wake()))["woke"], "already")
+        time.sleep(0.3)
+        self.assertEqual(self.hivra.calls, [])
+
+    def test_report_retries_server_errors_but_not_refusals(self):
+        self.write_credential()
+        self.hivra.statuses = [503, 502]
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.wake()), 200)
+        self.assertEqual(len(self.hivra.wait_for(3)), 3)
+        time.sleep(0.2)
+        self.assertEqual(len(self.hivra.calls), 3)
+
+        self.hivra.calls.clear()
+        self.hivra.statuses = [409, 409, 409]
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.wake()), 200)
+        self.hivra.wait_for(1)
+        time.sleep(0.3)
+        self.assertEqual(len(self.hivra.calls), 1)
+
+    def test_a_revoked_or_wrong_credential_is_refused_by_hivra(self):
+        self.write_credential(credential=secrets.token_hex(32))
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.wake()), 200)
+        calls = self.hivra.wait_for(1)
+        self.assertFalse(calls[0]["signed"])
+        time.sleep(0.2)
+        # A 401 is not retried.
+        self.assertEqual(len(self.hivra.calls), 1)
+
+    def test_ticket_for_a_vm_that_is_not_running_asks_hivra_to_wake_it(self):
+        self.write_credential()
+        self.stop_vm()
+        response = self.h.wake()
+        self.assertEqual(status_of(response), 503)
+        self.assertIn(b"Retry-After: 5", response)
+        self.assertEqual(json.loads(body_of(response))["error"], "waking")
+        calls = self.hivra.wait_for(1)
+        self.assertEqual(calls[0]["path"], "/api/hivra/ingress/wake-request")
+        self.assertEqual(calls[0]["body"], {"vmid": VMID, "reason": "ticket"})
+        self.assertTrue(calls[0]["signed"])
+
+    def test_without_a_credential_a_stopped_vm_ticket_is_a_plain_503(self):
+        self.stop_vm()
+        response = self.h.wake()
+        self.assertEqual(status_of(response), 503)
+        self.assertEqual(json.loads(body_of(response))["error"], "qmp_socket_missing")
+        self.assertEqual(self.hivra.calls, [])
+
+    def test_a_bad_ticket_never_asks_hivra(self):
+        self.write_credential()
+        self.stop_vm()
+        self.assertEqual(status_of(self.h.wake(ticket=self.h.ticket(VMID, key=secrets.token_hex(32)))), 403)
+        time.sleep(0.2)
+        self.assertEqual(self.hivra.calls, [])
+
+    def test_request_command_is_throttled_per_vm(self):
+        self.write_credential()
+        answer = self.h.ctl({"cmd": "request", "vmid": VMID, "from": "doorbell"})
+        self.assertEqual(answer, {"ok": True, "vmid": VMID, "state": "waking"})
+        self.assertEqual(self.hivra.calls[0]["body"], {"vmid": VMID, "reason": "doorbell"})
+        again = self.h.ctl({"cmd": "request", "vmid": VMID})
+        self.assertTrue(again["throttled"])
+        self.assertEqual(len(self.hivra.calls), 1)
+        # An unknown reason from root is recorded as ctl.
+        self.h.ctl({"cmd": "request", "vmid": OTHER_VMID, "from": "Nonsense!"})
+        self.assertEqual(self.hivra.calls[1]["body"], {"vmid": OTHER_VMID, "reason": "ctl"})
+
+    def test_request_without_credential_is_not_throttled(self):
+        self.assertEqual(self.h.ctl({"cmd": "request", "vmid": VMID})["error"], "no_credential")
+        self.write_credential()
+        self.assertTrue(self.h.ctl({"cmd": "request", "vmid": VMID})["ok"])
+
+    def test_forwarder_may_request_only_its_routes_as_a_client(self):
+        self.write_credential()
+        answer = self.h.run(self.h.helper.dispatch("forwarder", {"cmd": "request", "vmid": OTHER_VMID}))
+        self.assertEqual(answer["error"], "unknown_vmid")
+        answer = self.h.run(self.h.helper.dispatch("forwarder", {"cmd": "request", "vmid": VMID, "from": "doorbell"}))
+        self.assertTrue(answer["ok"])
+        self.assertEqual(self.hivra.calls[0]["body"]["reason"], "client")
+
+    def test_forwarder_sends_only_signed_calls_to_hivra_paths(self):
+        headers = {name: "x" for name in proxy.SIGNED_HEADERS}
+        for url in (self.hivra.origin + "/elsewhere", "http://10.0.0.1/api/hivra/ingress/wake-report",
+                    "https://example.test.evil/api/hivra/ingress/wake-report/x", None):
+            answer = self.h.ctl({"cmd": "post", "url": url, "headers": headers, "body": "{}"}, path=self.h.cfg.fwd_path)
+            self.assertEqual(answer["error"], "bad_call", url)
+        extra = dict(headers, Cookie="a")
+        answer = self.h.ctl({"cmd": "post", "url": self.hivra.origin + "/api/hivra/ingress/wake-report",
+                             "headers": extra, "body": "{}"}, path=self.h.cfg.fwd_path)
+        self.assertEqual(answer["error"], "bad_call")
+        self.assertEqual(self.hivra.calls, [])
+
+    def test_unreachable_guest_gets_a_waking_page_for_browsers_and_json_otherwise(self):
+        self.h.guest.close()
+        page = self.h.get("/", extra=b"Accept: text/html,*/*\r\n")
+        self.assertEqual(status_of(page), 503)
+        self.assertIn(b"Retry-After: 5", page)
+        self.assertIn(b"http-equiv=\"refresh\"", page)
+        self.assertIn(b"waking up", page)
+        api = self.h.get("/api/thing", extra=b"Accept: application/json\r\n")
+        self.assertEqual(status_of(api), 503)
+        self.assertIn(b"Retry-After: 5", api)
+        self.assertEqual(json.loads(body_of(api)), {"error": "unreachable"})
+
+
 class UnitTests(unittest.TestCase):
+    def test_signing_vector_matches_hivra(self):
+        credential = {"host_id": "fixturehost", "generation": 3, "credential": VECTOR_MATERIAL}
+        body = b'{"from":"ticket","vmid":1234}'
+        signature = proxy.sign_request(credential, "/api/hivra/ingress/wake-report", body, 1700000000, "nonce-0123456789ab")
+        self.assertEqual(signature, VECTOR_SIGNATURE)
+        self.assertEqual(signature, expected_signature(VECTOR_MATERIAL, "/api/hivra/ingress/wake-report", "fixturehost", 3,
+                                                       1700000000, "nonce-0123456789ab", body))
+
+    def test_credential_document_is_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = proxy.Config(credential_path=os.path.join(tmp, "c.json"))
+            self.assertIsNone(proxy.load_credential(cfg))
+            good = {"version": 1, "host_id": "fixturehost", "generation": 1, "credential": "ab" * 32,
+                    "origin": "https://app.example.test"}
+            for change in ({}, {"origin": "http://app.example.test"}, {"origin": "http://127.0.0.1:9"},
+                           {"origin": "https://app.example.test/path"}, {"generation": 0}, {"generation": True},
+                           {"credential": "AB" * 32}, {"host_id": "Bad Host"}, {"version": 2}, {"extra": 1}):
+                with open(cfg.credential_path, "w") as handle:
+                    json.dump(dict(good, **change), handle)
+                loaded = proxy.load_credential(cfg)
+                if change:
+                    self.assertIsNone(loaded, change)
+                else:
+                    self.assertEqual(loaded, good)
+            os.unlink(cfg.credential_path)
+            os.symlink(os.path.join(tmp, "elsewhere"), cfg.credential_path)
+            self.assertIsNone(proxy.load_credential(cfg))
+
     def test_ticket_round_trip(self):
         key = secrets.token_hex(32)
         now = int(time.time())
