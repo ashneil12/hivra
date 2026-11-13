@@ -2,12 +2,14 @@
 # vmid). Bundle paths cannot carry '@', so it ships under this name.
 [Unit]
 Description=Hivra host connector for computer %i (cloudflared, HTTP/2 to the edge, into the wake proxy)
-After=network-online.target hivra-wake-proxy.service
+After=network-online.target hivra-wake-proxy.service hivra-ingress-pins.service
 Wants=network-online.target
 # Written over SSH stdin by the cutover step (0600, root): TUNNEL_TOKEN and
 # TUNNEL_METRICS=127.0.0.1:<port unique on this host>. cloudflared reads both
 # from its environment, so the token never appears in argv.
 ConditionPathExists=/etc/hivra/ingress/%i.env
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

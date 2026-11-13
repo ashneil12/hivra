@@ -5,7 +5,7 @@ import { buildIdleProbeHostScript, parseIdleProbeOutput, parseIdleProbeRefusal }
 import { DISCORD_CHANNEL_SPEC } from "../registry";
 import { readChannelWakeRows } from "../store";
 import type { ChannelCoverageInput, ChannelWakeAdapter, ChannelWakeAdapterContext } from "../types";
-import { wakeDoorbellEnabled } from "../doorbell-scripts";
+import { wakeDoorbellBlocker } from "../doorbell-scripts";
 import {
   buildDiscordDoorbellArmHostScript,
   parseDiscordDoorbellArmOutput,
@@ -56,7 +56,8 @@ async function credFpOf(agentId: string): Promise<string | null> {
 
 /** Arms the doorbell's Discord session for one computer. Never throws; a failure keeps the agent awake. */
 export async function armDiscordDoorbell(ctx: ChannelWakeAdapterContext, deps: DiscordDoorbellDeps = {}): Promise<DiscordDoorbellArmResult> {
-  if (!wakeDoorbellEnabled("discord", deps.env ?? process.env)) return { ok: false, reason: "doorbell_off" };
+  const blocked = wakeDoorbellBlocker("discord", deps.env ?? process.env);
+  if (blocked) return { ok: false, reason: blocked };
   const target = ctx.target;
   if (!target || !target.bindingTag) return { ok: false, reason: "no_target" };
   try {
@@ -105,9 +106,11 @@ export function createDiscordDoorbellAdapter(deps: DiscordDoorbellDeps = {}): Ch
     ...DISCORD_CHANNEL_SPEC,
     coverageBlockers(input: ChannelCoverageInput): string[] {
       const reasons = DISCORD_CHANNEL_SPEC.coverageBlockers(input);
-      if (!wakeDoorbellEnabled("discord", deps.env ?? process.env)) reasons.push("doorbell_off");
+      const blocker = wakeDoorbellBlocker("discord", deps.env ?? process.env);
+      if (blocker) reasons.push(blocker);
       return reasons;
     },
+    canHear: () => wakeDoorbellBlocker("discord", deps.env ?? process.env) === null,
     async armBeforeSleep(ctx) {
       const result = await armDiscordDoorbell(ctx, deps);
       if (!result.ok) return { ok: false, reason: result.reason };

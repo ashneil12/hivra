@@ -1068,7 +1068,12 @@ if [ "$CTL_OK" != true ]; then
   STOP_REASON="$CTL_REASON"
   observe
 ${hostIngress ? `  # Paused after all: the proxy gets its marker, so it can still wake it. Otherwise requests flow again.
-  if [ "$OBS" = napping ] && ingress_mark && ingress_ctl 8 ${napped} >/dev/null 2>&1; then :; else ingress_unmark; ingress_undrain; fi
+  if [ "$OBS" = napping ] && ingress_mark && ingress_ctl 8 ${napped} >/dev/null 2>&1; then :; else
+    ingress_unmark
+    # Paused with no marker the proxy would never wake it: resume it here.
+    if [ "$OBS" = napping ]; then ingress_resume; observe; fi
+    ingress_undrain
+  fi
 ` : ""}  # Whatever else the computer now reports, it is never resumed from here.
   if [ "$STOP_REASON" = unconfirmed ]; then finish false suspend_unconfirmed "$OBS"; fi
   finish false suspend_failed "$OBS"
@@ -1145,13 +1150,20 @@ if [ "$ONBOOT_WAS" = 1 ]; then
   if ! qm set "$VMID" --onboot 0 >/dev/null; then rm -f "$ONBOOT_MARK"; finish false onboot_failed "$FROM"; fi
   ONBOOT_PENDING=1
 fi
-STEP="$(now_ms)"
+${hostIngress ? `# A running computer: the proxy holds new requests back first, and open streams or requests mean busy.
+# (Autostart, if turned off above, comes back on the way out: the computer is still up.)
+if [ "$FROM" = awake ]; then
+  ingress_drain || finish false "$INGRESS_ERR" "$FROM"
+fi
+` : ""}STEP="$(now_ms)"
 RC=0
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
 mark hibernate "$STEP"
 ${hostIngress ? `# Only a computer that is still paused keeps its nap marker; the proxy never resumes any other.
 [ "$OBS" = napping ] || ingress_unmark
+# Still running: requests flow again.
+if [ "$FROM" = awake ] && [ "$OBS" = awake ]; then ingress_undrain; fi
 ` : ""}HAS_VMSTATE=0
 if printf '%s\\n' "$CONFIG" | grep '^vmstate:' >/dev/null; then HAS_VMSTATE=1; fi
 if [ "$OBS" = hibernated ] && [ "$HAS_VMSTATE" = 1 ]; then

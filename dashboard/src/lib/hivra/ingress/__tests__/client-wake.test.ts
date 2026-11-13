@@ -19,10 +19,10 @@ const AGENT = "11111111-1111-4111-8111-111111111111";
 const target = { vmid: 1234, bindingTag: "hivra-agent-abc" };
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 const base = {
-  vmid: 1107,
-  hostname: "box-1107.example.test",
+  vmid: 4321,
+  hostname: "box-4321.example.test",
   bindingTag: "hivra-agent-abc",
-  guestIp: "10.250.20.7",
+  guestIp: "10.250.20.57",
   ticketKey: "a".repeat(64),
   generation: 4,
 };

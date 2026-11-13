@@ -283,12 +283,17 @@ async function performWakeSteps(
     const resolved = await resolveSleepTarget(row, LOG_SOURCE);
     if (!resolved.ok) return failed(`target_${resolved.code}`);
     const target = resolved.target;
-    // Host ingress (only read when it was ever configured here). A row that cannot be read means the old wake.
+    // Host ingress (only read when it was ever configured here). A row that
+    // cannot be read, or a cutover left half done, gets the ingress wake: it
+    // removes the proxy's nap marker (harmless when there is none) and leaves
+    // the guest's tunnel alone (it may be the host's, or off); the public
+    // health check below says whether the agent answers.
     const ingress: LoadedIngressState = await loadAgentIngressState(agentId, {
       vmid: target.vmid,
       hostId: String(target.executionContext?.host ?? ""),
     });
-    const hostIngress = ingress.kind === "row" && ingress.state.hostIngress;
+    const hostIngress = ingress.kind === "error"
+      || (ingress.kind === "row" && (ingress.state.hostIngress || ingress.state.interrupted));
     if (hostIngress) detail.host_ingress = true;
 
     if (restore) {

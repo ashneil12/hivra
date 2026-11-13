@@ -21,7 +21,7 @@ import type { AgentIngressRow, IngressPatch } from "../store";
 
 const AGENT = "11111111-1111-4111-8111-111111111111";
 const TUNNEL = "22222222-2222-4222-8222-222222222222";
-const HOSTNAME = "box-1107.example.test";
+const HOSTNAME = "box-4321.example.test";
 const SECRET_ENV = { HIVRA_HOST_INGRESS: "canary", HIVRA_INGRESS_SECRET: "s".repeat(40) };
 const ids = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
 
@@ -45,7 +45,7 @@ function world(options: { fail?: Step[]; mode?: "guest" | "host"; phase?: string
     origin: "http://localhost:8080",
   };
   let row: AgentIngressRow = {
-    agent_id: AGENT, vmid: 1107, host_id: "hosta", mode: options.mode ?? "guest", phase: options.phase ?? ((options.mode ?? "guest") === "host" ? "cutover" : "none"),
+    agent_id: AGENT, vmid: 4321, host_id: "hosta", mode: options.mode ?? "guest", phase: options.phase ?? ((options.mode ?? "guest") === "host" ? "cutover" : "none"),
     metrics_port: null, generation: 3, last_error: null, lease_id: null, lease_expires_at: null, updated_at: null,
   };
   let rowExists = options.mode !== undefined;
@@ -60,10 +60,10 @@ function world(options: { fail?: Step[]; mode?: "guest" | "host"; phase?: string
     env: SECRET_ENV,
     readAgent: async () => ({
       id: AGENT, user_id: "u", status: "running", desired_state: "running", operation_id: null, sleep_state: "awake",
-      computer_substrate: "proxmox-kvm", cf_tunnel_id: TUNNEL, cf_hostname: HOSTNAME, ip: "10.250.20.7", vmid: 1107,
+      computer_substrate: "proxmox-kvm", cf_tunnel_id: TUNNEL, cf_hostname: HOSTNAME, ip: "10.250.20.57", vmid: 4321,
       ...(options.agent ?? {}),
     }),
-    resolveTarget: async () => ({ env: {}, vmid: 1107, bindingTag: "hivra-agent-abc", hostId: "hosta", managed: true }),
+    resolveTarget: async () => ({ env: {}, vmid: 4321, bindingTag: "hivra-agent-abc", hostId: "hosta", managed: true }),
     readHostRow: async () => ({ ingress_mode: "canary" }),
     runHostScript: async (script) => {
       scripts.push(script);
@@ -157,6 +157,9 @@ function world(options: { fail?: Step[]; mode?: "guest" | "host"; phase?: string
     newLeaseId: () => ids(900 + serial++),
   };
   const reachable = () => state.guest.on || state.host.on;
+  // After every connector reconnects: only one holding the current secret registers again.
+  const reachableAfterReconnect = () =>
+    (state.guest.on && state.guest.secret === state.secret) || (state.host.on && state.host.secret === state.secret);
   const leaks = () => {
     const pattern = /run-doc-x{40}/;
     const logged = JSON.stringify([(log.info as jest.Mock).mock.calls, (log.warn as jest.Mock).mock.calls, (log.error as jest.Mock).mock.calls]);
@@ -166,7 +169,7 @@ function world(options: { fail?: Step[]; mode?: "guest" | "host"; phase?: string
       logs: pattern.test(logged),
     };
   };
-  return { deps, state, row: () => row, patches, stdins, reachable, leaks };
+  return { deps, state, row: () => row, patches, stdins, reachable, reachableAfterReconnect, leaks };
 }
 
 beforeEach(() => jest.clearAllMocks());
@@ -185,6 +188,8 @@ describe("enableHostIngress", () => {
     expect(w.leaks()).toEqual({ scripts: false, patches: false, logs: false });
     // The token went only as stdin, and only to the attach step.
     expect(w.stdins).toHaveLength(1);
+    // The lease is renewed before the long steps (an empty patch only renews it).
+    expect(w.patches.filter((patch) => Object.keys(patch).length === 0).length).toBeGreaterThanOrEqual(3);
   });
 
   it("gives the route the box bearer's hash and the owner's agent page for client wakes, when it has them", async () => {
@@ -202,6 +207,21 @@ describe("enableHostIngress", () => {
     await enableHostIngress(AGENT, plain.deps);
     const plainRoute = (JSON.parse(plain.stdins[0]) as { route: Record<string, unknown> }).route;
     expect(Object.keys(plainRoute).sort()).toEqual(["binding_tag", "generation", "guest_ip", "guest_port", "hostname", "ticket_key", "version", "vmid"]);
+  });
+
+  it("lets go of its lease and changes nothing when a sleep claimed the agent in the meantime", async () => {
+    const w = world();
+    let reads = 0;
+    const readAgent = async (id: string) => {
+      reads += 1;
+      const agent = await w.deps.readAgent!(id);
+      return reads > 1 ? { ...agent, operation_id: "sleep-op" } : agent;
+    };
+    const result = await enableHostIngress(AGENT, { ...w.deps, readAgent });
+    expect(result).toMatchObject({ ok: false, reason: "agent_busy", httpStatus: 409 });
+    expect(w.row().lease_id).toBeNull();
+    expect(w.state.guest.on).toBe(true);
+    expect(w.state.secret).toBe(1);
   });
 
   it("answers already for an agent in host mode", async () => {
@@ -223,9 +243,9 @@ describe("enableHostIngress", () => {
   });
 
   it("refuses an agent that is asleep, busy or has no named tunnel", async () => {
-    expect(ingressAgentRefusal({ status: "running", sleep_state: "napping", cf_tunnel_id: TUNNEL, cf_hostname: HOSTNAME, ip: "10.250.20.7" })).toBe("agent_asleep");
-    expect(ingressAgentRefusal({ status: "running", operation_id: "x", cf_tunnel_id: TUNNEL, cf_hostname: HOSTNAME, ip: "10.250.20.7" })).toBe("agent_busy");
-    expect(ingressAgentRefusal({ status: "running", cf_tunnel_id: null, cf_hostname: null, ip: "10.250.20.7" })).toBe("no_named_tunnel");
+    expect(ingressAgentRefusal({ status: "running", sleep_state: "napping", cf_tunnel_id: TUNNEL, cf_hostname: HOSTNAME, ip: "10.250.20.57" })).toBe("agent_asleep");
+    expect(ingressAgentRefusal({ status: "running", operation_id: "x", cf_tunnel_id: TUNNEL, cf_hostname: HOSTNAME, ip: "10.250.20.57" })).toBe("agent_busy");
+    expect(ingressAgentRefusal({ status: "running", cf_tunnel_id: null, cf_hostname: null, ip: "10.250.20.57" })).toBe("no_named_tunnel");
     const w = world({ agent: { sleep_state: "napping" } });
     await expect(enableHostIngress(AGENT, w.deps)).resolves.toMatchObject({ ok: false, reason: "agent_asleep", httpStatus: 409 });
   });
@@ -294,15 +314,85 @@ describe("rollbackHostIngress", () => {
     expect(result.ok).toBe(true);
   });
 
-  it.each<Step[]>([["guest_enable"], ["rotate"], ["detach"]])("a failure at %s leaves the agent reachable", async (...failures) => {
+  it.each<Step[]>([["guest_enable"], ["detach"]])("a failure at %s leaves the agent reachable, on a secret that still works", async (...failures) => {
     const w = world({ mode: "host", fail: failures });
     const result = await rollbackHostIngress(AGENT, w.deps);
     expect(result.ok).toBe(false);
     expect(w.reachable()).toBe(true);
-    if (failures.includes("guest_enable") || failures.includes("rotate")) {
+    // Nothing rotated while the host may still be serving: every running connector survives a reconnect.
+    expect(w.state.secret).toBe(1);
+    expect(w.reachableAfterReconnect()).toBe(true);
+    if (failures.includes("guest_enable")) {
       expect(w.state.host.on).toBe(true);
       expect(w.row().mode).toBe("host");
     }
+  });
+
+  it("rotates only once the host side is gone, and hands the guest the new token", async () => {
+    const w = world({ mode: "host" });
+    const result = await rollbackHostIngress(AGENT, w.deps);
+    expect(result.ok).toBe(true);
+    expect(w.state.secret).toBe(2);
+    expect(w.state.guest.secret).toBe(2);
+    expect(w.reachableAfterReconnect()).toBe(true);
+    const order = result.steps.map((step) => step.step);
+    expect(order.indexOf("rotate")).toBeGreaterThan(order.indexOf("detach"));
+  });
+
+  it("a failed rotation still finishes the rollback on the old token, and says so", async () => {
+    const w = world({ mode: "host", fail: ["rotate"] });
+    const result = await rollbackHostIngress(AGENT, w.deps);
+    expect(result).toMatchObject({ ok: true, mode: "guest", phase: "rolled_back" });
+    expect(w.row().last_error).toBe("rollback_rotate_failed");
+    expect(w.reachableAfterReconnect()).toBe(true);
+  });
+
+  it("a guest that cannot take the rotated token is recorded stale, and the next rollback hands it over", async () => {
+    const w = world({ mode: "host" });
+    let enables = 0;
+    const flaky: Partial<IngressDeps> = {
+      ...w.deps,
+      runHostScriptWithStdin: async (script, stdin, env, options) => {
+        if (script.includes("SCRIPT='guest_enable'")) {
+          enables += 1;
+          if (enables > 1 && enables <= 3) return { ok: true, stderr: "", stdout: 'HIVRA_INGRESS_STEP {"step":"guest_enable","ok":false,"ms":1,"reason":"restart_failed"}\n' };
+        }
+        return w.deps.runHostScriptWithStdin!(script, stdin, env, options);
+      },
+    };
+    const result = await rollbackHostIngress(AGENT, flaky);
+    expect(result).toMatchObject({ ok: false, mode: "guest", phase: "failed", reason: "guest_token_stale" });
+    expect(w.row()).toMatchObject({ mode: "guest", phase: "failed", last_error: "guest_token_stale" });
+    expect(w.reachableAfterReconnect()).toBe(false);
+    const again = await rollbackHostIngress(AGENT, flaky);
+    expect(again).toMatchObject({ ok: true, mode: "guest", phase: "rolled_back" });
+    expect(w.reachableAfterReconnect()).toBe(true);
+  });
+
+  it("finishes an enable that was cut short after the guest connector went off: the guest gets the token back before the host side goes", async () => {
+    const w = world({ mode: "guest", phase: "host_connector" });
+    w.state.secret = 2;
+    w.state.guest = { id: w.state.guest.id, secret: 1, on: false };
+    w.state.guestTokenFile = false;
+    w.state.host = { id: ids(77), secret: 2, on: true };
+    w.state.hostFiles = true;
+    const result = await rollbackHostIngress(AGENT, w.deps);
+    expect(result).toMatchObject({ ok: true, mode: "guest", phase: "rolled_back" });
+    expect(w.state.guest).toMatchObject({ on: true, secret: 2 });
+    expect(w.state.host.on).toBe(false);
+    expect(w.reachableAfterReconnect()).toBe(true);
+  });
+
+  it("keeps the host side when the cut-short enable's guest cannot take the token", async () => {
+    const w = world({ mode: "guest", phase: "host_connector", fail: ["guest_enable"] });
+    w.state.guest.on = false;
+    w.state.guestTokenFile = false;
+    w.state.host = { id: ids(77), secret: 1, on: true };
+    w.state.hostFiles = true;
+    const result = await rollbackHostIngress(AGENT, w.deps);
+    expect(result).toMatchObject({ ok: false, mode: "guest", phase: "failed" });
+    expect(w.state.host.on).toBe(true);
+    expect(w.row().last_error).toBe("guest_token_stale");
   });
 
   it("does nothing to the host when the agent cannot be woken", async () => {
@@ -317,24 +407,30 @@ describe("rollbackHostIngress", () => {
 describe("releaseHostIngressOnDelete", () => {
   it("does one read and nothing else for an agent that never used host ingress", async () => {
     const runDetach = jest.fn();
-    await releaseHostIngressOnDelete({ agentId: AGENT, hostname: HOSTNAME }, { read: async () => null, runDetach });
+    await releaseHostIngressOnDelete({ agentId: AGENT, hostname: HOSTNAME }, { read: async () => null, runDetach, env: SECRET_ENV });
     expect(runDetach).not.toHaveBeenCalled();
+  });
+
+  it("reads nothing at all when host ingress was never configured here", async () => {
+    const read = jest.fn();
+    await releaseHostIngressOnDelete({ agentId: AGENT, hostname: HOSTNAME }, { read, env: {} });
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("detaches on the row's host and drops the row", async () => {
     const runDetach = jest.fn(async () => true);
     const remove = jest.fn(async () => true);
-    const row = { agent_id: AGENT, vmid: 1107, host_id: "hosta" } as AgentIngressRow;
-    await releaseHostIngressOnDelete({ agentId: AGENT, hostname: "BOX-1107.example.test" }, { read: async () => row, runDetach, remove });
-    expect(runDetach).toHaveBeenCalledWith("hosta", 1107, HOSTNAME);
+    const row = { agent_id: AGENT, vmid: 4321, host_id: "hosta" } as AgentIngressRow;
+    await releaseHostIngressOnDelete({ agentId: AGENT, hostname: "BOX-4321.example.test" }, { read: async () => row, runDetach, remove, env: SECRET_ENV });
+    expect(runDetach).toHaveBeenCalledWith("hosta", 4321, HOSTNAME);
     expect(remove).toHaveBeenCalledWith(AGENT);
   });
 
   it("never throws and keeps the row when the host cleanup fails", async () => {
     const remove = jest.fn();
-    const row = { agent_id: AGENT, vmid: 1107, host_id: "hosta" } as AgentIngressRow;
+    const row = { agent_id: AGENT, vmid: 4321, host_id: "hosta" } as AgentIngressRow;
     await expect(releaseHostIngressOnDelete({ agentId: AGENT, hostname: HOSTNAME }, {
-      read: async () => row, runDetach: async () => { throw new Error("ssh"); }, remove,
+      read: async () => row, runDetach: async () => { throw new Error("ssh"); }, remove, env: SECRET_ENV,
     })).resolves.toBeUndefined();
     expect(remove).not.toHaveBeenCalled();
   });

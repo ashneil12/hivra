@@ -7,7 +7,7 @@ import { rollbackHostIngress } from "@/lib/hivra/ingress/rollback";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const SOURCE = "ops:hivra:ingress:rollback";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

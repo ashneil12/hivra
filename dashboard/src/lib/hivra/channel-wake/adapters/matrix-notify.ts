@@ -1,6 +1,6 @@
 import "server-only";
 
-import { channelWakeSecret } from "../config";
+import { resolveChannelWakeConfig } from "../config";
 import { readChannelWakeRows, type ChannelWakeRow } from "../store";
 import { requestChannelWake, type ChannelWakeRequest } from "../lifecycle";
 import { readHivraAgentRow, type AgentRow } from "../../agent-wake";
@@ -49,8 +49,11 @@ function devicesOf(body: unknown): unknown[] | null {
 }
 
 export async function handleMatrixNotify(body: unknown, deps: MatrixNotifyDeps): Promise<MatrixNotifyOutcome> {
-  const secret = channelWakeSecret(deps.env ?? process.env);
-  if (!secret) return { status: 404 };
+  // The channel wake switches, not only the secret: with HIVRA_CHANNEL_WAKE off or matrix not listed the
+  // route does not exist (the sweep takes those arms down and wakes any agent asleep on them).
+  const config = resolveChannelWakeConfig(deps.env ?? process.env);
+  if (!config || !config.channels.has("matrix")) return { status: 404 };
+  const secret = config.secret;
   const devices = devicesOf(body);
   if (!devices || devices.length > MAX_DEVICES) return { status: 400 };
 

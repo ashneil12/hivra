@@ -2,6 +2,8 @@
 Description=Hivra wake helper (root half of the host wake proxy: routes, nap markers and QMP resume)
 After=local-fs.target systemd-tmpfiles-setup.service pve-cluster.service
 Before=hivra-wake-proxy.service
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify

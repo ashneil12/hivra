@@ -88,6 +88,46 @@ agent that is asleep.
 `timing` adds `host_ms` and `ssh_ready_ms` to each wake's `detail`, which
 splits host time from connection time.
 
+## Host ingress and wake on any message
+
+The agent's public connector can move from its computer to the host, behind a
+small wake proxy, so a request wakes a napping agent; host doorbells and the
+Matrix push gateway wake it on email, Discord and Matrix messages. Every
+switch is off by default, and each one only ever keeps agents awake when it
+is off.
+
+| Switch | Where | Values |
+|---|---|---|
+| `HIVRA_HOST_INGRESS` | server env | `off`, `canary`, `on`. `off` is the kill switch: the sweep wakes every host-served agent and never naps it |
+| `HIVRA_INGRESS_SECRET` | server env | random, at least 32 characters. Derives each route's ticket key. Needed for any enable |
+| `proxmox_hosts.ingress_mode` | database, per host | `off` (default), `canary`, `on` |
+| `hivra_agent_ingress.mode` | database, per agent | `guest` or `host`, written only by the enable and rollback routes |
+| `HIVRA_HOST_WAKE_PROXY_ENABLED` | server env | `true` allows the `install-wake-proxy` bundle action |
+| `HIVRA_INGRESS_HOST_CREDENTIAL` | server env | `true` lets hosts call Hivra (`wake-report`, `wake-request`). The doorbells need it: without it they do not cover any channel, and the sweep wakes agents armed on them |
+| `HIVRA_WAKE_DOORBELLS` | server env | comma list of `email`, `discord` |
+| `HIVRA_CHANNEL_WAKE` | server env | `off` (default), `canary`, `on` |
+| `HIVRA_CHANNEL_WAKE_CHANNELS` | server env | comma list, for example `matrix,email` |
+| `HIVRA_CHANNEL_WAKE_SECRET` | server env | random, at least 32 characters. Unset means off, and it must stay set until every channel row reads `idle` |
+| `HIVRA_FAST_WAKE` | server env | add `ingress_ticket` for the server's ticket wake through the proxy |
+| client-wake level | per host, `ctl client-wake ticket\|auth` as root | `ticket` (default) |
+
+Once any agent has been moved to the host, keep `HIVRA_HOST_INGRESS` set
+(`off` is fine) and `HIVRA_INGRESS_SECRET` set: with both unset the server
+stops reading ingress rows altogether, so the kill switch no longer runs.
+Roll every agent back (`/api/ops/hivra/ingress/rollback`) before removing them.
+
+Operator routes (bearer `CRON_SECRET`): `/api/ops/hivra/ingress/enable`,
+`/rollback` and `/status` per agent; the `provisioner-bundle` route's
+`install-wake-proxy`, `wake-proxy-status`, `remove-wake-proxy` and
+`revoke-host-credential` actions per host, plus the doorbell's own install,
+status and remove actions. Remove the doorbell before the wake proxy.
+
+A cutover that was cut short (an enable stopped mid-run, or a rollback that
+could not hand the computer a working token) leaves a guest-mode row in phase
+`forwarder` or `host_connector`, or `failed` with `last_error`
+`recovery_failed`, `detach_failed` or `guest_token_stale`. Such an agent is
+kept awake until a rollback finishes it; run the rollback again.
+
 ## Rollback
 
 Set `HIVRA_SLEEP_MODE=off`, or the host's `sleep_mode` to `off`. Nothing new

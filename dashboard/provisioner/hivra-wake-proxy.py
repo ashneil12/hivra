@@ -140,6 +140,8 @@ BODY_TIMEOUT = 10.0
 AUTHED_REFRESH = 30.0
 BAD_PROOF_LIMIT = 20
 BAD_PROOF_WINDOW = 60.0
+# Clients remembered for bad proofs before idle ones are dropped.
+BAD_PROOF_SOURCES = 4096
 WAKE_CONNECT_DEADLINE = 3.0
 WAKE_URL_MAX = 512
 
@@ -168,7 +170,8 @@ MAX_VMID = 999_999_999
 
 ROOT_COMMANDS = frozenset(("wake", "status", "drain", "undrain", "napped", "stats", "reload", "health", "request",
                            "authed", "client-wake"))
-FORWARDER_COMMANDS = frozenset(("wake", "status", "health", "request", "authed"))
+# Never "request": an internet-facing process must not make Hivra wake a computer without a ticket or owner proof.
+FORWARDER_COMMANDS = frozenset(("wake", "status", "health", "authed"))
 # The wake doorbell may only ask Hivra for a wake (always as "doorbell") and read health.
 DOORBELL_COMMANDS = frozenset(("health", "request"))
 FWD_COMMANDS = frozenset(("drain", "undrain", "napped", "stats", "reload", "health", "post"))
@@ -796,6 +799,34 @@ def release_flock(fd):
         os.close(fd)
 
 
+def napped_state(cfg, vmid):
+    """Whether the VM is napped behind the proxy: a valid marker AND QEMU itself says paused. A VM someone
+    resumed outside the wake script (a manual resume, a wake that could not remove the marker) is running:
+    it is not napped, and its marker is removed under the per-VM lock (left alone while a script holds it).
+    QMP that cannot be read counts as napped, so no request reaches a VM that may be paused."""
+    if marker_state(cfg, vmid) != "valid":
+        return False
+    try:
+        status = qmp(cfg, vmid, "status")
+    except Fail:
+        return True
+    if status == "paused":
+        return True
+    if status == "running":
+        fd = take_flock(os.path.join(cfg.lock_dir, "hivra-vm-%d.lock" % vmid), 0)
+        if fd is not None:
+            try:
+                if marker_state(cfg, vmid) == "valid" and qmp(cfg, vmid, "status") == "running":
+                    remove_marker(cfg, vmid)
+                    log("marker_running", vmid=vmid)
+            except Fail:
+                pass
+            finally:
+                release_flock(fd)
+        return False
+    return True
+
+
 def wake_vm(cfg, vmid, binding_tag):
     """Resume a napped VM under the sleep scripts' per-VM lock. Never resumes a VM without a valid marker."""
     t0 = mono()
@@ -1112,8 +1143,8 @@ class Helper(object):
             if command == "wake":
                 return await self.wake(role, vmid, request)
             if command == "status":
-                state = await asyncio.get_running_loop().run_in_executor(self.pool, marker_state, self.cfg, vmid)
-                return {"ok": True, "vmid": vmid, "napped": state == "valid", "route": vmid in self.routes}
+                napped = await asyncio.get_running_loop().run_in_executor(self.pool, napped_state, self.cfg, vmid)
+                return {"ok": True, "vmid": vmid, "napped": napped, "route": vmid in self.routes}
             if command == "stats":
                 return await self.stats(vmid)
             if command == "request":
@@ -1715,13 +1746,13 @@ class Forwarder(object):
             await self.napped_request(request, route, proof, body, reader, writer)
             return
         if proof is not None:
-            self.note_authed(vmid, proof)
+            self.note_authed(vmid, proof, request)
         await self.forward(request, route, reader, writer, body, proof=proof)
 
     async def napped_request(self, request, route, proof, body, reader, writer):
         """A request for a napped VM. Only a verified owner proof, at the auth level, resumes it; anything else is told it sleeps."""
         vmid = route["vmid"]
-        if proof is not None and not self.proof_limited(vmid):
+        if proof is not None and not self.proof_limited(vmid, request):
             answer = await unix_request(self.cfg.ctl_path, {"cmd": "wake", "vmid": vmid, "proof": proof}, 15.0)
             error = answer.get("error") if isinstance(answer, dict) else None
             if answer is not None and answer.get("ok"):
@@ -1730,13 +1761,13 @@ class Forwarder(object):
                 await self.forward(request, route, reader, writer, body, connect_deadline=WAKE_CONNECT_DEADLINE)
                 return
             if error == "proof_refused":
-                self.bad_proofs[vmid].append(mono())
+                self.note_bad_proof(vmid, request)
             elif error == "waking":
                 await self.waking(request, writer)
                 return
         await self.asleep(request, writer, route)
 
-    def background_client_wake(self, vmid, proof):
+    def background_client_wake(self, vmid, proof, request):
         if vmid in self.client_asking:
             return
         self.client_asking.add(vmid)
@@ -1745,7 +1776,7 @@ class Forwarder(object):
             try:
                 answer = await unix_request(self.cfg.ctl_path, {"cmd": "wake", "vmid": vmid, "proof": proof}, 15.0)
                 if answer is not None and answer.get("error") == "proof_refused":
-                    self.bad_proofs[vmid].append(mono())
+                    self.note_bad_proof(vmid, request)
             finally:
                 self.client_asking.discard(vmid)
 
@@ -1753,26 +1784,41 @@ class Forwarder(object):
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
-    def proof_limited(self, vmid):
-        return window_full(self.bad_proofs[vmid], BAD_PROOF_WINDOW, BAD_PROOF_LIMIT)
+    def proof_source(self, vmid, request):
+        """Bad proofs count per VM and per client (the address the edge saw), so one client sending junk
+        cannot stop the owner's own proofs from waking the VM or keeping it marked in use."""
+        sources = request.header("cf-connecting-ip") if request is not None else []
+        source = sources[0].strip()[:64] if len(sources) == 1 else "-"
+        return (vmid, source)
 
-    def note_authed(self, vmid, proof):
+    def proof_limited(self, vmid, request):
+        key = self.proof_source(vmid, request)
+        window = self.bad_proofs.get(key)
+        return window is not None and window_full(window, BAD_PROOF_WINDOW, BAD_PROOF_LIMIT)
+
+    def note_bad_proof(self, vmid, request):
+        if len(self.bad_proofs) > BAD_PROOF_SOURCES:
+            for key in [key for key, window in self.bad_proofs.items() if not window_full(window, BAD_PROOF_WINDOW, 1)]:
+                del self.bad_proofs[key]
+        self.bad_proofs[self.proof_source(vmid, request)].append(mono())
+
+    def note_authed(self, vmid, proof, request):
         """Tell the helper, at most every AUTHED_REFRESH seconds per VM and in the background, that a proof reached the VM."""
         last = self.authed_at.get(vmid)
-        if (last is not None and mono() - last < AUTHED_REFRESH) or vmid in self.authed_checking or self.proof_limited(vmid):
+        if (last is not None and mono() - last < AUTHED_REFRESH) or vmid in self.authed_checking or self.proof_limited(vmid, request):
             return
         self.authed_checking.add(vmid)
-        task = asyncio.get_running_loop().create_task(self.check_authed(vmid, proof))
+        task = asyncio.get_running_loop().create_task(self.check_authed(vmid, proof, request))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
-    async def check_authed(self, vmid, proof):
+    async def check_authed(self, vmid, proof, request):
         try:
             answer = await unix_request(self.cfg.ctl_path, {"cmd": "authed", "vmid": vmid, "proof": proof}, CTL_TIMEOUT)
             if answer is not None and answer.get("ok"):
                 self.authed_at[vmid] = mono()
             elif answer is not None and answer.get("error") == "proof_refused":
-                self.bad_proofs[vmid].append(mono())
+                self.note_bad_proof(vmid, request)
         finally:
             self.authed_checking.discard(vmid)
 
@@ -1895,8 +1941,8 @@ class Forwarder(object):
                 # A computer that is starting (a hibernated one being restored) is not up yet. An owner's
                 # request for one that is not running at all asks the helper, in the background, to have
                 # Hivra wake it (only at the auth level; a paused VM without a marker is never touched).
-                if proof is not None and not self.proof_limited(vmid):
-                    self.background_client_wake(vmid, proof)
+                if proof is not None and not self.proof_limited(vmid, request):
+                    self.background_client_wake(vmid, proof, request)
                 await self.waking(request, writer)
                 return
             guest_writer.write(rebuild_head(request) + body)
@@ -2090,8 +2136,59 @@ def ctl_main(argv, cfg=None):
     return 0 if answer.get("ok") else 1
 
 
+PINS_DIR = "/etc/hivra/ingress/pins"
+PIN_NAME_RE = re.compile(r"^([0-9]{3,9})\.(nft|neigh)$")
+PIN_IP_RE = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
+PIN_MAC_RE = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+PIN_BRIDGE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,15}$")
+
+
+def apply_pins(pins_dir=PINS_DIR, run=None, owner_uid=0):
+    """Re-apply every computer's ARP/IP pin (its nft chain and its permanent
+    neighbour entry) after a host restart, before the proxy and the host
+    connectors start: both are runtime state, while the route files and the
+    enabled connectors survive the restart. Only root-owned files that are not
+    writable by anyone else are applied. Returns (applied, failed)."""
+    import subprocess
+    run = run or (lambda args: subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                              stderr=subprocess.DEVNULL, timeout=30, check=False).returncode)
+    applied, failed = [], []
+    try:
+        names = sorted(os.listdir(pins_dir))
+    except FileNotFoundError:
+        return applied, failed
+    # The chain first, then the neighbour entry, per computer.
+    names.sort(key=lambda name: (name.split(".")[0], 0 if name.endswith(".nft") else 1))
+    for name in names:
+        found = PIN_NAME_RE.match(name)
+        if not found:
+            continue
+        path = os.path.join(pins_dir, name)
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != owner_uid or info.st_mode & 0o022:
+                raise ValueError("unsafe")
+            if found.group(2) == "nft":
+                ok = run(["nft", "-f", path]) == 0
+            else:
+                with open(path, "r", encoding="ascii") as handle:
+                    fields = handle.read(256).split()
+                if len(fields) != 3 or not PIN_IP_RE.match(fields[0]) or not PIN_MAC_RE.match(fields[1]) \
+                        or not PIN_BRIDGE_RE.match(fields[2]):
+                    raise ValueError("invalid")
+                ok = run(["ip", "neigh", "replace", fields[0], "lladdr", fields[1], "dev", fields[2], "nud", "permanent"]) == 0
+        except (OSError, ValueError, UnicodeDecodeError):
+            ok = False
+        (applied if ok else failed).append(name)
+    return applied, failed
+
+
 def main(argv):
     mode = argv[0] if argv else ""
+    if mode == "apply-pins":
+        applied, failed = apply_pins()
+        sys.stdout.write(json.dumps({"applied": applied, "failed": failed, "ok": not failed}, separators=(",", ":")) + "\n")
+        return 0 if not failed else 1
     if mode == "helper":
         asyncio.run(run_service(Helper(Config())))
         return 0
@@ -2100,7 +2197,7 @@ def main(argv):
         return 0
     if mode == "ctl":
         return ctl_main(argv[1:])
-    sys.stderr.write("usage: hivra-wake-proxy.py helper|proxy|ctl <cmd> [vmid] [ms]\n")
+    sys.stderr.write("usage: hivra-wake-proxy.py helper|proxy|apply-pins|ctl <cmd> [vmid] [ms]\n")
     return 2
 
 

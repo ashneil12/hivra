@@ -108,15 +108,29 @@ export async function updateChannelWakeRow(
 }
 
 /** The sleep facts of some agents, by id. Throws when the read fails. */
+export interface ChannelWakeAgentFacts {
+  status: string | null;
+  sleep_state: string | null;
+  operation_id: string | null;
+  vmid?: number | null;
+  proxmox_host?: string | null;
+}
+
 export async function readChannelWakeAgentFacts(
   agentIds: readonly string[],
-): Promise<Map<string, { status: string | null; sleep_state: string | null; operation_id: string | null }>> {
-  const out = new Map<string, { status: string | null; sleep_state: string | null; operation_id: string | null }>();
+): Promise<Map<string, ChannelWakeAgentFacts>> {
+  const out = new Map<string, ChannelWakeAgentFacts>();
   if (agentIds.length === 0) return out;
-  const { data, error } = await db().from("hivra_agents").select("id, status, sleep_state, operation_id").in("id", [...agentIds]);
+  const { data, error } = await db().from("hivra_agents").select("id, status, sleep_state, operation_id, vmid, proxmox_host").in("id", [...agentIds]);
   if (error) throw new Error("channel_wake_agents_read_failed");
-  for (const row of (data ?? []) as Array<{ id: string; status: string | null; sleep_state: string | null; operation_id: string | null }>) {
-    out.set(row.id, { status: row.status ?? null, sleep_state: row.sleep_state ?? null, operation_id: row.operation_id ?? null });
+  for (const row of (data ?? []) as Array<{ id: string } & ChannelWakeAgentFacts>) {
+    out.set(row.id, {
+      status: row.status ?? null,
+      sleep_state: row.sleep_state ?? null,
+      operation_id: row.operation_id ?? null,
+      vmid: Number.isSafeInteger(row.vmid) ? row.vmid : null,
+      proxmox_host: typeof row.proxmox_host === "string" ? row.proxmox_host : null,
+    });
   }
   return out;
 }

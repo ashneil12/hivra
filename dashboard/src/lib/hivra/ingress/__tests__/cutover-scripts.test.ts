@@ -15,19 +15,19 @@ import {
 import { buildIngressAttachPayload, buildIngressRoute } from "../route-file";
 
 const TAG = "hivra-agent-abc";
-const HOSTNAME = "box-1107.example.test";
-const GUEST_IP = "10.250.20.7";
+const HOSTNAME = "box-4321.example.test";
+const GUEST_IP = "10.250.20.57";
 const FAKE_RUN_DOC = "e".repeat(80); // shaped like a run token, not one
 const REAL_PY = spawnSync("sh", ["-c", "command -v python3"], { encoding: "utf8" }).stdout.trim();
 
 function allScripts(): Array<[string, string]> {
   return [
-    ["preflight", buildIngressPreflightScript({ vmid: 1107, bindingTag: TAG })],
-    ["attach", buildIngressAttachScript({ vmid: 1107, bindingTag: TAG, hostname: HOSTNAME, guestIp: GUEST_IP, metricsPort: 21000 })],
-    ["detach", buildIngressDetachScript({ vmid: 1107, hostname: HOSTNAME })],
-    ["status", buildIngressStatusScript({ vmid: 1107, metricsPort: 21000 })],
-    ["guest_disable", buildIngressGuestTunnelScript({ vmid: 1107, bindingTag: TAG, op: "disable" })],
-    ["guest_enable", buildIngressGuestTunnelScript({ vmid: 1107, bindingTag: TAG, op: "enable" })],
+    ["preflight", buildIngressPreflightScript({ vmid: 4321, bindingTag: TAG })],
+    ["attach", buildIngressAttachScript({ vmid: 4321, bindingTag: TAG, hostname: HOSTNAME, guestIp: GUEST_IP, metricsPort: 21000 })],
+    ["detach", buildIngressDetachScript({ vmid: 4321, hostname: HOSTNAME })],
+    ["status", buildIngressStatusScript({ vmid: 4321, metricsPort: 21000 })],
+    ["guest_disable", buildIngressGuestTunnelScript({ vmid: 4321, bindingTag: TAG, op: "disable" })],
+    ["guest_enable", buildIngressGuestTunnelScript({ vmid: 4321, bindingTag: TAG, op: "enable" })],
   ];
 }
 
@@ -48,18 +48,18 @@ describe("host ingress scripts", () => {
   });
 
   it("refuses bad inputs instead of building a script", () => {
-    expect(() => buildIngressPreflightScript({ vmid: 1107, bindingTag: null })).toThrow();
-    expect(() => buildIngressAttachScript({ vmid: 1107, bindingTag: TAG, hostname: "x y", guestIp: GUEST_IP, metricsPort: 21000 })).toThrow();
-    expect(() => buildIngressAttachScript({ vmid: 1107, bindingTag: TAG, hostname: HOSTNAME, guestIp: "8.8.8.8", metricsPort: 21000 })).toThrow();
-    expect(() => buildIngressAttachScript({ vmid: 1107, bindingTag: TAG, hostname: HOSTNAME, guestIp: GUEST_IP, metricsPort: 80 })).toThrow();
+    expect(() => buildIngressPreflightScript({ vmid: 4321, bindingTag: null })).toThrow();
+    expect(() => buildIngressAttachScript({ vmid: 4321, bindingTag: TAG, hostname: "x y", guestIp: GUEST_IP, metricsPort: 21000 })).toThrow();
+    expect(() => buildIngressAttachScript({ vmid: 4321, bindingTag: TAG, hostname: HOSTNAME, guestIp: "8.8.8.8", metricsPort: 21000 })).toThrow();
+    expect(() => buildIngressAttachScript({ vmid: 4321, bindingTag: TAG, hostname: HOSTNAME, guestIp: GUEST_IP, metricsPort: 80 })).toThrow();
     expect(() => buildIngressDetachScript({ vmid: 12, hostname: HOSTNAME })).toThrow();
-    expect(() => buildIngressGuestTunnelScript({ vmid: 1107, bindingTag: TAG, op: "start" as "enable" })).toThrow();
+    expect(() => buildIngressGuestTunnelScript({ vmid: 4321, bindingTag: TAG, op: "start" as "enable" })).toThrow();
   });
 
   it("feeds the token to the guest only as stdin", () => {
-    const enable = buildIngressGuestTunnelScript({ vmid: 1107, bindingTag: TAG, op: "enable" });
+    const enable = buildIngressGuestTunnelScript({ vmid: 4321, bindingTag: TAG, op: "enable" });
     expect(enable).toContain('run_vmid_bound_guest_exec_stdin /usr/bin/python3 -I -B -c "$PROGRAM" enable < "$PAYLOAD"');
-    const disable = buildIngressGuestTunnelScript({ vmid: 1107, bindingTag: TAG, op: "disable" });
+    const disable = buildIngressGuestTunnelScript({ vmid: 4321, bindingTag: TAG, op: "disable" });
     expect(disable).not.toContain("head -c");
   });
 
@@ -132,9 +132,9 @@ function runScript(work: string, bin: string, script: string, stdin: string, env
   });
 }
 
-const attachScript = () => buildIngressAttachScript({ vmid: 1107, bindingTag: TAG, hostname: HOSTNAME, guestIp: GUEST_IP, metricsPort: 21000 });
+const attachScript = () => buildIngressAttachScript({ vmid: 4321, bindingTag: TAG, hostname: HOSTNAME, guestIp: GUEST_IP, metricsPort: 21000 });
 const attachPayload = () => buildIngressAttachPayload({
-  route: buildIngressRoute({ vmid: 1107, hostname: HOSTNAME, bindingTag: TAG, guestIp: GUEST_IP, ticketKey: "a".repeat(64), generation: 2 }),
+  route: buildIngressRoute({ vmid: 4321, hostname: HOSTNAME, bindingTag: TAG, guestIp: GUEST_IP, ticketKey: "a".repeat(64), generation: 2 }),
   token: FAKE_RUN_DOC,
   metricsPort: 21000,
 });
@@ -144,14 +144,19 @@ describe("attach and detach on a stub host", () => {
     withHost((work, bin) => {
       const run = runScript(work, bin, attachScript(), attachPayload());
       expect(parseIngressStep(run.stdout)).toMatchObject({ step: "attach", ok: true });
-      const route = JSON.parse(readFileSync(path.join(work, "etc/routes/1107.json"), "utf8"));
-      expect(route).toMatchObject({ vmid: 1107, hostname: HOSTNAME, guest_ip: GUEST_IP, guest_port: 18080, guest_mac: "bc:24:11:aa:bb:cc" });
-      expect(readFileSync(path.join(work, "etc/1107.env"), "utf8")).toBe(`TUNNEL_TOKEN=${FAKE_RUN_DOC}\nTUNNEL_METRICS=127.0.0.1:21000\n`);
+      const route = JSON.parse(readFileSync(path.join(work, "etc/routes/4321.json"), "utf8"));
+      expect(route).toMatchObject({ vmid: 4321, hostname: HOSTNAME, guest_ip: GUEST_IP, guest_port: 18080, guest_mac: "bc:24:11:aa:bb:cc" });
+      expect(readFileSync(path.join(work, "etc/4321.env"), "utf8")).toBe(`TUNNEL_TOKEN=${FAKE_RUN_DOC}\nTUNNEL_METRICS=127.0.0.1:21000\n`);
       const applied = readFileSync(path.join(work, "state/applied.nft"), "utf8");
-      expect(applied).toContain('iifname { "tap1107i0", "fwpr1107p0" } ether saddr != bc:24:11:aa:bb:cc drop');
-      expect(applied).toContain(`meta ibrname "vmbr9" iifname != { "tap1107i0", "fwpr1107p0" } arp saddr ip ${GUEST_IP} drop`);
+      expect(applied).toContain('iifname { "tap4321i0", "fwpr4321p0" } ether saddr != bc:24:11:aa:bb:cc drop');
+      // Tagged frames would slip past the ARP and IPv4 matches.
+      expect(applied).toContain('iifname { "tap4321i0", "fwpr4321p0" } ether type { 8021q, 8021ad } drop');
+      expect(applied).toContain('meta ibrname "vmbr9" iifname "tap*" ether type { 8021q, 8021ad } drop');
+      expect(applied).toContain('meta ibrname "vmbr9" iifname "fwpr*" ether type { 8021q, 8021ad } drop');
+      expect(applied.indexOf("8021q")).toBeLessThan(applied.indexOf("ether saddr !="));
+      expect(applied).toContain(`meta ibrname "vmbr9" iifname != { "tap4321i0", "fwpr4321p0" } arp saddr ip ${GUEST_IP} drop`);
       const calls = readFileSync(path.join(work, "calls"), "utf8");
-      expect(calls).toContain("systemctl enable --now hivra-cf@1107.service");
+      expect(calls).toContain("systemctl enable --now hivra-cf@4321.service");
       expect(calls).toContain(`ip neigh replace ${GUEST_IP} lladdr bc:24:11:aa:bb:cc dev vmbr9 nud permanent`);
       // The token never reaches argv or the script's output.
       expect(calls).not.toContain(FAKE_RUN_DOC);
@@ -164,9 +169,9 @@ describe("attach and detach on a stub host", () => {
     withHost((work, bin) => {
       const run = runScript(work, bin, attachScript(), attachPayload(), { FAKE_ROUTE: "0" });
       expect(parseIngressStep(run.stdout)).toMatchObject({ step: "route", ok: false, reason: "route_rejected" });
-      expect(existsSync(path.join(work, "etc/routes/1107.json"))).toBe(false);
-      expect(existsSync(path.join(work, "etc/1107.env"))).toBe(false);
-      expect(existsSync(path.join(work, "etc/pins/1107.nft"))).toBe(false);
+      expect(existsSync(path.join(work, "etc/routes/4321.json"))).toBe(false);
+      expect(existsSync(path.join(work, "etc/4321.env"))).toBe(false);
+      expect(existsSync(path.join(work, "etc/pins/4321.nft"))).toBe(false);
       expect(existsSync(path.join(work, "state/chain"))).toBe(false);
       expect(existsSync(path.join(work, "state/active"))).toBe(false);
     });
@@ -175,31 +180,31 @@ describe("attach and detach on a stub host", () => {
   it("refuses a payload that does not match the script", () => {
     withHost((work, bin) => {
       const other = buildIngressAttachPayload({
-        route: buildIngressRoute({ vmid: 1107, hostname: "other.example.test", bindingTag: TAG, guestIp: GUEST_IP, ticketKey: "a".repeat(64), generation: 2 }),
+        route: buildIngressRoute({ vmid: 4321, hostname: "other.example.test", bindingTag: TAG, guestIp: GUEST_IP, ticketKey: "a".repeat(64), generation: 2 }),
         token: FAKE_RUN_DOC,
         metricsPort: 21000,
       });
       const run = runScript(work, bin, attachScript(), other);
       expect(parseIngressStep(run.stdout)).toMatchObject({ ok: false, reason: "payload_mismatch" });
-      expect(existsSync(path.join(work, "etc/1107.env"))).toBe(false);
+      expect(existsSync(path.join(work, "etc/4321.env"))).toBe(false);
     });
   });
 
   it("detach removes the host side, is idempotent and leaves another hostname's route alone", () => {
     withHost((work, bin) => {
       runScript(work, bin, attachScript(), attachPayload());
-      const wrong = runScript(work, bin, buildIngressDetachScript({ vmid: 1107, hostname: "other.example.test" }), "");
+      const wrong = runScript(work, bin, buildIngressDetachScript({ vmid: 4321, hostname: "other.example.test" }), "");
       expect(parseIngressStep(wrong.stdout)).toMatchObject({ ok: false, reason: "hostname_mismatch" });
-      expect(existsSync(path.join(work, "etc/routes/1107.json"))).toBe(true);
+      expect(existsSync(path.join(work, "etc/routes/4321.json"))).toBe(true);
 
-      const first = runScript(work, bin, buildIngressDetachScript({ vmid: 1107, hostname: HOSTNAME }), "");
+      const first = runScript(work, bin, buildIngressDetachScript({ vmid: 4321, hostname: HOSTNAME }), "");
       expect(parseIngressStep(first.stdout)).toMatchObject({ step: "detach", ok: true });
-      expect(existsSync(path.join(work, "etc/routes/1107.json"))).toBe(false);
-      expect(existsSync(path.join(work, "etc/1107.env"))).toBe(false);
+      expect(existsSync(path.join(work, "etc/routes/4321.json"))).toBe(false);
+      expect(existsSync(path.join(work, "etc/4321.env"))).toBe(false);
       expect(existsSync(path.join(work, "state/active"))).toBe(false);
       expect(existsSync(path.join(work, "state/chain"))).toBe(false);
 
-      const second = runScript(work, bin, buildIngressDetachScript({ vmid: 1107, hostname: HOSTNAME }), "");
+      const second = runScript(work, bin, buildIngressDetachScript({ vmid: 4321, hostname: HOSTNAME }), "");
       expect(parseIngressStep(second.stdout)).toMatchObject({ step: "detach_absent", ok: true });
     });
   });
@@ -207,7 +212,7 @@ describe("attach and detach on a stub host", () => {
   it("status reports what is there", () => {
     withHost((work, bin) => {
       runScript(work, bin, attachScript(), attachPayload());
-      const run = runScript(work, bin, buildIngressStatusScript({ vmid: 1107, metricsPort: 21000 }), "");
+      const run = runScript(work, bin, buildIngressStatusScript({ vmid: 4321, metricsPort: 21000 }), "");
       expect(parseIngressStep(run.stdout)).toMatchObject({ step: "status", ok: true, route: true, env: true, connector: true, ready: true, pin: true, proxy_route: true });
     });
   });

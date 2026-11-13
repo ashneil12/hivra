@@ -49,10 +49,10 @@ describe("ingress ticket key", () => {
 
 describe("route file", () => {
   const route = () => buildIngressRoute({
-    vmid: 1107,
-    hostname: "Box-1107.example.test",
+    vmid: 4321,
+    hostname: "Box-4321.example.test",
     bindingTag: "hivra-agent-abc",
-    guestIp: "10.250.20.7",
+    guestIp: "10.250.20.57",
     ticketKey: "a".repeat(64),
     generation: 4,
   });
@@ -60,10 +60,10 @@ describe("route file", () => {
   it("has exactly the fields the proxy reads, port 18080 and a lower-case hostname", () => {
     expect(route()).toEqual({
       version: 1,
-      vmid: 1107,
-      hostname: "box-1107.example.test",
+      vmid: 4321,
+      hostname: "box-4321.example.test",
       binding_tag: "hivra-agent-abc",
-      guest_ip: "10.250.20.7",
+      guest_ip: "10.250.20.57",
       guest_port: 18080,
       ticket_key: "a".repeat(64),
       generation: 4,
@@ -78,7 +78,7 @@ describe("route file", () => {
     expect(parseIngressRoute({ ...route(), guest_ip: "8.8.8.8" })).toBeNull();
     expect(parseIngressRoute({ ...route(), ticket_key: "zz" })).toBeNull();
     expect(parseIngressRoute({ ...route(), vmid: 5 })).toBeNull();
-    expect(() => buildIngressRoute({ vmid: 1107, hostname: "bad host", bindingTag: "t", guestIp: "10.250.20.7", ticketKey: "a".repeat(64), generation: 0 })).toThrow();
+    expect(() => buildIngressRoute({ vmid: 4321, hostname: "bad host", bindingTag: "t", guestIp: "10.250.20.57", ticketKey: "a".repeat(64), generation: 0 })).toThrow();
   });
 
   it("only accepts private guest addresses", () => {

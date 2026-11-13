@@ -39,7 +39,7 @@ const ARM = "0f0e0d0c-0b0a-4908-8706-050403020100";
 const FP = "0123456789abcdef";
 const DOORBELL_PY = path.join(process.cwd(), "provisioner/hivra-wake-doorbell.py");
 const target = { vmid: 1234, bindingTag: "hivra-binding-test", env: { host: "x" } };
-const ON = { HIVRA_WAKE_DOORBELLS: "email" };
+const ON = { HIVRA_WAKE_DOORBELLS: "email", HIVRA_INGRESS_HOST_CREDENTIAL: "true" };
 const digests = { "hivra-wake-doorbell.py": "a".repeat(64), "hivra-wake-doorbell.service": "b".repeat(64) };
 
 function bashSyntaxOk(script: string): boolean {
@@ -73,6 +73,12 @@ describe("email in the registry", () => {
     expect(createEmailImapAdapter({ env: {} }).coverageBlockers(input)).toEqual(["doorbell_off"]);
     expect(createEmailImapAdapter({ env: ON }).coverageBlockers(input)).toEqual([]);
     expect(CHANNEL_WAKE_ADAPTERS).toContain(EMAIL_IMAP_ADAPTER);
+    // Its rings reach Hivra only through the host credential.
+    const noCredential = createEmailImapAdapter({ env: { HIVRA_WAKE_DOORBELLS: "email" } });
+    expect(noCredential.coverageBlockers(input)).toEqual(["host_credential_off"]);
+    expect(noCredential.canHear!()).toBe(false);
+    expect(createEmailImapAdapter({ env: ON }).canHear!()).toBe(true);
+    expect(createEmailImapAdapter({ env: {} }).canHear!()).toBe(false);
   });
 
   it("leaves the Telegram-only and plain probe scripts as they were", () => {

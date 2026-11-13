@@ -182,15 +182,26 @@ describe("ticket fast path", () => {
     expect(mockTicket).not.toHaveBeenCalled();
   });
 
-  it("runs the old wake script when the agent has no ingress row or it cannot be read", async () => {
-    for (const loaded of [{ kind: "none" }, { kind: "error" }]) {
+  it("runs the old wake script when the agent has no ingress row", async () => {
+    mockRunScript.mockClear();
+    mockLoadIngress.mockResolvedValue({ kind: "none" });
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open" });
+    expect(mockTicket).not.toHaveBeenCalled();
+    const script = String(mockRunScript.mock.calls[0][0]);
+    expect(script).not.toContain("ingress_unmark");
+    expect(script).toContain("hivra-cf-tunnel");
+  });
+
+  it("removes the nap marker and leaves the guest tunnel alone when the row cannot be read or a cutover was cut short", async () => {
+    const interrupted = { kind: "row", state: { ...hostState(false).state, hostIngress: false, acts: false, needsAwake: true, interrupted: true } };
+    for (const loaded of [{ kind: "error" }, interrupted]) {
       mockRunScript.mockClear();
       mockLoadIngress.mockResolvedValue(loaded);
       await ensureHivraAgentAwake(AGENT_ID, { trigger: "open" });
       expect(mockTicket).not.toHaveBeenCalled();
       const script = String(mockRunScript.mock.calls[0][0]);
-      expect(script).not.toContain("ingress_unmark");
-      expect(script).toContain("hivra-cf-tunnel");
+      expect(script).toContain("ingress_unmark");
+      expect(script).not.toContain("hivra-cf-tunnel");
     }
   });
 });

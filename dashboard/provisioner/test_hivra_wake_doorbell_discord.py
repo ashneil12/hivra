@@ -436,6 +436,16 @@ class SessionTests(DiscordTestCase):
         self.assertTrue(self.wait(lambda: VMID not in self.h.service.watches))
         self.assertTrue(self.wait(lambda: 1000 in self.discord.close_codes))
 
+    def test_ring_that_never_reaches_hivra_keeps_watching(self):
+        self.h.cfg.fire_max = 0.3
+        self.h.cfg.fire_slow = 0.2
+        self.h.helper.refuse = "no_credential"
+        self.arm()
+        self.discord.dispatch("MESSAGE_CREATE", message())
+        self.assertTrue(self.wait(lambda: len(self.h.helper.requests) >= 4))
+        self.assertIn(VMID, self.h.service.watches)
+        self.assertEqual(self.watch().state, "fired")
+
     def test_restart_rings_for_a_lost_discord_arm(self):
         self.arm()
         self.h.restart()

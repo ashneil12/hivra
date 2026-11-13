@@ -11,6 +11,8 @@ import {
   type ChannelWakeRow,
 } from "./store";
 import type { ChannelWakeAdapter, ChannelWakeAdapterContext } from "./types";
+import { anyWakeDoorbellEnabled } from "./doorbell-scripts";
+import { reconcileDoorbellArms, type DoorbellReconcileDeps } from "./doorbell-reconcile";
 
 /**
  * The sleep sweep's step for every generic channel (Telegram keeps its own
@@ -61,6 +63,8 @@ export interface ChannelSweepOptions {
   /** Starts a wake (trigger "channel"). Must not throw. */
   wake: (agentId: string) => void;
   adapters?: readonly ChannelWakeAdapter[];
+  /** Tests: the doorbell check's host call and memory. */
+  doorbellReconcile?: Partial<Pick<DoorbellReconcileDeps, "runOnHost" | "lastAsked">>;
 }
 
 const ASLEEP = new Set(["napping", "hibernated"]);
@@ -130,6 +134,12 @@ export async function runChannelWakeSweep(options: ChannelSweepOptions): Promise
       log.warn("channel wake sweep row failed", { source: LOG_SOURCE, failureType: "channel_wake_sweep_row_failed", instanceId: row.agent_id });
     }
   }
+  // The host doorbell must still hold every arm recorded for a sleeping agent.
+  if (anyWakeDoorbellEnabled(env) && options.timeLeft() > MIN_ROW_TIME_MS) {
+    const lost = await reconcileDoorbellArms(rows, agents, { now, timeLeft: options.timeLeft, wake, ...(options.doorbellReconcile ?? {}) })
+      .catch(() => [] as string[]);
+    counts.woke += lost.length;
+  }
   return counts;
 }
 
@@ -167,7 +177,9 @@ async function sweepRow(row: ChannelWakeRow, rc: RowContext): Promise<void> {
     }
     return;
   }
-  const acts = Boolean(rc.config && rc.config.channels.has(adapter.channel) && row.enabled === true);
+  // An adapter whose own switches went off since it armed (a doorbell whose
+  // rings could no longer reach Hivra) cannot hear the agent: not acting.
+  const acts = Boolean(rc.config && rc.config.channels.has(adapter.channel) && row.enabled === true && (adapter.canHear?.() ?? true));
 
   switch (row.state) {
     case "armed":

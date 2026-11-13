@@ -161,6 +161,14 @@ export function ingressStatsShell(vmidExpr: string): string {
 printf '\\n${INGRESS_STATS_PREFIX}%s\\n' "$(printf '%s' "$INGRESS_STATS" | head -n 1 | head -c ${MAX_STATS_BYTES})"`;
 }
 
+/** Read-only: the proxy's stats for one computer, as one HIVRA_INGRESS_STATS line (a napping computer's probe cannot run). */
+export function buildIngressVmStatsHostScript(vmid: number): string {
+  return `set -euo pipefail
+export LC_ALL=C
+${ingressStatsShell(String(assertVmid(vmid)))}
+`;
+}
+
 /**
  * The per-minute read for one host: the proxy's stats for every computer it
  * serves (with its recent wakes), and whether each asked VM still carries a

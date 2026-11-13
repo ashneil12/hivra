@@ -57,7 +57,19 @@ export interface AgentIngressState {
   needsAwake: boolean;
   /** An enable or rollback holds the agent now. */
   leaseHeld: boolean;
+  /**
+   * A guest-mode row an enable or rollback left half done (killed mid-run, or
+   * a recovery that could not hand the guest a working token): the guest's
+   * connector may be off or on a revoked secret. Kept awake, and woken without
+   * touching the guest's tunnel, until a rollback finishes it.
+   */
+  interrupted: boolean;
 }
+
+/** last_error values that mean a guest-mode row may not be served by the guest's own connector. */
+export const INTERRUPTED_INGRESS_ERRORS: readonly string[] = ["recovery_failed", "detach_failed", "guest_token_stale"];
+/** Phases only an enable holds while it runs; seen without a lease, the run was cut short. */
+export const INTERRUPTED_INGRESS_PHASES: readonly string[] = ["forwarder", "host_connector"];
 
 /** Pure: what one ingress row means, given the host row and env. */
 export function agentIngressStateFrom(
@@ -72,8 +84,12 @@ export function agentIngressStateFrom(
   // A row written for another computer or host is not this one's: keep it awake until a human looks.
   const sameComputer = row.vmid === input.vmid && row.host_id === input.hostId;
   const acts = mode === "host" && sameComputer && row.phase === "cutover" && !leaseHeld && ingressActsFor(row, host, env);
-  const needsAwake = hostIngress && !leaseHeld && (ingressNeedsAwake(row, host, env) || !acts);
-  return { row, hostIngress, acts, needsAwake, leaseHeld };
+  const interrupted = mode === "guest" && !leaseHeld && (
+    INTERRUPTED_INGRESS_PHASES.includes(String(row.phase))
+    || (row.phase === "failed" && INTERRUPTED_INGRESS_ERRORS.includes(String(row.last_error ?? "")))
+  );
+  const needsAwake = interrupted || (hostIngress && !leaseHeld && (ingressNeedsAwake(row, host, env) || !acts));
+  return { row, hostIngress, acts, needsAwake, leaseHeld, interrupted };
 }
 
 async function readHostRow(hostId: string): Promise<IngressHostRow | null> {

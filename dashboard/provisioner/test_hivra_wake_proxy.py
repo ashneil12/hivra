@@ -849,13 +849,13 @@ class HivraCallTests(ProxyTestCase):
         self.write_credential()
         self.assertTrue(self.h.ctl({"cmd": "request", "vmid": VMID})["ok"])
 
-    def test_forwarder_may_request_only_its_routes_as_a_client(self):
+    def test_forwarder_may_never_ask_hivra_for_a_wake_without_a_proof(self):
+        # The internet-facing forwarder wakes only through `wake` with a ticket or owner proof.
         self.write_credential()
-        answer = self.h.run(self.h.helper.dispatch("forwarder", {"cmd": "request", "vmid": OTHER_VMID}))
-        self.assertEqual(answer["error"], "unknown_vmid")
-        answer = self.h.run(self.h.helper.dispatch("forwarder", {"cmd": "request", "vmid": VMID, "from": "doorbell"}))
-        self.assertTrue(answer["ok"])
-        self.assertEqual(self.hivra.calls[0]["body"]["reason"], "client")
+        for vmid in (VMID, OTHER_VMID):
+            answer = self.h.run(self.h.helper.dispatch("forwarder", {"cmd": "request", "vmid": vmid}))
+            self.assertEqual(answer, {"ok": False, "error": "forbidden"})
+        self.assertEqual(self.hivra.calls, [])
 
     def test_forwarder_sends_only_signed_calls_to_hivra_paths(self):
         headers = {name: "x" for name in proxy.SIGNED_HEADERS}
@@ -1075,15 +1075,32 @@ class ClientWakeTests(ProxyTestCase):
         self.assertFalse(proxy.disarm_required(self.h.cfg, VMID))
         self.assertEqual(proxy.ctl_main(["napped", str(VMID), "elsewhere"], self.h.cfg), 2)
 
+    def test_a_vm_resumed_outside_the_wake_script_is_not_napped(self):
+        # A manual resume, or a wake that could not remove the marker: QEMU runs, the marker still holds its pid.
+        self.h.nap(VMID)
+        self.assertTrue(self.h.ctl({"cmd": "status", "vmid": VMID})["napped"])
+        self.h.qemu[VMID].status = "running"
+        self.assertFalse(self.h.ctl({"cmd": "status", "vmid": VMID})["napped"])
+        self.assertFalse(os.path.exists(self.h.cfg.marker_path(VMID)))
+        self.assertEqual(status_of(self.h.get("/echo")), 200)
+
     def test_repeated_bad_proofs_stop_reaching_the_helper(self):
         self.set_level("auth")
         self.h.nap(VMID)
+        junk = b"Cf-Connecting-Ip: 192.0.2.10\r\n"
         for _ in range(proxy.BAD_PROOF_LIMIT):
-            self.h.get("/echo", extra=bearer(secrets.token_hex(32)))
-        self.assertTrue(self.h.forwarder.proof_limited(VMID))
-        response = self.h.get("/echo", extra=bearer(self.secret))
+            self.h.get("/echo", extra=junk + bearer(secrets.token_hex(32)))
+        limited = proxy.Request.__new__(proxy.Request)
+        limited.headers = [("cf-connecting-ip", "192.0.2.10")]
+        self.assertTrue(self.h.forwarder.proof_limited(VMID, limited))
+        response = self.h.get("/echo", extra=junk + bearer(self.secret))
         self.assertEqual(status_of(response), 503)
         self.assertEqual(self.h.qemu[VMID].conts, 0)
+        # Another client (the owner) is not locked out by someone else's junk: its proof still wakes the VM.
+        owner = self.h.get("/echo", extra=b"Cf-Connecting-Ip: 198.51.100.7\r\n" + bearer(self.secret))
+        self.assertNotEqual(status_of(owner), 503)
+        self.assertEqual(self.h.qemu[VMID].conts, 1)
+        self.h.nap(VMID)
         # Tickets have their own limit: the server still wakes it.
         self.assertEqual(status_of(self.h.wake()), 200)
 
@@ -1285,6 +1302,39 @@ class UnitTests(unittest.TestCase):
         for directory in ("/run/hivra-ingress ", "/run/hivra-ingress-fwd ", "/run/hivra-ingress-state ", "/etc/hivra/ingress/routes "):
             self.assertIn("d " + directory, tmpfiles)
 
+
+
+class ApplyPinsTests(unittest.TestCase):
+    """The boot unit puts every computer's ARP/IP pin back before the proxy or a host connector serves it."""
+
+    def test_applies_each_chain_then_its_neighbour_entry_and_skips_anything_unsafe(self):
+        with tempfile.TemporaryDirectory() as pins:
+            def write(name, text, mode=0o600):
+                path = os.path.join(pins, name)
+                with open(path, "w") as handle:
+                    handle.write(text)
+                os.chmod(path, mode)
+                return path
+            write("4321.neigh", "10.250.20.57 bc:24:11:aa:bb:cc vmbr9\n")
+            write("4321.nft", "add table bridge t\n")
+            write("4322.nft", "add table bridge t\n", 0o666)
+            write("4323.neigh", "10.250.20.58 not-a-mac vmbr9\n")
+            write("notes.txt", "ignored\n")
+            calls = []
+            applied, failed = proxy.apply_pins(pins, run=lambda args: calls.append(args) or 0, owner_uid=os.geteuid())
+            self.assertEqual(applied, ["4321.nft", "4321.neigh"])
+            self.assertEqual(sorted(failed), ["4322.nft", "4323.neigh"])
+            self.assertEqual(calls[0], ["nft", "-f", os.path.join(pins, "4321.nft")])
+            self.assertEqual(calls[1], ["ip", "neigh", "replace", "10.250.20.57", "lladdr", "bc:24:11:aa:bb:cc",
+                                        "dev", "vmbr9", "nud", "permanent"])
+            self.assertEqual(len(calls), 2)
+            # A command that fails is reported, and the rest still run.
+            applied, failed = proxy.apply_pins(pins, run=lambda args: 1, owner_uid=os.geteuid())
+            self.assertEqual(applied, [])
+            self.assertIn("4321.nft", failed)
+
+    def test_no_pins_directory_is_nothing_to_do(self):
+        self.assertEqual(proxy.apply_pins("/nonexistent/hivra-pins", run=lambda args: 0), ([], []))
 
 if __name__ == "__main__":
     unittest.main()

@@ -208,6 +208,34 @@ describe("sleepHivraAgent with host ingress", () => {
     expect(mockClaim).not.toHaveBeenCalled();
   });
 
+  it("aborts after its claim when an enable took the agent in the meantime, leaving the computer as it is", async () => {
+    mockLoadIngress.mockResolvedValueOnce(ingress()).mockResolvedValueOnce(ingress({ leaseHeld: true, acts: false }));
+    await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "aborted", reason: "ingress_operation", state: "awake" });
+    expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
+    expect(scriptsRun().some((s) => s.includes("HIVRA_SLEEP_RESULT"))).toBe(false);
+    // Also for an agent with no row before (the enable made it), and a row that can no longer be read.
+    for (const again of [ingress({ leaseHeld: true, acts: false, hostIngress: false }), { kind: "error" }]) {
+      mockRunScript.mockClear();
+      mockLoadIngress.mockResolvedValueOnce({ kind: "none" }).mockResolvedValueOnce(again);
+      stubScripts({ probe: probeLine(), sleep: sleepReceipt(), wake: wakeReceipt() });
+      await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({ outcome: "aborted" });
+      expect(scriptsRun().some((s) => s.includes("HIVRA_SLEEP_RESULT"))).toBe(false);
+    }
+  });
+
+  it("asks the proxy before it hibernates a napping computer, which its proxy may have resumed for a client", async () => {
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", cf_tunnel_id: "22222222-2222-4222-8222-222222222222" }), error: null });
+    stubScripts({ probe: statsLine({ inflight: 1 }), sleep: sleepReceipt(), wake: wakeReceipt() });
+    await expect(run({ tier: "hibernate", trigger: "sweep" })).resolves.toMatchObject({ outcome: "not_idle", reason: "ingress_active" });
+    stubScripts({ probe: "", sleep: sleepReceipt(), wake: wakeReceipt() });
+    await expect(run({ tier: "hibernate", trigger: "sweep" })).resolves.toMatchObject({ outcome: "skipped", reason: "ingress_stats_unavailable" });
+    expect(mockClaim).not.toHaveBeenCalled();
+    stubScripts({ probe: statsLine(), sleep: sleepReceipt({ tier: "hibernate", from: "napping", to: "hibernated", reason: "hibernated" }), wake: wakeReceipt() });
+    await run({ tier: "hibernate", trigger: "sweep" });
+    expect(scriptsRun()[0]).toContain("ctl stats");
+    expect(mockClaim).toHaveBeenCalled();
+  });
+
   it("recovers a lost receipt with the host-ingress wake script", async () => {
     stubScripts({ probe: probeLine() + statsLine(), sleep: "garbage", wake: wakeReceipt() });
     await run({ tier: "nap", trigger: "sweep" });

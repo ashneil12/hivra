@@ -41,6 +41,46 @@ export const HOST_WAKE_PROXY_PLACEMENTS = [
   { bundlePath: "hivra-ingress.tmpfiles.conf", dest: "/etc/tmpfiles.d/hivra-ingress.conf", mode: "0644" },
 ] as const;
 
+/**
+ * The boot oneshot that re-applies every host-ingress computer's ARP/IP pin
+ * (an nft chain and a permanent neighbour entry, both runtime state) before
+ * the proxy and the host connectors start. Written by the install step from
+ * here rather than shipped in the bundle, which is at the worker's file cap.
+ */
+export const HOST_INGRESS_PINS_UNIT_PATH = "/etc/systemd/system/hivra-ingress-pins.service";
+export const HOST_INGRESS_PINS_UNIT = `[Unit]
+Description=Hivra host ingress pins (re-applies each host-ingress computer's ARP/IP pin after a host restart)
+# The pins are runtime state (an nft chain, a permanent neighbour entry), while
+# the route files and the enabled host connectors survive a restart: they go
+# back before the proxy or any connector serves a computer.
+After=network-online.target pve-cluster.service
+Wants=network-online.target
+Before=hivra-wake-helper.service hivra-wake-proxy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Written by the wake-proxy install step; it runs the bundle's checked wake proxy program.
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/hivra-ingress/hivra-wake-proxy.py apply-pins
+User=root
+UMask=0077
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+LockPersonality=yes
+SystemCallArchitectures=native
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+`;
+
 export type HostWakeProxyBundlePath = (typeof HOST_WAKE_PROXY_PLACEMENTS)[number]["bundlePath"];
 export const HOST_WAKE_PROXY_BUNDLE_FILES: readonly HostWakeProxyBundlePath[] =
   HOST_WAKE_PROXY_PLACEMENTS.map((entry) => entry.bundlePath);
@@ -235,6 +275,7 @@ HELPER_WAS_ACTIVE=0
 PROXY_WAS_ACTIVE=0
 HELPER_WAS_ENABLED=0
 PROXY_WAS_ENABLED=0
+PINS_WAS_ENABLED=0
 emit() {
   printf '%s status=%s step=%s changed=%s cloudflared=%s${credentialEmit} ms=%s\\n' "$MARK" "$1" "$STEP" "$CHANGED" "$CF_VERSION"${credentialEmitArg} "$(( $(uptime_ms) - STARTED_MS ))"
 }
@@ -289,6 +330,7 @@ on_exit() {
   if [ "$TOUCHED" = 1 ]; then
     unwind_unit hivra-wake-proxy.service "$PROXY_WAS_ACTIVE" "$PROXY_WAS_ENABLED"
     unwind_unit hivra-wake-helper.service "$HELPER_WAS_ACTIVE" "$HELPER_WAS_ENABLED"
+    [ "$PINS_WAS_ENABLED" = 1 ] || systemctl disable hivra-ingress-pins.service 2>/dev/null
     restore_files
     systemctl daemon-reload
     resume_unit hivra-wake-helper.service "$HELPER_WAS_ACTIVE" "$HELPER_WAS_ENABLED"
@@ -330,6 +372,7 @@ systemctl is-active --quiet hivra-wake-helper.service && HELPER_WAS_ACTIVE=1
 systemctl is-active --quiet hivra-wake-proxy.service && PROXY_WAS_ACTIVE=1
 systemctl is-enabled --quiet hivra-wake-helper.service 2>/dev/null && HELPER_WAS_ENABLED=1
 systemctl is-enabled --quiet hivra-wake-proxy.service 2>/dev/null && PROXY_WAS_ENABLED=1
+systemctl is-enabled --quiet hivra-ingress-pins.service 2>/dev/null && PINS_WAS_ENABLED=1
 if [ "$PROXY_WAS_ACTIVE" = 0 ] && ss -Hltn '( sport = :8080 )' | grep -q .; then
   echo "port 8080 is already in use on this host" >&2; exit 1
 fi
@@ -355,6 +398,8 @@ if [ "$NEED_CF" = 1 ]; then place_file "$STAGE/cloudflared" "$CF_BIN" 0755 cf; f
 ${placements}
 printf 'channel=%s version=%s cloudflared=%s\\n' "$CHANNEL" "$EXPECTED_VERSION" "$CF_VERSION" > "$STAGE/SOURCE"
 place_file "$STAGE/SOURCE" "$LIB_DIR/SOURCE" 0644 source
+printf '%s' ${shellQuote(HOST_INGRESS_PINS_UNIT)} > "$STAGE/hivra-ingress-pins.service"
+place_file "$STAGE/hivra-ingress-pins.service" ${shellQuote(HOST_INGRESS_PINS_UNIT_PATH)} 0644 pins
 STEP=start
 # The drill's forced failure must exercise the rollback even when nothing changed.
 [ "$FORCE_HEALTH_FAILURE" = 0 ] || TOUCHED=1
@@ -363,6 +408,11 @@ if [ "$CHANGED" = 1 ]; then systemctl daemon-reload; fi
 if [ "$HELPER_WAS_ENABLED" = 0 ] || [ "$PROXY_WAS_ENABLED" = 0 ]; then
   TOUCHED=1
   systemctl enable hivra-wake-helper.service hivra-wake-proxy.service
+fi
+# Pins are runtime state: this oneshot puts them back at boot, before the proxy and the host connectors.
+if [ "$PINS_WAS_ENABLED" = 0 ]; then
+  TOUCHED=1
+  systemctl enable hivra-ingress-pins.service
 fi
 if [ "$CHANGED" = 1 ]; then
   systemctl restart hivra-wake-helper.service
@@ -426,6 +476,7 @@ export function buildHostWakeProxyRemoveScript(targetId: string): string {
     ...HOST_WAKE_PROXY_PLACEMENTS.map((entry) => entry.dest),
     `${HOST_WAKE_PROXY_LIB_DIR}/SOURCE`,
     HOST_CLOUDFLARED_PATH,
+    HOST_INGRESS_PINS_UNIT_PATH,
   ];
   return `${prelude(targetId)}MARK=${shellQuote(WAKE_PROXY_RESULT_MARKER)}
 STEP=preflight
@@ -445,8 +496,15 @@ if [ "$ROUTES" != 0 ] || [ "$ENVS" != 0 ] || [ "$CONNECTORS" != 0 ]; then
   emit refused
   exit 1
 fi
+# The wake doorbell rings through this helper and runs in its group: it goes first.
+if [ -e /etc/systemd/system/hivra-wake-doorbell.service ] || systemctl is-active --quiet hivra-wake-doorbell.service; then
+  echo "the wake doorbell is installed here and rings through the wake helper; remove the doorbell first" >&2
+  trap - EXIT
+  emit refused
+  exit 1
+fi
 STEP=stop
-for unit in hivra-wake-proxy.service hivra-wake-helper.service; do
+for unit in hivra-wake-proxy.service hivra-wake-helper.service hivra-ingress-pins.service; do
   if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit" 2>/dev/null; then
     CHANGED=1
     systemctl disable --now "$unit" 2>/dev/null || systemctl stop "$unit"

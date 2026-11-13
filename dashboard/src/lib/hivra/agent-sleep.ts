@@ -59,7 +59,7 @@ import {
 } from "./agent-wake";
 import { listTunnelConnections } from "@/lib/services/cloudflare-tunnel";
 import { loadAgentIngressState } from "./ingress/wake-client";
-import { parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
+import { buildIngressVmStatsHostScript, parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
 
 /**
  * Put an agent to sleep: nap (pause, RAM stays) or hibernate (RAM saved to
@@ -522,6 +522,24 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     }
   }
 
+  // A napping host-ingress computer may have been resumed by its proxy for a
+  // client and be in use through it: the proxy's own view decides before any
+  // tier moves it (the guest probe above runs only on an awake computer).
+  if (hostIngress && state !== "awake") {
+    try {
+      const run = await runProxmoxHostScript(buildIngressVmStatsHostScript(target.vmid), target.env, { timeoutMs: PROBE_TIMEOUT_MS });
+      const blocker = ingressIdleBlocker(parseIngressVmStats(run?.stdout ?? "", target.vmid), {
+        manual,
+        nowMs: now(),
+        idleWindowMs: timings.napAfterSeconds * 1000,
+      });
+      if (blocker === "ingress_stats_unavailable") return { outcome: "skipped", reason: blocker };
+      if (blocker) return { outcome: "not_idle", reason: blocker, reasons: [blocker] };
+    } catch {
+      return { outcome: "skipped", reason: "ingress_stats_unavailable" };
+    }
+  }
+
   const sleepRow: AgentRow = row;
   const sleepTarget: SleepTarget = target;
   const sleepGeneration: number = expectedGeneration;
@@ -550,6 +568,24 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     // From here the lease is ours. Every path below gives it back.
     const finish = async (result: AgentSleepFinishResult): Promise<boolean> =>
       finishAgentSleep({ agentId, operationId, result });
+
+    // An ingress enable or rollback may have taken its lease between the read
+    // above and this claim (it re-checks the sleep lease after taking its own,
+    // so one of the two always sees the other). Only read when ingress was
+    // ever configured here; then the computer is left exactly as it is.
+    {
+      const again = await loadAgentIngressState(agentId, {
+        vmid: target.vmid,
+        hostId: String(target.executionContext?.host ?? ""),
+        env,
+        nowMs: now(),
+      });
+      if (again.kind === "error" || (again.kind === "row" && (again.state.leaseHeld || again.state.needsAwake || again.state.hostIngress !== hostIngress))) {
+        const reason = again.kind === "row" && again.state.leaseHeld ? "ingress_operation" : "ingress_changed";
+        await finish(state === "napping" ? "napping" : "awake");
+        return { outcome: "aborted", state: state === "napping" ? "napping" : "awake", reason, ms: now() - startedAt };
+      }
+    }
     const record = async (kind: AgentSleepEventKind, toState: string, reason: string, detail: Record<string, number | string | boolean | null>) => {
       await logAgentSleepEvent({
         agentId,

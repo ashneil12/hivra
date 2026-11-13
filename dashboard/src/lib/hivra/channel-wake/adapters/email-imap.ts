@@ -11,7 +11,7 @@ import {
   buildEmailDoorbellArmHostScript,
   parseDoorbellArmOutput,
   parseDoorbellDisarmOutput,
-  wakeDoorbellEnabled,
+  wakeDoorbellBlocker,
   type DoorbellArmResult,
 } from "../doorbell-scripts";
 
@@ -65,7 +65,8 @@ async function targetOf(agentId: string): Promise<HostTarget | null> {
 
 /** Arms the doorbell for one computer. Never throws; a failure keeps the agent awake. */
 export async function armEmailDoorbell(ctx: ChannelWakeAdapterContext, deps: EmailImapDeps = {}): Promise<DoorbellArmResult> {
-  if (!wakeDoorbellEnabled("email", deps.env ?? process.env)) return { ok: false, reason: "doorbell_off" };
+  const blocked = wakeDoorbellBlocker("email", deps.env ?? process.env);
+  if (blocked) return { ok: false, reason: blocked };
   const target = ctx.target;
   if (!target || !target.bindingTag) return { ok: false, reason: "no_target" };
   try {
@@ -129,9 +130,11 @@ export function createEmailImapAdapter(deps: EmailImapDeps = {}): ChannelWakeAda
     ...EMAIL_CHANNEL_SPEC,
     coverageBlockers(input: ChannelCoverageInput): string[] {
       const reasons = EMAIL_CHANNEL_SPEC.coverageBlockers(input);
-      if (!wakeDoorbellEnabled("email", deps.env ?? process.env)) reasons.push("doorbell_off");
+      const blocker = wakeDoorbellBlocker("email", deps.env ?? process.env);
+      if (blocker) reasons.push(blocker);
       return reasons;
     },
+    canHear: () => wakeDoorbellBlocker("email", deps.env ?? process.env) === null,
     async armBeforeSleep(ctx) {
       const result = await armEmailDoorbell(ctx, deps);
       if (!result.ok) return { ok: false, reason: result.reason };

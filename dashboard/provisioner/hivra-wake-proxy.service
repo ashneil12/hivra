@@ -1,7 +1,9 @@
 [Unit]
 Description=Hivra wake proxy (unprivileged front door for host-ingress computers on 127.0.0.1:8080)
-After=network.target systemd-tmpfiles-setup.service hivra-wake-helper.service
+After=network.target systemd-tmpfiles-setup.service hivra-wake-helper.service hivra-ingress-pins.service
 Wants=hivra-wake-helper.service
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify

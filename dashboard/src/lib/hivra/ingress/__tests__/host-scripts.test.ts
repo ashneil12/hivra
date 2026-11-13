@@ -311,6 +311,11 @@ describe("host wake proxy scripts (on a fake host)", () => {
     expect(host.file("/usr/local/lib/hivra-ingress/SOURCE")).toBe(`channel=default version=${VERSION} cloudflared=2026.8.2\n`);
     expect(existsSync(path.join(host.state, "active.hivra-wake-proxy.service"))).toBe(true);
     expect(existsSync(path.join(host.state, "enabled.hivra-wake-helper.service"))).toBe(true);
+    // The boot unit that puts the pins back before the proxy and the connectors.
+    expect(existsSync(path.join(host.state, "enabled.hivra-ingress-pins.service"))).toBe(true);
+    const pinsUnit = host.file("/etc/systemd/system/hivra-ingress-pins.service");
+    expect(pinsUnit).toContain("hivra-wake-proxy.py apply-pins");
+    expect(pinsUnit).toContain("Before=hivra-wake-helper.service hivra-wake-proxy.service");
 
     const log = path.join(host.state, "systemctl.log");
     writeFileSync(log, "");
@@ -382,6 +387,7 @@ describe("host wake proxy scripts (on a fake host)", () => {
     expect(existsSync(path.join(host.state, "user"))).toBe(false);
     expect(existsSync(path.join(host.state, "active.hivra-wake-proxy.service"))).toBe(false);
     expect(existsSync(path.join(host.state, "enabled.hivra-wake-helper.service"))).toBe(false);
+    expect(existsSync(path.join(host.state, "enabled.hivra-ingress-pins.service"))).toBe(false);
   });
 
   it("writes the host credential from stdin, root only, once the proxy is healthy, and converges", () => {
@@ -455,11 +461,20 @@ describe("host wake proxy scripts (on a fake host)", () => {
     expect(host.exists(UNIT_DEST)).toBe(true);
 
     rmSync(path.join(host.root, "etc/hivra/ingress/routes/101.json"));
+    // The wake doorbell rings through the helper and runs in its group: it must go first.
+    host.writeHostFile("/etc/systemd/system/hivra-wake-doorbell.service", "[Unit]\n");
+    const doorbell = host.run(buildHostWakeProxyRemoveScript(TARGET));
+    expect(parseHostWakeProxyResult(doorbell.stdout)).toMatchObject({ status: "refused", step: "dependents" });
+    expect(doorbell.stderr).toContain("remove the doorbell first");
+    expect(host.exists(UNIT_DEST)).toBe(true);
+    rmSync(path.join(host.root, "etc/systemd/system/hivra-wake-doorbell.service"));
+
     const removed = host.run(buildHostWakeProxyRemoveScript(TARGET));
     expect(removed.status).toBe(0);
     expect(parseHostWakeProxyResult(removed.stdout)).toMatchObject({ status: "removed", changed: true });
     for (const entry of HOST_WAKE_PROXY_PLACEMENTS) expect(host.exists(entry.dest)).toBe(false);
     expect(host.exists("/usr/local/bin/hivra-cloudflared")).toBe(false);
+    expect(host.exists("/etc/systemd/system/hivra-ingress-pins.service")).toBe(false);
     expect(existsSync(path.join(host.state, "user"))).toBe(false);
     expect(parseHostWakeProxyResult(host.run(buildHostWakeProxyRemoveScript(TARGET)).stdout)?.status).toBe("absent");
   });

@@ -409,6 +409,23 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
   };
   const phase = (patch: IngressPatch) => deps.store.update({ agentId, leaseId, patch });
 
+  // A sleep may have claimed the agent between the read above and this lease
+  // (the sleep re-checks the ingress lease after its own claim, so one of the
+  // two always sees the other): read it again now that the lease is ours.
+  let again: AgentRow | null = null;
+  try {
+    again = await deps.readAgent(agentId);
+  } catch {
+    again = null;
+  }
+  const refusal = again ? ingressAgentRefusal(again) : "agent_unreadable";
+  if (refusal) {
+    await deps.store.release({ agentId, leaseId });
+    return refuse(refusal, refusal === "agent_unreadable" ? 503 : 409);
+  }
+  // Before each long step: the lease outlives the step (a lost lease is noticed at the next phase write).
+  const renew = () => deps.store.update({ agentId, leaseId, patch: {} }).catch(() => false);
+
   // 1. Preflight: nothing changes yet.
   const preflight = await hostStep(deps, target, "preflight", buildIngressPreflightScript(target), null);
   record(steps, preflight);
@@ -438,6 +455,7 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
   const guestIds = new Set(guestConnectors.map((connector) => connector.clientId));
 
   // 2. Guest forwarder: a host-only listener in the guest. Harmless if left.
+  await renew();
   let forwarderOk = false;
   try {
     const run = await deps.runHostScript(buildGuestForwarderHostScript(target, "install"), target.env,
@@ -493,6 +511,7 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
   }
 
   // 5. Host side.
+  await renew();
   const route = buildIngressRoute({
     vmid: target.vmid,
     hostname,
@@ -518,6 +537,7 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
   const hostIds = new Set(live(withHost).filter((c) => !guestIds.has(c.clientId)).map((c) => c.clientId));
 
   // 7. Guest connector off, its (now stale) token file deleted.
+  await renew();
   const guestOff = await hostStep(deps, target, "guest_disable",
     buildIngressGuestTunnelScript({ vmid: target.vmid, bindingTag: target.bindingTag, op: "disable" }), null, GUEST_TIMEOUT_MS);
   record(steps, guestOff);
@@ -551,6 +571,7 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
    * the current token); only once it is listed does the host side go.
    */
   async function recover(reason: string, knownToken: string | null): Promise<IngressRunResult> {
+    await renew();
     let current = knownToken;
     if (!current) {
       try {
@@ -588,6 +609,7 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
       return finish({ ok: false, agentId, mode: servingMode, phase: "failed", reason, steps },
         { mode: servingMode, phase: "failed", last_error: "recovery_failed" });
     }
+    await renew();
     const detach = await hostStep(deps, target, "detach", buildIngressDetachScript({ vmid: target.vmid, hostname }), null);
     record(steps, detach);
     await deps.cf.setOrigin(tunnelId, hostname, "http://localhost:8080").catch(() => undefined);

@@ -35,6 +35,8 @@ export interface HostState {
   /** QMP: refuse connections, fail or ignore a stop or a cont. */
   qmpDown?: boolean;
   qmpStopFail?: boolean;
+  /** The stop pauses the VM but answers with an error. */
+  qmpStopFailPaused?: boolean;
   qmpStopNoop?: boolean;
   qmpContFail?: boolean;
   qmpContNoop?: boolean;
@@ -164,6 +166,9 @@ class Qmp(socketserver.StreamRequestHandler):
             elif cmd in ("stop", "cont"):
                 log("qmp " + cmd)
                 out({"timestamp": {"seconds": 1, "microseconds": 2}, "event": "STOP" if cmd == "stop" else "RESUME"})
+                if cmd == "stop" and s.get("qmpStopFailPaused"):
+                    s["qmp"] = "paused"; save(s)
+                    reply({"error": {"class": "GenericError", "desc": "refused"}}); continue
                 if s.get("qmpStopFail" if cmd == "stop" else "qmpContFail"):
                     reply({"error": {"class": "GenericError", "desc": "refused"}}); continue
                 if not s.get("qmpStopNoop" if cmd == "stop" else "qmpContNoop"):

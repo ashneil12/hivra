@@ -75,6 +75,29 @@ describe("agentIngressStateFrom", () => {
     const held = ingressRow({ lease_id: "lease", lease_expires_at: new Date(Date.now() + 60_000).toISOString() });
     expect(agentIngressStateFrom(held, hostOn, input)).toMatchObject({ acts: false, leaseHeld: true, needsAwake: false });
   });
+
+  it("keeps a guest-mode agent awake when an enable or rollback left its cutover half done", () => {
+    for (const over of [
+      { phase: "forwarder" },
+      { phase: "host_connector" },
+      { phase: "failed", last_error: "recovery_failed" },
+      { phase: "failed", last_error: "detach_failed" },
+      { phase: "failed", last_error: "guest_token_stale" },
+    ]) {
+      // With every switch off too: this is the way back, not ingress acting.
+      for (const env of [on, {}]) {
+        expect(agentIngressStateFrom(ingressRow({ mode: "guest", ...over }), null, { ...input, env }))
+          .toMatchObject({ hostIngress: false, acts: false, needsAwake: true, interrupted: true });
+      }
+      // Still running (lease held): the run itself owns it.
+      const running = ingressRow({ mode: "guest", ...over, lease_id: "lease", lease_expires_at: new Date(Date.now() + 60_000).toISOString() });
+      expect(agentIngressStateFrom(running, hostOn, input)).toMatchObject({ needsAwake: false, interrupted: false, leaseHeld: true });
+    }
+    for (const over of [{ phase: "failed", last_error: "forwarder_failed" }, { phase: "rolled_back" }, { phase: "none" }]) {
+      expect(agentIngressStateFrom(ingressRow({ mode: "guest", ...over }), hostOn, input))
+        .toMatchObject({ needsAwake: false, interrupted: false });
+    }
+  });
 });
 
 describe("loadAgentIngressState", () => {

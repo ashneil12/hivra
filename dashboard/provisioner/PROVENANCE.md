@@ -544,6 +544,21 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.6` builds on `2026.11.13.5` and hardens the host wake proxy, the doorbell and their units
+after review. Changed: `hivra-wake-proxy.py`, `hivra-wake-doorbell.py`, `hivra-wake-proxy.service`,
+`hivra-wake-helper.service`, `hivra-cf-template.service`, `hivra-wake-doorbell.service`, plus the documents, the
+version and the provider worker's release labels; no file is added (the bundle is at the worker's file cap). The helper reports a computer
+napped only when its marker is valid and QEMU says paused (a computer resumed some other way has its marker removed
+under the per-VM lock), and the forwarder may no longer ask Hivra for a wake (`request`) at all. Bad owner proofs
+count per VM and per client address, so one client's junk cannot lock the owner out. A new `apply-pins` command, run at
+boot by the `hivra-ingress-pins.service` oneshot that the wake-proxy install step writes, puts every host-ingress
+computer's ARP/IP pin back before the proxy and the host connectors start. The doorbell connects only to a mail server with a globally routable address (resolved and
+connected to by that address), and a ring that never reached Hivra no longer gives up after `FIRE_MAX`: it keeps
+asking every `FIRE_SLOW` seconds until Hivra says the computer is awake or a wake disarms it. Every new daemon unit
+sets `StartLimitIntervalSec=0`, so it never stays failed; the doorbell may run 64 tasks. Nothing is installed by
+bundle sync; the units take effect on the next wake-proxy or doorbell install step. No guest asset changes. This
+source release does not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.13.5` builds on `2026.11.13.4` and teaches the host wake doorbell Discord. Only
 `hivra-wake-doorbell.py` changes, plus the documents, the version and the provider worker's release labels.
 Before a Discord-covered computer sleeps, Hivra's arm host script reads the bot token and Hermes's Discord reply

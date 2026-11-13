@@ -65,10 +65,19 @@ export async function claimAgentIngressLease(input: { agentId: string; leaseId: 
   return Array.isArray(data) && data.length === 1;
 }
 
-/** Writes a patch while the lease is still ours. False when it is not. */
-export async function updateAgentIngressUnderLease(input: { agentId: string; leaseId: string; patch: IngressPatch }): Promise<boolean> {
+/**
+ * Writes a patch while the lease is still ours, and renews the lease (an empty
+ * patch only renews it), so a long enable or rollback never runs past it.
+ * False when it is not ours.
+ */
+export async function updateAgentIngressUnderLease(input: { agentId: string; leaseId: string; patch: IngressPatch; nowMs?: number }): Promise<boolean> {
+  const now = input.nowMs ?? Date.now();
   const { data, error } = await db().from("hivra_agent_ingress")
-    .update({ ...input.patch, updated_at: new Date().toISOString() })
+    .update({
+      ...input.patch,
+      lease_expires_at: new Date(now + INGRESS_LEASE_MS).toISOString(),
+      updated_at: new Date(now).toISOString(),
+    })
     .eq("agent_id", input.agentId)
     .eq("lease_id", input.leaseId)
     .select("agent_id");

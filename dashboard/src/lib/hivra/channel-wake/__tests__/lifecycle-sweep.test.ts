@@ -308,6 +308,16 @@ describe("the sweep", () => {
     expect(wake).not.toHaveBeenCalled();
   });
 
+  it("disarms and wakes a sleeping agent whose adapter can no longer hear it (a doorbell whose rings cannot reach Hivra)", async () => {
+    mockAgents.set(AGENT, { status: "running", sleep_state: "napping", operation_id: null });
+    const email = adapter("email", { canHear: () => false });
+    mockRows.push(row("email", { state: "armed" }));
+    const { wake, result } = run([email]);
+    await result;
+    expect(email.disarmForWake).toHaveBeenCalled();
+    expect(wake).toHaveBeenCalledWith(AGENT);
+  });
+
   it("arms late adapters, and blocks and wakes after repeated failures", async () => {
     mockAgents.set(AGENT, { status: "running", sleep_state: "napping", operation_id: null });
     const late = adapter("matrix", { armLater: jest.fn(async () => ({ ok: false as const, reason: "down" })) });

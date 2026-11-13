@@ -214,6 +214,21 @@ host("against the stub host", () => {
       expect(result.marker).toBeNull();
     });
 
+    it("keeps a computer the failed stop paused anyway, with its marker, so the proxy can wake it", () => {
+      const result = run(nap, { ...awakeProbe, qmpStopFailPaused: true });
+      expect(parseSleepReceipt(result.stdout, VMID)).toMatchObject({ ok: false, to: "napping" });
+      expect(result.marker).toBe(qemuPid());
+      expect(result.state.qmp).toBe("paused");
+    });
+
+    it("resumes a computer the failed stop paused anyway when the proxy will not take the marker", () => {
+      const result = run(nap, { ...awakeProbe, qmpStopFailPaused: true }, { STUB_CTL_NAPPED: "down" });
+      expect(parseSleepReceipt(result.stdout, VMID)).toMatchObject({ ok: false, to: "awake" });
+      expect(result.marker).toBeNull();
+      expect(result.state.qmp).toBe("running");
+      expect(ordered(result.calls).slice(-2)).toEqual(["qmp cont", `ingress undrain ${VMID}`]);
+    });
+
     it("leaves no trace of the proxy when the computer is in use", () => {
       const result = run(nap, { ...AWAKE, probeStdout: probeLine({ activeRuns: 1 }) });
       expect(parseSleepReceipt(result.stdout, VMID)).toMatchObject({ ok: false, reason: "active" });
@@ -228,6 +243,23 @@ host("against the stub host", () => {
       const result = run(hibernate, NAPPING, {}, true);
       expect(parseSleepReceipt(result.stdout, VMID)).toMatchObject({ ok: true, reason: "hibernated" });
       expect(result.marker).toBeNull();
+    });
+
+    it("drains a running computer before it is saved, and refuses when the proxy is busy", () => {
+      const saved = run(hibernate, awakeProbe);
+      expect(parseSleepReceipt(saved.stdout, VMID)).toMatchObject({ ok: true, reason: "hibernated" });
+      expect(saved.calls).toContain(`ingress drain ${VMID} 2000`);
+      const busy = run(hibernate, awakeProbe, { STUB_CTL_DRAIN: "busy" });
+      expect(parseSleepReceipt(busy.stdout, VMID)).toMatchObject({ ok: false, reason: "ingress_busy", to: "awake" });
+      expect(busy.state.status).toBe("running");
+      const failed = run(hibernate, { ...awakeProbe, hibernateFail: true });
+      expect(parseSleepReceipt(failed.stdout, VMID)).toMatchObject({ ok: false, to: "awake" });
+      expect(failed.calls).toContain(`ingress undrain ${VMID}`);
+    });
+
+    it("never drains a napping computer (it has no requests to finish)", () => {
+      const result = run(hibernate, NAPPING, {}, true);
+      expect(result.calls.some((c) => c.startsWith("ingress drain"))).toBe(false);
     });
 
     it("keeps the marker when the computer is still paused after a failed save", () => {

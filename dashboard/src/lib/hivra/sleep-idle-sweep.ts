@@ -21,7 +21,12 @@ import { disarmChannelsForWake, settleChannelsAfterWake } from "./channel-wake/l
 import { logAgentSleepEvent, parseSleepGeneration, reconcileAgentSleepState } from "./agent-sleep-store";
 import { resolveSleepTarget } from "./agent-wake";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
-import { agentIngressStateFrom, hostIngressConfigured } from "./ingress/wake-client";
+import {
+  INTERRUPTED_INGRESS_ERRORS,
+  INTERRUPTED_INGRESS_PHASES,
+  agentIngressStateFrom,
+  hostIngressConfigured,
+} from "./ingress/wake-client";
 import type { AgentIngressRow } from "./ingress/store";
 import type { IngressHostRow } from "./ingress/config";
 import {
@@ -560,7 +565,8 @@ async function runHostIngress(ctx: Context): Promise<void> {
   const { data: ingressData, error: ingressError } = await ctx.db
     .from("hivra_agent_ingress")
     .select("agent_id, vmid, host_id, mode, phase, metrics_port, generation, last_error, lease_id, lease_expires_at, updated_at")
-    .neq("mode", "guest")
+    // Host-served rows, and guest rows an enable or rollback left half done (kept awake too).
+    .or(`mode.neq.guest,phase.in.(${INTERRUPTED_INGRESS_PHASES.join(",")}),last_error.in.(${INTERRUPTED_INGRESS_ERRORS.join(",")})`)
     .limit(500);
   if (ingressError) {
     counts.errors += 1;

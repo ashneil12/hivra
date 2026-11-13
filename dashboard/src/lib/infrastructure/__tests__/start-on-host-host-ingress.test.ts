@@ -27,14 +27,14 @@ function run(options: { route?: object | null; curlOk?: boolean } = {}) {
     writeFileSync(path.join(bin, "curl"), `#!/usr/bin/env bash\necho "curl $*" >> "${work}/calls"\nexit ${options.curlOk === false ? 1 : 0}\n`);
     chmodSync(path.join(bin, "curl"), 0o755);
     if (options.route !== null) {
-      writeFileSync(path.join(work, "ingress/routes/1107.json"), JSON.stringify(options.route ?? { hostname: "box-1107.example.test" }));
+      writeFileSync(path.join(work, "ingress/routes/4321.json"), JSON.stringify(options.route ?? { hostname: "box-4321.example.test" }));
     }
-    writeFileSync(path.join(work, "ingress/pins/1107.nft"), "add table bridge hivra_ingress_pin\n");
-    writeFileSync(path.join(work, "ingress/pins/1107.neigh"), "10.250.20.7 bc:24:11:aa:bb:cc vmbr9\n");
+    writeFileSync(path.join(work, "ingress/pins/4321.nft"), "add table bridge hivra_ingress_pin\n");
+    writeFileSync(path.join(work, "ingress/pins/4321.neigh"), "10.250.20.57 bc:24:11:aa:bb:cc vmbr9\n");
     const harness = `set -euo pipefail
-VMID=1107
-IP=10.250.20.7
-HIVRA_TUNNEL_URL=https://box-1107.example.test
+VMID=4321
+IP=10.250.20.57
+HIVRA_TUNNEL_URL=https://box-4321.example.test
 publish_result() { printf 'RESULT %s\\n' "$1"; }
 seq() { echo 1; }
 sleep() { :; }
@@ -62,11 +62,11 @@ describe("hivra-start-on-host.sh host ingress branch", () => {
   it("skips the guest tunnel restart, re-applies the pin and starts the host connector", () => {
     const result = run();
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('RESULT {"vmid":1107,"ip":"10.250.20.7","chat_url":"https://box-1107.example.test","ready":true}');
+    expect(result.stdout).toContain('RESULT {"vmid":4321,"ip":"10.250.20.57","chat_url":"https://box-4321.example.test","ready":true}');
     expect(result.stdout).not.toContain("FELL_THROUGH");
-    expect(result.calls).toContain("systemctl start hivra-cf@1107.service");
+    expect(result.calls).toContain("systemctl start hivra-cf@4321.service");
     expect(result.calls).toContain("nft -f");
-    expect(result.calls).toContain("ip neigh replace 10.250.20.7 lladdr bc:24:11:aa:bb:cc dev vmbr9 nud permanent");
+    expect(result.calls).toContain("ip neigh replace 10.250.20.57 lladdr bc:24:11:aa:bb:cc dev vmbr9 nud permanent");
     expect(result.calls).not.toContain("hivra-cf-tunnel");
   });
 

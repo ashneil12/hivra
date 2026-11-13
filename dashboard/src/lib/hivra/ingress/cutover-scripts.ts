@@ -232,6 +232,11 @@ OWN="$(printf '{ "tap%si0", "fwpr%sp0" }' "$VMID" "$VMID")"
   printf 'add table bridge %s\n' "$PIN_TABLE"
   printf 'add chain bridge %s vm_%s { type filter hook prerouting priority -300; policy accept; }\n' "$PIN_TABLE" "$VMID"
   printf 'flush chain bridge %s vm_%s\n' "$PIN_TABLE" "$VMID"
+  # VLAN-tagged frames would hide ARP and IPv4 from the matches below while the host still takes VID 0 frames as
+  # untagged (as in proxmox-host-vm-antispoof.sh): none from this computer, nor from any other guest port on its bridge.
+  printf 'add rule bridge %s vm_%s iifname %s ether type { 8021q, 8021ad } drop\n' "$PIN_TABLE" "$VMID" "$OWN"
+  printf 'add rule bridge %s vm_%s meta ibrname "%s" iifname "tap*" ether type { 8021q, 8021ad } drop\n' "$PIN_TABLE" "$VMID" "$BRIDGE"
+  printf 'add rule bridge %s vm_%s meta ibrname "%s" iifname "fwpr*" ether type { 8021q, 8021ad } drop\n' "$PIN_TABLE" "$VMID" "$BRIDGE"
   printf 'add rule bridge %s vm_%s iifname %s ether saddr != %s drop\n' "$PIN_TABLE" "$VMID" "$OWN" "$MAC"
   printf 'add rule bridge %s vm_%s iifname %s arp saddr ether != %s drop\n' "$PIN_TABLE" "$VMID" "$OWN" "$MAC"
   printf 'add rule bridge %s vm_%s iifname %s arp saddr ip != { %s, 0.0.0.0 } drop\n' "$PIN_TABLE" "$VMID" "$OWN" "$GUEST_IP"

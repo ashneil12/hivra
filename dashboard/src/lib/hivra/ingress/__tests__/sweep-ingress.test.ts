@@ -175,10 +175,29 @@ describe("host ingress sweep step", () => {
     expect(mockEnsure).toHaveBeenCalledWith(id(1), expect.objectContaining({ trigger: "ingress" }));
   });
 
-  it("asks only for host-mode rows", async () => {
+  it("asks only for host-mode rows and guest rows a cutover left half done", async () => {
     tables({ ingress: [], agents: [] });
     await sweep({ HIVRA_HOST_INGRESS: "canary" });
     const call = mockCalls.find((c) => c.table === "hivra_agent_ingress");
-    expect(call?.ops).toEqual(expect.arrayContaining([["neq", ["mode", "guest"]]]));
+    expect(call?.ops).toEqual(expect.arrayContaining([
+      ["or", ["mode.neq.guest,phase.in.(forwarder,host_connector),last_error.in.(recovery_failed,detach_failed,guest_token_stale)"]],
+    ]));
+  });
+
+  it.each([
+    [{ phase: "host_connector" }],
+    [{ phase: "forwarder" }],
+    [{ phase: "failed", last_error: "recovery_failed" }],
+    [{ phase: "failed", last_error: "guest_token_stale" }],
+  ])("wakes a sleeping guest-mode agent whose cutover was left half done (%j)", async (over) => {
+    tables({ ingress: [ingressRow(1, { mode: "guest", ...over })], agents: [agent(1)] });
+    await sweep({ HIVRA_HOST_INGRESS: "canary" });
+    expect(mockEnsure).toHaveBeenCalledWith(id(1), expect.objectContaining({ trigger: "ingress" }));
+  });
+
+  it("leaves a cleanly failed guest-mode enable alone", async () => {
+    tables({ ingress: [ingressRow(1, { mode: "guest", phase: "failed", last_error: "forwarder_failed" })], agents: [agent(1)] });
+    await sweep({ HIVRA_HOST_INGRESS: "canary" });
+    expect(mockEnsure).not.toHaveBeenCalled();
   });
 });

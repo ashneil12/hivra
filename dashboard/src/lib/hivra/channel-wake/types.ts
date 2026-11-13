@@ -114,4 +114,10 @@ export interface ChannelWakeAdapter extends ChannelWakeSpec {
   verifyClear(ctx: ChannelWakeAdapterContext): Promise<boolean>;
   /** Opt-out or agent delete: undo everything this adapter set up. Never throws. */
   release(ctx: ChannelWakeAdapterContext): Promise<void>;
+  /**
+   * Whether an arm made earlier can still wake the agent now (its switches are
+   * still on). False makes the sweep take the arm down and wake a sleeping
+   * agent. Absent means yes.
+   */
+  canHear?(): boolean;
 }

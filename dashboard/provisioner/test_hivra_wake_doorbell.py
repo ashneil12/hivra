@@ -153,6 +153,7 @@ class FakeHelper(object):
         self.requests = []
         self.credential = True
         self.state = "waking"
+        self.refuse = None
         self.server = asyncio.run_coroutine_threadsafe(asyncio.start_unix_server(self.serve, path=path), loop).result(5)
 
     async def serve(self, reader, writer):
@@ -161,7 +162,8 @@ class FakeHelper(object):
             answer = {"ok": True, "credential": self.credential}
         else:
             self.requests.append(request)
-            answer = {"ok": True, "vmid": request.get("vmid"), "state": self.state}
+            answer = ({"ok": False, "error": self.refuse} if self.refuse
+                      else {"ok": True, "vmid": request.get("vmid"), "state": self.state})
         writer.write((json.dumps(answer) + "\n").encode())
         await writer.drain()
         writer.close()
@@ -183,7 +185,7 @@ class Harness(object):
         self.imap = FakeImap(self.loop, idle=idle, password=self.password)
         self.helper = FakeHelper(self.loop, self.helper_path)
         options = dict(run_dir=self.run_dir, helper_ctl=self.helper_path, root_uids=(os.geteuid(),),
-                       idle_seconds=0.3, poll_seconds=0.2, fire_retry=0.2, fire_max=30.0, watch_fail=1.0,
+                       idle_seconds=0.3, poll_seconds=0.2, fire_retry=0.2, fire_max=30.0, watch_fail=1.0, allow_private_imap=True,
                        reconnect_backoff=(0.1,), arm_timeout=5.0, connect_timeout=2.0, command_timeout=3.0)
         options.update(overrides)
         self.cfg = doorbell.Config(**options)
@@ -258,6 +260,21 @@ class DoorbellTestCase(unittest.TestCase):
 
 
 class ArmTests(DoorbellTestCase):
+    def test_refuses_a_mail_server_on_a_private_address(self):
+        # Host settings from inside a computer may not point the doorbell at the host or another guest.
+        self.h.cfg.allow_private_imap = False
+        answer = self.h.ctl(self.h.arm_request())
+        self.assertEqual((answer["ok"], answer.get("error")), (False, "address_refused"))
+        self.assertEqual(self.h.imap.commands, [])
+
+    def test_resolves_to_a_global_address_only(self):
+        cfg = doorbell.Config(allow_private_imap=False, connect_timeout=2.0)
+        for host in ("127.0.0.1", "10.0.0.5", "169.254.1.1", "100.64.0.1", "::1"):
+            with self.assertRaises(doorbell.ImapError) as caught:
+                asyncio.run(doorbell.resolve_public(host, 993, cfg))
+            self.assertEqual(caught.exception.reason, "address_refused")
+        self.assertEqual(asyncio.run(doorbell.resolve_public("8.8.8.8", 993, cfg)), "8.8.8.8")
+
     def test_arm_records_status_baseline_then_examines(self):
         answer = self.arm()
         self.assertEqual(answer["uidvalidity"], 7001)
@@ -407,6 +424,20 @@ class WatchTests(DoorbellTestCase):
         self.h.helper.state = "awake"
         self.arm()
         self.h.imap.add(headers(OWNER))
+        self.assertTrue(self.h.wait(lambda: VMID not in self.h.service.watches))
+
+    def test_ring_that_never_reaches_hivra_never_expires(self):
+        self.h.cfg.fire_max = 0.3
+        self.h.cfg.fire_slow = 0.2
+        self.h.helper.refuse = "no_credential"
+        self.arm()
+        self.h.imap.add(headers(OWNER))
+        self.assertTrue(self.h.wait(lambda: len(self.h.helper.requests) >= 5))
+        self.assertIn(VMID, self.h.service.watches)
+        self.assertEqual(self.h.ctl({"cmd": "status", "vmid": VMID})["state"], "fired")
+        # Once Hivra answers that the computer is awake, it may stop.
+        self.h.helper.refuse = None
+        self.h.helper.state = "awake"
         self.assertTrue(self.h.wait(lambda: VMID not in self.h.service.watches))
 
     def test_restart_rings_for_every_lost_arm(self):

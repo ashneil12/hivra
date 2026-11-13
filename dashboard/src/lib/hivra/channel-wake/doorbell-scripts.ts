@@ -22,6 +22,7 @@ import {
   type ManagedHivraProvisionerChannel,
 } from "@/lib/hivra/managed-provisioner-channel";
 import { buildChannelCredReadProgram, buildGuestCredHandoffHostScript, parseIdleProbeRefusal } from "@/lib/hivra/agent-sleep-scripts";
+import { ingressHostCredentialEnabled } from "@/lib/hivra/ingress/config";
 import { EMAIL_CHANNEL_SPEC } from "./registry";
 
 type Env = Record<string, string | undefined>;
@@ -37,6 +38,17 @@ export function parseWakeDoorbells(value: string | undefined | null): ReadonlySe
 
 export function wakeDoorbellEnabled(channel: WakeDoorbellChannel, env: Env = process.env): boolean {
   return parseWakeDoorbells(env.HIVRA_WAKE_DOORBELLS).has(channel);
+}
+
+/**
+ * Why a doorbell channel cannot cover a sleeping computer now, or null. The
+ * doorbell's rings reach Hivra only through the host credential, so with
+ * HIVRA_INGRESS_HOST_CREDENTIAL off every ring would fail.
+ */
+export function wakeDoorbellBlocker(channel: WakeDoorbellChannel, env: Env = process.env): "doorbell_off" | "host_credential_off" | null {
+  if (!wakeDoorbellEnabled(channel, env)) return "doorbell_off";
+  if (!ingressHostCredentialEnabled(env)) return "host_credential_off";
+  return null;
 }
 
 export function anyWakeDoorbellEnabled(env: Env = process.env): boolean {
@@ -363,6 +375,51 @@ printf '${DOORBELL_STATUS_MARKER} installed=%s active=%s ok=%s armed=%s fired=%s
   "$INSTALLED" "\${ACTIVE:-unknown}" "$(health_field "$HEALTH" ok)" "$(health_field "$HEALTH" armed)" "$(health_field "$HEALTH" fired)" \\
   "$(health_field "$HEALTH" helper)" "$(health_field "$HEALTH" credential)"
 `;
+}
+
+export const DOORBELL_ARMS_PREFIX = "HIVRA_DOORBELL_ARMS ";
+const MAX_ARMS_BYTES = 256 * 1024;
+
+/**
+ * Read-only: every arm the doorbell holds on this host (vmid, arm id, state),
+ * as one HIVRA_DOORBELL_ARMS line of JSON. Never a credential. A doorbell
+ * that is not installed or does not answer says so in that line.
+ */
+export function buildDoorbellArmsScript(targetId: string): string {
+  assertTarget(targetId);
+  return `${prelude(targetId)}if [ ! -f "$PY" ]; then printf '${DOORBELL_ARMS_PREFIX}%s\\n' '{"ok":false,"error":"absent"}'; exit 0; fi
+OUT="$(printf '%s\\n' '{"cmd":"status"}' | command timeout -k 2 10 /usr/bin/python3 -I -B "$PY" ctl 2>/dev/null | head -n 1 | head -c ${MAX_ARMS_BYTES})" || true
+[ -n "$OUT" ] || OUT='{"ok":false,"error":"unreachable"}'
+printf '${DOORBELL_ARMS_PREFIX}%s\\n' "$OUT"
+`;
+}
+
+export interface DoorbellArm {
+  armId: string | null;
+  state: string;
+}
+
+/**
+ * The doorbell's arms by vmid; `{ answered: false }` when it is absent or
+ * did not answer (nobody on the host can hear a computer then); null when the
+ * script's output cannot be read (nothing is known: try again later).
+ */
+export function parseDoorbellArms(stdout: string): { answered: true; arms: Map<number, DoorbellArm> } | { answered: false } | null {
+  const answer = doorbellAnswerLine(stdout, DOORBELL_ARMS_PREFIX);
+  if (!answer) return null;
+  if (answer.ok !== true) return { answered: false };
+  const vms = answer.vms;
+  if (!vms || typeof vms !== "object" || Array.isArray(vms)) return null;
+  const arms = new Map<number, DoorbellArm>();
+  for (const [key, value] of Object.entries(vms as Record<string, unknown>)) {
+    const vmid = Number(key);
+    if (!Number.isSafeInteger(vmid) || !value || typeof value !== "object") continue;
+    const view = value as Record<string, unknown>;
+    const armId = typeof view.arm_id === "string" && UUID.test(view.arm_id) ? view.arm_id : null;
+    const state = typeof view.state === "string" && REASON.test(view.state) ? view.state : "unknown";
+    arms.set(vmid, { armId, state });
+  }
+  return { answered: true, arms };
 }
 
 /**

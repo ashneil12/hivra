@@ -589,6 +589,11 @@ update them yet.
   free-response channel, sends one typing indicator and never posts. It stays connected about 90
   seconds after the disarm. Agents are covered only with Hermes's own missed-message catch-up on and
   a DM channel listed for it.
+- **Host ingress hardening (shipped, dark).** From `2026.11.13.6`, `hivra-ingress-pins.service`
+  (written and enabled by the wake-proxy install step; it runs `hivra-wake-proxy.py apply-pins`) re-applies each host-ingress computer's ARP/IP pin at boot
+  before the proxy and connectors start; the helper treats a running computer as not napped; the
+  forwarder cannot ask for wakes; the doorbell only reaches public mail servers and keeps ringing until
+  Hivra answers; the daemons never stop restarting.
 - **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
   (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
   the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks

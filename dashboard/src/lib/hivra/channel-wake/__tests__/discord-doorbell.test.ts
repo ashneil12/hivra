@@ -35,7 +35,7 @@ const ARM = "0f0e0d0c-0b0a-4908-8706-050403020100";
 const FP = "0123456789abcdef";
 const DOORBELL_PY = path.join(process.cwd(), "provisioner/hivra-wake-doorbell.py");
 const target = { vmid: 1234, bindingTag: "hivra-binding-test", env: { host: "x" } };
-const ON = { HIVRA_WAKE_DOORBELLS: "email,discord" };
+const ON = { HIVRA_WAKE_DOORBELLS: "email,discord", HIVRA_INGRESS_HOST_CREDENTIAL: "true" };
 const facts = { backfill: true, backfillChannels: 1, backfillAllChannels: false, dmsAllowed: true };
 const probe = { liveChannels: ["hermes:discord"], channelFps: { discord: FP }, channelFacts: { discord: facts } };
 const row = { enabled: true, credFp: FP, blockedUntil: null };
@@ -87,6 +87,9 @@ describe("Discord in the registry", () => {
   it("adds doorbell_off in the adapter until HIVRA_WAKE_DOORBELLS lists discord", () => {
     const input = { acts: true, row, probe, nowMs: 0 };
     expect(createDiscordDoorbellAdapter({ env: { HIVRA_WAKE_DOORBELLS: "email" } }).coverageBlockers(input)).toEqual(["doorbell_off"]);
+    const noCredential = createDiscordDoorbellAdapter({ env: { HIVRA_WAKE_DOORBELLS: "discord" } });
+    expect(noCredential.coverageBlockers(input)).toEqual(["host_credential_off"]);
+    expect(noCredential.canHear!()).toBe(false);
     expect(createDiscordDoorbellAdapter({ env: ON }).coverageBlockers(input)).toEqual([]);
     expect(CHANNEL_WAKE_ADAPTERS).toContain(DISCORD_DOORBELL_ADAPTER);
   });

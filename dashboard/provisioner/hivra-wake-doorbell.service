@@ -2,6 +2,8 @@
 Description=Hivra wake doorbell (watches a sleeping computer's mailbox read-only and asks for its wake)
 After=network-online.target hivra-wake-helper.service
 Wants=network-online.target
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify
@@ -47,7 +49,7 @@ SystemCallFilter=~@privileged @resources
 LimitNOFILE=4096
 LimitCORE=0
 MemoryMax=128M
-TasksMax=32
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target

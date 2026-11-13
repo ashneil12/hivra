@@ -83,6 +83,10 @@ describe("Matrix push gateway", () => {
   it("is dark without the secret", async () => {
     const wake = jest.fn();
     expect(await handleMatrixNotify(push(key), { env: {}, wake })).toEqual({ status: 404 });
+    // The switches, not only the secret: off, or matrix not listed, and the route does not exist.
+    for (const env of [{ ...ENV, HIVRA_CHANNEL_WAKE: "off" }, { ...ENV, HIVRA_CHANNEL_WAKE_CHANNELS: "email" }]) {
+      expect(await handleMatrixNotify(push(key), { env, wake })).toEqual({ status: 404 });
+    }
     expect(wake).not.toHaveBeenCalled();
   });
 

@@ -44,8 +44,11 @@ Waking: the doorbell asks the wake proxy's root helper (`request` on
 which signs a wake-request to Hivra with the host credential. The doorbell
 never holds that credential. It forgets the mail credentials as soon as it
 rings, and asks again every FIRE_RETRY seconds until Hivra disarms it (every
-wake does) or FIRE_MAX passes, because a ring that lands while the computer is
-still going to sleep is answered "awake" and must be repeated once it sleeps.
+wake does), because a ring that lands while the computer is still going to
+sleep is answered "awake" and must be repeated once it sleeps. Past FIRE_MAX it
+stops only if Hivra's last answer said the computer is awake; a ring that never
+got through (Hivra or the network down, no host credential) keeps asking every
+FIRE_SLOW seconds, so a sleeping computer is never left deaf.
 
 Fail toward awake. A watch that cannot reach the mailbox for WATCH_FAIL seconds
 rings. A doorbell that restarts has lost the credentials it held, so it rings
@@ -80,6 +83,7 @@ import email.parser
 import email.policy
 import email.utils
 import hashlib
+import ipaddress
 import json
 import os
 import pwd
@@ -104,6 +108,7 @@ IDLE_SECONDS = 240.0
 POLL_SECONDS = 30.0
 FIRE_RETRY = 15.0
 FIRE_MAX = 600.0
+FIRE_SLOW = 60.0
 WATCH_FAIL = 300.0
 RECONNECT_BACKOFF = (2.0, 5.0, 10.0, 30.0, 60.0)
 MAX_LINE = 64 * 1024
@@ -179,6 +184,9 @@ class Config(object):
         self.poll_seconds = POLL_SECONDS
         self.fire_retry = FIRE_RETRY
         self.fire_max = FIRE_MAX
+        self.fire_slow = FIRE_SLOW
+        # Tests only: a fake mail server on loopback.
+        self.allow_private_imap = False
         self.watch_fail = WATCH_FAIL
         self.reconnect_backoff = RECONNECT_BACKOFF
         self.arm_timeout = ARM_TIMEOUT
@@ -215,6 +223,31 @@ def log(event, **fields):
         sys.stderr.flush()
     except (OSError, ValueError):
         pass
+
+
+
+def ring_settled(answer):
+    """Whether Hivra itself answered that the computer is awake: only then may a ring past FIRE_MAX stop.
+    A ring that never reached Hivra (no answer, a refusal, no host credential) keeps going."""
+    return bool(answer and answer.get("ok") is True and answer.get("state") == "awake")
+
+async def resolve_public(host, port, cfg):
+    """The first globally routable address `host` resolves to. Raises ImapError("address_refused") when it has
+    none (loopback, private, link-local, shared, reserved), ImapError("connect_failed") when it does not resolve."""
+    try:
+        infos = await asyncio.wait_for(
+            asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP),
+            cfg.connect_timeout)
+    except (OSError, asyncio.TimeoutError, UnicodeError):
+        raise ImapError("connect_failed")
+    for info in infos:
+        try:
+            address = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if address.is_global or cfg.allow_private_imap:
+            return str(address)
+    raise ImapError("address_refused")
 
 
 def parse_vmid(value):
@@ -410,9 +443,13 @@ class Imap(object):
         security = params["security"]
         # "plain" only ever comes from the computer's own settings, where Hermes already logs in the same way.
         context = self.tls_context() if security == "tls" else None
+        # The doorbell connects from the host's own address, which every guest forwarder allows: only a public
+        # mail server, resolved here and connected to by the address that was checked (never the host itself,
+        # another guest or anything private), so a computer's settings cannot point it at internal services.
+        address = await resolve_public(params["host"], params["port"], self.cfg)
         try:
             self.reader, self.writer = await asyncio.wait_for(
-                asyncio.open_connection(params["host"], params["port"], ssl=context,
+                asyncio.open_connection(address, params["port"], ssl=context,
                                         server_hostname=params["host"] if context else None, limit=MAX_LINE * 2),
                 self.cfg.connect_timeout)
         except (OSError, asyncio.TimeoutError, ssl.SSLError, ValueError):
@@ -749,7 +786,7 @@ class Watch(object):
             await self.ring("fault")
 
     async def ring(self, reason):
-        """Forget the mail credentials, then ask for the wake until disarmed or FIRE_MAX passes."""
+        """Forget the mail credentials, then ask for the wake until disarmed (or, past FIRE_MAX, Hivra says awake)."""
         if self.imap is not None:
             await self.imap.close()
             self.imap = None
@@ -766,10 +803,14 @@ class Watch(object):
             log("wake_request", vmid=self.vmid, ok=bool(answer and answer.get("ok")),
                 state=(answer or {}).get("state"), error=(answer or {}).get("error"))
             if self.cfg.clock() - self.fired_at >= self.cfg.fire_max:
-                self.state = "expired"
-                log("ring_expired", vmid=self.vmid, requests=self.requests)
-                self.doorbell.forget(self)
-                return
+                if ring_settled(answer):
+                    self.state = "expired"
+                    log("ring_expired", vmid=self.vmid, requests=self.requests)
+                    self.doorbell.forget(self)
+                    return
+                # Hivra never said the computer is awake: keep asking, more slowly, never deaf.
+                await asyncio.sleep(self.cfg.fire_slow)
+                continue
             await asyncio.sleep(self.cfg.fire_retry)
 
     async def stop(self):
@@ -1376,11 +1417,14 @@ class DiscordWatch(object):
             if channel_id and self.typing is None and answer and answer.get("ok") and self.token:
                 await self.send_typing(channel_id)
             if self.cfg.clock() - self.fired_at >= self.cfg.fire_max:
-                self.state = "expired"
-                log("ring_expired", vmid=self.vmid, requests=self.requests)
-                self.doorbell.forget(self)
-                await self.stop()
-                return
+                if ring_settled(answer):
+                    self.state = "expired"
+                    log("ring_expired", vmid=self.vmid, requests=self.requests)
+                    self.doorbell.forget(self)
+                    await self.stop()
+                    return
+                await asyncio.sleep(self.cfg.fire_slow)
+                continue
             await asyncio.sleep(self.cfg.fire_retry)
 
     async def send_typing(self, channel_id):
