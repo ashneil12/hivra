@@ -570,6 +570,11 @@ update them yet.
   The proxy resumes only a paused VM whose nap marker holds the running QEMU pid, answers
   an unknown host or a napping computer with 503, and wakes only on a signed, short-lived,
   single-use `POST /__hivra/wake` ticket.
+- **Host ingress at start (shipped, dark).** From `2026.11.13.2`, `hivra-start-on-host.sh`
+  checks for `/etc/hivra/ingress/routes/<vmid>.json`. When it names the computer's own
+  hostname (the per-agent cutover wrote it), the start re-applies the host's ARP/IP pin
+  from `/etc/hivra/ingress/pins/`, starts the host connector `hivra-cf@<vmid>` and checks the
+  stable URL, and never restarts the guest connector. No route file: unchanged behaviour.
 - **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
   model as a complete set. On a fresh install the guest writes the runtime's
   `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`

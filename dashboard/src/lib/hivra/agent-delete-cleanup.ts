@@ -6,6 +6,7 @@ import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-br
 import { readStoredLlmConfig } from "./agent-llm";
 import { clearHivraPrivateAccessAfterDelete } from "./private-access-store";
 import { releaseTelegramWakeOnDelete } from "./telegram-wake/lifecycle";
+import { releaseHostIngressOnDelete } from "./ingress/rollback";
 
 export class HivraAgentDeleteCleanupError extends Error {
   constructor(public readonly stage: "remote_desktop" | "private_access" | "managed_key" | "tunnel") {
@@ -51,6 +52,10 @@ export async function cleanupHivraAgentAccess(input: {
       throw new HivraAgentDeleteCleanupError("managed_key");
     }
   }
+  // A host-ingress agent's connector runs on the host: stop it and remove its
+  // route, env file and pin before the tunnel goes. Best effort, never blocks
+  // the delete, and one read for an agent that never used host ingress.
+  await releaseHostIngressOnDelete({ agentId: input.agentId, hostname: input.hostname });
   try {
     await deleteBoxTunnelVerified({ tunnelId: input.tunnelId, hostname: input.hostname });
   } catch {

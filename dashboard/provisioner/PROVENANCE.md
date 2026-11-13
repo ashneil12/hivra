@@ -544,6 +544,14 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.2` builds on `2026.11.13.1` and teaches `hivra-start-on-host.sh` about host
+ingress: when `/etc/hivra/ingress/routes/<vmid>.json` names the computer's own hostname, a start
+puts the host's ARP/IP pin back, starts `hivra-cf@<vmid>` and reports the unchanged stable URL
+instead of restarting a guest connector (the guest's connector is off and has no token in that
+mode). Without such a route file the script behaves exactly as before. No guest asset changes.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
 Release `2026.11.13.1` builds on `2026.11.12.5` and adds the host wake proxy as inert bundle
 files: `hivra-wake-proxy.py` (Python standard library only), `hivra-wake-helper.service`,
 `hivra-wake-proxy.service`, `hivra-cf-template.service` (installed as `hivra-cf@.service`) and
