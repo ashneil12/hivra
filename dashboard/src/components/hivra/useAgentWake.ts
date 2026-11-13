@@ -150,12 +150,19 @@ export function useAgentWake(
     if (resting !== "idle") return;
     const comeBack = () => setRest(null);
     const onVisible = () => { if (document.visibilityState === "visible") comeBack(); };
+    // A click inside the agent's own frame never reaches this window, but it takes focus
+    // from it: the window blurs and the frame becomes the active element.
+    const onBlur = () => {
+      window.setTimeout(() => { if (document.activeElement instanceof HTMLIFrameElement) comeBack(); }, 0);
+    };
     const events = ["pointerdown", "keydown", "touchstart"] as const;
     for (const name of events) window.addEventListener(name, comeBack, { passive: true });
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("blur", onBlur);
     return () => {
       for (const name of events) window.removeEventListener(name, comeBack);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("blur", onBlur);
     };
   }, [resting]);
 
