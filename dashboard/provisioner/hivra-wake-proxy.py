@@ -18,7 +18,25 @@ Python 3 standard library only. One file, three entry points:
            undrain, napped, stats, reload and health from root only.
   ctl      `ctl <cmd> [vmid] [ms]`: one request to the helper, prints the JSON
            answer. Exit 0 when ok, 1 when the helper said no, 2 when the
-           helper could not be reached.
+           helper could not be reached. Also `ctl napped <vmid> server-disarm`
+           and `ctl client-wake [ticket|auth]` (below).
+
+Client wakes. What may resume a napped VM is a per-host level, set with
+`ctl client-wake ticket|auth` and kept in /run/hivra-ingress-state/client-wake.json,
+so it survives a restart of either service but not a reboot (no file, or anything
+unreadable, means ticket):
+  ticket   Only a server ticket (POST /__hivra/wake) resumes it.
+  auth     Also a request that proves the owner: an `Authorization: Bearer`
+           whose sha256 is the route's bearer_sha256, or a POST /auth/bootstrap
+           whose form `token` (body at most 16 KB) hashes the same. The
+           forwarder passes the proof to the helper, which checks it.
+A cookie, or a webhook signature header, never resumes a VM: anyone can send
+one. A browser page request for a napped VM is redirected to the route's
+wake_url (the owner's agent page, which wakes it through the server); other
+requests get 503. When the nap said `server-disarm` (a channel such as Telegram
+is armed and only Hivra can take it down), a client wake goes to Hivra as a
+wake-request instead of a local cont. The idle signal (`last_authed_at` in
+stats) moves only on a verified ticket, bearer or bootstrap.
 
 Calls to Hivra (only once the install step wrote a host credential to
 /etc/hivra/ingress/host-credential.json; without it the proxy calls nothing).
@@ -67,9 +85,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote
 
-VERSION = "hivra-wake-proxy/2"
+VERSION = "hivra-wake-proxy/3"
 
 MAX_HEAD = 32 * 1024
 HEAD_TIMEOUT = 10.0
@@ -110,6 +128,18 @@ REQUEST_MIN_INTERVAL = 5.0
 WAKE_REPORT_PATH = "/api/hivra/ingress/wake-report"
 WAKE_REQUEST_PATH = "/api/hivra/ingress/wake-request"
 REQUEST_REASONS = frozenset(("ticket", "client", "doorbell", "ctl"))
+CLIENT_WAKE_LEVELS = ("ticket", "auth")
+CLIENT_WAKE_DEFAULT = "ticket"
+PROOF_KINDS = frozenset(("bearer", "bootstrap"))
+PROOF_MAX = 512
+BOOTSTRAP_PATH = "/auth/bootstrap"
+BOOTSTRAP_MAX_BODY = 16 * 1024
+BODY_TIMEOUT = 10.0
+AUTHED_REFRESH = 30.0
+BAD_PROOF_LIMIT = 20
+BAD_PROOF_WINDOW = 60.0
+WAKE_CONNECT_DEADLINE = 3.0
+WAKE_URL_MAX = 512
 
 # The guest fixup after a proxy wake: the host's clock, then drop the paused
 # guest's dead :443 connections. It never touches the guest's tunnel unit,
@@ -126,14 +156,17 @@ ORIGIN_RE = re.compile(r"^https://[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 TEST_ORIGIN_RE = re.compile(r"^http://127\.0\.0\.1:[0-9]{1,5}$")
 NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAC_RE = re.compile(r"^[0-9a-f]{64}$")
+WAKE_URL_RE = re.compile(r"^https://[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%/-]*)?$")
+BEARER_RE = re.compile(r"^bearer[ \t]+([\x21-\x7e]{1,%d})$" % PROOF_MAX, re.IGNORECASE)
 EXP_RE = re.compile(r"^[0-9]{1,12}$")
 HTTP_TCHAR_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 PID_RE = re.compile(rb"^\s*([0-9]{1,10})\s*$")
 MIN_VMID = 100
 MAX_VMID = 999_999_999
 
-ROOT_COMMANDS = frozenset(("wake", "status", "drain", "undrain", "napped", "stats", "reload", "health", "request"))
-FORWARDER_COMMANDS = frozenset(("wake", "status", "health", "request"))
+ROOT_COMMANDS = frozenset(("wake", "status", "drain", "undrain", "napped", "stats", "reload", "health", "request",
+                           "authed", "client-wake"))
+FORWARDER_COMMANDS = frozenset(("wake", "status", "health", "request", "authed"))
 FWD_COMMANDS = frozenset(("drain", "undrain", "napped", "stats", "reload", "health", "post"))
 HIVRA_PATHS = frozenset((WAKE_REPORT_PATH, WAKE_REQUEST_PATH))
 
@@ -163,6 +196,7 @@ class Config(object):
         self.drain_lease = DRAIN_LEASE
         self.health_deadline = HEALTH_DEADLINE
         self.credential_path = "/etc/hivra/ingress/host-credential.json"
+        self.client_wake_path = None
         # Tests only: lets the credential name a plain-http loopback origin.
         self.allow_test_origin = False
         for key, value in overrides.items():
@@ -184,6 +218,13 @@ class Config(object):
 
     def marker_path(self, vmid):
         return os.path.join(self.state_dir, "napped-%d" % vmid)
+
+    @property
+    def client_wake_file(self):
+        return self.client_wake_path or os.path.join(self.state_dir, "client-wake.json")
+
+    def disarm_path(self, vmid):
+        return os.path.join(self.state_dir, "disarm-%d" % vmid)
 
     def resolved_forwarder_uid(self):
         if self.forwarder_uid is not None:
@@ -280,8 +321,20 @@ def parse_route(cfg, raw, file_vmid):
     generation = raw.get("generation", 0)
     if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
         raise ValueError("generation")
+    bearer = raw.get("bearer_sha256")
+    if bearer is not None and (not isinstance(bearer, str) or not HEX_64_RE.match(bearer)):
+        raise ValueError("bearer_sha256")
+    wake_url = raw.get("wake_url")
+    if wake_url is not None and not wake_url_ok(wake_url):
+        raise ValueError("wake_url")
     return {"vmid": vmid, "hostname": hostname, "binding_tag": tag, "guest_ip": guest_ip,
-            "guest_port": guest_port, "ticket_key": key, "generation": generation}
+            "guest_port": guest_port, "ticket_key": key, "generation": generation,
+            "bearer_sha256": bearer, "wake_url": wake_url}
+
+
+def wake_url_ok(value):
+    """An https URL with no credentials, query or fragment: where a browser is sent to wake a napped VM."""
+    return isinstance(value, str) and len(value) <= WAKE_URL_MAX and bool(WAKE_URL_RE.match(value))
 
 
 def load_routes(cfg):
@@ -324,10 +377,14 @@ def load_routes(cfg):
 
 def public_routes(routes):
     """The half of the routes the forwarder may see: no keys, no binding tags."""
-    return {"version": 1, "routes": [
-        {"vmid": r["vmid"], "hostname": r["hostname"], "guest_ip": r["guest_ip"], "guest_port": r["guest_port"],
-         "generation": r["generation"]}
-        for r in sorted(routes.values(), key=lambda item: item["vmid"])]}
+    out = []
+    for r in sorted(routes.values(), key=lambda item: item["vmid"]):
+        item = {"vmid": r["vmid"], "hostname": r["hostname"], "guest_ip": r["guest_ip"], "guest_port": r["guest_port"],
+                "generation": r["generation"]}
+        if r.get("wake_url"):
+            item["wake_url"] = r["wake_url"]
+        out.append(item)
+    return {"version": 1, "routes": out}
 
 
 def write_atomic(path, data, mode, gid=None):
@@ -630,10 +687,75 @@ def marker_state(cfg, vmid):
 
 
 def remove_marker(cfg, vmid):
+    for path in (cfg.marker_path(vmid), cfg.disarm_path(vmid)):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def set_disarm(cfg, vmid, wanted):
+    """Remember, for this nap only, that a client wake must go through Hivra (it takes a channel down first).
+
+    The file holds the nap marker's pid, so it never outlives the nap it was set for.
+    Returns False when it was wanted but could not be written."""
+    path = cfg.disarm_path(vmid)
+    if not wanted:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return True
+    marked = read_pid(cfg.marker_path(vmid))
+    if marked is None or marked <= 0:
+        return False
     try:
-        os.unlink(cfg.marker_path(vmid))
-    except FileNotFoundError:
-        pass
+        write_atomic(path, ("%d\n" % marked).encode("ascii"), 0o600)
+    except OSError:
+        return False
+    return True
+
+
+def disarm_required(cfg, vmid):
+    """True when the current nap said a client wake must go through Hivra. Unreadable counts as required."""
+    held = read_pid(cfg.disarm_path(vmid))
+    if held is None:
+        return False
+    if held <= 0:
+        return True
+    marked = read_pid(cfg.marker_path(vmid))
+    return marked is not None and marked > 0 and held == marked
+
+
+def proof_matches(route, proof):
+    """The proof's token hashes to the route's bearer_sha256 (constant-time). False without one."""
+    expected = route.get("bearer_sha256")
+    if not isinstance(expected, str) or not isinstance(proof, dict):
+        return False
+    token = proof.get("token")
+    if proof.get("kind") not in PROOF_KINDS or not isinstance(token, str) or not 1 <= len(token) <= PROOF_MAX:
+        return False
+    return hmac.compare_digest(hashlib.sha256(token.encode("utf-8")).hexdigest(), expected)
+
+
+def load_client_wake(cfg):
+    """The host's client-wake level. No file, or anything unexpected, is ticket."""
+    try:
+        info = os.lstat(cfg.client_wake_file)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024:
+            return CLIENT_WAKE_DEFAULT
+        with open(cfg.client_wake_file, "rb") as handle:
+            doc = json.loads(handle.read(1025).decode("utf-8"))
+    except (OSError, ValueError):
+        return CLIENT_WAKE_DEFAULT
+    if not isinstance(doc, dict) or doc.get("version") != 1 or doc.get("level") not in CLIENT_WAKE_LEVELS:
+        return CLIENT_WAKE_DEFAULT
+    return doc["level"]
+
+
+def save_client_wake(cfg, level):
+    data = (json.dumps({"level": level, "version": 1}, separators=(",", ":"), sort_keys=True) + "\n").encode("utf-8")
+    write_atomic(cfg.client_wake_file, data, 0o600)
 
 
 def take_flock(path, wait):
@@ -888,6 +1010,7 @@ class Helper(object):
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="hivra-wake-helper")
         self.requests = {}
         self.request_last = {}
+        self.client_wake = CLIENT_WAKE_DEFAULT
         self.server = None
 
     def role(self, uid):
@@ -901,10 +1024,11 @@ class Helper(object):
         return None
 
     async def start(self):
+        self.client_wake = await asyncio.get_running_loop().run_in_executor(self.pool, load_client_wake, self.cfg)
         await self.reload()
         gid = self.cfg.resolved_forwarder_gid() if os.geteuid() == 0 else None
         self.server = await bind_unix(self.cfg.ctl_path, self.handle, 0o660, gid)
-        log("helper_ready", version=VERSION, routes=len(self.routes))
+        log("helper_ready", version=VERSION, routes=len(self.routes), client_wake=self.client_wake)
 
     async def stop(self):
         if self.server is not None:
@@ -957,9 +1081,12 @@ class Helper(object):
                 forwarder = await unix_request(self.cfg.fwd_path, {"cmd": "health"}, CTL_TIMEOUT)
                 credential = await asyncio.get_running_loop().run_in_executor(self.pool, load_credential, self.cfg)
                 return {"ok": True, "version": VERSION, "routes": len(self.routes),
-                        "forwarder": bool(forwarder and forwarder.get("ok")), "credential": credential is not None}
+                        "forwarder": bool(forwarder and forwarder.get("ok")), "credential": credential is not None,
+                        "client_wake": self.client_wake}
             if command == "reload":
                 return await self.reload()
+            if command == "client-wake":
+                return await self.set_client_wake(request.get("level"))
             if command == "stats" and request.get("vmid") is None:
                 return await self.stats(None)
             vmid = parse_vmid(request.get("vmid"))
@@ -974,6 +1101,8 @@ class Helper(object):
                 return await self.stats(vmid)
             if command == "request":
                 return await self.request(role, vmid, request)
+            if command == "authed":
+                return self.authed(vmid, request.get("proof"))
             if command == "drain":
                 ms = request.get("ms", 2000)
                 if isinstance(ms, bool) or not isinstance(ms, int) or not 0 <= ms <= DRAIN_MAX_MS:
@@ -981,6 +1110,15 @@ class Helper(object):
                 answer = await unix_request(self.cfg.fwd_path, {"cmd": "drain", "vmid": vmid, "ms": ms},
                                             CTL_TIMEOUT + ms / 1000.0)
                 return answer if answer is not None else {"ok": False, "error": "forwarder_down"}
+            if command == "napped":
+                disarm = request.get("disarm")
+                if disarm not in (None, "server"):
+                    return {"ok": False, "error": "bad_disarm"}
+                written = await asyncio.get_running_loop().run_in_executor(
+                    self.pool, set_disarm, self.cfg, vmid, disarm == "server")
+                if not written:
+                    # The nap cannot promise a server-side disarm: say no, so the nap undoes itself.
+                    return {"ok": False, "vmid": vmid, "error": "disarm_unwritable"}
             # undrain, napped
             answer = await unix_request(self.cfg.fwd_path, {"cmd": command, "vmid": vmid}, CTL_TIMEOUT)
             return answer if answer is not None else {"ok": False, "error": "forwarder_down"}
@@ -1009,11 +1147,68 @@ class Helper(object):
             answer.update(vmid=vmid, **vms[str(vmid)])
         return answer
 
+    async def set_client_wake(self, level):
+        if level is None:
+            return {"ok": True, "client_wake": self.client_wake}
+        if level not in CLIENT_WAKE_LEVELS:
+            return {"ok": False, "error": "bad_level"}
+        try:
+            await asyncio.get_running_loop().run_in_executor(self.pool, save_client_wake, self.cfg, level)
+        except OSError:
+            return {"ok": False, "error": "unwritable", "client_wake": self.client_wake}
+        self.client_wake = level
+        log("client_wake_set", level=level)
+        return {"ok": True, "client_wake": level}
+
+    def authed(self, vmid, proof):
+        """`authed`: a request carrying this proof reached the VM. Moves the idle signal only when the proof checks out."""
+        route = self.routes.get(vmid)
+        if route is None:
+            return {"ok": False, "vmid": vmid, "error": "unknown_vmid"}
+        if not proof_matches(route, proof):
+            return {"ok": False, "vmid": vmid, "error": "proof_refused"}
+        self.last_authed[vmid] = round(time.time(), 3)
+        return {"ok": True, "vmid": vmid}
+
+    async def client_wake_request(self, vmid, route, proof):
+        """A wake asked for by a request that carries the owner's bearer (or bootstrap token)."""
+        if not proof_matches(route, proof):
+            log("proof_refused", vmid=vmid)
+            return {"ok": False, "vmid": vmid, "error": "proof_refused"}
+        self.last_authed[vmid] = round(time.time(), 3)
+        if self.client_wake != "auth":
+            return {"ok": False, "vmid": vmid, "error": "client_wake_off"}
+        source = proof["kind"]
+        loop = asyncio.get_running_loop()
+        if await loop.run_in_executor(self.pool, disarm_required, self.cfg, vmid):
+            # Only Hivra can take the armed channel down before the agent runs again.
+            asked = await self.request_wake(vmid, "client")
+            if asked.get("ok"):
+                return {"ok": False, "vmid": vmid, "error": "waking", "requested": True, "state": asked.get("state")}
+            return {"ok": False, "vmid": vmid, "error": "disarm_required"}
+        result = await self.shared_wake(vmid, route, source)
+        if not result.get("ok") and result.get("reason") == "qmp_socket_missing":
+            asked = await self.request_wake(vmid, "client")
+            if asked.get("ok"):
+                return {"ok": False, "vmid": vmid, "error": "waking", "requested": True, "state": asked.get("state")}
+        return result
+
+    async def shared_wake(self, vmid, route, source):
+        """At most one wake per VM runs at a time; every caller gets its result."""
+        task = self.pending.get(vmid)
+        if task is None:
+            task = asyncio.get_running_loop().create_task(self.run_wake(vmid, route, source))
+            self.pending[vmid] = task
+            task.add_done_callback(lambda _task, key=vmid: self.pending.pop(key, None))
+        return dict(await asyncio.shield(task))
+
     async def wake(self, role, vmid, request):
         route = self.routes.get(vmid)
         if route is None:
             return {"ok": False, "vmid": vmid, "error": "unknown_vmid"}
         ticket = request.get("ticket")
+        if ticket is None and request.get("proof") is not None:
+            return await self.client_wake_request(vmid, route, request.get("proof"))
         if role == "forwarder" or ticket is not None:
             now = int(time.time())
             ok, reason, nonce, exp = check_ticket(ticket, route["ticket_key"], vmid, now)
@@ -1027,12 +1222,7 @@ class Helper(object):
             source = "ticket"
         else:
             source = request.get("from") if isinstance(request.get("from"), str) and re.match(r"^[a-z_]{1,16}$", request.get("from")) else "ctl"
-        task = self.pending.get(vmid)
-        if task is None:
-            task = asyncio.get_running_loop().create_task(self.run_wake(vmid, route, source))
-            self.pending[vmid] = task
-            task.add_done_callback(lambda _task, key=vmid: self.pending.pop(key, None))
-        result = dict(await asyncio.shield(task))
+        result = await self.shared_wake(vmid, route, source)
         if source == "ticket" and not result.get("ok") and result.get("reason") == "qmp_socket_missing":
             # A signed wake for a VM that is not running at all (hibernated): only Hivra can start it.
             asked = await self.request_wake(vmid, "ticket")
@@ -1243,7 +1433,7 @@ def parse_response_head(head):
     return status, ctype
 
 
-REASONS = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed",
+REASONS = {200: "OK", 302: "Found", 303: "See Other", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed",
            408: "Request Timeout", 429: "Too Many Requests", 431: "Request Header Fields Too Large",
            503: "Service Unavailable", 504: "Gateway Timeout"}
 
@@ -1267,6 +1457,10 @@ class Forwarder(object):
         self.draining = {}
         self.last_any = {}
         self.bad_tickets = collections.defaultdict(collections.deque)
+        self.bad_proofs = collections.defaultdict(collections.deque)
+        self.authed_at = {}
+        self.authed_checking = set()
+        self.client_asking = set()
         self.napped_cache = {}
         self.servers = []
         self.bound = []
@@ -1297,6 +1491,8 @@ class Forwarder(object):
                     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
                         continue
                     route = {"vmid": vmid, "hostname": item["hostname"], "guest_ip": item["guest_ip"], "guest_port": port}
+                    if wake_url_ok(item.get("wake_url")):
+                        route["wake_url"] = item["wake_url"]
                     by_host[route["hostname"]] = route
                     by_vmid[vmid] = route
             except (OSError, ValueError, AttributeError):
@@ -1482,14 +1678,95 @@ class Forwarder(object):
             return
         vmid = route["vmid"]
         self.last_any[vmid] = round(time.time(), 3)
-        if vmid in self.draining or await self.is_napped(vmid):
+        body = b""
+        proof = None
+        if bootstrap_candidate(request):
+            try:
+                body = await asyncio.wait_for(reader.readexactly(int(request.header("content-length")[0])), BODY_TIMEOUT)
+            except asyncio.TimeoutError:
+                await self.reply(writer, 408, {"error": "body_timeout"})
+                return
+            proof = bootstrap_proof(body)
+        if proof is None:
+            proof = bearer_proof(request)
+        if vmid in self.draining:
             await self.asleep(request, writer)
             return
-        await self.forward(request, route, reader, writer)
+        if await self.is_napped(vmid):
+            await self.napped_request(request, route, proof, body, reader, writer)
+            return
+        if proof is not None:
+            self.note_authed(vmid, proof)
+        await self.forward(request, route, reader, writer, body, proof=proof)
 
-    async def asleep(self, request, writer):
+    async def napped_request(self, request, route, proof, body, reader, writer):
+        """A request for a napped VM. Only a verified owner proof, at the auth level, resumes it; anything else is told it sleeps."""
+        vmid = route["vmid"]
+        if proof is not None and not self.proof_limited(vmid):
+            answer = await unix_request(self.cfg.ctl_path, {"cmd": "wake", "vmid": vmid, "proof": proof}, 15.0)
+            error = answer.get("error") if isinstance(answer, dict) else None
+            if answer is not None and answer.get("ok"):
+                self.napped_cache.pop(vmid, None)
+                self.authed_at[vmid] = mono()
+                await self.forward(request, route, reader, writer, body, connect_deadline=WAKE_CONNECT_DEADLINE)
+                return
+            if error == "proof_refused":
+                self.bad_proofs[vmid].append(mono())
+            elif error == "waking":
+                await self.waking(request, writer)
+                return
+        await self.asleep(request, writer, route)
+
+    def background_client_wake(self, vmid, proof):
+        if vmid in self.client_asking:
+            return
+        self.client_asking.add(vmid)
+
+        async def ask():
+            try:
+                answer = await unix_request(self.cfg.ctl_path, {"cmd": "wake", "vmid": vmid, "proof": proof}, 15.0)
+                if answer is not None and answer.get("error") == "proof_refused":
+                    self.bad_proofs[vmid].append(mono())
+            finally:
+                self.client_asking.discard(vmid)
+
+        task = asyncio.get_running_loop().create_task(ask())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    def proof_limited(self, vmid):
+        return window_full(self.bad_proofs[vmid], BAD_PROOF_WINDOW, BAD_PROOF_LIMIT)
+
+    def note_authed(self, vmid, proof):
+        """Tell the helper, at most every AUTHED_REFRESH seconds per VM and in the background, that a proof reached the VM."""
+        last = self.authed_at.get(vmid)
+        if (last is not None and mono() - last < AUTHED_REFRESH) or vmid in self.authed_checking or self.proof_limited(vmid):
+            return
+        self.authed_checking.add(vmid)
+        task = asyncio.get_running_loop().create_task(self.check_authed(vmid, proof))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    async def check_authed(self, vmid, proof):
+        try:
+            answer = await unix_request(self.cfg.ctl_path, {"cmd": "authed", "vmid": vmid, "proof": proof}, CTL_TIMEOUT)
+            if answer is not None and answer.get("ok"):
+                self.authed_at[vmid] = mono()
+            elif answer is not None and answer.get("error") == "proof_refused":
+                self.bad_proofs[vmid].append(mono())
+        finally:
+            self.authed_checking.discard(vmid)
+
+    async def asleep(self, request, writer, route=None):
         accept = ",".join(request.header("accept")).lower()
         extra = ("Retry-After: 5",)
+        wake_url = route.get("wake_url") if route is not None else None
+        if wake_url and "text/html" in accept and request.method in ("GET", "HEAD", "POST"):
+            # A browser goes to the owner's agent page, which wakes the computer through Hivra.
+            status = 303 if request.method == "POST" else 302
+            await self.reply(writer, status, b"", "text/plain; charset=utf-8",
+                             ("Location: %s" % wake_url, "Referrer-Policy: no-referrer"))
+            return
         if "text/html" in accept:
             await self.reply(writer, 503, ASLEEP_PAGE, "text/html; charset=utf-8", extra)
         else:
@@ -1523,11 +1800,7 @@ class Forwarder(object):
         return napped
 
     def bad_ticket_limited(self, vmid):
-        window = self.bad_tickets[vmid]
-        now = mono()
-        while window and now - window[0] > BAD_TICKET_WINDOW:
-            window.popleft()
-        return len(window) >= BAD_TICKET_LIMIT
+        return window_full(self.bad_tickets[vmid], BAD_TICKET_WINDOW, BAD_TICKET_LIMIT)
 
     async def ticket_wake(self, request, route, writer):
         vmid = route["vmid"]
@@ -1589,22 +1862,25 @@ class Forwarder(object):
                 return False
             await asyncio.sleep(HEALTH_INTERVAL)
 
-    async def forward(self, request, route, reader, writer):
+    async def forward(self, request, route, reader, writer, body=b"", connect_deadline=0.0, proof=None):
+        """Splice the request to the guest. body is what was already read of it. Right after a wake, the
+        connect is retried every 50 ms for up to connect_deadline seconds while the guest's network comes back."""
         vmid = route["vmid"]
         self.inflight[vmid] += 1
         streaming = False
         guest_writer = None
         tasks = []
         try:
-            try:
-                guest_reader, guest_writer = await asyncio.wait_for(
-                    asyncio.open_connection(route["guest_ip"], route["guest_port"], limit=MAX_RESPONSE_HEAD),
-                    GUEST_CONNECT_TIMEOUT)
-            except (OSError, asyncio.TimeoutError):
-                # A computer that is starting (a hibernated one being restored) is not up yet.
+            guest_reader, guest_writer = await self.connect_guest(route, connect_deadline)
+            if guest_writer is None:
+                # A computer that is starting (a hibernated one being restored) is not up yet. An owner's
+                # request for one that is not running at all asks the helper, in the background, to have
+                # Hivra wake it (only at the auth level; a paused VM without a marker is never touched).
+                if proof is not None and not self.proof_limited(vmid):
+                    self.background_client_wake(vmid, proof)
                 await self.waking(request, writer)
                 return
-            guest_writer.write(rebuild_head(request))
+            guest_writer.write(rebuild_head(request) + body)
             await guest_writer.drain()
 
             async def upstream():
@@ -1654,6 +1930,56 @@ class Forwarder(object):
             if streaming:
                 self.streams[vmid] -= 1
             self.inflight[vmid] -= 1
+
+
+    async def connect_guest(self, route, connect_deadline):
+        deadline = mono() + connect_deadline
+        while True:
+            timeout = GUEST_CONNECT_TIMEOUT if connect_deadline <= 0 else max(0.05, min(GUEST_CONNECT_TIMEOUT, deadline - mono()))
+            try:
+                return await asyncio.wait_for(
+                    asyncio.open_connection(route["guest_ip"], route["guest_port"], limit=MAX_RESPONSE_HEAD), timeout)
+            except (OSError, asyncio.TimeoutError):
+                if mono() + HEALTH_INTERVAL >= deadline:
+                    return None, None
+            await asyncio.sleep(HEALTH_INTERVAL)
+
+
+def window_full(window, seconds, limit):
+    now = mono()
+    while window and now - window[0] > seconds:
+        window.popleft()
+    return len(window) >= limit
+
+
+def bootstrap_candidate(request):
+    """POST /auth/bootstrap with one small Content-Length, no chunking and no Expect: its body may be read first."""
+    if request.method != "POST" or request.target.split("?", 1)[0] != BOOTSTRAP_PATH:
+        return False
+    lengths = request.header("content-length")
+    if len(lengths) != 1 or not re.match(r"^[0-9]{1,5}$", lengths[0]) or int(lengths[0]) > BOOTSTRAP_MAX_BODY:
+        return False
+    return not request.header("transfer-encoding") and not request.header("expect")
+
+
+def bootstrap_proof(body):
+    """The form's token as a proof, or None. The guest reads the same field (URLSearchParams)."""
+    try:
+        form = parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True, max_num_fields=64)
+    except ValueError:
+        return None
+    values = form.get("token") or []
+    token = values[0] if values else ""
+    return {"kind": "bootstrap", "token": token} if 1 <= len(token) <= PROOF_MAX else None
+
+
+def bearer_proof(request):
+    """The Authorization: Bearer token as a proof, or None. Only one Authorization header counts."""
+    values = request.header("authorization")
+    if len(values) != 1:
+        return None
+    match = BEARER_RE.match(values[0])
+    return {"kind": "bearer", "token": match.group(1)} if match else None
 
 
 async def read_response_head(reader):
@@ -1713,11 +2039,24 @@ def ctl_main(argv, cfg=None):
         sys.stderr.write("usage: hivra-wake-proxy.py ctl <%s> [vmid] [ms]\n" % "|".join(sorted(ROOT_COMMANDS)))
         return 2
     request = {"cmd": argv[0]}
+    if argv[0] == "client-wake":
+        if len(argv) > 2 or (len(argv) == 2 and argv[1] not in CLIENT_WAKE_LEVELS):
+            sys.stderr.write("usage: hivra-wake-proxy.py ctl client-wake [%s]\n" % "|".join(CLIENT_WAKE_LEVELS))
+            return 2
+        if len(argv) == 2:
+            request["level"] = argv[1]
+        argv = argv[:1]
     if len(argv) > 1:
         request["vmid"] = parse_vmid(argv[1])
         if request["vmid"] is None:
             sys.stderr.write("bad vmid\n")
             return 2
+    if argv[0] == "napped" and len(argv) > 2:
+        if len(argv) > 3 or argv[2] != "server-disarm":
+            sys.stderr.write("usage: hivra-wake-proxy.py ctl napped <vmid> [server-disarm]\n")
+            return 2
+        request["disarm"] = "server"
+        argv = argv[:2]
     if len(argv) > 2:
         if not re.match(r"^[0-9]{1,5}$", argv[2]):
             sys.stderr.write("bad ms\n")

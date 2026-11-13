@@ -161,6 +161,13 @@ class FakeGuest(object):
                         break
                     writer.write(b"echo:" + data)
                     await writer.drain()
+            elif path == b"/auth/bootstrap":
+                length = 0
+                for line in head.split(b"\r\n"):
+                    if line.lower().startswith(b"content-length:"):
+                        length = int(line.split(b":", 1)[1])
+                body = await reader.readexactly(length)
+                writer.write(b"HTTP/1.1 303 See Other\r\nLocation: /\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
             elif path == b"/slow":
                 await asyncio.sleep(0.6)
                 writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nslow")
@@ -875,6 +882,308 @@ class HivraCallTests(ProxyTestCase):
         self.assertEqual(json.loads(body_of(api)), {"error": "unreachable"})
 
 
+WAKE_URL = "https://dashboard.example.test/dashboard/agent/fixture"
+
+
+def route_file(h, vmid):
+    return os.path.join(h.dirs["routes"], "%d.json" % vmid)
+
+
+def owner_secret_route(h, vmid=VMID, wake_url=WAKE_URL):
+    """Give the route a bearer hash (of a secret made now) and a wake URL; returns the secret."""
+    import hashlib
+    secret = secrets.token_hex(32)
+    with open(route_file(h, vmid)) as handle:
+        route = json.load(handle)
+    route["bearer_sha256"] = hashlib.sha256(secret.encode()).hexdigest()
+    if wake_url is None:
+        route.pop("wake_url", None)
+    else:
+        route["wake_url"] = wake_url
+    with open(route_file(h, vmid), "w") as handle:
+        json.dump(route, handle)
+    assert h.ctl({"cmd": "reload"})["ok"]
+    return secret
+
+
+def bearer(secret):
+    return b"Authorization: Bearer " + secret.encode() + b"\r\n"
+
+
+def bootstrap_request(h, secret, host=HOSTNAME, accept=b"text/html"):
+    body = b"token=" + secret.encode() + b"&destination=%2F"
+    return h.raw(b"POST /auth/bootstrap HTTP/1.1\r\nHost: " + host.encode() +
+                 b"\r\nAccept: " + accept + b"\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: " +
+                 str(len(body)).encode() + b"\r\n\r\n" + body)
+
+
+def wait_until(check, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.02)
+    return check()
+
+
+class ClientWakeTests(ProxyTestCase):
+    def setUp(self):
+        ProxyTestCase.setUp(self)
+        self.secret = owner_secret_route(self.h)
+
+    def set_level(self, level):
+        self.assertEqual(self.h.ctl({"cmd": "client-wake", "level": level}), {"ok": True, "client_wake": level})
+
+    def cases(self):
+        wrong = secrets.token_hex(32)
+        return [
+            # (name, request, wakes at ticket, wakes at auth)
+            ("plain", lambda: self.h.get("/echo"), False, False),
+            ("browser", lambda: self.h.get("/echo", extra=b"Accept: text/html\r\n"), False, False),
+            ("forged cookie", lambda: self.h.get("/echo", extra=b"Cookie: __Host-hivra_auth=" + wrong.encode() + b"\r\n"),
+             False, False),
+            ("signature header", lambda: self.h.get("/hooks/github", method=b"POST", extra=(
+                b"X-Hub-Signature-256: sha256=" + wrong.encode() + b"\r\nContent-Length: 0\r\n")), False, False),
+            ("telegram header", lambda: self.h.get("/telegram", method=b"POST", extra=(
+                b"X-Telegram-Bot-Api-Secret-Token: " + wrong.encode() + b"\r\nContent-Length: 0\r\n")), False, False),
+            ("wrong bearer", lambda: self.h.get("/echo", extra=bearer(wrong)), False, False),
+            ("basic scheme", lambda: self.h.get("/echo", extra=b"Authorization: Basic " + self.secret.encode() + b"\r\n"),
+             False, False),
+            ("two bearers", lambda: self.h.get("/echo", extra=bearer(self.secret) + bearer(wrong)), False, False),
+            ("wrong bootstrap", lambda: bootstrap_request(self.h, wrong), False, False),
+            ("bearer", lambda: self.h.get("/echo", extra=bearer(self.secret)), False, True),
+            ("bootstrap", lambda: bootstrap_request(self.h, self.secret), False, True),
+        ]
+
+    def test_wake_rule_table_per_level(self):
+        for level in proxy.CLIENT_WAKE_LEVELS:
+            self.set_level(level)
+            for name, send, at_ticket, at_auth in self.cases():
+                wakes = at_auth if level == "auth" else at_ticket
+                self.h.nap(VMID)
+                qemu = self.h.qemu[VMID]
+                before = qemu.conts
+                response = send()
+                label = "%s at %s" % (name, level)
+                self.assertEqual(qemu.conts - before, 1 if wakes else 0, label)
+                if wakes:
+                    self.assertIn(status_of(response), (200, 303), label)
+                    self.assertFalse(os.path.exists(self.h.cfg.marker_path(VMID)), label)
+                else:
+                    self.assertIn(status_of(response), (302, 303, 503), label)
+                    self.assertEqual(qemu.status, "paused", label)
+                # A bad proof is never let near the rate limit in this table.
+                self.h.forwarder.bad_proofs.clear()
+            os.unlink(self.h.cfg.marker_path(VMID)) if os.path.exists(self.h.cfg.marker_path(VMID)) else None
+            self.h.qemu[VMID].status = "running"
+
+    def test_bootstrap_body_reaches_the_guest_after_the_wake(self):
+        self.set_level("auth")
+        self.h.nap(VMID)
+        response = bootstrap_request(self.h, self.secret)
+        self.assertEqual(status_of(response), 303)
+        self.assertEqual(body_of(response), b"token=" + self.secret.encode() + b"&destination=%2F")
+        stats = self.h.ctl({"cmd": "stats", "vmid": VMID})
+        self.assertEqual(stats["wakes"][-1]["from"], "bootstrap")
+        self.assertIsNotNone(stats["last_authed_at"])
+
+    def test_bearer_wake_is_recorded_and_moves_the_idle_signal(self):
+        self.set_level("auth")
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
+        stats = self.h.ctl({"cmd": "stats", "vmid": VMID})
+        self.assertEqual(stats["wakes"][-1]["from"], "bearer")
+        self.assertEqual(stats["wakes"][-1]["woke"], "nap")
+        self.assertIsNotNone(stats["last_authed_at"])
+
+    def test_forged_proofs_never_move_the_idle_signal(self):
+        wrong = secrets.token_hex(32)
+        for level in proxy.CLIENT_WAKE_LEVELS:
+            self.set_level(level)
+            # Awake: everything is forwarded, nothing counts as the owner.
+            self.assertEqual(status_of(self.h.get("/echo", extra=b"Cookie: __Host-hivra_auth=" + wrong.encode() + b"\r\n")), 200)
+            self.assertEqual(status_of(self.h.get("/echo", extra=b"X-Hub-Signature-256: sha256=" + wrong.encode() + b"\r\n")), 200)
+            self.assertEqual(status_of(self.h.get("/echo", extra=bearer(wrong))), 200)
+            self.h.nap(VMID)
+            self.h.get("/echo", extra=b"Cookie: __Host-hivra_auth=" + wrong.encode() + b"\r\n")
+            self.h.get("/echo", extra=bearer(wrong))
+            bootstrap_request(self.h, wrong)
+            os.unlink(self.h.cfg.marker_path(VMID))
+            self.h.qemu[VMID].status = "running"
+            self.h.forwarder.bad_proofs.clear()
+            self.h.forwarder.authed_at.clear()
+        time.sleep(0.2)
+        stats = self.h.ctl({"cmd": "stats", "vmid": VMID})
+        self.assertIsNone(stats["last_authed_at"])
+        self.assertEqual(stats["wakes"], [])
+        self.assertIsNotNone(stats["last_any_at"])
+
+    def test_owner_bearer_on_an_awake_vm_moves_the_idle_signal_at_most_every_refresh(self):
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
+        self.assertTrue(wait_until(lambda: self.h.ctl({"cmd": "stats", "vmid": VMID})["last_authed_at"] is not None))
+        first = self.h.ctl({"cmd": "stats", "vmid": VMID})["last_authed_at"]
+        time.sleep(0.05)
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
+        time.sleep(0.2)
+        self.assertEqual(self.h.ctl({"cmd": "stats", "vmid": VMID})["last_authed_at"], first)
+
+    def test_browser_on_a_napped_vm_is_sent_to_the_wake_url(self):
+        self.h.nap(VMID)
+        response = self.h.get("/", extra=b"Accept: text/html,application/xhtml+xml\r\n")
+        self.assertEqual(status_of(response), 302)
+        self.assertIn(b"Location: " + WAKE_URL.encode() + b"\r\n", response)
+        self.assertIn(b"Cache-Control: no-store", response)
+        self.assertEqual(status_of(bootstrap_request(self.h, secrets.token_hex(32))), 303)
+        api = self.h.get("/api/meta", extra=b"Accept: application/json\r\n")
+        self.assertEqual(status_of(api), 503)
+        self.assertEqual(json.loads(body_of(api))["error"], "asleep")
+        self.assertEqual(self.h.qemu[VMID].conts, 0)
+
+    def test_without_a_wake_url_a_browser_gets_the_asleep_page(self):
+        owner_secret_route(self.h, wake_url=None)
+        self.h.nap(VMID)
+        response = self.h.get("/", extra=b"Accept: text/html\r\n")
+        self.assertEqual(status_of(response), 503)
+        self.assertIn(b"text/html", response)
+
+    def test_public_route_table_carries_wake_url_but_no_bearer_hash(self):
+        import hashlib
+        text = Path(self.h.cfg.public_routes_path).read_text()
+        self.assertIn(WAKE_URL, text)
+        self.assertNotIn("bearer_sha256", text)
+        self.assertNotIn(hashlib.sha256(self.secret.encode()).hexdigest(), text)
+
+    def test_level_survives_a_helper_restart_and_bad_levels_are_refused(self):
+        self.assertEqual(self.h.ctl({"cmd": "client-wake"}), {"ok": True, "client_wake": "ticket"})
+        self.assertEqual(self.h.ctl({"cmd": "client-wake", "level": "cookie"})["error"], "bad_level")
+        self.set_level("auth")
+        self.h.restart_helper()
+        self.assertEqual(self.h.ctl({"cmd": "health"})["client_wake"], "auth")
+        with open(self.h.cfg.client_wake_file, "w") as handle:
+            handle.write("{not json")
+        self.h.restart_helper()
+        self.assertEqual(self.h.ctl({"cmd": "client-wake"})["client_wake"], "ticket")
+
+    def test_ctl_cli_sets_level_and_napped_disarm(self):
+        self.assertEqual(proxy.ctl_main(["client-wake", "auth"], self.h.cfg), 0)
+        self.assertEqual(self.h.helper.client_wake, "auth")
+        self.assertEqual(proxy.ctl_main(["client-wake", "everything"], self.h.cfg), 2)
+        self.h.nap(VMID)
+        self.assertEqual(proxy.ctl_main(["napped", str(VMID), "server-disarm"], self.h.cfg), 0)
+        self.assertTrue(proxy.disarm_required(self.h.cfg, VMID))
+        self.assertEqual(proxy.ctl_main(["napped", str(VMID)], self.h.cfg), 0)
+        self.assertFalse(proxy.disarm_required(self.h.cfg, VMID))
+        self.assertEqual(proxy.ctl_main(["napped", str(VMID), "elsewhere"], self.h.cfg), 2)
+
+    def test_repeated_bad_proofs_stop_reaching_the_helper(self):
+        self.set_level("auth")
+        self.h.nap(VMID)
+        for _ in range(proxy.BAD_PROOF_LIMIT):
+            self.h.get("/echo", extra=bearer(secrets.token_hex(32)))
+        self.assertTrue(self.h.forwarder.proof_limited(VMID))
+        response = self.h.get("/echo", extra=bearer(self.secret))
+        self.assertEqual(status_of(response), 503)
+        self.assertEqual(self.h.qemu[VMID].conts, 0)
+        # Tickets have their own limit: the server still wakes it.
+        self.assertEqual(status_of(self.h.wake()), 200)
+
+    def test_route_without_a_bearer_hash_never_client_wakes(self):
+        with open(route_file(self.h, VMID)) as handle:
+            route = json.load(handle)
+        route.pop("bearer_sha256")
+        with open(route_file(self.h, VMID), "w") as handle:
+            json.dump(route, handle)
+        self.assertTrue(self.h.ctl({"cmd": "reload"})["ok"])
+        self.set_level("auth")
+        self.h.nap(VMID)
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 503)
+        self.assertEqual(self.h.qemu[VMID].conts, 0)
+
+    def test_paused_vm_without_marker_is_not_resumed_by_a_client(self):
+        self.set_level("auth")
+        self.h.qemu[VMID].status = "paused"
+        # A paused guest does not answer: no marker means no wake, and 503 inside a second.
+        self.h.guest.close()
+        t0 = time.monotonic()
+        response = self.h.get("/echo", extra=bearer(self.secret))
+        self.assertEqual(status_of(response), 503)
+        self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertEqual(self.h.qemu[VMID].conts, 0)
+
+
+class ClientWakeDisarmTests(HivraCallTests):
+    def setUp(self):
+        HivraCallTests.setUp(self)
+        self.secret = owner_secret_route(self.h)
+        self.assertTrue(self.h.ctl({"cmd": "client-wake", "level": "auth"})["ok"])
+
+    def nap_armed(self):
+        self.h.nap(VMID)
+        self.assertTrue(self.h.ctl({"cmd": "napped", "vmid": VMID, "disarm": "server"})["ok"])
+
+    def test_armed_nap_sends_client_wakes_to_hivra(self):
+        self.write_credential()
+        self.nap_armed()
+        response = self.h.get("/echo", extra=bearer(self.secret) + b"Accept: text/html\r\n")
+        self.assertEqual(status_of(response), 503)
+        self.assertIn(b"Retry-After: 5", response)
+        self.assertIn(b"waking up", response)
+        self.assertEqual(self.h.qemu[VMID].conts, 0)
+        calls = self.hivra.wait_for(1)
+        self.assertEqual(calls[0]["path"], "/api/hivra/ingress/wake-request")
+        self.assertEqual(calls[0]["body"], {"vmid": VMID, "reason": "client"})
+        self.assertTrue(calls[0]["signed"])
+
+    def test_owner_request_for_a_stopped_vm_asks_hivra_to_wake_it(self):
+        self.write_credential()
+        self.stop_vm()
+        self.h.guest.close()
+        response = self.h.get("/echo", extra=bearer(self.secret))
+        self.assertEqual(status_of(response), 503)
+        calls = self.hivra.wait_for(1)
+        self.assertEqual(calls[0]["path"], "/api/hivra/ingress/wake-request")
+        self.assertEqual(calls[0]["body"], {"vmid": VMID, "reason": "client"})
+
+    def test_anonymous_request_for_a_stopped_vm_asks_nothing(self):
+        self.write_credential()
+        self.stop_vm()
+        self.h.guest.close()
+        self.assertEqual(status_of(self.h.get("/echo", extra=b"Cookie: __Host-hivra_auth=x\r\n")), 503)
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(secrets.token_hex(32)))), 503)
+        time.sleep(0.3)
+        self.assertEqual(self.hivra.calls, [])
+
+    def test_armed_nap_without_a_credential_never_resumes_locally(self):
+        self.nap_armed()
+        response = self.h.get("/echo", extra=bearer(self.secret))
+        self.assertEqual(status_of(response), 503)
+        self.assertEqual(self.h.qemu[VMID].conts, 0)
+        self.assertEqual(self.hivra.calls, [])
+
+    def test_ticket_still_wakes_an_armed_nap_and_clears_it(self):
+        self.nap_armed()
+        self.assertEqual(status_of(self.h.wake()), 200)
+        self.assertFalse(os.path.exists(self.h.cfg.disarm_path(VMID)))
+
+    def test_disarm_from_an_earlier_qemu_is_ignored(self):
+        self.h.nap(VMID)
+        with open(self.h.cfg.disarm_path(VMID), "w") as handle:
+            handle.write("%d\n" % (os.getpid() + 100000))
+        self.assertFalse(proxy.disarm_required(self.h.cfg, VMID))
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
+        self.assertEqual(self.h.qemu[VMID].conts, 1)
+
+    def test_a_plain_napped_clears_an_earlier_disarm(self):
+        self.nap_armed()
+        self.assertTrue(self.h.ctl({"cmd": "napped", "vmid": VMID})["ok"])
+        self.assertFalse(os.path.exists(self.h.cfg.disarm_path(VMID)))
+
+    def test_disarm_needs_the_marker(self):
+        answer = self.h.ctl({"cmd": "napped", "vmid": VMID, "disarm": "server"})
+        self.assertEqual(answer["error"], "disarm_unwritable")
+        self.assertEqual(self.h.ctl({"cmd": "napped", "vmid": VMID, "disarm": "maybe"})["error"], "bad_disarm")
+
+
 class UnitTests(unittest.TestCase):
     def test_signing_vector_matches_hivra(self):
         credential = {"host_id": "fixturehost", "generation": 3, "credential": VECTOR_MATERIAL}
@@ -926,6 +1235,27 @@ class UnitTests(unittest.TestCase):
                              ("hostname", "Bad Host"), ("ticket_key", "short"), ("binding_tag", "a b"), ("vmid", 301)):
             with self.assertRaises(ValueError):
                 proxy.parse_route(cfg, dict(good, **{field: value}), 300)
+        self.assertIsNone(proxy.parse_route(cfg, good, 300)["wake_url"])
+        self.assertEqual(proxy.parse_route(cfg, dict(good, wake_url=WAKE_URL), 300)["wake_url"], WAKE_URL)
+        for field, value in (("bearer_sha256", "AB" * 32), ("bearer_sha256", "ab"), ("wake_url", "http://a.example.test/x"),
+                             ("wake_url", "https://user@a.example.test/"), ("wake_url", "https://a.example.test/?next=x"),
+                             ("wake_url", "https://a.example.test/#x"), ("wake_url", 5)):
+            with self.assertRaises(ValueError):
+                proxy.parse_route(cfg, dict(good, **{field: value}), 300)
+
+    def test_proof_parsing(self):
+        request = proxy.parse_request_head(b"GET / HTTP/1.1\r\nHost: a.example.test\r\nAuthorization: bearer  abc\r\n\r\n")
+        self.assertEqual(proxy.bearer_proof(request), {"kind": "bearer", "token": "abc"})
+        self.assertIsNone(proxy.bootstrap_proof(b"destination=%2F"))
+        self.assertEqual(proxy.bootstrap_proof(b"token=a%2Bb&token=c"), {"kind": "bootstrap", "token": "a+b"})
+        for head in (b"POST /auth/bootstrap HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n",
+                     b"POST /auth/bootstrap HTTP/1.1\r\nHost: a\r\nContent-Length: 16385\r\n\r\n",
+                     b"POST /auth/bootstrap HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n",
+                     b"GET /auth/bootstrap HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n",
+                     b"POST /auth/bootstrap2 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n"):
+            self.assertFalse(proxy.bootstrap_candidate(proxy.parse_request_head(head)), head)
+        self.assertTrue(proxy.bootstrap_candidate(proxy.parse_request_head(
+            b"POST /auth/bootstrap?x=1 HTTP/1.1\r\nHost: a\r\nContent-Length: 16384\r\n\r\n")))
 
     def test_ctl_cli_unreachable_exit_code(self):
         with tempfile.TemporaryDirectory() as tmp:

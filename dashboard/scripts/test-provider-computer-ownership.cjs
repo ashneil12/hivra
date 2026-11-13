@@ -408,6 +408,17 @@ async function main() {
     });
     await db.exec(HOST_CREDENTIAL_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedHostCredential, "re-applying the 2026.11.13.3 admission changes nothing");
+    // 2026.11.13.4 anchors on the 2026.11.13.3 entry; idempotent too.
+    const CLIENT_WAKE_ADMISSION = migration("20261113130000_provider_release_admission_2026_11_13_4.sql");
+    await db.exec(CLIENT_WAKE_ADMISSION);
+    const admittedClientWake = await admissionDefinitions();
+    admittedClientWake.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(CLIENT_WAKE_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedClientWake, "re-applying the 2026.11.13.4 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

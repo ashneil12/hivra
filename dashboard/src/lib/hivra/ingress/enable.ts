@@ -49,6 +49,8 @@ import {
   buildGuestTokenPayload,
   buildIngressAttachPayload,
   buildIngressRoute,
+  ingressBearerSha256,
+  ingressWakeUrl,
   deriveIngressTicketKey,
   isPrivateGuestIp,
   pickMetricsPort,
@@ -498,6 +500,8 @@ export async function enableHostIngress(agentId: string, partialDeps: Partial<In
     guestIp: String(loaded.context.row.ip),
     ticketKey: deriveIngressTicketKey({ secret, agentId, tunnelId, generation }),
     generation,
+    bearerSha256: ingressBearerSha256(loaded.context.row.api_token),
+    wakeUrl: ingressWakeUrl(agentId, deps.env),
   });
   const attach = await hostStep(deps, target, "attach",
     buildIngressAttachScript({ vmid: target.vmid, bindingTag: target.bindingTag, hostname, guestIp: route.guest_ip, metricsPort }),

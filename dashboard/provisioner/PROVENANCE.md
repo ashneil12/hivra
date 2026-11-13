@@ -544,6 +544,19 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.13.4` builds on `2026.11.13.3` and teaches the host wake proxy client wakes.
+A per-host level, set with `ctl client-wake ticket|auth` (default `ticket`, kept in
+`/run/hivra-ingress-state`), decides what may resume a napped computer: at `ticket` only a server
+ticket; at `auth` also a request whose `Authorization: Bearer`, or `POST /auth/bootstrap` form token
+(body at most 16 KB), hashes to the route's optional `bearer_sha256`. The root helper checks the
+proof; the forwarder never sees the hash. A cookie or a webhook signature header never wakes a
+computer and never moves the idle signal (`last_authed_at`), which now moves only on a verified
+ticket, bearer or bootstrap. A browser asking for a napped computer is redirected to the route's
+optional `wake_url`. A nap that says `server-disarm` makes client wakes go to Hivra as a
+`wake-request` instead of a local resume. Routes without the new fields behave exactly as before.
+`hivra-provider-worker.py` advances its release labels. No guest asset changes. This source release
+does not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.13.3` builds on `2026.11.13.2` and lets the host wake proxy call Hivra with a
 host credential: after it resumes a napped computer it reports the wake (`wake-report`), and for a
 valid ticket to a computer that is not running (a hibernated one) it asks Hivra to wake it
