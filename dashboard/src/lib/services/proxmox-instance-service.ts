@@ -211,6 +211,9 @@ export interface HostScriptResult {
   /** Sudo transport only: the command never reached the script, and the
    * fixed diagnosis says why. */
   sudoFailure?: SudoTransportFailure;
+  /** Only when asked for with reportTimings: milliseconds from the start of
+   * the SSH connect until the session was ready. */
+  sshReadyMs?: number;
 }
 
 /** Default and absolute host-output limits protect the control plane from a
@@ -255,6 +258,11 @@ type HostScriptTimeoutOverride =
   | {
       timeoutMs?: number;
       earlyFinishMarker?: string;
+      /** With earlyFinishMarker: finish only once a newline follows the
+       * marker, so a receipt line that has only partly arrived is never cut. */
+      earlyFinishOnLine?: boolean;
+      /** Add sshReadyMs to the result. */
+      reportTimings?: boolean;
       maxOutputBytes?: number;
       /** Sudo transport only. "bounded" (the default) stops the remote script
        * with TERM, then KILL, just before Hivra's own deadline. "none" is for
@@ -1539,6 +1547,16 @@ type HostInvocation = {
   stdin: string;
 };
 
+/**
+ * Whether the early-finish marker has arrived. With `wholeLine` the line that
+ * holds it must also be complete: a chunk can end in the middle of a receipt.
+ */
+export function markerSeen(stdout: string, marker: string, wholeLine: boolean): boolean {
+  const at = stdout.indexOf(marker);
+  if (at < 0) return false;
+  return !wholeLine || stdout.indexOf("\n", at + marker.length) >= 0;
+}
+
 function withoutSudoSentinel(result: HostScriptResult): HostScriptResult {
   return { ...result, stderr: stripSudoSentinel(result.stderr).stderr };
 }
@@ -1565,6 +1583,8 @@ async function runProxmoxHostInvocation(
   const dispatchDeadline = performance.now() + timeoutMs;
   const earlyFinishMarker =
     typeof timeoutMsOverride === "object" ? timeoutMsOverride?.earlyFinishMarker : undefined;
+  const earlyFinishOnLine = typeof timeoutMsOverride === "object" && timeoutMsOverride.earlyFinishOnLine === true;
+  const reportTimings = typeof timeoutMsOverride === "object" && timeoutMsOverride.reportTimings === true;
   const maxOutputBytes = resolveHostScriptMaxOutputBytes(timeoutMsOverride);
   const mode = envValue(env, "PROXMOX_EXEC_MODE", "ssh");
   const userInfrastructureConnection =
@@ -1680,6 +1700,8 @@ async function runProxmoxHostInvocation(
   return await new Promise<HostScriptResult>((resolve) => {
       const conn = new Ssh2Client();
       let settled = false;
+      // When the SSH session became ready, from the start of the connect.
+      let sshReadyMs: number | null = null;
       // What the server presented, recorded before the verifier refuses it.
       let presentedFingerprint: string | null = null;
       const stdoutChunks: Buffer[] = [];
@@ -1712,7 +1734,8 @@ async function runProxmoxHostInvocation(
           // ignore
         }
         const bounded = result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result;
-        resolve(sudoTransport ? withoutSudoSentinel(bounded) : bounded);
+        const timed = reportTimings && sshReadyMs !== null ? { ...bounded, sshReadyMs } : bounded;
+        resolve(sudoTransport ? withoutSudoSentinel(timed) : timed);
       };
 
       const timer = setTimeout(() => {
@@ -1782,6 +1805,7 @@ async function runProxmoxHostInvocation(
 
       conn.on("ready", () => {
         if (!active()) return;
+        sshReadyMs = Date.now() - t0;
         debugLog("ssh.ready");
         if (!active()) return;
         conn.exec(command, (err, stream) => {
@@ -1852,7 +1876,7 @@ async function runProxmoxHostInvocation(
             // independently on the host.
             if (earlyFinishMarker && !settled) {
               const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-              if (stdout.includes(earlyFinishMarker)) {
+              if (markerSeen(stdout, earlyFinishMarker, earlyFinishOnLine)) {
                 debugLog("marker.found");
                 const stderr = Buffer.concat(stderrChunks).toString("utf8");
                 finish({ ok: true, stdout, stderr });

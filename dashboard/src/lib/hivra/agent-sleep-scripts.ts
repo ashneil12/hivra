@@ -193,7 +193,49 @@ qga_unlock() {
   exec 7>&-
 }`;
 
-const STATE_SHELL = `# One config read serves the binding check and the first state read.
+/**
+ * Fast answers to `qm config <vmid>` and `qm status <vmid>` from the files the
+ * CLI itself reads, for the binding check (when switched on) and the admission
+ * helper. Anything they cannot answer exactly goes to the real CLI.
+ */
+const FAST_QM_SHELL = `# The admission helper reads every VM with qm config and qm status. The CLI costs
+# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
+# These two answer from the files the CLI itself reads, and hand anything they
+# cannot answer exactly back to the real CLI. The binding check may use the config
+# reader too: a missing file goes to the CLI, which then fails as before.
+PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
+QEMU_RUN_DIR=/var/run/qemu-server
+hivra_fast_qm() {
+  local f pid
+  if [ "$#" = 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+    case "$1" in
+      config)
+        f="$PVE_QEMU_CONF_DIR/$2.conf"
+        # Pending changes are applied in the CLI's answer, so a file with any goes to the CLI.
+        # Snapshot sections are not part of the current config.
+        if [ -r "$f" ] && ! grep -q '^\\[PENDING\\]' "$f"; then
+          awk '/^\\[/ {exit} /^#/ {next} NF {print}' "$f"
+          return 0
+        fi
+        ;;
+      status)
+        f="$QEMU_RUN_DIR/$2.pid"
+        if [ ! -e "$f" ]; then echo "status: stopped"; return 0; fi
+        pid="$(head -c 32 "$f" 2>/dev/null | tr -dc 0-9)"
+        if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
+          echo "status: running"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  command timeout -k 5 30 qm "$@" </dev/null
+}`;
+
+function stateShell(fastConfig: boolean): string {
+  return `# One config read serves the binding check and the first state read.
 read_state() {
   local out
   ST=""; QMP=""; LOCK=none
@@ -226,12 +268,13 @@ observe() { if read_state; then OBS="$(tier_of)"; else OBS=unknown; fi; }
 require_binding() {
   [ -n "$EXPECTED_BINDING_TAG" ] || finish false binding_missing
   local tags
-  CONFIG="$(qm config "$VMID" 2>/dev/null)" || finish false unreachable
+  CONFIG="$(${fastConfig ? "hivra_fast_qm" : "qm"} config "$VMID" 2>/dev/null)" || finish false unreachable
   tags="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
   printf '%s\\n' "$tags" | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
     || finish false binding_mismatch
   CONFIG_FRESH=1
 }`;
+}
 
 /** Checks the instantaneous signals of a probe. Prints ok, active or invalid. */
 const PROBE_CHECK_PERL = String.raw`use strict;
@@ -543,6 +586,8 @@ export interface SleepHostScriptInput {
   tier: SleepScriptTier;
   /** A manual test sleep ignores the open page's own connections. */
   manual: boolean;
+  /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
+  fastConfigRead?: boolean;
 }
 
 function napBody(): string {
@@ -664,7 +709,8 @@ qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${buildVmidBoundGuestExecPrelude()}
 ${receiptShell("sleep")}
 ${CTL_SHELL}
-${STATE_SHELL}
+${FAST_QM_SHELL}
+${stateShell(input.fastConfigRead === true)}
 ${probeShell(input.manual === true)}
 install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
@@ -693,6 +739,8 @@ export interface WakeHostScriptInput {
   vmid: number;
   bindingTag: string | null;
   admission: WakeAdmission;
+  /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
+  fastConfigRead?: boolean;
 }
 
 function assertAdmission(admission: WakeAdmission): void {
@@ -712,40 +760,6 @@ HOST_RESERVE_MB=${admission.hostReserveMb}
 ENFORCE_CEILINGS=${admission.enforceCeilings ? 1 : 0}
 CPU_DENSITY_MILLI=${admission.cpuDensityMilli}
 MEMORY_DENSITY_MILLI=${admission.memoryDensityMilli}
-# The admission helper reads every VM with qm config and qm status. The CLI costs
-# about 0.6 s a call, so on a host with 20 VMs that walk alone took 26 s of a wake.
-# For the helper only, these two answer from the files the CLI itself reads, and
-# hand anything they cannot answer exactly back to the real CLI.
-PVE_QEMU_CONF_DIR=/etc/pve/qemu-server
-QEMU_RUN_DIR=/var/run/qemu-server
-hivra_fast_qm() {
-  local f pid
-  if [ "$#" = 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
-    case "$1" in
-      config)
-        f="$PVE_QEMU_CONF_DIR/$2.conf"
-        # Pending changes are applied in the CLI's answer, so a file with any goes to the CLI.
-        # Snapshot sections are not part of the current config.
-        if [ -r "$f" ] && ! grep -q '^\\[PENDING\\]' "$f"; then
-          awk '/^\\[/ {exit} /^#/ {next} NF {print}' "$f"
-          return 0
-        fi
-        ;;
-      status)
-        f="$QEMU_RUN_DIR/$2.pid"
-        if [ ! -e "$f" ]; then echo "status: stopped"; return 0; fi
-        pid="$(head -c 32 "$f" 2>/dev/null | tr -dc 0-9)"
-        if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] \
-            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
-            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
-          echo "status: running"
-          return 0
-        fi
-        ;;
-    esac
-  fi
-  command timeout -k 5 30 qm "$@" </dev/null
-}
 run_admission() {
   (
     qm() { hivra_fast_qm "$@"; }
@@ -880,7 +894,8 @@ EXPECTED_BINDING_TAG=${shellQuote(tag)}
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${receiptShell("wake")}
 ${CTL_SHELL}
-${STATE_SHELL}
+${FAST_QM_SHELL}
+${stateShell(input.fastConfigRead === true)}
 ${wakeAdmissionShell(input.admission)}
 install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:

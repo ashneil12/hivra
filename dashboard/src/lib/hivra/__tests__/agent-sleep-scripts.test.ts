@@ -469,6 +469,70 @@ host("wake script against a stub host", () => {
     }
   });
 
+  describe("with the fast binding check", () => {
+    const fastWake = () => buildWakeHostScript({
+      vmid: VMID, bindingTag: TAG, admission: ADMISSION(h.provisionerDir), fastConfigRead: true,
+    });
+    const confFile = () => path.join(h.dir, "pve-qemu-server", `${VMID}.conf`);
+    const writeConf = (text: string) => {
+      mkdirSync(path.dirname(confFile()), { recursive: true });
+      writeFileSync(confFile(), text);
+    };
+    const configCalls = (run: { calls: string[] }) => run.calls.filter((c) => c.startsWith("qm config"));
+    afterEach(() => rmSync(confFile(), { force: true }));
+
+    it("is off unless asked for: the binding check starts the CLI", () => {
+      expect(wake()).toContain('CONFIG="$(qm config "$VMID" 2>/dev/null)" || finish false unreachable');
+      expect(fastWake()).toContain('CONFIG="$(hivra_fast_qm config "$VMID" 2>/dev/null)" || finish false unreachable');
+      // The reader is defined once, ahead of the binding check, in both kinds of script.
+      for (const script of [fastWake(), wake(), buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false })]) {
+        expect(script.match(/^hivra_fast_qm\(\) \{$/gm)?.length).toBe(1);
+        expect(script.indexOf("hivra_fast_qm() {")).toBeLessThan(script.indexOf("require_binding() {"));
+      }
+    });
+
+    it("wakes a nap reading the binding from the config file, with no qm CLI at all", () => {
+      writeConf(`#note\nmemory: 4096\ntags: other;${TAG}\n\n[snap1]\ntags: someone-else\n`);
+      const run = h.run(fastWake(), NAPPING);
+      expect(receipt(run)).toMatchObject({ ok: true, from: "napping", to: "awake", reason: "resumed" });
+      expect(configCalls(run)).toEqual([]);
+    });
+
+    it("leaves snapshot sections out, so a tag only a snapshot holds does not match", () => {
+      writeConf(`memory: 4096\ntags: someone-else\n[snap1]\ntags: ${TAG}\n`);
+      const run = h.run(fastWake(), NAPPING);
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "binding_mismatch" });
+      none(run.calls);
+      expect(configCalls(run)).toEqual([]);
+    });
+
+    it("hands a file with pending changes to the CLI", () => {
+      writeConf(`tags: someone-else\n[PENDING]\ntags: ${TAG}\n`);
+      const run = h.run(fastWake(), NAPPING);
+      // The CLI's answer (from the stub host's state) is the one that counts.
+      expect(receipt(run)).toMatchObject({ ok: true, reason: "resumed" });
+      expect(configCalls(run)).toEqual([`qm config ${VMID}`]);
+    });
+
+    it("asks the CLI when there is no config file, and says unreachable when the CLI fails too", () => {
+      const viaCli = h.run(fastWake(), NAPPING);
+      expect(receipt(viaCli)).toMatchObject({ ok: true, reason: "resumed" });
+      expect(configCalls(viaCli)).toEqual([`qm config ${VMID}`]);
+      const gone = h.run(fastWake(), { ...NAPPING, configFail: true });
+      expect(receipt(gone)).toMatchObject({ ok: false, reason: "unreachable" });
+      none(gone.calls);
+      expect(fixups(gone.calls)).toEqual([]);
+    });
+
+    it("works the same in the sleep script", () => {
+      writeConf(`tags: ${TAG}\n`);
+      const nap = buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false, fastConfigRead: true });
+      const run = h.run(nap, { ...AWAKE, probeStdout: probeLine() });
+      expect(explain(run, parseSleepReceipt(run.stdout, VMID))).toMatchObject({ ok: true, to: "napping" });
+      expect(configCalls(run)).toEqual([]);
+    });
+  });
+
   it("retries the guest agent until it answers after a restore", () => {
     // The first connection stays silent, as a guest that is still booting does.
     const run = h.run(quick(wake()).replace("AGENT_WAIT=8", "AGENT_WAIT=1").replace("AGENT_WAIT=30", "AGENT_WAIT=6"), { ...HIBERNATED, qgaSilentConnects: 1 });

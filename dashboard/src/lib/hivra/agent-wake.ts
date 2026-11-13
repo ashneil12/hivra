@@ -18,7 +18,8 @@ import {
   parseSleepGeneration,
   type AgentSleepEventTrigger,
 } from "./agent-sleep-store";
-import { buildWakeHostScript, parseWakeReceipt, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
+import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
+import { isFastWakeEnabled } from "./fast-wake-flags";
 
 /**
  * Wake an agent that is asleep, and say when it can be used.
@@ -43,6 +44,9 @@ const MAX_WAKE_WAIT_MS = 120_000;
 export const WAKE_HEALTHZ_BUDGET_MS = 30_000;
 const HEALTHZ_REQUEST_TIMEOUT_MS = 5_000;
 const HEALTHZ_INTERVAL_MS = 1_000;
+/** With fast_healthz: the quicker polls right after the host says the computer is up, and how long they last. */
+const HEALTHZ_FAST_INTERVAL_MS = 150;
+const HEALTHZ_FAST_WINDOW_MS = 3_000;
 /** The host script's own bounds: up to 15 s for a sleep that holds the computer, 8 s of guest-agent wait, and for a restore the start itself. A nap wake normally takes about one second. */
 const WAKE_SCRIPT_TIMEOUT_MS = 60_000;
 const RESTORE_SCRIPT_TIMEOUT_MS = 120_000;
@@ -143,6 +147,8 @@ export interface WakeScriptRun {
   /** The host's own error text when the script could not run, with no secrets. */
   runError: string | null;
   ms: number;
+  /** With the timing switch on: when the SSH session to the host was ready. */
+  sshReadyMs?: number;
 }
 
 /** Runs the wake script once. Never throws: a script that cannot be built or run is a null receipt. */
@@ -158,6 +164,7 @@ export async function runWakeHostScript(
       vmid: target.vmid,
       bindingTag: target.bindingTag,
       admission: buildWakeAdmissionFor(target),
+      ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
@@ -165,6 +172,10 @@ export async function runWakeHostScript(
   try {
     const result = await runProxmoxHostScript(script, target.env, {
       timeoutMs: options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
+      // The receipt is the script's last word, so the answer can come back as
+      // soon as its line is complete, without waiting for the session to close.
+      ...(isFastWakeEnabled("early_finish") ? { earlyFinishMarker: WAKE_RESULT_PREFIX.trim(), earlyFinishOnLine: true } : {}),
+      ...(isFastWakeEnabled("timing") ? { reportTimings: true } : {}),
     });
     // The receipt is read even when the run reports an error: a script that
     // finished its work and then lost its connection still told us the answer.
@@ -173,6 +184,7 @@ export async function runWakeHostScript(
       receipt,
       runError: receipt || result?.ok ? null : "host_script_failed",
       ms: Date.now() - startedAt,
+      ...(typeof result?.sshReadyMs === "number" ? { sshReadyMs: result.sshReadyMs } : {}),
     };
   } catch {
     return { receipt: null, runError: "host_script_threw", ms: Date.now() - startedAt };
@@ -189,6 +201,8 @@ export async function pollPublicHealthz(
   options: {
     budgetMs?: number;
     intervalMs?: number;
+    /** Poll every 150 ms for the first 3 s, then at the normal interval. */
+    fastStart?: boolean;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
   } = {},
 ): Promise<{ up: boolean; ms: number; attempts: number }> {
@@ -212,8 +226,10 @@ export async function pollPublicHealthz(
     } catch {
       // Not answering yet.
     }
-    if (Date.now() - startedAt + intervalMs >= budgetMs) return { up: false, ms: Date.now() - startedAt, attempts };
-    await delay(intervalMs);
+    const elapsed = Date.now() - startedAt;
+    const wait = options.fastStart && elapsed < HEALTHZ_FAST_WINDOW_MS ? Math.min(intervalMs, HEALTHZ_FAST_INTERVAL_MS) : intervalMs;
+    if (elapsed + wait >= budgetMs) return { up: false, ms: Date.now() - startedAt, attempts };
+    await delay(wait);
   }
 }
 
@@ -261,11 +277,14 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
 
     const run = await runWakeHostScript(row, target, { restore });
     detail.script_ms = run.ms;
+    if (run.sshReadyMs !== undefined) detail.ssh_ready_ms = run.sshReadyMs;
     if (!run.receipt) return failed(run.runError ?? "no_receipt");
     for (const [name, ms] of Object.entries(run.receipt.steps)) detail[`${name}_ms`] = ms;
     detail.host_from = run.receipt.from;
     detail.fixup_via = run.receipt.via;
     detail.fixup_tries = run.receipt.tries;
+    // The host's own time, so the rest of script_ms reads as transport.
+    if (isFastWakeEnabled("timing")) detail.host_ms = run.receipt.ms;
 
     if (run.receipt.to === "cold") {
       // Nothing saved and the computer is off. The normal start path owns that.
@@ -273,7 +292,7 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
     }
     if (!run.receipt.ok) return failed(run.receipt.reason);
 
-    const health = await pollPublicHealthz(row.cf_hostname);
+    const health = await pollPublicHealthz(row.cf_hostname, isFastWakeEnabled("fast_healthz") ? { fastStart: true } : {});
     detail.healthz_ms = health.ms;
     detail.healthz_attempts = health.attempts;
     if (!health.up) return failed("public_healthz_timeout");
@@ -295,31 +314,59 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
   }
 }
 
+/**
+ * Hands work to the route's after(), so it runs once the answer is sent.
+ * Returns false when it cannot, and the caller then awaits the work itself.
+ */
+type DeferWork = (work: Promise<unknown>) => boolean;
+
+/** Writes the wake event, with the generation the row has once the lease is given back. */
+async function recordWakeEvent(input: {
+  agentId: string;
+  trigger: AgentSleepEventTrigger;
+  fromState: string;
+  outcome: WakeOutcome;
+  wakeMs: number;
+  after?: AgentRow | null;
+}): Promise<void> {
+  const after = input.after === undefined ? await tryReadRow(input.agentId) : input.after;
+  await logAgentSleepEvent({
+    agentId: input.agentId,
+    kind: input.outcome.result === "awake" ? "wake" : "fail",
+    trigger: input.trigger,
+    fromState: input.fromState,
+    toState: input.outcome.result,
+    generation: parseSleepGeneration(after?.sleep_generation),
+    durationMs: input.wakeMs,
+    reason: input.outcome.reason,
+    detail: { ...input.outcome.detail, total_ms: input.wakeMs },
+  });
+}
+
 /** Runs the wake under a lease this call already holds, and always gives the lease back. */
 async function wakeUnderLease(
   row: AgentRow,
   agentId: string,
   operationId: string,
   trigger: AgentSleepEventTrigger,
+  deferWork?: DeferWork,
 ): Promise<EnsureAwakeResult> {
   const startedAt = Date.now();
   const fromState = String(row.sleep_state);
   const outcome = await performWake(row, agentId);
   const wakeMs = Date.now() - startedAt;
 
+  // The lease is always given back before the answer.
   const finished = await finishAgentWake({ agentId, operationId, result: outcome.result });
-  const after = await tryReadRow(agentId);
-  await logAgentSleepEvent({
-    agentId,
-    kind: outcome.result === "awake" ? "wake" : "fail",
-    trigger,
-    fromState,
-    toState: outcome.result,
-    generation: parseSleepGeneration(after?.sleep_generation),
-    durationMs: wakeMs,
-    reason: outcome.reason,
-    detail: { ...outcome.detail, total_ms: wakeMs },
-  });
+  let after: AgentRow | null = null;
+  if (finished && deferWork) {
+    // Only the event still needs the row. Both can wait until the answer is sent.
+    const record = recordWakeEvent({ agentId, trigger, fromState, outcome, wakeMs }).catch(() => undefined);
+    if (!deferWork(record)) await record;
+  } else {
+    after = await tryReadRow(agentId);
+    await recordWakeEvent({ agentId, trigger, fromState, outcome, wakeMs, after });
+  }
 
   if (!finished) {
     // The lease was not ours any more (the agent was deleted, or a newer
@@ -401,7 +448,19 @@ export async function ensureHivraAgentAwake(
     row = await tryReadRow(agentId);
   }
 
-  const work = wakeUnderLease(row, agentId, operationId, options.trigger).catch((error): EnsureAwakeResult => {
+  // With deferred_log, the wake event is written through the route's after(),
+  // but only while this call still answers: once the wait is over the whole
+  // wake already runs there, and it simply awaits its own event.
+  let answered = false;
+  const onBackground = options.onBackground;
+  const deferWork: DeferWork | undefined = onBackground && isFastWakeEnabled("deferred_log")
+    ? (task) => {
+        if (answered) return false;
+        onBackground(task);
+        return true;
+      }
+    : undefined;
+  const work = wakeUnderLease(row, agentId, operationId, options.trigger, deferWork).catch((error): EnsureAwakeResult => {
     log.error("agent wake threw after its lease was taken", error instanceof Error ? error : new Error(String(error)), {
       source: LOG_SOURCE,
       failureType: "agent_wake_lease_error",
@@ -412,7 +471,10 @@ export async function ensureHivraAgentAwake(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), Math.max(0, deadline - Date.now()));
+    timer = setTimeout(() => {
+      answered = true;
+      resolve("timeout");
+    }, Math.max(0, deadline - Date.now()));
   });
   const winner = await Promise.race([work, timedOut]);
   if (timer) clearTimeout(timer);

@@ -9,6 +9,7 @@ import { bankrSkillsDirForType } from "./bankr-skills-seed";
 import { coerceSkillIds } from "./template-skills";
 import { resolveHivraProxmoxHost } from "./proxmox-target";
 import { isStartBlockedForLapse } from "./lapse-gate";
+import { isFastWakeEnabled } from "./fast-wake-flags";
 import {
   AUTONOMOUS_KINDS,
   DESKTOP_KINDS,
@@ -455,7 +456,13 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
 
   let receipt: SleepReceipt | null = null;
   try {
-    const script = buildSleepHostScript({ vmid: target.vmid, bindingTag: target.bindingTag, tier, manual });
+    const script = buildSleepHostScript({
+      vmid: target.vmid,
+      bindingTag: target.bindingTag,
+      tier,
+      manual,
+      ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
+    });
     const run = await runProxmoxHostScript(script, target.env, {
       timeoutMs: tier === "hibernate" ? HIBERNATE_SCRIPT_TIMEOUT_MS : NAP_SCRIPT_TIMEOUT_MS,
     });
