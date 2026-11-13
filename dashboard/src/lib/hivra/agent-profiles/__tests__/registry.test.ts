@@ -119,7 +119,7 @@ describe("the switch", () => {
     expect(on).not.toContain(shellQuote(IDLE_PROBE_PROGRAM));
     expect(on).toContain("PROFILE_B64");
     const sleep = buildSleepHostScript({ ...target, tier: "nap", manual: false, profile: probeProfileFor("openclaw"),
-      telegramCoverage: { channels: ["openclaw:telegram"], fingerprint: "0123456789abcdef", tag: "openclaw:telegram" } });
+      telegramCoverage: { channels: ["openclaw:telegram"], fingerprint: "abcdefabcdefabcd", tag: "openclaw:telegram" } });
     expect(sleep).toContain("PROFILE_B64");
     expect(sleep).toContain(`my %allowed = map { $_ => 1 } ("openclaw:telegram");`);
     expect(sleep.includes("\0")).toBe(false);
@@ -155,8 +155,8 @@ describe("the chat endpoints", () => {
 });
 
 describe("Telegram covered through a profile's channel", () => {
-  const facts = { hermesFp: "0123456789abcdef", hermesTokenInEnv: true, hermesWebhookMode: false, hermesConfigToken: false };
-  const row = { enabled: true, tokenFp: "0123456789abcdef", hasToken: true, blockedUntil: null };
+  const facts = { hermesFp: "abcdefabcdefabcd", hermesTokenInEnv: true, hermesWebhookMode: false, hermesConfigToken: false };
+  const row = { enabled: true, tokenFp: "abcdefabcdefabcd", hasToken: true, blockedUntil: null };
   const input = (liveChannels: string[], tag?: string) => ({
     configured: true, hostAllowed: true, row, nowMs: 0, probe: { liveChannels, telegram: facts }, ...(tag ? { tag } : {}),
   });
@@ -191,7 +191,7 @@ describe("Telegram covered through a profile's channel", () => {
       env: {
         ...process.env,
         HIVRA_COVERED_CHANNELS: tag,
-        HIVRA_TG_FP: "0123456789abcdef",
+        HIVRA_TG_FP: "abcdefabcdefabcd",
         HIVRA_PROBE: JSON.stringify({ activeRuns: 0, cliProcesses: 0, liveChannels, errors: [], openConnections: 0, sshSessions: 0,
           terminalAttached: false, desktopAttached: false, telegram: facts }),
       },
