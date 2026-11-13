@@ -160,7 +160,8 @@ export function channelCoverageFor(
   }
   const covered: string[] = [];
   const telegram = TELEGRAM_ADAPTER.coversItself(contexts.telegram, probe, nowMs);
-  if (telegram) covered.push(TELEGRAM_CHANNEL_SPEC.probeTag);
+  const telegramTag = contexts.telegram?.tag ?? TELEGRAM_CHANNEL_SPEC.probeTag;
+  if (telegram) covered.push(telegramTag);
   const generic: GenericChannelContext[] = [];
   for (const context of contexts.generic) {
     const blockers = context.adapter.coverageBlockers({
@@ -173,12 +174,16 @@ export function channelCoverageFor(
     covered.push(context.adapter.probeTag);
     generic.push(context);
   }
-  const allowed = coverableProbeTags(contexts.generic.map((c) => c.adapter));
+  const allowed = coverableProbeTags(contexts.generic.map((c) => c.adapter), telegramTag);
   return { covered: covered.filter((tag) => allowed.includes(tag)), telegram, generic };
 }
 
 /** The host script's form of a coverage that includes a generic channel, or null when only Telegram (or nothing) is covered. */
-export function channelSleepCoverage(coverage: ChannelCoverage, telegramFp: string | null): ChannelSleepCoverage | null {
+export function channelSleepCoverage(
+  coverage: ChannelCoverage,
+  telegramFp: string | null,
+  telegramTag?: string,
+): ChannelSleepCoverage | null {
   if (coverage.generic.length === 0) return null;
   const fingerprints: Partial<Record<ChannelWakeChannel, string>> = {};
   if (coverage.telegram) {
@@ -189,7 +194,7 @@ export function channelSleepCoverage(coverage: ChannelCoverage, telegramFp: stri
     if (!row.cred_fp) return null;
     fingerprints[adapter.channel] = row.cred_fp;
   }
-  return { channels: [...coverage.covered], fingerprints };
+  return { channels: [...coverage.covered], fingerprints, ...(coverage.telegram && telegramTag !== undefined ? { telegramTag } : {}) };
 }
 
 /** An arm made before a sleep, so it can be recorded or undone. */

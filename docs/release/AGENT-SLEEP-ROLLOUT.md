@@ -128,6 +128,59 @@ could not hand the computer a working token) leaves a guest-mode row in phase
 `recovery_failed`, `detach_failed` or `guest_token_stale`. Such an agent is
 kept awake until a rollback finishes it; run the rollback again.
 
+## Agent wake profiles
+
+`HIVRA_AGENT_PROFILES` (server env, `off` by default, or `on`). Off, the idle
+probe is the fixed program it always was. On, the server hands the probe the
+wake profile for the agent's type (`dashboard/src/lib/hivra/agent-profiles/`)
+as data, and the probe evaluates it: busy processes, activity directories,
+scheduled jobs, chat channels and app ports. For Hermes, OpenClaw, Claude
+Code, Codex and Agent Zero it gives the same answer the fixed probe gave
+(the comparison tests run both on the same fixture computers). It also adds
+two safety nets for every agent, with or without a profile:
+
+- an established connection to a known chat service (Telegram, Discord,
+  Slack, WhatsApp, matrix.org, Signal; resolved by the server when it probes)
+  that no declared channel's own process holds is the live channel
+  `unknown:<platform>`, which nothing ever covers, so the agent stays awake;
+- an agent process (any non-root process, or one the profile names) using
+  25% or more of a core over half a second counts as busy.
+
+With profiles on, Telegram wake also covers any type whose profile declares
+where its bot token lives and that Telegram queues its messages (today Hermes
+and OpenClaw, polling only). The owner's switch appears for those types.
+Turning profiles off again leaves such an opt-in in place but uncovered: an
+OpenClaw agent that is asleep still wakes on its bot, and stays awake after.
+
+### Adding a new agent type
+
+Add one entry to `AGENT_WAKE_PROFILES` in
+`dashboard/src/lib/hivra/agent-profiles/profiles.ts`, keyed by its
+`hivra_agents.type`:
+
+- `busy`: processes whose presence means work is running (a coding CLI);
+- `agentProcesses`: its long-running processes, for the CPU safety net
+  (`{ cgroup: "docker" }` for a container);
+- `activity`: directories whose newest file time is its last use;
+- `schedules`: where its scheduled jobs live, with a reader kind
+  (`hermes-jobs`, `json-next-run`, `json-nonempty`, `crontab`, `dir-nonempty`);
+- `channels`: where it records its chat channels (`env-keys`,
+  `json-channels`, `yaml-enabled`, `gateway-state`, `systemd-env`,
+  `systemd-active`), with the process that holds each connection;
+- `wake`: per platform with a wake adapter, where the credential lives (an
+  `.env` key or a JSON path) and how it catches up (`none`, `server-queued`,
+  `backfill-setting`). Declare `server-queued` only when the agent really
+  reads what queued while it slept; otherwise leave the platform out;
+- `appPorts`: the loopback ports its app serves on.
+
+The registry test fails until every type in `agent-catalog.ts` has an entry.
+No probe code changes for a new type unless it stores something in a shape
+no reader kind knows; then add the reader to `sleep/profile-probe-program.ts`.
+
+Without an entry, the probe evaluates every known profile together and keeps
+no wake source: nothing of it is covered, any chat connection keeps it awake,
+and so does any busy agent process.
+
 ## Rollback
 
 Set `HIVRA_SLEEP_MODE=off`, or the host's `sleep_mode` to `off`. Nothing new

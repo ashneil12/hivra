@@ -52,6 +52,8 @@ import {
   genericChannelSpec,
 } from "@/lib/hivra/channel-wake/registry";
 import type { ChannelWakeSpec } from "@/lib/hivra/channel-wake/types";
+import { probeProfileJson, type ChannelWakeSource, type ProbeProfile } from "@/lib/hivra/agent-profiles";
+import { buildProfileProbeProgram } from "@/lib/hivra/sleep/profile-probe-program";
 
 export const SLEEP_RESULT_PREFIX = "HIVRA_SLEEP_RESULT ";
 export const WAKE_RESULT_PREFIX = "HIVRA_WAKE_RESULT ";
@@ -429,7 +431,7 @@ const PLAIN_CHANNEL_CHECK = "$busy = 1 if @$channels;";
  * .env with the fingerprint in HIVRA_TG_FP, Hermes polls, and config.yaml has
  * no token of its own. The same rules as telegramWakeCoverage().
  */
-const COVERED_CHANNEL_CHECK = String.raw`my %allowed = map { $_ => 1 } (${[TELEGRAM_CHANNEL_SPEC.probeTag].map((c) => JSON.stringify(c)).join(", ")});
+const coveredChannelCheck = (telegramTag: string) => String.raw`my %allowed = map { $_ => 1 } (${[telegramTag].map((c) => JSON.stringify(c)).join(", ")});
 my %covered = map { $_ => 1 } grep { $allowed{$_} } split /,/, ($ENV{HIVRA_COVERED_CHANNELS} // "");
 my $fp = $ENV{HIVRA_TG_FP} // "";
 my $tg = $d->{telegram};
@@ -442,19 +444,29 @@ for my $c (@$channels) {
     $busy = 1 unless $tg_ok && defined($c) && !ref($c) && $covered{$c};
 }`;
 
-/** The probe check. With nothing covered it is exactly the check every sleep used before. */
-export function probeCheckPerl(covered: boolean): string {
-  return PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => (covered ? COVERED_CHANNEL_CHECK : PLAIN_CHANNEL_CHECK));
+/**
+ * The probe check. With nothing covered it is exactly the check every sleep used before.
+ * `telegramTag` is the live channel Telegram covers: Hermes's unless the agent's wake profile declares another.
+ */
+export function probeCheckPerl(covered: boolean, telegramTag: string = TELEGRAM_CHANNEL_SPEC.probeTag): string {
+  return PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => (covered ? coveredChannelCheck(telegramTag) : PLAIN_CHANNEL_CHECK));
 }
 
 /** Where the channel fingerprint lines go in the probe: just before the OpenClaw read, as the Telegram facts do. */
 const CHANNEL_FPS_ANCHOR = `oc = rjson(HOME + "/.openclaw/openclaw.json", 262144)\n`;
 
-/** The probe a sleep runs: Telegram facts when Telegram is covered, and fingerprints for the generic channels asked about. */
+/**
+ * The probe a sleep runs: Telegram facts when Telegram is covered, and fingerprints for the generic channels asked about.
+ * With an agent wake profile (HIVRA_AGENT_PROFILES on) it is the profile probe, which reads both from where the profile says.
+ */
 export function idleProbeProgramFor(
-  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[] } = {},
+  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[]; profile?: ProbeProfile | null } = {},
   specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
 ): string {
+  if (options.profile) {
+    for (const channel of options.channels ?? []) if (!genericChannelSpec(channel, specs)) throw new Error("No generic channel wake spec.");
+    return buildProfileProbeProgram(probeProfileJson(options.profile, { telegram: options.telegram === true, channels: options.channels ?? [] }));
+  }
   const base = options.telegram === true ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM;
   const channels = options.channels ?? [];
   if (channels.length === 0) return base;
@@ -467,27 +479,31 @@ type ScriptCoverage =
   | { kind: "telegram"; coverage: TelegramSleepCoverage }
   | { kind: "channels"; coverage: ChannelSleepCoverage; specs: readonly ChannelWakeSpec[] };
 
-function probeShell(manual: boolean, scriptCoverage: ScriptCoverage | null = null): string {
-  if (scriptCoverage?.kind === "channels") return channelProbeShell(manual, scriptCoverage.coverage, scriptCoverage.specs);
+function probeShell(manual: boolean, scriptCoverage: ScriptCoverage | null = null, profile: ProbeProfile | null = null): string {
+  if (scriptCoverage?.kind === "channels") return channelProbeShell(manual, scriptCoverage.coverage, scriptCoverage.specs, profile);
   const coverage = scriptCoverage?.coverage ?? null;
-  return `PROBE_PROGRAM=${shellQuote(coverage ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM)}
+  const program = profile
+    ? idleProbeProgramFor({ telegram: coverage !== null, profile })
+    : coverage ? IDLE_PROBE_TELEGRAM_PROGRAM : IDLE_PROBE_PROGRAM;
+  return `PROBE_PROGRAM=${shellQuote(program)}
 MANUAL=${manual ? 1 : 0}${coverage ? `
 HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
 HIVRA_TG_FP=${shellQuote(coverage.fingerprint)}` : ""}
-${probeFunctionsShell(coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : "", probeCheckPerl(coverage !== null))}`;
+${probeFunctionsShell(coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : "", probeCheckPerl(coverage !== null, coverage?.tag))}`;
 }
 
 /** The general form: every covered channel is checked by its own predicate (see channelGatePerl). */
-function channelProbeShell(manual: boolean, coverage: ChannelSleepCoverage, specs: readonly ChannelWakeSpec[]): string {
+function channelProbeShell(manual: boolean, coverage: ChannelSleepCoverage, specs: readonly ChannelWakeSpec[], profile: ProbeProfile | null = null): string {
   const generic = coverage.channels
     .map((tag) => specs.find((spec) => spec.probeTag === tag)?.channel)
     .filter((channel): channel is ChannelWakeChannel => Boolean(channel));
-  const program = idleProbeProgramFor({ telegram: coverage.channels.includes(TELEGRAM_CHANNEL_SPEC.probeTag), channels: generic }, specs);
+  const telegramTag = coverage.telegramTag ?? TELEGRAM_CHANNEL_SPEC.probeTag;
+  const program = idleProbeProgramFor({ telegram: coverage.channels.includes(telegramTag), channels: generic, profile }, specs);
   return `PROBE_PROGRAM=${shellQuote(program)}
 MANUAL=${manual ? 1 : 0}
 HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
 HIVRA_CHANNEL_FPS=${shellQuote(channelFpsEnv(coverage.fingerprints))}
-${probeFunctionsShell(' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_CHANNEL_FPS="$HIVRA_CHANNEL_FPS"', PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => channelGatePerl(specs)))}`;
+${probeFunctionsShell(' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_CHANNEL_FPS="$HIVRA_CHANNEL_FPS"', PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => channelGatePerl(specs, coverage.telegramTag)))}`;
 }
 
 function probeFunctionsShell(checkEnv: string, checkPerl: string): string {
@@ -534,7 +550,7 @@ probe_or_finish() {
  */
 export function buildIdleProbeHostScript(
   target: { vmid: number; bindingTag: string | null },
-  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[]; ingressStats?: boolean } = {},
+  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[]; ingressStats?: boolean; profile?: ProbeProfile | null } = {},
   specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
 ): string {
   const script = buildGuestReadHostScript(target, idleProbeProgramFor(options, specs));
@@ -623,9 +639,58 @@ if not re.match(r"^\d{6,}:[A-Za-z0-9_-]{30,}$", tok): none("bad_shape")
 sys.stdout.write("${TELEGRAM_TOKEN_PREFIX}" + tok + "\n")
 `;
 
-/** Runs the token read in the VM. Refusals print one HIVRA_IDLE_REFUSED line, as the probe's do. */
-export function buildTelegramTokenReadHostScript(target: { vmid: number; bindingTag: string | null }): string {
-  return buildGuestReadHostScript(target, TELEGRAM_TOKEN_READ_PROGRAM);
+/**
+ * The token read for a Telegram source an agent wake profile declares: the
+ * same answer lines, read from the profile's credential location (an .env key
+ * or a string in a JSON file) with the parser the profile probe fingerprints.
+ * A set webhook location refuses with webhook_mode, as Hermes's does.
+ */
+export function buildTelegramTokenReadProgram(source: Pick<ChannelWakeSource, "credential" | "webhook">): string {
+  if (source.credential.length !== 1 || source.credential[0].kind === "regex") throw new Error("Invalid Telegram token source.");
+  const input = JSON.stringify({ credential: source.credential[0], webhook: source.webhook ?? null });
+  if (!/^[\x20-\x7e]*$/.test(input)) throw new Error("Invalid Telegram token source.");
+  return String.raw`import json, os, re, sys
+# hivra-tg-token-read v1 (profile). Runs as root via the guest agent. Prints the token line and nothing else.
+${TELEGRAM_ENV_VALUE_PY}
+SRC = json.loads(${JSON.stringify(input)})
+HOME = "/home/bux"
+def none(why):
+    sys.stdout.write("${TELEGRAM_TOKEN_NONE_PREFIX}" + why + "\n")
+    sys.exit(0)
+def text_of(p, n):
+    try: fd = os.open(HOME + p[1:] if p.startswith("~/") else p, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError: return None
+    try: return os.read(fd, n).decode("utf-8", "replace")
+    finally: os.close(fd)
+def value(l):
+    if l is None: return None
+    t = text_of(l["path"], 262144)
+    if t is None: return None
+    if l["kind"] == "env": return env_value(t, l["key"])
+    if l["kind"] == "json":
+        try: o = json.loads(t)
+        except ValueError: return None
+        for a in l["at"]: o = o.get(a) if isinstance(o, dict) else None
+        return o if isinstance(o, str) and o else ("set" if o not in (None, False, "", [], {}) else None)
+    return "set" if re.search(l["pattern"], t, re.M) else None
+if text_of(SRC["credential"]["path"], 1) is None: none("no_env")
+tok = value(SRC["credential"])
+if not tok: none("no_token")
+if value(SRC["webhook"]): none("webhook_mode")
+if not re.match(r"^\d{6,}:[A-Za-z0-9_-]{30,}$", tok): none("bad_shape")
+sys.stdout.write("${TELEGRAM_TOKEN_PREFIX}" + tok + "\n")
+`;
+}
+
+/**
+ * Runs the token read in the VM. Refusals print one HIVRA_IDLE_REFUSED line, as the probe's do.
+ * With a profile's source (HIVRA_AGENT_PROFILES on) it reads from there; otherwise from Hermes's .env, as always.
+ */
+export function buildTelegramTokenReadHostScript(
+  target: { vmid: number; bindingTag: string | null },
+  source: Pick<ChannelWakeSource, "credential" | "webhook"> | null = null,
+): string {
+  return buildGuestReadHostScript(target, source ? buildTelegramTokenReadProgram(source) : TELEGRAM_TOKEN_READ_PROGRAM);
 }
 
 export type TelegramTokenRead = { ok: true; token: string } | { ok: false; reason: string };
@@ -892,6 +957,8 @@ export interface IdleVerdictOptions {
   coveredChannels?: readonly string[];
   /** The generic channel specs the allowlist is built from. The registry's own by default (tests pass others). */
   channelSpecs?: readonly ChannelWakeSpec[];
+  /** The live channel Telegram covers when the agent's wake profile declares one (see TelegramSleepCoverage.tag). */
+  telegramTag?: string;
 }
 
 export interface IdleVerdict {
@@ -929,7 +996,7 @@ export function idleVerdict(probeInput: unknown, options: IdleVerdictOptions): I
 
   if (probe.activeRuns > 0) reasons.push("active_runs");
   if (probe.cliProcesses > 0) reasons.push("cli_process");
-  const covered = allowedCoveredChannels(options.coveredChannels, options.channelSpecs);
+  const covered = allowedCoveredChannels(options.coveredChannels, options.channelSpecs, options.telegramTag);
   if (probe.liveChannels.some((channel) => !covered.includes(channel))) reasons.push("live_channels");
 
   const probeNowMs = Date.parse(probe.now);
@@ -966,18 +1033,32 @@ export function idleVerdict(probeInput: unknown, options: IdleVerdictOptions): I
 export interface TelegramSleepCoverage {
   channels: string[];
   fingerprint: string;
+  /**
+   * The live channel Telegram covers, when the agent's wake profile declares
+   * one other than Hermes's (e.g. "openclaw:telegram"). Absent: "hermes:telegram".
+   */
+  tag?: string;
+}
+
+const TELEGRAM_TAG = /^[a-z][a-z0-9_-]{0,19}:telegram$/;
+
+function telegramTagOf(tag: unknown): string {
+  if (tag === undefined) return TELEGRAM_CHANNEL_SPEC.probeTag;
+  if (typeof tag !== "string" || !TELEGRAM_TAG.test(tag)) throw new Error("Invalid Telegram wake coverage.");
+  return tag;
 }
 
 function assertCoverage(coverage: TelegramSleepCoverage | null | undefined): TelegramSleepCoverage | null {
   if (!coverage) return null;
   const channels = coverage.channels;
+  const tag = telegramTagOf(coverage.tag);
   if (!Array.isArray(channels) || channels.length === 0
-      || channels.some((c) => c !== TELEGRAM_CHANNEL_SPEC.probeTag)
+      || channels.some((c) => c !== tag)
       || new Set(channels).size !== channels.length
       || typeof coverage.fingerprint !== "string" || !PROBE_FINGERPRINT.test(coverage.fingerprint)) {
     throw new Error("Invalid Telegram wake coverage.");
   }
-  return { channels: [...channels], fingerprint: coverage.fingerprint };
+  return { channels: [...channels], fingerprint: coverage.fingerprint, ...(coverage.tag === undefined ? {} : { tag }) };
 }
 
 /**
@@ -988,6 +1069,8 @@ function assertCoverage(coverage: TelegramSleepCoverage | null | undefined): Tel
 export interface ChannelSleepCoverage {
   channels: string[];
   fingerprints: Partial<Record<ChannelWakeChannel, string>>;
+  /** As TelegramSleepCoverage.tag. */
+  telegramTag?: string;
 }
 
 function assertChannelCoverage(
@@ -996,22 +1079,23 @@ function assertChannelCoverage(
 ): ChannelSleepCoverage | null {
   if (!coverage) return null;
   const channels = coverage.channels;
-  const allowed = coverableProbeTags(specs);
+  const telegramTag = telegramTagOf(coverage.telegramTag);
+  const allowed = coverableProbeTags(specs, telegramTag);
   const fps = coverage.fingerprints;
   const fail = () => { throw new Error("Invalid channel wake coverage."); };
   if (!Array.isArray(channels) || channels.length === 0 || new Set(channels).size !== channels.length
       || channels.some((c) => !allowed.includes(c)) || !fps || typeof fps !== "object") fail();
   const out: Partial<Record<ChannelWakeChannel, string>> = {};
   for (const tag of channels) {
-    const channel = tag === TELEGRAM_CHANNEL_SPEC.probeTag ? "telegram" : specs.find((spec) => spec.probeTag === tag)?.channel;
+    const channel = tag === telegramTag ? "telegram" : specs.find((spec) => spec.probeTag === tag)?.channel;
     const fp = channel ? fps[channel] : undefined;
     if (!channel || typeof fp !== "string" || !PROBE_FINGERPRINT.test(fp)) fail();
     out[channel as ChannelWakeChannel] = fp as string;
   }
   // A fingerprint for a channel that is not covered would be checked for nothing: refuse it.
   if (Object.keys(fps).length !== Object.keys(out).length) fail();
-  if (!channels.some((tag) => tag !== TELEGRAM_CHANNEL_SPEC.probeTag && genericChannelSpec(specs.find((s) => s.probeTag === tag)?.channel, specs))) fail();
-  return { channels: [...channels], fingerprints: out };
+  if (!channels.some((tag) => tag !== telegramTag && genericChannelSpec(specs.find((s) => s.probeTag === tag)?.channel, specs))) fail();
+  return { channels: [...channels], fingerprints: out, ...(coverage.telegramTag === undefined ? {} : { telegramTag }) };
 }
 
 export interface SleepHostScriptInput {
@@ -1036,6 +1120,11 @@ export interface SleepHostScriptInput {
    * the marker. Off by default.
    */
   hostIngress?: boolean;
+  /**
+   * The agent's wake profile (HIVRA_AGENT_PROFILES on): the probe this script
+   * runs before the stop is the profile probe. Absent: the probe as before.
+   */
+  profile?: ProbeProfile | null;
 }
 
 function coversTelegram(coverage: ScriptCoverage | null): boolean {
@@ -1215,7 +1304,7 @@ ${receiptShell("sleep")}
 ${ctlShell()}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
-${probeShell(input.manual === true, coverage)}
+${probeShell(input.manual === true, coverage, input.profile ?? null)}
 ${hostIngress ? `${ingressShell()}
 ` : ""}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock

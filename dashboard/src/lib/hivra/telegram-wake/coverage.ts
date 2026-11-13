@@ -46,6 +46,12 @@ export interface TelegramCoverageInput {
   row: TelegramWakeRowFacts | null;
   probe: { liveChannels: readonly string[]; telegram?: TelegramProbeFacts | null } | null;
   nowMs: number;
+  /**
+   * The live channel this wake covers, when the agent's wake profile declares
+   * one other than Hermes's (HIVRA_AGENT_PROFILES on). The probe's Telegram
+   * facts then describe that profile's source. Absent: "hermes:telegram".
+   */
+  tag?: string;
 }
 
 const FINGERPRINT = /^[0-9a-f]{16}$/;
@@ -71,7 +77,8 @@ export function telegramCoverageBlockers(input: TelegramCoverageInput): string[]
   }
   const channels = probe.liveChannels;
   if (channels.length === 0) reasons.push("no_live_channel");
-  if (channels.some((channel) => !TELEGRAM_WAKE_COVERABLE_CHANNELS.includes(channel))) reasons.push("other_channel");
+  const coverable = input.tag === undefined ? TELEGRAM_WAKE_COVERABLE_CHANNELS : [input.tag];
+  if (channels.some((channel) => !coverable.includes(channel))) reasons.push("other_channel");
   const tg = probe.telegram;
   if (!tg) reasons.push("no_telegram_facts");
   else {

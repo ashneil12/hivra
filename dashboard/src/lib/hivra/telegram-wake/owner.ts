@@ -11,12 +11,14 @@ import { resolveSleepTarget, type AgentRow } from "../agent-wake";
 import { resolveTelegramWakeConfig, telegramWakeHostAllowed } from "./config";
 import { telegramGetBot, telegramTokenFingerprint, type TelegramFetch } from "./bot-api";
 import { decryptTelegramToken, deleteWakeWebhook } from "./lifecycle";
+import { telegramWakeKinds, telegramWakeSource } from "../agent-profiles";
 import { readTelegramWakeRow, saveTelegramWakeOptIn, updateTelegramWakeRow, type TelegramWakeState } from "./store";
 
 /**
  * The owner's switch for Telegram wake-on-message on one agent.
  *
- * Turning it on reads TELEGRAM_BOT_TOKEN from ~/.hermes/.env once, through the
+ * Turning it on reads the bot token once (from ~/.hermes/.env, or with agent
+ * profiles on, from where the agent type's profile says it lives), through the
  * guest agent of the agent's own computer, checks it with getMe and keeps it
  * encrypted. The token never leaves this file except encrypted, and is never
  * logged or returned. Turning it off takes any webhook down first and only
@@ -27,8 +29,11 @@ import { readTelegramWakeRow, saveTelegramWakeOptIn, updateTelegramWakeRow, type
 const LOG_SOURCE = "telegram-wake-owner";
 const TOKEN_READ_TIMEOUT_MS = 45_000;
 
-/** Agent kinds phase 1 covers. */
-const COVERED_KINDS: readonly string[] = ["hermes"];
+/**
+ * Agent kinds the switch covers: Hermes, or with HIVRA_AGENT_PROFILES on,
+ * every kind whose wake profile declares where its Telegram token lives and
+ * that Telegram queues its messages (agent-profiles/profiles.ts).
+ */
 
 export interface TelegramWakeView {
   /** The switch can be shown for this agent. */
@@ -68,7 +73,7 @@ async function hasTelegramConnection(agentId: string, userId: string): Promise<b
 async function availability(agent: AgentRow, userId: string, env: Record<string, string | undefined>): Promise<boolean> {
   const config = resolveTelegramWakeConfig(env);
   if (!config) return false;
-  if (!COVERED_KINDS.includes(String(agent.type ?? ""))) return false;
+  if (!telegramWakeKinds(env).includes(String(agent.type ?? ""))) return false;
   if (agent.deployment_mode !== "hivra-managed" || agent.computer_substrate !== "proxmox-kvm") return false;
   if (config.mode === "canary") {
     const host = await readSleepHostRow(agent);
@@ -99,12 +104,15 @@ const TOKEN_READ_MESSAGES: Record<string, string> = {
 };
 
 /** Reads the token from the agent's own computer. The token comes back only inside the result. */
-async function readTokenFromComputer(agent: AgentRow): Promise<{ ok: true; token: string } | { ok: false; reason: string }> {
+async function readTokenFromComputer(agent: AgentRow, env: Record<string, string | undefined>): Promise<{ ok: true; token: string } | { ok: false; reason: string }> {
   try {
     const resolved = await resolveSleepTarget(agent, LOG_SOURCE);
     if (!resolved.ok) return { ok: false, reason: `target_${resolved.code}` };
     const run = await runProxmoxHostScript(
-      buildTelegramTokenReadHostScript({ vmid: resolved.target.vmid, bindingTag: resolved.target.bindingTag }),
+      buildTelegramTokenReadHostScript(
+        { vmid: resolved.target.vmid, bindingTag: resolved.target.bindingTag },
+        telegramWakeSource(agent.type, env),
+      ),
       resolved.target.env,
       { timeoutMs: TOKEN_READ_TIMEOUT_MS },
     );
@@ -130,7 +138,7 @@ export async function enableTelegramWake(agent: AgentRow, userId: string, deps: 
   if (current && WEBHOOK_STATES.includes(current.state)) {
     return refuse(409, "settling", "This setting is still settling. Try again in a minute.");
   }
-  const read = await readTokenFromComputer(agent);
+  const read = await readTokenFromComputer(agent, env);
   if (!read.ok) {
     log.warn("telegram wake opt-in could not read the bot token", {
       source: LOG_SOURCE,

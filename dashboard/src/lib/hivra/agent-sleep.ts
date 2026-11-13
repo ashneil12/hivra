@@ -58,6 +58,8 @@ import {
   type AgentRow,
 } from "./agent-wake";
 import { listTunnelConnections } from "@/lib/services/cloudflare-tunnel";
+import { agentProfilesEnabled, probeProfileFor, telegramWakeSource, type ProbeProfile } from "./agent-profiles";
+import { resolveChatEndpoints } from "./agent-profiles/resolve";
 import { loadAgentIngressState } from "./ingress/wake-client";
 import { buildIngressVmStatsHostScript, parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
 
@@ -445,9 +447,25 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   let telegram: TelegramSleepContext | null = null;
   // Every other channel: read only when the channel wake switches are on and an adapter exists.
   let genericChannels: GenericChannelContext[] = [];
+  // Agent wake profiles (HIVRA_AGENT_PROFILES): the probe evaluates the profile for this
+  // agent's type, with the chat and CPU safety nets. Off: the probe exactly as before.
+  const profilesOn = agentProfilesEnabled(env);
+  let profile: ProbeProfile | null = null;
+  if (profilesOn) {
+    const endpoints = await resolveChatEndpoints().catch(() => []);
+    try {
+      profile = probeProfileFor(row.type, { endpoints });
+    } catch {
+      return { outcome: "skipped", reason: "profile_invalid" };
+    }
+  }
+  // With profiles on, Telegram covers the channel the type's profile declares; a type with none has no Telegram wake.
+  const telegramSource = profilesOn ? telegramWakeSource(row.type, env) : null;
+  const telegramTag = telegramSource?.tag;
   if (state === "awake") {
     try {
       telegram = await TELEGRAM_ADAPTER.readSleepContext(agentId, host?.sleep_mode ?? null, env);
+      if (telegram && profilesOn) telegram = telegramSource ? { ...telegram, tag: telegramSource.tag } : null;
     } catch {
       telegram = null;
     }
@@ -465,6 +483,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     horizonS: timings.horizonSeconds,
     cores,
     ...(coveredChannels.length > 0 ? { coveredChannels } : {}),
+    ...(telegramTag !== undefined ? { telegramTag } : {}),
   });
 
   // The live check comes first, before any lease: an agent that is in use is
@@ -479,7 +498,8 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       ? { telegram: Boolean(telegram), channels: genericChannels.map((c) => c.adapter.channel) }
       : telegram ? { telegram: true } : {};
     // Host ingress: the proxy's own view of the computer rides in the same SSH call.
-    const probeOptions = hostIngress ? { ...channelProbeOptions, ingressStats: true } : channelProbeOptions;
+    const withIngress = hostIngress ? { ...channelProbeOptions, ingressStats: true } : channelProbeOptions;
+    const probeOptions = profile ? { ...withIngress, profile } : withIngress;
     try {
       const run = await runProxmoxHostScript(
         buildIdleProbeHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }, probeOptions),
@@ -630,7 +650,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
 
     let receipt: SleepReceipt | null = null;
     // A coverage with any channel beyond Telegram goes to the host in the general form.
-    const sleepCoverage = channelSleepCoverage(coverage, telegram?.row.token_fp ?? null);
+    const sleepCoverage = channelSleepCoverage(coverage, telegram?.row.token_fp ?? null, telegramTag);
     if (coverage.generic.length > 0 && !sleepCoverage) return recoverByWaking("channel_coverage_invalid");
     try {
       const script = buildSleepHostScript({
@@ -640,10 +660,11 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
         manual,
         ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
         ...(hostIngress ? { hostIngress: true } : {}),
+        ...(profile ? { profile } : {}),
         ...(sleepCoverage
           ? { channelCoverage: sleepCoverage }
           : telegram && covered.length > 0 && telegram.row.token_fp
-            ? { telegramCoverage: { channels: covered, fingerprint: telegram.row.token_fp } }
+            ? { telegramCoverage: { channels: covered, fingerprint: telegram.row.token_fp, ...(telegramTag !== undefined ? { tag: telegramTag } : {}) } }
             : {}),
       });
       const run = await runProxmoxHostScript(script, target.env, {

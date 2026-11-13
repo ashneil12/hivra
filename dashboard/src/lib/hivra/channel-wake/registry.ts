@@ -140,8 +140,11 @@ export const DISCORD_CHANNEL_SPEC: ChannelWakeSpec = {
 export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [MATRIX_CHANNEL_SPEC, EMAIL_CHANNEL_SPEC, DISCORD_CHANNEL_SPEC];
 
 /** Every probe tag a wake can ever cover. Both gates refuse anything else. */
-export function coverableProbeTags(specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS): string[] {
-  return [TELEGRAM_CHANNEL_SPEC.probeTag, ...specs.map((spec) => spec.probeTag)];
+export function coverableProbeTags(
+  specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
+  telegramTag: string = TELEGRAM_CHANNEL_SPEC.probeTag,
+): string[] {
+  return [telegramTag, ...specs.map((spec) => spec.probeTag)];
 }
 
 export const CHANNEL_WAKE_COVERABLE: readonly string[] = coverableProbeTags();
@@ -167,8 +170,9 @@ export function channelForProbeTag(
 export function allowedCoveredChannels(
   channels: readonly unknown[] | undefined,
   specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
+  telegramTag?: string,
 ): string[] {
-  const allowed = coverableProbeTags(specs);
+  const allowed = coverableProbeTags(specs, telegramTag);
   const out: string[] = [];
   for (const channel of channels ?? []) {
     if (typeof channel === "string" && allowed.includes(channel) && !out.includes(channel)) out.push(channel);
@@ -226,9 +230,15 @@ function assertSpecs(specs: readonly ChannelWakeSpec[]): void {
  * credential fingerprint the probe saw equals the one in HIVRA_CHANNEL_FPS,
  * plus that adapter's own facts check.
  */
-export function channelGatePerl(specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS): string {
+export function channelGatePerl(
+  specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
+  telegramTag: string = TELEGRAM_CHANNEL_SPEC.probeTag,
+): string {
   assertSpecs(specs);
-  const tags = coverableProbeTags(specs).map((tag) => JSON.stringify(tag)).join(", ");
+  if (!/^[a-z][a-z0-9_-]{0,19}:telegram$/.test(telegramTag) || specs.some((spec) => spec.probeTag === telegramTag)) {
+    throw new Error("Invalid channel wake spec.");
+  }
+  const tags = coverableProbeTags(specs, telegramTag).map((tag) => JSON.stringify(tag)).join(", ");
   const blocks = specs.map((spec) => {
     const name = JSON.stringify(spec.channel);
     return `{
@@ -253,7 +263,7 @@ export function channelGatePerl(specs: readonly ChannelWakeSpec[] = GENERIC_CHAN
     `{`,
     `    my $fp = $fps{"telegram"} // "";`,
     `    my $tg = $d->{telegram};`,
-    `    $ok{"hermes:telegram"} = (${TELEGRAM_HOST_CHECK_PERL}) ? 1 : 0;`,
+    `    $ok{${JSON.stringify(telegramTag)}} = (${TELEGRAM_HOST_CHECK_PERL}) ? 1 : 0;`,
     `}`,
     ...blocks,
     `for my $c (@$channels) {`,
