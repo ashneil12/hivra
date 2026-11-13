@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   HOST_VM_CONTROL_PREFIX, HOST_VM_CONTROL_PROGRAM, parseVmControlReceipt, type VmControlReceipt,
+  WAKE_FIXUP_COMMAND_TEMPLATE, WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE,
 } from "../host-vm-control-program";
 
 jest.setTimeout(40_000);
@@ -596,5 +597,56 @@ describe("parseVmControlReceipt", () => {
     ["a bad exit code", line({ ...good, exitcode: 999 })],
   ])("rejects %s", (_name, stdout) => {
     expect(parseVmControlReceipt(stdout)).toBeNull();
+  });
+});
+
+describe("host helper: fixup templates", () => {
+  // The exported templates document what runs in the guest; the program carries its own copy.
+  const programTemplate = (name: string) => {
+    const m = new RegExp(`^${name} = "(.*)"$`, "m").exec(HOST_VM_CONTROL_PROGRAM);
+    return m ? m[1].replace("%s", "<epoch>") : null;
+  };
+
+  it("keeps the program's two templates identical to the exported ones", () => {
+    expect(programTemplate("FIXUP_TEMPLATE")).toBe(WAKE_FIXUP_COMMAND_TEMPLATE);
+    expect(programTemplate("FIXUP_SOCKETS_TEMPLATE")).toBe(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE);
+  });
+
+  it("differs only by the guarded socket step before the tunnel restart", () => {
+    const step = "ss -K state established '( dport = :443 )' >/dev/null 2>&1 || true; ";
+    expect(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE.replace(step, "")).toBe(WAKE_FIXUP_COMMAND_TEMPLATE);
+    expect(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE.indexOf("ss -K")).toBeLessThan(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE.indexOf("systemctl restart"));
+  });
+
+  it("a guest without ss -K still restarts its tunnel and exits 0", () => {
+    const cmd = WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE
+      .replace("date -s @<epoch> >/dev/null; ", "")
+      .replaceAll("systemctl kill -s SIGKILL hivra-cf-tunnel", "echo killed")
+      .replaceAll("systemctl restart hivra-cf-tunnel", "echo restarted");
+    const ran = spawnSync("/bin/sh", ["-c", cmd], { env: { PATH: "/nonexistent" } as unknown as NodeJS.ProcessEnv, encoding: "utf8" });
+    expect(ran.status).toBe(0);
+    expect(ran.stdout).toBe("killed\nrestarted\n");
+  });
+});
+
+suite("host helper: fixup with stale sockets", () => {
+  const SOCKETS = /^date -s @(\d{10})\.(\d{9}) >\/dev\/null; ss -K state established '\( dport = :443 \)' >\/dev\/null 2>&1 \|\| true; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel$/;
+
+  it("sends the socket step only when asked", async () => {
+    const qga = await qgaServer({});
+    try {
+      const plain = await runHelper(["fixup", VMID, "5"]);
+      expect(plain.receipt.ok).toBe(true);
+      expect(FIXUP.test(qga.execs[0].arg[1])).toBe(true);
+      const withSockets = await runHelper(["fixup", VMID, "5", "sockets"]);
+      expect(withSockets.receipt).toMatchObject({ ok: true, reason: "ok", via: "socket" });
+      expect(SOCKETS.test(qga.execs[1].arg[1])).toBe(true);
+      expect(withSockets.stdout).not.toContain("_template");
+    } finally { await qga.close(); }
+  });
+
+  it("refuses any other fourth argument", async () => {
+    const r = await runHelper(["fixup", VMID, "5", "everything"]);
+    expect(r.receipt).toMatchObject({ ok: false, reason: "usage" });
   });
 });

@@ -13,6 +13,8 @@ import {
 import { ensureHivraAgentAwake, type AgentRow, type EnsureAwakeResult } from "./agent-wake";
 import { STALE_LEASE_MS, reconcileAgentSleep, sleepLeaseKind } from "./sleep-reconcile";
 import { markAgentAwake } from "./sleep-aware";
+import { telegramWakeCleanupEnabled } from "./telegram-wake/config";
+import { runTelegramWakeSweep, type TelegramSweepCounts } from "./telegram-wake/sweep";
 
 // The host state script, its parser and the lease rules live in sleep-reconcile.ts; they
 // are re-exported here because this is where the sweep's callers and tests look for them.
@@ -147,6 +149,8 @@ export interface SleepIdleSweepSummary {
   drift: { checked: number; settled: number; consistent: number; left: number; woke: number };
   hibernate: SweepStepCounts;
   nap: SweepStepCounts;
+  /** Telegram wake webhooks set and taken down. Only when that feature is configured. */
+  telegram?: TelegramSweepCounts;
   timedOut: boolean;
   elapsedMs: number;
   errors: number;
@@ -478,6 +482,21 @@ async function reconcileDrift(ctx: Context): Promise<void> {
     await untilDeadline(ctx, Promise.allSettled(background));
     ctx.pending.push(...background);
   }
+}
+
+// --- Step 2d: Telegram wake webhooks ------------------------------------------
+
+/** Sets wake webhooks on bots of agents asleep long enough, and takes down any that should not be there. */
+async function runTelegramWakes(ctx: Context): Promise<void> {
+  ctx.summary.telegram = await runTelegramWakeSweep({
+    env: ctx.env,
+    now: ctx.now,
+    timeLeft: () => remaining(ctx),
+    // The whole wake runs alongside the rest of the run, which waits for it before answering.
+    wake: (agentId) => {
+      ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "telegram", waitMs: 120_000 }).catch(() => undefined));
+    },
+  });
 }
 
 /** A stopped computer has nothing napping; how many leftover records are reset per run. */
@@ -832,6 +851,9 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     ["stale lease recovery", recoverStaleLeases],
     ["record drift", reconcileDrift],
     ["stopped sleep records", resetStoppedSleepRecords],
+    ...(telegramWakeCleanupEnabled(env)
+      ? ([["telegram wake webhooks", runTelegramWakes]] as Array<[string, (c: Context) => Promise<void>]>)
+      : []),
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
   ];
   for (const [name, step] of steps) {

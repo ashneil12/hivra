@@ -252,3 +252,44 @@ OUT.update({
 })
 sys.stdout.write("HIVRA_IDLE " + json.dumps(OUT, separators=(",", ":"), sort_keys=True) + "\n")
 `;
+
+/**
+ * Reads one KEY=value from a .env text the way python-dotenv does for plain
+ * files: the last assignment wins, an optional "export " is allowed, and one
+ * pair of matching quotes is removed. Shared by the Telegram probe and the
+ * token read, so the fingerprint on both sides comes from the same value.
+ */
+export const TELEGRAM_ENV_VALUE_PY = String.raw`def env_value(text, key):
+    v = None
+    for ln in (text or "").splitlines():
+        m = re.match(r"^\s*(?:export\s+)?" + key + r"\s*=(.*)$", ln)
+        if m: v = m.group(1).strip()
+    if v is None: return None
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'": v = v[1:-1]
+    else: v = re.split(r"\s+#", v, 1)[0].strip()
+    return v or None`;
+
+const TELEGRAM_FACTS_PY = String.raw`# Telegram wake facts: a fingerprint of the .env token, never the token.
+import hashlib
+${TELEGRAM_ENV_VALUE_PY}
+tok = env_value(env, "TELEGRAM_BOT_TOKEN")
+OUT["telegram"] = {
+    "hermesFp": hashlib.sha256(tok.encode("utf-8")).hexdigest()[:16] if tok else None,
+    "hermesTokenInEnv": bool(tok),
+    "hermesWebhookMode": bool(env_value(env, "TELEGRAM_WEBHOOK_URL")),
+    "hermesConfigToken": bool(re.search(r"^  telegram:\s*\n(?:    .*\n)*?    (?:bot_)?token:\s*\S", cfg, re.M)),
+}
+`;
+
+const TELEGRAM_FACTS_ANCHOR = `oc = rjson(HOME + "/.openclaw/openclaw.json", 262144)\n`;
+
+function withTelegramFacts(program: string): string {
+  if (!program.includes(TELEGRAM_FACTS_ANCHOR)) throw new Error("idle probe: Telegram anchor missing");
+  return program.replace(TELEGRAM_FACTS_ANCHOR, () => TELEGRAM_FACTS_PY + TELEGRAM_FACTS_ANCHOR);
+}
+
+/**
+ * The probe with one more field, `telegram`, for an agent whose owner turned
+ * on Telegram wake. Every other probe runs IDLE_PROBE_PROGRAM unchanged.
+ */
+export const IDLE_PROBE_TELEGRAM_PROGRAM = withTelegramFacts(IDLE_PROBE_PROGRAM);

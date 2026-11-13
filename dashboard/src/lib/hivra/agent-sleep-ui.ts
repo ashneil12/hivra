@@ -15,6 +15,14 @@ export function agentSleepUiEnabled(): boolean {
   return process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP === "1";
 }
 
+/**
+ * The "Wake on Telegram messages" switch: only with the sleep screens on and
+ * its own client switch on, so with either off the page makes no extra request.
+ */
+export function telegramWakeUiEnabled(): boolean {
+  return agentSleepUiEnabled() && process.env.NEXT_PUBLIC_HIVRA_TELEGRAM_WAKE === "1";
+}
+
 export interface SleepViewInput {
   status?: string | null;
   sleep_state?: string | null;

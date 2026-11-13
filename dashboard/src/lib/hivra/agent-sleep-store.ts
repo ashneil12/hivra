@@ -31,7 +31,7 @@ export type AgentWakeClaim = "claimed" | "awake" | "busy" | "refused";
 export type AgentWakeFinishResult = "awake" | "wake_failed";
 
 export type AgentSleepEventKind = "nap" | "hibernate" | "wake" | "abort" | "fail" | "reconcile";
-export type AgentSleepEventTrigger = "sweep" | "manual" | "open" | "action" | "schedule" | "reconcile";
+export type AgentSleepEventTrigger = "sweep" | "manual" | "open" | "action" | "schedule" | "reconcile" | "telegram";
 
 export interface AgentSleepEvent {
   agentId: string;

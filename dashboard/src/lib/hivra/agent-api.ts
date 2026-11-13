@@ -702,6 +702,38 @@ export async function saveAgentSleepSettings(
   };
 }
 
+export interface TelegramWakeSetting {
+  /** The switch applies to this agent. */
+  available: boolean;
+  enabled: boolean;
+  /** A message would wake the agent right now. */
+  armed: boolean;
+}
+
+function telegramWakeSetting(data: unknown): TelegramWakeSetting {
+  const d = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  return { available: d.available === true, enabled: d.enabled === true, armed: d.armed === true };
+}
+
+/** Whether "Wake on Telegram messages" applies to this agent, and whether it is on. */
+export async function getTelegramWakeSetting(id: string): Promise<TelegramWakeSetting> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/telegram-wake`, { cache: "no-store" });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) return { available: false, enabled: false, armed: false };
+  return telegramWakeSetting(j.data);
+}
+
+export async function saveTelegramWakeSetting(id: string, enabled: boolean): Promise<TelegramWakeSetting> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/telegram-wake`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not save this setting.");
+  return telegramWakeSetting(j.data);
+}
+
 const ProviderResizeViewResponseSchema = z.object({
   operation: ProviderResizeOperationViewSchema.nullable(),
   catalog: ProviderResizeCatalogSchema.nullable(),

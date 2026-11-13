@@ -20,6 +20,8 @@ import {
 } from "./agent-sleep-store";
 import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
 import { isFastWakeEnabled } from "./fast-wake-flags";
+import { resolveTelegramWakeConfig } from "./telegram-wake/config";
+import { disarmTelegramForWake, rearmTelegramAfterFailedWake, type TelegramDisarm } from "./telegram-wake/lifecycle";
 
 /**
  * Wake an agent that is asleep, and say when it can be used.
@@ -165,6 +167,8 @@ export async function runWakeHostScript(
       bindingTag: target.bindingTag,
       admission: buildWakeAdmissionFor(target),
       ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
+      // With Telegram wake on, the guest also drops its dead long polls, so a bot polls again at once.
+      ...(resolveTelegramWakeConfig() ? { killStaleSockets: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
@@ -242,7 +246,21 @@ interface WakeOutcome {
   detail: WakeDetail;
 }
 
+/** Runs the wake, and puts a Telegram webhook it took down back in line when the wake fails. */
 async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome> {
+  const telegram: { disarm: TelegramDisarm | null } = { disarm: null };
+  const outcome = await performWakeSteps(row, agentId, telegram);
+  if (outcome.result === "wake_failed" && telegram.disarm) {
+    await rearmTelegramAfterFailedWake(agentId, telegram.disarm).catch(() => undefined);
+  }
+  return outcome;
+}
+
+async function performWakeSteps(
+  row: AgentRow,
+  agentId: string,
+  telegram: { disarm: TelegramDisarm | null },
+): Promise<WakeOutcome> {
   const fromState = String(row.sleep_state);
   // Only a nap is known to be a quick resume. A hibernation, and a wake that
   // failed before (the host may hold either), get the restore protections: a host
@@ -273,6 +291,15 @@ async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome>
         detail.deferred = decision.reason;
         return failed(`capacity_${decision.reason}`);
       }
+    }
+
+    // Admitted: take a Telegram wake webhook down before the computer runs again,
+    // so Hermes polls cleanly and finds every queued message. A refused wake
+    // returned above, and leaves the webhook armed.
+    telegram.disarm = await disarmTelegramForWake(agentId);
+    if (telegram.disarm) {
+      detail.tg_disarm_ms = telegram.disarm.ms;
+      detail.tg_disarm_ok = telegram.disarm.ok;
     }
 
     const run = await runWakeHostScript(row, target, { restore });
