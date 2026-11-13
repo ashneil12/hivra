@@ -15,6 +15,16 @@ import type { AgentWakeProfile, ProcessMatch } from "./types";
 
 const HERMES_GATEWAY: ProcessMatch = { cmdAll: ["hermes", " gateway"] };
 const OPENCLAW_GATEWAY: ProcessMatch = { cmdAll: ["openclaw", " gateway"] };
+// The process that holds a declared channel's connection, for the chat safety
+// net. Stricter than "running" above (kept as the probe always read it): the
+// program or script must be named hermes / openclaw (a path's last part, or a
+// module like hermes_cli) and "gateway" must be a whole later argument, or the
+// process names itself openclaw-gateway. A miss only makes a connection
+// "unknown", which keeps the agent awake.
+const HERMES_GATEWAY_OWNER: ProcessMatch = { cmd: String.raw`(^|[\s/])hermes[\w.-]*(\s\S+)*?\sgateway(\s|$)` };
+const OPENCLAW_GATEWAY_OWNER: ProcessMatch = {
+  cmd: String.raw`(^|[\s/])openclaw[\w.-]*(\s\S+)*?\sgateway(\s|$)|(^|[\s/])openclaw-gateway(\s|$)`,
+};
 /** Anything running in a Docker container (Agent Zero, OpenBot, Nuphos run there). */
 const IN_CONTAINER: ProcessMatch = { cgroup: "docker" };
 
@@ -65,10 +75,11 @@ const HERMES: AgentWakeProfile = {
   ],
   // The .env first, then Hermes's own record, then config.yaml: the order the probe has always read them in.
   channels: [
-    { kind: "env-keys", prefix: "hermes", path: HERMES_ENV, keys: HERMES_ENV_CHANNELS, up: HERMES_GATEWAY },
+    { kind: "env-keys", prefix: "hermes", path: HERMES_ENV, keys: HERMES_ENV_CHANNELS, up: HERMES_GATEWAY, owner: HERMES_GATEWAY_OWNER },
     { kind: "gateway-state", prefix: "hermes", path: "~/.hermes/gateway_state.json", profilesDir: "~/.hermes/profiles",
-      profilePath: "/gateway_state.json", ignore: ["api_server", "local"], requiredWhileUp: true, up: HERMES_GATEWAY },
-    { kind: "yaml-enabled", prefix: "hermes", path: HERMES_CONFIG, up: HERMES_GATEWAY },
+      profilePath: "/gateway_state.json", ignore: ["api_server", "local"], requiredWhileUp: true, up: HERMES_GATEWAY,
+      owner: HERMES_GATEWAY_OWNER },
+    { kind: "yaml-enabled", prefix: "hermes", path: HERMES_CONFIG, up: HERMES_GATEWAY, owner: HERMES_GATEWAY_OWNER },
   ],
   wake: {
     telegram: {
@@ -105,7 +116,7 @@ const OPENCLAW: AgentWakeProfile = {
     { kind: "json-next-run", path: "~/.openclaw/cron/jobs-state.json", key: "nextRunAtMs" },
     { kind: "json-next-run", path: "~/.openclaw/cron/jobs.json", key: "nextRunAtMs" },
   ],
-  channels: [{ kind: "json-channels", prefix: "openclaw", path: OPENCLAW_JSON, at: ["channels"], owner: OPENCLAW_GATEWAY }],
+  channels: [{ kind: "json-channels", prefix: "openclaw", path: OPENCLAW_JSON, at: ["channels"], owner: OPENCLAW_GATEWAY_OWNER }],
   wake: {
     // A polling bot: Telegram keeps the updates while the wake webhook is set
     // and hands them over once it is deleted. A webhook of OpenClaw's own, a

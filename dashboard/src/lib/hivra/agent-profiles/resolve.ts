@@ -6,8 +6,8 @@ import { CHAT_SERVICE_ENDPOINTS, probeEndpoints, type ProbeEndpoint } from "./en
 /**
  * Resolves the chat services' public names for the probe's safety net. Each
  * name gets at most `timeoutMs`; a name that does not resolve is left out
- * (the safety net then sees less, never more). Cached for a few minutes, so a
- * sweep of many agents resolves once.
+ * (the probe still resolves every name itself on the guest). Cached for a few
+ * minutes when every service resolved, so a sweep of many agents resolves once.
  */
 const CACHE_MS = 5 * 60_000;
 let cache: { at: number; endpoints: ProbeEndpoint[] } | null = null;
@@ -35,6 +35,8 @@ export async function resolveChatEndpoints(
     }
   })));
   const endpoints = probeEndpoints(resolved);
-  if (endpoints.length > 0) cache = { at: now(), endpoints };
+  // Cached only when every service resolved: a partial answer would leave the
+  // others blind for every agent swept in the next few minutes.
+  if (endpoints.every((e) => e.a.length > 0)) cache = { at: now(), endpoints };
   return endpoints;
 }

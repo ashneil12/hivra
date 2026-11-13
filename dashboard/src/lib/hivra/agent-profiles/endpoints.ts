@@ -1,7 +1,13 @@
 // The chat safety net: public chat services an agent with no profile (or a
 // profile that does not know a channel) may still be connected to. The server
-// resolves these names when it probes and hands the probe the addresses in
-// the form /proc/net/tcp prints them; the probe never resolves anything.
+// resolves these names when it probes and hands the probe the names and the
+// addresses in the form /proc/net/tcp prints them.
+//
+// The probe also resolves the same names itself, on the guest, with a short
+// deadline, and merges both sets: a service routed by region or edge (Slack,
+// WhatsApp) can answer the server and the guest with different addresses, and
+// addresses rotate within the server's cache. Even so the net is best effort:
+// only services with stable addresses (Telegram's) are reliably covered.
 //
 // A connection the probe finds to one of them that no declared channel's own
 // process holds is reported as the live channel "unknown:<platform>". No wake
@@ -28,10 +34,11 @@ export const CHAT_SERVICE_ENDPOINTS: readonly ChatServiceEndpoints[] = [
   { platform: "signal", hosts: ["chat.signal.org"], ports: [443] },
 ];
 
-/** What the probe gets: per platform, the remote ports and addresses in /proc/net form. */
+/** What the probe gets: per platform, the remote ports, the names it resolves itself, and the server's addresses in /proc/net form. */
 export interface ProbeEndpoint {
   p: string;
   ports: number[];
+  h?: string[];
   a: string[];
 }
 
@@ -87,15 +94,16 @@ export function procNetAddresses(address: string): string[] | null {
   return [[0, 4, 8, 12].map((i) => word(v6.slice(i, i + 4))).join("")];
 }
 
-/** The probe's endpoint list from resolved addresses per platform. Unusable addresses are dropped. */
+/**
+ * The probe's endpoint list: every service, with its names (the probe resolves
+ * them too) and the addresses the server resolved. Unusable addresses are dropped.
+ */
 export function probeEndpoints(resolved: Readonly<Record<string, readonly string[]>>): ProbeEndpoint[] {
-  const out: ProbeEndpoint[] = [];
-  for (const service of CHAT_SERVICE_ENDPOINTS) {
+  return CHAT_SERVICE_ENDPOINTS.map((service) => {
     const addrs = new Set<string>();
     for (const address of resolved[service.platform] ?? []) {
       for (const a of procNetAddresses(address) ?? []) addrs.add(a);
     }
-    if (addrs.size > 0) out.push({ p: service.platform, ports: [...service.ports], a: [...addrs].sort().slice(0, 64) });
-  }
-  return out;
+    return { p: service.platform, ports: [...service.ports], h: [...service.hosts], a: [...addrs].sort().slice(0, 64) };
+  });
 }

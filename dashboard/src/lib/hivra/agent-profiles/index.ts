@@ -8,8 +8,9 @@
 // idle probe gets the profile for the agent's type as data and evaluates it,
 // with the chat and CPU safety nets.
 //
-// With no profile for a type, the probe gets the union of every profile (the
-// old fixed lists and more) and no wake source, so no channel of it is ever
+// Every agent's probe detects with the union of every profile (the old fixed
+// lists and more); the type's own profile only chooses its wake sources. With
+// no profile for a type there is no wake source, so no channel of it is ever
 // covered, and an unknown chat connection keeps it awake.
 
 import { AGENT_WAKE_PROFILES, COMPUTER_PROFILE } from "./profiles";
@@ -142,23 +143,31 @@ function uniq<T>(items: readonly T[]): T[] {
 }
 
 /**
- * The profile the probe evaluates: the computer's own entries merged with the
- * type's. Schedules read the type's first and the computer's last, channels
- * the computer's first: the order the probe always read them in.
+ * The profile the probe evaluates. Detection always uses every profile: the
+ * computer's own entries plus every agent type's busy processes, activity,
+ * schedules, channels and ports, because a user can install any agent on any
+ * computer (a desktop running Hermes's cron jobs must not sleep through them),
+ * and the fixed probe always read them all. The type's own profile comes first
+ * and only adds; what it alone chooses is the wake sources (`wake`) and the CPU
+ * safety net's agent processes. A channel the type does not cover is just a
+ * live channel, so the union only ever keeps an agent awake.
+ * Schedules read the type's first and the computer's last, channels the
+ * computer's first: the order the probe always read them in.
  * With no profile, every profile is merged and no wake source is kept.
  */
 export function effectiveWakeProfile(type: unknown): AgentWakeProfile {
   const own = agentWakeProfile(type);
-  const parts = own ? [own] : AGENT_WAKE_PROFILES;
+  const parts = own ? [own, ...AGENT_WAKE_PROFILES.filter((p) => p !== own)] : AGENT_WAKE_PROFILES;
+  const facts = parts.find((p) => p.hermesFacts)?.hermesFacts;
   return {
     type: own ? own.type : "unknown",
     busy: uniq([...COMPUTER_PROFILE.busy, ...parts.flatMap((p) => p.busy)]),
-    agentProcesses: uniq(parts.flatMap((p) => p.agentProcesses)),
+    agentProcesses: uniq((own ? [own] : parts).flatMap((p) => p.agentProcesses)),
     activity: uniq([...COMPUTER_PROFILE.activity, ...parts.flatMap((p) => p.activity)]),
     schedules: uniq([...parts.flatMap((p) => p.schedules), ...COMPUTER_PROFILE.schedules]),
     channels: uniq([...COMPUTER_PROFILE.channels, ...parts.flatMap((p) => p.channels)]),
     wake: own ? { ...own.wake } : {},
-    ...(parts.find((p) => p.hermesFacts) ? { hermesFacts: parts.find((p) => p.hermesFacts)!.hermesFacts } : {}),
+    ...(facts ? { hermesFacts: facts } : {}),
     appPorts: [...new Set([...COMPUTER_PROFILE.appPorts, ...parts.flatMap((p) => p.appPorts)])].sort((a, b) => a - b),
   };
 }
@@ -188,6 +197,7 @@ export function probeProfileFor(
 }
 
 const ENDPOINT_ADDR = /^(?:[0-9A-F]{8}|[0-9A-F]{32})$/;
+const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 /**
  * The probe's input, as one compact JSON object: the profile, plus the wake
@@ -202,6 +212,7 @@ export function probeProfileJson(
   assertAgentWakeProfile(p);
   for (const e of input.endpoints) {
     if (!NAME.test(e.p) || !e.ports.every((n) => Number.isInteger(n) && n > 0 && n < 65536) || !e.a.every((a) => ENDPOINT_ADDR.test(a))) fail("endpoint");
+    if (e.h !== undefined && (e.h.length > 4 || !e.h.every((h) => typeof h === "string" && HOSTNAME.test(h)))) fail("endpoint host");
   }
   if (input.cpu && (!(input.cpu.pct > 0 && input.cpu.pct <= 400) || !Number.isInteger(input.cpu.ms) || input.cpu.ms < 50 || input.cpu.ms > 3000)) fail("cpu");
   const out: Record<string, unknown> = {

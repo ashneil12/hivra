@@ -59,16 +59,33 @@ describe("the registry", () => {
     }
   });
 
-  it("merges the computer's entries into every profile, and gives no wake to a type without one", () => {
-    const codex = effectiveWakeProfile("codex");
-    expect(codex.schedules.map((s) => s.kind)).toEqual(["crontab", "dir-nonempty"]);
-    expect(codex.channels.map((c) => c.kind)).toEqual(["systemd-env"]);
-    expect(codex.appPorts).toEqual([3101, 5555, 9119, 9120, 18789, 50080]);
+  it("detects with every profile for every type; the type's own only chooses its wake and CPU processes", () => {
     const unknown = effectiveWakeProfile("future-agent");
     expect(unknown.type).toBe("unknown");
     expect(unknown.wake).toEqual({});
     expect(unknown.appPorts).toEqual(expect.arrayContaining([3080, 3102]));
-    expect(unknown.channels.length).toBeGreaterThan(codex.channels.length);
+    const detection = (p: ReturnType<typeof effectiveWakeProfile>) => ({
+      busy: p.busy, activity: p.activity, schedules: p.schedules, channels: p.channels, ports: p.appPorts, facts: p.hermesFacts,
+    });
+    const sorted = (p: ReturnType<typeof effectiveWakeProfile>) => {
+      const d = detection(p);
+      const by = (xs: readonly unknown[]) => xs.map((x) => JSON.stringify(x)).sort();
+      return { ...d, busy: by(d.busy), activity: by(d.activity), schedules: by(d.schedules), channels: by(d.channels) };
+    };
+    for (const profile of AGENT_WAKE_PROFILES) {
+      const own = effectiveWakeProfile(profile.type);
+      expect(own.type).toBe(profile.type);
+      expect(own.wake).toEqual(profile.wake);
+      expect(own.agentProcesses).toEqual(profile.agentProcesses);
+      // A desktop or Claude Code computer with Hermes or OpenClaw installed still sees their jobs and channels.
+      expect(sorted(own)).toEqual(sorted(unknown));
+    }
+    const codex = effectiveWakeProfile("codex");
+    expect(codex.schedules.map((s) => s.kind)).toEqual(expect.arrayContaining(["hermes-jobs", "json-next-run", "json-nonempty", "crontab", "dir-nonempty"]));
+    expect(codex.channels[0].kind).toBe("systemd-env");
+    // The type's own entries come first, the computer's schedules last.
+    expect(effectiveWakeProfile("openclaw").schedules[0].kind).toBe("json-next-run");
+    expect(codex.schedules.at(-1)!.kind).toBe("dir-nonempty");
   });
 
   it("declares catch-up honestly: Telegram on Hermes and OpenClaw; nothing on agents without chat", () => {
@@ -116,9 +133,14 @@ describe("the chat endpoints", () => {
     expect(procNetAddresses("::ffff:192.0.2.10")).toEqual(["0000000000000000FFFF00000A0200C0"]);
     expect(procNetAddresses("not.an.address")).toBeNull();
     expect(procNetAddresses("1:2:3")).toBeNull();
-    expect(probeEndpoints({ telegram: ["192.0.2.10"], nope: ["198.51.100.1"] })).toEqual([
-      { p: "telegram", ports: [443, 80, 88, 8443], a: ["0000000000000000FFFF00000A0200C0", "0A0200C0"] },
-    ]);
+    const endpoints = probeEndpoints({ telegram: ["192.0.2.10"], nope: ["198.51.100.1"] });
+    expect(endpoints[0]).toEqual(
+      { p: "telegram", ports: [443, 80, 88, 8443], h: ["api.telegram.org"], a: ["0000000000000000FFFF00000A0200C0", "0A0200C0"] },
+    );
+    // Every service goes to the probe with its names, which the probe resolves on the guest too.
+    expect(endpoints.map((e) => e.p)).toEqual(["telegram", "discord", "slack", "whatsapp", "matrix", "signal"]);
+    expect(endpoints.slice(1).every((e) => e.a.length === 0 && e.h!.length > 0)).toBe(true);
+    expect(() => probeProfileJson(probeProfileFor("codex", { endpoints }))).not.toThrow();
   });
 
   it("refuses anything but addresses in the probe input", () => {
@@ -126,6 +148,9 @@ describe("the chat endpoints", () => {
     const json = JSON.parse(probeProfileJson(probeProfileFor("codex", { endpoints: [{ p: "telegram", ports: [443], a: ["0A0200C0"] }] })));
     expect(json.endpoints).toEqual([{ p: "telegram", ports: [443], a: ["0A0200C0"] }]);
     expect(json.cpu).toEqual({ pct: 25, ms: 500 });
+    for (const h of [["bad host"], ["x\"y.example.test"], ["a.example.test", "b.example.test", "c.example.test", "d.example.test", "e.example.test"], ["nodot"]]) {
+      expect(() => probeProfileJson(probeProfileFor("codex", { endpoints: [{ p: "telegram", ports: [443], h, a: [] }] }))).toThrow();
+    }
   });
 });
 

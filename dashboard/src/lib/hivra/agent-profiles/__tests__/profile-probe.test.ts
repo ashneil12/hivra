@@ -4,13 +4,13 @@
 // the same. Then what only the profile probe does: other types, the chat
 // safety net and the CPU safety net.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { idleProbeProgramFor, parseIdleProbeOutput } from "../../agent-sleep-scripts";
 import { IDLE_PROBE_PREFIX, IDLE_PROBE_PROGRAM, IDLE_PROBE_TELEGRAM_PROGRAM } from "../../sleep/idle-probe-program";
-import { PROFILE_PROBE_BODY } from "../../sleep/profile-probe-program";
-import { probeProfileFor, type ProbeProfile } from "..";
+import { buildProfileProbeProgram, PROFILE_PROBE_BODY } from "../../sleep/profile-probe-program";
+import { probeProfileFor, probeProfileJson, type ProbeProfile } from "..";
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
 const run = hasPython ? describe : describe.skip;
@@ -100,6 +100,24 @@ run("profile probe vs the fixed probe, on the same fixture computer", () => {
     const old = exec(legacy(IDLE_PROBE_PROGRAM));
     expect(old.liveChannels).toContain("hermes:feishu");
     expect(comparable(profileRun("not-a-type"))).toEqual(comparable(old));
+  });
+
+  it("gives the old answer for a known type on a computer that holds other agents' files", async () => {
+    // A desktop, terminal, Claude Code or Codex computer where the user installed Hermes and OpenClaw:
+    // their cron jobs and channels still keep it awake, exactly as the fixed probe saw them.
+    kitchenSink();
+    put("home/.openclaw/openclaw.json", JSON.stringify({ channels: { slack: { enabled: true } } }));
+    const check = () => {
+      const old = comparable(exec(legacy(IDLE_PROBE_PROGRAM)));
+      expect(old.nextJobAt).not.toBeNull();
+      expect(old.liveChannels).toEqual(expect.arrayContaining(["hermes:discord", "openclaw:slack"].map((t) => expect.stringContaining(t))));
+      for (const type of ["claude-code", "codex", "linux-desktop", "linux-terminal", "hermes", "openclaw", "agent-zero"]) {
+        expect([type, comparable(profileRun(type))]).toEqual([type, old]);
+      }
+    };
+    check();
+    await startGateway();
+    check();
   });
 
   it("gives the old answer for Hermes, with and without its gateway, Telegram facts and fingerprints included", async () => {
@@ -202,8 +220,47 @@ run("profile probe vs the fixed probe, on the same fixture computer", () => {
       expect(inode).toMatch(/^\d+$/);
       const profile = probeProfileFor("hermes", { cpu: null, endpoints: tgEndpoints });
       expect(withNet(profile, row(inode)).liveChannels).toEqual(["hermes:telegram"]);
-      // The same connection from a process that is not the declared one's is unknown.
-      expect(withNet(probeProfileFor("openclaw", { cpu: null, endpoints: tgEndpoints }), row(inode)).liveChannels).toEqual(["unknown:telegram"]);
+      // Every type detects with every profile: on an OpenClaw computer it is Hermes's live (uncovered) channel.
+      expect(withNet(probeProfileFor("openclaw", { cpu: null, endpoints: tgEndpoints }), row(inode)).liveChannels).toEqual(["hermes:telegram"]);
+    });
+
+    it("counts a connection held by a process started under the gateway, or by a look-alike, as unknown", async () => {
+      put("home/.hermes/.env", "TELEGRAM_BOT_TOKEN=1:x\n");
+      // The gateway starts a second bot (say, from its terminal tool) that holds its own connection.
+      const child = "import socket, time; s = socket.socket(); time.sleep(120)";
+      gateway = spawn("python3", ["-c", `import subprocess, sys, time; subprocess.Popen([sys.executable, "-c", ${JSON.stringify(child)}, "other-bot"]); time.sleep(120)`, "hermes", "gateway"], { stdio: "ignore" });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const kid = readdirSync("/proc").find((p) => /^\d+$/.test(p) && (() => {
+        try { return readFileSync(`/proc/${p}/stat`, "utf8").split(") ")[1].split(" ")[1] === String(gateway!.pid); } catch { return false; }
+      })()) ?? "";
+      expect(kid).toMatch(/^\d+$/);
+      const inode = spawnSync("sh", ["-c", `ls -l /proc/${kid}/fd | sed -n 's/.*socket:\\[\\([0-9]*\\)\\].*/\\1/p' | head -1`], { encoding: "utf8" }).stdout.trim();
+      expect(inode).toMatch(/^\d+$/);
+      try {
+        const json = withNet(probeProfileFor("hermes", { cpu: null, endpoints: tgEndpoints }), row(inode));
+        expect(json.liveChannels).toEqual(["hermes:telegram", "unknown:telegram"]);
+      } finally {
+        process.kill(Number(kid), "SIGKILL");
+      }
+      // "hermes" and " gateway" in a command line are not enough: the program must be hermes and gateway an argument.
+      gateway.kill("SIGKILL");
+      gateway = spawn("python3", ["-c", "import socket, time; s = socket.socket(); time.sleep(120)", "--name=hermes", "x gateway"], { stdio: "ignore" });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const inode2 = spawnSync("sh", ["-c", `ls -l /proc/${gateway.pid}/fd | sed -n 's/.*socket:\\[\\([0-9]*\\)\\].*/\\1/p' | head -1`], { encoding: "utf8" }).stdout.trim();
+      expect(withNet(probeProfileFor("hermes", { cpu: null, endpoints: tgEndpoints }), row(inode2)).liveChannels).toContain("unknown:telegram");
+    });
+
+    it("resolves the services' names on the guest too, and merges them with the server's addresses", () => {
+      // localhost resolves without a network: 127.0.0.1 on 443 is what /proc/net/tcp prints as 0100007F:01BB.
+      // (The server only ever sends public names; the program itself takes any name it is handed.)
+      const input = JSON.parse(probeProfileJson(probeProfileFor("codex", { cpu: null })));
+      const program = (endpoints: unknown[]) =>
+        fromProfile(buildProfileProbeProgram(JSON.stringify({ ...input, endpoints }))).replaceAll('"/proc/net/tcp"', JSON.stringify(path.join(dir, "tcp")));
+      put("tcp", header + row("5151", "0100007F:01BB"));
+      expect(exec(program([{ p: "telegram", ports: [443], h: ["localhost"], a: [] }])).liveChannels).toEqual(["unknown:telegram"]);
+      expect(exec(program([{ p: "telegram", ports: [443], a: [] }])).liveChannels).toEqual([]);
+      // A name that does not resolve adds nothing; the server's addresses still count.
+      expect(exec(program([{ p: "telegram", ports: [443], h: ["nothing.invalid"], a: ["0100007F"] }])).liveChannels).toEqual(["unknown:telegram"]);
     });
   });
 

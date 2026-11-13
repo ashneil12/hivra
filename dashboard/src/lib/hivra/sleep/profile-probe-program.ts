@@ -10,7 +10,10 @@
 // answer on the same computer (see the comparison tests); it adds:
 //   - any profile's own busy processes, activity, schedules, channels and ports
 //   - the chat safety net: an established connection to a known chat service
-//     that no declared channel's own process holds is "unknown:<platform>"
+//     that no declared channel's own process holds is "unknown:<platform>". The services' addresses come
+//     from the server and are also resolved here, on the guest, in the
+//     background with a short deadline, so a service whose addresses differ by
+//     region or edge is still seen; a name that fails or is late adds nothing
 //   - the CPU safety net: an agent process at or above the threshold is busy
 //     (counted in cliProcesses, which both gates already read as busy)
 //
@@ -20,7 +23,7 @@
 
 import { TELEGRAM_ENV_VALUE_PY } from "./idle-probe-program";
 
-export const PROFILE_PROBE_BODY = String.raw`import base64, calendar, errno, hashlib, json, os, re, signal, subprocess, sys, time
+export const PROFILE_PROBE_BODY = String.raw`import base64, calendar, errno, hashlib, json, os, re, signal, socket, subprocess, sys, threading, time
 # hivra-idle-probe v1 (profile). Runs as root via the guest agent. Counts and times only.
 class _Timeout(BaseException): pass
 def _alarm(*_): raise _Timeout()
@@ -37,6 +40,31 @@ ROOT = ""
 os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
 PF = json.loads(base64.b64decode(PROFILE_B64).decode("utf-8"))
 OUT = {"v": 1, "errors": [], "profile": PF["type"]}
+# The chat services' names, resolved on the guest in the background (the server's own
+# answers can differ by region or edge). Each lookup runs in a daemon thread; the
+# safety net waits for them until DNS_DL at most, then uses what came back.
+RES = {}
+def _resolve(h):
+    out = set()
+    try:
+        for fam, _, _, _, sa in socket.getaddrinfo(h, None, 0, socket.SOCK_STREAM):
+            try:
+                if fam == socket.AF_INET:
+                    x = socket.inet_aton(sa[0])[::-1].hex().upper()
+                    out.update((x, "0000000000000000FFFF0000" + x))
+                elif fam == socket.AF_INET6:
+                    b = socket.inet_pton(socket.AF_INET6, sa[0].split("%")[0])
+                    out.add("".join(b[i:i + 4][::-1].hex().upper() for i in (0, 4, 8, 12)))
+            except (OSError, ValueError): pass
+    except Exception: pass
+    RES[h] = out
+_RT = []
+for _e in PF["endpoints"]:
+    for _h in _e.get("h", [])[:4]:
+        try:
+            _t = threading.Thread(target=_resolve, args=(_h,), daemon=True); _t.start(); _RT.append(_t)
+        except RuntimeError: pass
+DNS_DL = T0 + 2.0
 def err(k):
     if k not in OUT["errors"]: OUT["errors"].append(k)
 def iso(t): return None if t is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
@@ -356,9 +384,12 @@ if TG is not None:
                        "hermesConfigToken": any(bool(loc_val(l)) for l in TG["shadow"])}
 if PF.get("fps") is not None: OUT["channelFps"] = {c: fp_of(locs) for c, locs in PF["fps"].items()}
 # ---- the chat safety net: a connection to a chat service that no declared channel's process holds ----
+for _t in _RT: _t.join(max(0.0, DNS_DL - time.time()))
 WANT = {}
 for e in PF["endpoints"]:
-    for a in e["a"]:
+    addrs = set(e["a"])
+    for h in e.get("h", [])[:4]: addrs.update(RES.get(h, ()))
+    for a in addrs:
         for port in e["ports"]: WANT[(a.upper(), port)] = e["p"]
 hits = []
 if WANT:
@@ -378,16 +409,16 @@ if hits:
             try: l = os.readlink("/proc/%d/fd/%s" % (q, fd))
             except OSError: continue
             if l.startswith("socket:[") and l[8:-1] in need: owners[l[8:-1]] = q
-    def lineage(pid):
-        out = []
-        while pid in procs and pid not in out and len(out) < 12: out.append(pid); pid = procs[pid][1]
-        return out
+    # Only the process that holds the socket itself counts (its threads share its
+    # descriptors). A process started under it (a second bot run from the agent's
+    # terminal tool) is not the declared channel, and a unit's or container's
+    # worker processes are matched by their cgroup, which they inherit.
     def held(pl, pid):
         for s in PF["channels"]:
             m = s.get("owner") or s.get("up")
             tag = s["tag"] if "tag" in s else s["prefix"] + ":" + pl
             if (s.get("platform", pl) != pl) or tag not in ch or not m: continue
-            if any(match(q, m) for q in lineage(pid)): return True
+            if pid is not None and match(pid, m): return True
         return False
     for pl, ino in hits:
         if not held(pl, owners.get(ino)): add("unknown:" + pl)

@@ -89,8 +89,12 @@ function viewOf(available: boolean, row: { enabled: boolean; state: TelegramWake
 export async function readTelegramWakeView(agent: AgentRow, userId: string, deps: OwnerDeps = {}): Promise<TelegramWakeView> {
   const env = deps.env ?? process.env;
   const available = await availability(agent, userId, env);
-  if (!available) return viewOf(false, null);
   const row = await readTelegramWakeRow(String(agent.id)).catch(() => null);
+  // Still on, but no longer available (an operator turned agent profiles or the
+  // switch off, or the kind is no longer covered): show the switch anyway, so
+  // the owner can turn it off and Hivra forgets its copy of the bot token.
+  // Turning it on again is refused while it is not available.
+  if (!available) return row?.enabled === true ? viewOf(true, row) : viewOf(false, null);
   return viewOf(true, row);
 }
 

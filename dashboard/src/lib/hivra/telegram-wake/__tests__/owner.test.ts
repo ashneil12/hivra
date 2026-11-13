@@ -89,6 +89,16 @@ describe("with agent wake profiles on", () => {
     expect(script).toContain("botToken");
     expect(script).not.toContain(".hermes/.env");
   });
+
+  it("still lets the owner turn it off after profiles go off, so the stored token is forgotten", async () => {
+    stored = { agent_id: AGENT, enabled: true, token_enc: "enc", state: "pending_arm" };
+    // Profiles off: OpenClaw is no longer a Telegram wake kind, but the switch stays so it can be turned off.
+    await expect(readTelegramWakeView(agent({ type: "openclaw" }), "user-1", { env })).resolves.toEqual({ available: true, enabled: true, armed: false });
+    await expect(enableTelegramWake(agent({ type: "openclaw" }), "user-1", { env })).resolves.toMatchObject({ ok: false, code: "not_available" });
+    await expect(disableTelegramWake(agent({ type: "openclaw" }), { env })).resolves.toMatchObject({ ok: true, view: { available: false, enabled: false } });
+    expect(stored).toMatchObject({ enabled: false });
+    await expect(readTelegramWakeView(agent({ type: "openclaw" }), "user-1", { env })).resolves.toMatchObject({ available: false });
+  });
 });
 
 describe("enable", () => {

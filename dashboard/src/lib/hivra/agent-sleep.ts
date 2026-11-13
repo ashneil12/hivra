@@ -60,6 +60,7 @@ import {
 import { listTunnelConnections } from "@/lib/services/cloudflare-tunnel";
 import { agentProfilesEnabled, probeProfileFor, telegramWakeSource, type ProbeProfile } from "./agent-profiles";
 import { resolveChatEndpoints } from "./agent-profiles/resolve";
+import { probeEndpoints } from "./agent-profiles/endpoints";
 import { loadAgentIngressState } from "./ingress/wake-client";
 import { buildIngressVmStatsHostScript, parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
 
@@ -452,7 +453,8 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   const profilesOn = agentProfilesEnabled(env);
   let profile: ProbeProfile | null = null;
   if (profilesOn) {
-    const endpoints = await resolveChatEndpoints().catch(() => []);
+    // The names always go to the probe, which resolves them too; the server's addresses are added when it has them.
+    const endpoints = await resolveChatEndpoints().catch(() => probeEndpoints({}));
     try {
       profile = probeProfileFor(row.type, { endpoints });
     } catch {

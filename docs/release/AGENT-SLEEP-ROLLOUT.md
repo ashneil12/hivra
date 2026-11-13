@@ -132,17 +132,26 @@ kept awake until a rollback finishes it; run the rollback again.
 
 `HIVRA_AGENT_PROFILES` (server env, `off` by default, or `on`). Off, the idle
 probe is the fixed program it always was. On, the server hands the probe the
-wake profile for the agent's type (`dashboard/src/lib/hivra/agent-profiles/`)
-as data, and the probe evaluates it: busy processes, activity directories,
-scheduled jobs, chat channels and app ports. For Hermes, OpenClaw, Claude
+wake profiles (`dashboard/src/lib/hivra/agent-profiles/`) as data, and the
+probe evaluates them: busy processes, activity directories, scheduled jobs,
+chat channels and app ports. Detection always uses every profile, whatever
+the agent's type, because a user can install any agent on any computer (a
+desktop where Hermes runs cron jobs must not sleep through them); the type's
+own profile only adds to it and chooses its wake sources and the CPU safety
+net's processes. For Hermes, OpenClaw, Claude
 Code, Codex and Agent Zero it gives the same answer the fixed probe gave
 (the comparison tests run both on the same fixture computers). It also adds
 two safety nets for every agent, with or without a profile:
 
 - an established connection to a known chat service (Telegram, Discord,
-  Slack, WhatsApp, matrix.org, Signal; resolved by the server when it probes)
-  that no declared channel's own process holds is the live channel
-  `unknown:<platform>`, which nothing ever covers, so the agent stays awake;
+  Slack, WhatsApp, matrix.org, Signal; resolved by the server when it probes,
+  and again on the guest with a two-second deadline) that no declared
+  channel's own process holds is the live channel `unknown:<platform>`, which
+  nothing ever covers, so the agent stays awake. Only the process holding the
+  socket counts as the channel's, never a process started under it. Matching
+  is by address, so it is best effort: services with stable addresses
+  (Telegram) are reliably seen; ones routed by region or edge (Slack,
+  WhatsApp) may be missed when their addresses change;
 - an agent process (any non-root process, or one the profile names) using
   25% or more of a core over half a second counts as busy.
 
@@ -151,6 +160,8 @@ where its bot token lives and that Telegram queues its messages (today Hermes
 and OpenClaw, polling only). The owner's switch appears for those types.
 Turning profiles off again leaves such an opt-in in place but uncovered: an
 OpenClaw agent that is asleep still wakes on its bot, and stays awake after.
+The owner still sees the switch, on, while it is on, so they can turn it off
+and Hivra forgets the bot token; it cannot be turned on again.
 
 ### Adding a new agent type
 
@@ -177,8 +188,8 @@ The registry test fails until every type in `agent-catalog.ts` has an entry.
 No probe code changes for a new type unless it stores something in a shape
 no reader kind knows; then add the reader to `sleep/profile-probe-program.ts`.
 
-Without an entry, the probe evaluates every known profile together and keeps
-no wake source: nothing of it is covered, any chat connection keeps it awake,
+Without an entry, the probe evaluates every known profile together (as for
+every type) and keeps no wake source: nothing of it is covered, any chat connection keeps it awake,
 and so does any busy agent process.
 
 ## Rollback
