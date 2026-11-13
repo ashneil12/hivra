@@ -23,6 +23,7 @@ import type {
   ChannelWakeTargetRef,
 } from "./types";
 import { TELEGRAM_ADAPTER, type TelegramDisarm, type TelegramSleepContext } from "./adapters/telegram";
+import { MATRIX_ADAPTER } from "./adapters/matrix-pusher";
 import type { ChannelSleepCoverage } from "../agent-sleep-scripts";
 import type { TelegramProbeFacts } from "../telegram-wake/coverage";
 
@@ -54,11 +55,11 @@ export const CHANNEL_WAKES_PER_HOUR = 6;
 const HOUR_MS = 60 * 60_000;
 
 /**
- * The generic adapters, by channel. Empty until an adapter lands (Matrix,
- * email and Discord are later packages); each one also adds its spec to
- * registry.ts.
+ * The generic adapters, by channel: Matrix today (email and Discord are later
+ * packages); each one also adds its spec to registry.ts. None of them acts
+ * unless the channel wake switches are configured.
  */
-export const CHANNEL_WAKE_ADAPTERS: readonly ChannelWakeAdapter[] = [];
+export const CHANNEL_WAKE_ADAPTERS: readonly ChannelWakeAdapter[] = [MATRIX_ADAPTER];
 
 type Env = Record<string, string | undefined>;
 

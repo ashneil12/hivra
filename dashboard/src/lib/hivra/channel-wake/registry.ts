@@ -3,9 +3,10 @@
 //
 // Telegram is the first entry. Its server side is the telegram-wake module,
 // unchanged, and its host check is the same expression the Telegram-only gate
-// has always used. Every other channel is a generic spec; WP2 ships none, so
-// with today's registry the only coverable channel is hermes:telegram, as
-// before. Adapters for Matrix, email and Discord add a spec here.
+// has always used. Every other channel is a generic spec: Matrix today, email
+// and Discord later. A generic spec only acts when the channel wake switches
+// are on and the owner opted in; a Telegram-only sleep never reads this list,
+// so its scripts are unchanged.
 //
 // The TypeScript allowlist (CHANNEL_WAKE_COVERABLE) and the Perl allowlist in
 // the generated host gate are built from the same arrays, so they cannot drift.
@@ -39,8 +40,38 @@ export const TELEGRAM_HOST_CHECK_PERL = String.raw`$fp =~ /\A[0-9a-f]{16}\z/ && 
     && JSON::PP::is_bool($tg->{hermesWebhookMode}) && !$tg->{hermesWebhookMode}
     && JSON::PP::is_bool($tg->{hermesConfigToken}) && !$tg->{hermesConfigToken}`;
 
-/** The channels with a generic adapter. Empty until an adapter lands; order is the gate's order. */
-export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [];
+/**
+ * Matrix, through a homeserver pusher registered once at opt-in (WP10). The
+ * homeserver calls Hivra's push gateway route on a DM or a mention; nothing is
+ * armed at sleep and nothing is taken down at wake. Hermes catches up with
+ * /sync from its saved token. Covered only while the probe sees the same
+ * homeserver and access token as at opt-in (a password login has no token,
+ * so it is never covered).
+ */
+export const MATRIX_CHANNEL_SPEC: ChannelWakeSpec = {
+  channel: "matrix",
+  probeTag: "hermes:matrix",
+  detector: "server-push",
+  catchUp: "native",
+  needsServerDisarm: false,
+  socketBased: true,
+  credKeys: ["MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN"],
+  coverageBlockers(input: ChannelCoverageInput): string[] {
+    const reasons = standardChannelBlockers(MATRIX_CHANNEL_SPEC, input);
+    const facts = input.probe?.channelFacts?.matrix;
+    if (!facts) reasons.push("no_matrix_facts");
+    else {
+      if (!facts.homeserverHost) reasons.push("no_homeserver");
+      if (facts.passwordLogin !== false) reasons.push("password_login");
+    }
+    return reasons;
+  },
+  hostFactsPerl: `defined($f) && defined($f->{homeserverHost}) && !ref($f->{homeserverHost}) && $f->{homeserverHost} ne ""
+        && JSON::PP::is_bool($f->{passwordLogin}) && !$f->{passwordLogin}`,
+};
+
+/** The channels with a generic adapter; order is the gate's order. */
+export const GENERIC_CHANNEL_SPECS: readonly ChannelWakeSpec[] = [MATRIX_CHANNEL_SPEC];
 
 /** Every probe tag a wake can ever cover. Both gates refuse anything else. */
 export function coverableProbeTags(specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS): string[] {

@@ -70,9 +70,10 @@ describe("only Telegram on: byte-identical scripts", () => {
     expect(idleProbeProgramFor({ telegram: true })).toBe(IDLE_PROBE_TELEGRAM_PROGRAM);
   });
 
-  it("has Telegram as the only coverable channel today, in both gates", () => {
-    expect(CHANNEL_WAKE_COVERABLE).toEqual(["hermes:telegram"]);
-    expect(CHANNEL_WAKE_COVERABLE).toEqual(TELEGRAM_WAKE_COVERABLE_CHANNELS);
+  it("keeps Telegram's own allowlist to Telegram; the general one adds Matrix", () => {
+    // The Telegram-only gate (probeCheckPerl(true)) never reads the general registry.
+    expect(TELEGRAM_WAKE_COVERABLE_CHANNELS).toEqual(["hermes:telegram"]);
+    expect(CHANNEL_WAKE_COVERABLE).toEqual(["hermes:telegram", "hermes:matrix"]);
     expect(probeCheckPerl(true)).toContain(`my %allowed = map { $_ => 1 } ("hermes:telegram");`);
     // The general gate's Telegram check is the legacy one, word for word.
     expect(probeCheckPerl(true)).toContain(TELEGRAM_HOST_CHECK_PERL);
