@@ -8,6 +8,7 @@ import {
   parseIdleProbeRefusal, parseSleepReceipt, parseWakeReceipt, type WakeAdmission,
 } from "../agent-sleep-scripts";
 import { HOST_VM_CONTROL_PROGRAM, HOST_VM_CONTROL_SOCKETS_PROGRAM } from "../sleep/host-vm-control-program";
+import { IDLE_PROBE_PROGRAM } from "../sleep/idle-probe-program";
 import { shellQuote } from "../proxmox-target";
 import {
   AWAKE, COLD, HIBERNATED, NAPPING, TAG, VMID, makeHostHarness, probeLine, type HostHarness, type HostState,
@@ -32,14 +33,24 @@ describe("script construction", () => {
   // before the fast-wake and Telegram-wake work. These digests were taken from
   // that earlier code. A change here changes every sleep and wake on every host,
   // so update them only on purpose.
+  //
+  // The sleep scripts carry the idle probe program, which changed on purpose
+  // (unflagged) when it learned Hermes's gateway_state.json and more channels:
+  // that change can only keep more agents awake. So the sleep digests are taken
+  // with the probe program cut out; they are the same values the earlier code
+  // gives with its probe cut out. The probe has its own tests.
   it("sends exactly the earlier scripts with every switch off", () => {
     const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+    const withoutProbe = (text: string) => {
+      expect(text).toContain(shellQuote(IDLE_PROBE_PROGRAM));
+      return text.split(shellQuote(IDLE_PROBE_PROGRAM)).join("'<probe>'");
+    };
     const target = { vmid: 123, bindingTag: "hivra-x" };
     const admission = { provisionerDirectory: "/opt/hivra", hostReserveMb: 2048, enforceCeilings: true, cpuDensityMilli: 1500, memoryDensityMilli: 1200 };
-    expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false })))
-      .toBe("53bd65b090b0891d5a866a5f19ee96cdd38345fa1ae902b382862707837ac985");
-    expect(digest(buildSleepHostScript({ ...target, tier: "hibernate", manual: false })))
-      .toBe("7973a777c9e10a593ccd94707d7233793421bd71e77e1000380d41343e59ec66");
+    expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "nap", manual: false }))))
+      .toBe("30792d3358eeeb69c93e71559494694ca8e8eb4b3e3a6c07fa71fd529f838ff0");
+    expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "hibernate", manual: false }))))
+      .toBe("ff24aec0040e571da4a5d8acb1d278283b9589bfd9d97c41e04286f59b80c9d6");
     expect(digest(buildWakeHostScript({ ...target, admission })))
       .toBe("8ad925ebfdf85c7142ec9936216d1855b53a7e3fd1fff1cadade0835235abd01");
   });
