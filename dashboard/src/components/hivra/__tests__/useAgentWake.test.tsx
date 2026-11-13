@@ -140,3 +140,46 @@ describe("useAgentWake: a hold from an earlier visit", () => {
     await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("useAgentWake: the early wake switch", () => {
+  const previous = process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE;
+  afterEach(() => {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE;
+    else process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE = previous;
+  });
+
+  it("is off by default: nothing is sent before the first read", () => {
+    delete process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE;
+    mount({ view: "awake", loaded: false });
+    expect(mockWakeAgent).not.toHaveBeenCalled();
+  });
+
+  it("sends the wake beside the first read, and uses that one answer when the read finds it asleep", async () => {
+    process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE = "early_wake";
+    mockWakeAgent.mockResolvedValue({ state: "awake", wakeMs: 1200 });
+    const onWoke = jest.fn();
+    const { rerender } = renderHook(
+      ({ view, loaded }: { view: AgentSleepView; loaded: boolean }) => useAgentWake("agent-1", view, "napping", onWoke, loaded),
+      { initialProps: { view: "awake" as AgentSleepView, loaded: false } },
+    );
+    expect(mockWakeAgent).toHaveBeenCalledTimes(1);
+    rerender({ view: "asleep", loaded: true });
+    await waitFor(() => expect(onWoke).toHaveBeenCalledTimes(1));
+    // The answer already sent is used: no second request.
+    expect(mockWakeAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the early answer when the first read finds the agent awake, so a later nap is not woken by it", async () => {
+    process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE = "early_wake";
+    mockWakeAgent.mockResolvedValue({ state: "awake", wakeMs: null });
+    const { result, rerender } = mount({ view: "awake", loaded: false });
+    expect(mockWakeAgent).toHaveBeenCalledTimes(1);
+    rerender({ view: "awake", loaded: true });
+    rerender({ view: "asleep", state: "napping", loaded: true });
+    await waitFor(() => expect(result.current.resting).toBe("idle"));
+    mockWakeAgent.mockResolvedValue({ state: "waking" });
+    act(() => { fireEvent.pointerDown(window); });
+    // Coming back sends a fresh request rather than reusing the old answer.
+    await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(2));
+  });
+});

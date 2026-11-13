@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { wakeAgent } from "@/lib/hivra/agent-api";
+import { wakeAgent, type WakeAgentResult } from "@/lib/hivra/agent-api";
+import { isFastWakeEnabled } from "@/lib/hivra/fast-wake-flags";
 import type { AgentSleepView } from "@/lib/hivra/agent-sleep-ui";
 
 /** How long "Woke up in 1.4 s" stays on screen. */
@@ -86,6 +87,17 @@ export function useAgentWake(
   const startedRef = useRef<{ agentId: string; at: number; serverMs: number | null } | null>(null);
   const onWokeRef = useRef(onWoke);
   useEffect(() => { onWokeRef.current = onWoke; }, [onWoke]);
+  // With the early_wake switch: a wake request sent while the page reads the agent for the
+  // first time, used only if that read finds it asleep.
+  const earlyRef = useRef<{ agentId: string; answer: Promise<WakeAgentResult> } | null>(null);
+
+  // A page opened afresh wakes a sleeping agent at once anyway, so the request can go out
+  // beside the first read instead of after it. An agent that is awake answers at once.
+  useEffect(() => {
+    if (loaded || !isFastWakeEnabled("early_wake", process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE)) return;
+    if (earlyRef.current?.agentId === agentId) return;
+    earlyRef.current = { agentId, answer: wakeAgent(agentId) };
+  }, [agentId, loaded]);
 
   // A page opened afresh (or left) starts without a hold from an earlier visit.
   useEffect(() => {
@@ -97,7 +109,11 @@ export function useAgentWake(
 
   useEffect(() => {
     if (view === "awake") {
-      if (loaded) seenAwakeRef.current = agentId;
+      if (loaded) {
+        seenAwakeRef.current = agentId;
+        // The first read found it awake: the early answer is about a sleep that is not there.
+        earlyRef.current = null;
+      }
       releaseAutoWake(agentId);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- The agent is up: nothing is being held any more.
       setRest((current) => (current ? null : current));
@@ -130,7 +146,10 @@ export function useAgentWake(
     if (done && done.agentId === agentId && done.attempt === attempt) return;
     const mine = { agentId, attempt };
     requestedRef.current = mine;
-    void wakeAgent(agentId).then((result) => {
+    const early = earlyRef.current;
+    earlyRef.current = null;
+    const answer = early && early.agentId === agentId ? early.answer : wakeAgent(agentId);
+    void answer.then((result) => {
       // Another agent, or the agent woke by itself: this answer no longer matters.
       if (requestedRef.current !== mine) return;
       if (result.state === "failed") {
