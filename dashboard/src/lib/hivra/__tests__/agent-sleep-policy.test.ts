@@ -1,4 +1,5 @@
 import {
+  socketChannelsFromProbe,
   AUTONOMOUS_KINDS,
   DEFAULT_HIBERNATE_AFTER_NAP_SECONDS,
   DEFAULT_HIBERNATE_AFTER_SECONDS,
@@ -292,5 +293,21 @@ describe("ghost timer", () => {
   it("flags a pre-wake with no request once the timer runs out", () => {
     expect(isGhostWake(ago(GHOST_TIMER_SECONDS - 1), NOW)).toBe(false);
     expect(isGhostWake(ago(GHOST_TIMER_SECONDS), NOW)).toBe(true);
+  });
+});
+
+describe("socketChannelsFromProbe", () => {
+  it("strips the probe's prefixes and the down marker, so the socket check can match", () => {
+    expect(socketChannelsFromProbe(["hermes:discord:down", "hermes:discord", "openclaw:slack", "telegram:bux-tg", "hermes:whatsapp_cloud"]))
+      .toEqual(["discord", "slack", "telegram", "whatsapp_cloud"]);
+    expect(socketChannelsFromProbe([])).toEqual([]);
+    expect(socketChannelsFromProbe(undefined)).toBeUndefined();
+    expect(socketChannelsFromProbe(null)).toBeUndefined();
+  });
+
+  it("keeps a probe-reported socket channel ineligible for sleep", () => {
+    const decision = decideSleep({ socketChannels: socketChannelsFromProbe(["hermes:discord:down", "hermes:whatsapp_cloud"]) }, { sleepPolicy: "full" }, NOW);
+    expect(decision.verdict).toBe("ineligible");
+    expect(decision.reasons).toEqual(["socket_channel:discord"]);
   });
 });

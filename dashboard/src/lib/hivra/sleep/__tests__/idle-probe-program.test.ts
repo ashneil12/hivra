@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseIdleProbeOutput } from "../../agent-sleep-scripts";
-import { IDLE_PROBE_PREFIX, IDLE_PROBE_PROGRAM, IDLE_PROBE_VERSION } from "../idle-probe-program";
+import { IDLE_PROBE_PREFIX, IDLE_PROBE_PROGRAM, IDLE_PROBE_VERSION, parseChannelProbeFacts } from "../idle-probe-program";
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
 const run = hasPython ? describe : describe.skip;
@@ -31,19 +31,32 @@ run("idle probe program, run for real against fixture files", () => {
     writeFileSync(file, body);
   };
   // The probe reads fixed guest paths; point the ones under the user's home and the crontab at the fixture.
-  const probe = () => {
+  const GW_LINE = 'hermes_gw = any("hermes" in v[2] and " gateway" in v[2] for v in procs.values())';
+  // gatewayRunning pretends a Hermes gateway process is up; without it none is.
+  const probe = (opts: { gatewayRunning?: boolean } = {}) => {
+    const raw = probeRaw(opts);
+    expect(raw.status).toBe(0);
+    const parsed = parseIdleProbeOutput(raw.stdout);
+    expect(parsed).not.toBeNull();
+    expect(raw.stdout.trim().split("\n")).toHaveLength(1);
+    return parsed!;
+  };
+  const probeRaw = (opts: { gatewayRunning?: boolean } = {}) => {
+    expect(IDLE_PROBE_PROGRAM).toContain(GW_LINE);
     const program = IDLE_PROBE_PROGRAM
+      .replace(GW_LINE, opts.gatewayRunning ? "hermes_gw = True" : "hermes_gw = False")
       .replaceAll('HOME = "/home/bux"', `HOME = ${JSON.stringify(path.join(dir, "home"))}`)
       .replaceAll("/var/spool/cron/crontabs/bux", path.join(dir, "crontab"))
       .replaceAll("/var/spool/cron/atjobs", path.join(dir, "atjobs"))
       .replaceAll("/etc/bux/tg.env", path.join(dir, "tg.env"))
       .replaceAll("/opt/a0/usr/scheduler/tasks.json", path.join(dir, "a0-tasks.json"));
-    const result = spawnSync("python3", ["-I", "-B", "-c", program], { encoding: "utf8", timeout: 20_000 });
-    expect(result.status).toBe(0);
-    const parsed = parseIdleProbeOutput(result.stdout);
-    expect(parsed).not.toBeNull();
-    expect(result.stdout.trim().split("\n")).toHaveLength(1);
-    return parsed!;
+    return spawnSync("python3", ["-I", "-B", "-c", program], { encoding: "utf8", timeout: 20_000 });
+  };
+  /** The raw JSON object, with the fields the strict parser does not carry. */
+  const probeJson = (opts: { gatewayRunning?: boolean } = {}) => {
+    const raw = probeRaw(opts);
+    expect(raw.status).toBe(0);
+    return { stdout: raw.stdout, json: JSON.parse(raw.stdout.slice(IDLE_PROBE_PREFIX.length)) as Record<string, unknown> };
   };
   const future = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
 
@@ -162,5 +175,111 @@ run("idle probe program, run for real against fixture files", () => {
     expect(result.status).toBe(3);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("HIVRA_IDLE_FAILURE");
+  });
+  describe("Hermes channels", () => {
+    it("reports a password-only Matrix login, which the token check alone missed", () => {
+      const pw = ["pw", "Q".repeat(12), String(4242)].join("-");
+      put("home/.hermes/.env", `MATRIX_HOMESERVER=https://Matrix.Example.test:8448/\nMATRIX_USER_ID=@bot:example.test\nMATRIX_PASSWORD=${pw}\n`);
+      const { stdout, json } = probeJson();
+      expect(stdout).not.toContain(pw);
+      expect(json.liveChannels).toEqual(["hermes:matrix:down"]);
+      expect(json.channelFacts).toEqual({ matrix: { homeserverHost: "matrix.example.test", passwordLogin: true } });
+      expect(parseChannelProbeFacts(json.channelFacts)).toEqual(json.channelFacts);
+    });
+
+    it("reports an sms setup made through .env only", () => {
+      put("home/.hermes/.env", "TWILIO_ACCOUNT_SID=AC" + "0".repeat(10) + "\nTWILIO_PHONE_NUMBER=+15550000000\n");
+      expect(probe().liveChannels).toEqual(["hermes:sms:down"]);
+    });
+
+    it("tells Baileys WhatsApp from the Cloud API and dedupes it against config.yaml", () => {
+      put("home/.hermes/.env", "WHATSAPP_CLOUD_PHONE_NUMBER_ID=1\nWHATSAPP_CLOUD_ACCESS_TOKEN=x\n");
+      put("home/.hermes/config.yaml", "platforms:\n  whatsapp_cloud:\n    enabled: true\n");
+      expect(probe().liveChannels).toEqual(["hermes:whatsapp_cloud:down"]);
+      put("home/.hermes/.env", "WHATSAPP_ENABLED=true\n");
+      expect(probe().liveChannels).toEqual(["hermes:whatsapp:down", "hermes:whatsapp_cloud:down"]);
+      rmSync(path.join(dir, "home/.hermes/config.yaml"));
+      expect(probe().liveChannels).toEqual(["hermes:whatsapp:down"]);
+    });
+
+    it("reports every platform in a running gateway's record, but not its chat API, the CLI or a disabled one", () => {
+      put("home/.hermes/gateway_state.json", JSON.stringify({ gateway_state: "running", platforms: {
+        api_server: { state: "connected" }, local: { state: "connected" },
+        feishu: { state: "connected" }, irc: { state: "retrying" }, "ops:Line": { state: "fatal" },
+        teams: { state: "disabled" }, "bad name!": { state: "connected" },
+      } }));
+      const p = probe({ gatewayRunning: true });
+      expect(p.liveChannels).toEqual(["hermes:badname", "hermes:feishu", "hermes:irc", "hermes:line"]);
+      expect(p.errors).toEqual([]);
+    });
+
+    it("reads profile gateway records too", () => {
+      put("home/.hermes/gateway_state.json", JSON.stringify({ platforms: {} }));
+      put("home/.hermes/profiles/ops/gateway_state.json", JSON.stringify({ platforms: { signal: { state: "connected" } } }));
+      expect(probe({ gatewayRunning: true }).liveChannels).toEqual(["hermes:signal"]);
+    });
+
+    it("calls a missing or corrupt record an error while the gateway runs, so the agent stays awake", () => {
+      expect(probe({ gatewayRunning: true }).errors).toContain("gateway_state");
+      put("home/.hermes/gateway_state.json", '{"platforms": {"matrix"');
+      expect(probe({ gatewayRunning: true }).errors).toContain("gateway_state");
+      put("home/.hermes/gateway_state.json", JSON.stringify({ platforms: ["matrix"] }));
+      expect(probe({ gatewayRunning: true }).errors).toContain("gateway_state");
+      // With no gateway running, a missing or stale record is no error, and a readable one still names its channels.
+      expect(probe().errors).toEqual([]);
+      put("home/.hermes/gateway_state.json", JSON.stringify({ platforms: { matrix: { state: "connected" } } }));
+      expect(probe()).toMatchObject({ errors: [], liveChannels: ["hermes:matrix:down"] });
+    });
+
+    it("reports Discord backfill from .env, with config.yaml winning, and never a token", () => {
+      const tok = ["dc", "Z".repeat(16), String(31337)].join(".");
+      put("home/.hermes/.env", `DISCORD_BOT_TOKEN=${tok}\nDISCORD_MISSED_MESSAGE_BACKFILL=true\nDISCORD_MISSED_MESSAGE_BACKFILL_CHANNELS=111111111111,222222222222\n`);
+      let out = probeJson();
+      expect(out.stdout).not.toContain(tok);
+      expect(out.json.channelFacts).toEqual({ discord: { backfill: true, backfillChannels: 2, backfillAllChannels: false, dmsAllowed: true } });
+      put("home/.hermes/config.yaml", "discord:\n  require_mention: true\n  missed_message_backfill:\n    enabled: false\n    channels:\n      - '333333333333'\n  reactions: true\n");
+      out = probeJson();
+      expect(out.json.channelFacts).toEqual({ discord: { backfill: false, backfillChannels: 1, backfillAllChannels: false, dmsAllowed: true } });
+      put("home/.hermes/config.yaml", "discord:\n  missed_message_backfill:\n    enabled: true\n    channels: \"*\"\n");
+      expect(probeJson().json.channelFacts).toMatchObject({ discord: { backfill: true, backfillAllChannels: true } });
+    });
+
+    it("reports the IMAP host, Telegram webhook mode and Slack Socket Mode, and no secret", () => {
+      const pw = ["mail", "P".repeat(12), String(2718)].join("-");
+      const app = ["xapp", "1", "A".repeat(10) + "9"].join("-");
+      put("home/.hermes/.env", [
+        "EMAIL_ADDRESS=bot@example.test", `EMAIL_PASSWORD=${pw}`, "EMAIL_IMAP_HOST=imap.example.test", "EMAIL_SMTP_HOST=smtp.example.test",
+        "TELEGRAM_BOT_TOKEN=1:x", "TELEGRAM_WEBHOOK_URL=https://bot.example.test/hook",
+        "SLACK_BOT_TOKEN=x", `SLACK_APP_TOKEN=${app}`, "",
+      ].join("\n"));
+      const { stdout, json } = probeJson();
+      for (const secret of [pw, app, "1:x"]) expect(stdout).not.toContain(secret);
+      expect(json.channelFacts).toEqual({
+        email: { imapHost: "imap.example.test" },
+        telegram: { webhookMode: true },
+        slack: { socketMode: true },
+      });
+      expect(parseChannelProbeFacts(json.channelFacts)).toEqual(json.channelFacts);
+    });
+
+    it("sends no channel facts when there is no Hermes channel", () => {
+      expect(probeJson().json.channelFacts).toBeUndefined();
+    });
+  });
+});
+
+describe("channel facts parser", () => {
+  it("accepts what the probe sends and refuses anything else", () => {
+    expect(parseChannelProbeFacts(undefined)).toBeUndefined();
+    expect(parseChannelProbeFacts({})).toEqual({});
+    expect(parseChannelProbeFacts({ matrix: { homeserverHost: null, passwordLogin: false } })).toEqual({ matrix: { homeserverHost: null, passwordLogin: false } });
+    expect(parseChannelProbeFacts(null)).toBeNull();
+    expect(parseChannelProbeFacts([])).toBeNull();
+    expect(parseChannelProbeFacts({ irc: {} })).toBeNull();
+    expect(parseChannelProbeFacts({ matrix: { homeserverHost: "has space", passwordLogin: false } })).toBeNull();
+    expect(parseChannelProbeFacts({ email: { imapHost: 5 } })).toBeNull();
+    expect(parseChannelProbeFacts({ discord: { backfill: true, backfillChannels: -1, backfillAllChannels: false, dmsAllowed: true } })).toBeNull();
+    expect(parseChannelProbeFacts({ slack: { socketMode: "yes" } })).toBeNull();
+    expect(parseChannelProbeFacts({ telegram: {} })).toBeNull();
   });
 });

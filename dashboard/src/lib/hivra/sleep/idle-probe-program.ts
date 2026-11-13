@@ -13,6 +13,22 @@
 export const IDLE_PROBE_PREFIX = "HIVRA_IDLE ";
 export const IDLE_PROBE_VERSION = 1;
 
+/**
+ * Reads one KEY=value from a .env text the way python-dotenv does for plain
+ * files: the last assignment wins, an optional "export " is allowed, and one
+ * pair of matching quotes is removed. Shared by the Telegram probe and the
+ * token read, so the fingerprint on both sides comes from the same value.
+ */
+export const TELEGRAM_ENV_VALUE_PY = String.raw`def env_value(text, key):
+    v = None
+    for ln in (text or "").splitlines():
+        m = re.match(r"^\s*(?:export\s+)?" + key + r"\s*=(.*)$", ln)
+        if m: v = m.group(1).strip()
+    if v is None: return None
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'": v = v[1:-1]
+    else: v = re.split(r"\s+#", v, 1)[0].strip()
+    return v or None`;
+
 export const IDLE_PROBE_PROGRAM = String.raw`import calendar, errno, json, os, re, signal, subprocess, sys, time
 # hivra-idle-probe v1. Runs as root via the guest agent. Counts and times only.
 # BaseException, so no "except OSError" or "except Exception" below can swallow the alarm.
@@ -210,6 +226,7 @@ except Exception: err("timers")
 future = [t for t in nexts if t >= T0 - 300]
 # ---- chat channels ----
 ch = []
+${TELEGRAM_ENV_VALUE_PY}
 def active(unit):
     try:
         return subprocess.run(["systemctl", "is-active", "--quiet", unit], timeout=2).returncode == 0
@@ -218,14 +235,82 @@ tg = rd("/etc/bux/tg.env", 8192) or ""
 if re.search(r"^TG_BOT_TOKEN=\S", tg, re.M) and active("bux-tg"): ch.append("telegram:bux-tg")
 env = rd(HOME + "/.hermes/.env", 65536) or ""
 hermes_gw = any("hermes" in v[2] and " gateway" in v[2] for v in procs.values())
-for k, name in (("TELEGRAM_BOT_TOKEN", "telegram"), ("DISCORD_BOT_TOKEN", "discord"), ("SLACK_BOT_TOKEN", "slack"),
-                ("WHATSAPP_", "whatsapp"), ("SIGNAL_", "signal"), ("MATRIX_ACCESS_TOKEN", "matrix"), ("MATTERMOST_TOKEN", "mattermost"),
-                ("EMAIL_", "email")):
-    if re.search(r"^%s\w*=\S" % k, env, re.M): ch.append("hermes:" + name + ("" if hermes_gw else ":down"))
-cfg = rd(HOME + "/.hermes/config.yaml", 262144) or ""
-for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", cfg, re.M):
+def hermes_ch(name):
     tag = "hermes:" + name + ("" if hermes_gw else ":down")
     if tag not in ch: ch.append(tag)
+# Hermes's own record of the platforms its gateway runs (gateway/status.py). Every
+# platform in it is live, whatever its state, except Hivra's own chat API and the
+# CLI, and a platform the gateway itself marked disabled. While the gateway runs
+# the record must be there and readable: otherwise the answer is unknown.
+NOT_CHANNELS = ("api_server", "local")
+def gateway_platforms(p, required):
+    b = rdb(p, (1 << 20) + 1)
+    try: j = json.loads(b.decode("utf-8")) if b and len(b) <= 1 << 20 else None
+    except ValueError: j = None
+    pl = j.get("platforms") if isinstance(j, dict) else None
+    if not isinstance(pl, dict):
+        if required: err("gateway_state")
+        return
+    for k, v in list(pl.items())[:200]:
+        if not isinstance(k, str) or (isinstance(v, dict) and v.get("state") == "disabled"): continue
+        name = re.sub(r"[^a-z0-9_]", "", k.rsplit(":", 1)[-1].lower())[:30]
+        if name and name not in NOT_CHANNELS: hermes_ch(name)
+gateway_platforms(HOME + "/.hermes/gateway_state.json", hermes_gw)
+try:
+    for prof in sorted(os.listdir(HOME + "/.hermes/profiles"))[:50]: gateway_platforms("%s/.hermes/profiles/%s/gateway_state.json" % (HOME, prof), False)
+except OSError: pass
+# The .env and config.yaml are a second source: they also name a channel whose gateway is down.
+for k, name in (("TELEGRAM_BOT_TOKEN", "telegram"), ("DISCORD_BOT_TOKEN", "discord"), ("SLACK_BOT_TOKEN", "slack"),
+                ("WHATSAPP_(?!CLOUD_)", "whatsapp"), ("WHATSAPP_CLOUD_", "whatsapp_cloud"), ("SIGNAL_", "signal"),
+                ("MATRIX_ACCESS_TOKEN", "matrix"), ("MATRIX_PASSWORD", "matrix"), ("MATTERMOST_TOKEN", "mattermost"),
+                ("EMAIL_", "email"), ("TWILIO_ACCOUNT_SID", "sms"), ("BLUEBUBBLES_SERVER_URL", "bluebubbles"),
+                ("DINGTALK_CLIENT_ID", "dingtalk"), ("FEISHU_APP_ID", "feishu"), ("QQ_APP_ID", "qqbot"),
+                ("WECOM_BOT_ID", "wecom"), ("WECOM_CALLBACK_CORP_ID", "wecom_callback"), ("WEIXIN_TOKEN", "weixin"),
+                ("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON", "google_chat"), ("IRC_SERVER", "irc"), ("LINE_CHANNEL_ACCESS_TOKEN", "line"),
+                ("TEAMS_CLIENT_ID", "teams"), ("SIMPLEX_WS_URL", "simplex"), ("NTFY_TOPIC", "ntfy"),
+                ("PHOTON_PROJECT_ID", "photon"), ("RAFT_PROFILE", "raft"), ("BUZZ_RELAY_URL", "buzz")):
+    if re.search(r"^%s\w*=\S" % k, env, re.M): hermes_ch(name)
+cfg = rd(HOME + "/.hermes/config.yaml", 262144) or ""
+for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", cfg, re.M): hermes_ch(name)
+# Per-channel facts for the wake adapters. Modes and host names only, never a secret.
+def env_on(key): return (env_value(env, key) or "").lower() in ("true", "1", "yes", "on")
+def host_of(url):
+    m = re.match(r"^(?:[a-z][a-z0-9+.-]*://)?(?:[^@/]*@)?(\[[0-9a-fA-F:.]+\]|[^:/?#\s]+)", (url or "").strip())
+    h = m.group(1).lower() if m else ""
+    return h if re.match(r"^[a-z0-9.\[\]:-]{1,253}$", h) else None
+def yaml_block(text, key):
+    # The lines indented under "key:" (any depth), or the rest of its line when written inline.
+    out, ind = None, None
+    for ln in text.splitlines():
+        m = re.match(r"^(\s*)%s:\s*(.*)$" % key, ln)
+        if ind is None and m:
+            ind, out = len(m.group(1)), [m.group(2)]
+        elif ind is not None:
+            if ln.strip() and len(ln) - len(ln.lstrip()) <= ind: break
+            out.append(ln)
+    return None if out is None else "\n".join(out)
+names = {t.split(":")[1] for t in ch if t.startswith("hermes:")}
+facts = {}
+if "discord" in names:
+    blk = yaml_block(cfg, "missed_message_backfill") or ""
+    # config.yaml wins over .env, as in the adapter; an empty config list falls through to .env.
+    m = re.search(r"(?<!\w)enabled:\s*['\"]?(\w+)", blk)
+    backfill = m.group(1).lower() in ("true", "1", "yes", "on") if m else env_on("DISCORD_MISSED_MESSAGE_BACKFILL")
+    m = re.search(r"(?<!\w)channels:[ \t]*(.*)", blk)
+    listed = ""
+    if m:
+        listed = m.group(1).strip().strip("'\"") or " ".join(re.findall(r"^\s*-\s*(\S+)", blk[m.end():], re.M))
+    listed = listed or env_value(env, "DISCORD_MISSED_MESSAGE_BACKFILL_CHANNELS") or ""
+    # Hermes has no switch that refuses DMs, so DMs are always allowed.
+    facts["discord"] = {"backfill": backfill, "backfillChannels": len(re.findall(r"\d{5,}", listed)),
+                        "backfillAllChannels": "*" in listed, "dmsAllowed": True}
+if "matrix" in names:
+    facts["matrix"] = {"homeserverHost": host_of(env_value(env, "MATRIX_HOMESERVER")),
+                       "passwordLogin": bool(env_value(env, "MATRIX_PASSWORD")) and not env_value(env, "MATRIX_ACCESS_TOKEN")}
+if "email" in names: facts["email"] = {"imapHost": host_of(env_value(env, "EMAIL_IMAP_HOST"))}
+if "telegram" in names: facts.update(telegram={"webhookMode": bool(env_value(env, "TELEGRAM_WEBHOOK_URL"))})
+if "slack" in names: facts["slack"] = {"socketMode": bool(env_value(env, "SLACK_APP_TOKEN"))}
+if facts: OUT["channelFacts"] = facts
 oc = rjson(HOME + "/.openclaw/openclaw.json", 262144)
 if isinstance(oc, dict) and isinstance(oc.get("channels"), dict):
     for name, c in oc["channels"].items():
@@ -253,25 +338,8 @@ OUT.update({
 sys.stdout.write("HIVRA_IDLE " + json.dumps(OUT, separators=(",", ":"), sort_keys=True) + "\n")
 `;
 
-/**
- * Reads one KEY=value from a .env text the way python-dotenv does for plain
- * files: the last assignment wins, an optional "export " is allowed, and one
- * pair of matching quotes is removed. Shared by the Telegram probe and the
- * token read, so the fingerprint on both sides comes from the same value.
- */
-export const TELEGRAM_ENV_VALUE_PY = String.raw`def env_value(text, key):
-    v = None
-    for ln in (text or "").splitlines():
-        m = re.match(r"^\s*(?:export\s+)?" + key + r"\s*=(.*)$", ln)
-        if m: v = m.group(1).strip()
-    if v is None: return None
-    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'": v = v[1:-1]
-    else: v = re.split(r"\s+#", v, 1)[0].strip()
-    return v or None`;
-
 const TELEGRAM_FACTS_PY = String.raw`# Telegram wake facts: a fingerprint of the .env token, never the token.
 import hashlib
-${TELEGRAM_ENV_VALUE_PY}
 tok = env_value(env, "TELEGRAM_BOT_TOKEN")
 OUT["telegram"] = {
     "hermesFp": hashlib.sha256(tok.encode("utf-8")).hexdigest()[:16] if tok else None,
@@ -293,3 +361,74 @@ function withTelegramFacts(program: string): string {
  * on Telegram wake. Every other probe runs IDLE_PROBE_PROGRAM unchanged.
  */
 export const IDLE_PROBE_TELEGRAM_PROGRAM = withTelegramFacts(IDLE_PROBE_PROGRAM);
+
+/** Per-channel facts the probe reports for a live Hermes channel. Modes and host names only, never a secret. */
+export interface ChannelProbeFacts {
+  discord?: {
+    /** Hermes replays messages missed while the gateway was down (config.yaml or .env). */
+    backfill: boolean;
+    /** Channel ids listed explicitly for the replay. 0 means Hermes's default set, which holds no DM. */
+    backfillChannels: number;
+    backfillAllChannels: boolean;
+    /** Always true: Hermes has no switch that refuses DMs. */
+    dmsAllowed: boolean;
+  };
+  matrix?: { homeserverHost: string | null; passwordLogin: boolean };
+  email?: { imapHost: string | null };
+  telegram?: { webhookMode: boolean };
+  slack?: { socketMode: boolean };
+}
+
+const FACT_HOST = /^[a-z0-9.[\]:-]{1,253}$/;
+
+function factRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+function factHost(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && FACT_HOST.test(value) ? value : undefined;
+}
+
+/**
+ * Strict read of the probe's `channelFacts`. Undefined when the probe sent
+ * none; null when it sent something malformed, which a caller treats as
+ * unknown (and unknown never lets an agent sleep).
+ */
+export function parseChannelProbeFacts(value: unknown): ChannelProbeFacts | null | undefined {
+  if (value === undefined) return undefined;
+  const row = factRecord(value);
+  if (!row) return null;
+  const out: ChannelProbeFacts = {};
+  for (const key of Object.keys(row)) {
+    if (!["discord", "matrix", "email", "telegram", "slack"].includes(key)) return null;
+  }
+  if (row.discord !== undefined) {
+    const d = factRecord(row.discord);
+    if (!d || typeof d.backfill !== "boolean" || typeof d.backfillAllChannels !== "boolean" || typeof d.dmsAllowed !== "boolean"
+        || typeof d.backfillChannels !== "number" || !Number.isInteger(d.backfillChannels)
+        || d.backfillChannels < 0 || d.backfillChannels > 100_000) return null;
+    out.discord = { backfill: d.backfill, backfillChannels: d.backfillChannels, backfillAllChannels: d.backfillAllChannels, dmsAllowed: d.dmsAllowed };
+  }
+  if (row.matrix !== undefined) {
+    const m = factRecord(row.matrix);
+    const host = factHost(m?.homeserverHost);
+    if (!m || host === undefined || typeof m.passwordLogin !== "boolean") return null;
+    out.matrix = { homeserverHost: host, passwordLogin: m.passwordLogin };
+  }
+  if (row.email !== undefined) {
+    const host = factHost(factRecord(row.email)?.imapHost);
+    if (host === undefined) return null;
+    out.email = { imapHost: host };
+  }
+  if (row.telegram !== undefined) {
+    const t = factRecord(row.telegram);
+    if (!t || typeof t.webhookMode !== "boolean") return null;
+    out.telegram = { webhookMode: t.webhookMode };
+  }
+  if (row.slack !== undefined) {
+    const sl = factRecord(row.slack);
+    if (!sl || typeof sl.socketMode !== "boolean") return null;
+    out.slack = { socketMode: sl.socketMode };
+  }
+  return out;
+}
