@@ -187,6 +187,23 @@ describe("enableHostIngress", () => {
     expect(w.stdins).toHaveLength(1);
   });
 
+  it("gives the route the box bearer's hash and the owner's agent page for client wakes, when it has them", async () => {
+    const { createHash } = await import("node:crypto");
+    const boxCredential = "ab".repeat(32);
+    const w = world({ agent: { api_token: boxCredential } });
+    const env = { ...SECRET_ENV, NEXT_PUBLIC_APP_URL: "https://dashboard.example.test" };
+    await expect(enableHostIngress(AGENT, { ...w.deps, env })).resolves.toMatchObject({ ok: true });
+    const route = (JSON.parse(w.stdins[0]) as { route: Record<string, unknown> }).route;
+    expect(route.bearer_sha256).toBe(createHash("sha256").update(boxCredential).digest("hex"));
+    expect(route.wake_url).toBe(`https://dashboard.example.test/dashboard/agent/${AGENT}`);
+    expect(w.stdins[0]).not.toContain(boxCredential);
+    // Without either, the route is exactly what it was: tickets only.
+    const plain = world();
+    await enableHostIngress(AGENT, plain.deps);
+    const plainRoute = (JSON.parse(plain.stdins[0]) as { route: Record<string, unknown> }).route;
+    expect(Object.keys(plainRoute).sort()).toEqual(["binding_tag", "generation", "guest_ip", "guest_port", "hostname", "ticket_key", "version", "vmid"]);
+  });
+
   it("answers already for an agent in host mode", async () => {
     const w = world({ mode: "host" });
     await expect(enableHostIngress(AGENT, w.deps)).resolves.toMatchObject({ ok: true, already: true, mode: "host" });

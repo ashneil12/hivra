@@ -11,8 +11,14 @@
 // agentId NUL tunnelId NUL generation), hex. Hivra stores nothing per agent:
 // the key is derived again whenever it is needed, and moving the generation on
 // (every enable and rollback does) revokes every earlier key.
+//
+// Client wakes: bearer_sha256 is sha256 of the agent's box API token, so the
+// proxy's root helper can check a bearer (or the dashboard's /auth/bootstrap
+// form) without holding the token itself. wake_url is where a browser asking
+// for a napped computer is sent: the owner's agent page, which wakes it
+// through Hivra. Both are optional; without them the proxy wakes on tickets only.
 
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 import { GUEST_FORWARDER_LISTEN_PORT } from "@/lib/hivra/ingress/guest-forwarder-program";
 
@@ -34,6 +40,10 @@ const TAG = /^[A-Za-z0-9._-]{1,128}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 const TUNNEL_TOKEN = /^[A-Za-z0-9+/=_-]{40,4096}$/;
+/** The proxy's rule (hivra-wake-proxy.py WAKE_URL_RE): https, no credentials, query or fragment. */
+const WAKE_URL = /^https:\/\/[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?(?::[0-9]{1,5})?(?:\/[A-Za-z0-9._~%/-]*)?$/;
+const WAKE_URL_MAX = 512;
+const BOX_API_TOKEN = /^[a-f0-9]{64}$/;
 
 type Env = Record<string, string | undefined>;
 
@@ -82,6 +92,10 @@ export interface IngressRouteFile {
   guest_port: number;
   ticket_key: string;
   generation: number;
+  /** sha256 (hex) of the box API token: lets the proxy check a client's bearer. */
+  bearer_sha256?: string;
+  /** Where the proxy sends a browser that asks for the napped computer. */
+  wake_url?: string;
 }
 
 export function buildIngressRoute(input: {
@@ -91,6 +105,8 @@ export function buildIngressRoute(input: {
   guestIp: string;
   ticketKey: string;
   generation: number;
+  bearerSha256?: string | null;
+  wakeUrl?: string | null;
 }): IngressRouteFile {
   const route: IngressRouteFile = {
     version: INGRESS_ROUTE_VERSION,
@@ -101,6 +117,8 @@ export function buildIngressRoute(input: {
     guest_port: GUEST_FORWARDER_LISTEN_PORT,
     ticket_key: input.ticketKey,
     generation: input.generation,
+    ...(input.bearerSha256 ? { bearer_sha256: input.bearerSha256 } : {}),
+    ...(input.wakeUrl ? { wake_url: input.wakeUrl } : {}),
   };
   const checked = parseIngressRoute(route);
   if (!checked) throw new Error("Invalid ingress route.");
@@ -111,7 +129,8 @@ export function buildIngressRoute(input: {
 export function parseIngressRoute(value: unknown): (IngressRouteFile & { guest_mac?: string }) | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  const known = new Set(["version", "vmid", "hostname", "binding_tag", "guest_ip", "guest_port", "ticket_key", "generation", "guest_mac"]);
+  const known = new Set(["version", "vmid", "hostname", "binding_tag", "guest_ip", "guest_port", "ticket_key", "generation", "guest_mac",
+    "bearer_sha256", "wake_url"]);
   if (Object.keys(v).some((key) => !known.has(key))) return null;
   if (v.version !== INGRESS_ROUTE_VERSION) return null;
   if (typeof v.vmid !== "number") return null;
@@ -123,7 +142,37 @@ export function parseIngressRoute(value: unknown): (IngressRouteFile & { guest_m
   if (typeof v.ticket_key !== "string" || !HEX64.test(v.ticket_key)) return null;
   if (typeof v.generation !== "number" || !Number.isSafeInteger(v.generation) || v.generation < 0) return null;
   if (v.guest_mac !== undefined && (typeof v.guest_mac !== "string" || !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(v.guest_mac))) return null;
+  if (v.bearer_sha256 !== undefined && (typeof v.bearer_sha256 !== "string" || !HEX64.test(v.bearer_sha256))) return null;
+  if (v.wake_url !== undefined && !isIngressWakeUrl(v.wake_url)) return null;
   return v as unknown as IngressRouteFile & { guest_mac?: string };
+}
+
+/** Whether a value is a wake URL the proxy accepts. */
+export function isIngressWakeUrl(value: unknown): value is string {
+  return typeof value === "string" && value.length <= WAKE_URL_MAX && WAKE_URL.test(value);
+}
+
+/** sha256 (hex) of a box API token, or null when it is not the 64-hex shape boxes use. */
+export function ingressBearerSha256(apiToken: unknown): string | null {
+  if (typeof apiToken !== "string" || !BOX_API_TOKEN.test(apiToken)) return null;
+  return createHash("sha256").update(apiToken, "utf8").digest("hex");
+}
+
+/**
+ * The owner's agent page, from NEXT_PUBLIC_APP_URL: a signed-in owner lands there and
+ * the page wakes the agent through Hivra. null when no usable https origin is set.
+ */
+export function ingressWakeUrl(agentId: string, env: Env = process.env): string | null {
+  if (!UUID.test(agentId)) return null;
+  let origin: URL;
+  try {
+    origin = new URL(String(env.NEXT_PUBLIC_APP_URL ?? "").trim());
+  } catch {
+    return null;
+  }
+  if (origin.protocol !== "https:" || origin.username || origin.password) return null;
+  const url = `https://${origin.host.toLowerCase()}/dashboard/agent/${agentId.toLowerCase()}`;
+  return isIngressWakeUrl(url) ? url : null;
 }
 
 /** RFC 1918 or shared (100.64/10) IPv4, the same rule the proxy applies. */

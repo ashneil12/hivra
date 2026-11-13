@@ -940,7 +940,15 @@ export interface SleepHostScriptInput {
   hostIngress?: boolean;
 }
 
-function napBody(hostIngress = false): string {
+function coversTelegram(coverage: ScriptCoverage | null): boolean {
+  if (!coverage) return false;
+  return coverage.kind === "telegram" || Object.prototype.hasOwnProperty.call(coverage.coverage.fingerprints, "telegram");
+}
+
+function napBody(hostIngress = false, serverDisarm = false): string {
+  // Telegram covered: the sweep arms its webhook during the nap, and only Hivra can take it down, so the
+  // proxy is told to send a client wake to Hivra instead of resuming the computer itself.
+  const napped = serverDisarm ? "napped server-disarm" : "napped";
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -962,7 +970,7 @@ if [ "$CTL_OK" != true ]; then
   STOP_REASON="$CTL_REASON"
   observe
 ${hostIngress ? `  # Paused after all: the proxy gets its marker, so it can still wake it. Otherwise requests flow again.
-  if [ "$OBS" = napping ] && ingress_mark && ingress_ctl 8 napped >/dev/null 2>&1; then :; else ingress_unmark; ingress_undrain; fi
+  if [ "$OBS" = napping ] && ingress_mark && ingress_ctl 8 ${napped} >/dev/null 2>&1; then :; else ingress_unmark; ingress_undrain; fi
 ` : ""}  # Whatever else the computer now reports, it is never resumed from here.
   if [ "$STOP_REASON" = unconfirmed ]; then finish false suspend_unconfirmed "$OBS"; fi
   finish false suspend_failed "$OBS"
@@ -976,7 +984,7 @@ if ! ingress_mark; then
   observe
   finish false ingress_marker_failed "$OBS"
 fi
-if ! ingress_ctl 8 napped; then
+if ! ingress_ctl 8 ${napped}; then
   ingress_unmark
   ingress_resume
   ingress_undrain
@@ -1104,7 +1112,7 @@ exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
 flock -x -n 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${nap ? napBody(hostIngress) : hibernateBody(hostIngress)}
+${nap ? napBody(hostIngress, hostIngress && coversTelegram(coverage)) : hibernateBody(hostIngress)}
 `;
 }
 

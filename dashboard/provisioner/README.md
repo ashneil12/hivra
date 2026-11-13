@@ -570,6 +570,12 @@ update them yet.
   The proxy resumes only a paused VM whose nap marker holds the running QEMU pid, answers
   an unknown host or a napping computer with 503, and wakes only on a signed, short-lived,
   single-use `POST /__hivra/wake` ticket.
+- **Host wake proxy client wakes (shipped, dark).** From `2026.11.13.4`, `ctl client-wake auth`
+  lets the owner's bearer (or the dashboard's `/auth/bootstrap` form) resume a napped computer
+  when its route carries `bearer_sha256`; the default level `ticket` keeps tickets as the only wake.
+  Cookies and webhook signature headers never wake and never refresh the idle signal. Browsers
+  asking for a napped computer go to the route's `wake_url`. A nap marked `server-disarm`
+  (Telegram armed) sends client wakes to Hivra's `wake-request` instead.
 - **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
   (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
   the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks
