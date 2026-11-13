@@ -345,6 +345,18 @@ export function provisionerSupportsWakeProxy(version: unknown): boolean {
   return (PORTABLE_HIVRA_WAKE_PROXY_VERSIONS as readonly unknown[]).includes(version);
 }
 
+/** The cloudflared release the wake-proxy install step puts on a host as
+ * /usr/local/bin/hivra-cloudflared (the per-computer host connector). Same
+ * version the guests run. The digest is the one cloudflare publishes in the
+ * release notes for this exact asset; the install step refuses any download
+ * that does not hash to it. Not part of the provisioner bundle. */
+export const HIVRA_HOST_CLOUDFLARED_RELEASE = {
+  version: "2026.8.2",
+  asset: "cloudflared-linux-amd64",
+  url: "https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-linux-amd64",
+  sha256: "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2",
+} as const;
+
 /** Legacy provider runtimes; desktop admission is separately version-bound. */
 export const PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS = [
   ...PORTABLE_HIVRA_LEGACY_CATALOG_RUNTIME_IDS,

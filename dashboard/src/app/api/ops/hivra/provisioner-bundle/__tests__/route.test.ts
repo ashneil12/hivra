@@ -10,6 +10,14 @@ jest.mock("@/lib/hivra/managed-provisioner-bundle-sync", () => ({
   syncManagedProvisionerBundle: (...args: unknown[]) => mockSync(...args),
 }));
 
+const mockWakeProxy = jest.fn();
+
+jest.mock("@/lib/hivra/ingress/host-wake-proxy", () => ({
+  isHostWakeProxyAction: (value: unknown) =>
+    ["install-wake-proxy", "wake-proxy-status", "remove-wake-proxy"].includes(value as string),
+  runHostWakeProxyAction: (...args: unknown[]) => mockWakeProxy(...args),
+}));
+
 import { POST } from "../route";
 
 const ORIGINAL_ENV = process.env;
@@ -97,6 +105,44 @@ describe("POST /api/ops/hivra/provisioner-bundle", () => {
 
     expect(response.status).toBe(200);
     expect(mockSync).toHaveBeenCalledWith("canary", "fixturenode12");
+  });
+
+  it("runs a wake proxy action only when one is named, and never the bundle sync with it", async () => {
+    mockWakeProxy.mockResolvedValue({
+      ok: true,
+      action: "install-wake-proxy",
+      targetId: "fixturenode12",
+      channel: "default",
+      result: { status: "installed", step: "health", changed: true, ms: 900 },
+    });
+    const response = await POST(request({ target: "fixturenode12", action: "install-wake-proxy", apply: true }));
+    expect(response.status).toBe(200);
+    expect(mockWakeProxy).toHaveBeenCalledWith({
+      action: "install-wake-proxy",
+      channel: "default",
+      targetId: "fixturenode12",
+      forceHealthFailure: false,
+    });
+    expect(mockSync).not.toHaveBeenCalled();
+    expect(mockInspect).not.toHaveBeenCalled();
+
+    await POST(request({ target: "fixturenode12", action: "install-wake-proxy", force_health_failure: true }));
+    expect(mockWakeProxy).toHaveBeenLastCalledWith(expect.objectContaining({ forceHealthFailure: true }));
+  });
+
+  it("rejects an unknown action and passes a refusal through with its status", async () => {
+    expect((await POST(request({ target: "fixturenode12", action: "reboot" }))).status).toBe(400);
+    expect(mockWakeProxy).not.toHaveBeenCalled();
+
+    mockWakeProxy.mockResolvedValue({ ok: false, httpStatus: 409, error: "HIVRA_HOST_WAKE_PROXY_ENABLED is off." });
+    const response = await POST(request({ target: "fixturenode12", action: "install-wake-proxy" }));
+    expect(response.status).toBe(409);
+    expect(mockSync).not.toHaveBeenCalled();
+  });
+
+  it("does not call the wake proxy without an action", async () => {
+    await POST(request({ target: "fixturenode12", apply: true }));
+    expect(mockWakeProxy).not.toHaveBeenCalled();
   });
 
   it("fails closed for an unknown server deployment channel", async () => {
