@@ -25,10 +25,12 @@
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
+  HOST_VM_CONTROL_INGRESS_PROGRAM,
   HOST_VM_CONTROL_PREFIX,
   HOST_VM_CONTROL_PROGRAM,
   HOST_VM_CONTROL_SOCKETS_PROGRAM,
 } from "@/lib/hivra/sleep/host-vm-control-program";
+import { INGRESS_PROXY_CLI, INGRESS_STATE_DIR, ingressStatsShell } from "@/lib/hivra/ingress/proxy-stats";
 import {
   IDLE_PROBE_PREFIX,
   IDLE_PROBE_PROGRAM,
@@ -161,8 +163,11 @@ trap 'exit 143' TERM`;
  * the helper's fixup also drops stale outbound :443 connections in the guest;
  * without it this is the plain helper every script carried before.
  */
-function ctlShell(killStaleSockets = false): string {
-  return `HOST_CTL_PROGRAM=${shellQuote(killStaleSockets ? HOST_VM_CONTROL_SOCKETS_PROGRAM : HOST_VM_CONTROL_PROGRAM)}
+function ctlShell(killStaleSockets = false, hostIngress = false): string {
+  const program = hostIngress
+    ? HOST_VM_CONTROL_INGRESS_PROGRAM
+    : killStaleSockets ? HOST_VM_CONTROL_SOCKETS_PROGRAM : HOST_VM_CONTROL_PROGRAM;
+  return `HOST_CTL_PROGRAM=${shellQuote(program)}
 CTL_OK=false
 CTL_REASON=helper_failed
 CTL_STATUS=""
@@ -218,6 +223,58 @@ qga_lock() {
 qga_unlock() {
   flock -u 7 >/dev/null 2>&1 || true
   exec 7>&-
+}`;
+}
+
+/** How long the nap gives the proxy to finish the requests it is serving before the computer stops. */
+export const INGRESS_DRAIN_MS = 2000;
+
+/**
+ * Host ingress: the computer's public connector runs on the host, in front of
+ * the wake proxy. Only scripts for such a computer carry this. The proxy only
+ * ever resumes a VM whose nap marker holds the running QEMU's pid, so the nap
+ * writes the marker after the stop, and every wake and hibernate removes it.
+ */
+function ingressShell(): string {
+  return `INGRESS_CLI=${INGRESS_PROXY_CLI}
+INGRESS_MARKER="${INGRESS_STATE_DIR}/napped-$VMID"
+INGRESS_OUT=""
+INGRESS_ERR=""
+# ingress_ctl <limit s> <cmd> [ms]: one request to the proxy's root helper. Exit 0 ok, 1 refused, anything else unreachable.
+ingress_ctl() {
+  local limit="$1" cmd="$2" rc=0
+  shift 2
+  INGRESS_OUT="$(command timeout -k 2 "$limit" python3 -I -B "$INGRESS_CLI" ctl "$cmd" "$VMID" "$@" 2>/dev/null </dev/null)" || rc=$?
+  return "$rc"
+}
+# New requests wait at the proxy, and the ones in flight finish. Open websockets or streams mean busy.
+ingress_drain() {
+  local rc=0
+  ingress_ctl 12 drain ${INGRESS_DRAIN_MS} || rc=$?
+  [ "$rc" = 0 ] && return 0
+  INGRESS_ERR=ingress_down
+  if [ "$rc" = 1 ]; then
+    case "$INGRESS_OUT" in *'"error":"busy"'*) INGRESS_ERR=ingress_busy ;; esac
+  fi
+  return 1
+}
+ingress_undrain() { ingress_ctl 8 undrain >/dev/null 2>&1 || true; }
+# The marker holds the running QEMU's pid, so the proxy never trusts one an earlier QEMU left.
+ingress_mark() {
+  local pid tmp
+  [ -d "${INGRESS_STATE_DIR}" ] || return 1
+  pid="$(head -c 32 "/var/run/qemu-server/$VMID.pid" 2>/dev/null | tr -dc 0-9)"
+  [ -n "$pid" ] && [ -d "/proc/$pid" ] || return 1
+  tmp="$INGRESS_MARKER.tmp.$$"
+  if printf '%s\\n' "$pid" >"$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$INGRESS_MARKER"; then return 0; fi
+  rm -f "$tmp"
+  return 1
+}
+ingress_unmark() { rm -f "$INGRESS_MARKER" "$INGRESS_MARKER".tmp.* 2>/dev/null || true; }
+# A computer the proxy could not wake is never left paused: resume it here.
+ingress_resume() {
+  ctl 10 qmp "$VMID" cont 5
+  [ "$CTL_OK" = true ] || qm resume "$VMID" >/dev/null 2>&1 || true
 }`;
 }
 
@@ -477,10 +534,14 @@ probe_or_finish() {
  */
 export function buildIdleProbeHostScript(
   target: { vmid: number; bindingTag: string | null },
-  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[] } = {},
+  options: { telegram?: boolean; channels?: readonly ChannelWakeChannel[]; ingressStats?: boolean } = {},
   specs: readonly ChannelWakeSpec[] = GENERIC_CHANNEL_SPECS,
 ): string {
-  return buildGuestReadHostScript(target, idleProbeProgramFor(options, specs));
+  const script = buildGuestReadHostScript(target, idleProbeProgramFor(options, specs));
+  // Host ingress: the wake proxy's own view of the computer (requests in flight, open streams, last
+  // verified use) rides in the same SSH call, as one HIVRA_INGRESS_STATS line after the probe's.
+  return options.ingressStats === true ? `${script}${ingressStatsShell(String(target.vmid))}
+` : script;
 }
 
 /**
@@ -871,9 +932,15 @@ export interface SleepHostScriptInput {
   channelCoverage?: ChannelSleepCoverage | null;
   /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
   fastConfigRead?: boolean;
+  /**
+   * The computer's public connector runs on the host (host ingress). A nap
+   * drains the wake proxy first and leaves its nap marker; a hibernate removes
+   * the marker. Off by default.
+   */
+  hostIngress?: boolean;
 }
 
-function napBody(): string {
+function napBody(hostIngress = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -882,21 +949,45 @@ if [ "$FROM" != awake ]; then finish false not_sleepable "$FROM"; fi
 STEP="$(now_ms)"
 probe_or_finish
 mark probe "$STEP"
-# QMP stop, then query-status in the same session: the helper says ok only when the computer reports paused.
+${hostIngress ? `# The host connector must be serving, and the proxy holds new requests back before the computer stops.
+STEP="$(now_ms)"
+systemctl is-active --quiet "hivra-cf@$VMID.service" </dev/null || finish false ingress_down "$FROM"
+ingress_drain || finish false "$INGRESS_ERR" "$FROM"
+mark drain "$STEP"
+` : ""}# QMP stop, then query-status in the same session: the helper says ok only when the computer reports paused.
 STEP="$(now_ms)"
 ctl 10 qmp "$VMID" stop 5
 mark suspend "$STEP"
 if [ "$CTL_OK" != true ]; then
   STOP_REASON="$CTL_REASON"
   observe
-  # Whatever else the computer now reports, it is never resumed from here.
+${hostIngress ? `  # Paused after all: the proxy gets its marker, so it can still wake it. Otherwise requests flow again.
+  if [ "$OBS" = napping ] && ingress_mark && ingress_ctl 8 napped >/dev/null 2>&1; then :; else ingress_unmark; ingress_undrain; fi
+` : ""}  # Whatever else the computer now reports, it is never resumed from here.
   if [ "$STOP_REASON" = unconfirmed ]; then finish false suspend_unconfirmed "$OBS"; fi
   finish false suspend_failed "$OBS"
 fi
-finish true napped napping`;
+${hostIngress ? `# The marker, then napped (which also ends the drain). A proxy that cannot wake it gets it back running.
+STEP="$(now_ms)"
+if ! ingress_mark; then
+  ingress_unmark
+  ingress_resume
+  ingress_undrain
+  observe
+  finish false ingress_marker_failed "$OBS"
+fi
+if ! ingress_ctl 8 napped; then
+  ingress_unmark
+  ingress_resume
+  ingress_undrain
+  observe
+  finish false ingress_down "$OBS"
+fi
+mark marker "$STEP"
+` : ""}finish true napped napping`;
 }
 
-function hibernateBody(): string {
+function hibernateBody(hostIngress = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -953,7 +1044,9 @@ RC=0
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
 mark hibernate "$STEP"
-HAS_VMSTATE=0
+${hostIngress ? `# Only a computer that is still paused keeps its nap marker; the proxy never resumes any other.
+[ "$OBS" = napping ] || ingress_unmark
+` : ""}HAS_VMSTATE=0
 if printf '%s\\n' "$CONFIG" | grep '^vmstate:' >/dev/null; then HAS_VMSTATE=1; fi
 if [ "$OBS" = hibernated ] && [ "$HAS_VMSTATE" = 1 ]; then
   ONBOOT_PENDING=0
@@ -989,6 +1082,7 @@ export function buildSleepHostScript(
   const telegramCoverage = assertCoverage(input.telegramCoverage);
   const channelCoverage = assertChannelCoverage(input.channelCoverage, specs);
   if (telegramCoverage && channelCoverage) throw new Error("Invalid channel wake coverage.");
+  const hostIngress = input.hostIngress === true;
   const coverage: ScriptCoverage | null = channelCoverage
     ? { kind: "channels", coverage: channelCoverage, specs }
     : telegramCoverage ? { kind: "telegram", coverage: telegramCoverage } : null;
@@ -1004,12 +1098,13 @@ ${ctlShell()}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
 ${probeShell(input.manual === true, coverage)}
-install -d -m 0755 /run/lock
+${hostIngress ? `${ingressShell()}
+` : ""}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
 flock -x -n 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${nap ? napBody() : hibernateBody()}
+${nap ? napBody(hostIngress) : hibernateBody(hostIngress)}
 `;
 }
 
@@ -1035,6 +1130,13 @@ export interface WakeHostScriptInput {
   fastConfigRead?: boolean;
   /** The guest fixup also drops stale outbound :443 connections (frozen long polls). Off by default. */
   killStaleSockets?: boolean;
+  /**
+   * The computer's public connector runs on the host (host ingress): the wake
+   * removes the proxy's nap marker once the computer runs, and the fixup sets
+   * the clock and drops dead sockets but never touches the guest's tunnel.
+   * Off by default.
+   */
+  hostIngress?: boolean;
 }
 
 function assertAdmission(admission: WakeAdmission): void {
@@ -1083,7 +1185,7 @@ capacity_inputs() {
 }`;
 }
 
-function wakeBody(): string {
+function wakeBody(hostIngress = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -1153,7 +1255,9 @@ case "$ST/$QMP/$LOCK" in
     ;;
 esac
 mark resume "$STEP"
-# From here the computer is running. A failed fixup leaves it running and says what failed.
+${hostIngress ? `# Running now: the proxy stops answering for it as asleep and forwards again.
+ingress_unmark
+` : ""}# From here the computer is running. A failed fixup leaves it running and says what failed.
 # One guest exec over the guest agent socket: set the clock from this host, kill the tunnel hard, restart it.
 # After a restore the agent may need a few seconds to answer; the helper retries until AGENT_WAIT runs out.
 STEP="$(now_ms)"
@@ -1189,18 +1293,19 @@ EXPECTED_BINDING_TAG=${shellQuote(tag)}
 # The host script itself arrives on stdin, so no command may read it.
 qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${receiptShell("wake")}
-${ctlShell(input.killStaleSockets === true)}
+${ctlShell(input.killStaleSockets === true, input.hostIngress === true)}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
 ${wakeAdmissionShell(input.admission, input.fastConfigRead === true)}
-install -d -m 0755 /run/lock
+${input.hostIngress === true ? `${ingressShell()}
+` : ""}install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:
 # it would see a computer that is about to be paused and report it awake. It
 # waits a little, then says busy with what the host shows, and changes nothing.
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${wakeBody()}
+${wakeBody(input.hostIngress === true)}
 `;
 }
 

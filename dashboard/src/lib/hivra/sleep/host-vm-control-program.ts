@@ -27,7 +27,9 @@
 // HOST_VM_CONTROL_SOCKETS_PROGRAM is the same program with one more guest
 // step in its fixup (see WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE). It is sent
 // only by a wake that asks for it, so every other script carries the plain
-// program unchanged.
+// program unchanged. HOST_VM_CONTROL_INGRESS_PROGRAM is the variant for a
+// computer whose public connector runs on the host: its fixup sets the clock
+// and drops dead :443 sockets, and never touches the guest's tunnel unit.
 //
 // The receipt carries ok, a reason (lower case words), the QMP status where it
 // applies, how the fixup ran (via), the number of tries, and step timings in
@@ -49,6 +51,15 @@ export const WAKE_FIXUP_COMMAND_TEMPLATE =
  */
 export const WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE =
   "date -s @<epoch> >/dev/null; ss -K state established '( dport = :443 )' >/dev/null 2>&1 || true; systemctl kill -s SIGKILL hivra-cf-tunnel; systemctl restart hivra-cf-tunnel";
+
+/**
+ * The guest command after a wake of a host-ingress computer (its public
+ * connector runs on the host, and the guest's own tunnel unit is off with its
+ * token file gone): the clock and the dead :443 sockets, and never the tunnel.
+ * Used only by HOST_VM_CONTROL_INGRESS_PROGRAM.
+ */
+export const WAKE_FIXUP_INGRESS_COMMAND_TEMPLATE =
+  "date -s @<epoch> >/dev/null; ss -K state established '( dport = :443 )' >/dev/null 2>&1 || true";
 
 export const HOST_VM_CONTROL_PROGRAM = String.raw`import errno, fcntl, json, os, random, re, socket, subprocess, sys, time
 # hivra-host-vm-control v1. Runs as root on the host. Never prints guest output.
@@ -404,6 +415,13 @@ export const HOST_VM_CONTROL_SOCKETS_PROGRAM = (() => {
   const plain = programFixupLine(WAKE_FIXUP_COMMAND_TEMPLATE);
   if (HOST_VM_CONTROL_PROGRAM.split(plain).length !== 2) throw new Error("host helper fixup line not found");
   return HOST_VM_CONTROL_PROGRAM.replace(plain, () => programFixupLine(WAKE_FIXUP_SOCKETS_COMMAND_TEMPLATE));
+})();
+
+/** The program for a host-ingress computer: only its FIXUP_TEMPLATE line differs, and it never names the tunnel. */
+export const HOST_VM_CONTROL_INGRESS_PROGRAM = (() => {
+  const plain = programFixupLine(WAKE_FIXUP_COMMAND_TEMPLATE);
+  if (HOST_VM_CONTROL_PROGRAM.split(plain).length !== 2) throw new Error("host helper fixup line not found");
+  return HOST_VM_CONTROL_PROGRAM.replace(plain, () => programFixupLine(WAKE_FIXUP_INGRESS_COMMAND_TEMPLATE));
 })();
 
 export type VmControlOp = "qmp" | "fixup";

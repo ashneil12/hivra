@@ -26,6 +26,7 @@ import {
   settleChannelsAfterWake,
   type ChannelDisarms,
 } from "./channel-wake/lifecycle";
+import { loadAgentIngressState, wakeViaIngress, type LoadedIngressState } from "./ingress/wake-client";
 
 /**
  * Wake an agent that is asleep, and say when it can be used.
@@ -161,7 +162,7 @@ export interface WakeScriptRun {
 export async function runWakeHostScript(
   row: AgentRow,
   target: HivraLifecycleTarget,
-  options: { restore: boolean; killStaleSockets?: boolean },
+  options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
   let script: string;
@@ -173,6 +174,8 @@ export async function runWakeHostScript(
       ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
       // A wake that took a Telegram wake row back also drops the guest's dead long polls, so the bot polls again at once.
       ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
+      // The host runs this computer's public connector: drop the proxy's nap marker, and never touch the guest's tunnel.
+      ...(options.hostIngress === true ? { hostIngress: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
@@ -280,6 +283,13 @@ async function performWakeSteps(
     const resolved = await resolveSleepTarget(row, LOG_SOURCE);
     if (!resolved.ok) return failed(`target_${resolved.code}`);
     const target = resolved.target;
+    // Host ingress (only read when it was ever configured here). A row that cannot be read means the old wake.
+    const ingress: LoadedIngressState = await loadAgentIngressState(agentId, {
+      vmid: target.vmid,
+      hostId: String(target.executionContext?.host ?? ""),
+    });
+    const hostIngress = ingress.kind === "row" && ingress.state.hostIngress;
+    if (hostIngress) detail.host_ingress = true;
 
     if (restore) {
       // A restore claims host RAM all at once. Take a slot first, so a crowd of
@@ -314,9 +324,38 @@ async function performWakeSteps(
       detail.ch_disarm_ok = channels.disarm.generic.every((d) => d.ok);
     }
 
+    // The ticket fast path: a napping computer behind the host's wake proxy is
+    // resumed by the proxy itself, which answers once the guest is healthy, so
+    // neither SSH nor the public health check is needed. Anything but a good
+    // receipt falls back to the SSH wake below. The channel arms are down first.
+    if (!restore && ingress.kind === "row" && ingress.state.acts && isFastWakeEnabled("ingress_ticket")) {
+      const ticket = await wakeViaIngress({
+        agentId,
+        vmid: target.vmid,
+        hostname: row.cf_hostname,
+        tunnelId: row.cf_tunnel_id,
+        generation: ingress.state.row.generation,
+      });
+      detail.ticket_ms = ticket.ms;
+      if (ticket.ok) {
+        detail.via = "ingress";
+        detail.proxy_ms = ticket.receipt.ms;
+        detail.cont_ms = ticket.receipt.contMs;
+        detail.guest_ms = ticket.receipt.guestMs;
+        return { result: "awake", reason: ticket.receipt.woke === "nap" ? "resumed" : "already", cold: false, detail };
+      }
+      detail.ticket_failed = ticket.reason;
+      if (ticket.ok === false && ticket.status !== undefined) detail.ticket_status = ticket.status;
+    }
+
     // Any socket-based channel that was armed (Telegram's long poll included)
     // means the guest holds dead sockets: drop them, so it reconnects at once.
-    const run = await runWakeHostScript(row, target, { restore, ...(channels.disarm.killStaleSockets ? { killStaleSockets: true } : {}) });
+    const run = await runWakeHostScript(row, target, {
+      restore,
+      ...(channels.disarm.killStaleSockets ? { killStaleSockets: true } : {}),
+      ...(hostIngress ? { hostIngress: true } : {}),
+    });
+    if (hostIngress) detail.via = "ssh";
     detail.script_ms = run.ms;
     if (run.sshReadyMs !== undefined) detail.ssh_ready_ms = run.sshReadyMs;
     if (!run.receipt) return failed(run.runError ?? "no_receipt");

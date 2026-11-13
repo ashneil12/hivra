@@ -57,6 +57,9 @@ import {
   runWakeHostScript,
   type AgentRow,
 } from "./agent-wake";
+import { listTunnelConnections } from "@/lib/services/cloudflare-tunnel";
+import { loadAgentIngressState } from "./ingress/wake-client";
+import { parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
 
 /**
  * Put an agent to sleep: nap (pause, RAM stays) or hibernate (RAM saved to
@@ -288,6 +291,28 @@ export async function readSleepHostRow(row: AgentRow): Promise<SleepHostRow | nu
 }
 
 // ---------------------------------------------------------------------------
+// Host ingress idle check
+// ---------------------------------------------------------------------------
+
+/**
+ * What the host's wake proxy says against a nap: unknown (no stats), requests
+ * in flight or open streams, or a verified use (ticket, bearer, bootstrap)
+ * inside the idle window. Unauthenticated traffic never counts. null when
+ * nothing does. Pure.
+ */
+export function ingressIdleBlocker(
+  stats: IngressProxyVmStats | null,
+  options: { manual: boolean; nowMs: number; idleWindowMs: number },
+): string | null {
+  if (!stats) return "ingress_stats_unavailable";
+  if (stats.inflight > 0 || stats.streams > 0) return "ingress_active";
+  if (!options.manual && stats.lastAuthedAtMs !== null && options.nowMs - stats.lastAuthedAtMs < options.idleWindowMs) {
+    return "ingress_recent_use";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Sleep
 // ---------------------------------------------------------------------------
 
@@ -388,6 +413,33 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   }
   if (!target.bindingTag) return { outcome: "ineligible", reason: "binding_not_enforced", reasons: ["binding_not_enforced"] };
 
+  // Host ingress: an agent whose public connector runs on the host sleeps only
+  // while ingress may act on it, and never while an enable or rollback holds it.
+  // Read only when ingress was ever configured here; unreadable keeps it awake.
+  const ingress = await loadAgentIngressState(agentId, {
+    vmid: target.vmid,
+    hostId: String(target.executionContext?.host ?? ""),
+    env,
+    nowMs: now(),
+  });
+  if (ingress.kind === "error") return { outcome: "skipped", reason: "ingress_unreadable" };
+  const hostIngress = ingress.kind === "row" && ingress.state.hostIngress;
+  if (ingress.kind === "row") {
+    if (ingress.state.leaseHeld) return { outcome: "skipped", reason: "ingress_operation" };
+    if (ingress.state.needsAwake) return { outcome: "ineligible", reason: "ingress_needs_awake", reasons: ["ingress_needs_awake"] };
+  }
+  // A nap behind the host's proxy needs the host connector to be the only one
+  // at the edge: a second connector (a guest one come back, or anyone else's)
+  // would serve requests straight to a paused computer.
+  if (hostIngress && tier === "nap") {
+    try {
+      const live = (await listTunnelConnections(String(row.cf_tunnel_id ?? ""))).filter((c) => c.connections > 0);
+      if (live.length !== 1) return { outcome: "not_idle", reason: "ingress_connectors", reasons: ["ingress_connectors"] };
+    } catch {
+      return { outcome: "skipped", reason: "ingress_connectors_unknown" };
+    }
+  }
+
   // Telegram wake: read only when the server switch is fully on and the owner
   // opted in. Without it every live channel keeps the agent awake, as before.
   let telegram: TelegramSleepContext | null = null;
@@ -423,9 +475,11 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   let coverage: ChannelCoverage = { covered: [], telegram: false, generic: [] };
   let preSleepArms: PreSleepArm[] = [];
   if (state === "awake") {
-    const probeOptions = genericChannels.length > 0
+    const channelProbeOptions = genericChannels.length > 0
       ? { telegram: Boolean(telegram), channels: genericChannels.map((c) => c.adapter.channel) }
       : telegram ? { telegram: true } : {};
+    // Host ingress: the proxy's own view of the computer rides in the same SSH call.
+    const probeOptions = hostIngress ? { ...channelProbeOptions, ingressStats: true } : channelProbeOptions;
     try {
       const run = await runProxmoxHostScript(
         buildIdleProbeHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }, probeOptions),
@@ -441,6 +495,15 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       verdict = idleVerdict(probe, verdictOptions(probe.cpus, covered));
       if (!verdict.idle) {
         return { outcome: "not_idle", reason: verdict.reasons[0], reasons: verdict.reasons, nextJobAt: verdict.nextJobAt };
+      }
+      if (hostIngress) {
+        const blocker = ingressIdleBlocker(parseIngressVmStats(run?.stdout ?? "", target.vmid), {
+          manual,
+          nowMs: now(),
+          idleWindowMs: timings.napAfterSeconds * 1000,
+        });
+        if (blocker === "ingress_stats_unavailable") return { outcome: "skipped", reason: blocker };
+        if (blocker) return { outcome: "not_idle", reason: blocker, reasons: [blocker] };
       }
     } catch {
       return { outcome: "skipped", reason: "probe_unavailable" };
@@ -519,7 +582,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     };
     const recoverByWaking = async (reason: string): Promise<SleepOutcome> => {
       // A hibernation that lost its receipt may be saved to disk: that wake is a restore.
-      const run = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
+      const run = await runWakeHostScript(row, target, { restore: tier === "hibernate", ...(hostIngress ? { hostIngress: true } : {}) });
       const busy = run.receipt?.reason === "busy";
       const observed = run.receipt && !busy ? stateFromObserved(run.receipt.to === "cold" ? "awake" : run.receipt.to) : null;
       if (!observed) return leaveLease(reason, false);
@@ -540,6 +603,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
         tier,
         manual,
         ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
+        ...(hostIngress ? { hostIngress: true } : {}),
         ...(sleepCoverage
           ? { channelCoverage: sleepCoverage }
           : telegram && covered.length > 0 && telegram.row.token_fp
@@ -585,7 +649,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
     const finalCovered = finalCoverage.covered;
     const finalVerdict = receipt.probe ? idleVerdict(receipt.probe, verdictOptions(receipt.probe.cpus, finalCovered)) : verdict;
     if (receipt.probe && finalVerdict && !finalVerdict.idle) {
-      const woke = await runWakeHostScript(row, target, { restore: tier === "hibernate" });
+      const woke = await runWakeHostScript(row, target, { restore: tier === "hibernate", ...(hostIngress ? { hostIngress: true } : {}) });
       const observed = woke.receipt && woke.receipt.reason !== "busy"
         ? stateFromObserved(woke.receipt.to === "cold" ? "awake" : woke.receipt.to)
         : null;
