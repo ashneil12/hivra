@@ -736,8 +736,8 @@ hivra_fast_qm() {
         if [ ! -e "$f" ]; then echo "status: stopped"; return 0; fi
         pid="$(head -c 32 "$f" 2>/dev/null | tr -dc 0-9)"
         if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] \
-            && tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
-            && tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "$2" \
+            && tr '\\0' '\\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -Fxq -- "-id"; then
           echo "status: running"
           return 0
         fi

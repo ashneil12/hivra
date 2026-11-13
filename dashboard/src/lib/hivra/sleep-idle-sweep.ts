@@ -474,7 +474,10 @@ async function reconcileDrift(ctx: Context): Promise<void> {
       fail(ctx, "sleep drift reconcile threw", error, "sleep_sweep_drift_threw");
     }
   });
-  if (background.length > 0) await untilDeadline(ctx, Promise.allSettled(background));
+  if (background.length > 0) {
+    await untilDeadline(ctx, Promise.allSettled(background));
+    ctx.pending.push(...background);
+  }
 }
 
 /** A stopped computer has nothing napping; how many leftover records are reset per run. */

@@ -38,6 +38,17 @@ describe("script construction", () => {
     expect(() => buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION("/opt/p; reboot") })).toThrow();
   });
 
+  it("never puts a NUL byte in a script, which the sudo transport refuses", () => {
+    for (const script of [
+      buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false }),
+      buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "hibernate", manual: false }),
+      buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION("/opt/hivra") }),
+      buildIdleProbeHostScript({ vmid: VMID, bindingTag: TAG }),
+    ]) {
+      expect(script.includes("\0")).toBe(false);
+    }
+  });
+
   it("times steps on the monotonic clock, so a wall clock step never gives a negative time", () => {
     for (const script of [
       buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false }),
