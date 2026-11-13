@@ -40,7 +40,9 @@ describe("agent SEO catalog", () => {
     expect(AGENT_SEO_SLUGS).toEqual(slugs);
     // The hub's ItemList is the full launchable lineup: a new launchable agent
     // needs a page, and a page never outlives its agent.
-    expect([...slugs].sort()).toEqual(AGENTS.map((agent) => agent.id).sort());
+    // DeepSeek Harness is the one alpha, Hivra-Cloud-only agent without a public page yet: it has run only on
+    // its Canary acceptance, so its page waits for live evidence rather than shipping a claim ahead of it.
+    expect([...slugs].sort()).toEqual(AGENTS.map((agent) => agent.id).filter((id) => id !== "deepseek-harness").sort());
     // Every entry has its words, and the directory lists the same agents in the same order.
     expect(Object.keys(AGENT_PAGE_CONTENT).sort()).toEqual([...slugs].sort());
     expect(HUB_CONTENT.directory.cards.map((card) => card.slug)).toEqual(slugs);

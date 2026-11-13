@@ -20,6 +20,12 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - browser-state:/var/lib/hermes-browser
+    # Chromium runs with its sandbox on; without this profile it refuses to
+    # start. Same settings the dashboard gives real boxes.
+    security_opt:
+      - seccomp=./docker/seccomp-chromium.json
+      - no-new-privileges:true
+    init: true
     restart: unless-stopped
 
 volumes:

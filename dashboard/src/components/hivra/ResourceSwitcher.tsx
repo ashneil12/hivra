@@ -10,6 +10,7 @@ import styles from "./WorkspaceIdentity.module.css";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 import { listRecents, recentHref } from "@/lib/workspace/recents";
 import { fleetEntryHref } from "@/lib/hivra/fleet-sections";
+import { StatusText } from "@/components/ui/StatusText";
 
 /**
  * The fleet switcher, on the canonical resource route.
@@ -41,6 +42,12 @@ export interface ResourceSwitcherProps {
    * only the status instead of saying it twice.
    */
   showKind?: boolean;
+  /**
+   * "sidebar": the agent view's sidebar header, a plain name and chevron with no
+   * icon or caption (the title bar carries the status). The trigger keeps its
+   * accessible name and the same menu.
+   */
+  variant?: "bar" | "sidebar";
 }
 
 /** The kind word the caption shows, so a host can tell when it already says it. */
@@ -65,7 +72,7 @@ function agentHref(agent: UnifiedAgent): string {
     : `/dashboard/agent/${encodeURIComponent(agent.id)}`;
 }
 
-export function ResourceSwitcher({ currentUid, name, kind, status, showKind = true }: ResourceSwitcherProps) {
+export function ResourceSwitcher({ currentUid, name, kind, status, showKind = true, variant = "bar" }: ResourceSwitcherProps) {
   const router = useRouter();
   const [opened, setOpened] = useState(false);
 
@@ -76,6 +83,7 @@ export function ResourceSwitcher({ currentUid, name, kind, status, showKind = tr
       kind={kind}
       status={status}
       showKind={showKind}
+      variant={variant}
       router={router}
       onFirstOpen={() => setOpened(true)}
       opened={opened}
@@ -100,6 +108,7 @@ function ResourceSwitcherTrigger({
   kind,
   status,
   showKind,
+  variant,
   router,
   opened,
   onFirstOpen,
@@ -109,6 +118,7 @@ function ResourceSwitcherTrigger({
   kind?: "agent" | "computer";
   status?: string;
   showKind: boolean;
+  variant: "bar" | "sidebar";
   router: ReturnType<typeof useRouter>;
   opened: boolean;
   onFirstOpen: () => void;
@@ -149,15 +159,15 @@ function ResourceSwitcherTrigger({
         aria-describedby={name && status ? statusId : undefined}
         title={name ? `Switch from ${name}` : "Switch agent or computer"}
         onClick={toggle}
-        className={styles.switcher}
+        className={variant === "sidebar" ? styles.sidebarSwitcher : styles.switcher}
       >
         {name ? <>
-          {kind === "computer" ? <Monitor size={18} aria-hidden /> : <Bot size={18} aria-hidden />}
+          {variant === "sidebar" ? null : kind === "computer" ? <Monitor size={18} aria-hidden /> : <Bot size={18} aria-hidden />}
           {/* Parts are tagged so a narrow host can fold this onto one line
               (name, then a status dot and word) without a second markup. */}
           <span className={styles.copy}><strong>{name}</strong>{showKind || status ? <small>
             {showKind ? <span data-switcher-part="kind">{resourceKindLabel(kind)}</span> : null}
-            {status ? <>{showKind ? <span data-switcher-part="separator" aria-hidden="true"> · </span> : null}<span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}>{status}</span></> : null}
+            {status ? <>{showKind ? <span data-switcher-part="separator" aria-hidden="true"> · </span> : null}<span id={statusId} data-switcher-part="status" data-tone={statusTone(status)}><StatusText value={status} /></span></> : null}
           </small> : null}</span>
         </> : <span>Switch</span>}
         <ChevronDown aria-hidden="true" size={12} className="shrink-0 text-[var(--text-muted)]" />

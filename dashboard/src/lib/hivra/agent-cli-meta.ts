@@ -164,6 +164,31 @@ export async function readAgentSoftwareFromBox(target: AgentSoftwareBoxTarget, f
   }
 }
 
+/** Replies being written and the newest reply activity, from GET /api/chat/runs; null when malformed. */
+function replyEvidence(body: unknown): { runningReplies: number; lastReplyActivityAt: number | null } | null {
+  const runsBody = objectOf(body);
+  if (!runsBody || !Array.isArray(runsBody.runs)) return null;
+  let runningReplies = 0;
+  let lastReplyActivityAt: number | null = null;
+  for (const entry of runsBody.runs) {
+    const run = objectOf(entry);
+    if (!run) return null;
+    if (run.state !== "finished") runningReplies += 1;
+    for (const stamp of [run.createdAt, run.startedAt, run.finishedAt]) {
+      const at = typeof stamp === "string" ? Date.parse(stamp) : NaN;
+      if (Number.isFinite(at) && (lastReplyActivityAt === null || at > lastReplyActivityAt)) lastReplyActivityAt = at;
+    }
+  }
+  return { runningReplies, lastReplyActivityAt };
+}
+
+/** Whether someone is attached to an agent terminal, from GET /api/terminal/sessions; null when malformed. */
+function terminalEvidence(body: unknown): boolean | null {
+  const terminalsBody = objectOf(body);
+  if (!terminalsBody || !Array.isArray(terminalsBody.sessions)) return null;
+  return terminalsBody.sessions.some((entry) => objectOf(entry)?.attached === true);
+}
+
 export interface AgentIdleEvidence {
   /** Chat replies still being written. */
   runningReplies: number;
@@ -183,22 +208,71 @@ export async function readAgentIdleEvidence(target: Omit<AgentSoftwareBoxTarget,
   if (!origin || !apiToken) return null;
   const box = client(origin, apiToken, fetcher);
   try {
-    const runsBody = objectOf(await box.get("/api/chat/runs", true, MAX_RUNS_RESPONSE_BYTES));
-    const terminalsBody = objectOf(await box.get("/api/terminal/sessions?surface=agent", true));
-    if (!runsBody || !Array.isArray(runsBody.runs) || !terminalsBody || !Array.isArray(terminalsBody.sessions)) return null;
-    let runningReplies = 0;
-    let lastReplyActivityAt: number | null = null;
-    for (const entry of runsBody.runs) {
-      const run = objectOf(entry);
-      if (!run) return null;
-      if (run.state !== "finished") runningReplies += 1;
-      for (const stamp of [run.createdAt, run.startedAt, run.finishedAt]) {
-        const at = typeof stamp === "string" ? Date.parse(stamp) : NaN;
-        if (Number.isFinite(at) && (lastReplyActivityAt === null || at > lastReplyActivityAt)) lastReplyActivityAt = at;
-      }
-    }
-    const terminalAttached = terminalsBody.sessions.some((entry) => objectOf(entry)?.attached === true);
-    return { runningReplies, lastReplyActivityAt, terminalAttached };
+    const replies = replyEvidence(await box.get("/api/chat/runs", true, MAX_RUNS_RESPONSE_BYTES));
+    const terminalAttached = terminalEvidence(await box.get("/api/terminal/sessions?surface=agent", true));
+    if (!replies || terminalAttached === null) return null;
+    return { ...replies, terminalAttached };
+  } catch {
+    return null;
+  } finally {
+    box.close();
+  }
+}
+
+export interface AgentActivityReading {
+  /** The connection service's own start, as an opaque id. A new id means its counters began again. */
+  bootId: string;
+  /**
+   * App agents: when the app was last used through the connection service
+   * (ms). The service's own start counts as a use, so this only shows real use
+   * when compared with an earlier reading under the same bootId.
+   */
+  appLastUsedAt: number | null;
+  /** App agents: how many of the app's live connections are open now. */
+  appOpenConnections: number | null;
+  /** Replies being written through Hivra chat; null when that couldn't be read. */
+  runningReplies: number | null;
+  /** When the newest reply started or finished (ms); null when there were none or it couldn't be read. */
+  lastReplyActivityAt: number | null;
+  /** Whether someone is attached to an agent terminal; null when that couldn't be read. */
+  terminalAttached: boolean | null;
+}
+
+/**
+ * How much the agent is being used, as its computer's connection service
+ * reports it: counts and times only, never content. null when the computer
+ * can't be reached or isn't a current connection service of this agent's kind
+ * (the bearer is sent only after the public reply proves that). A part that
+ * can't be read is null, never 0 or false.
+ */
+export async function readAgentActivityFromBox(target: AgentSoftwareBoxTarget, fetcher: Fetcher = ssrfSafeFetch): Promise<AgentActivityReading | null> {
+  const origin = originOf(target);
+  const apiToken = typeof target.apiToken === "string" && API_TOKEN.test(target.apiToken) ? target.apiToken : null;
+  if (!origin || !apiToken) return null;
+  const box = client(origin, apiToken, fetcher);
+  const optional = async (path: string, limit?: number): Promise<unknown> => {
+    try { return await box.get(path, true, limit); } catch { return null; }
+  };
+  try {
+    const publicMeta = objectOf(await box.get("/api/meta", false));
+    if (!publicMeta || publicMeta.agentKind !== target.subject.gatewayKind) return null;
+    if (publicMeta.surfaceAuth !== "post-cookie-v1" || typeof publicMeta.bootId !== "string" || !BOOT_ID.test(publicMeta.bootId)) return null;
+    const privateMeta = objectOf(await box.get("/api/meta", true));
+    // The same service must answer both: a restart between the two starts its counters again.
+    if (!privateMeta || privateMeta.agentKind !== target.subject.gatewayKind || privateMeta.bootId !== publicMeta.bootId) return null;
+    const activity = objectOf(objectOf(privateMeta.agentApp)?.activity);
+    const usedAt = typeof activity?.lastUsedAt === "string" ? Date.parse(activity.lastUsedAt) : NaN;
+    const open = activity?.openConnections;
+    const replies = replyEvidence(await optional("/api/chat/runs", MAX_RUNS_RESPONSE_BYTES));
+    const terminalAttached = terminalEvidence(await optional("/api/terminal/sessions?surface=agent"));
+    return {
+      bootId: publicMeta.bootId,
+      appLastUsedAt: Number.isFinite(usedAt) ? usedAt : null,
+      appOpenConnections: typeof open === "number" && Number.isInteger(open) && open >= 0 ? open : null,
+      runningReplies: replies ? replies.runningReplies : null,
+      lastReplyActivityAt: replies ? replies.lastReplyActivityAt : null,
+      terminalAttached,
+    };
   } catch {
     return null;
   } finally {

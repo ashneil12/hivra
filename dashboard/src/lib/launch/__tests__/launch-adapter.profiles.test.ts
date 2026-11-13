@@ -112,12 +112,27 @@ describe("Claude Code, OpenClaw, Agent Zero and Aeon launch through the agent AP
     expect(jest.mocked(createAgent).mock.calls[0][0]).not.toHaveProperty("maximumCpu");
   });
 
+  it("sends Claude Code on Hivra credits with the chosen Claude model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("claude-code"));
+    const draft = draftFor("claude-code", {}, { mode: "credits", model: "claude-opus-4-8", walletType: "card" });
+
+    await submitLaunchDraft(draft, MANAGED, { balance: { state: "known", cardMicroUsd: 1_000_000, hermesosMicroUsd: 0 } });
+
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({
+      type: "claude-code",
+      managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "claude-opus-4-8", walletType: "card" },
+    });
+  });
+
   it.each([
     ["openclaw", "native", false, { state: "unknown" }, false],
     ["openclaw", "credits", true, FUNDED, true],
     ["openclaw", "credits", false, TOKEN_ONLY, true],
     ["agent-zero", "credits", false, FUNDED, true],
     ["agent-zero", "native", false, FUNDED, false],
+    ["openbot", "credits", false, FUNDED, true],
+    ["openbot", "native", false, FUNDED, false],
     ["aeon", "credits", false, TOKEN_ONLY, true],
     ["aeon", "native", false, FUNDED, false],
   ] as const)("sends %s with %s model access exactly as its form did", async (profileId, mode, browser, balance, wantManaged) => {
@@ -150,6 +165,8 @@ describe("Claude Code, OpenClaw, Agent Zero and Aeon launch through the agent AP
     expect(PROFILE_DETAILS.openclaw.recommended).toMatchObject({ cpu: 1, ram: 2 });
     expect(PROFILE_DETAILS.aeon.recommended).toMatchObject({ cpu: 0.5, ram: 1 });
     expect(PROFILE_DETAILS["agent-zero"].recommended).toMatchObject({ cpu: 2, ram: 4 });
+    expect(PROFILE_DETAILS.openbot.recommended).toMatchObject({ cpu: 2, ram: 4 });
+    expect(PROFILE_DETAILS.openbot).toMatchObject({ runtimeId: "openbot", placementRuntimeId: "openbot", lane: "hivra-agent" });
   });
 });
 
@@ -197,7 +214,7 @@ describe("a launch without a receipt is only ever looked for again, never resent
     jest.mocked(findHivraLaunchReceipt).mockResolvedValue({ state: "accepted", phase: "accepted", agent: created("codex") });
     await expect(reconcileLaunchDraft(draftFor("codex"))).resolves.toMatchObject({ id: AGENT_ID });
     expect(launchResumeMode("codex")).toBe("resend");
-    for (const profileId of ["claude-code", "hermes", "openclaw", "agent-zero", "aeon"] as const) {
+    for (const profileId of ["claude-code", "hermes", "openclaw", "agent-zero", "openbot", "aeon", "deepseek-harness"] as const) {
       expect(launchResumeMode(profileId)).toBe("observe");
     }
   });
@@ -227,7 +244,7 @@ describe("Codex with a model key or Hivra credits", () => {
   });
 
   it("sends a pasted key exactly as the welcome form when the owner doesn't save it", async () => {
-    const legacy = legacyWelcomeBody({ mode: "byok", model: "deepseek-v4-pro" }, "  synthetic-venice-key  ");
+    const legacy = legacyWelcomeBody({ mode: "byok", model: "deepseek-v4-1-flash" }, "  synthetic-venice-key  ");
     jest.mocked(createAgent).mockResolvedValue(created("codex"));
     const draft = draftFor("codex", shared, { mode: "api-key", source: "custom", keySource: "paste", saveKey: false });
 
@@ -250,7 +267,7 @@ describe("Codex with a model key or Hivra credits", () => {
     expect(bodyOf(fetchCalls[0])).toEqual({ name: "Venice AI", provider: "venice", key: "synthetic-venice-key" });
     expect(onKeySaved).toHaveBeenCalledWith(VAULT_KEY_ID, expect.objectContaining({ id: VAULT_KEY_ID, provider: "venice", key_preview: "synthe...-key" }));
     const input = jest.mocked(createAgent).mock.calls[0][0];
-    expect(input.llm).toEqual({ provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VAULT_KEY_ID });
+    expect(input.llm).toEqual({ provider: "venice", mode: "byok", model: "deepseek-v4-1-flash", vaultKeyId: VAULT_KEY_ID });
     expect(JSON.stringify(input)).not.toContain("synthetic-venice-key");
   });
 
@@ -262,7 +279,7 @@ describe("Codex with a model key or Hivra credits", () => {
     jest.mocked(createAgent).mockResolvedValue(created("codex"));
     await submitLaunchDraft({ ...unconfirmed, modelAccess: { ...unconfirmed.modelAccess, sendSavedKey: true } }, MANAGED);
     expect(jest.mocked(createAgent).mock.calls[0][0].llm).toEqual({
-      provider: "venice", mode: "byok", model: "deepseek-v4-pro", vaultKeyId: VAULT_KEY_ID,
+      provider: "venice", mode: "byok", model: "deepseek-v4-1-flash", vaultKeyId: VAULT_KEY_ID,
     });
   });
 
@@ -277,7 +294,7 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
   const legacyBase = {
     agentName: "Hermes 1",
     selectedProviderId: "venice",
-    model: "deepseek-v4-flash",
+    model: "deepseek-v4-1-flash",
     customBaseUrl: "",
     managedVeniceWalletType: "card" as const,
     apiKey: "",
@@ -330,7 +347,8 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
     const error = await submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED).catch(caught => caught);
     expect(error).toBeInstanceOf(LaunchCorrectableError);
     expect(error.action).toEqual({ kind: "open", label: "Choose a plan", href: "/dashboard/billing?tab=plans" });
-    expect(error.message).toBe("A Hivra-hosted computer needs a paid plan.");
+    expect(error.message).toBe("Hermes runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.");
+    expect(error.message).not.toMatch(/own computer|connect one/i);
   });
 
   it("offers the owner's existing agent when the plan holds only one", async () => {
@@ -362,6 +380,18 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
     await expect(submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
   });
 
+  it.each([502, 503, 504])("keeps a %i with nothing visible in the check-again flow so a retry cannot start a second Hermes", async status => {
+    route((url, init) => url === "/api/instances" && init?.method === "POST", () => json(status, { success: false, error: "Gateway timeout." }));
+    route(url => url === "/api/instances", () => json(200, { success: true, data: [] }));
+    await expect(submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
+  });
+
+  it("keeps a non-JSON error page with nothing visible in the check-again flow", async () => {
+    route((url, init) => url === "/api/instances" && init?.method === "POST", () => new Response("<html>Gateway Timeout</html>", { status: 504 }));
+    route(url => url === "/api/instances", () => json(200, { success: true, data: [] }));
+    await expect(submitLaunchDraft(draftFor("hermes", hermesResources), MANAGED)).rejects.toBeInstanceOf(HivraLaunchInProgressError);
+  });
+
   it("reports a server failure that created nothing as a stopped launch", async () => {
     route((url, init) => url === "/api/instances" && init?.method === "POST", () => json(500, { success: false, error: "No capacity right now.", failureType: "provision_host_failure" }));
     route(url => url === "/api/instances", () => json(200, { success: true, data: [] }));
@@ -374,10 +404,106 @@ describe("Hermes launches through its instance lane as the welcome deploy form d
   });
 });
 
+describe("DeepSeek Harness launches as its acceptance did", () => {
+  it("sends Hivra credits with its default model on Hivra Cloud: no browser, receipt or maxima", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("deepseek-harness"));
+    const draft = draftFor("deepseek-harness", {}, { mode: "credits" });
+
+    await expect(submitLaunchDraft(draft, MANAGED, { balance: FUNDED })).resolves.toMatchObject({ id: AGENT_ID });
+
+    expect(wire(jest.mocked(createAgent).mock.calls[0][0])).toEqual({
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4,
+      browser: false, managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-1-flash", walletType: "card" },
+      deployment: { mode: "hivra-managed" },
+    });
+  });
+
+  it("sends the owner's pasted Venice key and the chosen model, without the managed flag", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("deepseek-harness"));
+    const draft = draftFor("deepseek-harness", {}, { mode: "api-key", model: "deepseek-v4-pro" });
+    await submitLaunchDraft(draft, MANAGED, { apiKey: "synthetic-venice-key" });
+    const sent = jest.mocked(createAgent).mock.calls[0][0];
+    expect(sent).toMatchObject({
+      managedVenice: false, browser: false,
+      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-pro", apiKey: "synthetic-venice-key" },
+    });
+    expect(sent).not.toHaveProperty("templateId");
+  });
+
+  it("sends a saved Vault key by ID and the default model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("deepseek-harness"));
+    const draft = draftFor("deepseek-harness", {}, { mode: "api-key", keySource: "saved", vaultKeyId: VAULT_KEY_ID, sendSavedKey: true });
+    await submitLaunchDraft(draft, MANAGED);
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({
+      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-1-flash", vaultKeyId: VAULT_KEY_ID },
+    });
+  });
+
+  it("never launches from a draft that still carries its own sign-in", async () => {
+    await expect(submitLaunchDraft(draftFor("deepseek-harness", {}, { mode: "native" }), MANAGED)).rejects.toMatchObject({ code: "model_access_required" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("never sends it to a server the owner connected", async () => {
+    await expect(submitLaunchDraft(draftFor("deepseek-harness", {}, { mode: "credits" }), SELF_MANAGED)).rejects.toMatchObject({ code: "deepseek_managed_only" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("looks for what a lost answer created instead of sending it again", async () => {
+    jest.mocked(createAgent).mockRejectedValue(new Error("Failed to fetch"));
+    jest.mocked(listAgentsResult).mockResolvedValue({ error: null, agents: [
+      created("deepseek-harness", { name: "DeepSeek Harness 1", created_at: new Date().toISOString() } as Partial<HivraAgent>),
+    ] });
+    await expect(submitLaunchDraft(draftFor("deepseek-harness", {}, { mode: "credits" }), MANAGED)).resolves.toMatchObject({ id: AGENT_ID });
+    expect(createAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Hermes on a Hivra computer launches the generic agent type `hermes`", () => {
+  it("sends Hivra credits with the default model on Hivra Cloud, with no browser", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("hermes"));
+    const draft = draftFor("hermes-computer", {}, { mode: "credits" });
+
+    await expect(submitLaunchDraft(draft, MANAGED, { balance: FUNDED })).resolves.toMatchObject({ id: AGENT_ID });
+
+    expect(wire(jest.mocked(createAgent).mock.calls[0][0])).toEqual({
+      type: "hermes", name: "Hermes 1", cpu: 2, ram: 4,
+      browser: false, managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "deepseek-v4-1-flash", walletType: "card" },
+      deployment: { mode: "hivra-managed" },
+    });
+    // It never touches the old lane's instance API.
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("sends the owner's pasted Venice key with the chosen model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("hermes"));
+    await submitLaunchDraft(draftFor("hermes-computer", {}, { mode: "api-key", model: "deepseek-v4-pro" }), MANAGED, { apiKey: "synthetic-venice-key" });
+    expect(jest.mocked(createAgent).mock.calls[0][0]).toMatchObject({
+      type: "hermes", managedVenice: false, browser: false,
+      llm: { provider: "venice", mode: "byok", model: "deepseek-v4-pro", apiKey: "synthetic-venice-key" },
+    });
+  });
+
+  it("can be left to Hermes's own setup, sending no model", async () => {
+    jest.mocked(createAgent).mockResolvedValue(created("hermes"));
+    await submitLaunchDraft(draftFor("hermes-computer", {}, { mode: "native" }), MANAGED);
+    const sent = jest.mocked(createAgent).mock.calls[0][0];
+    expect(sent).toMatchObject({ type: "hermes", managedVenice: false });
+    expect(sent).not.toHaveProperty("llm");
+  });
+
+  it("never sends it to a server the owner connected", async () => {
+    await expect(submitLaunchDraft(draftFor("hermes-computer", {}, { mode: "credits" }), SELF_MANAGED)).rejects.toMatchObject({ code: "hermes_managed_only" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+});
+
 describe("a launch started from a saved template", () => {
   const TEMPLATE = { id: "77777777-7777-4777-8777-777777777777", name: "Research Bot" };
 
-  it.each(["claude-code", "codex", "openclaw", "agent-zero", "aeon"] as const)(
+  it.each(["claude-code", "codex", "openclaw", "agent-zero", "openbot", "aeon"] as const)(
     "names the template in the %s launch so the server forks it", async (profileId) => {
       jest.mocked(createAgent).mockResolvedValue(created(PROFILE_DETAILS[profileId].runtimeId));
       await submitLaunchDraft(draftFor(profileId, { template: TEMPLATE }), MANAGED);
@@ -409,7 +535,9 @@ describe("each runtime opens its own surface", () => {
     ["codex", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`],
     ["openclaw", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["agent-zero", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
+    ["openbot", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["aeon", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
+    ["deepseek-harness", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["hermes", "native", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1`],
     ["hermes", "credits", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1`],
   ] as const)("opens %s (%s) where its form did", (profileId, mode, href) => {
@@ -421,9 +549,12 @@ describe("each runtime opens its own surface", () => {
       .toBe(`/dashboard/instances/${AGENT_ID}?focus=nous-tool-gateway&surface=chat&welcome=1`);
   });
 
-  it("keeps Hermes in the journey until its workspace answers", () => {
+  it("keeps every agent in the journey until it can answer, and opens computers straight away", () => {
     expect(opensOnAcceptance("hermes")).toBe(false);
-    expect(opensOnAcceptance("claude-code")).toBe(true);
+    expect(opensOnAcceptance("claude-code")).toBe(false);
+    expect(opensOnAcceptance("codex")).toBe(false);
+    expect(opensOnAcceptance("openclaw")).toBe(false);
+    expect(opensOnAcceptance("ubuntu-desktop")).toBe(true);
   });
 });
 

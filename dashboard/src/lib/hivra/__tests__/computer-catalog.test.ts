@@ -2,6 +2,7 @@ import {
   COMPUTER_TEMPLATES,
   OMARCHY_TEMPLATE,
   UBUNTU_DESKTOP_TEMPLATE,
+  UBUNTU_SERVER_TEMPLATE,
   WINDOWS_TEMPLATE,
   assessComputerTemplateTarget,
   getComputerTemplate,
@@ -9,7 +10,7 @@ import {
 
 describe("Hivra computer-image catalog", () => {
   it("offers Ubuntu Desktop as the first launchable computer profile", () => {
-    expect(COMPUTER_TEMPLATES.map((template) => template.id)).toEqual(["ubuntu-desktop", "omarchy", "windows"]);
+    expect(COMPUTER_TEMPLATES.map((template) => template.id)).toEqual(["ubuntu-desktop", "ubuntu-server", "omarchy", "windows"]);
     expect(getComputerTemplate("ubuntu-desktop")).toBe(UBUNTU_DESKTOP_TEMPLATE);
     expect(UBUNTU_DESKTOP_TEMPLATE).toMatchObject({
       kind: "operating-system",
@@ -26,6 +27,24 @@ describe("Hivra computer-image catalog", () => {
     });
   });
 
+  it("models the Linux computer as the Ubuntu image with a light floor and no desktop access", () => {
+    expect(getComputerTemplate("ubuntu-server")).toBe(UBUNTU_SERVER_TEMPLATE);
+    expect(UBUNTU_SERVER_TEMPLATE).toMatchObject({
+      name: "Linux computer",
+      runtimeId: "linux-desktop",
+      launchMode: "standard",
+      requirements: { cpu: 0.5, ramGb: 1, diskGb: 40 },
+      access: { native: { protocol: "none" }, browser: { protocol: "none" } },
+    });
+    // The same pinned image, so admission checks the same prepared checksum.
+    expect(UBUNTU_SERVER_TEMPLATE.upstream.isoSha256).toBe(UBUNTU_DESKTOP_TEMPLATE.upstream.isoSha256);
+    expect(UBUNTU_DESKTOP_TEMPLATE.requirements).toMatchObject({ cpu: 2, ramGb: 4 });
+    expect(assessComputerTemplateTarget(UBUNTU_SERVER_TEMPLATE, {
+      architecture: "amd64", driver: "proxmox-kvm", kvmAvailable: true, cpu: 1, ramGb: 2, diskGb: 40,
+      preparedImageSha256: UBUNTU_SERVER_TEMPLATE.upstream.isoSha256,
+    }).launchReady).toBe(true);
+  });
+
   it("keeps Ubuntu admission aligned with the provisioner's 40 GB disk", () => {
     expect(assessComputerTemplateTarget(UBUNTU_DESKTOP_TEMPLATE, {
       architecture: "amd64",
@@ -39,7 +58,7 @@ describe("Hivra computer-image catalog", () => {
   });
 
   it("models Omarchy as a computer image, not an agent identity", () => {
-    expect(COMPUTER_TEMPLATES).toHaveLength(3);
+    expect(COMPUTER_TEMPLATES).toHaveLength(4);
     expect(getComputerTemplate("omarchy")).toBe(OMARCHY_TEMPLATE);
     expect(OMARCHY_TEMPLATE).toMatchObject({
       kind: "operating-system",

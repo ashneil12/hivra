@@ -1,27 +1,30 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// "Update available" beside the agent's name in the surface bar. Above 900px
-// the identity cluster was a fixed 280px, so the chip (which never shrinks)
-// cut the agent's own name to a few letters; on a phone its words were hidden,
-// leaving an unlabelled icon.
-describe("the software chip in the agent page's surface bar", () => {
-  const css = readFileSync(join(__dirname, "..", "ResourceWorkspace.module.css"), "utf8");
-  const chipCss = readFileSync(join(__dirname, "..", "..", "..", "..", "..", "components", "hivra", "AgentSoftwareChip.module.css"), "utf8");
+// "Update available" beside the agent's name now sits in the floating pill's
+// dropdown header, which is wide enough for the chip's full words, so the old
+// short-word rule for a narrow title bar is gone and must not come back unused.
+describe("the software chip in the agent page's floating pill", () => {
+  const root = join(__dirname, "..", "..", "..", "..", "..", "components", "hivra");
+  const pill = readFileSync(join(root, "agent-shell", "AgentPill.tsx"), "utf8");
+  const pillCss = readFileSync(join(root, "agent-shell", "AgentPill.module.css"), "utf8");
+  const shell = readFileSync(join(root, "agent-shell", "AgentShell.tsx"), "utf8");
 
-  it("lets the identity grow to fit the name and the chip on wide pages, only while the chip shows", () => {
-    const wide = css.slice(css.indexOf("@container resource-workspace (width > 900px)"));
-    expect(wide).toMatch(/^@container resource-workspace \(width > 900px\) \{\s*\.identity:has\(> \.softwareChip:not\(:empty\)\) \{ flex: 0 1 auto; max-width: 45%; \}\s*\}/);
-    // The narrow layout's own identity rule (a full row) stays untouched by it.
-    const narrow = css.slice(css.indexOf("@container resource-workspace (max-width: 900px)"));
-    expect(narrow).toContain(".identity { flex-basis: 100%; max-width: none;");
+  it("draws the chip in the dropdown header, beside the status", () => {
+    expect(pill).toContain("styles.head");
+    expect(pill).toContain("{extras ? (");
+    expect(pill).toContain("className={styles.extras}");
+    expect(shell).toContain("extras={titleExtras}");
   });
 
-  it("keeps a short word next to the icon on a phone", () => {
-    const phone = css.slice(css.indexOf("@container resource-workspace (max-width: 600px)"));
-    expect(phone).toContain(".softwareChip [data-chip-text] { display: none; }");
-    expect(phone).toContain(".softwareChip [data-chip-short] { display: inline; }");
-    // Hidden everywhere else by the chip's own stylesheet, which the phone rule outranks.
-    expect(chipCss).toMatch(/^\.short \{ display: none; \}$/m);
+  it("lets the chip keep its full words: the dropdown never hides them", () => {
+    expect(pillCss).not.toContain("data-chip-text");
+    expect(pillCss).not.toContain("data-chip-short");
+  });
+
+  it("keeps the column a size container, and a positioning box for the pill and its dropdown", () => {
+    const column = readFileSync(join(root, "agent-shell", "AgentShell.module.css"), "utf8");
+    expect(column).toMatch(/\.column \{[^}]*container-type: inline-size/);
+    expect(column).toMatch(/\.column \{[^}]*position: relative/);
   });
 });

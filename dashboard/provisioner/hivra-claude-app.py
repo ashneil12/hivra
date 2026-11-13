@@ -29,6 +29,14 @@ Verbs (the gateway reaches them through one scoped sudoers rule):
   mode app|desktop  full-screen app view, or the app in a window on the desktop
   remove            stop, disable and delete the app and its saved profile
   supervise         the systemd service: restore, launch, keep it running
+  clipboard on|off  the owner's clipboard switch for the desktop (off by default)
+  clipboard-put     put UTF-8 text from stdin on the desktop's clipboard (switch on)
+  clipboard-get     print the desktop's clipboard text as JSON (switch on)
+
+The clipboard verbs never turn on Selkies' own clipboard: the stream keeps it
+off. They move text only when the owner presses Paste in or Copy out on the
+Desktop toolbar, through ``xclip`` run as the desktop user inside the container.
+The switch lives outside the app's state so removing the app never changes it.
 """
 
 from __future__ import annotations
@@ -73,6 +81,20 @@ SNAPSHOT_EXCLUDES = (
     ".config/Claude/SingletonCookie", ".config/Claude/SingletonSocket",
     ".config/Claude/claude-code", ".config/Claude/vm_bundles",
 )
+# Claude Code's own data from the app's Code tab (sessions, settings, its
+# config file) lives outside .config/Claude. It is saved in its own archive with
+# its own cap, so a large session history can never stop the sign-in backup.
+CODE_SNAPSHOT = STATE / "code-profile.tar.gz"
+CODE_SNAPSHOT_PATHS = (".claude", ".claude.json")
+CODE_SNAPSHOT_EXCLUDES = (
+    ".claude/shell-snapshots", ".claude/statsig", ".claude/debug", ".claude/cache",
+    ".claude/ide", ".claude/local", ".claude/downloads",
+)
+CODE_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024
+WORKSPACE_DIR = f"{HOME}/Hivra"
+CLIPBOARD_STATE = Path("/var/lib/hivra/desktop-clipboard")
+CLIPBOARD_ENABLED = CLIPBOARD_STATE / "enabled"
+CLIPBOARD_MAX_BYTES = 256 * 1024
 SNAPSHOT_INTERVAL_SECONDS = 120
 # A profile larger than this is not backed up (the previous backup is kept) rather
 # than filling the VM's memory or disk.
@@ -93,6 +115,13 @@ export DISPLAY={display}
 export XDG_RUNTIME_DIR=/tmp/runtime-{user}
 export XDG_CURRENT_DESKTOP=KDE
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent
+# Start in the Hivra folder, the one place in this desktop that survives a
+# restart, so a project opened from the Code tab is kept with the owner's files.
+cd {workspace} 2>/dev/null || cd
+# --no-sandbox: the contained desktop runs under Docker's default seccomp profile
+# with no-new-privileges, which leaves Chromium neither user namespaces nor its
+# setuid helper. The computer's VM and the locked-down container are the walls
+# here; giving this container a Chromium seccomp grant is tracked separately.
 exec {root}/current/usr/lib/claude-desktop/claude-desktop --no-sandbox --password-store=basic "$@"
 """
 
@@ -254,6 +283,16 @@ def download(pin: dict) -> Path:
     return target
 
 
+def write_launcher() -> None:
+    """(Re)write the launcher, so a launcher from an older helper is replaced the
+    next time the app starts rather than only when a new version is unpacked."""
+    launcher = LAUNCHER_SCRIPT.format(display=DISPLAY, user=DESKTOP_USER, root=APP_ROOT, workspace=WORKSPACE_DIR)
+    in_container(["/bin/bash", "-c",
+                  f"set -e; mkdir -p {HOME}/.local/bin {HOME}/.local/share/applications; "
+                  f"cat > {LAUNCHER}.tmp; chmod 0755 {LAUNCHER}.tmp; mv -f {LAUNCHER}.tmp {LAUNCHER}"],
+                 input_bytes=launcher.encode())
+
+
 def unpack(pin: dict) -> None:
     """Unpack the pinned package inside the container as the desktop user."""
     version = pin["version"]
@@ -275,10 +314,7 @@ def unpack(pin: dict) -> None:
     entry = (f"[Desktop Entry]\nName=Claude\nComment=Claude app\nExec={LAUNCHER} %U\nIcon=utilities-terminal\n"
              "Type=Application\nStartupNotify=true\nCategories=Utility;Development;\n"
              "MimeType=x-scheme-handler/claude;application/vnd.anthropic.mcpb;application/vnd.anthropic.skill;\n")
-    launcher = LAUNCHER_SCRIPT.format(display=DISPLAY, user=DESKTOP_USER, root=APP_ROOT)
-    in_container(["/bin/bash", "-c",
-                  f"set -e; mkdir -p {HOME}/.local/bin {HOME}/.local/share/applications; "
-                  f"cat > {LAUNCHER}; chmod 0755 {LAUNCHER}"], input_bytes=launcher.encode())
+    write_launcher()
     in_container(["/bin/bash", "-c", f"cat > {DESKTOP_ENTRY}"], input_bytes=entry.encode())
     in_container(["/bin/bash", "-c",
                   f"set -e; ln -sfn {version} {APP_ROOT}/current.next; mv -T {APP_ROOT}/current.next {APP_ROOT}/current; "
@@ -297,36 +333,56 @@ def unpack(pin: dict) -> None:
                      check=False)
 
 
-def snapshot_profile() -> bool:
+def snapshot_archive(target: Path, paths, excludes, limit: int) -> bool:
+    """Save the named paths of the desktop user's home into ``target`` (root-only),
+    keeping the previous archive when the new one fails or is over ``limit``."""
     if not container_running():
         return False
-    exists = in_container(["/bin/bash", "-c", f"test -d {HOME}/.config/Claude"], check=False)
-    if exists.returncode != 0:
+    present = [path for path in paths
+               if in_container(["/usr/bin/test", "-e", f"{HOME}/{path}"], check=False).returncode == 0]
+    if not present:
         return False
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = SNAPSHOT.with_name(SNAPSHOT.name + ".tmp")
+    temporary = target.with_name(target.name + ".tmp")
     command = [DOCKER, "exec", "-u", DESKTOP_USER, CONTAINER, "tar", "-C", HOME, "-czf", "-"] \
-        + [f"--exclude={item}" for item in SNAPSHOT_EXCLUDES] + [".config/Claude"]
-    code, written, exceeded = stream_to_file(command, temporary, SNAPSHOT_MAX_BYTES)
+        + [f"--exclude={item}" for item in excludes] + present
+    code, written, exceeded = stream_to_file(command, temporary, limit)
     # tar exits 1 when a file changed while it was read (a live profile): the
     # archive is still the best available copy, never a reason to drop state.
     if exceeded or code not in (0, 1) or written == 0:
         temporary.unlink(missing_ok=True)
-        log("profile snapshot skipped: " + ("larger than the cap" if exceeded else "tar failed"))
+        log(f"{target.name} snapshot skipped: " + ("larger than the cap" if exceeded else "tar failed"))
         return False
-    os.replace(temporary, SNAPSHOT)
+    os.replace(temporary, target)
+    return True
+
+
+def snapshot_profile() -> bool:
+    saved = snapshot_archive(SNAPSHOT, (".config/Claude",), SNAPSHOT_EXCLUDES, SNAPSHOT_MAX_BYTES)
+    snapshot_archive(CODE_SNAPSHOT, CODE_SNAPSHOT_PATHS, CODE_SNAPSHOT_EXCLUDES, CODE_SNAPSHOT_MAX_BYTES)
+    return saved
+
+
+def restore_archive(source: Path, marker: str) -> bool:
+    """Put ``source`` back unless ``marker`` already exists in the desktop's home."""
+    if not source.is_file():
+        return False
+    present = in_container(["/usr/bin/test", "-e", f"{HOME}/{marker}"], check=False)
+    if present.returncode == 0:
+        return False
+    stream_from_file([DOCKER, "exec", "-i", "-u", DESKTOP_USER, CONTAINER, "/bin/tar", "-C", HOME, "-xzf", "-",
+                      "--no-same-owner", "--no-same-permissions"], source, timeout=300)
     return True
 
 
 def restore_profile() -> bool:
-    if not SNAPSHOT.is_file():
-        return False
-    present = in_container(["/bin/bash", "-c", f"test -e {HOME}/.config/Claude/Local\\ Storage"], check=False)
-    if present.returncode == 0:
-        return False
-    stream_from_file([DOCKER, "exec", "-i", "-u", DESKTOP_USER, CONTAINER, "/bin/tar", "-C", HOME, "-xzf", "-",
-                      "--no-same-owner", "--no-same-permissions"], SNAPSHOT, timeout=300)
-    return True
+    restored = restore_archive(SNAPSHOT, ".config/Claude/Local Storage")
+    try:
+        restore_archive(CODE_SNAPSHOT, ".claude")
+    except RuntimeError as error:
+        # The Code tab's history is worth keeping, but never worth not starting the app.
+        log(f"Code tab data was not restored: {error}")
+    return restored
 
 
 # --- window mode -----------------------------------------------------------------
@@ -406,6 +462,8 @@ def status() -> dict:
         "profileSaved": SNAPSHOT.is_file(),
         "installing": install_in_progress(),
         "lastError": last_error,
+        "codeProfileSaved": CODE_SNAPSHOT.is_file(),
+        "clipboard": clipboard_enabled(),
     }
 
 
@@ -495,7 +553,7 @@ def verb_remove() -> int:
         if container_running():
             in_container(["/usr/bin/pkill", "-u", DESKTOP_USER, "-f", f"{APP_ROOT}/.*/claude-desktop"], check=False, timeout=10)
             in_container(["/bin/bash", "-c",
-                          f"rm -rf {APP_ROOT} {HOME}/.config/Claude {HOME}/.cache/hivra-claude-app {LAUNCHER} {DESKTOP_ENTRY}"],
+                          f"rm -rf {APP_ROOT} {HOME}/.config/Claude {HOME}/.claude {HOME}/.claude.json {HOME}/.cache/hivra-claude-app {LAUNCHER} {DESKTOP_ENTRY}"],
                          check=False, timeout=120)
         shutil.rmtree(STATE, ignore_errors=True)
     print(json.dumps({"ok": True, "removed": True}))
@@ -535,6 +593,7 @@ def supervise() -> int:
                         unpack(pin)
                         write_state(ENABLED, pin["version"] + "\n")
                     restore_profile()
+                    write_launcher()
                 log("starting the Claude app")
                 in_container([LAUNCHER], detach=True, check=False, timeout=20)
                 applied_for = None
@@ -567,6 +626,75 @@ def supervise() -> int:
     return 0
 
 
+# --- clipboard -------------------------------------------------------------------
+
+def clipboard_enabled() -> bool:
+    return CLIPBOARD_ENABLED.is_file()
+
+
+def verb_clipboard(setting: str) -> int:
+    if setting not in ("on", "off"):
+        print("usage: hivra-claude-app clipboard on|off", file=sys.stderr)
+        return 2
+    if setting == "on":
+        CLIPBOARD_STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(CLIPBOARD_STATE, 0o700)
+        fd = os.open(CLIPBOARD_ENABLED, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(fd)
+    else:
+        CLIPBOARD_ENABLED.unlink(missing_ok=True)
+    print(json.dumps({"ok": True, "clipboard": clipboard_enabled()}))
+    return 0
+
+
+def clipboard_refusal() -> str | None:
+    if not clipboard_enabled():
+        return "clipboard_off"
+    if not container_running():
+        return "desktop_not_running"
+    return None
+
+
+def verb_clipboard_put() -> int:
+    refusal = clipboard_refusal()
+    if refusal:
+        print(json.dumps({"ok": False, "error": refusal}))
+        return 3
+    data = sys.stdin.buffer.read(CLIPBOARD_MAX_BYTES + 1)
+    if len(data) > CLIPBOARD_MAX_BYTES:
+        print(json.dumps({"ok": False, "error": "too_large"}))
+        return 4
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        print(json.dumps({"ok": False, "error": "not_text"}))
+        return 4
+    # xclip keeps a child running to serve the selection. Its output goes to
+    # /dev/null so that child never holds docker exec's pipes open.
+    result = in_container(["/bin/sh", "-c", "exec xclip -selection clipboard -in >/dev/null 2>&1"],
+                          check=False, input_bytes=data, timeout=15)
+    if result.returncode != 0:
+        print(json.dumps({"ok": False, "error": "clipboard_failed"}))
+        return 1
+    print(json.dumps({"ok": True, "bytes": len(data)}))
+    return 0
+
+
+def verb_clipboard_get() -> int:
+    refusal = clipboard_refusal()
+    if refusal:
+        print(json.dumps({"ok": False, "error": refusal}))
+        return 3
+    result = in_container(["xclip", "-selection", "clipboard", "-out"], check=False, timeout=10)
+    # xclip exits non-zero when nothing owns the clipboard: that is an empty clipboard.
+    data = result.stdout if result.returncode == 0 else b""
+    if len(data) > CLIPBOARD_MAX_BYTES:
+        print(json.dumps({"ok": False, "error": "too_large"}))
+        return 4
+    print(json.dumps({"ok": True, "text": data.decode("utf-8", "replace")}))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if os.geteuid() != 0:
         print("hivra-claude-app must run as root", file=sys.stderr)
@@ -585,7 +713,13 @@ def main(argv: list[str]) -> int:
         return verb_remove()
     if verb == "supervise" and len(argv) == 2:
         return supervise()
-    print("usage: hivra-claude-app status|install|mode app|desktop|remove|supervise", file=sys.stderr)  # install-run is internal
+    if verb == "clipboard" and len(argv) == 3:
+        return verb_clipboard(argv[2])
+    if verb == "clipboard-put" and len(argv) == 2:
+        return verb_clipboard_put()
+    if verb == "clipboard-get" and len(argv) == 2:
+        return verb_clipboard_get()
+    print("usage: hivra-claude-app status|install|mode app|desktop|remove|supervise|clipboard on|off|clipboard-put|clipboard-get", file=sys.stderr)  # install-run is internal
     return 2
 
 

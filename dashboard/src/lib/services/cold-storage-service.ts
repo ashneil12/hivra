@@ -183,6 +183,7 @@ type HermesInstanceRow = {
   lifecycle_state: string | null;
   status: string | null;
   subdomain: string | null;
+  gateway_url?: string | null;
   archive_uri: string | null;
   archived_at: string | null;
   archive_size_bytes: number | null;
@@ -201,6 +202,7 @@ const INSTANCE_COLUMNS = [
   "lifecycle_state",
   "status",
   "subdomain",
+  "gateway_url",
   "archive_uri",
   "archived_at",
   "archive_size_bytes",
@@ -801,6 +803,8 @@ export type RestoreInstanceOptions = {
    * pick the right tier value from tier-specs.ts themselves.
    */
   cpuLimit?: number;
+  /** Persisted VM memory for the paid size, rather than the template default. */
+  ramLimitMb?: number;
   /**
    * Ceiling for the restore-vm-cold.sh host script, in ms. Mirrors
    * ArchiveInstanceOptions.maxScriptTimeoutMs and exists for the same reason:
@@ -1138,7 +1142,9 @@ async function restoreInstanceAfterLock(
     !Number.isSafeInteger(options.templateVmid) ||
     options.templateVmid <= 0 ||
     !Number.isSafeInteger(options.targetDiskGb ?? 30) ||
-    !Number.isFinite(options.cpuLimit ?? 0.5)
+    !Number.isFinite(options.cpuLimit ?? 0.5) ||
+    !Number.isSafeInteger(options.ramLimitMb ?? 4096) ||
+    (options.ramLimitMb ?? 4096) <= 0
   ) {
     return revertToCold({
       ok: false,
@@ -1166,6 +1172,7 @@ async function restoreInstanceAfterLock(
     String(options.templateVmid),
     String(options.targetDiskGb ?? 30),
     String(options.cpuLimit ?? 0.5),
+    String(options.ramLimitMb ?? 4096),
   ].join(" ");
 
   const scriptResult = await d.runHostScript(cmd, destHostEnv, {
@@ -1268,18 +1275,15 @@ async function restoreInstanceAfterLock(
   // ORIGINAL VMID on the ORIGINAL host. After archive that VMID was
   // destroyed and may have been recycled to a different tenant, so the
   // cross-tenant footgun PR #94 (b254d680) was meant to close stays open.
-  // Reconstruct gatewayHost + host-env routing from the restore target. The
-  // infra block was stripped at reclaim (stripProxmoxInfrastructure), so the
-  // spread above is empty — without these fields the restored row has no
-  // gatewayHost, getProxmoxInfrastructure() returns null, and applyLiveUpdate()
-  // reports "No host attached", leaving the instance un-updatable after a
-  // pause→restore cycle. destinationGateway arrives as a URL.
+  // destinationGateway is the private network router, not the public agent
+  // hostname. Reclaim can strip infrastructure, so read the durable public URL
+  // first and retain the prior public hostname as a fallback.
   const restoredGatewayHost = (() => {
     try {
-      return new URL(options.destinationGateway).host || undefined;
-    } catch {
-      return options.destinationGateway || undefined;
-    }
+      if (row.gateway_url) return new URL(row.gateway_url).hostname || undefined;
+    } catch { /* Fall back to the previously recorded public route. */ }
+    const prior = row.config?.infrastructure as Record<string, unknown> | undefined;
+    return typeof prior?.gatewayHost === "string" ? prior.gatewayHost : undefined;
   })();
   const newInfra = {
     ...(row.config?.infrastructure as Record<string, unknown> | undefined ?? {}),

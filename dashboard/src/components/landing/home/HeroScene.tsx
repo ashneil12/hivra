@@ -1,15 +1,20 @@
 "use client";
 
-import { useRef, type PointerEvent } from "react";
-import { m, useMotionValue, useScroll, useSpring, useTransform } from "framer-motion";
-import { Cpu, KeyRound, Power, RotateCcw } from "lucide-react";
-import { EASE_OUT, useMotionPref, usePageVisible, useRange, useTypedLines, useVisible } from "./motion";
+import { useRef } from "react";
+import { m } from "framer-motion";
+import { Globe, LaptopMinimal, RotateCcw, Server, Smartphone, SquareTerminal } from "lucide-react";
+import { EASE_OUT, useMotionPref, usePageVisible, useTypedLines, useVisible } from "./motion";
 import styles from "./home.module.css";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { planSizeParts } from "@/lib/blog/plan-facts";
 
-const ENTRY_SIZE_CHIP = planSizeParts("entry");
+const ENTRY_SIZE = planSizeParts("entry");
 
-/** An illustration of an agent session on a Hivra computer, not a recording. */
+/**
+ * An illustration, not a recording. It reads top to bottom as one story:
+ * your laptop closes, the agent keeps working on its own computer, and you
+ * can open it again from anywhere. The labels reuse the hero's own phrases.
+ */
 const SESSION = [
   "> ship the settings page",
   "● Read app/settings/page.tsx",
@@ -17,6 +22,15 @@ const SESSION = [
   "● Run npm test",
   "└ all tests passed",
   "● Open the preview",
+] as const;
+
+/** The laptop shows as closed once the agent is a couple of steps in. */
+const CLOSE_AFTER_LINE = 3;
+
+const PLACES = [
+  { icon: Globe, label: "Browser" },
+  { icon: Smartphone, label: "Phone" },
+  { icon: SquareTerminal, label: "Terminal" },
 ] as const;
 
 function lineKind(line: string) {
@@ -30,106 +44,77 @@ export default function HeroScene() {
   const { off } = useMotionPref();
   const visible = useVisible(ref, { amount: 0.2 });
   const pageShown = usePageVisible();
-  const live = !off && visible && pageShown;
   const typing = useTypedLines(SESSION, visible && pageShown, { cps: 54, pause: 420, startDelay: 900 });
+  const laptopClosed = off || typing.finished || typing.done >= CLOSE_AFTER_LINE;
 
-  // Pointer parallax (mouse only) and a tilt away as the hero scrolls out.
-  const px = useMotionValue(0);
-  const py = useMotionValue(0);
-  const sx = useSpring(px, { stiffness: 120, damping: 18, mass: 0.6 });
-  const sy = useSpring(py, { stiffness: 120, damping: 18, mass: 0.6 });
-  const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
-  const scrollTilt = useRange(scrollYProgress, [0, 1], [0, 14]);
-  const scrollLift = useRange(scrollYProgress, [0, 1], [0, -70]);
-  const rotateY = useTransform(sx, v => (off ? 0 : v * 9 - 12));
-  const rotateX = useTransform([sy, scrollTilt], ([y, t]: number[]) => (off ? 0 : 8 - y * 7 + t));
-
-  function onMove(event: PointerEvent<HTMLDivElement>) {
-    if (off || event.pointerType !== "mouse") return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    px.set((event.clientX - rect.left) / rect.width - 0.5);
-    py.set((event.clientY - rect.top) / rect.height - 0.5);
-  }
-  function onLeave() {
-    px.set(0);
-    py.set(0);
-  }
-
-  // The entrance starts from its hidden state at mount; with motion off it
-  // jumps straight to the finished state instead (motion can be switched off
-  // after mount, so `animate` must always say where to end up).
-  const shown = { opacity: 1, x: 0, y: 0, z: 0, scale: 1, rotateX: 0, filter: "blur(0px)" };
-  const enter = (delay: number, from: Record<string, number | string>) => ({
-    initial: { opacity: 0, ...from },
-    animate: shown,
-    transition: off ? { duration: 0 } : { duration: 1.1, delay, ease: EASE_OUT },
+  // With motion off everything is simply there; `animate` always says where to end up.
+  const enter = (delay: number) => ({
+    initial: { opacity: 0, y: 18 },
+    animate: { opacity: 1, y: 0 },
+    transition: off ? { duration: 0 } : { duration: 0.9, delay, ease: EASE_OUT },
   });
 
-  const float = (amplitude: number, duration: number, delay = 0) =>
-    live ? { animate: { y: [0, -amplitude, 0] }, transition: { duration, delay, repeat: Infinity, ease: "easeInOut" as const } } : {};
-
   return (
-    <div ref={ref} className={styles.scene} onPointerMove={onMove} onPointerLeave={onLeave}>
+    <div ref={ref} className={styles.scene}>
       <div className={styles.sceneBackdrop} aria-hidden="true">
         <span className={styles.sceneGlow} />
-        <span className={styles.sceneFloor} />
-        <span className={styles.sceneBars} />
       </div>
-      <m.div className={styles.sceneRig} style={{ rotateX, rotateY, y: scrollLift }} aria-hidden="true">
-        <m.div className={styles.win} {...enter(0.15, { y: 60, z: -220, rotateX: 22, scale: 0.9, filter: "blur(10px)" })}>
+      <div className={styles.flow} aria-hidden="true">
+        <m.div className={styles.flowLaptop} data-closed={laptopClosed ? "" : undefined} {...enter(0.1)}>
+          <LaptopMinimal size={16} />
+          <span>Your laptop</span>
+          <span className={styles.flowState}>
+            <i />
+            {laptopClosed ? "Closed" : "Open"}
+          </span>
+        </m.div>
+
+        <span className={styles.flowLink} data-live={!off && laptopClosed ? "" : undefined} />
+
+        <m.div className={styles.win} {...enter(0.25)}>
           <div className={styles.winBar}>
             <span className={styles.winDots}><i /><i /><i /></span>
             <b>Claude Code</b>
             <span className={styles.winHost}>agent-01</span>
             <span className={styles.winChip}><i />Running</span>
           </div>
+          <div className={styles.winSpec}>
+            <Server size={13} />
+            <span>Your agent&apos;s own computer</span>
+            <span className={styles.winSpecSize}>Ubuntu · {ENTRY_SIZE.cpu} · {ENTRY_SIZE.ram}</span>
+          </div>
           <div className={styles.winBody}>
             {SESSION.map((line, index) => {
-              const shown = index < typing.done ? line : index === typing.done ? typing.partial : "";
-              if (!shown && index > typing.done) return <p key={line} className={styles.lineEmpty} />;
+              const text = index < typing.done ? line : index === typing.done ? typing.partial : "";
+              if (!text && index > typing.done) return <p key={line} className={styles.lineEmpty} />;
               return (
                 <p key={line} className={lineKind(line)}>
-                  {shown}
+                  {text}
                   {index === typing.done && !typing.finished ? <span className={styles.caret} /> : null}
                 </p>
               );
             })}
-            {typing.finished ? (
-              <p className={styles.lineWorking}>
-                <span className={styles.spinner} />
-                Working
-              </p>
-            ) : null}
+            <p className={styles.lineWorking} data-shown={typing.finished ? "" : undefined}>
+              <ThinkingOrb state="working" size={20} theme="dark" />
+              Working
+            </p>
           </div>
-          <div className={styles.tmuxBar}>
-            <span>[agent-01] 0:claude*</span>
-            <span>Hivra Cloud</span>
-          </div>
-          <span className={styles.winSweep} />
         </m.div>
 
-        <m.div className={styles.scenePhone} {...enter(0.85, { x: 70, y: 40, z: 120 })}>
-          <m.div className={styles.scenePhoneInner} {...float(7, 7, 0.4)}>
-            <span className={styles.phoneIsland} />
-            <span className={styles.phoneTitle}>agent-01</span>
-            <span className={styles.phoneChip}><i />Running</span>
-            <span className={styles.phoneLine} />
-            <span className={styles.phoneLine} data-short="" />
-            <span className={styles.phoneLine} />
-            <span className={styles.phoneInput}>Message agent-01</span>
-          </m.div>
-        </m.div>
+        <span className={styles.flowLink} />
 
-        <m.div className={`${styles.floatChip} ${styles.chipA}`} {...enter(1.15, { y: 30, z: 80 })}>
-          <m.span {...float(6, 6.4)}><Power size={13} />Stays on</m.span>
+        <m.div className={styles.flowAnywhere} {...enter(0.4)}>
+          <span className={styles.flowAnywhereTitle}>Access it from anywhere</span>
+          <span className={styles.flowPlaces}>
+            {PLACES.map(({ icon: Icon, label }) => (
+              <span key={label}>
+                <Icon size={13} />
+                {label}
+              </span>
+            ))}
+          </span>
         </m.div>
-        <m.div className={`${styles.floatChip} ${styles.chipB}`} {...enter(1.3, { y: 30, z: 60 })}>
-          <m.span {...float(5, 7.2, 0.8)}><KeyRound size={13} />Your login</m.span>
-        </m.div>
-        <m.div className={`${styles.floatChip} ${styles.chipC}`} {...enter(1.45, { y: 30, z: 40 })}>
-          <m.span {...float(6, 8, 1.4)}><Cpu size={13} />{ENTRY_SIZE_CHIP.cpu} · {ENTRY_SIZE_CHIP.ram}</m.span>
-        </m.div>
-      </m.div>
+      </div>
       <div className={styles.sceneMeta}>
         <span>Illustration</span>
         {!off ? (

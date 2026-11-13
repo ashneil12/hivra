@@ -3,6 +3,16 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { InfrastructureEntryChooser } from "../InfrastructureEntryChooser";
 
+jest.mock("@/lib/infrastructure/home-connector-client", () => ({
+  startHomeConnector: jest.fn(async () => ({
+    connectorId: "11111111-1111-4111-8111-111111111111",
+    hostname: "11111111-1111-4111-8111-111111111111.connector.hivra.invalid",
+    expiresAt: "2030-01-01T00:00:00Z",
+    command: "curl -fsSL https://canary.example.test/api/infrastructure/home-connector/install | sudo bash -s -- hvc_abc",
+  })),
+  getHomeConnectorStatus: jest.fn(async () => ({ online: true, revoked: false })),
+}));
+
 function setup(selfHosted = false) {
   const callbacks = { onChooseHivraCloud: jest.fn(), onConnectHetzner: jest.fn(), onConnectExisting: jest.fn() };
   render(<InfrastructureEntryChooser firstConnection hivraCloud={null} selfHosted={selfHosted} {...callbacks} />);
@@ -97,5 +107,33 @@ describe("guided infrastructure paths", () => {
     expect(callbacks.onConnectExisting).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("heading", { name: "Where is your machine?" })).toHaveFocus();
+  });
+
+  describe("a machine on your network, through the home connector", () => {
+    function openLocal(props: { homeConnectorEnabled?: boolean } = {}) {
+      const onConnectHomeMachine = jest.fn();
+      render(<InfrastructureEntryChooser firstConnection hivraCloud={null} selfHosted={false}
+        onChooseHivraCloud={jest.fn()} onConnectHetzner={jest.fn()} onConnectExisting={jest.fn()}
+        onConnectHomeMachine={onConnectHomeMachine} {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: /Choose my machine/i }));
+      fireEvent.click(screen.getByRole("button", { name: /On my local network/i }));
+      return onConnectHomeMachine;
+    }
+
+    it("keeps today's note when the server flag is off", () => {
+      openLocal({ homeConnectorEnabled: false });
+      expect(screen.getByText("Hosted Hivra cannot connect to your local network.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /install command/i })).not.toBeInTheDocument();
+    });
+
+    it("shows the one-command install instead when it is on, then continues once the machine is online", async () => {
+      const onConnectHomeMachine = openLocal({ homeConnectorEnabled: true });
+      expect(screen.queryByText("Hosted Hivra cannot connect to your local network.")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /Get my install command/i }));
+      expect(await screen.findByTestId("home-connector-command")).toHaveTextContent("sudo bash -s -- hvc_abc");
+      const next = await screen.findByRole("button", { name: /Continue/i }, { timeout: 5_000 });
+      fireEvent.click(next);
+      expect(onConnectHomeMachine).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111.connector.hivra.invalid");
+    }, 10_000);
   });
 });

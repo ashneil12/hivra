@@ -121,6 +121,21 @@ describe("Claude Code and native Codex request parity with their welcome form", 
     }));
   });
 
+  it("puts Claude Code on Hivra credits with the chosen Claude model and wallet", () => {
+    expect(nativeCliAgentRequest({
+      type: "claude-code", name: "Claude Code 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED,
+      credits: { walletType: "card", model: "claude-opus-4-8" },
+    })).toMatchObject({
+      managedVenice: true,
+      llm: { provider: "venice", mode: "managed", model: "claude-opus-4-8", walletType: "card" },
+    });
+    // Codex never takes credits through the native lane.
+    expect(nativeCliAgentRequest({
+      type: "codex", name: "Codex 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED,
+      credits: { walletType: "card", model: "claude-opus-4-8" },
+    })).not.toHaveProperty("llm");
+  });
+
   it("names Claude Code's launch without a receipt id: its lane takes none", () => {
     expect(nativeCliAgentRequest({ type: "claude-code", name: "Claude Code 1", cpu: 0.5, ram: 1, browser: false, deployment: MANAGED }))
       .not.toHaveProperty("launchRequestId");
@@ -134,6 +149,8 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
     ["openclaw", true, 0, 5_000_000],
     ["agent-zero", true, 0, 0],
     ["agent-zero", false, 1, 1],
+    ["openbot", true, 0, 0],
+    ["openbot", false, 1, 1],
     ["aeon", true, 5_000_000, 5_000_000],
     ["aeon", false, 0, 0],
   ] as const)("sends %s with credits %s (card %d, token %d) exactly as the form did", (type, credits, card, token) => {
@@ -155,6 +172,17 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
     expect(openclaw).toMatchObject({ managedVenice: true, llm: { provider: "venice", mode: "managed", walletType: "card" } });
     expect(aeon).toMatchObject({ managedVenice: true });
     expect(aeon).not.toHaveProperty("llm");
+  });
+});
+
+describe("DeepSeek Harness launch request", () => {
+  it("carries no credits, key, browser or receipt: its model key is added inside it", () => {
+    const request = dashboardAgentRequest({ type: "deepseek-harness", name: " DeepSeek Harness 1 ", cpu: 2, ram: 4, browser: false, credits: null, deployment: MANAGED });
+    expect(request).toEqual({
+      type: "deepseek-harness", name: "DeepSeek Harness 1", cpu: 2, ram: 4, browser: false, managedVenice: false, deployment: MANAGED,
+    });
+    expect(request).not.toHaveProperty("llm");
+    expect(request).not.toHaveProperty("launchRequestId");
   });
 });
 

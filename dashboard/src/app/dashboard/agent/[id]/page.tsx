@@ -1,29 +1,32 @@
 "use client";
 
-// Hivra per-agent view — Agent (Chat, <Agent> session) · Computer (Terminal,
-// Files, Browser, Git) · Manage. Server-backed: polls the agent until provisioning finishes, then the
+// Hivra per-agent view — Chat (<Agent> session) · Computer (Desktop,
+// Browser, Files, Terminal) · Settings, in the agent sidebar and one floating pill. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
 import styles from "./ResourceWorkspace.module.css";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import { Component, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, Loader2, ExternalLink, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
+import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, ArrowLeft, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import {
   AGENT_SURFACE_IDS,
-  agentComputerPairLabel,
+  agentComputerPair,
+  agentComputerPairDetail,
+  agentPageSurfacesFor,
   agentSurfaceGroups,
   agentSurfaceLabel,
   agentSurfacesFor,
   type AgentSurfaceGroupId,
   type AgentSurfaceId,
 } from "@/lib/agent-computers/agent-surfaces";
-import { getAgent, browserStatus, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
+import { getAgent, browserStatus, browserToggle, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
@@ -35,10 +38,15 @@ import { useNativeWorkspace } from "@/components/layout/NativeWorkspaceBridge";
 import { HivraChat } from "@/components/hivra/HivraChat";
 import { HivraLogin } from "@/components/hivra/HivraLogin";
 import { HivraGitHubConnect } from "@/components/hivra/HivraGitHubConnect";
+import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
+import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
-import { ResourceSwitcher, resourceKindLabel } from "@/components/hivra/ResourceSwitcher";
-import { resolveResourceLanding } from "@/lib/hivra/resource-landing";
+import type { ManageSectionId } from "@/lib/hivra/manage-sections";
+import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
+import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
+import { AgentQuickSettings } from "@/components/hivra/agent-shell/quick-settings";
+import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
   SurfaceActionProvider,
@@ -51,7 +59,6 @@ import { resourceInventory } from "@/lib/workspace/resource-inventory";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { ChannelConnectNudge } from "@/components/hivra/ChannelConnectNudge";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
-import { isHivraEnabled } from "@/lib/hivra/hivra-flag";
 import { clientLog } from "@/lib/client/logger";
 import { agentActivityPresentation } from "@/lib/hivra/agent-activity";
 import { GOALS } from "@/lib/hivra/agent-identity";
@@ -62,8 +69,6 @@ import {
   buildWelcomePersonalizationContext,
   parseWelcomePersonalizationContext,
 } from "@/lib/welcome-personalization";
-
-const ENV_FLAG = process.env.NEXT_PUBLIC_HIVRA_AGENTS === "1";
 
 // A desktop stays mounted (hidden) while its owner works in other tabs, so
 // its placeholder shows only while Desktop is the open tab.
@@ -144,7 +149,7 @@ const TasksPanel = dynamic(
   () => import("@/components/scheduled-tasks/TasksPanel").then((mod) => mod.TasksPanel, surfaceCodeUnavailable),
   { ssr: false, loading: () => <LoadingState compact label="Loading tasks…" /> },
 );
-// Manage and the Files, Git, Skills and Telegram tabs are not the default tab:
+// Manage and the Files, Skills and Telegram tabs are not the default tab:
 // their code loads when the owner opens one (each sits in a SurfaceCodeBoundary).
 const HivraManage = dynamic(
   () => import("@/components/hivra/HivraManage").then((mod) => mod.HivraManage, surfaceCodeUnavailable),
@@ -153,10 +158,6 @@ const HivraManage = dynamic(
 const HivraFiles = dynamic(
   () => import("@/components/hivra/HivraFiles").then((mod) => mod.HivraFiles, surfaceCodeUnavailable),
   { loading: () => <LoadingState compact label="Loading files…" /> },
-);
-const HivraGit = dynamic(
-  () => import("@/components/hivra/HivraGit").then((mod) => mod.HivraGit, surfaceCodeUnavailable),
-  { loading: () => <LoadingState compact label="Loading git…" /> },
 );
 const HivraSkills = dynamic(
   () => import("@/components/hivra/HivraSkills").then((mod) => mod.HivraSkills, surfaceCodeUnavailable),
@@ -186,7 +187,7 @@ type Tab = AgentSurfaceId;
 const COMPUTER_WORKSPACE_TABS: Tab[] = ["files", "box"];
 
 const labelStyle: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
+  fontFamily: "var(--font-mono)",
   fontSize: 10,
   fontWeight: 700,
   textTransform: "uppercase",
@@ -211,11 +212,11 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
 const TABS: { id: Tab }[] = AGENT_SURFACE_IDS.map((id) => ({ id }));
 const GROUP_ICONS: Record<AgentSurfaceGroupId, React.ReactNode> = {
   work: <MessageSquareText size={14} />,
+  browser: <Globe size={14} />,
   computer: <Computer size={14} />,
   manage: <Settings2 size={14} />,
 };
 const WORK_PANE_ID = "agent-work-pane";
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
  * The sidebar, ⌘K and Home reuse a list of agents read moments ago. After a
@@ -247,11 +248,15 @@ function openingTab(id: string, requested: string | null | undefined, welcome: b
  * The surface actually shown for `tab`. A tab the resource does not have (a
  * stale link, a surface removed since) falls back to its landing view: a
  * computer's desktop (Manage for a terminal-only sandbox or one with no
- * desktop yet), a dashboard agent's dashboard, and everyone else's Chat.
+ * desktop yet; Files for a Linux computer, which has no desktop), a dashboard
+ * agent's dashboard, and everyone else's Chat.
  */
 function shownTab(agent: HivraAgent, tab: Tab): Tab {
   const def = catalogAgent(agent.type);
-  const surfaces = agentSurfacesFor(agent);
+  const surfaces = agentPageSurfacesFor(agent);
+  // Git is not a tab: its changes are a view inside Files, so an old ?tab=git
+  // link lands on Files (which opens Changes for it).
+  if (tab === "git" && surfaces.includes("files")) return "files";
   if (def?.surface === "computer") {
     // gVisor sandboxes are terminal-only: they have no desktop to land on, so
     // they open on Manage. Every other computer defers to the shared landing
@@ -267,7 +272,10 @@ function shownTab(agent: HivraAgent, tab: Tab): Tab {
       surfaceKind: def.surface,
       resourceKind: def.resourceKind,
     });
-    return landing.landing === "desktop" ? "desktop" : "manage";
+    if (landing.landing === "desktop") return "desktop";
+    // A computer with no desktop (a Linux computer) opens on its files.
+    if (landing.landing === "workspace") return surfaces.includes("files") ? "files" : "manage";
+    return "manage";
   }
   if (surfaces.includes(tab)) return tab;
   // Dashboard agents have no "chat" tab, so the default falls back to the
@@ -279,7 +287,7 @@ function shownTab(agent: HivraAgent, tab: Tab): Tab {
 function Stub({ title, body }: { title: string; body: string }) {
   return (
     <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>{title}</div>
+      <div className="serif" style={{ fontSize: 22, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto", lineHeight: 1.6 }}>{body}</div>
     </div>
   );
@@ -322,7 +330,6 @@ function AuthenticatedSurface({
   url,
   token,
   label,
-  description,
   background,
   permissions,
   onManage,
@@ -333,7 +340,6 @@ function AuthenticatedSurface({
   url: string;
   token: string;
   label: string;
-  description?: string;
   background: string;
   permissions?: readonly SurfacePermission[];
   onManage: () => void;
@@ -384,10 +390,10 @@ function AuthenticatedSurface({
   }, [accessStatus, bootstrapUrl, destination, token]);
 
   // "Open in new tab" is the everyday action of this surface, so it belongs in
-  // the bar with the rest of the chrome rather than in a strip of its own. The
-  // button below still drives the same hidden form — the behaviour does not
-  // move, only which row draws it. It renders inline when nothing received the
-  // publish (a standalone render, or this surface not being the active one).
+  // the title bar with the rest of the chrome. The button below still drives
+  // the same hidden form — the behaviour does not move, only where it is drawn.
+  // It renders as a small ghost icon in the pane's corner when nothing received
+  // the publish (a standalone render, or this surface not being the active one).
   const openInNewTabActions = useMemo(
     () => [
       {
@@ -407,7 +413,7 @@ function AuthenticatedSurface({
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
       {accessStatus === "ready" ? (
         <>
           <form ref={formRef} action={bootstrapUrl} method="POST" target={frameName} style={{ display: "none" }}>
@@ -420,29 +426,16 @@ function AuthenticatedSurface({
           </form>
         </>
       ) : null}
-      {/* No strip when there is nothing of its own to say.
-          `{description || label}` restated the agent name (already in the bar's
-          identity cluster) and the surface name (already the active tab), so on
-          the terminal and dashboard tabs this row was pure echo. It still
-          renders when the host passes a real `description` — the live browser's
-          read-only note is information, not decoration — and whenever the action
-          was not lifted, because then the button needs somewhere to live. */}
-      {description || !actionsLifted ? (
-        <div className={styles.surfaceToolbar}>
-          {description ? <span className={`mono ${styles.surfaceDescription}`}>{description}</span> : null}
-          <div style={{ flex: 1 }} />
-          {actionsLifted ? null : (
-            <button type="button" onClick={openInNewTab} disabled={accessStatus !== "ready"} aria-label="Open in new tab" className={`mono ${styles.newTabButton}`}>
-              <span>Open in new tab</span><ExternalLink size={13} aria-hidden="true" />
-            </button>
-          )}
-        </div>
-      ) : null}
+      {actionsLifted || accessStatus !== "ready" ? null : (
+        <button type="button" onClick={openInNewTab} aria-label="Open in new tab" title="Open in new tab" className={styles.newTabCorner}>
+          <ExternalLink size={14} aria-hidden="true" />
+        </button>
+      )}
       {accessStatus === "ready" ? (
         <iframe key={generation} name={frameName} title={label} allow={permissionsPolicy} style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background }} />
       ) : (
         <div className={styles.statusPanel} role="status">
-          {accessStatus === "checking" || accessStatus === "starting" ? <Loader2 size={20} style={{ animation: "spin 1s linear infinite", marginBottom: 12 }} /> : null}
+          {accessStatus === "checking" || accessStatus === "starting" ? <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><ThinkingOrb size={32} state="connecting" /></div> : null}
           <div className="serif" style={{ fontSize: 22, color: "var(--ink-black)", marginBottom: 8 }}>
             {accessStatus === "checking" ? "Connecting securely…" : accessStatus === "starting" ? starting.title : accessStatus === "stalled" ? stalled.title : accessStatus === "upgrade-required" ? "Connection update needed" : "Couldn’t verify secure access"}
           </div>
@@ -511,7 +504,15 @@ function terminalSessionUrl(url: string, slot: number): string {
   }
 }
 
-function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; onManage: () => void }) {
+/**
+ * How the owner names one of this terminal's sessions: "Terminal 1" for the
+ * shell, "Claude Code 1" for the agent's own command line.
+ */
+function sessionLabel(sessionName: string, n: number): string {
+  return `${sessionName} ${n}`;
+}
+
+function RetainedTerminal({ active, surfaceId, label, sessionName, ...surface }: { active: boolean; surfaceId?: string; url: string; token: string; label: string; sessionName: string; onManage: () => void }) {
   const [opened, setOpened] = useState(active);
   const [sessions, setSessions] = useState<number[]>([1]);
   const [current, setCurrent] = useState(1);
@@ -572,25 +573,34 @@ function RetainedTerminal({ active, surfaceId, label, ...surface }: { active: bo
     setSessions(next);
     if (n === current) setCurrent(next[Math.max(0, index - 1)]);
   };
+  const atLimit = sessions.length >= MAX_TERMINAL_SESSIONS;
+  const newLabel = sessionName === "Terminal" ? "New terminal" : `New ${sessionName} session`;
+  const newTitle = atLimit ? `Up to ${MAX_TERMINAL_SESSIONS} at once` : `${newLabel} — opens another one alongside`;
   return (
     <div hidden={!active} inert={!active} className={styles.terminalStack}>
-      <div role="tablist" aria-label={`${label} sessions`} className={styles.sessionStrip}>
-        {sessions.map((n) => (
-          <div key={n} className={styles.sessionTab} data-active={n === current ? "true" : undefined}>
-            <button type="button" role="tab" aria-selected={n === current} aria-controls={`${surfaceId || "terminal"}-session-${n}`} onClick={() => setCurrent(n)} className="mono">
-              Session {n}
-            </button>
-            {sessions.length > 1 ? (
-              <button type="button" aria-label={`Close session ${n}`} title="Close — ends this session's process" onClick={() => closeSession(n)} className={styles.sessionClose}>
+      {/* One session needs no strip. With more, each is a tab named by its
+          number and the new-terminal control stays in the strip. */}
+      {sessions.length > 1 ? (
+        <div role="tablist" aria-label={`${label} sessions`} className={styles.sessionStrip}>
+          {sessions.map((n) => (
+            <div key={n} className={styles.sessionTab} data-active={n === current ? "true" : undefined}>
+              <button type="button" role="tab" aria-selected={n === current} aria-controls={`${surfaceId || "terminal"}-session-${n}`} onClick={() => setCurrent(n)}>
+                {sessionLabel(sessionName, n)}
+              </button>
+              <button type="button" aria-label={`Close ${sessionLabel(sessionName, n)}`} title="Close — ends this one's process" onClick={() => closeSession(n)} className={styles.sessionClose}>
                 <X size={12} aria-hidden="true" />
               </button>
-            ) : null}
-          </div>
-        ))}
-        <button type="button" aria-label="New terminal session" title={sessions.length >= MAX_TERMINAL_SESSIONS ? `Up to ${MAX_TERMINAL_SESSIONS} sessions` : "New session"} disabled={sessions.length >= MAX_TERMINAL_SESSIONS} onClick={addSession} className={styles.sessionAdd}>
-          <Plus size={13} aria-hidden="true" />
+            </div>
+          ))}
+          <button type="button" aria-label={newLabel} title={newTitle} disabled={atLimit} onClick={addSession} className={styles.sessionAdd}>
+            <Plus size={13} aria-hidden="true" /><span>New</span>
+          </button>
+        </div>
+      ) : (
+        <button type="button" aria-label={newLabel} title={newTitle} onClick={addSession} className={styles.sessionNew}>
+          <Plus size={14} aria-hidden="true" />
         </button>
-      </div>
+      )}
       {sessions.map((n) => (
         <div key={n} id={`${surfaceId || "terminal"}-session-${n}`} role="tabpanel" hidden={n !== current} className={styles.sessionPanel}>
           <TerminalView {...surface} url={terminalSessionUrl(surface.url, n)} label={n === 1 ? label : `${label} · ${n}`} surfaceId={surfaceId} active={active && n === current} onAccessReady={onAccessReady} />
@@ -610,52 +620,112 @@ function DashboardView({ url, token, label, onManage, surfaceId, active = true }
 // Live browser — the agent's real Chrome (headful on the box's Xvfb), streamed
 // over noVNC through the box tunnel. This legacy surface has no shared session
 // input fence, so default its viewer to read-only instead of implying that the
-// agent has paused or that conflict-free takeover is available.
+// agent has paused or that conflict-free takeover is available. The title bar
+// says "View only" beside the status.
 function BrowserView({ url, token, onManage, surfaceId, active = true }: { url: string; token: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label="Live browser" description="Live browser · read-only view of the agent's Chrome. Conflict-free human takeover isn't available on this legacy surface." background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+  return <AuthenticatedSurface url={url} token={token} label="Live browser" background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
 }
 
 function BrowserDisabledView({
   isFreePlan,
+  planUnknown,
   onManage,
   onUpgrade,
+  onTurnOn,
 }: {
   isFreePlan: boolean;
+  /** A Hivra Cloud plan not read yet: turning on waits for it, as in Manage. */
+  planUnknown: boolean;
   onManage: () => void;
   onUpgrade: () => void;
+  /** Turns the browser on right here. Absent when the computer can't be asked. */
+  onTurnOn?: () => Promise<string | null>;
 }) {
+  const [turningOn, setTurningOn] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canTurnOn = Boolean(onTurnOn) && !isFreePlan && !planUnknown;
+  const turnOn = async () => {
+    if (!onTurnOn || turningOn) return;
+    setTurningOn(true);
+    setError(null);
+    const failure = await onTurnOn();
+    setTurningOn(false);
+    if (failure) setError(failure);
+  };
   const body = isFreePlan
     ? "The live browser needs a paid plan."
-    : "Turn it on in Manage to open the live browser.";
-  const button = isFreePlan ? (
-    <button
-      type="button"
-      onClick={onUpgrade}
-      className="mono"
-      style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
-    >
-      <Settings2 size={14} /> See plans
-    </button>
-  ) : (
-    <button
-      type="button"
-      onClick={onManage}
-      className="mono"
-      style={{ border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800, padding: "9px 14px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7 }}
-    >
-      <Settings2 size={14} /> Open Manage
-    </button>
-  );
+    : canTurnOn
+      ? "Turn it on to let your agent use a real browser you can watch here."
+      : "Turn it on in Manage to open the live browser.";
 
   return (
-    <div className={styles.statusPanel}>
-      <div className="serif" style={{ fontSize: 22, fontWeight: 400, color: "var(--ink-black)", marginBottom: 6 }}>
-        Browser automation is off
+    <div className={styles.statusPanel} role="status">
+      <h3>Browser automation is off</h3>
+      <p style={{ fontSize: 13, lineHeight: 1.6 }}>{body}</p>
+      <div className={styles.statusActions}>
+        {isFreePlan ? (
+          <button type="button" className={styles.statusPrimary} onClick={onUpgrade}>See plans</button>
+        ) : canTurnOn ? (
+          <button type="button" className={styles.statusPrimary} onClick={() => { void turnOn(); }} disabled={turningOn} aria-busy={turningOn || undefined}>
+            {turningOn ? "Turning on…" : "Turn on browser"}
+          </button>
+        ) : null}
+        <button type="button" className={isFreePlan || canTurnOn ? styles.statusSecondary : styles.statusPrimary} onClick={onManage}>
+          <Settings2 size={14} aria-hidden="true" /> Open Manage
+        </button>
       </div>
-      <div style={{ fontSize: 13, maxWidth: 440, margin: "0 auto 16px", lineHeight: 1.6 }}>
-        {body}
+      {error ? <p role="alert" className={styles.statusNote}>{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * The chat surface's answer when the computer has not confirmed its model
+ * connection. Checking again holds a visible "Checking…" state for at least a
+ * beat, so a fast failure still reads as a real second attempt, and says when
+ * it last tried. When Hivra can't get any answer from the computer at all, it
+ * says so plainly rather than offering a retry as the only way out.
+ */
+function ConnectionCheckPanel({
+  readiness,
+  unreachable,
+  checking,
+  checkedAt,
+  onCheck,
+  onManage,
+}: {
+  readiness: "upgrade_required" | "unavailable";
+  unreachable: boolean;
+  checking: boolean;
+  checkedAt: number | null;
+  onCheck: () => void;
+  onManage: () => void;
+}) {
+  const title = readiness === "upgrade_required"
+    ? "This computer needs a Chat update"
+    : unreachable ? "Can’t reach this computer" : "Couldn’t check the model connection";
+  const body = readiness === "upgrade_required"
+    ? "Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update connection service (the computer keeps running); you can still use native sign-in in the Codex terminal."
+    : unreachable
+      ? "Hivra isn’t getting answers from this computer right now. It may be restarting, or it may have been removed. Your saved settings haven’t changed. Manage shows its power state and lets you restart it."
+      : "The computer hasn’t confirmed its connection yet. Check Inference in Manage, or check again. Your saved settings haven’t changed.";
+  return (
+    <div className={styles.statusPanel} role="status">
+      <h3>{title}</h3>
+      <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>{body}</p>
+      <div className={styles.statusActions}>
+        <button type="button" className={styles.statusPrimary} onClick={onCheck} disabled={checking} aria-busy={checking || undefined}>
+          {checking ? "Checking…" : "Check connection"}
+        </button>
+        <button type="button" className={styles.statusSecondary} onClick={onManage}>
+          <Settings2 size={14} aria-hidden="true" /> Open Manage
+        </button>
       </div>
-      {button}
+      {checkedAt && !checking ? (
+        <p className={styles.statusNote}>
+          Checked again at <time dateTime={new Date(checkedAt).toISOString()}>{new Date(checkedAt).toLocaleTimeString()}</time>. Still no answer.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -773,7 +843,6 @@ export default function AgentPage() {
     nextURL.searchParams.delete("welcome");
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
   }, [welcomeParam]);
-  const [flagOn, setFlagOn] = useState<boolean | null>(ENV_FLAG ? true : null);
   const [agent, setAgent] = useState<HivraAgent | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [statusObservation, setStatusObservation] = useState<{
@@ -818,6 +887,25 @@ export default function AgentPage() {
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
   const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
   const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
+  // A second look at a failed connection check. While it runs, the failure
+  // panel stays put with its button showing "Checking…" (for at least a beat,
+  // so a fast failure still reads as a real attempt) instead of flashing to a
+  // loader and back. A success moves on at once.
+  const [recheck, setRecheck] = useState<{ agentId: string; startedAt: number; from: "upgrade_required" | "unavailable" } | null>(null);
+  const [recheckedAt, setRecheckedAt] = useState<{ agentId: string; at: number } | null>(null);
+  const rechecking = recheck?.agentId === id;
+  useEffect(() => {
+    if (!recheck || chatReadiness === null) return;
+    const settled = chatReadiness !== "unavailable" && chatReadiness !== "upgrade_required";
+    const timer = window.setTimeout(() => {
+      setRecheck(null);
+      setRecheckedAt(settled ? null : { agentId: recheck.agentId, at: Date.now() });
+    }, settled ? 0 : Math.max(0, recheck.startedAt + 700 - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [recheck, chatReadiness]);
+  const shownReadiness = rechecking && (chatReadiness === null || chatReadiness === "unavailable" || chatReadiness === "upgrade_required")
+    ? recheck.from
+    : chatReadiness;
   const [planResult, setPlanResult] = useState<{ value: PlanInfo | null; agentId: string; version: number } | null>(null);
   const plan = planResult?.agentId === id && planResult.version === reloadKey ? planResult.value : null;
   // Free-plan browser lock → the shared upgrade paywall (instead of a dead-end button).
@@ -834,16 +922,6 @@ export default function AgentPage() {
   useEffect(() => {
     capabilityPrefetchRef.current = null;
   }, [id]);
-
-  // Read the window-based Hivra flag only after hydration. A build-time true is
-  // already authoritative; otherwise server and client both start unresolved
-  // and render neutral feedback until the live hostname / ?hivra=1 check runs.
-  // Reading the hostname in a lazy initializer would make preview deployments
-  // render differently on the server and client and cause a hydration mismatch.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate post-hydration flip of a render-gating flag; see comment above.
-    setFlagOn(isHivraEnabled());
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -970,7 +1048,7 @@ export default function AgentPage() {
   }, [id, reloadKey]);
 
   const go = useCallback(
-    (path: string) => router.push(`${path}${ENV_FLAG ? "" : "?hivra=1"}`),
+    (path: string) => router.push(path),
     [router],
   );
 
@@ -986,13 +1064,22 @@ export default function AgentPage() {
 
   // "Update available" beside the agent's name opens Manage › Updates: the
   // link a newly mounted Manage reads, and a request an open one follows.
-  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: "updates"; id: number } | null>(null);
+  const [manageSectionRequest, setManageSectionRequest] = useState<{ section: ManageSectionId; id: number } | null>(null);
   const openManageUpdates = useCallback(() => {
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("section", "updates");
     nextURL.hash = "agent-software";
     window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
     setManageSectionRequest((current) => ({ section: "updates", id: (current?.id ?? 0) + 1 }));
+    selectTab("manage");
+  }, [selectTab]);
+  // The pill's quick settings (Model, Computer size, Updates) open their Manage section.
+  const openManageSection = useCallback((section: ManageSectionId) => {
+    const nextURL = new URL(window.location.href);
+    nextURL.searchParams.set("section", section);
+    nextURL.hash = "";
+    window.history.replaceState(null, "", `${nextURL.pathname}${nextURL.search}${nextURL.hash}`);
+    setManageSectionRequest((current) => ({ section, id: (current?.id ?? 0) + 1 }));
     selectTab("manage");
   }, [selectTab]);
 
@@ -1009,8 +1096,8 @@ export default function AgentPage() {
 
   // While that agent's Chat is on screen, the visit is the agent's own
   // (`a-<attachment id>`), not the computer's Desktop.
-  const attachedVisit = Boolean(flagOn && attachedAgent && agent?.id === id && tab === "chat");
-  const visitTab: Tab | null = flagOn && agent && agent.id === id
+  const attachedVisit = Boolean(attachedAgent && agent?.id === id && tab === "chat");
+  const visitTab: Tab | null = agent && agent.id === id
     ? attachedVisit || agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
     : null;
   useRecordVisit(
@@ -1029,6 +1116,8 @@ export default function AgentPage() {
     if (!agent || agent.status !== "running" || agent.id !== id) return;
     if (catalogAgent(agent.type)?.surface !== "computer") return;
     if (agent.computer_substrate === "gvisor") return;
+    // No desktop, so no desktop capability to read.
+    if (!computerHasDesktop(agent.computer_profile)) return;
     if (capabilityPrefetchRef.current === agent.id) return;
     capabilityPrefetchRef.current = agent.id;
     void refreshDesktopCapability(agent.id).catch(() => {});
@@ -1057,12 +1146,6 @@ export default function AgentPage() {
     if (desktopRequested) startDesktopDownload(fastDesktopRequested);
   }, [desktopRequested, fastDesktopRequested]);
 
-  if (flagOn === null) {
-    return <LoadingState label="Checking availability…" />;
-  }
-  if (!flagOn) {
-    return <div className={styles.statusPanel}>This preview isn&apos;t enabled here.</div>;
-  }
   if (loaded && !agent) {
     return (
       <div className={styles.statusPanel}>
@@ -1081,9 +1164,17 @@ export default function AgentPage() {
     // surface, with its own Chat, Files and Manage views. The computer tabs
     // (Terminal, Browser, Git) and Skills do not apply.
     return (
-      <SurfaceCodeBoundary>
-        <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onChanged={listChanged} onDeleted={() => { listChanged(); go("/dashboard"); }} />
-      </SurfaceCodeBoundary>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        {/* The global rail is not drawn on agent pages and this session has no sidebar of its own. */}
+        <div className={styles.backBar}>
+          <button type="button" className={styles.backLink} onClick={() => go("/dashboard")}>
+            <ArrowLeft size={14} aria-hidden="true" /> All agents
+          </button>
+        </div>
+        <SurfaceCodeBoundary>
+          <DigitalOceanAgentWorkspace agentId={agent.id} firstTask={agent.first_task} manage={agent.manage} onChanged={listChanged} onDeleted={() => { listChanged(); go("/dashboard"); }} />
+        </SurfaceCodeBoundary>
+      </div>
     );
   }
 
@@ -1099,27 +1190,34 @@ export default function AgentPage() {
   // surfaces handle transient gateway outages themselves so navigation does
   // not appear and disappear with live probes.
   const computerTabs: Tab[] = isComputer ? withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent) : [];
-  const tabs = withAttachedAgentChat(agentSurfacesFor(agent), attachedAgent).map((id) => ({
+  // Native clients get the plain list: no Desktop for an agent, as before.
+  const tabs = withAttachedAgentChat(agentPageSurfacesFor(agent), attachedAgent)
+    .filter((id) => !(nativeWorkspace && !isComputer && id === "desktop"))
+    .map((id) => ({
     id,
     // A computer's own shell is just "Terminal"; an agent's CLI is its session.
     label: agentSurfaceLabel(id, def),
     icon: TAB_ICONS[id],
   }));
-  // Agent pages group their surfaces: Agent (Chat, <Agent> session) ·
-  // Computer (Terminal, Files, Browser, Git) · Manage. Computers keep their
-  // short flat list. Agent and Manage always open their first view (Chat or
-  // the dashboard, Settings); Computer reopens the view last used in it.
+  // Agent pages group their surfaces: Agent (Chat, <Agent> session) · Browser
+  // · Computer (Desktop, Files, Terminal) · Manage. Computers keep
+  // their short flat list. Agent and Manage always open their first view (Chat
+  // or the dashboard, Settings); Computer reopens the view last used in it,
+  // Files the first time (the Desktop entry there is a choice, not a place to land).
   const surfaceGroups = isComputer ? undefined : agentSurfaceGroups(tabs.map((t) => t.id), def).map((group) => ({
     id: group.id,
-    label: group.label,
+    // The sidebar's rows: the agent's chat, its computer, and its settings.
+    label: group.id === "manage" ? "Settings" : group.id === "work" && !isDashboard ? "Chat" : group.label,
     icon: group.id === "work" && isDashboard ? TAB_ICONS.aeon : GROUP_ICONS[group.id],
     surfaces: group.surfaces,
     home: group.id === "computer" ? undefined : group.surfaces[0],
+    start: group.id === "computer" && group.surfaces.includes("files") ? "files" as const : undefined,
   }));
-  // The switcher's caption names the kind ("Agent · Running"). A chat agent's
-  // bar already opens with an Agent button, so there it keeps only the status.
+  // Where this agent's computer runs and how big it is: a tooltip on the name in
+  // the title bar (Settings does not repeat it).
+  const computerDetail = agentComputerPairDetail(agentComputerPair(agent));
+  const computerNote = `${agent.name || "This agent"}’s own computer${computerDetail ? ` · ${computerDetail}` : ""}`;
   const switcherKind = isComputer ? "computer" : "agent";
-  const kindInBar = Boolean(surfaceGroups?.some((group) => group.label === resourceKindLabel(switcherKind)));
   // One shared decision with the workspace: resource-landing owns "what does
   // this resource open on", so the two routes cannot drift apart again.
   const landing = resolveResourceLanding({
@@ -1139,11 +1237,15 @@ export default function AgentPage() {
   const effectiveTab: Tab = attachedChatShown ? "chat" : shownTab(agent, tab);
   const requestedKnownTab = requestedTab && TABS.some((t) => t.id === requestedTab) ? requestedTab as Tab : null;
   const unavailableTab = isComputer
-    ? COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
+    // A stale ?tab=desktop on a computer with no desktop is replaced by the tab
+    // it opens on instead of lingering in the address.
+    ? (COMPUTER_WORKSPACE_TABS.includes(requestedTab as Tab)
+        || (requestedTab === "desktop" && !computerHasDesktop(agent.computer_profile)))
       && !computerTabs.includes(requestedTab as Tab)
         ? requestedTab as Tab
         : null
-    : requestedKnownTab && !tabs.some((t) => t.id === requestedKnownTab) ? requestedKnownTab : null;
+    // ?tab=git is no tab but still a good link: it opens Files › Changes.
+    : requestedKnownTab && !tabs.some((t) => t.id === (requestedKnownTab === "git" ? "files" : requestedKnownTab)) ? requestedKnownTab : null;
   const provisioning = agent.status === "provisioning";
   const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
     && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
@@ -1185,40 +1287,10 @@ export default function AgentPage() {
     </SurfaceCodeBoundary>
   );
 
-  return (
-    <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
-    <SurfaceActionProvider store={actionStore}>
-    <SurfaceMetadataContext.Provider value={surfaceMetadataCache}>
-    <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
-      <CanonicalizeUnavailableTab
-        unavailableTab={unavailableTab}
-        canonicalTab={effectiveTab}
-      />
-      {/* Keep identity, switching and work surfaces together. Native chrome owns
-          identity on native clients; the existing session components stay below. */}
-      <ResourceSurfaceNavigation
-        surfaces={tabs}
-        groups={surfaceGroups}
-        panelId={WORK_PANE_ID}
-        // The linked pair, where the owner is looking at the computer.
-        groupNotes={isComputer ? undefined : { computer: `${capitalize(agentComputerPairLabel(agent))}` }}
-        active={effectiveTab}
-        onSelect={selectTab}
-        exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
-        identity={
-          nativeWorkspace ? undefined : (
-            <div className={styles.identity}>
-              <ResourceSwitcher currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} showKind={!kindInBar} status={provisioning ? activity.label : agent.status} />
-              {isComputer ? null : (
-                <span className={styles.softwareChip}>
-                  <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />
-                </span>
-              )}
-            </div>
-          )
-        }
-      />
-
+  // The page's own rows under the floating pill: the channel nudge, then the work
+  // pane that holds every surface (mounted and retained exactly as before).
+  const content = (
+    <>
       {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
           connected get a one-line pointer to the Telegram tab (the component
           gates itself on this visit's welcome + probe + per-box dismiss).
@@ -1250,7 +1322,7 @@ export default function AgentPage() {
             <HivraConsoleDesktop computerId={agent.id} name={agent.name}
               profile={agent.computer_profile} active={effectiveTab === "desktop"}
               autoOpenFast={landing.desktopAutoOpen || searchParams?.get("open") === "fast"} />
-          ) : (
+          ) : landing.desktopTransport === "remote" ? (
             <HivraRemoteDesktop
               computerId={agent.id}
               name={agent.name}
@@ -1265,13 +1337,13 @@ export default function AgentPage() {
               // does not offer it.
               toolbarSlot={agent.chat_url && agent.api_token ? <ClaudeAppSwitch boxUrl={agent.chat_url} token={agent.api_token} active={effectiveTab === "desktop"} /> : null}
             />
-          )
+          ) : null
         ) : null}
         </SurfaceCodeBoundary>
         </DesktopTabOpen.Provider>
         {chatOpened && chatSurfaceReady && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
-            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} />
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
           </div>
         ) : null}
         {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
@@ -1284,6 +1356,7 @@ export default function AgentPage() {
                 url={`${agent.chat_url.replace(/\/$/, "")}/terminal/`}
                 token={tok}
                 label={`${def?.name || "Agent"} session`}
+                sessionName={def?.name || "Agent"}
                 onManage={() => selectTab("manage")}
               />
             ) : null}
@@ -1299,6 +1372,7 @@ export default function AgentPage() {
               url={`${agent.chat_url.replace(/\/$/, "")}/box-terminal/`}
               token={tok}
               label="Terminal"
+              sessionName="Terminal"
               onManage={() => selectTab("manage")}
             />}
           </>
@@ -1331,8 +1405,8 @@ export default function AgentPage() {
         ) : provisioning ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
-              <Loader2 aria-hidden="true" size={20} style={{ display: "block", margin: "0 auto", animation: "spin 1s linear infinite", color: "var(--gold-leaf)" }} />
-              <div className="serif" style={{ fontSize: 24, fontWeight: 400, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
+              <div style={{ display: "flex", justifyContent: "center" }}><ThinkingOrb size={32} state="connecting" /></div>
+              <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
               <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>{activity.body}</div>
               {statusObservation?.agentId === id ? <div
                 aria-live="off"
@@ -1376,7 +1450,7 @@ export default function AgentPage() {
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : "aeon"}/`}
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
@@ -1390,30 +1464,42 @@ export default function AgentPage() {
         ) : effectiveTab === "chat" ? (
           !agent.chat_url ? (
             <Stub title="Runtime not reachable" body="The computer is up but its chat isn't connected yet. Give it a moment." />
-          ) : chatReadiness === "upgrade_required" ? (
-            <div className={styles.statusPanel} role="status">
-              <h3>This computer needs a Chat update</h3>
-              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>Its saved model connection needs a newer Hivra Chat runtime. Your key and files are unchanged. Open Manage and choose Update connection service (the computer keeps running); you can still use native sign-in in the Codex terminal.</p>
-              <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
-            </div>
-          ) : chatReadiness === "unavailable" ? (
-            <div className={styles.statusPanel} role="status">
-              <h3>Couldn’t check the model connection</h3>
-              <p style={{ lineHeight: 1.6, color: "var(--text-muted)" }}>The computer hasn’t confirmed its connection yet. Check Inference in Manage, or check again. Your saved settings haven’t changed.</p>
-              <button type="button" onClick={() => setReloadKey(k => k + 1)}>Check connection</button>
-            </div>
+          ) : shownReadiness === "upgrade_required" || shownReadiness === "unavailable" ? (
+            <ConnectionCheckPanel
+              readiness={shownReadiness}
+              unreachable={statusObservation?.agentId === id && statusObservation.unavailable}
+              checking={rechecking}
+              checkedAt={recheckedAt?.agentId === id ? recheckedAt.at : null}
+              onCheck={() => {
+                setRecheck({ agentId: id, startedAt: Date.now(), from: shownReadiness });
+                setReloadKey(k => k + 1);
+              }}
+              onManage={() => selectTab("manage")}
+            />
           ) : loggedIn === null ? (
             <LoadingState compact label="Checking access…" />
           ) : loggedIn ? null : (
             <HivraLogin boxUrl={agent.chat_url} onDone={() => setReloadKey(k => k + 1)} agentKind={cliKind} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} />
           )
         ) : effectiveTab === "desktop" ? (
-          agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
-        ) : effectiveTab === "git" ? (
-          agent.chat_url ? <SurfaceCodeBoundary><HivraGit boxUrl={agent.chat_url} token={agent.api_token} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+          !isComputer ? (
+            // An agent has no screen of its own: connect a desktop or launch one.
+            <AgentDesktopEntry
+              agentId={agent.id}
+              agentName={agent.name}
+              onLaunch={() => go(buildLaunchHref({ profile: "ubuntu-desktop", start: true }))}
+              onOpenComputer={(computerId) => go(`/dashboard/agent/${encodeURIComponent(computerId)}?tab=desktop`)}
+              onManage={() => selectTab("manage")}
+            />
+          ) : agent.status === "running" ? null : <Stub title="Not ready" body="The computer must be running before its desktop can open." />
         ) : effectiveTab === "files" ? (
           providerWorkspace && agent.status === "running" && agent.chat_url ? null
-            : agent.chat_url && !providerWorkspace ? <SurfaceCodeBoundary><HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
+            : agent.chat_url && !providerWorkspace ? <SurfaceCodeBoundary>
+              {/* Git's changes are a view here; ?tab=git opens it directly. */}
+              <HivraFiles boxUrl={agent.chat_url} token={agent.api_token} workspaceRoot={isComputer}
+                showChanges view={tab === "git" ? "changes" : "files"}
+                onViewChange={(next) => selectTab(next === "changes" ? "git" : "files")} />
+            </SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "skills" ? (
           agent.chat_url ? <SurfaceCodeBoundary><HivraSkills boxUrl={agent.chat_url} token={agent.api_token} /></SurfaceCodeBoundary> : <Stub title="Not ready" body="The computer isn't reachable yet." />
         ) : effectiveTab === "telegram" ? (
@@ -1438,8 +1524,18 @@ export default function AgentPage() {
           browserOn === false ? (
             <BrowserDisabledView
               isFreePlan={isFreePlan}
+              planUnknown={agent.deployment_mode !== "self-managed" && !plan}
               onManage={() => selectTab("manage")}
               onUpgrade={() => setPaywallOpen(true)}
+              onTurnOn={agent.chat_url ? async () => {
+                const result = await browserToggle(agent.chat_url!, true, agent.api_token);
+                if (!result.ok) {
+                  if (/requires a paid plan/i.test(result.error || "")) setPaywallOpen(true);
+                  return "Couldn’t turn the browser on. Try again, or turn it on in Manage.";
+                }
+                setBrowserOn(true);
+                return null;
+              } : undefined}
             />
           ) : agent.chat_url ? (
             <BrowserView url={`${agent.chat_url.replace(/\/$/, "")}/vnc/vnc.html?path=vnc/websockify&autoconnect=true&resize=scale&reconnect=true&view_only=true`} token={tok} surfaceId="browser" active={effectiveTab === "browser"} onManage={() => selectTab("manage")} />
@@ -1448,6 +1544,65 @@ export default function AgentPage() {
           )
         ) : null}
       </div>
+    </>
+  );
+
+  return (
+    <SurfaceSignInEpoch.Provider value={surfaceSignInEpoch}>
+    <SurfaceActionProvider store={actionStore}>
+    <SurfaceMetadataContext.Provider value={surfaceMetadataCache}>
+    <div className={styles.workspace} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", zIndex: 1, maxWidth: "100%" }}>
+      <CanonicalizeUnavailableTab
+        unavailableTab={unavailableTab}
+        canonicalTab={effectiveTab}
+      />
+      {nativeWorkspace ? (
+        <>
+          {/* A native client draws its own chrome; the bar only publishes the surface list and lifts actions. */}
+          <ResourceSurfaceNavigation
+            surfaces={tabs}
+            active={effectiveTab}
+            onSelect={selectTab}
+            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+          />
+          {content}
+        </>
+      ) : (
+        <AgentQuickSettings
+          key={agent.id}
+          agent={agent}
+          surfaces={tabs.map((t) => t.id)}
+          enabled={!isComputer && agent.status === "running"}
+          onOpenSurface={selectTab}
+          onOpenManageSection={openManageSection}
+          onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+          onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
+        >
+          {({ settings, busy, suggestion }) => (
+          <AgentShell
+            name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
+            status={provisioning ? activity.label : agent.status}
+            nameTitle={isComputer ? undefined : computerNote}
+            switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
+            titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
+            surfaces={tabs}
+            groups={surfaceGroups}
+            active={effectiveTab}
+            onSelect={selectTab}
+            chatSurface="chat"
+            panelId={WORK_PANE_ID}
+            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+            surfaceNote={{ browser: "View only" }}
+            homeLabel={isDashboard ? def?.name : undefined}
+            quickSettings={settings}
+            busy={busy}
+            suggestion={suggestion}
+          >
+            {content}
+          </AgentShell>
+          )}
+        </AgentQuickSettings>
+      )}
 
       {paywallOpen ? (
         <UpgradePaywallModal

@@ -55,8 +55,22 @@ it("emits the native v2 Proxmox document only with its fixed named HTTPS origin"
     wantBrowser: null, modelKey: "", modelBaseUrl: "", model: "", tunnelToken: "fixture-tunnel",
     accessHostname: null, publicOrigin: "https://native.example.test" });
   expect(document({ AGENT_KIND: "deepseek-harness", HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel" }).status).toBe(1);
-  expect(document({ AGENT_KIND: "deepseek-harness", HIVRA_MODEL_KEY: "synthetic", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
-    HIVRA_TUNNEL_URL: "https://native.example.test" }).status).toBe(1);
+});
+it("lets the native v2 document carry its launch-time model only as a complete set", () => {
+  const native = { AGENT_KIND: "deepseek-harness", HIVRA_TUNNEL_TOKEN: "fixture-tunnel", HIVRA_TUNNEL_URL: "https://native.example.test" };
+  const model = { HIVRA_MODEL_KEY: "synthetic-key-value", HIVRA_MODEL_BASE_URL: "https://models.example.test/v1", HIVRA_HERMES_MODEL: "deepseek-v4-1-flash" };
+  const result = document({ ...native, ...model });
+  expect(result.status).toBe(0); expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toMatchObject({ version: 2, agentKind: "deepseek-harness", modelKey: "synthetic-key-value",
+    modelBaseUrl: "https://models.example.test/v1", model: "deepseek-v4-1-flash", publicOrigin: "https://native.example.test" });
+  for (const missing of Object.keys(model)) {
+    const partial = document({ ...native, ...model, [missing]: "" });
+    expect({ missing, status: partial.status, stderr: partial.stderr }).toEqual({ missing, status: 1, stderr: "invalid guest launch input\n" });
+  }
+  for (const present of Object.keys(model)) {
+    const alone = document({ ...native, HIVRA_MODEL_KEY: "", HIVRA_MODEL_BASE_URL: "", HIVRA_HERMES_MODEL: "", [present]: model[present as keyof typeof model] });
+    expect({ present, status: alone.status }).toEqual({ present, status: 1 });
+  }
 });
 it("emits Linux Desktop only as a strict v3 computer launch", () => {
   const result = document({ AGENT_KIND: "linux-desktop", HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
@@ -73,6 +87,49 @@ it("emits Linux Desktop only as a strict v3 computer launch", () => {
   expect(document({ AGENT_KIND: "linux-desktop", HIVRA_MODEL_KEY: "synthetic", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
     HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
     HIVRA_CONTROL_ORIGIN: "https://canary.example.test" }).status).toBe(1);
+});
+it("emits Linux server only as the same strict v3 computer launch", () => {
+  const env = { AGENT_KIND: "linux-server", HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
+    HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
+    HIVRA_CONTROL_ORIGIN: "https://canary.example.test" };
+  const result = document(env);
+  expect(result.status).toBe(0); expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({ version: 3, agentKind: "linux-server", computerSubstrate: "proxmox-kvm",
+    wantBrowser: null, modelKey: "", modelBaseUrl: "", model: "", tunnelToken: "fixture-tunnel",
+    accessHostname: null, publicOrigin: "https://computer.example.test",
+    computerId: "11111111-1111-4111-8111-111111111111", controlOrigin: "https://canary.example.test" });
+  // The launch document itself refuses missing halves, a browser flag and model settings.
+  const documentRefusals: Array<Record<string, string>> = [{ HIVRA_TUNNEL_URL: "" }, { HIVRA_TUNNEL_TOKEN: "" }, { HIVRA_MODEL_KEY: "synthetic" }, { HIVRA_WANT_BROWSER: "0" },
+    { HIVRA_WANT_BROWSER: "1" }, { HIVRA_COMPUTER_ID: "" }, { HIVRA_CONTROL_ORIGIN: "" }];
+  for (const bad of documentRefusals) {
+    expect({ bad, status: document({ ...env, ...bad }).status }).toEqual({ bad, status: 1 });
+  }
+  // Allocation-time validation applies to the new kind exactly as to Linux Desktop.
+  const hostSource = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+  const start = hostSource.indexOf("validate_linux_desktop_input() {");
+  const end = hostSource.indexOf("\nvalidate_linux_desktop_input\n", start);
+  expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+  const validate = (kind: string, overrides: Record<string, string>) => spawnSync("/bin/bash", ["--noprofile", "--norc", "-s"], {
+    input: `set -euo pipefail\nfail() { exit 1; }\n${hostSource.slice(start, end)}\nvalidate_linux_desktop_input\n`,
+    env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", AGENT_KIND: kind, HIVRA_MODEL_KEY: "", HIVRA_MODEL_BASE_URL: "", HIVRA_HERMES_MODEL: "",
+      HIVRA_WANT_BROWSER: "", HIVRA_TUNNEL_TOKEN: env.HIVRA_TUNNEL_TOKEN, HIVRA_TUNNEL_URL: env.HIVRA_TUNNEL_URL,
+      HIVRA_COMPUTER_ID: env.HIVRA_COMPUTER_ID, HIVRA_CONTROL_ORIGIN: env.HIVRA_CONTROL_ORIGIN, ...overrides }, encoding: "utf8", timeout: 3_000,
+  }).status;
+  for (const kind of ["linux-desktop", "linux-server"]) {
+    expect(validate(kind, {})).toBe(0);
+    const allocationRefusals: Array<Record<string, string>> = [{ HIVRA_TUNNEL_URL: "" }, { HIVRA_TUNNEL_TOKEN: "" }, { HIVRA_MODEL_KEY: "synthetic" }, { HIVRA_MODEL_BASE_URL: "https://m.example.test" },
+      { HIVRA_WANT_BROWSER: "0" }, { HIVRA_COMPUTER_ID: "not-a-uuid" }, { HIVRA_COMPUTER_ID: "" }, { HIVRA_CONTROL_ORIGIN: "http://canary.example.test" },
+      { HIVRA_CONTROL_ORIGIN: "" }, { HIVRA_TUNNEL_URL: "https://computer.example.test/" }, { HIVRA_TUNNEL_URL: "https://Computer.example.test" }];
+    for (const bad of allocationRefusals) {
+      expect({ kind, bad, status: validate(kind, bad) }).toEqual({ kind, bad, status: 1 });
+    }
+  }
+  // Other kinds are not subject to the computer validation.
+  expect(validate("codex", { HIVRA_COMPUTER_ID: "" })).toBe(0);
+  // Unknown kinds are still refused at the host's first gate.
+  const source = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+  expect(source).toContain("deepseek-harness|linux-desktop|linux-server) ;; *)");
+  expect(source).not.toContain("linux-servers");
 });
 const REPORTER_TOKEN = ["hvra_otlp_v1", "eyJmaXh0dXJlIjp0cnVlfQ", "Zml4dHVyZS1zaWduYXR1cmU"].join("."); // synthetic, built at runtime
 const REPORTER_CREDENTIAL = {
@@ -123,7 +180,7 @@ it("rejects a reporter credential for other runtimes or in any malformed shape w
     expect({ kind, credential, status: result.status, stdout: result.stdout, stderr: result.stderr })
       .toEqual({ kind, credential, status: 1, stdout: "", stderr: "invalid guest launch input\n" });
   }
-  for (const kind of ["deepseek-harness", "linux-desktop"]) {
+  for (const kind of ["deepseek-harness", "linux-desktop", "linux-server"]) {
     expect(document({ AGENT_KIND: kind, HIVRA_MODEL_KEY: "", HIVRA_TUNNEL_TOKEN: "fixture-tunnel",
       HIVRA_TUNNEL_URL: "https://computer.example.test", HIVRA_COMPUTER_ID: "11111111-1111-4111-8111-111111111111",
       HIVRA_CONTROL_ORIGIN: "https://canary.example.test", HIVRA_ACTIVITY_TELEMETRY: JSON.stringify(REPORTER_CREDENTIAL) }).status).toBe(1);
@@ -169,9 +226,9 @@ it("forwards the guest installer's reporter marker into the host provisioning lo
   // replaced by a local guest), the guest installer's own marker writer, the
   // phase 1 kickoff's `>> "$LOG" 2>&1`, and the poll's exact grep pattern.
   const hostSource = readFileSync(path.join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
-  const statement = hostSource.match(/^guest_launch_document \| "\$\{GSSH\[@\]\}" "ubuntu@\$\{IP\}" \\\n.*hivra-install-agent\.py" >&2$/m)?.[0];
+  const statement = hostSource.match(/^guest_launch_document \| timeout [^\n]*"\$\{GSSH\[@\]\}" \\\n[^\n]*"ubuntu@\$\{IP\}" \\\n[^\n]*hivra-install-agent\.py" >&2 \\\n\s*\|\| fail "[^"\n]*"$/m)?.[0];
   expect(statement).toBeDefined();
-  const pollSource = readFileSync(path.join(process.cwd(), "src/app/api/hivra/agents/[id]/route.ts"), "utf8");
+  const pollSource = readFileSync(path.join(process.cwd(), "src/lib/hivra/proxmox-provision-poll.ts"), "utf8");
   const pattern = pollSource.match(/const ACTIVITY_COLLECTOR_MARKER_PATTERN = "([^"]+)";/)?.[1];
   expect(pattern).toBe("^HIVRA_ACTIVITY_COLLECTOR status=(installed|failed reason=[a-z_]{1,40})$");
   const installer = path.join(process.cwd(), "provisioner/hivra-install-agent.py");
@@ -180,6 +237,9 @@ it("forwards the guest installer's reporter marker into the host provisioning lo
     const log = path.join(directory, "hivra-prov-1090.log");
     const guest = () => `set -euo pipefail
 guest_launch_document() { printf 'document'; }
+# The host bounds the install with timeout(1), which cannot run a shell function.
+timeout() { shift 2; "$@"; }
+fail() { echo "$*" >&2; exit 1; }
 guest() {
   cat >/dev/null
   # Bootstrap output on stdout that ends mid-line, then the reporter marker.

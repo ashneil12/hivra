@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom";
 import { useEffect, useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 
 import { DEFAULT_MODEL_ACCESS, type LaunchModelAccess, type LaunchProfileId } from "@/lib/launch/contracts";
 import {
@@ -61,26 +61,39 @@ const choices = () => screen.getByRole("group", { name: "Model access" });
 const choice = (name: RegExp) => within(choices()).getByRole("button", { name });
 
 describe("ModelAccessControl", () => {
+  it("shows every choice as a one-click button with no disclosure step first", () => {
+    render(<Harness profileId="codex" />);
+    const group = within(choices());
+    expect(group.getAllByRole("button").length).toBeGreaterThan(1);
+    expect(group.getByRole("button", { name: /^Hivra credits/ })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Change/ })).not.toBeInTheDocument();
+  });
+
   it("defaults Codex to signing in inside it, with a key and Hivra credits as the other choices", () => {
     render(<Harness profileId="codex" />);
-    expect(choice(/^Sign in inside Codex after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(choice(/^Use my API key/)).toHaveAttribute("aria-pressed", "false");
+    expect(choice(/^Sign in with my existing account/)).toHaveAttribute("aria-pressed", "true");
+    expect(choice(/^Use my own API key/)).toHaveAttribute("aria-pressed", "false");
     expect(choice(/^Hivra credits/)).toHaveTextContent("$4.25 available");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("shows Claude Code's unavailable choices with why, never pressed", () => {
+  it("offers Claude Code its own sign-in or Hivra credits with a Claude model, never an API key", () => {
     render(<Harness profileId="claude-code" />);
-    expect(choice(/^Sign in inside Claude Code after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(choice(/^Use my API key/)).toBeDisabled();
-    expect(choice(/^Use my API key/)).toHaveAttribute("aria-pressed", "false");
-    expect(choice(/^Use my API key/)).toHaveTextContent("Not available for Claude Code yet.");
-    expect(choice(/^Hivra credits/)).toBeDisabled();
+    expect(choice(/^Sign in with my existing account/)).toHaveAttribute("aria-pressed", "true");
+    expect(choice(/^Use my own API key/)).toBeDisabled();
+    expect(choice(/^Use my own API key/)).toHaveAttribute("aria-pressed", "false");
+    expect(choice(/^Use my own API key/)).toHaveTextContent("Not available for Claude Code. Use Hivra credits");
+    expect(choice(/^Hivra credits/)).toBeEnabled();
+    fireEvent.click(choice(/^Hivra credits/));
+    expect(latest.access.mode).toBe("credits");
+    const options = within(screen.getByRole("combobox")).getAllByRole("option").map(option => option.getAttribute("value"));
+    expect(options[0]).toBe("claude-sonnet-4-6");
+    expect(options.every(value => !value || value.startsWith("claude-"))).toBe(true);
   });
 
   it("offers the saved Vault key first and sends it only after the per-launch consent", () => {
     render(<Harness profileId="codex" savedKeys={[VENICE_KEY]} />);
-    fireEvent.click(choice(/^Use my API key/));
+    fireEvent.click(choice(/^Use my own API key/));
 
     expect(screen.getByRole("button", { name: "Use my saved key ••3f2a" })).toHaveAttribute("aria-pressed", "true");
     const consent = screen.getByRole("checkbox", { name: /Send this key to Codex 1's computer/ });
@@ -95,7 +108,7 @@ describe("ModelAccessControl", () => {
 
   it("takes a pasted key into the page's memory only, and drops it on another choice", () => {
     render(<Harness profileId="codex" savedKeys={[VENICE_KEY]} />);
-    fireEvent.click(choice(/^Use my API key/));
+    fireEvent.click(choice(/^Use my own API key/));
     fireEvent.click(screen.getByRole("button", { name: "Paste a new key" }));
     const input = screen.getByLabelText("Venice AI API key");
     expect(input).toHaveAttribute("type", "password");
@@ -115,7 +128,7 @@ describe("ModelAccessControl", () => {
 
   it("offers to save a pasted key without mentioning a replacement when none is saved", () => {
     render(<Harness profileId="codex" savedKeys={[]} />);
-    fireEvent.click(choice(/^Use my API key/));
+    fireEvent.click(choice(/^Use my own API key/));
     const save = screen.getByRole("checkbox", { name: "Save it in my Vault for next time" });
     expect(save).not.toBeChecked();
   });
@@ -124,7 +137,7 @@ describe("ModelAccessControl", () => {
     render(<Harness profileId="codex" />);
     fireEvent.click(choice(/^Hivra credits/));
     const model = screen.getByRole("combobox", { name: "Model" });
-    expect(model).toHaveValue("deepseek-v4-pro");
+    expect(model).toHaveValue("deepseek-v4-1-flash");
     const advanced = screen.getByText("Advanced").closest("details")!;
     expect(advanced).not.toHaveAttribute("open");
     fireEvent.change(within(advanced).getByLabelText("Model ID"), { target: { value: "my-model-1" } });
@@ -136,7 +149,7 @@ describe("ModelAccessControl", () => {
     const onAddCredit = jest.fn();
     render(<Harness profileId="hermes" balance={EMPTY} onAddCredit={onAddCredit} />);
     expect(choice(/^Hivra credits/)).toBeDisabled();
-    expect(choice(/^Hivra credits/)).toHaveTextContent("You have $0 in Hivra credits.");
+    expect(choice(/^Hivra credits/)).toHaveTextContent("Add credit to start chatting.");
     fireEvent.click(within(choices()).getByRole("button", { name: "Add credit" }));
     expect(onAddCredit).toHaveBeenCalledTimes(1);
   });
@@ -151,5 +164,61 @@ describe("ModelAccessControl", () => {
     fireEvent.change(screen.getByLabelText("Model ID"), { target: { value: "llama3.2" } });
     expect(latest.access).toMatchObject({ baseUrl: "https://llm.example.test/v1", model: "llama3.2" });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("says credits are powered by Venice, and badges only private models", () => {
+    render(<Harness profileId="codex" />);
+    expect(choice(/^Hivra credits/)).toHaveTextContent("Powered by Venice");
+    fireEvent.click(choice(/^Hivra credits/));
+    const model = screen.getByRole("combobox", { name: "Model" });
+    expect(within(model).getByRole("option", { name: /^Kimi K2\.6.* · Private$/ })).toBeInTheDocument();
+    expect(within(model).getByRole("option", { name: "Claude Opus 4.8 (via Venice)" })).toBeInTheDocument();
+  });
+
+  it("starts at $0 on credits with one clear next step", () => {
+    const onAddCredit = jest.fn();
+    render(<Harness profileId="hermes" balance={EMPTY} initial={{ mode: "credits" }} onAddCredit={onAddCredit} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Add credit to start chatting, or choose another option.");
+    fireEvent.click(within(choices()).getByRole("button", { name: "Add credit" }));
+    expect(onAddCredit).toHaveBeenCalledTimes(1);
+    fireEvent.click(choice(/^Set up inside Hermes/));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  describe("checking a pasted Venice key", () => {
+    const realFetch = global.fetch;
+    afterEach(() => { global.fetch = realFetch; jest.useRealTimers(); });
+
+    async function pasteKey(result: unknown) {
+      jest.useFakeTimers();
+      const fetchMock = jest.fn().mockResolvedValue({ json: async () => result });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<Harness profileId="codex" initial={{ mode: "api-key", source: "custom" }} />);
+      fireEvent.change(screen.getByLabelText("Venice AI API key"), { target: { value: "venice-key-12345678" } });
+      expect(fetchMock).not.toHaveBeenCalled();
+      await act(async () => { await jest.advanceTimersByTimeAsync(700); });
+      return fetchMock;
+    }
+
+    it("says the key works and lists what it can use, with private models badged", async () => {
+      const fetchMock = await pasteKey({ ok: true, models: [
+        { id: "kimi-k2-6", name: "Kimi K2.6", privacy: "private" },
+        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", privacy: "anonymized" },
+      ] });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Key works.")).toBeInTheDocument();
+      const model = screen.getByRole("combobox", { name: "Model" });
+      expect(within(model).getAllByRole("option").map(option => option.textContent)).toEqual(["Kimi K2.6 · Private", "Claude Sonnet 4.6"]);
+    });
+
+    it("says plainly when Venice doesn't accept the key", async () => {
+      await pasteKey({ ok: false, reason: "invalid_key" });
+      expect(screen.getByText("Venice doesn't accept this key. Check it and try again.")).toBeInTheDocument();
+    });
+
+    it("says when Venice couldn't be reached", async () => {
+      await pasteKey({ ok: false, reason: "unreachable" });
+      expect(screen.getByText(/Couldn't reach Venice to check this key/)).toBeInTheDocument();
+    });
   });
 });

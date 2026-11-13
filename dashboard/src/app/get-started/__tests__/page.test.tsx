@@ -686,7 +686,7 @@ describe("the translated sign-up pages follow the English page", () => {
     render(<GetStartedPage />);
 
     const { elements, variables } = mockSignUp.mock.calls[0][0].appearance;
-    expect(variables).toMatchObject({ colorBackground: "var(--bg-surface)", colorPrimaryForeground: "var(--vellum-bg)" });
+    expect(variables).toMatchObject({ colorBackground: "var(--hg-glass-strong)", colorPrimaryForeground: "var(--hg-on-accent)" });
     expect(JSON.stringify(elements)).not.toMatch(/bg-white|text-white|bg-black/);
   });
 

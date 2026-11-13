@@ -43,6 +43,11 @@ import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { priorityForResourceTier } from "@/lib/subscription/agent-slots";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { log } from "@/lib/logger";
+import {
+  blocksInstanceLiveMutation,
+  readInstanceLiveMutationBlock,
+  type InstanceLiveMutationState,
+} from "./instance-live-mutation";
 
 const LOG_SOURCE = "tier-change-service";
 
@@ -74,7 +79,7 @@ export interface TierChangeOutcome {
   resizesFailed: Array<{ instanceId: string; error: string }>;
 }
 
-interface InstanceRow {
+interface InstanceRow extends InstanceLiveMutationState {
   id: string;
   config: { infrastructure?: Partial<ProxmoxInfrastructure> } | null;
   hetzner_server_id: number | null;
@@ -171,7 +176,7 @@ export async function applyTierChange(
   // 1. Find all instances owned by this user that aren't deleted/scheduled
   const { data: instances, error: listErr } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, config, hetzner_server_id, host_id, cpu_limit, ram_limit, resource_tier, gateway_url")
+    .select("id, config, hetzner_server_id, host_id, cpu_limit, ram_limit, resource_tier, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
     .eq("user_id", params.userId)
     .not("status", "in", '("deleted","scheduled_for_deletion")');
 
@@ -286,14 +291,27 @@ export async function applyTierChange(
   //     steady-state re-apply (same tier, same boost) doesn't trigger a
   //     needless container restart. NON-FATAL: a failed flag just means the
   //     redeploy waits for the next fleet sync.
+  // A cold-storage transition may have happened while the tier writes ran.
+  // Never resize a missing guest or one owned by another lifecycle operation.
+  const liveRowIds = new Set<string>();
+  for (const row of rows) {
+    if (!blocksInstanceLiveMutation(row)
+      && !(await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row))) {
+      liveRowIds.add(row.id);
+    }
+  }
   const capsChangedRowIds = rows
     .filter((r) => {
+      if (r.lifecycle_state === "deleting" || r.lifecycle_state === "deleted") return false;
       const target = targets.get(r.id)!;
       return r.cpu_limit !== target.cpu || r.ram_limit !== target.ramMb;
     })
     .map((r) => r.id);
 
   if (capsChangedRowIds.length > 0) {
+    // Cold archives contain the previous compose/container caps. Keep this
+    // obligation even while archived: the lifecycle-aware worker skips it
+    // until restoration, then recreates the container with the paid caps.
     const { error: flagErr } = await supabaseAdmin
       .from("hermes_instances")
       .update({ tier_change_pending: true })
@@ -313,9 +331,11 @@ export async function applyTierChange(
   //    instances would need a docker-compose recreate (drops in-flight chats);
   //    MVP defers that path — they pick up new caps on next provision.
   for (const row of rows) {
+    if (!liveRowIds.has(row.id)) continue;
     const provider = row.config?.infrastructure?.provider;
     const vmid = row.config?.infrastructure?.vmid;
     if (provider === "proxmox" && typeof vmid === "number") {
+      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row)) continue;
       const target = targets.get(row.id)!;
       outcome.resizesAttempted += 1;
       try {

@@ -11,10 +11,12 @@ const mockRpc = jest.fn();
 const mockObserve = jest.fn();
 const mockConnect = jest.fn();
 const mockDisconnect = jest.fn();
+const mockConnectNetbird = jest.fn();
+const mockObserveNetbird = jest.fn();
+const mockReapply = jest.fn();
 const mockRateLimit = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/rate-limit", () => ({
   enforceRateLimit: (...args: unknown[]) => mockRateLimit(...args), getIP: () => "127.0.0.1",
 }));
@@ -27,6 +29,9 @@ jest.mock("@/lib/hivra/tailscale-private-access", () => {
     observeHivraTailscale: (...args: unknown[]) => mockObserve(...args),
     connectHivraTailscale: (...args: unknown[]) => mockConnect(...args),
     disconnectHivraTailscale: (...args: unknown[]) => mockDisconnect(...args),
+    connectHivraNetbird: (...args: unknown[]) => mockConnectNetbird(...args),
+    observeHivraNetbird: (...args: unknown[]) => mockObserveNetbird(...args),
+    reapplyHivraOutboundBlock: (...args: unknown[]) => mockReapply(...args),
   };
 });
 
@@ -67,6 +72,8 @@ describe("Hivra Tailscale private access route", () => {
     mockFrom.mockImplementation((table: string) => table === "hivra_agents" ? query(() => agent)
       : table === "hivra_private_access_connections" ? query(() => connection) : query(() => activeOperation));
     mockRpc.mockResolvedValue({ data: true, error: null });
+    mockObserveNetbird.mockResolvedValue({ ok: true, connectionPresent: false, receipt: { state: "disconnected", sshEnabled: false,
+      loginServer: "https://api.netbird.io", observedAt: "2026-09-15T12:00:00Z" } });
     mockObserve.mockResolvedValue({ ok: true, connectionPresent: false, receipt: { state: "disconnected", sshEnabled: false,
       loginServer: "https://controlplane.tailscale.com", observedAt: "2026-09-15T12:00:00Z" } });
     mockConnect.mockResolvedValue({ ok: true, receipt: { state: "connected", sshEnabled: false,
@@ -195,5 +202,144 @@ describe("Hivra Tailscale private access route", () => {
     expect(response.status).toBe(429);
     expect(mockObserve).not.toHaveBeenCalled();
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  describe("hardening and private network v2", () => {
+    const FLAG = "NEXT_PUBLIC_HIVRA_PRIVATE_NETWORK_V2";
+    const saved = process.env[FLAG];
+    afterEach(() => { if (saved === undefined) delete process.env[FLAG]; else process.env[FLAG] = saved; });
+    const stored = () => ({ authority: hivraPrivateAccessAuthority(agent as Parameters<typeof hivraPrivateAccessAuthority>[0]),
+      state: "connected", machine_name: "box", magic_dns_name: null, tailnet_name: null,
+      login_server: "https://controlplane.tailscale.com", ipv4: "100.64.0.7", ipv6: null,
+      connected_at: "2026-09-15T12:00:00Z", observed_at: "2026-09-15T12:00:00Z", failure_code: null });
+
+    it("explains a client that is too old in plain words and names the code", async () => {
+      mockConnect.mockResolvedValue({ ok: false, receipt: { state: "disconnected", sshEnabled: false,
+        loginServer: "https://controlplane.tailscale.com", observedAt: "2026-09-15T12:00:01Z", failureCode: "client_too_old" } });
+      const response = await POST(request({ action: "connect", authKey: "opaque-key" }), params);
+      expect(response.status).toBe(202);
+      const body = await response.json();
+      expect(body.failureCode).toBe("client_too_old");
+      expect(body.error).toContain("1.104.4");
+    });
+
+    it("does not offer NetBird while the flag is off", async () => {
+      delete process.env[FLAG];
+      const response = await POST(request({ action: "connect", provider: "netbird", authKey: "nb-key" }), params);
+      expect(response.status).toBe(400);
+      expect(mockConnectNetbird).not.toHaveBeenCalled();
+      expect(mockRpc).not.toHaveBeenCalled();
+    });
+
+    it("still refuses to enrol over a saved connection while the flag is off", async () => {
+      delete process.env[FLAG];
+      connection = stored();
+      const response = await POST(request({ action: "connect", authKey: "k" }), params);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "already_managed" });
+      expect(mockDisconnect).not.toHaveBeenCalled();
+    });
+
+    it("joins NetBird with its own address check, and refuses a non-https server", async () => {
+      process.env[FLAG] = "1";
+      mockConnectNetbird.mockResolvedValue({ ok: true, receipt: { state: "connected", provider: "netbird", sshEnabled: false,
+        loginServer: "https://api.netbird.io", ipv4: "100.92.1.2", observedAt: "2026-09-15T12:00:01Z" } });
+      const bad = await POST(request({ action: "connect", provider: "netbird", authKey: "k", loginServer: "http://nb.example.test" }), params);
+      expect(bad.status).toBe(400);
+      const ok = await POST(request({ action: "connect", provider: "netbird", authKey: "nb-key" }), params);
+      expect(ok.status).toBe(200);
+      expect(mockConnectNetbird).toHaveBeenCalledWith(expect.objectContaining({ id: ID }), "nb-key", "https://api.netbird.io");
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+
+    it("switches network in one action: leaves the old one, then joins the new one", async () => {
+      process.env[FLAG] = "1";
+      connection = stored();
+      mockConnectNetbird.mockResolvedValue({ ok: true, receipt: { state: "connected", provider: "netbird", sshEnabled: false,
+        loginServer: "https://api.netbird.io", ipv4: "100.92.1.2", observedAt: "2026-09-15T12:00:02Z" } });
+      const response = await POST(request({ action: "connect", provider: "netbird", authKey: "nb-key" }), params);
+      expect(response.status).toBe(200);
+      expect(mockDisconnect).toHaveBeenCalledTimes(1);
+      expect(mockDisconnect.mock.invocationCallOrder[0]).toBeLessThan(mockConnectNetbird.mock.invocationCallOrder[0]);
+      expect(mockRpc.mock.calls.map(call => call[0])).toEqual([
+        "begin_hivra_private_access_operation", "dispatch_hivra_private_access_operation", "complete_hivra_private_access_operation",
+        "begin_hivra_private_access_operation", "dispatch_hivra_private_access_operation", "complete_hivra_private_access_operation",
+      ]);
+      expect(mockRpc.mock.calls[0][1]).toMatchObject({ p_action: "disconnect" });
+      expect(mockRpc.mock.calls[3][1]).toMatchObject({ p_action: "connect", p_login_server: "https://api.netbird.io" });
+    });
+
+    it("does not join the new network when leaving the old one is not confirmed", async () => {
+      process.env[FLAG] = "1";
+      connection = stored();
+      mockDisconnect.mockResolvedValue({ ok: false, receipt: { state: "unknown", sshEnabled: false,
+        loginServer: "https://controlplane.tailscale.com", observedAt: "2026-09-15T12:01:00Z" } });
+      const response = await POST(request({ action: "connect", provider: "netbird", authKey: "nb-key" }), params);
+      expect(response.status).toBe(202);
+      expect(mockConnectNetbird).not.toHaveBeenCalled();
+      expect(mockConnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("saved extras and reapplying protection", () => {
+    const savedConnection = (extra: Record<string, unknown> = {}) => ({
+      authority: hivraPrivateAccessAuthority(agent as Parameters<typeof hivraPrivateAccessAuthority>[0]), state: "connected",
+      machine_name: "box", magic_dns_name: null, tailnet_name: null, login_server: "https://controlplane.tailscale.com",
+      ipv4: "100.64.0.7", ipv6: null, connected_at: "2026-09-15T12:00:00Z", observed_at: "2026-09-15T12:00:00Z",
+      failure_code: null, ...extra });
+    const liveReceipt = (extra: Record<string, unknown> = {}) => ({ state: "connected", provider: "tailscale", sshEnabled: false,
+      loginServer: "https://controlplane.tailscale.com", ipv4: "100.64.0.7", observedAt: "2026-09-15T12:05:00Z", ...extra });
+
+    it("returns the saved provider and the computer's own view on a plain read", async () => {
+      connection = savedConnection({ provider: "netbird", can_see_other_devices: true, visible_peer_count: 2,
+        tagged_hivra: null, block_present: false, client_version: "0.59.1" });
+      const read = await GET(new NextRequest("https://canary.hermesos.cloud/x", { headers: { host: "canary.hermesos.cloud" } }), params);
+      expect((await read.json()).data.connection).toMatchObject({ provider: "netbird", providerKind: "netbird",
+        canSeeOtherDevices: true, visiblePeerCount: 2, blockPresent: false, clientVersion: "0.59.1" });
+    });
+
+    it("still reads a connection where the extra columns do not exist", async () => {
+      const calls: string[] = [];
+      mockFrom.mockImplementation((table: string) => {
+        if (table !== "hivra_private_access_connections") return table === "hivra_agents" ? query(() => agent) : query(() => activeOperation);
+        return { select: (columns: string) => { calls.push(columns);
+          const failing = columns.includes("block_present");
+          return { eq: () => ({ eq: () => ({ maybeSingle: async () => failing
+            ? { data: null, error: { message: "column does not exist" } } : { data: savedConnection(), error: null } }) }) }; } };
+      });
+      const read = await GET(new NextRequest("https://canary.hermesos.cloud/x", { headers: { host: "canary.hermesos.cloud" } }), params);
+      expect(read.status).toBe(200);
+      expect(calls).toHaveLength(2);
+      expect((await read.json()).data.connection).toMatchObject({ ipv4: "100.64.0.7" });
+    });
+
+    it("reapplies the block on a connected computer without joining again", async () => {
+      connection = savedConnection();
+      mockObserve.mockResolvedValue({ ok: true, connectionPresent: true, receipt: liveReceipt({ blockPresent: false }) });
+      mockReapply.mockResolvedValue({ ok: true, receipt: liveReceipt({ blockPresent: true }) });
+      const response = await POST(request({ action: "reapply" }), params);
+      expect(response.status).toBe(200);
+      expect(mockReapply).toHaveBeenCalledWith(expect.objectContaining({ id: ID }), "tailscale", "https://controlplane.tailscale.com");
+      expect(mockConnect).not.toHaveBeenCalled();
+      expect(mockRpc).toHaveBeenCalledWith("record_hivra_private_access_observation", expect.objectContaining({
+        p_receipt: expect.objectContaining({ blockPresent: true }) }));
+      expect(await response.json()).toMatchObject({ success: true, data: { connection: { blockPresent: true } } });
+    });
+
+    it("says so when the protection could not be confirmed", async () => {
+      connection = savedConnection();
+      mockObserve.mockResolvedValue({ ok: true, connectionPresent: true, receipt: liveReceipt({ blockPresent: false }) });
+      mockReapply.mockResolvedValue({ ok: false, receipt: liveReceipt({ blockPresent: false, failureCode: "outbound_block_failed" }) });
+      const response = await POST(request({ action: "reapply" }), params);
+      expect(response.status).toBe(202);
+      expect((await response.json()).failureCode).toBe("outbound_block_failed");
+    });
+
+    it("refuses to reapply when nothing is connected", async () => {
+      connection = null;
+      const response = await POST(request({ action: "reapply" }), params);
+      expect(response.status).toBe(409);
+      expect(mockReapply).not.toHaveBeenCalled();
+    });
   });
 });

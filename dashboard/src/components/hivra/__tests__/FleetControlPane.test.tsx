@@ -7,10 +7,23 @@ import type { AgentSurfaceId } from "@/lib/agent-computers/agent-surfaces";
 import { recordVisit } from "@/lib/workspace/recents";
 import type { UnifiedAgent } from "@/lib/hivra/unified-agent";
 
+import { deleteAgent } from "@/lib/hivra/agent-api";
 import { FleetControlPane } from "../FleetControlPane";
 
 jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
   useWorkspaceAgents: jest.fn(),
+}));
+
+jest.mock("@/components/dashboard/OnboardingChecklist", () => ({
+  OnboardingChecklist: () => <div data-testid="onboarding-checklist-stub" />,
+}));
+
+const fetchPlanStrictMock = jest.fn(async () => null as unknown);
+jest.mock("@/lib/hivra/agent-api", () => ({
+  ...jest.requireActual("@/lib/hivra/agent-api"),
+  fetchPlanStrict: () => fetchPlanStrictMock(),
+  deleteAgent: jest.fn(async () => undefined),
+  startAgent: jest.fn(async () => undefined),
 }));
 
 const replace = jest.fn();
@@ -150,7 +163,7 @@ describe("FleetControlPane", () => {
 
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    expect(screen.getByRole("link", { name: /Start with an agent/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What would you like to work on?" })).toBeInTheDocument();
   });
 
   it("says loading rather than 'none' while the fleet is in flight", () => {
@@ -310,11 +323,107 @@ describe("FleetControlPane", () => {
     expect(replace).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Where will you work?" })).toBeInTheDocument();
   });
-  it("shows two explicit starting choices for an empty account", () => {
+  it("offers three one-tap agents and a browse link to an empty account", async () => {
+    fetchPlanStrictMock.mockResolvedValue(null);
     mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
     render(<FleetControlPane />);
-    expect(screen.getByRole("link", { name: /Start with an agent/ })).toHaveAttribute("href", "/dashboard/launch?kind=agent&start=1");
-    expect(screen.getByRole("link", { name: /Start with a computer/ })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1");
+    expect(screen.getByRole("heading", { name: "What would you like to work on?" })).toBeInTheDocument();
+    expect(screen.getByText("Choose an agent and we'll help you get it running on a computer of its own.")).toBeInTheDocument();
+    expect(screen.getByText("Research and automation")).toBeInTheDocument();
+    expect(screen.getByText("Recommended")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Hermes/ })).toHaveAttribute("href", "/dashboard/launch?profile=hermes");
+    expect(screen.getByRole("link", { name: /Claude Code/ })).toHaveAttribute("href", "/dashboard/launch?profile=claude-code");
+    expect(screen.getByRole("link", { name: /Codex/ })).toHaveAttribute("href", "/dashboard/launch?profile=codex");
+    expect(screen.getByRole("link", { name: "Browse every agent and computer" })).toHaveAttribute("href", "/dashboard/launch");
+    expect(screen.queryByTestId("first-run-plan")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-checklist-stub")).not.toBeInTheDocument();
+  });
+
+  it("offers a free account its two ways to run an agent, once the plan is known", async () => {
+    fetchPlanStrictMock.mockResolvedValue({ subscribed: false, name: "Free", key: "free" });
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
+    render(<FleetControlPane />);
+    const line = await screen.findByTestId("first-run-plan");
+    expect(line).toHaveTextContent("Choose where your agent runs");
+    expect(line).toHaveTextContent("Every agent needs a computer. Choose how you'd like to run yours.");
+    expect(within(line).getByRole("link", { name: "Use Hivra Cloud" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(within(line).getByRole("link", { name: "Connect my server" })).toHaveAttribute("href", "/dashboard/infrastructure");
+    expect(line).toHaveTextContent("Claude Code and Codex are supported on eligible owner-managed infrastructure. Hermes currently requires Hivra Cloud.");
+  });
+
+  it("leaves the plan line out for a paid account", async () => {
+    fetchPlanStrictMock.mockResolvedValue({ subscribed: true, name: "Operator", key: "operator" });
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [] }));
+    render(<FleetControlPane />);
+    await screen.findByRole("heading", { name: "What would you like to work on?" });
+    await Promise.resolve();
+    expect(screen.queryByTestId("first-run-plan")).not.toBeInTheDocument();
+  });
+
+  it("shows the first-steps checklist on Home once there are agents", () => {
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex] }));
+    render(<FleetControlPane />);
+    expect(screen.getByTestId("onboarding-checklist-stub")).toBeInTheDocument();
+  });
+
+  describe("a computer that no longer exists on its host", () => {
+    const gone = {
+      ...ubuntu, state: "error", statusRaw: "error", attention: "error",
+      failureReason: "This computer no longer exists on its host.", missingOnHost: true,
+    } as UnifiedAgent;
+
+    it("says why and offers Remove, behind a confirmation, on the card", async () => {
+      const retryHivra = jest.fn(async () => undefined);
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, gone], retryHivra }));
+      render(<FleetControlPane attentionRequested />);
+      const resolution = screen.getByTestId("attention-resolution");
+      expect(within(resolution).getByText("This computer no longer exists on its host.")).toBeVisible();
+      expect(deleteAgent).not.toHaveBeenCalled();
+      fireEvent.click(within(resolution).getByRole("button", { name: "Remove" }));
+      expect(deleteAgent).not.toHaveBeenCalled();
+      expect(within(resolution).getByText(/can.t be undone/)).toBeVisible();
+      fireEvent.click(within(resolution).getByRole("button", { name: "Remove from Hivra" }));
+      await screen.findByTestId("attention-resolution");
+      expect(deleteAgent).toHaveBeenCalledWith("ubuntu", { recordOnly: true });
+      await Promise.resolve();
+      expect(retryHivra).toHaveBeenCalled();
+    });
+
+    it("opens View details on Manage, which shows the same reason and Remove", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [gone] }));
+      render(<FleetControlPane attentionRequested />);
+      expect(screen.getByRole("link", { name: /MY_UBUNTU_DESKTOP.*View details/ })).toHaveAttribute("href", "/dashboard/agent/ubuntu?tab=manage");
+    });
+
+    it("falls back to plain words when the row has no stored reason", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [{ ...gone, failureReason: undefined, missingOnHost: false }] }));
+      render(<FleetControlPane attentionRequested />);
+      expect(screen.getByText("Something went wrong and it stopped working.")).toBeVisible();
+      expect(screen.getByRole("link", { name: "Launch again" })).toBeVisible();
+    });
+
+    it("offers Try again when the machine still exists", () => {
+      mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [{ ...gone, missingOnHost: false, canTryAgain: true }] }));
+      render(<FleetControlPane attentionRequested />);
+      expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    });
+  });
+
+  it("agrees with the sidebar: an agent added to an errored computer is not a second card", () => {
+    const added = agent("a-1", "Codex on MY_UBUNTU_DESKTOP", {
+      state: "error", attention: "error", attachment: { id: "1", computerId: "ubuntu", computerName: "MY_UBUNTU_DESKTOP", phase: "attached" },
+    });
+    const sick = { ...ubuntu, state: "error", attention: "error" } as UnifiedAgent;
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [sick, added] }));
+    render(<FleetControlPane attentionRequested />);
+    expect(screen.getAllByTestId("attention-resolution")).toHaveLength(1);
+  });
+
+  it("says plainly that nothing needs the owner, never an empty needs-you list", () => {
+    mockedUseWorkspaceAgents.mockReturnValue(state({ agents: [codex, ubuntu] }));
+    render(<FleetControlPane attentionRequested />);
+    expect(screen.getByText("Nothing needs you right now. Everything is running as it should.")).toBeVisible();
+    expect(screen.queryByTestId("attention-resolution")).not.toBeInTheDocument();
   });
 
   it("opens attention without redirecting and includes approvals, not healthy resources", () => {

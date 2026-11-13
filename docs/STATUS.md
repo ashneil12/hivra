@@ -16,33 +16,81 @@ must match it.
 | --- | --- |
 | Agents that can be launched | `dashboard/src/lib/hivra/agent-catalog.ts` (`available`) |
 | Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`) and the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx` |
-| Previews that are shown but not launchable | `dashboard/src/lib/hivra/preview-catalog.ts` |
+| Previews that are shown but not launchable (Buzz only) | `dashboard/src/lib/hivra/preview-catalog.ts` |
 | Public wording for crawlers and the homepage | `dashboard/src/lib/llms-txt.ts` and `dashboard/src/components/landing/home/content.ts` |
 
 ## Agents
 
-All six launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
+All seven launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
 a free account works with a server the person connects.
 
 | Agent | Status | Where it runs |
 | --- | --- | --- |
-| Claude Code | Available | Hivra Cloud or a server you connected |
-| Codex | Available | Hivra Cloud or a server you connected |
-| Hermes | Available | Hivra Cloud only |
-| OpenClaw | Available | Hivra Cloud or a server you connected |
-| Agent Zero | Available | Hivra Cloud or a server you connected |
-| Aeon | Available | Hivra Cloud or a server you connected |
-| DeepSeek Harness | Preview, not launchable | Shown on Agents only |
+| Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
+| Codex | Available | Hivra Cloud or a Proxmox server you connected |
+| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`) on a paid plan. Live on Canary; it reaches hivra.cloud with the next owner-approved production promotion |
+| OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
+| Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
+| Aeon | Available | Hivra Cloud or a Proxmox server you connected |
+| DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.5 or later |
+| OpenBot (CopilotKit) | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.4 or later |
+
+Claude Code can sign in with the person's own Claude account, or run on Hivra
+credits: Hivra translates its requests for Venice's Claude models and bills the
+credits. Credits need a host on provisioner release 2026.11.10.2 or later.
+
+Hermes on a Hivra computer is the official Hermes Agent, unmodified: Hivra
+creates the computer, runs Hermes's own installer, points it at Venice inference
+(default model `deepseek-v4-1-flash`, or the person's own Venice key), and opens
+Hermes's own web UI behind the Hivra sign-in at `/hermes/`. There is no
+Hivra-built image, fork or patch. Owners update it with `hermes update` in
+Terminal or the Update Hermes button on the agent's Manage tab. It needs
+provisioner release 2026.11.12.1 or later and at least 1 CPU and 2 GB, on a paid
+plan like every Hivra-run computer (there is no free compute). There is no
+deployment switch for it: what Canary runs is what a production promotion ships.
+
+DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
+through Hivra's authenticated gateway. It launches with no browser and gets its
+model at launch, because DeepSeek's own settings refuse a key from a remote
+browser: it runs DeepSeek V4.1 Flash on Hivra credits by default, or on the
+person's own Venice API key. It is labelled alpha because the upstream version it runs is pinned
+at an alpha release. It has no public agent page yet, and a connected server or
+a computer in the owner's own cloud cannot run it. Its Launch tile is not on
+the first-run card, which stays at three choices.
+
+OpenBot on a Hivra computer is CopilotKit's official OpenBot image (MIT),
+unmodified: Hivra pulls the latest release, runs it on the computer's loopback
+in OpenBot's single-user mode, and serves OpenBot's own workspace at the root of
+the computer's address behind the Hivra sign-in (the agent page opens
+`/openbot/`). OpenBot will not start without a CopilotKit Intelligence key
+(CopilotKit has a free plan), so the first open shows a one-step page to paste
+it; Hivra keeps it on the computer only. Models run through Venice on Hivra
+credits by default, and the owner can change provider in OpenBot's settings.
+Owners update with the Update button, which pulls upstream's latest image and
+puts the previous image and database back if the new one does not start. It
+needs at least 1 CPU and 3 GB. It is not in the Launch list unless the
+deployment sets `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT=1`. The other app named
+OpenBot (Nightly Labs) is not offered: its licence does not allow a paid host.
+
+The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 
 ## Computers
 
 | Computer | Status | Condition |
 | --- | --- | --- |
-| Ubuntu Desktop | Available | Hivra Cloud or a server you connected |
+| Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
+| Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
 | Linux Sandbox | Available | A gVisor-ready server you connected |
 | Omarchy | Available, with a condition | A prepared computer on Hivra Cloud. A launch claims the one prepared Omarchy computer the site holds, so the tile appears only where that computer is configured. Hivra does not yet build a fresh Omarchy computer per customer. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | macOS | Not offered | Planned only. |
+
+Pending release: new Omarchy claims will reserve the prepared computer while
+updating to the latest supported official stable v4 release. Desktop stays
+blocked until the exact release, migrations and rebooted kernel are verified;
+existing owner opens do not trigger upgrades. This requires migration
+`20261103010000` and the matching dashboard release. Live rollout is unverified.
+See [the rollout and recovery notes](release/OMARCHY-PREPARED-REFRESH.md).
 
 Public copy never calls Omarchy or Windows plainly available, and never calls
 them a preview: each always carries its condition, "Omarchy (prepared
@@ -54,6 +102,9 @@ computer)" and "Windows on your own server with your licensed image".
 | --- | --- |
 | Buzz agent collaboration | Usable: connect a relay and install the sidecar on an eligible computer. Not a launch target. |
 | Self-hosting the whole platform | Preview. `README.md` headlines "Self-host preview" and the roadmap page says so. |
+| Free agent tools on `/tools` | Canary only. Seven added tools (agent picker, running-cost calculator, free-model finder, job library, Telegram and Discord wizard, security check, SOUL.md builder) show only while `NEXT_PUBLIC_HIVRA_AGENT_TOOLS_ENABLED` is on. The flag is on for Canary and off for hivra.cloud. |
+| Catalog view of Launch | Preview, off by default. While `NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG` is `1`, Launch's Choose step gains a search, an agents and computers filter and "Browse by job", and each tile opens a page (what it is, who makes it, how you talk to it, good first tasks, a picture) before Review, and Home suggests up to two agents the owner does not run yet under "Try next". It lists exactly what Launch already offers and changes nothing about what can launch. Once use is known, agents more people use are listed first. |
+| Maker claims on catalog pages | Preview, off by default, with a switch of its own: `NEXT_PUBLIC_HIVRA_MAKER_CLAIMS` is `1` and the catalog view of Launch is on. A maker proves they run an agent's project by adding a file with a line Hivra gives them to the project's repository. A proven claim marks the page as claimed and shows the maker how the agent is used on Hivra (people, launches, hours, the share still running after two weeks) and a launch button for their README. Maker earnings are shown as not turned on: nothing is paid. Editing a page and proof by DNS record are not built. |
 | Canary only, not yet on hivra.cloud | Listed in the "Where things stand" paragraph of [the roadmap](../ROADMAP.md). Nothing reaches hivra.cloud until the owner approves a production promotion. |
 
 ## Owner decisions

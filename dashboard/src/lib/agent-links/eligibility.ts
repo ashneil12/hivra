@@ -75,6 +75,8 @@ export function linkLabel(name: string | null | undefined, fallback = "Computer"
 /** A short kind for the agent's list and Manage. */
 export function computerKindLabel(row: LinkRow): string {
   if (row.computer_substrate === "gvisor" || row.computer_profile === "linux-terminal") return "Linux sandbox";
+  // A Linux computer has no desktop, and its type is the desktop type.
+  if (row.computer_profile === "ubuntu-server") return "Linux computer";
   if (row.computer_profile === "omarchy") return "Omarchy desktop";
   if (row.computer_profile === "windows") return "Windows";
   if (row.computer_profile === "ubuntu-desktop" || row.type === "linux-desktop") return "Ubuntu desktop";

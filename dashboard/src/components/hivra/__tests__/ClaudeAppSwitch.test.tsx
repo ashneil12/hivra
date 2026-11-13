@@ -15,12 +15,15 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   claudeAppInstall: jest.fn(),
   claudeAppSetView: jest.fn(),
   claudeAppRemove: jest.fn(),
+  desktopClipboardSet: jest.fn(),
+  desktopClipboardPaste: jest.fn(),
+  desktopClipboardCopy: jest.fn(),
 }));
 jest.mock("../ClaudeAppSwitch.module.css", () => new Proxy({}, { get: (_target, key) => String(key) }));
 
 const base: ClaudeAppStatus = {
   enabled: true, desktopRunning: true, installedVersion: "2.26454.0", pinnedVersion: "2.26454.0", updateAvailable: false,
-  appRunning: true, mode: "app", profileSaved: true, installing: false, lastError: null,
+  appRunning: true, mode: "app", profileSaved: true, installing: false, lastError: null, clipboard: null,
 };
 const showing = (status: Partial<ClaudeAppStatus>) =>
   jest.mocked(claudeAppStatus).mockResolvedValue({ available: true, status: { ...base, ...status }, error: null });
@@ -201,4 +204,17 @@ describe("with the app added", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove the Claude app" }));
     await waitFor(() => expect(claudeAppRemove).toHaveBeenCalledWith("https://box.example", "t"));
   });
+});
+
+it("shows the clipboard switch, off, on a computer that has it, even before the app is added", async () => {
+  showing({ enabled: false, clipboard: false });
+  mount();
+  expect(await screen.findByRole("button", { name: "Clipboard off" })).toBeTruthy();
+});
+
+it("hides the clipboard switch on a computer whose software predates it", async () => {
+  showing({ clipboard: null });
+  mount();
+  await screen.findByRole("radiogroup", { name: "Desktop view" });
+  expect(screen.queryByRole("button", { name: /Clipboard/ })).toBeNull();
 });

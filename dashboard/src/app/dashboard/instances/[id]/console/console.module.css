@@ -43,11 +43,11 @@
   padding: 0 14px;
   cursor: pointer;
   list-style: none;
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: .05em;
   color: var(--ink-black);
 }
 .actionsSummary::-webkit-details-marker { display: none; }
@@ -63,11 +63,11 @@
 
 .actionsGroupLabel {
   margin: 8px 0 0;
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: .05em;
   color: var(--text-muted);
 }
 
@@ -79,7 +79,7 @@
 .confirmActions > button { min-height: 44px; }
 
 /* Destructive prompt text: the dark red fails contrast on the dark card. */
-.dangerText { color: #8a3c2e; }
+.dangerText { color: var(--hg-bad); }
 :global(.dark) .dangerText { color: var(--hivra-red); }
 
 .backupsIcon { width: 48px; height: 48px; }

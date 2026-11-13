@@ -1,114 +1,166 @@
 @import "tailwindcss";
 
-:root {
-    --vellum-bg: #fdfcf9;
-    --ink-black: #1a1a1a;
-    --ink-hover: #000000;
-    /* Hivra brand accent is red. `--gold-leaf` is kept as the brand-accent
-       variable name (used in ~70 places) but now resolves to red; genuine
-       amber/warning needs go through `--yellow` instead. */
-    --gold-leaf: #ff2c2d;
-    --hivra-red: #ff2c2d;
-    --hivra-red-bright: #ff4244;
-    --hivra-red-soft: rgba(255, 44, 45, 0.12);
-    --hivra-red-line: rgba(255, 44, 45, 0.42);
-    --hivra-red-glow: rgba(255, 44, 45, 0.45);
-    --grid-line: rgba(26, 26, 26, 0.045);
-    --grid-size: 64px;
-    --etched-border: rgba(26, 26, 26, 0.08);
-    --border-subtle: rgba(26, 26, 26, 0.04);
-    
-    /* Semantic mapping for existing code compatibility */
-    --bg-primary: var(--vellum-bg);
-    --bg-surface: #ffffff;
-    --bg-elevated: #faf9f6;
-    --border: var(--etched-border);
-    --accent: var(--ink-black);
-    --green: #22c55e;
-    --red: #ef4444;
-    /* Amber, decoupled from the brand accent — for warning / in-progress states. */
-    --yellow: #c5a059;
-    --text-primary: var(--ink-black);
-    --text-secondary: rgba(26, 26, 26, 0.7);
-    --text-muted: rgba(26, 26, 26, 0.4);
-    --overlay-bg: rgba(255, 255, 255, 0.8);
-    --btn-bg: var(--ink-black);
-    --btn-text: var(--vellum-bg);
-    --card-inverted-bg: var(--ink-black);
-    --card-inverted-text: var(--vellum-bg);
-    --pill-bg: var(--ink-black);
-    --pill-text: var(--vellum-bg);
-    --skills-surface-hero: linear-gradient(180deg, rgba(255,255,255,0.78) 0%, rgba(246,242,234,0.98) 100%);
-    --skills-surface-panel: rgba(255,255,255,0.68);
-    --skills-surface-subtle: rgba(255,255,255,0.52);
-    --skills-surface-card: linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(245,241,233,0.82) 100%);
-    --skills-surface-chip: rgba(255,255,255,0.88);
-    --skills-surface-chip-border: rgba(18,16,14,0.12);
-    --skills-hover-bg: rgba(0,0,0,0.02);
-    --skills-success-border: rgba(21,128,61,0.18);
-    --skills-success-bg: rgba(21,128,61,0.05);
-    --skills-success-text: #166534;
-    --skills-warning-border: rgba(180,83,9,0.18);
-    --skills-warning-bg: rgba(180,83,9,0.06);
-    --skills-warning-text: #92400e;
-    --skills-danger-border: rgba(239,68,68,0.15);
-    --skills-danger-bg: rgba(239,68,68,0.04);
-    --skills-danger-text: #ef4444;
+/* ═══════════════════════════════════════════════════════════════════════
+   HIVRA GLASS — the design language (Nov 2026 redesign)
+   ───────────────────────────────────────────────────────────────────────
+   Monochrome glass, after MonoCode Hub. One neutral ink (`--hg-fg`) mixed
+   over one neutral base (`--hg-bg`) makes every surface, line and selection,
+   so light and dark are the same system with two inputs. Colour is reserved
+   for meaning: status (ok / warn / bad) and the Hivra mark. Primary actions
+   are solid ink, not red.
 
+   Surfaces are translucent and frosted (backdrop blur) over a soft ambient
+   haze, with hairline 7–10% strokes, rounded corners (6 / 10 / 14 / 20) and
+   short, eased motion (120–200 ms, cubic-bezier(0.22, 1, 0.36, 1)).
+
+   Older component code reads the legacy names below (--vellum-bg,
+   --ink-black, --gold-leaf, --etched-border …). They now resolve to the
+   glass tokens, so every screen restyles without per-screen edits.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+    /* Inputs: the two values a theme sets. Neutral grey, no hue. */
+    --hg-bg: hsl(240 0% 97%);
+    --hg-fg: hsl(240 0% 14%);
+    /* The floor under the glass: a shade deeper than the base. */
+    --hg-floor: hsl(240 0% 94%);
+
+    /* Type. System faces, as the native apps use. */
+    --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Ubuntu, Cantarell, Arial, sans-serif;
+    --font-display: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+    /* Legacy face variables (formerly Outfit, Space Grotesk, Playfair) now name the system faces. */
+    --font-outfit: var(--font-sans);
+    --font-grotesk: var(--font-display);
+    --font-playfair: var(--font-display);
+    --font-serif: var(--font-display);
+
+    /* Ink ramps: text and lines are the ink at an opacity. */
+    --hg-text: var(--hg-fg);
+    --hg-text-2: color-mix(in srgb, var(--hg-fg) 68%, transparent);
+    --hg-text-3: color-mix(in srgb, var(--hg-fg) 46%, transparent);
+    --hg-stroke: color-mix(in srgb, var(--hg-fg) 9%, transparent);
+    --hg-stroke-strong: color-mix(in srgb, var(--hg-fg) 16%, transparent);
+    --hg-stroke-subtle: color-mix(in srgb, var(--hg-fg) 6%, transparent);
+
+    /* Fills: selection and raised UI, ink over whatever is behind. */
+    --hg-fill-1: color-mix(in srgb, var(--hg-fg) 4%, transparent);
+    --hg-fill-2: color-mix(in srgb, var(--hg-fg) 7%, transparent);
+    --hg-fill-3: color-mix(in srgb, var(--hg-fg) 11%, transparent);
+    --hg-fill-hover: color-mix(in srgb, var(--hg-fg) 9%, transparent);
+
+    /* Opaque surfaces, for things that must not show through. */
+    --hg-surface: color-mix(in srgb, var(--hg-fg) 3%, var(--hg-bg));
+    --hg-surface-2: color-mix(in srgb, var(--hg-fg) 6%, var(--hg-bg));
+
+    /* Glass: translucent panels over the haze. */
+    --hg-glass: color-mix(in srgb, var(--hg-bg) 62%, transparent);
+    --hg-glass-strong: color-mix(in srgb, var(--hg-bg) 82%, transparent);
+    --hg-glass-blur: 24px;
+    --hg-glass-edge: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
+    --hg-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05), 0 1px 1px rgb(0 0 0 / 0.03);
+    --hg-shadow-md: 0 8px 24px -6px rgb(0 0 0 / 0.10), 0 2px 6px rgb(0 0 0 / 0.05);
+    --hg-shadow-lg: 0 24px 64px -16px rgb(0 0 0 / 0.22), 0 4px 14px rgb(0 0 0 / 0.07);
+
+    /* The haze behind the glass: soft, nearly grey light. */
+    --hg-haze-1: color-mix(in srgb, hsl(220 30% 70%) 22%, transparent);
+    --hg-haze-2: color-mix(in srgb, hsl(350 40% 72%) 14%, transparent);
+    --hg-haze-3: color-mix(in srgb, hsl(260 20% 75%) 16%, transparent);
+
+    /* Accent: monochrome, like MonoCode's theme accent. Text on it is the base. */
+    --hg-accent: var(--hg-fg);
+    --hg-on-accent: var(--hg-bg);
+    --hg-focus: hsl(211 92% 52%);
+
+    /* Status: the one place colour means something. */
+    --hg-ok: #16a34a;
+    --hg-warn: #b7791f;
+    --hg-bad: #dc2626;
+    --hg-brand: #ff2c2d;
+
+    /* Shape and motion. */
+    --hg-radius-xs: 4px;
+    --hg-radius-sm: 7px;
+    --hg-radius-md: 10px;
+    --hg-radius-lg: 14px;
+    --hg-radius-xl: 20px;
+    --hg-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --hg-fast: 120ms;
+    --hg-medium: 200ms;
+
+    /* ── Legacy names, mapped onto the glass tokens ── */
+    --vellum-bg: var(--hg-bg);
+    --ink-black: var(--hg-fg);
+    --ink-hover: color-mix(in srgb, var(--hg-fg) 86%, var(--hg-bg));
+    /* `--gold-leaf` was the brand accent; the accent is now the ink. */
+    --gold-leaf: var(--hg-accent);
+    /* Hivra red stays for the mark and for danger. Soft/line/glow were used as
+       selection and hover tints; those are neutral ink now. */
+    --hivra-red: var(--hg-brand);
+    --hivra-red-bright: color-mix(in srgb, var(--hg-brand) 86%, white);
+    --hivra-red-soft: var(--hg-fill-2);
+    --hivra-red-line: var(--hg-stroke-strong);
+    --hivra-red-glow: color-mix(in srgb, var(--hg-fg) 14%, transparent);
+    --grid-line: color-mix(in srgb, var(--hg-fg) 3.5%, transparent);
+    --grid-size: 64px;
+    --etched-border: var(--hg-stroke);
+    --border-subtle: var(--hg-stroke-subtle);
+
+    --bg-primary: var(--hg-bg);
+    --bg-surface: var(--hg-surface);
+    --bg-elevated: var(--hg-surface-2);
+    --border: var(--hg-stroke);
+    --accent: var(--hg-fg);
+    --green: var(--hg-ok);
+    --red: var(--hg-bad);
+    --yellow: var(--hg-warn);
+    --text-primary: var(--hg-text);
+    --text-secondary: var(--hg-text-2);
+    --text-muted: var(--hg-text-3);
+    --overlay-bg: color-mix(in srgb, var(--hg-bg) 72%, transparent);
+    --btn-bg: var(--hg-accent);
+    --btn-text: var(--hg-on-accent);
+    --card-inverted-bg: var(--hg-fg);
+    --card-inverted-text: var(--hg-bg);
+    --pill-bg: var(--hg-fill-2);
+    --pill-text: var(--hg-fg);
+    --hover-bg: var(--hg-fill-hover);
+    --skills-surface-hero: linear-gradient(180deg, var(--hg-fill-2) 0%, var(--hg-fill-1) 100%);
+    --skills-surface-panel: var(--hg-glass);
+    --skills-surface-subtle: var(--hg-fill-1);
+    --skills-surface-card: var(--hg-surface);
+    --skills-surface-chip: var(--hg-fill-2);
+    --skills-surface-chip-border: var(--hg-stroke);
+    --skills-hover-bg: var(--hg-fill-1);
+    --skills-success-border: color-mix(in srgb, var(--hg-ok) 24%, transparent);
+    --skills-success-bg: color-mix(in srgb, var(--hg-ok) 8%, transparent);
+    --skills-success-text: var(--hg-ok);
+    --skills-warning-border: color-mix(in srgb, var(--hg-warn) 24%, transparent);
+    --skills-warning-bg: color-mix(in srgb, var(--hg-warn) 8%, transparent);
+    --skills-warning-text: var(--hg-warn);
+    --skills-danger-border: color-mix(in srgb, var(--hg-bad) 24%, transparent);
+    --skills-danger-bg: color-mix(in srgb, var(--hg-bad) 7%, transparent);
+    --skills-danger-text: var(--hg-bad);
 }
 
 :root.dark, .dark {
-    /* Vellum is slightly off-black, like a dark slate or charcoal */
-    --vellum-bg: #0d0d0d;
-    --ink-black: #fdfcf9;
-    --ink-hover: #e6e6e6;
-    /* Brand red, brighter on black */
-    --gold-leaf: #ff3a3b;
-    --hivra-red: #ff3a3b;
-    --hivra-red-bright: #ff5a5b;
-    --hivra-red-soft: rgba(255, 58, 59, 0.16);
-    --hivra-red-line: rgba(255, 58, 59, 0.5);
-    --hivra-red-glow: rgba(255, 58, 59, 0.55);
-    --grid-line: rgba(253, 252, 249, 0.05);
-    --etched-border: rgba(253, 252, 249, 0.12);
-    --border-subtle: rgba(253, 252, 249, 0.06);
-
-    --bg-primary: var(--vellum-bg);
-    /* Surface and Elevated are shades lighter than the root background */
-    --bg-surface: #141414;
-    --bg-elevated: #1a1a1a;
-    --border: var(--etched-border);
-    --accent: var(--ink-black);
-    --green: #22c55e;
-    --red: #ef4444;
-    --yellow: #d4af37;
-    --text-primary: var(--ink-black);
-    --text-secondary: rgba(253, 252, 249, 0.75);
-    --text-muted: rgba(253, 252, 249, 0.45);
-    --overlay-bg: rgba(20, 20, 20, 0.8);
-    --btn-bg: var(--bg-elevated);
-    --btn-text: var(--ink-black);
-    --card-inverted-bg: var(--bg-surface);
-    --card-inverted-text: var(--ink-black);
-    --pill-bg: var(--bg-elevated);
-    --pill-text: var(--ink-black);
-    --skills-surface-hero: linear-gradient(180deg, rgba(26,26,26,0.92) 0%, rgba(13,13,13,0.98) 100%);
-    --skills-surface-panel: rgba(20,20,20,0.82);
-    --skills-surface-subtle: rgba(20,20,20,0.72);
-    --skills-surface-card: linear-gradient(180deg, rgba(26,26,26,0.96) 0%, rgba(16,16,16,0.92) 100%);
-    --skills-surface-chip: rgba(20,20,20,0.9);
-    --skills-surface-chip-border: rgba(253,252,249,0.16);
-    --skills-hover-bg: rgba(253,252,249,0.04);
-    --skills-success-border: rgba(34,197,94,0.28);
-    --skills-success-bg: rgba(34,197,94,0.12);
-    --skills-success-text: #86efac;
-    --skills-warning-border: rgba(245,158,11,0.28);
-    --skills-warning-bg: rgba(245,158,11,0.12);
-    --skills-warning-text: #fcd34d;
-    --skills-danger-border: rgba(248,113,113,0.3);
-    --skills-danger-bg: rgba(248,113,113,0.12);
-    --skills-danger-text: #fca5a5;
-
+    --hg-bg: hsl(240 0% 9%);
+    --hg-fg: hsl(240 0% 92%);
+    --hg-floor: hsl(240 0% 6%);
+    --hg-glass: color-mix(in srgb, var(--hg-bg) 58%, transparent);
+    --hg-glass-strong: color-mix(in srgb, var(--hg-bg) 84%, transparent);
+    --hg-glass-edge: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+    --hg-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --hg-shadow-md: 0 10px 30px -8px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.25);
+    --hg-shadow-lg: 0 30px 80px -20px rgb(0 0 0 / 0.7), 0 6px 18px rgb(0 0 0 / 0.35);
+    --hg-haze-1: color-mix(in srgb, hsl(215 45% 55%) 16%, transparent);
+    --hg-haze-2: color-mix(in srgb, hsl(352 55% 55%) 9%, transparent);
+    --hg-haze-3: color-mix(in srgb, hsl(265 30% 60%) 10%, transparent);
+    --hg-focus: hsl(211 92% 62%);
+    --hg-ok: #34d399;
+    --hg-warn: #fbbf24;
+    --hg-bad: #f87171;
+    --hg-brand: #ff3a3b;
 }
 
 /* Do NOT re-declare a bare-element reset here.
@@ -124,14 +176,20 @@
 
 html, body {
     height: 100%;
-    background-color: var(--vellum-bg);
     color: var(--ink-black);
-    font-family: var(--font-outfit), 'Outfit', system-ui, sans-serif;
+    font-family: var(--font-sans);
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     scroll-behavior: smooth;
 }
+
+/* The page floor sits on <html>; <body> stays clear so the ambient haze
+   (body::before, below) shows through every glass surface above it. */
+html { background-color: var(--hg-bg); }
+body { background-color: transparent; }
 
 /* ── Smooth Theme Transitions ────────────────────────────────────── */
 /* Scoped to specific elements instead of * to avoid scroll jank on mobile */
@@ -182,65 +240,69 @@ select,
     transition: none !important;
 }
 
-/* Vellum Texture overlay */
-.vellum-texture {
-    position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
-    pointer-events: none;
-    z-index: 50;
-    opacity: 0.04;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-}
+/* The old vellum grain overlay. Glass is clean, so it no longer paints. */
+.vellum-texture { display: none; }
 
-/* Typography Classes — `.serif` is the brand display face (Space Grotesk). */
-.serif { font-family: var(--font-grotesk), 'Space Grotesk', var(--font-outfit), system-ui, sans-serif; letter-spacing: -0.015em; }
-.mono { font-family: var(--font-mono), 'Space Mono', monospace; }
+/* Typography. `.serif` was the display face; it is now the system display
+   face, set tight. `.mono` is the system monospace. */
+.serif { font-family: var(--font-display); letter-spacing: -0.022em; font-feature-settings: "ss01", "cv11"; }
+.serif em { font-style: normal; }
+.mono { font-family: var(--font-mono); }
 
-/* Custom Components */
+/* Cards: frosted glass with a hairline and a soft lift on hover. */
 .etched-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--etched-border);
-    box-shadow: 0 4px 20px -5px rgba(0,0,0,0.05);
-    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    background: var(--hg-glass);
+    -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    border: 1px solid var(--hg-stroke);
+    border-radius: var(--hg-radius-lg);
+    box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+    transition: border-color var(--hg-medium) var(--hg-ease), box-shadow var(--hg-medium) var(--hg-ease), transform var(--hg-medium) var(--hg-ease);
 }
 
 @media (hover: hover) and (pointer: fine) {
     .etched-card:hover {
-        border-color: var(--hivra-red);
-        transform: translateY(-2px);
+        border-color: var(--hg-stroke-strong);
+        box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
+        transform: translateY(-1px);
     }
 }
 
+/* Primary action: solid ink, like MonoCode's composer send. */
 .action-button {
-    background: var(--hivra-red);
-    color: #fff;
-    transition: all 0.3s ease;
+    background: var(--hg-accent);
+    color: var(--hg-on-accent);
+    border-radius: var(--hg-radius-sm);
+    transition: background-color var(--hg-fast) var(--hg-ease), transform var(--hg-fast) var(--hg-ease), opacity var(--hg-fast) var(--hg-ease);
     position: relative;
     overflow: hidden;
-    font-family: var(--font-mono), 'Space Mono', monospace;
-    text-transform: uppercase;
+    font-family: var(--font-sans);
+    text-transform: none;
+    letter-spacing: 0;
     font-weight: 600;
-    box-shadow: none;
+    box-shadow: var(--hg-shadow-sm);
 }
 .action-button:hover {
-    background: var(--hivra-red-bright);
+    background: color-mix(in srgb, var(--hg-accent) 88%, transparent);
     opacity: 1;
     letter-spacing: 0;
-    box-shadow: none;
 }
+.action-button:active { transform: scale(0.98); }
+.action-button:disabled { background: var(--hg-fill-3); color: var(--hg-text-3); box-shadow: none; }
 
 /* AI Assistant Items */
 .ai-message {
-    border-left: 2px solid var(--gold-leaf);
-    background: rgba(255, 44, 45, 0.03);
+    border-left: 2px solid var(--hg-stroke-strong);
+    background: var(--hg-fill-1);
+    border-radius: 0 var(--hg-radius-md) var(--hg-radius-md) 0;
 }
 .glow-dot {
     width: 8px;
     height: 8px;
-    background: var(--green);
+    background: var(--hg-ok);
     border-radius: 50%;
     display: inline-block;
-    box-shadow: 0 0 10px var(--green);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--hg-ok) 18%, transparent);
 }
 
 /* Sidebar line indicator */
@@ -254,8 +316,9 @@ select,
     left: -20px;
     top: 50%;
     transform: translateY(-50%);
-    width: 4px;
-    height: 20px;
+    width: 3px;
+    height: 16px;
+    border-radius: 2px;
     background: var(--ink-black);
 }
 
@@ -263,13 +326,13 @@ select,
    scrollbars, so a desktop app's wrapped view is left out entirely. :where()
    keeps the specificity these rules had before the scope was added. */
 :where(:root:not([data-shell="desktop"]))::-webkit-scrollbar,
-:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar { width: 4px; height: 4px; }
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar { width: 8px; height: 8px; }
 :where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-track,
 :where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-track { background: transparent; }
 :where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-thumb,
-:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-thumb { background: var(--etched-border); }
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-thumb { background: var(--hg-fill-3); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
 :where(:root:not([data-shell="desktop"]))::-webkit-scrollbar-thumb:hover,
-:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-thumb:hover { background: rgba(26,26,26,0.2); }
+:where(:root:not([data-shell="desktop"])) ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--hg-fg) 22%, transparent); background-clip: padding-box; }
 
 /* ── Desktop shell ───────────────────────────────────────────────────
    html[data-shell="desktop"] is set before first paint by the root layout's
@@ -292,13 +355,13 @@ select,
 :root[data-shell="desktop"]:has(.hermes-pwa-bottom-nav) { --hivra-bottom-chrome: 0px; }
 
 /* Selection */
-::selection { background: var(--hivra-red); color: #fff; }
+::selection { background: color-mix(in srgb, var(--hg-focus) 32%, transparent); color: inherit; }
 
 /* Status badges */
-.badge-running { background: rgba(34,197,94,0.1); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
-.badge-provisioning { background: rgba(197,160,89,0.12); color: var(--yellow); border: 1px solid rgba(197,160,89,0.28); }
-.badge-stopped { background: rgba(26,26,26,0.05); color: var(--text-muted); border: 1px solid var(--etched-border); }
-.badge-error, .badge-failed { background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+.badge-running { background: color-mix(in srgb, var(--hg-ok) 10%, transparent); color: var(--hg-ok); border: 1px solid color-mix(in srgb, var(--hg-ok) 22%, transparent); border-radius: 999px; }
+.badge-provisioning { background: color-mix(in srgb, var(--hg-warn) 10%, transparent); color: var(--hg-warn); border: 1px solid color-mix(in srgb, var(--hg-warn) 24%, transparent); border-radius: 999px; }
+.badge-stopped { background: var(--hg-fill-1); color: var(--text-muted); border: 1px solid var(--hg-stroke); border-radius: 999px; }
+.badge-error, .badge-failed { background: color-mix(in srgb, var(--hg-bad) 10%, transparent); color: var(--hg-bad); border: 1px solid color-mix(in srgb, var(--hg-bad) 22%, transparent); border-radius: 999px; }
 
 /* Animations */
 @keyframes pulse-soft {
@@ -341,84 +404,17 @@ select,
 .animate-spin-slow { animation: spin-slow 2s linear infinite; }
 .animate-kaomoji { animation: kaomoji-wiggle 3s ease-in-out infinite; }
 
-/* Shared agent-chat activity: quiet motion keeps the eye on the current action. */
+/* Shared agent-chat motion: a turn and its work trail arrive with a quiet
+   fade. The turn's look is in components/hivra/chat/chat.module.css. */
 .hivra-chat-message,
-.hivra-chat-activity-wrap,
-.hivra-chat-tool-history-list {
+.hivra-chat-trail,
+.hivra-chat-trail-rows {
   animation: hivra-chat-activity-in 160ms ease-out both;
 }
-.hivra-chat-activity-wrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-.hivra-chat-activity {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 20px;
-  margin-bottom: 8px;
-  border-left: 2px solid var(--gold-leaf);
-  padding: 2px 0 2px 9px;
-  color: var(--text-secondary);
-  font-family: var(--font-mono), monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.035em;
-}
-.hivra-chat-activity-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--gold-leaf); }
-.hivra-chat-activity-dot.is-running { animation: hivra-chat-activity-pulse 1.4s ease-in-out infinite; }
-.hivra-chat-activity-dot.is-error { background: var(--red, #c0392b); }
-.hivra-chat-activity-dot.is-muted { background: var(--text-muted); }
-.hivra-chat-activity-dot.is-done { background: var(--gold-leaf); }
-.hivra-chat-activity-label { color: var(--ink-black); font-weight: 600; text-transform: uppercase; }
-.hivra-chat-activity-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hivra-chat-spinner { animation: spin 1s linear infinite; }
-.hivra-chat-latest {
-  position: absolute;
-  bottom: calc(100% + 12px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  padding: 8px 12px;
-  border: 1px solid var(--etched-border);
-  border-radius: 999px;
-  background: var(--bg-surface);
-  color: var(--ink-black);
-  box-shadow: 0 3px 14px rgb(0 0 0 / 10%);
-  font-size: 12px;
-  cursor: pointer;
-}
-.hivra-chat-latest:hover { border-color: var(--hivra-red-line); }
-.hivra-chat-latest:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 2px; }
-.hivra-chat-composer:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: -2px; }
-.hivra-chat-tool-toggle:focus-visible, .hivra-chat-tool-history > button:focus-visible { outline: 2px solid var(--gold-leaf); outline-offset: 2px; }
-.hivra-chat-tool-history { margin-top: 8px; border-top: 1px solid var(--etched-border); }
-.hivra-chat-tool-history > button {
-  display: flex; align-items: center; gap: 5px; border: 0; background: transparent;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 10.5px;
-  padding: 5px 0;
-  transition: color 160ms ease, transform 160ms ease;
-}
-.hivra-chat-tool-history > button:hover,
-.hivra-chat-tool-history > button:focus-visible { color: var(--ink-black); }
-.hivra-chat-tool-history-list { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
-.hivra-chat-turn-state { color: var(--text-muted); font-family: var(--font-mono), monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-@media (max-width: 767px) {
-  .hivra-chat-activity { font-size: 12px; }
-  .hivra-chat-tool-history > button { font-size: 11px; }
-}
-@media (pointer: coarse) {
-  .hivra-chat-tool-history > button { min-height: 40px; }
-}
 @keyframes hivra-chat-activity-in {
   from { opacity: 0; transform: translate3d(0, 3px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-@keyframes hivra-chat-activity-pulse {
-  0%, 100% { opacity: 0.45; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1); }
 }
 
 /* Wallet compute-boost card — entrance + ambient "alive" loops. */
@@ -431,8 +427,8 @@ select,
   50% { opacity: 1; transform: scale(1.16); }
 }
 @keyframes boost-icon-charge {
-  0%, 100% { box-shadow: 0 0 0 rgba(197,160,89,0); }
-  50% { box-shadow: 0 0 16px rgba(197,160,89,0.5); }
+  0%, 100% { box-shadow: 0 0 0 transparent; }
+  50% { box-shadow: 0 0 16px var(--hivra-red-glow); }
 }
 @keyframes boost-zap-pulse {
   0%, 100% { transform: scale(1); }
@@ -458,9 +454,8 @@ select,
   .boost-card, .boost-glow, .boost-iconwrap, .boost-zap, .boost-shine { animation: none; }
   .boost-card { opacity: 1; transform: none; }
   .boost-shine { display: none; }
-  .hivra-chat-message, .hivra-chat-activity-wrap, .hivra-chat-tool-history-list, .hivra-chat-activity-dot.is-running { animation: none; }
-  .hivra-chat-message, .hivra-chat-activity-wrap, .hivra-chat-tool-history-list { transform: none; opacity: 1; }
-  .hivra-chat-tool-history > button { transition: none; }
+  .hivra-chat-message, .hivra-chat-trail, .hivra-chat-trail-rows { animation: none; }
+  .hivra-chat-message, .hivra-chat-trail, .hivra-chat-trail-rows { transform: none; opacity: 1; }
   .hivra-chat-spinner, .hivra-chat-message .animate-bounce { animation: none; }
 }
 
@@ -502,7 +497,7 @@ select,
     display: flex; align-items: center; justify-content: center;
     background: var(--bg-elevated);
     border: 1px solid var(--etched-border);
-    border-radius: 0;
+    border-radius: var(--hg-radius-sm);
     margin-bottom: 1.25rem;
     color: var(--text-muted);
 }
@@ -530,7 +525,7 @@ select,
 .chat-header-btn {
     width: 30px; height: 30px;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 0;
+    border-radius: var(--hg-radius-sm);
     color: var(--text-muted);
     transition: all 0.2s ease;
 }
@@ -547,13 +542,13 @@ select,
 }
 .chat-header-status {
     font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
-    padding: 2px 8px; border-radius: 0; font-weight: 600;
+    padding: 2px 8px; border-radius: var(--hg-radius-sm); font-weight: 600;
 }
 .chat-header-status-online {
-    background: rgba(34,197,94,0.08); color: var(--green);
+    background: color-mix(in srgb, var(--hg-ok) 10%, transparent); color: var(--green);
 }
 .chat-header-status-offline {
-    background: rgba(26,26,26,0.05); color: var(--text-muted);
+    background: var(--hg-fill-1); color: var(--text-muted);
 }
 .chat-header-count {
     font-size: 10px; color: var(--text-muted); letter-spacing: 0.05em;
@@ -579,7 +574,7 @@ select,
 }
 .chat-sidebar-close {
     width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
-    border-radius: 0; color: var(--text-muted); transition: all 0.2s;
+    border-radius: var(--hg-radius-sm); color: var(--text-muted); transition: all 0.2s;
 }
 .chat-sidebar-close:hover { background: var(--etched-border); color: var(--ink-black); }
 .chat-sidebar-new {
@@ -601,7 +596,7 @@ select,
 .chat-sidebar-search-input {
     width: 100%; padding: 8px 10px 8px 32px;
     font-size: 12px; border: 1px solid var(--etched-border);
-    background: var(--bg-surface); border-radius: 0;
+    background: var(--bg-surface); border-radius: var(--hg-radius-sm);
 }
 .chat-sidebar-search-input:focus { border-color: var(--ink-black); }
 .chat-sidebar-list {
@@ -618,9 +613,9 @@ select,
     padding: 10px 16px; cursor: pointer;
     transition: background 0.15s;
 }
-.chat-sidebar-item:hover { background: rgba(26,26,26,0.03); }
+.chat-sidebar-item:hover { background: var(--hg-fill-1); }
 .chat-sidebar-item-active {
-    background: rgba(197,160,89,0.06);
+    background: var(--hg-fill-1);
     border-left: 2px solid var(--gold-leaf);
 }
 .chat-sidebar-item-content {
@@ -637,7 +632,7 @@ select,
 .chat-sidebar-item-time { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
 .chat-sidebar-item-more {
     width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-    border-radius: 0; color: var(--text-muted); opacity: 0;
+    border-radius: var(--hg-radius-sm); color: var(--text-muted); opacity: 0;
     transition: all 0.15s;
 }
 .chat-sidebar-item:hover .chat-sidebar-item-more { opacity: 1; }
@@ -684,7 +679,7 @@ select,
     padding: 6px 14px;
     font-size: 11px; font-weight: 600;
     background: var(--ink-black); color: var(--bg-surface);
-    border-radius: 0;
+    border-radius: var(--hg-radius-sm);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     z-index: 10;
     transition: all 0.2s;
@@ -708,16 +703,16 @@ select,
 .chat-avatar {
     width: 30px; height: 30px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 0; margin-top: 2px;
+    border-radius: var(--hg-radius-sm); margin-top: 2px;
 }
 .chat-avatar-user {
-    background: rgba(26,26,26,0.05);
+    background: var(--hg-fill-2);
     border: 1px solid var(--etched-border);
     color: var(--ink-black);
 }
 .chat-avatar-assistant {
-    background: rgba(197,160,89,0.08);
-    border: 1px solid rgba(197,160,89,0.15);
+    background: var(--hg-fill-2);
+    border: 1px solid var(--hg-stroke);
     color: var(--gold-leaf);
 }
 
@@ -748,7 +743,7 @@ select,
 .chat-message-user .chat-message-text {
     display: inline-block; text-align: left;
     padding: 10px 16px;
-    background: rgba(26,26,26,0.03);
+    background: var(--hg-fill-1);
     border: 1px solid var(--etched-border);
     max-width: 85%;
 }
@@ -764,7 +759,7 @@ select,
     transition: border-color 0.2s;
 }
 .chat-attachment-chip:hover { border-color: var(--gold-leaf); }
-.chat-attachment-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 0; }
+.chat-attachment-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: var(--hg-radius-sm); }
 .chat-attachment-name { font-size: 11px; }
 
 /* ── Message Actions (hover bar) ──────────────────────────────────────── */
@@ -772,7 +767,7 @@ select,
     display: flex; gap: 2px;
     position: absolute; bottom: -6px;
     background: var(--bg-surface); border: 1px solid var(--etched-border);
-    border-radius: 0; padding: 2px;
+    border-radius: var(--hg-radius-sm); padding: 2px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.06);
     animation: chat-msg-in 0.15s ease;
     z-index: 5;
@@ -782,7 +777,7 @@ select,
 .chat-action-btn {
     width: 26px; height: 26px;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 0; color: var(--text-muted);
+    border-radius: var(--hg-radius-sm); color: var(--text-muted);
     transition: all 0.15s;
 }
 .chat-action-btn:hover { background: var(--bg-elevated); color: var(--ink-black); }
@@ -836,9 +831,9 @@ select,
 }
 .chat-md-ul li, .chat-md-ol li { margin: 0.15em 0; }
 .chat-md-inline-code {
-    background: rgba(197,160,89,0.08);
-    border: 1px solid rgba(197,160,89,0.12);
-    padding: 1px 6px; border-radius: 0;
+    background: var(--hg-fill-2);
+    border: 1px solid var(--hg-stroke);
+    padding: 1px 6px; border-radius: var(--hg-radius-sm);
     font-size: 12px; font-family: var(--font-mono), 'Space Mono', monospace;
 }
 .chat-md-link {
@@ -860,7 +855,7 @@ select,
     background: var(--bg-elevated); font-weight: 700;
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
 }
-.chat-md-table tr:hover td { background: rgba(197,160,89,0.03); }
+.chat-md-table tr:hover td { background: var(--hg-fill-1); }
 
 /* ── Code Block ───────────────────────────────────────────────────────── */
 .chat-code-block {
@@ -873,7 +868,7 @@ select,
     display: flex; align-items: center; justify-content: space-between;
     padding: 6px 12px;
     border-bottom: 1px solid var(--etched-border);
-    background: rgba(26,26,26,0.02);
+    background: var(--hg-fill-1);
 }
 .chat-code-lang {
     font-size: 9px; text-transform: uppercase; letter-spacing: 0.15em;
@@ -882,7 +877,7 @@ select,
 .chat-code-copy {
     display: flex; align-items: center; gap: 4px;
     font-size: 10px; color: var(--text-muted);
-    padding: 3px 8px; border-radius: 0;
+    padding: 3px 8px; border-radius: var(--hg-radius-sm);
     transition: all 0.2s;
 }
 .chat-code-copy:hover { background: var(--etched-border); color: var(--ink-black); }
@@ -932,7 +927,7 @@ select,
 .chat-tool-params { display: flex; flex-direction: column; gap: 3px; }
 .chat-tool-param {
     display: flex; gap: 10px; font-size: 12px;
-    padding: 3px 0; border-bottom: 1px solid rgba(26,26,26,0.04);
+    padding: 3px 0; border-bottom: 1px solid var(--hg-fill-2);
 }
 .chat-tool-param-key {
     flex-shrink: 0; font-size: 11px; font-weight: 600;
@@ -955,8 +950,9 @@ select,
 .chat-thinking-pill {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 8px 16px;
-    border: 1px solid rgba(197,160,89,0.2);
-    background: rgba(197,160,89,0.04);
+    border: 1px solid var(--hg-stroke);
+    border-radius: 999px;
+    background: var(--hg-fill-1);
     font-size: 12px; font-weight: 500; color: var(--text-secondary);
 }
 .chat-thinking-icon { animation: pulse-soft 1.5s ease-in-out infinite; color: var(--gold-leaf); }
@@ -1032,14 +1028,14 @@ select,
 .chat-artifact-title { font-size: 13px; font-weight: 600; }
 .chat-artifact-lang {
     font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
-    padding: 2px 6px; background: rgba(197,160,89,0.08);
+    padding: 2px 6px; background: var(--hg-fill-2);
     color: var(--gold-leaf); font-weight: 600;
 }
 .chat-artifact-actions { display: flex; gap: 2px; }
 .chat-artifact-btn {
     width: 28px; height: 28px;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 0; color: var(--text-muted);
+    border-radius: var(--hg-radius-sm); color: var(--text-muted);
     transition: all 0.2s;
 }
 .chat-artifact-btn:hover { background: var(--etched-border); color: var(--ink-black); }
@@ -1064,8 +1060,8 @@ select,
     transition: all 0.2s;
 }
 .chat-artifact-chip:hover {
-    border-color: var(--gold-leaf);
-    background: rgba(197,160,89,0.03);
+    border-color: var(--hg-stroke-strong);
+    background: var(--hg-fill-1);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1123,11 +1119,12 @@ select,
 }
 
 .vitals-label {
-    font-family: var(--font-mono), 'Space Mono', monospace;
-    font-size: 10px;
+    font-family: var(--font-sans);
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: .05em;
     opacity: 0.5;
+    font-weight: 600;
 }
 
 .vitals-value {
@@ -1154,13 +1151,17 @@ select,
 }
 .chat-input-composer {
     display: flex; align-items: flex-end; gap: 6px;
-    border: 1px solid var(--etched-border);
-    background: var(--bg-surface);
-    padding: 4px;
-    transition: border-color 0.2s;
+    border: 1px solid var(--hg-stroke);
+    border-radius: var(--hg-radius-xl);
+    background: var(--hg-glass-strong);
+    -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
+    padding: 6px;
+    transition: border-color var(--hg-fast) var(--hg-ease), box-shadow var(--hg-fast) var(--hg-ease);
 }
 .chat-input-composer:focus-within {
-    border-color: var(--ink-black);
+    border-color: var(--hg-stroke-strong);
 }
 .chat-input-textarea {
     flex: 1;
@@ -1176,13 +1177,13 @@ select,
     width: 36px; height: 36px;
     display: flex; align-items: center; justify-content: center;
     color: var(--text-muted); flex-shrink: 0;
-    border-radius: 0;
+    border-radius: var(--hg-radius-sm);
     transition: all 0.2s;
 }
 .chat-input-attach:hover { background: var(--bg-elevated); color: var(--ink-black); }
 .chat-input-file-hidden { display: none; }
 .chat-input-send {
-    width: 36px; height: 36px;
+    width: 34px; height: 34px; border-radius: 999px;
     display: flex; align-items: center; justify-content: center;
     background: var(--ink-black); color: var(--bg-surface);
     flex-shrink: 0;
@@ -1191,7 +1192,7 @@ select,
 .chat-input-send:hover { background: var(--ink-hover); }
 .chat-input-send:disabled { opacity: 0.25; cursor: default; }
 .chat-input-stop {
-    width: 36px; height: 36px;
+    width: 34px; height: 34px; border-radius: 999px;
     display: flex; align-items: center; justify-content: center;
     background: var(--red); color: var(--bg-surface);
     flex-shrink: 0;
@@ -1211,7 +1212,7 @@ select,
     background: var(--bg-surface); font-size: 11px;
     position: relative;
 }
-.chat-input-file-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 0; }
+.chat-input-file-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: var(--hg-radius-sm); }
 .chat-input-file-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-input-file-remove {
     width: 16px; height: 16px;
@@ -1224,15 +1225,18 @@ select,
 
 /* ── Drag & Drop ──────────────────────────────────────────────────────── */
 .chat-input-dragover .chat-input-composer {
-    border-color: var(--gold-leaf);
-    background: rgba(197,160,89,0.03);
+    border-color: var(--hg-stroke-strong);
+    background: var(--hg-fill-1);
 }
 .chat-input-drop-overlay {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 8px;
-    background: rgba(253,252,249,0.9);
-    border: 2px dashed var(--gold-leaf);
+    background: var(--hg-glass-strong);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    border-radius: var(--hg-radius-lg);
+    border: 2px dashed var(--hg-stroke-strong);
     color: var(--gold-leaf); font-size: 13px; font-weight: 600;
     z-index: 10;
 }
@@ -1242,8 +1246,9 @@ select,
     display: flex; align-items: center; gap: 8px;
     margin: 0 16px 8px;
     padding: 10px 14px;
-    border: 1px solid rgba(239,68,68,0.15);
-    background: rgba(239,68,68,0.04);
+    border: 1px solid color-mix(in srgb, var(--hg-bad) 22%, transparent);
+    border-radius: var(--hg-radius-md);
+    background: color-mix(in srgb, var(--hg-bad) 7%, transparent);
     font-size: 12px; color: var(--red);
 }
 
@@ -1287,24 +1292,21 @@ select,
 
 /* Marketing cards: sharp + a stronger red lift than the app default */
 .hivra-net .etched-card {
-    border-radius: 0;
-    box-shadow: none;
+    border-radius: var(--hg-radius-lg);
 }
 @media (hover: hover) and (pointer: fine) {
     .hivra-net .etched-card:hover {
-        transform: translateY(-3px);
-        box-shadow:
-            0 0 0 1px var(--hivra-red-soft),
-            0 24px 50px -28px var(--hivra-red-glow);
+        transform: translateY(-2px);
+        box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg);
     }
 }
 
 /* ── Network node primitives ─────────────────────────────────────────────── */
 .hivra-net .net-eyebrow {
-    font-family: var(--font-mono), "Space Mono", monospace;
-    font-size: 10px;
+    font-family: var(--font-sans);
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.22em;
+    letter-spacing: .05em;
     font-weight: 700;
     color: var(--hivra-red);
 }
@@ -1314,10 +1316,10 @@ select,
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-family: var(--font-mono), "Space Mono", monospace;
-    font-size: 9px;
+    font-family: var(--font-sans);
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.18em;
+    letter-spacing: .05em;
     font-weight: 700;
 }
 .hivra-net .node-status .dot {
@@ -1457,7 +1459,7 @@ select,
     color: var(--text-secondary);
     background: transparent;
     border: none;
-    border-radius: 0;
+    border-radius: var(--hg-radius-sm);
     cursor: pointer;
     transition: all 0.2s ease;
 }
@@ -1486,4 +1488,209 @@ select,
         align-items: flex-start;
         padding: calc(20px + env(safe-area-inset-top, 0px)) 16px calc(20px + env(safe-area-inset-bottom, 0px));
     }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HIVRA GLASS — shared surfaces, defaults and primitives
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Ambient haze: three soft light pools fixed behind everything, so the glass
+   above has something to frost. Monochrome enough to read as grey. */
+body::before {
+    content: "";
+    position: fixed;
+    inset: -20vmax;
+    z-index: -1;
+    pointer-events: none;
+    background:
+        radial-gradient(38vmax 30vmax at 18% 12%, var(--hg-haze-1), transparent 70%),
+        radial-gradient(34vmax 28vmax at 86% 18%, var(--hg-haze-2), transparent 70%),
+        radial-gradient(44vmax 34vmax at 60% 96%, var(--hg-haze-3), transparent 72%);
+    filter: blur(24px);
+}
+:root[data-shell="desktop"] body::before { display: none; }
+
+/* Rounded defaults. Tailwind-built controls and bordered boxes that do not
+   choose their own rounding get the glass radii. Zero specificity, so any
+   component class that sets a radius still wins; anything carrying a
+   `rounded*` utility keeps it. One-sided borders (rules, tab underlines)
+   stay square so their lines do not curl at the ends. */
+:where([class~="border"]):not([class*="rounded"]) {
+    border-radius: var(--hg-radius-md);
+}
+:where(button, select, textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"])):not([class*="rounded"], [class*="border-b"], [class*="border-t"], [class*="border-l"], [class*="border-r"]) {
+    border-radius: var(--hg-radius-sm);
+}
+
+/* Small uppercase labels set in the monospace face read as MonoCode's
+   section labels: the sans face, semibold, lightly tracked. */
+:where(.mono, [class~="font-mono"])[class~="uppercase"] {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: 0.045em;
+}
+
+/* The same labels when their uppercase (and sometimes their monospace face)
+   is set inline. React writes inline styles without a space on the server and
+   the browser adds one on the client, so both spellings are matched. Inline
+   weight and tracking still apply; only the face changes. */
+:where(.mono, [class~="font-mono"]):is([style*="text-transform:uppercase"], [style*="text-transform: uppercase"]),
+:is([style*="font-family:var(--font-mono)"], [style*="font-family: var(--font-mono)"]):is([style*="text-transform:uppercase"], [style*="text-transform: uppercase"]) {
+    font-family: var(--font-sans) !important;
+}
+
+/* One focus ring everywhere, the system blue. It is unlayered, so it would
+   beat Tailwind's layered `outline-none`; controls that draw their own focus
+   state with utilities opt out by carrying that class. Text fields get the
+   softer, hugging ring macOS uses rather than a detached outline. */
+:where(a, button, input, select, textarea, summary, [tabindex]):where(:not([class*="outline-none"])):focus-visible {
+    outline: 2px solid var(--hg-focus);
+    outline-offset: 2px;
+}
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"], [type="reset"], [type="file"]), textarea):where(:not([class*="outline-none"])):focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--hg-focus) 45%, transparent);
+    outline-offset: 0;
+}
+
+/* Status words swap with a short fade and slide instead of a jump. Applied
+   by <StatusText> only after the value changes, never on first render. */
+@keyframes hg-status-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+}
+.hg-status-swap { display: inline-block; animation: hg-status-in 240ms var(--hg-ease) both; }
+@media (prefers-reduced-motion: reduce) {
+    .hg-status-swap { animation: none; }
+}
+
+/* Glass surfaces. `hg-glass` for panels and cards, `hg-glass-strong` for
+   menus, dialogs and bars that sit over moving content. */
+.hg-glass,
+.hg-glass-strong {
+    border: 1px solid var(--hg-stroke);
+    -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+}
+.hg-glass { background: var(--hg-glass); border-radius: var(--hg-radius-lg); }
+.hg-glass-strong { background: var(--hg-glass-strong); border-radius: var(--hg-radius-lg); box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg); }
+
+/* Section label: "CHANGES", "ACCOUNT". */
+.hg-label {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--hg-text-3);
+}
+
+/* Buttons. Primary is solid ink; secondary is a hairline; ghost is bare. */
+.hg-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--hg-stroke);
+    border-radius: var(--hg-radius-sm);
+    background: transparent;
+    color: var(--hg-text-2);
+    font: 500 13px/1 var(--font-sans);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease), border-color var(--hg-fast) var(--hg-ease), transform var(--hg-fast) var(--hg-ease);
+}
+.hg-btn:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.hg-btn:active { transform: scale(0.98); }
+.hg-btn:disabled { opacity: 0.4; cursor: default; }
+.hg-btn-primary { background: var(--hg-accent); border-color: transparent; color: var(--hg-on-accent); font-weight: 600; box-shadow: var(--hg-shadow-sm); }
+.hg-btn-primary:hover { background: color-mix(in srgb, var(--hg-accent) 88%, transparent); color: var(--hg-on-accent); }
+.hg-btn-danger { color: var(--hg-bad); border-color: color-mix(in srgb, var(--hg-bad) 30%, transparent); }
+.hg-btn-danger:hover { background: color-mix(in srgb, var(--hg-bad) 10%, transparent); color: var(--hg-bad); }
+
+/* Pills and chips. */
+.hg-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 9px;
+    border: 1px solid var(--hg-stroke);
+    border-radius: 999px;
+    background: var(--hg-fill-1);
+    color: var(--hg-text-2);
+    font: 500 11.5px/1.6 var(--font-sans);
+}
+
+/* Entrance used by panels and lists. */
+@keyframes hg-rise {
+    from { opacity: 0; transform: translate3d(0, 6px, 0); }
+    to { opacity: 1; transform: none; }
+}
+.hg-rise { animation: hg-rise 240ms var(--hg-ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+    .hg-rise { animation: none; }
+    .hg-btn, .action-button, .etched-card { transition: none; }
+}
+
+/* Browsers without backdrop-filter get the opaque surface instead. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .hg-glass, .etched-card { background: var(--hg-surface); }
+    .hg-glass-strong { background: var(--hg-surface-2); }
+}
+
+/* The homepage is always dark, whatever the device's theme. Its palette sits
+   here rather than in public-site.module.css so the cookie banner, which the
+   root layout mounts outside the page, can wear it too while the homepage is
+   open. The legacy aliases are restated because :root resolved them against
+   the light palette. */
+[data-public-site][data-variant="home"],
+html:has([data-public-site][data-variant="home"]) .hivra-cookie-consent {
+    color-scheme: dark;
+    --hg-bg:hsl(240 0% 9%);
+    --hg-fg:hsl(240 0% 92%);
+    --hg-floor:hsl(240 0% 6%);
+    --hg-text:var(--hg-fg);
+    --hg-text-2:color-mix(in srgb,var(--hg-fg) 68%,transparent);
+    --hg-text-3:color-mix(in srgb,var(--hg-fg) 46%,transparent);
+    --hg-stroke:color-mix(in srgb,var(--hg-fg) 9%,transparent);
+    --hg-stroke-strong:color-mix(in srgb,var(--hg-fg) 16%,transparent);
+    --hg-stroke-subtle:color-mix(in srgb,var(--hg-fg) 6%,transparent);
+    --hg-fill-1:color-mix(in srgb,var(--hg-fg) 4%,transparent);
+    --hg-fill-2:color-mix(in srgb,var(--hg-fg) 7%,transparent);
+    --hg-fill-3:color-mix(in srgb,var(--hg-fg) 11%,transparent);
+    --hg-fill-hover:color-mix(in srgb,var(--hg-fg) 9%,transparent);
+    --hg-surface:color-mix(in srgb,var(--hg-fg) 3%,var(--hg-bg));
+    --hg-surface-2:color-mix(in srgb,var(--hg-fg) 6%,var(--hg-bg));
+    --hg-glass:color-mix(in srgb,var(--hg-bg) 58%,transparent);
+    --hg-glass-strong:color-mix(in srgb,var(--hg-bg) 84%,transparent);
+    --hg-glass-edge:inset 0 1px 0 color-mix(in srgb,white 6%,transparent);
+    --hg-shadow-sm:0 1px 2px rgb(0 0 0 / .3);
+    --hg-shadow-md:0 10px 30px -8px rgb(0 0 0 / .5),0 2px 6px rgb(0 0 0 / .25);
+    --hg-shadow-lg:0 30px 80px -20px rgb(0 0 0 / .7),0 6px 18px rgb(0 0 0 / .35);
+    --hg-haze-1:color-mix(in srgb,hsl(215 45% 55%) 16%,transparent);
+    --hg-haze-2:color-mix(in srgb,hsl(352 55% 55%) 9%,transparent);
+    --hg-haze-3:color-mix(in srgb,hsl(265 30% 60%) 10%,transparent);
+    --hg-accent:var(--hg-fg);
+    --hg-on-accent:var(--hg-bg);
+    --hg-focus:hsl(211 92% 62%);
+    --hg-ok:#34d399;
+    --hg-warn:#fbbf24;
+    --hg-bad:#f87171;
+    --hg-brand:#ff3a3b;
+    --vellum-bg:var(--hg-bg);
+    --ink-black:var(--hg-fg);
+    --text-primary:var(--hg-text);
+    --text-secondary:var(--hg-text-2);
+    --text-muted:var(--hg-text-3);
+    --etched-border: var(--hg-stroke);
+    --bg-surface: var(--hg-surface);
+    --bg-elevated: var(--hg-surface-2);
+    --gold-leaf: var(--hg-accent);
+    --btn-bg: var(--hg-accent);
+    --btn-text: var(--hg-on-accent);
+    color: var(--hg-text);
 }

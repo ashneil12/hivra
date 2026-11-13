@@ -160,6 +160,33 @@ describe("Hivra compatibility projection", () => {
     });
   });
 
+  it("advertises files and terminal but no desktop for a Linux computer (ubuntu-server)", () => {
+    const projected = projectHivraAgent({
+      id: "server-1",
+      name: "Linux computer",
+      status: "running",
+      type: "linux-desktop",
+      computerProfile: "ubuntu-server",
+      computerSubstrate: "proxmox-kvm",
+    });
+
+    expect(projected.capabilities).toEqual({
+      surfaces: ["files", "terminal"],
+      actions: ["stop", "reboot", "delete", "resize", "snapshot", "restore"],
+    });
+    expect(AgentComputerSchema.safeParse(projected).success).toBe(true);
+  });
+
+  it("fails closed on the desktop for a profile it does not know, and keeps it for Ubuntu", () => {
+    const surfaces = (computerProfile?: string) => projectHivraAgent({
+      id: "profile-1", name: "Computer", status: "running", type: "linux-desktop", computerProfile,
+    }).capabilities.surfaces;
+
+    expect(surfaces("plan9")).toEqual(["files", "terminal"]);
+    expect(surfaces("ubuntu-desktop")).toEqual(["files", "terminal", "desktop"]);
+    expect(surfaces(undefined)).toEqual(["files", "terminal", "desktop"]);
+  });
+
   it("does not advertise Proxmox-only lifecycle actions for a provider VM", () => {
     const projected = projectHivraAgent({
       id: "desktop-provider-1",

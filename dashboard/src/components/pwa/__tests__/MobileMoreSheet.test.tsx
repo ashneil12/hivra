@@ -44,11 +44,11 @@ describe("MobileMoreSheet", () => {
     expect(controls).toEqual([
       "Close menu",
       "Switch or search",
-      "2 agents or computers need attention",
-      "Capacity",
+      "2 agents or computers need you",
       "Activity",
       "Settings",
       "Billing",
+      "Servers",
       "Applications",
       "Help",
       "Manage account",
@@ -56,14 +56,14 @@ describe("MobileMoreSheet", () => {
       "Theme: DarkSwitch to light",
     ]);
     expect(within(sheet).getByRole("button", { name: "Close menu" })).toBeInTheDocument();
-    expect(within(sheet).getByRole("link", { name: "2 agents or computers need attention" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
+    expect(within(sheet).getByRole("link", { name: "2 agents or computers need you" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
     expect(within(sheet).getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/dashboard/billing");
     expect(within(sheet).getByText("a.very.long.operator.address@example-company.com")).toBeInTheDocument();
   });
 
   it("omits the attention row when nothing needs attention", () => {
     const { sheet } = renderSheet();
-    expect(within(sheet).queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(within(sheet).queryByText("Need you")).not.toBeInTheDocument();
   });
 
   it("marks the current destination", () => {

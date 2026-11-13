@@ -132,15 +132,16 @@ extension HivraWorkspaceRouteGrammar {
         static let templateReference = Value.matching("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
         static let resourceID = Value.matching("^[A-Za-z0-9_-]{1,256}$")
         /// LaunchProfileId (launch/contracts.ts).
-        static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
-                                                "ubuntu-desktop", "linux-terminal", "omarchy", "windows"])
+        static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "aeon",
+                                                "deepseek-harness", "ubuntu-desktop", "ubuntu-server",
+                                                "linux-terminal", "omarchy", "windows"])
         /// Launch history stages, including the names used before Choose merged its steps (LaunchJourney).
         static let launchStage = Value.mapped(["choose": "choose", "plan": "plan", "review": "review",
                                                "type": "choose", "profile": "choose", "capacity": "plan"])
         /// "1", or the paid plan an upgrade moved to (subscription PLAN_ORDER without free).
         static let launchUpgrade = Value.oneOf(["1", "operator", "fleet", "command"])
         /// PortableLaunchResourceId (hivra/launch-navigation.ts).
-        static let portableLaunchResource = Value.oneOf(["claude-code", "codex", "aeon", "openclaw", "agent-zero",
+        static let portableLaunchResource = Value.oneOf(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot",
                                                          "linux-desktop", "linux-terminal", "windows"])
     }
 

@@ -426,7 +426,7 @@ copyright, source-offer and exact image-layer review remain open.
 | OpenClaw | Download npm package into the guest | `openclaw@2026.6.10` |
 | Agent Zero | Pull an OCI image by digest | `sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0` |
 | cloudflared | Download and SHA-256 verify Linux executable | `2026.8.2` |
-| Google Chrome | Download and SHA-256 verify Debian package | `152.0.7977.64-1` |
+| Google Chrome | Download and SHA-256 verify Debian package | `157.0.8103.50-1` |
 | GitHub CLI | Download and SHA-256 verify Debian package | `2.98.0` |
 | Proxmox guest base | Download and SHA-256 verify dated Ubuntu image | Jammy `release-20260807` |
 | Guest system packages | Install from Ubuntu package repositories | Installed package/version receipt still required |
@@ -445,10 +445,11 @@ Important coverage limits:
   still need release review. Aeon's separate application build and the pinned
   bux installer downloads remain outside that global-tree scope. Agent Zero's
   digest likewise needs an image-layer and OS-package inventory.
-- The browser-sidecar Dockerfile uses digest-pinned `node:22-bookworm-slim` build
-  images and a digest-pinned `mcr.microsoft.com/playwright:v1.59.1-noble` runtime,
-  plus apt packages. Its npm SBOM is not a container-image SBOM; publishing a
-  built sidecar image still requires image-layer evidence.
+- The browser-sidecar Dockerfile uses a digest-pinned `node:22-trixie-slim` image
+  for all three stages, plus apt packages, including Debian's Chromium from
+  trixie-security (the build refuses anything below 156.0.8078.73). Its npm SBOM
+  is not a container-image SBOM; publishing a built sidecar image still requires
+  image-layer evidence.
 - Hermes and Operator OS use the separate instance/image lane; their image build,
   upstream fork and asset distribution audit is still outstanding. They are not
   covered by the portable five-runtime installer inventory.

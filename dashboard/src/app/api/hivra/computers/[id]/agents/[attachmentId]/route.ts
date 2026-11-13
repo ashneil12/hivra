@@ -11,8 +11,6 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { attachDependencies, beginAttachmentOperation } from "@/lib/agent-computers/attach-routes";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
@@ -25,7 +23,6 @@ const RemoveBody = z.object({ reviewSha256: Review, requestId: Uuid }).strict();
 async function handle(req: NextRequest, params: Promise<{ id: string; attachmentId: string }>, kind: "access_change" | "detach") {
   const method = kind === "detach" ? "DELETE" : "PATCH";
   try {
-    if (!isHivraApiAllowed(req.headers.get("host")) || !isAgentAttachEnabled()) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     if (!isSameOriginMutationRequest(req) || !hasStrictJsonContentType(req)) return noStore(apiError("Forbidden", 403));

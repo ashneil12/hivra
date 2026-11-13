@@ -198,6 +198,8 @@ export async function runParkIdleHivraAgentsSweep(
         .update({ status: "stopped" })
         .eq("id", row.id)
         .eq("status", "running")
+        // Never flip a row that is mid-operation (a start, resize or update owns it).
+        .is("operation_id", null)
         .select("id");
 
       if (flipped && flipped.length > 0) {

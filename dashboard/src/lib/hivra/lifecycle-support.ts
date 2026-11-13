@@ -117,6 +117,20 @@ export function hasOwnershipBinding(row: LifecycleSupportRow): boolean {
   return row.infrastructure_binding_token_enforced === true;
 }
 
+/**
+ * An `error` row that still has its computer: it was fully set up at least once
+ * (`provisioned_at` is the first-ready stamp), has a provider identity, and no
+ * operation holds it. Start can bring it back. A launch that failed before the
+ * computer was ever ready, or whose half-built computer was cleaned up, has no
+ * such computer and is launched again instead.
+ */
+export function errorKeepsComputer(row: LifecycleSupportRow & { provisioned_at?: unknown }): boolean {
+  if (row.status !== "error") return false;
+  if (hasOperation(row)) return false;
+  if (typeof row.provisioned_at !== "string" || !row.provisioned_at) return false;
+  return Number.isSafeInteger(row.vmid) && Number(row.vmid) >= 100;
+}
+
 function hasOperation(row: LifecycleSupportRow): boolean {
   return row.operation_id != null || row.operation_kind != null;
 }
@@ -188,7 +202,7 @@ export type RuntimeUpdateRefusal = "digitalocean" | "prepared" | "my-cloud";
  * left out: its runtime probe is bound to the release it was installed from,
  * so an in-place update would fail its next Start or Restart.
  */
-export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero"] as const;
+export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot"] as const;
 
 /**
  * Why update_runtime is refused for this row, before any lease or host call,

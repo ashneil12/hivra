@@ -12,6 +12,7 @@ import { useWorkspaceViewport } from '../useWorkspaceViewport';
 import { FleetControlPane } from '@/components/hivra/FleetControlPane';
 import { resetResourceInventory, resourceInventory } from '@/lib/workspace/resource-inventory';
 import { recordVisit } from '@/lib/workspace/recents';
+import { useAppShell } from '../AppShellContext';
 
 jest.mock('../ClientLayoutWrapper.module.css', () => ({
   __esModule: true,
@@ -23,6 +24,8 @@ jest.mock('next/navigation', () => ({
   usePathname: jest.fn(),
   useRouter: () => ({ push: jest.fn() }),
 }));
+
+jest.mock('@/components/hivra/PendingBridgeCard', () => ({ PendingBridgeCard: () => <div data-testid="pending-bridge-card" /> }));
 
 jest.mock('../useDashboardResources', () => ({
   useDashboardResources: jest.fn(),
@@ -206,7 +209,7 @@ describe('ClientLayoutWrapper', () => {
     expect(screen.getByRole('navigation', { name: /app navigation/i })).toBeInTheDocument();
   });
 
-  it('shares the resolved section with mobile navigation without confusing matching source IDs', () => {
+  it('keeps Home selected in every navigation while a runtime is open', () => {
     const resources: DashboardResource[] = [
       { uid: 'h-shared', id: 'shared', source: 'hermes', kind: 'agent', name: 'Writer', description: 'Hermes', status: 'running', href: '/dashboard/instances/shared' },
       { uid: 'x-shared', id: 'shared', source: 'hivra', kind: 'computer', name: 'Desktop', description: 'Ubuntu Desktop', status: 'running', href: '/dashboard/agent/shared?tab=desktop' },
@@ -214,30 +217,21 @@ describe('ClientLayoutWrapper', () => {
     (useDashboardResources as jest.Mock).mockReturnValue({ resources, loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
     (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
     const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    const expectSelected = (name: string | null) => {
-      for (const label of ['Primary', 'App navigation']) {
+    const expectHomeSelected = () => {
+      // The agent view draws its own sidebar, so the global rail ("Primary") is only there on other pages.
+      const onAgentPage = /^\/dashboard\/agent\//.test((usePathname as jest.Mock)() ?? '');
+      for (const label of onAgentPage ? ['App navigation'] : ['Primary', 'App navigation']) {
         const nav = within(screen.getByRole('navigation', { name: label }));
-        if (name) expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name })]);
-        else expect(nav.queryByRole('link', { current: 'page' })).not.toBeInTheDocument();
+        expect(nav.getAllByRole('link', { current: 'page' })).toEqual([nav.getByRole('link', { name: 'Home' })]);
       }
     };
-    expectSelected('Computers');
+    expectHomeSelected();
 
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/instances/shared/console');
-    view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected('Agents');
-
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/unknown');
-    view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected(null);
-
-    (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/shared');
-    view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
-    expectSelected('Computers');
-
-    (useDashboardResources as jest.Mock).mockReturnValue({ resources: [], loading: true, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
-    view.rerender(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="another-owner">{mockChildren}</ClientLayoutWrapper>);
-    expectSelected(null);
+    for (const pathname of ['/dashboard/instances/shared/console', '/dashboard/agent/unknown']) {
+      (usePathname as jest.Mock).mockReturnValue(pathname);
+      view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expectHomeSelected();
+    }
   });
 
   it('preserves the active work pane while the shell switcher opens and closes', () => {
@@ -422,7 +416,8 @@ describe('ClientLayoutWrapper', () => {
 
   it('badges More with the sidebar attention count on phones', () => {
     const resources: DashboardResource[] = [
-      { uid: 'h-a', id: 'a', source: 'hermes', kind: 'agent', name: 'Writer', description: 'Hermes', status: 'error', href: '/dashboard/instances/a' },
+      // An errored row carries attention "error", as the resource feed builds it; the badge counts what Need you lists.
+      { uid: 'h-a', id: 'a', source: 'hermes', kind: 'agent', name: 'Writer', description: 'Hermes', status: 'error', attention: 'error', href: '/dashboard/instances/a' },
       { uid: 'x-b', id: 'b', source: 'hivra', kind: 'computer', name: 'Desktop', description: 'Ubuntu Desktop', status: 'running', href: '/dashboard/agent/b?tab=desktop' },
     ];
     (useDashboardResources as jest.Mock).mockReturnValue({ resources, loading: false, errors: { hermes: null, hivra: null }, refresh: jest.fn() });
@@ -443,7 +438,7 @@ describe('ClientLayoutWrapper', () => {
     expect(screen.queryByTestId('dashboard-mobile-header')).not.toBeInTheDocument();
     const appNav = screen.getByRole('navigation', { name: /app navigation/i });
     expect(appNav).toBeInTheDocument();
-    expect(within(appNav).getByRole('link', { name: /agents/i })).toHaveAttribute('aria-current', 'page');
+    expect(within(appNav).getByRole('link', { name: /home/i })).toHaveAttribute('aria-current', 'page');
   });
 
   it('suppresses app navigation on the dedicated full-screen TUI route', () => {
@@ -483,13 +478,59 @@ describe('ClientLayoutWrapper', () => {
       );
       expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
       expect(screen.queryByTestId('home-continue')).not.toBeInTheDocument();
-      await waitFor(() => expect(screen.getByText('Choose an agent to work with, or a computer of your own.')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText('What would you like to work on?')).toBeInTheDocument());
       expect(screen.queryByText('ACCOUNT_A_PROJECT')).not.toBeInTheDocument();
     } finally {
       global.fetch = originalFetch;
       resetResourceInventory();
       window.localStorage.clear();
     }
+  });
+
+  describe('on the agent view, which draws its own sidebar beside the rail', () => {
+    function OpenSearch() {
+      const shell = useAppShell();
+      return <button type="button" onClick={shell?.openSwitcher}>Agent page search</button>;
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', ''); } });
+      Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.removeAttribute('open'); } });
+    });
+
+    it('keeps the global rail as icons beside it, so Home is one click away, and keeps the bottom navigation', () => {
+      // Without the rail there was no way back from an agent (owner feedback).
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123');
+      const { container } = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      const rail = screen.getByRole('complementary', { name: 'Workspace navigation' });
+      expect(rail.className).toMatch(/collapsed/);
+      expect(rail.className).not.toMatch(/expanded/);
+      expect(container.querySelector<HTMLElement>('[class*="spacer"]')?.style.width).toBe('72px');
+      expect(screen.getAllByRole('link', { name: 'Hivra home' })[0]).toHaveAttribute('href');
+      expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeInTheDocument();
+    });
+
+    it('leaves other pages with their full rail', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/settings');
+      const view = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' }).className).toMatch(/expanded/);
+      // Sub-paths of the agent route are not the agent view.
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123/other');
+      view.rerender(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      expect(screen.getByRole('complementary', { name: 'Workspace navigation' }).className).toMatch(/expanded/);
+    });
+
+    it('still opens the switcher with ⌘K, and for the page through AppShellContext', () => {
+      (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/agent_123');
+      render(<ClientLayoutWrapper {...mockProps}><OpenSearch /></ClientLayoutWrapper>);
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      fireEvent.keyDown(window, { key: 'k', metaKey: true });
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Close switcher' }));
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Agent page search' }));
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+    });
   });
 
   it('leaves no pending timers after unmount', () => {
@@ -502,5 +543,19 @@ describe('ClientLayoutWrapper', () => {
     unmount();
 
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('shows the "Waiting for your OK" card on the home page and on an agent page, and nowhere else', () => {
+    const shown = (path: string) => {
+      (usePathname as jest.Mock).mockReturnValue(path);
+      const { unmount } = render(<ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>);
+      const found = screen.queryByTestId('pending-bridge-card') !== null;
+      unmount();
+      return found;
+    };
+    expect(shown('/dashboard')).toBe(true);
+    expect(shown('/dashboard/agent/11111111-1111-4111-8111-111111111111')).toBe(true);
+    expect(shown('/dashboard/settings')).toBe(false);
+    expect(shown('/dashboard/agents')).toBe(false);
   });
 });

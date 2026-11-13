@@ -2,8 +2,9 @@
 
 // OnboardingChecklist — the day-one activation guide on the main dashboard.
 //
-// Shown while the user's FIRST deployment is younger than 14 days and the
-// checklist isn't finished (and not dismissed). Every item derives live state
+// Shown while the user's FIRST deployment is younger than 14 days, the
+// checklist isn't finished (and not dismissed), and no first message has been
+// sent yet (sending one hides it for good). Every item derives live state
 // from data that already exists — no new tables:
 //   ① deploy   — any Hermes instance / Hivra box exists (always true here:
 //                visibility requires a deployment, so the first tick is free).
@@ -108,12 +109,10 @@ function capture(event: string, properties: Record<string, unknown>) {
 }
 
 const monoLabel: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace",
-  fontSize: 10,
-  fontWeight: 700,
-  textTransform: "uppercase",
-  letterSpacing: "0.16em",
-  color: "var(--text-muted)",
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: "0.05em",
+  color: "var(--hg-text-3, var(--text-muted))",
 };
 
 export function OnboardingChecklist({
@@ -251,8 +250,8 @@ export function OnboardingChecklist({
   const items: ChecklistItem[] = [
     {
       id: "deploy",
-      label: "Deploy your agent",
-      detail: "Your agent is live on its own machine.",
+      label: "Launch your agent",
+      detail: "Your agent is up and running.",
       icon: <Rocket size={14} />,
       state: totalDeployments > 0 ? "done" : "pending",
       onActivate: () => {
@@ -264,7 +263,7 @@ export function OnboardingChecklist({
     {
       id: "message",
       label: "Send your first message",
-      detail: "Open the chat and give it a real task.",
+      detail: "Open the chat and give it something to do.",
       icon: <MessageSquareText size={14} />,
       state: firstMessageDone ? "done" : "pending",
       onActivate: () => {
@@ -274,8 +273,8 @@ export function OnboardingChecklist({
     },
     {
       id: "telegram",
-      label: "Connect a channel (Telegram)",
-      detail: "Get pinged when work is done — chat from your phone.",
+      label: "Chat from Telegram",
+      detail: "Get a message when work is done, and chat from your phone.",
       icon: <Send size={14} />,
       state: telegramConnected === true ? "done" : "pending",
       onActivate: () => {
@@ -287,8 +286,8 @@ export function OnboardingChecklist({
     },
     {
       id: "browser",
-      label: "Enable web browsing",
-      detail: "Your agent gets a live Chrome it can drive.",
+      label: "Let your agent browse the web",
+      detail: "Your agent gets a web browser it can use.",
       icon: <Globe size={14} />,
       state: isFreePlan ? "locked" : acks.browser ? "done" : "pending",
       pro: true,
@@ -309,8 +308,8 @@ export function OnboardingChecklist({
   if (targetInstance) {
     items.push({
       id: "cron",
-      label: "Add a scheduled task",
-      detail: "Recurring reports and monitors, on autopilot.",
+      label: "Run a task on a schedule",
+      detail: "Reports and checks that run by themselves.",
       icon: <CalendarClock size={14} />,
       state: isFreePlan ? "locked" : acks.cron ? "done" : "pending",
       pro: true,
@@ -331,7 +330,9 @@ export function OnboardingChecklist({
 
   const fresh =
     firstDeployAtMs !== null && nowMs !== null && nowMs - firstDeployAtMs < MAX_FIRST_DEPLOY_AGE_MS;
-  const visible = !dismissed && agentsLoaded && totalDeployments > 0 && fresh && !allDone;
+  // The first message is the first win: once it has been sent the checklist
+  // goes away for good (it never reappears, so no dismissal is needed).
+  const visible = !dismissed && agentsLoaded && totalDeployments > 0 && fresh && !allDone && !firstMessageDone;
 
   if (dismissed && undoable) {
     return (
@@ -425,7 +426,7 @@ export function OnboardingChecklist({
       data-testid="onboarding-checklist"
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: "clamp(1rem, 3vw, 1.4rem)",
         marginBottom: 18,
         position: "relative",
@@ -457,7 +458,7 @@ export function OnboardingChecklist({
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         <div>
-          <div className="mono" style={{ ...monoLabel, letterSpacing: "0.18em" }}>
+          <div className="mono" style={{ ...monoLabel, letterSpacing: "0.05em" }}>
             Getting started
           </div>
           <h3 className="serif" style={{ margin: "6px 0 0", fontSize: "clamp(1.35rem, 3.5vw, 1.7rem)", fontWeight: 400, lineHeight: 1.1, color: "var(--ink-black)" }}>
@@ -487,7 +488,7 @@ export function OnboardingChecklist({
                 gap: 10,
                 textAlign: "left",
                 border: "1px solid var(--etched-border)",
-                background: done ? "rgba(255,255,255,0.015)" : "rgba(255,255,255,0.03)",
+                background: done ? "var(--hg-fill-1)" : "var(--hg-fill-1)",
                 padding: "10px 12px",
                 cursor: "pointer",
                 minWidth: 0,
@@ -529,7 +530,7 @@ export function OnboardingChecklist({
                   className="mono"
                   style={{
                     ...monoLabel,
-                    fontSize: 9,
+                    fontSize: 11,
                     color: locked ? "var(--gold-leaf)" : "var(--text-muted)",
                     border: "1px solid var(--etched-border)",
                     padding: "3px 6px",

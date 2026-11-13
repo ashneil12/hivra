@@ -53,8 +53,6 @@ jest.mock("@/components/instances/CommandPanel", () => {
   };
 });
 jest.mock("@/components/storage/StorageUsageBanner", () => ({ StorageUsageBanner: () => null }));
-jest.mock("@/components/billing/SleepWakeUpgradePrompt", () => ({ SleepWakeUpgradePrompt: () => null }));
-jest.mock("@/components/billing/ArchiveUpgradeWall", () => ({ ArchiveUpgradeWall: () => null }));
 jest.mock("@/lib/hivra/agent-api", () => ({ fetchPlanStrict: jest.fn().mockResolvedValue(null), isFreePlanInfo: () => false }));
 
 import InstancePage from "../page";

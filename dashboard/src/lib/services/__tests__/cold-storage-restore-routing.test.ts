@@ -7,6 +7,7 @@
  * builder and the cf-upsert flow via injected fetch.
  */
 
+import { spawnSync } from "node:child_process";
 import { buildProxmoxGatewayCaddySite } from "../proxmox-gateway-caddy-site";
 import {
   applyRestoreRouting,
@@ -14,6 +15,16 @@ import {
 } from "../cold-storage-restore-routing";
 
 describe("buildProxmoxGatewayCaddySite restore integration", () => {
+  it("generates an executable Bash program for public route restoration", () => {
+    const script = buildRestoreHostCaddySiteApplyScript({
+      sitesDir: "/etc/caddy/hermes.d",
+      gatewayHost: "abc123.hermesos.cloud",
+      siteContent: "abc123.hermesos.cloud { respond 200 }",
+    });
+    const result = spawnSync("bash", ["-n"], { input: script, encoding: "utf8" });
+    expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+  });
+
   it("pins restored current-domain routes to the static origin certificate", () => {
     const out = buildProxmoxGatewayCaddySite({
       gatewayHost: "abc123.hermesos.cloud",

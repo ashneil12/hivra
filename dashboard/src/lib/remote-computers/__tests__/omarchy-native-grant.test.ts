@@ -95,3 +95,8 @@ it("rejects stale descriptor clocks and unsafe boottime conversion", () => {
   expect(buildOmarchyNativeGuardianGrant({ session,
     descriptor: { ...descriptor, observedBoottimeNs: "9999999999999999999" }, nowMs })).toBeNull();
 });
+
+it("refuses a browser-only descriptor even on a native validated package pair", () => {
+  expect(buildOmarchyNativeGuardianGrant({ session, nowMs,
+    descriptor: { ...descriptor, route: { status: "browser-only", publicIpv4: "198.51.100.11" } } })).toBeNull();
+});

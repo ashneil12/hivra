@@ -21,10 +21,10 @@
   margin: 0 0 0.5rem -0.25rem;
   padding: 0 0.25rem;
   color: var(--text-secondary);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   text-decoration: none;
 }
@@ -34,6 +34,6 @@
 }
 
 .backLink:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }

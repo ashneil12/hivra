@@ -52,16 +52,6 @@ const launchBody = {
 beforeEach(() => {
   mockLaunch.mockReset();
   mockAuth.mockResolvedValue({ userId: "user_1" });
-  process.env.NEXT_PUBLIC_HIVRA_AGENTS = "1";
-});
-afterEach(() => { delete process.env.NEXT_PUBLIC_HIVRA_AGENTS; });
-
-it("stays unavailable off the Hivra hosts, before auth or DigitalOcean work", async () => {
-  delete process.env.NEXT_PUBLIC_HIVRA_AGENTS;
-  const response = await launch(mutation("/api/hivra/managed-sessions", launchBody));
-  expect(response.status).toBe(404);
-  expect(mockAuth).not.toHaveBeenCalled();
-  expect(mockLaunch).not.toHaveBeenCalled();
 });
 
 describe("POST /api/hivra/managed-sessions", () => {

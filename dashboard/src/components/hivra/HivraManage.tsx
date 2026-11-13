@@ -14,24 +14,35 @@ import {
   Power, RefreshCw, Trash2, Check, Copy, ExternalLink, Loader2,
   AlertTriangle, Cpu, MemoryStick, Globe, Server, ShieldCheck, KeyRound, Wrench, LogIn,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { CookieImportModal } from "@/components/instances/CookieImportModal";
 import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
+import { HermesModelSettings } from "./HermesModelSettings";
+import { HermesRestorePoints, restorePointsEnabled } from "./HermesRestorePoints";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
 import { ComputerContractPanel } from "./ComputerContractPanel";
 import { ComputerAgentsPanel } from "./ComputerAgentsPanel";
 import { AgentLinksPanel } from "./AgentLinksPanel";
+import { LocalBridgePanel } from "./LocalBridgePanel";
 import { ManageLayout, ManageNotice, ManagePanel, type ManageFeedback } from "./ManageLayout";
 import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
-import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome } from "./AgentSoftwarePanel";
+import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome, type SoftwareRecovery } from "./AgentSoftwarePanel";
+import { HivraLogin } from "./HivraLogin";
+import { HivraGitHubConnect } from "./HivraGitHubConnect";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
+import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
+import {
+  ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
+} from "./manage/ManageReachability";
+import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import {
   manageButtonDark as btnDark, manageButtonGhost as btnGhost, manageCard as card, manageError as errorStyle,
   manageLabel as label, manageMuted, manageValue as valStyle,
@@ -43,6 +54,7 @@ import {
   listAgentSnapshots, snapshotAgent, restoreAgentSnapshot, AgentActionError,
   type HivraAgent, type HivraAgentSnapshot, type PlanInfo, type BoxRestrict, type McpServer,
 } from "@/lib/hivra/agent-api";
+import { BOX_MODEL_OPTIONS } from "@/lib/hivra/agent-models";
 import { resizeFloor, hostingDisclaimer, MAX_CPU, MAX_RAM, type AgentDef } from "@/lib/hivra/agent-catalog";
 import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import { UpgradePaywallModal } from "@/components/billing/UpgradePaywallModal";
@@ -74,26 +86,11 @@ function resourceOptions(base: readonly number[], ...saved: Array<number | null 
     .sort((a, b) => a - b);
 }
 
-// Curated model choices per CLI. "Default" = clear the override (the CLI's own
-// default / whatever the user's plan resolves). The claude values are CLI
-// ALIASES — the CLI resolves them to the newest build, so this list doesn't go
-// stale when Anthropic ships new versions. Codex ids are the ChatGPT-account
-// allowlist; both CLIs also accept a custom id typed in the free-text field.
-const MODEL_OPTS: Record<string, { value: string; label: string }[]> = {
-  claude: [
-    { value: "", label: "Default" },
-    { value: "fable", label: "Fable" },
-    { value: "opus", label: "Opus" },
-    { value: "sonnet", label: "Sonnet" },
-    { value: "haiku", label: "Haiku" },
-  ],
-  codex: [
-    { value: "", label: "Default" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-    { value: "gpt-5.1-codex-max", label: "Codex Max" },
-    { value: "gpt-5.1-codex", label: "Codex" },
-    { value: "gpt-5-codex", label: "Codex (5)" },
-  ],
+/** What a Linux computer without a desktop says where the others mention the desktop. */
+const HEADLESS_LIFECYCLE_DETAIL: Record<string, string> = {
+  start: "Hivra is powering it on and waiting for its connection. This normally takes under a minute.",
+  restart: "Its terminal and files will disconnect briefly while Hivra confirms the reboot.",
+  force_restart: "Hivra is switching it off at once, then starting it again. Its terminal and files disconnect until it is back.",
 };
 
 const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; section: ManageSectionId }> = {
@@ -224,7 +221,7 @@ function computerHostingDisclaimer(template: ComputerTemplateDefinition): string
 type ErrorSlot = "header" | "power" | "force" | "updates" | "restore" | "browser" | "model" | "permissions" | "tools" | "resources" | "danger";
 const ERROR_SLOT: Record<string, ErrorSlot> = {
   rename: "header", start: "power", stop: "power", restart: "power", force_stop: "force", force_restart: "force", "runtime-update": "updates",
-  snapshot: "restore", restore: "restore", browser: "browser", model: "model", restrict: "permissions",
+  snapshot: "restore", restore: "restore", browser: "browser", model: "model", restrict: "permissions", "ask-first": "permissions",
   mcp: "tools", resize: "resources", destroy: "danger",
 };
 const SLOT_SECTION: Record<ErrorSlot, ManageSectionId | null> = {
@@ -241,7 +238,7 @@ const CHAT_READINESS_LINE: Record<ChatReadiness, string> = {
   provider_configured: "Model connection set up in Model & tools",
   sign_in_required: "Not signed in yet: open Chat to sign in",
   upgrade_required: "Needs a connection service update (see Updates)",
-  unavailable: "Couldn't check sign-in right now",
+  unavailable: UNREACHABLE_CARD_LINE,
 };
 
 function SectionError({ message }: { message: string }) {
@@ -324,7 +321,11 @@ export function HivraManage(props: HivraManageProps) {
   if (props.agent.computer_substrate === "gvisor") {
     return <GvisorComputerManage key={props.agent.id} agent={props.agent} onChanged={props.onChanged} onDestroyed={props.onDestroyed} />;
   }
-  return <HivraManageContent key={props.agent.id} {...props} />;
+  return (
+    <ManageReachabilityProvider key={props.agent.id}>
+      <HivraManageContent {...props} />
+    </ManageReachabilityProvider>
+  );
 }
 
 function HivraManageContent({
@@ -390,6 +391,34 @@ function HivraManageContent({
     return () => { alive = false; };
   }, [isChatCli, agent.chat_url, agent.api_token]);
 
+  // "Ask me first" (Claude Code only): wait for the owner's answer in Needs you
+  // before shell commands and file changes. The route answers available:false
+  // while Needs you answers are off or for other agents, which hides it.
+  const [askFirst, setAskFirst] = useState<{ available: boolean; enabled: boolean } | null>(null);
+  useEffect(() => {
+    if (def?.cliKind !== "claude" || agent.type !== "claude-code") return;
+    let alive = true;
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/ask-first`, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as { data?: { available?: boolean; enabled?: boolean } }).data : null))
+      .then((data) => { if (alive && data) setAskFirst({ available: Boolean(data.available), enabled: Boolean(data.enabled) }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [def?.cliKind, agent.type, agent.id]);
+
+  const applyAskFirst = useCallback(async (next: boolean) => {
+    if (acting) return;
+    setActing("ask-first"); setErr(null);
+    try {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/ask-first`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }),
+      });
+      const body = (await res.json().catch(() => null)) as { data?: { available?: boolean; enabled?: boolean }; error?: string; message?: string } | null;
+      if (!res.ok) throw new Error(body?.error || body?.message || "Couldn't change Ask me first");
+      setAskFirst({ available: true, enabled: Boolean(body?.data?.enabled) });
+    } catch (e) { setErr({ slot: "permissions", message: (e as Error).message }); }
+    finally { setActing(null); }
+  }, [agent.id, acting]);
+
   // MCP servers — list + add form state. Tools (curated bundles) install MCP
   // servers too, so the picker refreshes this same list on change.
   const [mcp, setMcp] = useState<McpServer[] | null>(null);
@@ -428,7 +457,7 @@ function HivraManageContent({
   }, [refreshMcp]);
 
   // resize — floor depends on whether browser automation is on (+1 CPU / +2 GB)
-  const floor = useMemo(() => resizeFloor(agent.type, bOn), [agent.type, bOn]);
+  const floor = useMemo(() => resizeFloor(agent.type, bOn, agent.computer_profile), [agent.type, agent.computer_profile, bOn]);
   const [rcpu, setRcpu] = useState(Math.max(agent.cpu, floor.cpu));
   const [rram, setRram] = useState(Math.max(agent.ram, floor.ram));
   const [maximumCpu, setMaximumCpu] = useState(Math.max(agent.cpu_max ?? agent.cpu, agent.cpu, floor.cpu));
@@ -465,6 +494,9 @@ function HivraManageContent({
   const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
   const [snapshotMaximum, setSnapshotMaximum] = useState(manage?.restorePoints?.maximum ?? 5);
   const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null);
+  // Sign in again / Change GitHub token, shown in place in Overview.
+  const [signInOpen, setSignInOpen] = useState(false);
+  const [signInDone, setSignInDone] = useState(false);
   // Stop/Restart/Resize/Restore on a chat computer: which action is asking the
   // computer about replies in progress, and the confirmation when some are.
   const [repliesCheck, setRepliesCheck] = useState<RunEndingAction | null>(null);
@@ -687,6 +719,7 @@ function HivraManageContent({
   const computerTemplate = agent.computer_profile && agent.computer_profile !== "linux-terminal" ? getComputerTemplate(agent.computer_profile) : undefined;
   const preparedComputer = computerTemplate?.launchMode === "prepared-canary";
   const isComputerOnly = manage ? manage.kind === "computer" : agent.type === "linux-desktop" || Boolean(agent.computer_profile);
+  const headlessComputer = agent.type === "linux-desktop" && agent.computer_profile === "ubuntu-server";
 
   // What the server says this computer supports. An older server that sends
   // no map gets the controls this page offered before sections existed.
@@ -824,7 +857,7 @@ function HivraManageContent({
     const them = running === 1 ? "it" : "them";
     const id = `hm-replies-${action}`;
     return (
-      <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-detail`} style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.025)" }}>
+      <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-detail`} style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)" }}>
         <div id={`${id}-title`} style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{repliesInProgress(running)}</div>
         <div id={`${id}-detail`} style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
           {RUN_ENDING[action].effect} {them} now. To keep {them}, cancel and wait until the chat finishes.
@@ -839,12 +872,12 @@ function HivraManageContent({
     );
   };
   const progressFor = (section: ManageSectionId) => acting && LIFECYCLE_PROGRESS[acting]?.section === section ? (
-    <div role="status" aria-live="polite" style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.025)" }}>
-      <Loader2 size={15} aria-hidden="true" style={{ animation: "spin 1s linear infinite", flexShrink: 0, marginTop: 2 }} />
+    <div role="status" aria-live="polite" style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)" }}>
+      <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={20} /></span>
       <div>
         <div style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{LIFECYCLE_PROGRESS[acting].title}</div>
         <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          {LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
+          {(headlessComputer ? HEADLESS_LIFECYCLE_DETAIL[acting] : undefined) ?? LIFECYCLE_PROGRESS[acting].detail}{acting === "stop" && stopSwitchesOff ? ` ${STOP_SWITCHES_OFF}` : ""}
         </div>
       </div>
     </div>
@@ -856,15 +889,34 @@ function HivraManageContent({
     || snapshots.length >= snapshotMaximum || !restorePointsUsable;
 
   const chatModelSection = isChatCli && Boolean(agent.chat_url) && modelSupported;
-  const veniceModelSection = Boolean(def?.llm?.providers.includes("venice"));
+  // DeepSeek Harness has no post-launch model delivery path, so no Manage section.
+  const veniceModelSection = Boolean(def?.llm?.providers.includes("venice")) && agent.type !== "deepseek-harness" && agent.type !== "hermes";
+  const hermesModelSection = agent.type === "hermes" && Boolean(agent.chat_url);
   const permissionsSection = isChatCli && Boolean(agent.chat_url) && restrictSupported;
   const toolsSection = isChatCli && Boolean(agent.chat_url);
 
   // Feedback from a section that isn't open: a banner that opens it.
   const errorSection = err?.slot ? SLOT_SECTION[err.slot] : null;
   const progressSection = acting ? LIFECYCLE_PROGRESS[acting]?.section ?? null : null;
+  // The host says this computer is gone: Manage offers to remove its record,
+  // and no power control applies. Otherwise any card that can't reach the
+  // computer (and the sign-in check) raises the one banner below.
+  const missingOnHost = isComputerMissingOnHostRow(agent);
+  const restartFromBanner = !missingOnHost && power.restart && capAvailable(power.restart);
   const notices = (
     <>
+      <ReportUnreachable source="sign-in" when={!isComputerOnly && isChatCli && chatReadiness === "unavailable"} />
+      <ManageReachabilityNotice
+        missing={missingOnHost}
+        onRestart={restartFromBanner ? () => void requestRunEnding("restart") : null}
+        restarting={acting === "restart" || repliesCheck === "restart"}
+        restartDisabled={busy}
+        onRemove={missingOnHost ? () => void run("remove-record", async () => {
+          await deleteAgent(agent.id, { recordOnly: true });
+          onDestroyed();
+        }) : null}
+        removing={acting === "remove-record"}
+      />
       {err && !err.slot ? <div role="alert" style={errorStyle}>{err.message}</div> : null}
       {err && errorSection && errorSection !== selected && sections.includes(errorSection)
         ? <ManageNotice kind="alert" message={err.message} section={errorSection} onOpen={openAndFocus} /> : null}
@@ -893,6 +945,19 @@ function HivraManageContent({
         offered: forceStopCap.state !== "unavailable",
       }
     : null;
+  // Sign in again (Claude Code, Codex) or Change GitHub token (Aeon): for when a
+  // login ran out but the computer still reports it is signed in.
+  const signInKind: "claude" | "codex" | "github" | null = isComputerOnly || agent.status !== "running" || !agent.chat_url
+    ? null
+    : def?.cliKind === "claude" || def?.cliKind === "codex" ? def.cliKind
+    : def?.id === "aeon" && def?.connect === "github" ? "github" : null;
+  // After a failed update that couldn't be undone: restore points if this
+  // computer keeps them, otherwise Force restart under Advanced.
+  const softwareRecovery: SoftwareRecovery | null = sections.includes("recovery") && restorePointsListed
+    ? { kind: "restore", open: () => openAndFocus("recovery") }
+    : sections.includes("advanced") && forcePower?.offered
+      ? { kind: "force-restart", open: () => openAndFocus("advanced") }
+      : null;
   const signInLine = !isComputerOnly && isChatCli && chatReadiness ? CHAT_READINESS_LINE[chatReadiness] : null;
   const disclaimer = computerTemplate
     ? computerHostingDisclaimer(computerTemplate)
@@ -933,9 +998,11 @@ function HivraManageContent({
       {/* OVERVIEW — what this is, its size and where it runs, and power. */}
       <ManagePanel id="overview" selected={selected}>
         <div style={{ display: "grid", gap: 20 }}>
+          {/* A Hermes agent moved to the official setup can go back for 7 days. */}
+          <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputerOnly} />
           {/* Error lands here, not on a surface: say why and what to do next
               where the owner actually is, not only under Advanced. */}
-          {agent.status === "error" && agent.error ? (
+          {agent.status === "error" && agent.error && !missingOnHost ? (
             <div role="alert" style={{ ...card, borderColor: "var(--red)" }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-black)", marginBottom: 6 }}>{agent.provisioned_at ? "This computer isn’t ready" : "Setup didn’t finish"}</div>
               <div style={{ ...manageMuted, overflowWrap: "anywhere" }}>{agent.error}</div>
@@ -955,18 +1022,60 @@ function HivraManageContent({
             </div>
           </div>
 
+          {signInKind ? (
+            <div style={{ display: "grid", gap: 10 }} data-testid="manage-sign-in-again">
+              <div className="mono" style={label}>{signInKind === "github" ? "GitHub token" : "Sign-in"}</div>
+              <div style={card}>
+                {signInOpen ? (
+                  <>
+                    {signInKind === "github" ? (
+                      <HivraGitHubConnect
+                        reconnect boxUrl={agent.chat_url as string} boxId={agent.id} token={agent.api_token}
+                        productName={def?.name} displayName={agent.name} emoji={agent.emoji}
+                        onDone={() => { setSignInOpen(false); setSignInDone(true); onChanged(); }}
+                      />
+                    ) : (
+                      <HivraLogin
+                        reauth boxUrl={agent.chat_url as string} token={agent.api_token} agentKind={signInKind}
+                        productName={def?.name} displayName={agent.name} emoji={agent.emoji}
+                        onDone={() => { setSignInOpen(false); setSignInDone(true); onChanged(); }}
+                      />
+                    )}
+                    <div>
+                      <button type="button" onClick={() => setSignInOpen(false)} style={btnGhost}>Cancel</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55 }}>
+                      {signInKind === "github"
+                        ? "If your GitHub token expired or was deleted and Aeon can no longer save changes to your fork, paste a new one here."
+                        : `If ${def?.name ?? "this agent"} says you need to sign in, or stops answering because your sign-in ran out, sign in again here. Your files and chats stay as they are.`}
+                    </div>
+                    {signInDone ? <div role="status" style={{ ...manageMuted, color: "var(--ink-black)" }}>{signInKind === "github" ? "Your new GitHub token is saved." : "Signed in again."}</div> : null}
+                    <div>
+                      <button type="button" onClick={() => { setSignInDone(false); setSignInOpen(true); }} style={btnGhost}>
+                        <LogIn size={14} /> {signInKind === "github" ? "Change GitHub token" : "Sign in again"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           <ManageUsageCard agentId={agent.id} cap={manage?.usage} recordedStatus={agent.status} />
 
-          <div style={{ display: "grid", gap: 10 }}>
+          {missingOnHost ? null : <div style={{ display: "grid", gap: 10 }}>
             <div className="mono" style={label}>Power</div>
             <div style={card}>
               {powerUnavailable ? (
                 <div style={manageMuted}>{capReason(power.start)}</div>
               ) : (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {agent.status === "stopped" ? (
+                  {agent.status === "stopped" || agent.status === "error" ? (
                     <button type="button" disabled={busy || !capAvailable(power.start)} title={capReason(power.start) ?? undefined} onClick={() => { setPowerNotice(null); void run("start", () => startAgent(agent.id)); }} style={{ ...btnDark, cursor: busy || !capAvailable(power.start) ? "default" : "pointer", opacity: busy || !capAvailable(power.start) ? 0.6 : 1 }}>
-                      {acting === "start" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} Start
+                      {acting === "start" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Power size={14} />} {agent.status === "error" ? "Try again" : "Start"}
                     </button>
                   ) : (
                     <button type="button" disabled={busy || !capAvailable(power.stop)} title={capReason(power.stop) ?? undefined} onClick={() => void requestRunEnding("stop")} style={{ ...btnGhost, cursor: busy || !capAvailable(power.stop) ? "default" : "pointer", opacity: busy || !capAvailable(power.stop) ? 0.6 : 1 }}>
@@ -982,6 +1091,7 @@ function HivraManageContent({
               {powerNotice && powerNotice.agentId === agent.id ? <div role="status" style={{ ...manageMuted, color: "var(--ink-black)" }}>{powerNotice.text}</div> : null}
               {errorFor("power")}
               {!powerUnavailable && lifecyclePending ? <CapReasonLine cap={power.stop} /> : null}
+              {!powerUnavailable && agent.status === "error" && !capAvailable(power.start) ? <CapReasonLine cap={power.start} /> : null}
               {/* Only explains buttons that are there. */}
               {powerUnavailable ? null : <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                 {stopSwitchesOff
@@ -994,7 +1104,7 @@ function HivraManageContent({
                 style={{ margin: 0, padding: "12px 14px", border: "1px solid var(--etched-border)", fontSize: 12, lineHeight: 1.6 }}
               >{providerPowerMessage(agent.power_stage)}</p> : null}
             </div>
-          </div>
+          </div>}
 
           {/* The agent and its computer as one pair (ATT-11), and what the agent
               knows about it. A computer's agents live in its Agents section. */}
@@ -1006,6 +1116,9 @@ function HivraManageContent({
           {!isComputerOnly || !sections.includes("agents") ? (
             <AgentLinksPanel subjectId={agent.id} subjectName={agent.name} />
           ) : null}
+          {/* Commands this owner's agents ask to run on the owner's own computer.
+              Shows nothing unless the server's local-bridge flag is on (404). */}
+          {isComputerOnly ? null : <LocalBridgePanel />}
         </div>
       </ManagePanel>
 
@@ -1050,11 +1163,11 @@ function HivraManageContent({
                       // Transparent 56x44 hit area around the unchanged 48x27 track.
                       style={{ minWidth: 56, minHeight: 44, border: 0, background: "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: busy ? "default" : "pointer", flexShrink: 0, padding: 0 }}
                     >
-                      <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: bOn ? "var(--gold-leaf)" : "rgba(255,255,255,0.05)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
+                      <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: bOn ? "var(--gold-leaf)" : "var(--hg-fill-2)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
                         {acting === "browser" ? (
-                          <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: "var(--ink-black)", position: "absolute", top: 6, left: bOn ? 24 : 6 }} />
+                          <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: bOn ? "var(--hg-on-accent)" : "var(--ink-black)", position: "absolute", top: 6, left: bOn ? 24 : 6 }} />
                         ) : (
-                          <span style={{ position: "absolute", top: 3, left: bOn ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: bOn ? "var(--ink-black)" : "var(--text-muted)", transition: "left .15s ease" }} />
+                          <span style={{ position: "absolute", top: 3, left: bOn ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: bOn ? "var(--hg-on-accent)" : "var(--text-muted)", transition: "left var(--hg-medium) var(--hg-ease)" }} />
                         )}
                       </span>
                     </button> : null}
@@ -1076,7 +1189,7 @@ function HivraManageContent({
                     <button
                       type="button"
                       onClick={() => setCookieOpen(true)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 7, flexShrink: 0, padding: "9px 14px", minHeight: 40, border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--vellum-bg, #f5f0e8)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", cursor: "pointer" }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 7, flexShrink: 0, padding: "9px 14px", minHeight: 40, border: "1px solid var(--hg-accent)", background: "var(--hg-accent)", color: "var(--hg-on-accent)", borderRadius: "var(--hg-radius-sm)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
                     >
                       <KeyRound size={14} /> Import cookies
                     </button>
@@ -1101,7 +1214,7 @@ function HivraManageContent({
                     Which model {def?.name || "the agent"} uses, within your own {def?.vendor || "provider"} plan. Applies from the next message — running turns aren&apos;t interrupted.
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    {(MODEL_OPTS[def?.cliKind || "claude"] || []).map((o) => {
+                    {(BOX_MODEL_OPTIONS[def?.cliKind || "claude"] || []).map((o) => {
                       const active = (model || "") === o.value;
                       return (
                         <button
@@ -1124,7 +1237,7 @@ function HivraManageContent({
                     {acting === "model" ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }} /> : null}
                   </div>
                   {errorFor("model")}
-                  {model && !(MODEL_OPTS[def?.cliKind || "claude"] || []).some((o) => o.value === model) ? (
+                  {model && !(BOX_MODEL_OPTIONS[def?.cliKind || "claude"] || []).some((o) => o.value === model) ? (
                     <div className="mono" style={{ fontSize: 11, color: "var(--text-secondary)" }}>Current: {model}</div>
                   ) : null}
                   <div style={{ display: "flex", gap: 8 }}>
@@ -1135,7 +1248,7 @@ function HivraManageContent({
                       placeholder={def?.cliKind === "codex" ? "Custom model id (e.g. gpt-5.1-codex)" : "Custom model id (e.g. claude-opus-4-8[1m])"}
                       aria-label="Custom model id"
                       autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="done"
-                      style={{ flex: 1, padding: "8px 10px", minHeight: 40, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
+                      style={{ flex: 1, padding: "8px 10px", minHeight: 40, border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
                     />
                     <button
                       type="button"
@@ -1150,6 +1263,21 @@ function HivraManageContent({
                     A model your account can&apos;t access fails on the next message with a clear error in chat — switch back here if that happens.
                   </div>
                 </div>
+              </div>
+            ) : null}
+
+            {hermesModelSection ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={card}>
+                  <HermesModelSettings chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
+                    running={agent.status === "running" && !agent.activity} disabled={busy} />
+                </div>
+                {restorePointsEnabled() ? (
+                  <div style={card}>
+                    <HermesRestorePoints chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
+                      running={agent.status === "running" && !agent.activity} disabled={busy} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1209,6 +1337,41 @@ function HivraManageContent({
                         ? (def?.cliKind === "codex" ? "Sandboxed to its workspace — can edit project files but not the wider system." : "Shell commands are off; file reads and edits still work.")
                         : "The agent runs autonomously with full access to its own computer (it's single-tenant, yours alone)."}
                   </div>
+                  {askFirst?.available && restrict !== "readonly" ? (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, borderTop: "1px solid var(--etched-border)", paddingTop: 10 }}>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={askFirst.enabled}
+                        aria-label="Ask me first"
+                        disabled={busy || agent.status !== "running"}
+                        onClick={() => void applyAskFirst(!askFirst.enabled)}
+                        style={{
+                          flex: "none", width: 38, height: 22, borderRadius: 11, padding: 2, marginTop: 1,
+                          border: "1px solid " + (askFirst.enabled ? "var(--ink-black)" : "var(--etched-border)"),
+                          background: askFirst.enabled ? "var(--ink-black)" : "transparent",
+                          cursor: busy || agent.status !== "running" ? "default" : "pointer",
+                        }}
+                      >
+                        <span style={{
+                          display: "block", width: 16, height: 16, borderRadius: 8,
+                          background: askFirst.enabled ? "var(--bg-surface)" : "var(--text-muted)",
+                          transform: askFirst.enabled ? "translateX(16px)" : "none", transition: "transform 120ms ease",
+                        }} />
+                      </button>
+                      <div style={{ display: "grid", gap: 2 }}>
+                        <div style={{ fontSize: 12.5, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 6 }}>
+                          Ask me first
+                          {acting === "ask-first" ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }} /> : null}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                          {askFirst.enabled
+                            ? "Before each command or file change, Claude Code waits for your answer in Needs you. No answer in 9 minutes means no."
+                            : "Off: Claude Code works on its own. Turn on to approve each command or file change from Needs you."}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1251,19 +1414,19 @@ function HivraManageContent({
                     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 6 }}>
                       {(mcp || []).map((s) => {
                         const confirmingRemove = mcpRemoveConfirm === s.name;
-                        const removeBtn: React.CSSProperties = { border: "1px solid var(--etched-border)", background: "transparent", minWidth: 40, minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px", flexShrink: 0, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" };
+                        const removeBtn: React.CSSProperties = { border: "1px solid var(--hg-stroke)", background: "transparent", borderRadius: "var(--hg-radius-sm)", minWidth: 40, minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 10px", flexShrink: 0, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 600 };
                         return (
                           <div key={s.name} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 4, border: "1px solid var(--etched-border)", padding: "4px 4px 4px 10px" }}>
                             <span style={{ flex: "1 1 160px", minWidth: 0, display: "flex", alignItems: "center", gap: 10, minHeight: 40 }}>
                               <span className="mono" title={s.name} style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-black)", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
-                              <span className="mono" style={{ fontSize: 11, color: confirmingRemove ? "#e06c5a" : "var(--text-muted)", flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{confirmingRemove ? "Remove?" : [s.command, ...s.args].join(" ")}</span>
+                              <span className="mono" style={{ fontSize: 11, color: confirmingRemove ? "var(--hg-bad)" : "var(--text-muted)", flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{confirmingRemove ? "Remove?" : [s.command, ...s.args].join(" ")}</span>
                             </span>
                             {/* Two-step remove. The trash button becomes Cancel in place, so it keeps
                                 focus and a double tap lands on Cancel; when the pair wraps to its own
                                 line, the second tap lands on the prompt instead. */}
                             <span style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
                               {confirmingRemove ? (
-                                <button type="button" disabled={busy} onClick={() => void dropMcp(s.name)} aria-label={`Confirm remove ${s.name}`} style={{ ...removeBtn, color: "#e06c5a", borderColor: "rgba(192,57,43,0.5)" }}>
+                                <button type="button" disabled={busy} onClick={() => void dropMcp(s.name)} aria-label={`Confirm remove ${s.name}`} style={{ ...removeBtn, color: "var(--hg-bad)", borderColor: "color-mix(in srgb, var(--hg-bad) 45%, transparent)" }}>
                                   {acting === "mcp-" + s.name ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />} Remove
                                 </button>
                               ) : null}
@@ -1272,7 +1435,7 @@ function HivraManageContent({
                                 disabled={busy}
                                 onClick={() => setMcpRemoveConfirm(confirmingRemove ? null : s.name)}
                                 aria-label={confirmingRemove ? `Cancel removing ${s.name}` : `Remove ${s.name}`}
-                                style={confirmingRemove ? { ...removeBtn, color: "var(--ink-black)" } : { ...removeBtn, padding: 0, color: "#e06c5a" }}
+                                style={confirmingRemove ? { ...removeBtn, color: "var(--ink-black)" } : { ...removeBtn, padding: 0, color: "var(--hg-bad)" }}
                               >
                                 {confirmingRemove ? "Cancel" : <Trash2 size={13} />}
                               </button>
@@ -1292,7 +1455,7 @@ function HivraManageContent({
                       placeholder="name"
                       aria-label="MCP server name"
                       autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="next"
-                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
+                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
                     />
                     <input
                       ref={mcpCmdRef}
@@ -1302,7 +1465,7 @@ function HivraManageContent({
                       placeholder="command, e.g. npx -y @modelcontextprotocol/server-github"
                       aria-label="MCP server command"
                       autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="done"
-                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
+                      style={{ padding: "8px 10px", minHeight: 40, border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 12, fontFamily: "var(--font-mono), monospace", outline: "none", minWidth: 0 }}
                     />
                     <button
                       type="button"
@@ -1345,7 +1508,9 @@ function HivraManageContent({
             ) : resizeKind === "fixed" ? (
               <ManageFixedSize
                 size={`${fmtNum(agent.cpu)} CPU / ${fmtNum(agent.ram)} GB`}
-                reason={capReason(manage?.resize.cap) ?? `This prepared ${computerTemplate?.name ?? ""} computer can't be resized yet.`}
+                reason={capReason(manage?.resize.cap)
+                  ?? `This computer has a fixed size (${fmtNum(agent.cpu)} CPU, ${fmtNum(agent.ram)} GB). For a different size, launch a new one.`}
+                plain={!manage || (manage.resize.cap.state === "unavailable" && ["prepared_fixed", "windows_fixed"].includes(manage.resize.cap.code))}
               />
             ) : (
               <div style={card}>
@@ -1366,7 +1531,7 @@ function HivraManageContent({
                     {cpuOptions.map((n) => {
                       const disabled = !resizeAllowed || n < floor.cpu || n > capCpu;
                       return (
-                        <button key={`c${n}`} type="button" disabled={disabled} aria-pressed={rcpu === n} onClick={() => { setRcpu(n); setMaximumCpu(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rcpu === n ? "var(--gold-leaf)" : "transparent", color: rcpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>
+                        <button key={`c${n}`} type="button" disabled={disabled} aria-pressed={rcpu === n} onClick={() => { setRcpu(n); setMaximumCpu(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rcpu === n ? "var(--gold-leaf)" : "transparent", color: rcpu === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>
                       );
                     })}
                     </div>
@@ -1376,7 +1541,7 @@ function HivraManageContent({
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       {cpuOptions.filter(n => n >= rcpu).map((n) => {
                         const disabled = !resizeAllowed || n > maximumCapCpu;
-                        return <button key={`mc${n}`} type="button" disabled={disabled} aria-pressed={maximumCpu === n} onClick={() => setMaximumCpu(n)} style={{ border: "1px solid var(--etched-border)", background: maximumCpu === n ? "var(--gold-leaf)" : "transparent", color: maximumCpu === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>;
+                        return <button key={`mc${n}`} type="button" disabled={disabled} aria-pressed={maximumCpu === n} onClick={() => setMaximumCpu(n)} style={{ border: "1px solid var(--etched-border)", background: maximumCpu === n ? "var(--gold-leaf)" : "transparent", color: maximumCpu === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} CPU</button>;
                       })}
                     </div>
                   </fieldset>
@@ -1386,7 +1551,7 @@ function HivraManageContent({
                     {ramOptions.map((n) => {
                       const disabled = !resizeAllowed || n < floor.ram || n > capRam;
                       return (
-                        <button key={`r${n}`} type="button" disabled={disabled} aria-pressed={rram === n} onClick={() => { setRram(n); setMaximumRam(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rram === n ? "var(--gold-leaf)" : "transparent", color: rram === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>
+                        <button key={`r${n}`} type="button" disabled={disabled} aria-pressed={rram === n} onClick={() => { setRram(n); setMaximumRam(current => Math.max(current, n)); }} style={{ border: "1px solid var(--etched-border)", background: rram === n ? "var(--gold-leaf)" : "transparent", color: rram === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>
                       );
                     })}
                     </div>
@@ -1396,7 +1561,7 @@ function HivraManageContent({
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       {ramOptions.filter(n => n >= rram).map((n) => {
                         const disabled = !resizeAllowed || n > maximumCapRam;
-                        return <button key={`mr${n}`} type="button" disabled={disabled} aria-pressed={maximumRam === n} onClick={() => setMaximumRam(n)} style={{ border: "1px solid var(--etched-border)", background: maximumRam === n ? "var(--gold-leaf)" : "transparent", color: maximumRam === n ? "var(--ink-black)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>;
+                        return <button key={`mr${n}`} type="button" disabled={disabled} aria-pressed={maximumRam === n} onClick={() => setMaximumRam(n)} style={{ border: "1px solid var(--etched-border)", background: maximumRam === n ? "var(--gold-leaf)" : "transparent", color: maximumRam === n ? "var(--hg-on-accent)" : disabled ? "var(--text-muted)" : "var(--text-secondary)", fontSize: 12, padding: "5px 11px", minHeight: 40, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "var(--font-mono), monospace", opacity: disabled ? 0.35 : 1 }}>{fmtNum(n)} GB</button>;
                       })}
                     </div>
                   </fieldset>
@@ -1462,7 +1627,7 @@ function HivraManageContent({
                   {snapshotsLoading && snapshots.length === 0 ? (
                     <div role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading restore points…</div>
                   ) : snapshotsError ? (
-                    <div role="alert" style={{ fontSize: 12, color: "#e06c5a", lineHeight: 1.5 }}>
+                    <div role="alert" style={{ fontSize: 12, color: "var(--hg-bad)", lineHeight: 1.5 }}>
                       {snapshotsError} <button type="button" onClick={() => void refreshSnapshots()} style={{ ...btnGhost, marginLeft: 8 }}>Retry</button>
                     </div>
                   ) : snapshots.length === 0 ? (
@@ -1488,11 +1653,11 @@ function HivraManageContent({
                               <RefreshCw size={13} /> Restore
                             </button>
                           </div>
-                          {snapshot.error ? <div role="alert" style={{ color: "#e06c5a", fontSize: 11.5 }}>{snapshot.error}</div> : null}
+                          {snapshot.error ? <div role="alert" style={{ color: "var(--hg-bad)", fontSize: 11.5 }}>{snapshot.error}</div> : null}
                           {restoreConfirmId === snapshot.id ? (
                             <div style={{ borderTop: "1px solid var(--etched-border)", paddingTop: 10, display: "grid", gap: 9 }}>
                               <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, lineHeight: 1.55, color: "var(--text-secondary)" }}>
-                                <AlertTriangle size={15} style={{ color: "#e06c5a", flexShrink: 0, marginTop: 2 }} />
+                                <AlertTriangle size={15} style={{ color: "var(--hg-bad)", flexShrink: 0, marginTop: 2 }} />
                                 Restoring rolls the disk back to this point and permanently removes changes made afterward. The computer will be left stopped; start it after you review the result.
                               </div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1575,6 +1740,7 @@ function HivraManageContent({
                 busy={busy}
                 updating={acting === "cli-update"}
                 onUpdate={updateAgentSoftware}
+                recovery={softwareRecovery}
               />
             </div>
             {connectionUpdate ? (
@@ -1598,11 +1764,14 @@ function HivraManageContent({
                       <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                         {agent.type === "deepseek-harness"
                           ? "Update connection service brings Hivra’s DeepSeek service up to date without restarting the computer. It restarts DeepSeek, which ends a task DeepSeek is working on; your files, chats and model settings stay as they are. If the new version doesn’t start cleanly, the previous one comes back. Terminals open on this page reconnect when it finishes."
+                          : headlessComputer
+                          ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so files and local logins stay as they are. Terminals open on this page reconnect when it finishes."
                           : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
                         {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}
-                        {manage?.agentApp ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
+                        {manage?.agentApp?.vetted ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
+                        {manage?.agentApp && !manage.agentApp.vetted ? " It also runs Hermes’s own update (hermes update) once nobody is using Hermes." : ""}
                       </div>
                     </>
                   )}
@@ -1675,7 +1844,7 @@ function HivraManageContent({
                   </>
                 ) : <div style={manageMuted}>{capReason(forcePower.stop)}</div>}
                 {forceConfirm ? (
-                  <div role="alertdialog" aria-labelledby="hm-force-title" aria-describedby="hm-force-detail" style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid rgba(192,57,43,0.5)", background: "rgba(192,57,43,0.06)" }}>
+                  <div role="alertdialog" aria-labelledby="hm-force-title" aria-describedby="hm-force-detail" style={{ display: "grid", gap: 10, padding: "12px 14px", border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 6%, transparent)", borderRadius: "var(--hg-radius-md)" }}>
                     <div id="hm-force-title" style={{ fontSize: 12.5, color: "var(--ink-black)", fontWeight: 700 }}>{FORCE_POWER[forceConfirm.action].title(agent.name)}</div>
                     <div id="hm-force-detail" style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
                       {FORCE_POWER[forceConfirm.action].detail}
@@ -1684,7 +1853,7 @@ function HivraManageContent({
                     {/* Cancel first, as in the danger zone; it takes focus when this opens. */}
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <button ref={forceCancel} type="button" onClick={cancelForce} style={{ ...btnGhost, cursor: "pointer" }}>Cancel</button>
-                      <button type="button" disabled={busy} onClick={confirmForce} style={{ ...btnDark, background: "#c0392b", borderColor: "#c0392b", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+                      <button type="button" disabled={busy} onClick={confirmForce} style={{ ...btnDark, background: "var(--hg-bad)", borderColor: "var(--hg-bad)", color: "#fff", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
                         {FORCE_POWER[forceConfirm.action].button}
                       </button>
                     </div>
@@ -1713,7 +1882,7 @@ function HivraManageContent({
           {disclaimer ? (
             <div style={{ display: "grid", gap: 10 }}>
               <div className="mono" style={label}>About</div>
-              <div style={{ border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.02)", padding: 16, display: "flex", gap: 11, alignItems: "flex-start", boxSizing: "border-box" }}>
+              <div style={{ border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", padding: 16, display: "flex", gap: 11, alignItems: "flex-start", boxSizing: "border-box" }}>
                 <ShieldCheck size={16} style={{ color: "var(--text-muted)", flexShrink: 0, marginTop: 2 }} />
                 <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6, minWidth: 0 }}>{disclaimer}</div>
               </div>

@@ -43,3 +43,46 @@ describe("unifyAll software", () => {
     expect(unifyAll([], [codex(undefined)])[0].software).toBeNull();
   });
 });
+
+describe("unifyAll canTryAgain", () => {
+  const errored = (patch: Record<string, unknown>) => ({
+    ...computer("ubuntu-desktop"), status: "error", error: "Desktop never answered",
+    computer_substrate: "proxmox-kvm", deployment_mode: "hivra-managed",
+    provisioned_at: "2026-09-12T08:30:00Z", vmid: 1113, ...patch,
+  }) as unknown as HivraAgent;
+
+  it("is set only for an errored Hivra Cloud computer that was ready once and still has its machine", () => {
+    expect(unifyAll([], [errored({})])[0].canTryAgain).toBe(true);
+    for (const patch of [
+      { provisioned_at: null },
+      { vmid: null },
+      { computer_substrate: "provider-vm" },
+      { deployment_mode: "self-managed" },
+      { computer_profile: "windows" },
+      { status: "running" },
+    ]) {
+      expect(unifyAll([], [errored(patch)])[0].canTryAgain).toBeUndefined();
+    }
+  });
+});
+
+describe("unifyAll computers gone from their host", () => {
+  const gone = {
+    ...computer("ubuntu-desktop"), status: "error", vmid: 101, provisioned_at: "2026-01-01T00:00:00Z",
+    error: "This computer no longer exists on its host.",
+  } as unknown as HivraAgent;
+
+  it("keeps the stored reason and marks it as only removable", () => {
+    const [row] = unifyAll([], [gone]);
+    expect(row.attention).toBe("error");
+    expect(row.failureReason).toBe("This computer no longer exists on its host.");
+    expect(row.missingOnHost).toBe(true);
+    expect(row.canTryAgain).toBeUndefined();
+  });
+
+  it("does not mark an ordinary failure as gone", () => {
+    const [row] = unifyAll([], [{ ...gone, error: "Setup failed." } as HivraAgent]);
+    expect(row.missingOnHost).toBeUndefined();
+    expect(row.failureReason).toBe("Setup failed.");
+  });
+});

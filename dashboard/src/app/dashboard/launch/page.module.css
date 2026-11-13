@@ -12,20 +12,20 @@
 
 .eyebrow {
   display: block;
-  color: #ff4244;
-  font-family: var(--font-mono), monospace;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.18em;
+  color: var(--hg-fg);
+  font-family: var(--font-sans);
+  font-size: 0.69rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .header h1 {
   margin: 0.55rem 0 0;
-  font-family: var(--font-serif), serif;
+  font-family: var(--font-display);
   font-size: clamp(2.5rem, 6vw, 4.8rem);
-  font-weight: 420;
-  letter-spacing: -0.045em;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   line-height: 0.96;
 }
 
@@ -42,6 +42,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--etched-border);
   background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  border-radius: var(--hg-radius-sm);
 }
 
 .catalogColumn {
@@ -65,27 +66,28 @@
   height: 44px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(255, 66, 68, 0.48);
-  color: #ff4244;
-  background: rgba(255, 66, 68, 0.07);
+  border: 1px solid var(--hg-stroke-strong);
+  color: var(--hg-fg);
+  background: var(--hg-fill-2);
+  border-radius: var(--hg-radius-sm);
 }
 
 .columnHeader small,
 .rowCopy small { color: var(--text-muted); }
 
 .columnHeader small {
-  font-family: var(--font-mono), monospace;
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+  font-family: var(--font-sans);
+  font-size: 0.69rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .columnHeader h2 {
   margin: 0.2rem 0 0;
-  font-family: var(--font-serif), serif;
+  font-family: var(--font-display);
   font-size: clamp(1.75rem, 4vw, 2.35rem);
-  font-weight: 430;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -97,7 +99,13 @@
   line-height: 1.55;
 }
 
-.resourceList { border: 1px solid var(--etched-border); }
+.resourceList { border: 1px solid var(--etched-border);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  background: var(--hg-glass);
+  border-radius: var(--hg-radius-lg);
+}
 
 .resourceRow {
   display: grid;
@@ -111,8 +119,8 @@
 }
 
 .resourceRow + .resourceRow { border-top: 1px solid var(--etched-border); }
-a.resourceRow:hover, a.resourceRow:focus-visible { background: rgba(255, 255, 255, 0.045); }
-a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; }
+a.resourceRow:hover, a.resourceRow:focus-visible { background: var(--hg-fill-1); }
+a.resourceRow:focus-visible { outline: 1px solid var(--hg-fg); outline-offset: -1px; }
 
 .rowIcon {
   display: grid;
@@ -120,8 +128,9 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
   height: 32px;
   place-items: center;
   border: 1px solid var(--etched-border);
-  color: #ff5557;
+  color: var(--hg-fg);
   font: 800 0.68rem var(--font-mono), monospace;
+  border-radius: var(--hg-radius-sm);
 }
 
 .rowCopy {
@@ -137,14 +146,15 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
   border: 1px solid var(--etched-border);
   color: var(--text-muted);
   padding: 0.2rem 0.3rem;
-  font: 800 0.46rem/1 var(--font-mono), monospace;
+  font: 600 0.69rem/1 var(--font-sans);
   font-style: normal;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+  border-radius: var(--hg-radius-sm);
 }
 
 .unavailable { opacity: 0.64; }
-.pending { color: var(--text-muted); font: 800 0.5rem var(--font-mono), monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+.pending { color: var(--text-muted); font: 600 0.69rem var(--font-sans); letter-spacing: 0.05em; text-transform: uppercase; }
 
 .secondaryLink {
   display: inline-flex;
@@ -153,10 +163,10 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
   gap: 0.45rem;
   margin-top: 1rem;
   color: var(--text-secondary);
-  font: 800 0.58rem var(--font-mono), monospace;
-  letter-spacing: 0.09em;
+  font: 600 0.69rem var(--font-sans);
+  letter-spacing: 0.05em;
   text-decoration: none;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .secondaryLink:hover { color: var(--ink-black); }
@@ -169,14 +179,15 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
   margin-top: 1rem;
   padding: 1.25rem;
   border: 1px solid var(--etched-border);
-  background: rgba(255, 255, 255, 0.018);
+  background: var(--hg-fill-1);
+  border-radius: var(--hg-radius-sm);
 }
 
 .infrastructure h2 {
   margin: 0.35rem 0 0;
-  font-family: var(--font-serif), serif;
+  font-family: var(--font-display);
   font-size: 1.3rem;
-  font-weight: 440;
+  font-weight: 600;
 }
 
 .infrastructure p { margin-top: 0.35rem; font-size: 0.75rem; }
@@ -185,6 +196,7 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   border: 1px solid var(--etched-border);
+  border-radius: var(--hg-radius-sm);
 }
 
 .providers > span {
@@ -196,9 +208,9 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
 }
 
 .providers > span + span { border-left: 1px solid var(--etched-border); }
-.providers svg { grid-row: 1 / 3; color: #ff4244; }
+.providers svg { grid-row: 1 / 3; color: var(--hg-fg); }
 .providers strong { font-size: 0.72rem; }
-.providers small { color: var(--text-muted); font: 0.55rem var(--font-mono), monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+.providers small { color: var(--text-muted); font: 600 0.55rem var(--font-sans); letter-spacing: .05em; text-transform: uppercase; }
 
 .infrastructure > a {
   display: inline-flex;
@@ -209,11 +221,12 @@ a.resourceRow:focus-visible { outline: 1px solid #ff4244; outline-offset: -1px; 
   border: 1px solid var(--ink-black);
   color: var(--ink-black);
   background: transparent;
-  font: 800 0.65rem var(--font-mono), monospace;
-  letter-spacing: 0.11em;
+  font: 600 0.69rem var(--font-sans);
+  letter-spacing: 0.05em;
   text-decoration: none;
   text-transform: uppercase;
   white-space: nowrap;
+  border-radius: var(--hg-radius-sm);
 }
 
 @media (max-width: 900px) {

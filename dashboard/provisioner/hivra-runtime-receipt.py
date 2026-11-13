@@ -291,9 +291,9 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
 def service_records(runner: Callable[[list[str], str | None], bytes | None]) -> list[dict[str, str]]:
     units = [
         "bux-aeon.service", "bux-box-ttyd.service", "bux-hivra-chat.service",
-        "bux-local-browser.service", "bux-openclaw.service", "bux-ttyd.service",
+        "bux-local-browser.service", "bux-openclaw.service", "bux-hermes.service", "bux-ttyd.service",
         "hivra-direct-access.service",
-        "hivra-agent-zero.service", "hivra-novnc.service", "hivra-x11vnc.service", "hivra-xvfb.service",
+        "hivra-agent-zero.service", "hivra-openbot.service", "hivra-novnc.service", "hivra-x11vnc.service", "hivra-xvfb.service",
     ]
     records = []
     for unit in units:
@@ -343,6 +343,7 @@ def collect_receipt(
         ("node", ["/usr/bin/node", "--version"], None),
         ("npm", ["/usr/bin/npm", "--version"], None),
         ("openclaw", ["/home/bux/.npm-global/bin/openclaw", "--version"], "bux"),
+        ("hermes", ["/home/bux/.local/bin/hermes", "--version"], "bux"),
         ("ttyd", ["/usr/local/bin/ttyd", "--version"], None),
     ]:
         binaries.append({"name": name, "versionOutput": first_line(runner(arguments, user))})
@@ -702,7 +703,7 @@ def refresh_direct_access_evidence(*, provisioner_version: str, agent_kind: str,
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--provisioner-version", required=True)
-    parser.add_argument("--agent-kind", choices=("claude", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"), required=True)
+    parser.add_argument("--agent-kind", choices=("claude", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "deepseek-harness", "linux-desktop", "linux-server"), required=True)
     parser.add_argument("--substrate", choices=("proxmox-kvm", "provider-vm"), required=True)
     parser.add_argument("--browser-enabled", choices=("0", "1"))
     parser.add_argument("--agent-zero-image")
@@ -715,7 +716,7 @@ def arguments() -> argparse.Namespace:
             raise ReceiptError("invalid direct-access refresh")
     elif value.browser_enabled is None:
         raise ReceiptError("browser selection is required")
-    elif value.agent_kind == "agent-zero":
+    elif value.agent_kind in ("agent-zero", "openbot"):
         if not isinstance(value.agent_zero_image, str) or "@" not in value.agent_zero_image or not DIGEST.fullmatch(value.agent_zero_image.rsplit("@", 1)[1]):
             raise ReceiptError("invalid selected container image")
     elif value.agent_zero_image is not None:

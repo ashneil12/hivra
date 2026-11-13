@@ -1,4 +1,6 @@
 import type { UnifiedAgent } from "./unified-agent";
+import { isLaunchProfileId } from "@/lib/launch/contracts";
+import { computerHasDesktop } from "./resource-landing";
 
 /**
  * Grouping for any surface that lists the whole fleet.
@@ -83,7 +85,14 @@ export function fleetEntryHref(agent: UnifiedAgent): string {
   if (agent.kind === "hermes") {
     return `/dashboard/instances/${encodeURIComponent(agent.id)}`;
   }
-  const tab = agent.resourceKind === "computer" ? (isSandboxComputer(agent) ? "manage" : "desktop") : "chat";
+  // A computer that errored (or whose host lost it) has no desktop to show;
+  // Manage says what happened and offers the way forward.
+  if (agent.state === "error" && (agent.missingOnHost || agent.resourceKind === "computer")) {
+    return `/dashboard/agent/${encodeURIComponent(agent.id)}?tab=manage`;
+  }
+  const tab = agent.resourceKind === "computer"
+    ? (isSandboxComputer(agent) ? "manage" : isDesktoplessComputer(agent) ? "files" : "desktop")
+    : "chat";
   return `/dashboard/agent/${encodeURIComponent(agent.id)}?tab=${tab}`;
 }
 
@@ -93,8 +102,24 @@ export function isSandboxComputer(agent: Pick<UnifiedAgent, "resourceKind" | "ag
     && (agent.agentType === "linux-terminal" || agent.computerProfile === "linux-terminal");
 }
 
+/** A computer with no desktop (a Linux computer, or a profile Hivra does not
+ * know): it opens on its files, never on a desktop. */
+export function isDesktoplessComputer(agent: Pick<UnifiedAgent, "resourceKind" | "agentType" | "computerProfile">): boolean {
+  return agent.resourceKind === "computer" && !isSandboxComputer(agent) && !computerHasDesktop(agent.computerProfile);
+}
+
 /** What a running entry's link says it opens. */
 export function fleetEntryOpenLabel(agent: Pick<UnifiedAgent, "resourceKind" | "agentType" | "computerProfile">): string {
   if (agent.resourceKind !== "computer") return "Open agent";
-  return isSandboxComputer(agent) ? "Open sandbox" : "Open desktop";
+  if (isSandboxComputer(agent)) return "Open sandbox";
+  return isDesktoplessComputer(agent) ? "Open computer" : "Open desktop";
+}
+
+/** Launch page link for a failed launch: same agent type or computer profile preselected. */
+export function relaunchHref(agent: UnifiedAgent): string {
+  const query = new URLSearchParams({ start: "1" });
+  const profile = agent.resourceKind === "computer" ? agent.computerProfile : agent.agentType;
+  if (isLaunchProfileId(profile)) query.set("profile", profile);
+  else if (agent.resourceKind) query.set("kind", agent.resourceKind);
+  return `/dashboard/launch?${query.toString()}`;
 }

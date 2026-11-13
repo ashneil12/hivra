@@ -8,7 +8,6 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit, RATE_LIMIT_PRESETS } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { createModelKeyCoordinator, ModelKeyError, type ModelKeyProblem } from "@/lib/hivra/model-key-coordinator";
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
 import { createLaunchModelCoordinator } from "@/lib/hivra/launch-model-coordinator";
@@ -37,7 +36,6 @@ function failure(cause: unknown) {
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return error("Not found", 404);
     const { userId } = await auth();
     if (!userId) return error("Unauthorized", 401);
     const { id } = await params;
@@ -53,7 +51,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return error("Not found", 404);
     const { userId } = await auth();
     if (!userId) return error("Unauthorized", 401);
     if (!isSameOriginMutationRequest(req)) return error("Open model settings from this dashboard to make a change.", 403);

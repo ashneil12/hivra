@@ -3,92 +3,110 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { MIN_CHROMIUM_VERSION } from "../src/browser/chromium.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
 const repoRoot = join(packageRoot, "..", "..");
+const read = (...parts: string[]) => readFileSync(join(...parts), "utf8");
+const workflowText = () => read(repoRoot, ".github", "workflows", "browser-sidecar.yml");
+type Step = Record<string, unknown> & { name?: string; run?: string; if?: string };
 
 describe("browser-sidecar image build contract", () => {
-  it("requires browser installation and real integration tests before publishing", () => {
-    const workflow = readFileSync(join(repoRoot, ".github", "workflows", "browser-sidecar-publish.yml"), "utf8");
-    const job = parse(workflow).jobs["verify-and-publish"];
-    expect(job["continue-on-error"]).toBeUndefined();
-    expect(job["timeout-minutes"]).toBe(30);
-    const steps = job.steps as Array<Record<string, unknown>>;
-    const installIndex = steps.findIndex((step) => step.name === "Install Playwright Chromium");
-    const integrationIndex = steps.findIndex((step) => step.name === "Integration test (persist-session)");
-    const buildIndex = steps.findIndex((step) => step.name === "Build & push image");
-    expect(installIndex).toBeGreaterThanOrEqual(0);
-    expect(integrationIndex).toBeGreaterThan(installIndex);
-    expect(buildIndex).toBeGreaterThan(integrationIndex);
-    expect(steps[installIndex].run).toBe("npx playwright install chromium");
-    expect(steps[integrationIndex]).toMatchObject({
-      run: "npm run test:integration",
-      env: { RUN_INTEGRATION: "1" },
-    });
-    for (const index of [installIndex, integrationIndex, buildIndex]) {
-      expect(steps[index]["continue-on-error"]).toBeUndefined();
-      // Default success() semantics are required, not always() after a failure.
-      expect([undefined, "success()"]).toContain(steps[index].if);
+  it("tests, builds and sandbox-checks the image before anything is published", () => {
+    const jobs = parse(workflowText()).jobs as Record<string, { needs?: string; if?: string; steps: Step[] }>;
+    expect(jobs.image.needs).toBe("test");
+    expect(jobs.publish.needs).toBe("image");
+    expect(jobs.publish.if).toBe("github.event_name == 'push'");
+
+    const testRuns = jobs.test.steps.map((step) => step.run);
+    expect(testRuns).toEqual(expect.arrayContaining(["npm ci --no-audit --no-fund", "npm run lint", "npm test"]));
+
+    const imageSteps = jobs.image.steps;
+    const names = imageSteps.map((step) => step.name);
+    const build = names.indexOf("Build image");
+    const policy = names.indexOf("Match the customer VMs' user-namespace policy");
+    const sandbox = names.indexOf("Sandbox regression (sandbox ON, patched Chromium, fails closed)");
+    const save = names.indexOf("Save tested image");
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(policy).toBeGreaterThan(build);
+    expect(sandbox).toBeGreaterThan(policy);
+    expect(save).toBeGreaterThan(sandbox);
+    expect(imageSteps[policy].run).toContain("sysctl -w kernel.apparmor_restrict_unprivileged_userns=1");
+    expect(imageSteps[sandbox].run).toBe('bash tests/sandbox/run-image-checks.sh "$IMAGE"');
+    for (const step of [...jobs.test.steps, ...imageSteps, ...jobs.publish.steps]) {
+      expect(step["continue-on-error"]).toBeUndefined();
+    }
+  });
+
+  it("publishes only the tested bytes, only under immutable sha- tags, and never moves :stable", () => {
+    const text = workflowText();
+    const publish = (parse(text).jobs.publish.steps as Step[]).find((step) => step.name === "Push immutable sha tag")!;
+    expect(publish.run).toContain('docker load');
+    expect(publish.run).toContain('target="ghcr.io/ashneil12/${package_name}:sha-${SHA}"');
+    // One package for canary and main builds; the -canary package is retired.
+    expect(publish.run).toContain('package_name="hermes-browser-sidecar"');
+    expect(publish.run).not.toContain("hermes-browser-sidecar-canary");
+    expect(publish.run).toContain('refusing to publish from');
+    expect(text).not.toMatch(/:stable["'\s]*$/m);
+    expect(text).not.toMatch(/docker (tag|push)[^\n]*:stable/);
+    // github.* values reach the shell through env, never `${{ }}` inside run:
+    // (template-injection hardening).
+    for (const step of parse(text).jobs.publish.steps as Step[]) {
+      expect(step.run ?? "").not.toContain("${{");
     }
   });
 
   it("uses the committed lockfile for Docker and CI dependency installs", () => {
-    const dockerfile = readFileSync(join(packageRoot, "Dockerfile"), "utf8");
-    const publishWorkflow = readFileSync(
-      join(repoRoot, ".github", "workflows", "browser-sidecar-publish.yml"),
-      "utf8"
-    );
-
+    const dockerfile = read(packageRoot, "Dockerfile");
     expect(dockerfile).toContain("COPY package.json package-lock.json ./");
     expect(dockerfile).toContain("npm ci --omit=dev --no-audit --no-fund");
     expect(dockerfile).toContain("npm ci --no-audit --no-fund");
-    expect(dockerfile).not.toContain("npm install --omit=dev");
-    expect(dockerfile).not.toContain("RUN npm install --no-audit --no-fund");
-
-    expect(publishWorkflow).toContain("run: npm ci --no-audit --no-fund");
-    expect(publishWorkflow).not.toContain("run: npm install --no-audit --no-fund");
+    expect(dockerfile).not.toContain("npm install");
+    expect(workflowText()).toContain("run: npm ci --no-audit --no-fund");
   });
 
   it("pins every external base image to an immutable multi-platform digest", () => {
-    const dockerfile = readFileSync(join(packageRoot, "Dockerfile"), "utf8");
-    const fromLines = dockerfile.split(/\r?\n/).filter((line) => line.startsWith("FROM "));
+    const fromLines = read(packageRoot, "Dockerfile").split(/\r?\n/).filter((line) => line.startsWith("FROM "));
+    const base = "node:22-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab1e0fd3866b6d2d8f";
+    expect(fromLines).toEqual([`FROM ${base} AS deps`, `FROM ${base} AS build`, `FROM ${base} AS runtime`]);
+  });
+});
 
-    expect(fromLines).toEqual([
-      "FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS deps",
-      "FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS build",
-      "FROM mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53 AS runtime",
-    ]);
+describe("browser-sidecar Chromium is patched and sandboxed", () => {
+  const dockerfile = read(packageRoot, "Dockerfile");
+
+  it("ships Debian's security-tracked Chromium, not a Playwright-bundled browser", () => {
+    expect(dockerfile).not.toContain("mcr.microsoft.com/playwright");
+    expect(dockerfile).not.toMatch(/playwright install/);
+    expect(dockerfile).toContain("      chromium fonts-liberation fonts-noto-core");
+    expect(dockerfile).toContain("ENV CHROMIUM_PATH=/usr/lib/chromium/chromium");
   });
 
-  it("does not require the private sidecar image to be pulled anonymously", () => {
-    const publishWorkflow = readFileSync(
-      join(repoRoot, ".github", "workflows", "browser-sidecar-publish.yml"),
-      "utf8"
-    );
-
-    expect(publishWorkflow).not.toContain("Make package public");
-    expect(publishWorkflow).not.toContain("Verify anonymous GHCR pull");
-    expect(publishWorkflow).not.toContain("docker logout ghcr.io");
-    expect(publishWorkflow).not.toContain("must be public before VMs can pull it");
+  it("refuses to build below the CVE-2026-118306 floor, in step with the launcher", () => {
+    // 156.0.8078.73 fixed CVE-2026-118306 (sandbox escape). Never lower it.
+    expect(MIN_CHROMIUM_VERSION).toBe("156.0.8078.73");
+    expect(dockerfile).toContain(`ARG CHROMIUM_MIN_VERSION=${MIN_CHROMIUM_VERSION}`);
+    expect(dockerfile).toContain('dpkg --compare-versions "$installed" ge "$CHROMIUM_MIN_VERSION"');
   });
 
-  it("publishes the canary and prod sidecar packages from their matching repos", () => {
-    const publishWorkflow = readFileSync(
-      join(repoRoot, ".github", "workflows", "browser-sidecar-publish.yml"),
-      "utf8"
-    );
+  it("runs as the unprivileged browser user, dropped to by the entrypoint", () => {
+    expect(dockerfile).toContain("useradd --create-home --uid 10001 --user-group --shell /usr/sbin/nologin browser");
+    expect(dockerfile).toContain("chown -R browser:browser /var/lib/hermes-browser");
+    const entrypoint = read(packageRoot, "docker", "entrypoint.sh");
+    const drop = entrypoint.indexOf('exec setpriv --reuid="$BROWSER_USER" --regid="$BROWSER_USER" --init-groups --inh-caps=-all');
+    expect(drop).toBeGreaterThan(0);
+    // Nothing starts before the drop: the display stack and Node come after it.
+    for (const marker of ["supervise Xvfb", "node /app/cdp-proxy.mjs", "exec node dist/server.js"]) {
+      expect(entrypoint.indexOf(marker)).toBeGreaterThan(drop);
+    }
+  });
 
-    // The repo name reaches the shell via an env var, never via `${{ }}`
-    // expansion inside `run:` (zizmor template-injection hardening). Assert the
-    // hardened indirection so a regression back to inline `${{ }}` is caught.
-    expect(publishWorkflow).toContain('_REPO_NAME: ${{ github.event.repository.name }}');
-    expect(publishWorkflow).toContain('repo_name="$_REPO_NAME"');
-    expect(publishWorkflow).not.toContain('repo_name="${{ github.event.repository.name }}"');
-    expect(publishWorkflow).toContain('if [[ "$repo_name" == *-canary ]]; then');
-    expect(publishWorkflow).toContain('package_name="hermes-browser-sidecar-canary"');
-    expect(publishWorkflow).toContain('package_name="hermes-browser-sidecar"');
-    expect(publishWorkflow).toContain('base="ghcr.io/${repo_lc}/${package_name}"');
-    expect(publishWorkflow).not.toContain('base="ghcr.io/${repo_lc}/hermes-browser-sidecar-canary"');
+  it("copies the compiled launch settings next to the CDP proxy that imports them", () => {
+    const dist = dockerfile.indexOf("COPY --from=build /app/dist ./dist");
+    const proxy = dockerfile.indexOf("COPY docker/cdp-proxy.mjs ./cdp-proxy.mjs");
+    expect(dist).toBeGreaterThan(0);
+    expect(proxy).toBeGreaterThan(0);
+    expect(read(packageRoot, "docker", "cdp-proxy.mjs")).toContain('from "./dist/browser/chromium.js"');
   });
 });

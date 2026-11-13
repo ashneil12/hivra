@@ -15,9 +15,9 @@
 }
 
 .option {
-  font-family: var(--font-mono), monospace;
-  font-size: 9px;
-  letter-spacing: 0.1em;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: .05em;
   text-transform: uppercase;
   padding: 3px 9px;
   min-height: 24px;
@@ -26,6 +26,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .option + .option {
@@ -33,8 +34,8 @@
 }
 
 .option[data-selected="true"] {
-  background: var(--hivra-red);
-  color: #fff;
+  background: var(--hg-accent);
+  color: var(--hg-on-accent);
 }
 
 .option:disabled {
@@ -45,10 +46,10 @@
 .primary,
 .danger,
 .more {
-  font-family: var(--font-mono), monospace;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  letter-spacing: 0;
+  text-transform: none;
   min-height: 24px;
   padding: 2px 8px;
   border: 1px solid var(--etched-border);
@@ -56,6 +57,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .more {
@@ -64,20 +66,20 @@
 }
 
 .primary {
-  background: var(--hivra-red);
-  border-color: var(--hivra-red);
-  color: #fff;
+  background: var(--hg-accent);
+  border-color: var(--hg-accent);
+  color: var(--hg-on-accent);
 }
 
 .danger {
-  border-color: var(--hivra-red-line);
-  color: var(--hivra-red);
+  border-color: var(--hg-stroke-strong);
+  color: var(--hg-text);
 }
 
 .action:hover,
 .more:hover {
   color: var(--ink-black);
-  border-color: var(--hivra-red-line);
+  border-color: var(--hg-stroke-strong);
 }
 
 .option:focus-visible,
@@ -85,7 +87,7 @@
 .primary:focus-visible,
 .danger:focus-visible,
 .more:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 1px;
 }
 
@@ -100,7 +102,7 @@
 
 .error {
   font-size: 11px;
-  color: var(--hivra-red);
+  color: var(--hg-text);
   max-width: 28ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -119,7 +121,7 @@
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--hg-shadow-lg);
   white-space: normal;
 }
 
@@ -136,4 +138,17 @@
   display: flex;
   gap: 6px;
   margin-top: 4px;
+}
+
+.clipboardText {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 6px;
+  border: 1px solid var(--etched-border);
+  background: var(--bg-base, transparent);
+  color: var(--ink-black);
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  resize: vertical;
 }

@@ -6,8 +6,6 @@ import { NextRequest } from "next/server";
 // route logic runs for real; auth, the flag and storage are faked.
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
-jest.mock("@/lib/agent-computers/attach-flag", () => ({ isAgentAttachEnabled: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn() }));
 jest.mock("@/lib/agent-computers/attachment-lifecycle-store", () => ({ createAttachmentLifecycleStore: jest.fn() }));
 jest.mock("@/lib/hivra/resource-gate", () => ({ validateAgentResources: jest.fn(), resolvePlanAgentSlots: jest.fn() }));
@@ -19,8 +17,6 @@ jest.mock("@/lib/api-response", () => ({
 }));
 
 import { auth } from "@clerk/nextjs/server";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -57,8 +53,6 @@ beforeEach(() => {
   computerRow = { id: ID, name: "MY_UBUNTU_DESKTOP", type: "linux-desktop", cpu: 2, ram: 4, deployment_mode: "hivra-managed", status: "running",
     computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true };
   jest.mocked(auth).mockResolvedValue({ userId: OWNER } as Awaited<ReturnType<typeof auth>>);
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
-  jest.mocked(isAgentAttachEnabled).mockReturnValue(true);
   jest.mocked(enforceAuthenticatedRouteRateLimit).mockReturnValue(null);
   jest.mocked(createAttachmentLifecycleStore).mockReturnValue(store as unknown as ReturnType<typeof createAttachmentLifecycleStore>);
   const chain: Record<string, jest.Mock> = {};
@@ -68,13 +62,6 @@ beforeEach(() => {
   store.readTarget.mockResolvedValue({ authority, eligible: false, reason: "agent_present" });
   store.readAttachments.mockResolvedValue([attached]);
   store.beginOperation.mockResolvedValue({ status: "claimed", operationId: REQUEST, resumed: false });
-});
-
-it("is off where attach is not offered", async () => {
-  jest.mocked(isAgentAttachEnabled).mockReturnValue(false);
-  expect((await send("PATCH", accessBody())).status).toBe(404);
-  expect((await send("DELETE", removeBody())).status).toBe(404);
-  expect(auth).not.toHaveBeenCalled();
 });
 
 it("refuses anonymous, cross-site and non-JSON requests before reading anything", async () => {

@@ -4,14 +4,14 @@ public enum HivraWorkspaceDestination: String, CaseIterable, Codable, Sendable {
     case overview, agents, computers, activity, infrastructure, launch, settings
 
     /// The dashboard's primary navigation, in its order (apps/shared/native-contract/primary-navigation.v1.json).
-    public static let primaryNavigation: [Self] = [.overview, .computers, .agents, .infrastructure, .activity]
+    public static let primaryNavigation: [Self] = [.overview, .agents, .computers, .activity]
 
     public var path: String { self == .overview ? "/dashboard" : "/dashboard/\(rawValue)" }
     public var label: String {
         switch self {
         case .overview: "Home"
-        // The route keeps its original path; the dashboard calls it Capacity.
-        case .infrastructure: "Capacity"
+        // The route keeps its original path; the dashboard calls it Servers.
+        case .infrastructure: "Servers"
         default: rawValue.capitalized
         }
     }

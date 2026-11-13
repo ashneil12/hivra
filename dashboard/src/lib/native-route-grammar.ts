@@ -52,8 +52,8 @@ const TEMPLATE_REFERENCE = matching(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
 const RESOURCE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
 export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
-  "claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
-  "ubuntu-desktop", "linux-terminal", "omarchy", "windows",
+  "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "aeon", "deepseek-harness",
+  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
 ]);
 /** Launch history stages, and the names used before Choose merged its steps
  * (LaunchJourney parseHistoryStage). The launch step itself is never history. */
@@ -65,7 +65,7 @@ const LAUNCH_STAGE = mapped({
 /** The paid plans an upgrade can return with (PLAN_ORDER without free). */
 export const NATIVE_UPGRADE_PLANS = ["operator", "fleet", "command"] as const satisfies readonly PlanKey[];
 export const PORTABLE_LAUNCH_RESOURCES = everyMember<PortableLaunchResourceId>()([
-  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "linux-desktop", "linux-terminal", "windows",
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "linux-desktop", "linux-terminal", "windows",
 ]);
 
 const TAB: Parameter = { name: "tab", value: SURFACE };

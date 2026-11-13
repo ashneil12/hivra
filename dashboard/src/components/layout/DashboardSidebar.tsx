@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useMediaQuery } from '@/lib/client/media-query';
 import { UserButton } from '@clerk/nextjs';
-import { AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { AlertCircle, Bot, ChevronLeft, ChevronRight, Monitor, Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -21,8 +21,9 @@ import {
   labelForNavigationItem,
   type DashboardNavigationItem,
 } from '@/lib/dashboard-navigation';
-import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
-import { recentHref } from '@/lib/workspace/recents';
+import { listRecents, recentHref, visitHref } from '@/lib/workspace/recents';
+import { needsOwnerAttention } from '@/lib/hivra/resource-attention';
+import { StatusText } from '@/components/ui/StatusText';
 import { DashboardResourceSwitcher } from './DashboardResourceSwitcher';
 import { resourceMatchesPath, type DashboardResource } from './dashboard-resources';
 import { useDashboardResources } from './useDashboardResources';
@@ -34,30 +35,35 @@ interface DashboardSidebarProps {
   /** The account code the server setup script shows (XXXX-XXXX). */
   accountCode?: string | null;
   resourceOwnerKey?: string;
-  onActiveResourceKindChange?: (kind: DashboardResource['kind'] | null) => void;
   /** The phone bar has no sidebar, so it badges More with this count. */
   onAttentionCountChange?: (count: number) => void;
   /** Controlled by the shell so the phone header and More sheet can open it. */
   switcherOpen?: boolean;
   onSwitcherOpenChange?: (open: boolean) => void;
   showOpsLink?: boolean;
+  /**
+   * A page that draws its own sidebar next to the rail (the agent view) keeps
+   * the rail as icons only. Its toggle opens the full rail over the page, as it
+   * does on tablet widths, so two wide sidebars never sit side by side.
+   */
+  compact?: boolean;
 }
 
 const SIDEBAR_EXPANDED_STORAGE_KEY = 'hivra:dashboard:sidebar-expanded';
 
 export function getDashboardSidebarToggleStyle(isExpanded: boolean): React.CSSProperties {
   return {
-    background: isExpanded ? 'var(--bg-elevated)' : 'var(--bg-surface)',
-    border: isExpanded ? '1px solid var(--gold-leaf)' : '1px solid var(--etched-border)',
-    color: isExpanded ? 'var(--ink-black)' : 'var(--text-muted)',
+    background: 'transparent',
+    border: '0',
+    color: isExpanded ? 'var(--hg-text)' : 'var(--hg-text-3)',
   };
 }
 
 const COMPACT_RAIL_QUERY = '(min-width: 768px) and (max-width: 1023px)';
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
-  userName, userEmail, accountCode, resourceOwnerKey, onActiveResourceKindChange, onAttentionCountChange,
-  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange,
+  userName, userEmail, accountCode, resourceOwnerKey, onAttentionCountChange,
+  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, compact = false,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
   const pathname = usePathname();
@@ -65,7 +71,7 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   const { copy } = useLocale();
   const dashboard = copy.dashboard;
   const [isExpanded, setIsExpanded] = useState(true);
-  const compactRail = useMediaQuery(COMPACT_RAIL_QUERY);
+  const compactRail = useMediaQuery(COMPACT_RAIL_QUERY) || compact;
   const [compactExpanded, setCompactExpanded] = useState(false);
   const toggleButton = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -77,14 +83,20 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   }, [onSwitcherOpenChange]);
   const aside = useRef<HTMLElement>(null);
   const { resources, loading, errors, refresh } = useDashboardResources(owner, pathname);
-  const attentionCount = resources.filter(item => !loading && !errors[item.source] && (item.attention || item.status === "error")).length;
+  const attentionCount = resources.filter(item => !loading && !errors[item.source] && needsOwnerAttention(item)).length;
   const currentResource = resources.find((item) => resourceMatchesPath(item, pathname));
   const effectivelyExpanded = compactRail ? compactExpanded : isExpanded;
-  const currentResourceKind = currentResource?.kind ?? null;
-
+  // The most recent agent or computer, for the Continue shortcut. Recents live
+  // in this browser's storage, so it is read after mount (never during the
+  // server render) and again whenever the route changes.
+  const [lastUsedUid, setLastUsedUid] = useState<string | null>(null);
   useEffect(() => {
-    onActiveResourceKindChange?.(currentResourceKind);
-  }, [currentResourceKind, onActiveResourceKindChange]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLastUsedUid(listRecents()[0]?.uid ?? null);
+  }, [pathname]);
+  const continueResource = lastUsedUid && lastUsedUid !== currentResource?.uid
+    ? resources.find((item) => item.uid === lastUsedUid) ?? null
+    : null;
 
   useEffect(() => {
     onAttentionCountChange?.(attentionCount);
@@ -150,21 +162,24 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
   // Touch tablets cannot see title tooltips, so the collapsed rail shows a label.
   const railLabel = (item: DashboardNavigationItem, label: string) =>
     effectivelyExpanded ? null : <span className={styles.railLabel} aria-hidden>{label === item.label ? DASHBOARD_RAIL_SHORT_LABELS[item.id] ?? label : label}</span>;
-  const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
   // Home is the list. From inside an agent or computer the link asks for it
   // explicitly as well; the legacy page ignores ?runtimes=1.
   const homeHref = pathname && isRuntimeDetailPath(pathname) ? DASHBOARD_RUNTIME_LIST_HREF : '/dashboard';
-  const primaryNavigation = filterDashboardNavigation(
-    DASHBOARD_PRIMARY_NAVIGATION,
-    workspaceShellEnabled,
-  );
-  const renderNavigationItem = (item: DashboardNavigationItem) => {
-    const active = isDashboardNavigationItemActive(
-      item,
-      pathname,
-      currentResourceKind,
-      workspaceShellEnabled,
-    );
+  const primaryNavigation = filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION);
+  const renderContinue = (item: DashboardResource) => {
+    const Icon = item.kind === 'agent' ? Bot : Monitor;
+    const label = `Continue ${item.name}`;
+    const tab = listRecents().find((visit) => visit.uid === item.uid)?.tab ?? null;
+    return <Link key="continue" href={visitHref(item.uid, tab, item.href)} className={`${styles.navItem} ${styles.continueItem}`}
+      aria-label={label} title={!effectivelyExpanded ? label : undefined} onClick={closeNavigation}>
+      <Icon size={17} aria-hidden />
+      {effectivelyExpanded
+        ? <span className={styles.continueCopy}><strong>{item.name}</strong><small>Continue</small></span>
+        : <span className={styles.railLabel} aria-hidden>Continue</span>}
+    </Link>;
+  };
+  const renderNavigationItem = (item: DashboardNavigationItem): React.ReactNode => {
+    const active = isDashboardNavigationItemActive(item, pathname);
     const label = localizedLabel(item);
     const Icon = item.icon;
     return <Link key={item.id} href={item.id === 'home' ? homeHref : item.href} className={`${styles.navItem} ${active ? styles.active : ''}`}
@@ -210,12 +225,13 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         <Link href={DASHBOARD_LAUNCH_NAVIGATION.href} className={styles.launch} aria-label={launchLabel} onClick={closeNavigation}>
           <LaunchIcon size={17} aria-hidden />{effectivelyExpanded ? <span>{launchLabel}</span> : railLabel(DASHBOARD_LAUNCH_NAVIGATION, launchLabel)}
         </Link>
-        <nav aria-label="Primary" data-navigation-group="primary" className={styles.navigation}>{primaryNavigation.map(renderNavigationItem)}</nav>
-        {attentionCount > 0 && <Link href="/dashboard?runtimes=1&attention=1" className={`${styles.navItem} ${styles.attention}`} onClick={closeNavigation} aria-label={`${attentionCount} agents or computers need attention`}>
-          <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <span>Needs attention</span>}<span className={styles.attentionCount}>{attentionCount}</span>
+        <nav aria-label="Primary" data-navigation-group="primary" className={styles.navigation}>{primaryNavigation.flatMap((item) =>
+          item.id === 'home' && continueResource ? [renderNavigationItem(item), renderContinue(continueResource)] : [renderNavigationItem(item)])}</nav>
+        {attentionCount > 0 && <Link href="/dashboard?runtimes=1&attention=1" className={`${styles.navItem} ${styles.attention}`} onClick={closeNavigation} aria-label={`${attentionCount} agents or computers need you`}>
+          <AlertCircle size={17} aria-hidden />{effectivelyExpanded && <StatusText value="Need you" />}<span className={styles.attentionCount}>{attentionCount}</span>
         </Link>}
         <div className={styles.footer}>
-          <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, isWorkspaceShellNavigationEnabled()).map(renderNavigationItem)}</nav>
+          <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION).map(renderNavigationItem)}</nav>
           <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
           <div className={styles.account}>
             {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}

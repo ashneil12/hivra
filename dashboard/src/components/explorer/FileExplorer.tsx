@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { 
   Home, Folder, LayoutGrid, List as ListIcon,
-  Loader2, RefreshCw, AlertTriangle, ArrowLeft, PencilLine, FolderOpen,
+  RefreshCw, AlertTriangle, ArrowLeft, PencilLine, FolderOpen,
   Info, FileSearch, Copy, ChevronLeft, ChevronRight, Download
 } from 'lucide-react';
+import { ThinkingOrb } from '@/components/ui/ThinkingOrb';
 import { motion } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { FileIcon } from './FileIcon';
@@ -382,13 +383,13 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
   return (
     <div className="relative flex h-full w-full min-h-0 flex-col bg-[var(--bg-primary)] text-[var(--ink-black)]">
       <div
-        className="shrink-0 border-b border-[var(--etched-border)] bg-[color-mix(in_srgb,var(--vellum-bg)_82%,transparent)] px-4 py-4 sm:px-8 sm:pt-[22px] sm:pb-5"
+        className="shrink-0 border-b border-[var(--hg-stroke-subtle)] bg-[var(--hg-glass)] backdrop-blur-xl px-4 py-4 sm:px-8 sm:pt-[22px] sm:pb-5"
       >
         <div className="flex flex-col gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
               <span className="mono inline-flex items-center gap-2 text-[10px] uppercase leading-none tracking-[0.18em] text-[var(--ink-black)]">
-                <Folder size={12} className="text-[var(--gold-leaf)]" />
+                <Folder size={12} className="text-[var(--hg-text-3)]" />
                 Browser
               </span>
               <span className="h-3.5 w-px bg-[var(--etched-border)]" aria-hidden="true" />
@@ -471,7 +472,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
             <button
               onClick={() => fetchFiles(currentPath)}
               aria-label="Refresh explorer"
-              className="inline-flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-secondary)] transition-colors hover:border-[var(--ink-black)] hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px]"
+              className="inline-flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--text-secondary)] transition-colors hover:border-[var(--ink-black)] hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px]"
               title="Refresh"
             >
               <RefreshCw size={14} className={loading && files.length > 0 ? "animate-spin" : ""} />
@@ -490,9 +491,9 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 onClick={() => setViewMode('grid')}
                 aria-label="Grid view"
                 aria-pressed={viewMode === 'grid'}
-                className={`inline-flex min-w-[76px] items-center justify-center gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors pointer-coarse:min-h-[44px] ${
+                className={`inline-flex min-w-[76px] items-center justify-center gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] transition-colors pointer-coarse:min-h-[44px] ${
                   viewMode === 'grid'
-                    ? 'border border-[var(--ink-black)] bg-[var(--ink-black)] text-[var(--bg-surface)]'
+                    ? 'border border-[var(--hg-accent)] bg-[var(--hg-accent)] text-[var(--hg-on-accent)]'
                     : 'border border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)]'
                 }`}
                 style={{
@@ -506,9 +507,9 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 onClick={() => setViewMode('list')}
                 aria-label="List view"
                 aria-pressed={viewMode === 'list'}
-                className={`inline-flex min-w-[76px] items-center justify-center gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors pointer-coarse:min-h-[44px] ${
+                className={`inline-flex min-w-[76px] items-center justify-center gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.05em] transition-colors pointer-coarse:min-h-[44px] ${
                   viewMode === 'list'
-                    ? 'border border-[var(--ink-black)] bg-[var(--ink-black)] text-[var(--bg-surface)]'
+                    ? 'border border-[var(--hg-accent)] bg-[var(--hg-accent)] text-[var(--hg-on-accent)]'
                     : 'border border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)]'
                 }`}
                 style={{
@@ -530,7 +531,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
         >
           <div
             data-testid="explorer-current-folder-bar"
-            className="flex items-start justify-between gap-8 border-b border-[var(--etched-border)] bg-[var(--bg-surface)] px-10 py-6 max-sm:hidden"
+            className="flex items-start justify-between gap-8 border-b border-[var(--hg-stroke-subtle)] bg-transparent px-10 py-6 max-sm:hidden"
             style={{
               paddingTop: 14,
               paddingBottom: 14,
@@ -548,7 +549,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 paddingRight: 12,
               }}
             >
-              <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Current Folder</div>
+              <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Current Folder</div>
               <div className="mt-3 truncate text-sm font-semibold text-[var(--ink-black)]">{currentFolderLabel}</div>
             </div>
             <div
@@ -559,7 +560,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 paddingRight: 10,
               }}
             >
-              <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Status</div>
+              <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Status</div>
               <div className="mt-3 text-sm text-[var(--text-secondary)]">
                 {loading && files.length > 0 ? 'Refreshing…' : error ? 'Needs attention' : itemCountLabel}
               </div>
@@ -569,20 +570,20 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
           <div className="relative min-h-0 flex-1 overflow-auto bg-[linear-gradient(180deg,color-mix(in_srgb,var(--bg-elevated)_70%,transparent),transparent_28%)]">
             {loading && files.length === 0 ? (
               <div className="absolute inset-0 flex items-center justify-center p-6">
-                <div className="flex items-center gap-3 border border-[var(--etched-border)] bg-[var(--bg-surface)] px-5 py-4 text-sm text-[var(--text-secondary)] shadow-[0_16px_40px_rgba(0,0,0,0.06)]">
-                  <Loader2 className="animate-spin text-[var(--gold-leaf)]" size={18} />
+                <div className="flex items-center gap-3 rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass-strong)] backdrop-blur-xl px-5 py-4 text-sm text-[var(--text-secondary)] shadow-[var(--hg-shadow-md)]">
+                  <ThinkingOrb size={20} state="working" label="Opening filesystem" />
                   Opening remote filesystem…
                 </div>
               </div>
             ) : error ? (
               <div className="absolute inset-0 flex items-center justify-center p-6">
-                <div className="w-full max-w-xl border border-red-500/25 bg-[var(--bg-surface)] p-6 shadow-[0_16px_40px_rgba(0,0,0,0.08)]">
+                <div className="w-full max-w-xl rounded-[14px] border border-[var(--hg-bad)]/25 bg-[var(--hg-glass-strong)] backdrop-blur-xl p-6 shadow-[var(--hg-shadow-md)]">
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-10 w-10 items-center justify-center border border-red-500/20 bg-red-500/5 text-red-500">
+                    <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-[10px] border border-[var(--hg-bad)]/20 bg-[var(--hg-bad)]/5 text-[var(--hg-bad)]">
                       <AlertTriangle size={18} />
                     </div>
                     <div className="min-w-0">
-                      <div className="mono text-[10px] uppercase tracking-[0.16em] text-red-500">Filesystem Unavailable</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--hg-bad)]">Filesystem Unavailable</div>
                       <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{error}</p>
                     </div>
                   </div>
@@ -590,14 +591,14 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                     <button
                       onClick={() => fetchFiles(currentPath)}
                       aria-label="Retry loading folder"
-                      className="inline-flex items-center gap-2 border border-[var(--ink-black)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-black)] transition-colors hover:bg-[var(--ink-black)] hover:text-[var(--bg-surface)]"
+                      className="inline-flex items-center gap-2 border border-[var(--ink-black)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.05em] text-[var(--ink-black)] transition-colors hover:bg-[var(--ink-black)] hover:text-[var(--bg-surface)]"
                     >
                       <RefreshCw size={13} />
                       Retry
                     </button>
                     <button
                       onClick={() => navigateTo(explorerHome)}
-                      className="inline-flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-secondary)] transition-colors hover:border-[var(--ink-black)] hover:text-[var(--ink-black)]"
+                      className="inline-flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.05em] text-[var(--text-secondary)] transition-colors hover:border-[var(--ink-black)] hover:text-[var(--ink-black)]"
                     >
                       <Home size={13} />
                       Go Home
@@ -608,7 +609,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
             ) : files.length === 0 ? (
               <div className="absolute inset-0 flex items-center justify-center p-6">
                 <div className="flex w-full max-w-md flex-col items-center border border-dashed border-[var(--etched-border)] bg-[var(--bg-surface)] px-8 py-12 text-center">
-                  <Folder size={42} className="text-[var(--gold-leaf)] opacity-80" />
+                  <Folder size={42} className="text-[var(--hg-text-3)] opacity-80" />
                   <p className="mt-4 text-base font-semibold text-[var(--ink-black)]">This folder is empty</p>
                   <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
                     Files dropped into this directory will appear here automatically the next time the explorer refreshes.
@@ -631,10 +632,10 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                           onClick={() => handleFileClick(file)}
                           onDoubleClick={() => handleFileDoubleClick(file)}
                           data-testid={`file-card-${file.name}`}
-                          className={`group flex min-h-[120px] cursor-pointer flex-col gap-3 border bg-[var(--bg-surface)] p-4 text-left shadow-[0_10px_30px_rgba(0,0,0,0.04)] transition-all sm:min-h-[168px] sm:gap-[18px] sm:p-[22px] ${
+                          className={`group flex min-h-[120px] cursor-pointer flex-col gap-3 rounded-[14px] border bg-[var(--hg-glass)] backdrop-blur-xl p-4 text-left shadow-[var(--hg-shadow-sm)] transition-[background-color,border-color,transform] duration-150 sm:min-h-[168px] sm:gap-[18px] sm:p-[22px] ${
                             isSelected
-                              ? 'border-[var(--gold-leaf)] bg-[rgba(255, 44, 45,0.08)] shadow-[0_18px_40px_rgba(255, 44, 45,0.12)]'
-                              : 'border-[var(--etched-border)] hover:-translate-y-[1px] hover:border-[rgba(255, 44, 45,0.34)] hover:bg-[var(--bg-elevated)]'
+                              ? 'border-[var(--hg-stroke-strong)] bg-[var(--hg-fill-2)]'
+                              : 'border-[var(--hg-stroke)] hover:border-[var(--hg-stroke-strong)] hover:bg-[var(--hg-fill-hover)]'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-4">
@@ -649,7 +650,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                             >
                               <FileIcon type={file.type} name={file.name} size={32} className="shrink-0 transition-transform group-hover:scale-105" />
                             </div>
-                            {isSelected ? <ChevronRight size={14} className="mt-1 text-[var(--gold-leaf)]" /> : null}
+                            {isSelected ? <ChevronRight size={14} className="mt-1 text-[var(--hg-text-3)]" /> : null}
                           </div>
                           <div
                             className="space-y-3 px-1 pb-1"
@@ -673,7 +674,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                   </div>
                 ) : (
                   <div className="overflow-hidden border border-[var(--etched-border)] bg-[var(--bg-surface)]">
-                    <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_72px] gap-4 border-b border-[var(--etched-border)] bg-[var(--vellum-bg)] px-4 py-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)] sm:grid-cols-[minmax(0,1fr)_100px_160px] sm:px-10 sm:py-5 sm:text-[10px]">
+                    <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_72px] gap-4 border-b border-[var(--etched-border)] bg-[var(--vellum-bg)] px-4 py-4 text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)] sm:grid-cols-[minmax(0,1fr)_100px_160px] sm:px-10 sm:py-5 sm:text-[10px]">
                       <div>Name</div>
                       <div className="text-right">Size</div>
                       <div className="hidden text-right sm:block">Date Modified</div>
@@ -693,8 +694,8 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                             data-testid={`file-row-${file.name}`}
                             className={`grid cursor-pointer grid-cols-[minmax(0,1fr)_72px] items-center gap-4 border-b border-[var(--border-subtle)] px-4 py-3 transition-colors last:border-b-0 sm:grid-cols-[minmax(0,1fr)_100px_160px] sm:px-10 sm:py-[18px] ${
                               isSelected
-                                ? 'bg-[rgba(255, 44, 45,0.08)]'
-                                : 'hover:bg-[var(--bg-elevated)]'
+                                ? 'bg-[var(--hg-fill-2)]'
+                                : 'hover:bg-[var(--hg-fill-hover)]'
                             }`}
                           >
                             <div className="flex items-center gap-4 overflow-hidden">
@@ -738,7 +739,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
               <button
                 type="button"
                 onClick={() => setDetailOpen(false)}
-                className="mono inline-flex min-h-[44px] items-center gap-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--ink-black)]"
+                className="mono inline-flex min-h-[44px] items-center gap-1.5 px-3 text-[11px] font-semibold uppercase tracking-[0.05em] text-[var(--ink-black)]"
               >
                 <ChevronLeft size={16} aria-hidden="true" />
                 Back to files
@@ -759,14 +760,14 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
               <>
                 <section
                   data-testid="explorer-actions-section"
-                  className="border border-[var(--etched-border)] bg-[var(--bg-surface)] p-4 sm:p-[22px]"
+                  className="rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl p-4 sm:p-[22px]"
                 >
-                  <div className="mono text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Actions</div>
+                  <div className="mono text-[10px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Actions</div>
                   <div data-testid="explorer-actions-row" className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2.5">
                     {selectedFile.type === 'directory' ? (
                       <button
                         onClick={() => handleFileOpen(selectedFile)}
-                        className="inline-flex items-center gap-2 border border-[var(--ink-black)] px-3.5 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-black)] transition-colors hover:bg-[var(--ink-black)] hover:text-[var(--bg-surface)] pointer-coarse:min-h-[44px]"
+                        className="inline-flex items-center gap-2 border border-[var(--ink-black)] px-3.5 py-2.5 text-xs font-semibold uppercase tracking-[0.05em] text-[var(--ink-black)] transition-colors hover:bg-[var(--ink-black)] hover:text-[var(--bg-surface)] pointer-coarse:min-h-[44px]"
                       >
                         <FolderOpen size={13} />
                         Open Folder
@@ -774,7 +775,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                     ) : isPreviewableTextFile(selectedFile) ? (
                       <button
                         onClick={() => setEditingFile(selectedDisplayPath)}
-                        className="inline-flex items-center gap-2 border border-[var(--ink-black)] px-3.5 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-black)] transition-colors hover:bg-[var(--ink-black)] hover:text-[var(--bg-surface)] pointer-coarse:min-h-[44px]"
+                        className="inline-flex items-center gap-2 border border-[var(--ink-black)] px-3.5 py-2.5 text-xs font-semibold uppercase tracking-[0.05em] text-[var(--ink-black)] transition-colors hover:bg-[var(--ink-black)] hover:text-[var(--bg-surface)] pointer-coarse:min-h-[44px]"
                       >
                         <PencilLine size={13} />
                         {editingFile === selectedDisplayPath ? 'Editing Here' : 'Open in Editor'}
@@ -785,7 +786,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                         data-testid="explorer-download-link"
                         href={downloadHref}
                         download={selectedFile.name}
-                        className="inline-flex items-center gap-2 px-0.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] leading-none text-[var(--text-secondary)] no-underline transition-colors hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px] pointer-coarse:border pointer-coarse:border-[var(--etched-border)] pointer-coarse:px-3"
+                        className="inline-flex items-center gap-2 px-0.5 py-1 text-xs font-semibold uppercase tracking-[0.05em] leading-none text-[var(--text-secondary)] no-underline transition-colors hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px] pointer-coarse:border pointer-coarse:border-[var(--etched-border)] pointer-coarse:px-3"
                       >
                         <Download size={13} />
                         Download
@@ -793,7 +794,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                     ) : null}
                     <button
                       onClick={copySelectedPath}
-                      className="inline-flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-secondary)] transition-colors hover:border-[var(--ink-black)] hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px]"
+                      className="inline-flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-3.5 py-2.5 text-xs font-semibold uppercase tracking-[0.05em] text-[var(--text-secondary)] transition-colors hover:border-[var(--ink-black)] hover:text-[var(--ink-black)] pointer-coarse:min-h-[44px]"
                     >
                       <Copy size={13} />
                       Copy Path
@@ -802,10 +803,10 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 </section>
 
                 <div data-testid="explorer-selection-summary" className="space-y-4">
-                  <section className="border border-[var(--etched-border)] bg-[var(--bg-surface)] p-4 sm:p-[22px]">
-                    <div className="mono text-[11px] sm:text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Selected Item</div>
+                  <section className="rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl p-4 sm:p-[22px]">
+                    <div className="mono text-[11px] sm:text-[10px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Selected Item</div>
                     <div className="mt-4 flex items-start gap-4">
-                      <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-elevated)] text-[var(--gold-leaf)]">
+                      <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-elevated)] text-[var(--hg-text-3)]">
                         <Info size={18} />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -819,18 +820,18 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                     data-testid="explorer-metadata-grid"
                     className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3"
                   >
-                    <article className="border border-[var(--etched-border)] bg-[var(--bg-surface)] p-3 sm:p-[18px]">
-                      <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Type</div>
+                    <article className="rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] p-3 sm:p-[18px]">
+                      <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Type</div>
                       <div className="mt-2 text-sm font-semibold capitalize text-[var(--ink-black)]">{selectedFile.type}</div>
                     </article>
-                    <article className="border border-[var(--etched-border)] bg-[var(--bg-surface)] p-3 sm:p-[18px]">
-                      <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Size</div>
+                    <article className="rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] p-3 sm:p-[18px]">
+                      <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Size</div>
                       <div className="mt-2 text-sm font-semibold text-[var(--ink-black)]">
                         {selectedFile.type === 'directory' ? '--' : formatSize(selectedFile.size)}
                       </div>
                     </article>
-                    <article className="border border-[var(--etched-border)] bg-[var(--bg-surface)] p-3 sm:p-[18px]">
-                      <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Modified</div>
+                    <article className="rounded-[10px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] p-3 sm:p-[18px]">
+                      <div className="mono text-[11px] sm:text-[9px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Modified</div>
                       <div className="mt-2 text-sm font-semibold text-[var(--ink-black)]">{formatDate(selectedFile.modifyTime)}</div>
                     </article>
                   </section>
@@ -840,7 +841,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                   <section ref={editorSectionRef} data-testid="explorer-editor-section" className="space-y-4">
                     <div className="flex items-start justify-between gap-4 px-1">
                       <div>
-                        <div className="mono text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Editor</div>
+                        <div className="mono text-[10px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Editor</div>
                         <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
                           Editing is inline here in the dossier and only persists when you choose Save.
                         </p>
@@ -858,11 +859,11 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 ) : (
                   <section
                     data-testid="explorer-preview-section"
-                    className="border border-[var(--etched-border)] bg-[var(--bg-surface)] p-4 sm:p-[22px]"
+                    className="rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] backdrop-blur-xl p-4 sm:p-[22px]"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <div className="mono text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">Preview</div>
+                        <div className="mono text-[10px] uppercase tracking-[0.05em] text-[var(--text-muted)]">Preview</div>
                         <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
                           {selectedFile.type === 'directory'
                           ? 'Folders show navigation guidance here.'
@@ -871,7 +872,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                       </div>
                       <div
                         data-testid="explorer-preview-kind"
-                        className="mt-0.5 inline-flex shrink-0 items-center border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]"
+                        className="mt-0.5 inline-flex shrink-0 items-center border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.05em] text-[var(--text-muted)]"
                       >
                         {selectedFile.type === 'directory'
                           ? 'Folder'
@@ -893,7 +894,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                         </div>
                       ) : isPdfPreviewFile(selectedFile) ? (
                         binaryPreviewError ? (
-                          <div className="border border-red-500/20 bg-red-500/5 px-4 py-4 text-sm text-red-500">
+                          <div className="rounded-[10px] border border-[var(--hg-bad)]/20 bg-[var(--hg-bad)]/5 px-4 py-4 text-sm text-[var(--hg-bad)]">
                             {binaryPreviewError}
                           </div>
                         ) : (
@@ -906,7 +907,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                         )
                       ) : isImagePreviewFile(selectedFile) ? (
                         binaryPreviewError ? (
-                          <div className="border border-red-500/20 bg-red-500/5 px-4 py-4 text-sm text-red-500">
+                          <div className="rounded-[10px] border border-[var(--hg-bad)]/20 bg-[var(--hg-bad)]/5 px-4 py-4 text-sm text-[var(--hg-bad)]">
                             {binaryPreviewError}
                           </div>
                         ) : (
@@ -923,11 +924,11 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                       ) : isPreviewableTextFile(selectedFile) ? (
                         previewLoading ? (
                           <div className="flex items-center gap-2 border border-[var(--etched-border)] bg-[var(--bg-elevated)] px-5 py-7 text-sm text-[var(--text-muted)]">
-                            <Loader2 size={16} className="animate-spin" />
+                            <ThinkingOrb size={20} state="working" />
                             Loading preview…
                           </div>
                         ) : previewError ? (
-                          <div className="border border-red-500/20 bg-red-500/5 px-4 py-4 text-sm text-red-500">
+                          <div className="rounded-[10px] border border-[var(--hg-bad)]/20 bg-[var(--hg-bad)]/5 px-4 py-4 text-sm text-[var(--hg-bad)]">
                             {previewError}
                           </div>
                         ) : isMarkdownFile(selectedFile.name) ? (
@@ -965,7 +966,7 @@ export function FileExplorer({ instanceId, defaultPath, rootPath = DEFAULT_EXPLO
                 }}
               >
                 <div className="flex items-start gap-4">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-elevated)] text-[var(--gold-leaf)]">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-elevated)] text-[var(--hg-text-3)]">
                     <FileSearch size={18} />
                   </div>
                   <div className="px-4 py-1">

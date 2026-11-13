@@ -212,6 +212,7 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
       let updateFields: Record<string, unknown> | null = null;
       let candidateLimit = Infinity;
       let excludesFolderRecovery = false;
+      let excludesOmarchyRefresh = false;
       let excludesDesktopPrepare = false;
       const chain: Record<string, unknown> = {};
       const self = () => chain;
@@ -234,6 +235,7 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
       chain.order = jest.fn(self);
       chain.or = jest.fn((filter: string) => {
         if (filter === "computer_profile.is.null,computer_profile.eq.ubuntu-desktop") return chain;
+        if (filter === "operation_payload->>stage.is.null,operation_payload->>stage.neq.prepared_omarchy_refresh") { excludesOmarchyRefresh = true; return chain; }
         expect(filter).toBe("operation_kind.neq.restore,operation_payload->>folderRecoveryId.is.null");
         excludesFolderRecovery = true;
         return chain;
@@ -266,7 +268,8 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
           .includes(String(row.operation_kind))) : rows;
         const candidates = excludesFolderRecovery ? eligible.filter((row) => row.operation_kind !== "restore"
           || (row.operation_payload as Record<string, unknown> | null)?.folderRecoveryId == null) : eligible;
-        return resolve({ data: candidates.slice(0, candidateLimit), error: null });
+        const refreshFiltered = excludesOmarchyRefresh ? candidates.filter(row => (row.operation_payload as Record<string, unknown> | null)?.stage !== "prepared_omarchy_refresh") : candidates;
+        return resolve({ data: refreshFiltered.slice(0, candidateLimit), error: null });
       };
       return chain;
     });
@@ -311,6 +314,16 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
 
   it("starts evidence-only reconciliation after the normal launch window", () => {
     expect(STUCK_PROVISIONING_THRESHOLD_MS).toBe(10 * 60 * 1000);
+  });
+
+  it("excludes prepared Omarchy refreshes before the candidate cap so they cannot enter legacy recovery", async () => {
+    installSupabase([...Array.from({length:12}, (_,i) => buildStuckRow({id:`refresh-${i}`,computer_profile:"omarchy",operation_payload:{stage:"prepared_omarchy_refresh"}})), buildStuckRow()]);
+    mockedClaimRecovery.mockResolvedValue(false);
+    const summary=await runRecoverStuckHivraProvisioningSweep();
+    expect(summary.scanned).toBe(1);expect(summary.results[0].agentId).toBe(AGENT_ID);
+    const query=mockedFrom.mock.results[0].value;
+    expect(query.or).toHaveBeenCalledWith("operation_payload->>stage.is.null,operation_payload->>stage.neq.prepared_omarchy_refresh");
+    expect(query.or.mock.invocationCallOrder.at(-1)).toBeLessThan(query.limit.mock.invocationCallOrder[0]);
   });
 
   it("includes target-bound rows so owner-scoped portable recovery can reconcile them", async () => {
@@ -927,6 +940,82 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     )).toBe(false);
   });
 
+  it("past the hard deadline, cleans up an owned VM that never produced a result and marks error", async () => {
+    installSupabase([buildStuckRow()]);
+    mockedRunScript
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: [
+          "HIVRA_RECOVERY_VM exists",
+          "HIVRA_RECOVERY_VM_STATUS running",
+          "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+          "HIVRA_RECOVERY_OWNERSHIP match",
+          "HIVRA_RECOVERY_OPERATION_RECEIPT missing",
+          "",
+        ].join("\n"),
+        stderr: "",
+      } as Awaited<ReturnType<typeof runProxmoxHostScript>>)
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: "HIVRA_CANCELLED_PROVISION_CLEANED 1093\n",
+        stderr: "",
+      } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+
+    const summary = await runRecoverStuckHivraProvisioningSweep({ now: new Date("2026-06-07T10:54:00Z") });
+
+    expect(summary).toMatchObject({ markedError: 1, skipped: 0 });
+    expect(mockedRunScript).toHaveBeenCalledTimes(2);
+    expect(mockedReleaseOperation).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      markError: true,
+      error: expect.stringContaining("did not finish setting up in time"),
+    }));
+    expect(deleteBoxTunnel).toHaveBeenCalled();
+  });
+
+  it("past the hard deadline, leaves a VM without exact ownership evidence alone", async () => {
+    installSupabase([buildStuckRow({ allocation_operation_id: null })]);
+    mockedRunScript.mockResolvedValueOnce({
+      ok: true,
+      stdout: [
+        "HIVRA_RECOVERY_VM exists",
+        "HIVRA_RECOVERY_VM_STATUS running",
+        "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+        "HIVRA_RECOVERY_OWNERSHIP match",
+        "HIVRA_RECOVERY_OPERATION_RECEIPT missing",
+        "",
+      ].join("\n"),
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+
+    const summary = await runRecoverStuckHivraProvisioningSweep({ now: new Date("2026-06-07T12:00:00Z") });
+
+    expect(summary).toMatchObject({ markedError: 0, skipped: 1 });
+    expect(mockedRunScript).toHaveBeenCalledTimes(1);
+    expect(mockedReleaseOperation).not.toHaveBeenCalled();
+  });
+
+  it("never applies the hard deadline to a runtime update or restart on an old computer", async () => {
+    installSupabase([buildStuckRow({ operation_kind: "restart" })]);
+    mockedRunScript.mockResolvedValueOnce({
+      ok: true,
+      stdout: [
+        "HIVRA_RECOVERY_VM exists",
+        "HIVRA_RECOVERY_VM_STATUS running",
+        "HIVRA_RECOVERY_VM_CONFIG 2 2 4096",
+        "HIVRA_RECOVERY_OWNERSHIP match",
+        "HIVRA_RECOVERY_OPERATION_RECEIPT missing",
+        "",
+      ].join("\n"),
+      stderr: "",
+    } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+
+    await runRecoverStuckHivraProvisioningSweep({ now: new Date("2026-06-08T12:00:00Z") });
+
+    expect(mockedReleaseOperation).not.toHaveBeenCalledWith(expect.objectContaining({ markError: true }));
+    expect(mockedRunScript).toHaveBeenCalledTimes(1);
+  });
+
   it("skips (no update) when the host probe fails — transient, retried next sweep", async () => {
     installSupabase([buildStuckRow()]);
     mockedRunScript.mockResolvedValue({
@@ -958,7 +1047,7 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
         stderr: "",
       } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
 
-    const summary = await runRecoverStuckHivraProvisioningSweep();
+    const summary = await runRecoverStuckHivraProvisioningSweep({ now: new Date("2026-06-07T10:38:17Z") });
 
     expect(summary).toMatchObject({ markedError: 0, recovered: 0, cancelled: 0, skipped: 1 });
     expect(summary.results[0].reason).toContain("no terminal provision result");

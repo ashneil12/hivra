@@ -5,7 +5,7 @@ import type { FirstBootOperationScope } from "./first-boot-operations";
 import { providerGuestBundleScopeSha256 } from "./provider-guest-bundle";
 import { parseProviderGuestWorkerReceipt, type ProviderGuestWorkerIdentity } from "./provider-guest-worker";
 
-const Runtime = z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero"]);
+const Runtime = z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "hermes"]);
 const AccessMode = z.enum(["cloudflare-named", "direct-https"]);
 export type ProviderGuestRuntimeProbe = {
   scope: FirstBootOperationScope; identity: ProviderGuestWorkerIdentity;
@@ -155,7 +155,7 @@ def inspect():
             raise ValueError()
         access_unit = "hivra-direct-access.service" if EXPECTED["accessMode"] == "direct-https" else "hivra-cf-tunnel.service"
         units = ["bux-hivra-chat.service", "bux-ttyd.service", "bux-box-ttyd.service", access_unit]
-        extra = {"aeon": "bux-aeon.service", "openclaw": "bux-openclaw.service", "agent-zero": "hivra-agent-zero.service"}.get(kind)
+        extra = {"aeon": "bux-aeon.service", "openclaw": "bux-openclaw.service", "agent-zero": "hivra-agent-zero.service", "openbot": "hivra-openbot.service", "hermes": "bux-hermes.service"}.get(kind)
         if extra:
             units.append(extra)
         active = subprocess.run(["/usr/bin/systemctl", "is-active", *units], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -178,7 +178,7 @@ def inspect():
                 raise ValueError()
         # Agent login is separate from service readiness; a native login page
         # or an in-app redirect can be a legitimate first-run interface.
-        native = {"aeon": "/aeon/", "openclaw": "/openclaw/", "agent-zero": "/agent-zero/"}.get(kind)
+        native = {"aeon": "/aeon/", "openclaw": "/openclaw/", "agent-zero": "/agent-zero/", "openbot": "/openbot/", "hermes": "/hermes/"}.get(kind)
         if native and http(8080, native, token)[0] not in (200, 301, 302, 303, 307, 308, 401, 403):
             raise ValueError()
         result.update(ready=True, apiToken=token)

@@ -15,6 +15,7 @@ import { Check, Loader2, Search, X } from 'lucide-react';
 
 import { SafePortal } from '@/components/ui/SafePortal';
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 // Cap rendered tiles so a 1,400-item catalog doesn't mount thousands of nodes;
 // search + category narrow it. We tell the user when results are truncated.
 const RENDER_CAP = 120;
@@ -52,7 +53,7 @@ function AppLogo({ app }: { app: CatalogApp }) {
           alignItems: 'center',
           justifyContent: 'center',
           border: '1px solid var(--etched-border)',
-          background: 'rgba(255,255,255,0.03)',
+          background: 'var(--hg-fill-1)',
           fontSize: 12,
           fontWeight: 700,
           color: 'var(--text-muted)',
@@ -258,7 +259,7 @@ export function ComposioAppPicker({
         height: 'var(--workspace-viewport-height, 100dvh)',
         // Above the narrow-viewport command panel sheet it can open from.
         zIndex: 9999,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -281,7 +282,7 @@ export function ComposioAppPicker({
           minHeight: 0,
           border: '1px solid var(--etched-border)',
           background: 'var(--bg-surface)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.4)',
+          boxShadow: 'var(--hg-shadow-lg)',
         }}
       >
         {/* Header + search */}
@@ -305,7 +306,7 @@ export function ComposioAppPicker({
               alignItems: 'center',
               gap: 8,
               border: '1px solid var(--etched-border)',
-              background: 'rgba(255,255,255,0.02)',
+              background: 'var(--hg-fill-1)',
               padding: '8px 10px',
             }}
           >
@@ -350,10 +351,10 @@ export function ComposioAppPicker({
         <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '12px 18px' }}>
           {loading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>
-              <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Loading the app catalog…
+              <ThinkingOrb state="searching" size={20} /> Loading the app catalog…
             </div>
           ) : error ? (
-            <div style={{ fontSize: 13, color: '#dc2626', padding: '24px 0' }}>{error}</div>
+            <div style={{ fontSize: 13, color: 'var(--hg-bad)', padding: '24px 0' }}>{error}</div>
           ) : shown.length === 0 ? (
             <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '24px 0' }}>
               No apps match “{query}”.
@@ -380,8 +381,8 @@ export function ComposioAppPicker({
                       padding: '10px 11px',
                       minWidth: 0,
                       cursor: isLaunching ? 'default' : 'pointer',
-                      border: isConnected ? '1px solid rgba(22,163,74,0.4)' : '1px solid var(--etched-border)',
-                      background: isConnected ? 'rgba(22,163,74,0.06)' : 'rgba(255,255,255,0.02)',
+                      border: isConnected ? '1px solid color-mix(in srgb, var(--hg-ok) 40%, transparent)' : '1px solid var(--etched-border)',
+                      background: isConnected ? 'color-mix(in srgb, var(--hg-ok) 6%, transparent)' : 'var(--hg-fill-1)',
                       opacity: isLaunching ? 0.6 : 1,
                     }}
                   >
@@ -398,7 +399,7 @@ export function ComposioAppPicker({
                     {isLaunching ? (
                       <Loader2 size={13} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
                     ) : isConnected ? (
-                      <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 800, color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
+                      <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 800, color: 'var(--hg-ok)', textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
                         <Check size={11} /> On
                       </span>
                     ) : null}

@@ -38,25 +38,25 @@ type SetupMode = 'connect' | 'edit';
 function getStatusPalette(state: TailscaleConfig['state'] | 'unknown') {
   if (state === 'connected') {
     return {
-      background: 'rgba(32, 123, 91, 0.12)',
-      color: '#1f6f55',
-      border: '1px solid rgba(32, 123, 91, 0.3)',
+      background: 'color-mix(in srgb, var(--hg-ok) 12%, transparent)',
+      color: 'var(--hg-ok)',
+      border: '1px solid color-mix(in srgb, var(--hg-ok) 30%, transparent)',
     };
   }
 
   if (state === 'error') {
     return {
-      background: 'rgba(163, 62, 41, 0.12)',
-      color: '#8a3c2e',
-      border: '1px solid rgba(163, 62, 41, 0.28)',
+      background: 'color-mix(in srgb, var(--hg-bad) 12%, transparent)',
+      color: 'var(--hg-bad)',
+      border: '1px solid color-mix(in srgb, var(--hg-bad) 28%, transparent)',
     };
   }
 
   if (state === 'connecting') {
     return {
-      background: 'rgba(122, 91, 27, 0.12)',
-      color: '#7a5b1b',
-      border: '1px solid rgba(122, 91, 27, 0.28)',
+      background: 'color-mix(in srgb, var(--hg-warn) 12%, transparent)',
+      color: 'var(--hg-warn)',
+      border: '1px solid color-mix(in srgb, var(--hg-warn) 28%, transparent)',
     };
   }
 
@@ -75,26 +75,19 @@ function formatStateLabel(state: TailscaleConfig['state'] | 'unknown') {
   return 'Checking';
 }
 
-function formatTags(tags: string | undefined) {
-  return (tags || '')
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-}
-
 function FeedbackBanner({ tone, message }: { tone: FeedbackTone; message: string }) {
   const palette =
     tone === 'success'
       ? {
-          background: 'rgba(32, 123, 91, 0.08)',
-          border: '1px solid rgba(32, 123, 91, 0.24)',
-          color: '#1f6f55',
+          background: 'color-mix(in srgb, var(--hg-ok) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--hg-ok) 24%, transparent)',
+          color: 'var(--hg-ok)',
         }
       : tone === 'error'
         ? {
-            background: 'rgba(163, 62, 41, 0.08)',
-            border: '1px solid rgba(163, 62, 41, 0.24)',
-            color: '#8a3c2e',
+            background: 'color-mix(in srgb, var(--hg-bad) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--hg-bad) 24%, transparent)',
+            color: 'var(--hg-bad)',
           }
         : {
             background: 'var(--bg-surface)',
@@ -163,8 +156,6 @@ export function ConfigurationTailscalePanel({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [authKey, setAuthKey] = useState('');
   const [machineName, setMachineName] = useState(initialConfig?.machineName || '');
-  const [tags, setTags] = useState(initialConfig?.tags?.join(', ') || '');
-  const [enableSsh, setEnableSsh] = useState(Boolean(initialConfig?.sshEnabled));
   const [feedback, setFeedback] = useState<{ tone: FeedbackTone; message: string } | null>(null);
   const [activeAction, setActiveAction] = useState<ActionState>(null);
   const [forceClearAvailable, setForceClearAvailable] = useState(false);
@@ -190,8 +181,6 @@ export function ConfigurationTailscalePanel({
 
   function syncFormFromConfig(nextConfig?: TailscaleConfig) {
     setMachineName(nextConfig?.machineName || '');
-    setTags(nextConfig?.tags?.join(', ') || '');
-    setEnableSsh(Boolean(nextConfig?.sshEnabled));
   }
 
   async function refreshTailscaleStatus(showSpinner = false) {
@@ -257,7 +246,8 @@ export function ConfigurationTailscalePanel({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             machineName: machineName.trim() || undefined,
-            enableSsh,
+            // Tailscale SSH is never turned on from Hivra.
+            enableSsh: false,
           }),
         });
         const json = await response.json();
@@ -308,8 +298,9 @@ export function ConfigurationTailscalePanel({
         body: JSON.stringify({
           authKey: trimmedAuthKey,
           machineName: machineName.trim() || undefined,
-          tags: formatTags(tags),
-          enableSsh,
+          // No tags: forcing one makes `tailscale up` fail for anyone whose policy has no
+          // tagOwners for it. Never Tailscale SSH.
+          enableSsh: false,
         }),
       });
       const json = await response.json();
@@ -439,12 +430,12 @@ export function ConfigurationTailscalePanel({
               gap: 10,
               alignItems: 'flex-start',
               padding: '12px 14px',
-              background: 'rgba(122, 91, 27, 0.08)',
-              border: '1px solid rgba(122, 91, 27, 0.24)',
+              background: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--hg-warn) 24%, transparent)',
             }}
           >
-            <AlertTriangle size={16} style={{ marginTop: 1, flexShrink: 0, color: '#7a5b1b' }} />
-            <div style={{ fontSize: 12, color: '#7a5b1b', lineHeight: 1.5 }}>
+            <AlertTriangle size={16} style={{ marginTop: 1, flexShrink: 0, color: 'var(--hg-warn)' }} />
+            <div style={{ fontSize: 12, color: 'var(--hg-warn)', lineHeight: 1.5 }}>
               This agent is running on a shared host. Tailscale will connect to the underlying
               machine that powers this agent, so it improves access control but does not turn the
               machine into a dedicated single-tenant server.
@@ -543,7 +534,7 @@ export function ConfigurationTailscalePanel({
                 }}
               >
                 This host is already connected to your tailnet. You can update the machine name
-                and Tailscale SSH here without pasting a new auth key.
+                here without pasting a new auth key.
               </div>
             ) : (
               <>
@@ -573,7 +564,7 @@ export function ConfigurationTailscalePanel({
                       border: '1px solid var(--etched-border)',
                       padding: '10px 14px',
                       fontSize: 13,
-                      fontFamily: 'var(--font-mono), monospace',
+                      fontFamily: 'var(--font-mono)',
                       background: 'var(--bg-elevated)',
                       outline: 'none',
                     }}
@@ -602,7 +593,7 @@ export function ConfigurationTailscalePanel({
                 background: 'var(--bg-surface)',
                 padding: '10px 14px',
                 cursor: 'pointer',
-                fontFamily: 'var(--font-mono), monospace',
+                fontFamily: 'var(--font-mono)',
                 fontSize: 11,
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
@@ -644,105 +635,15 @@ export function ConfigurationTailscalePanel({
                       border: '1px solid var(--etched-border)',
                       padding: '10px 14px',
                       fontSize: 13,
-                      fontFamily: 'var(--font-mono), monospace',
+                      fontFamily: 'var(--font-mono)',
                       background: 'var(--bg-elevated)',
                       outline: 'none',
                     }}
                   />
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="tailscale-tags"
-                    className={`mono ${styles.microLabel}`}
-                    style={{
-                      fontSize: 9,
-                      display: 'block',
-                      marginBottom: 8,
-                      opacity: 0.5,
-                      fontWeight: 700,
-                    }}
-                  >
-                    TAGS
-                  </label>
-                  <input
-                    id="tailscale-tags"
-                    type="text"
-                    {...RAW_TEXT_INPUT_PROPS}
-                    value={tags}
-                    onChange={(event) => setTags(event.target.value)}
-                    placeholder="tag:prod, tag:ops"
-                    disabled={isEditingConnectedHost}
-                    style={{
-                      width: '100%',
-                      border: '1px solid var(--etched-border)',
-                      padding: '10px 14px',
-                      fontSize: 13,
-                      fontFamily: 'var(--font-mono), monospace',
-                      background: isEditingConnectedHost ? 'var(--bg-surface)' : 'var(--bg-elevated)',
-                      outline: 'none',
-                      color: isEditingConnectedHost ? 'var(--text-muted)' : 'var(--ink-black)',
-                    }}
-                  />
-                  {isEditingConnectedHost ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-                      Tags are set during the initial connection flow. Reconnect Tailscale if you
-                      need to apply a different tag set.
-                    </div>
-                  ) : null}
-                </div>
-
-                <div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '1rem',
-                    }}
-                  >
-                    <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-                      <span
-                        id="tailscale-ssh-label"
-                        className={`mono ${styles.microLabel}`}
-                        style={{
-                          fontSize: 9,
-                          display: 'block',
-                          opacity: 0.5,
-                          fontWeight: 700,
-                        }}
-                      >
-                        ENABLE TAILSCALE SSH
-                      </span>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                        Lets approved Tailscale users open SSH sessions without exposing another
-                        public path.
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={enableSsh}
-                      aria-labelledby="tailscale-ssh-label"
-                      onClick={() => setEnableSsh((value) => !value)}
-                      className={`${styles.touchTarget} ${styles.microLabel}`}
-                      style={{
-                        border: '1px solid var(--etched-border)',
-                        background: enableSsh ? 'var(--ink-black)' : 'var(--bg-surface)',
-                        color: enableSsh ? 'var(--bg-surface)' : 'var(--ink-black)',
-                        padding: '6px 10px',
-                        fontSize: 10,
-                        fontFamily: 'var(--font-mono), monospace',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.12em',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {enableSsh ? 'SSH: On' : 'SSH: Off'}
-                    </button>
-                  </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  Tailscale SSH is off for security; use normal SSH over your tailnet.
                 </div>
               </div>
             )}
@@ -826,7 +727,7 @@ export function ConfigurationTailscalePanel({
                   normal public dashboard URL remains unchanged for everyone else.
                 </div>
                 {tailscale?.lastError ? (
-                  <div style={{ fontSize: 12, color: '#8a3c2e', marginTop: 8 }}>
+                  <div style={{ fontSize: 12, color: 'var(--hg-bad)', marginTop: 8 }}>
                     Last error: {tailscale.lastError}
                   </div>
                 ) : null}
@@ -926,8 +827,8 @@ export function ConfigurationTailscalePanel({
                   alignItems: 'center',
                   gap: 8,
                   background: 'transparent',
-                  color: '#8a3c2e',
-                  border: '1px solid rgba(163, 62, 41, 0.4)',
+                  color: 'var(--hg-bad)',
+                  border: '1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)',
                   padding: '12px 24px',
                   fontSize: 11,
                   fontWeight: 700,
@@ -955,8 +856,8 @@ export function ConfigurationTailscalePanel({
                     alignItems: 'center',
                     gap: 8,
                     background: 'transparent',
-                    color: '#8a3c2e',
-                    border: '1px dashed rgba(163, 62, 41, 0.6)',
+                    color: 'var(--hg-bad)',
+                    border: '1px dashed color-mix(in srgb, var(--hg-bad) 60%, transparent)',
                     padding: '12px 24px',
                     fontSize: 11,
                     fontWeight: 700,
@@ -983,8 +884,8 @@ export function ConfigurationTailscalePanel({
                   display: 'grid',
                   gap: 12,
                   padding: '14px',
-                  border: '1px solid rgba(163, 62, 41, 0.4)',
-                  background: 'rgba(163, 62, 41, 0.05)',
+                  border: '1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)',
+                  background: 'color-mix(in srgb, var(--hg-bad) 5%, transparent)',
                 }}
               >
                 <p id={disconnectQuestionId} className={`mono ${styles.dangerText}`} style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -1020,9 +921,9 @@ export function ConfigurationTailscalePanel({
                       alignItems: 'center',
                       gap: 8,
                       minHeight: 44,
-                      background: '#8a3c2e',
+                      background: 'var(--hg-bad)',
                       color: '#fff',
-                      border: '1px solid #8a3c2e',
+                      border: '1px solid var(--hg-bad)',
                       padding: '0 20px',
                       fontSize: 11,
                       fontWeight: 700,

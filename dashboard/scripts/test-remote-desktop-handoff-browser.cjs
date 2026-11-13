@@ -9,6 +9,7 @@ const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 const { chromium } = require('playwright');
+const { launchOptions } = require('./lib/playwright-launch.cjs');
 const { WebSocketServer } = require('ws');
 const { handoffHtml, createRemoteDesktopBroker } = require('../provisioner/remote-desktop/broker.cjs');
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
@@ -73,7 +74,7 @@ async function main() {
   });
   brokerOrigin = await listen(broker);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch(launchOptions({ headless: true }));
   try {
     const page = await browser.newPage();
     await page.addInitScript(() => {

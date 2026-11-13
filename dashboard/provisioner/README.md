@@ -131,8 +131,9 @@ with the cloud browser swapped for a **self-hosted Chrome on the box** and a
 ## Prerequisites
 
 - A **fresh Ubuntu 22.04** box (amd64) reachable over SSH, with `sudo`/root.
-- Outbound internet (the script pulls bux from GitHub, Chrome from Google's apt
-  repo, and Node/skills via the bux installer).
+- Outbound internet (the script pulls bux from GitHub, the pinned Chrome `.deb` from
+  Google's download pool (checked against its SHA-256), and Node/skills via the bux
+  installer).
 - ~4 GB RAM minimum (Chrome pushes the box well past bux's 2 GB baseline). The
   reference box is 4 vCPU / 6 GB / 40 GB.
 
@@ -153,6 +154,7 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `AGENT_USER` | `bux` | **Pinned** — the bux installer + keeper hardcode `bux`; the script hard-fails on any other value. |
 | `BUX_DIR` | `/opt/bux` | **Pinned** — bux's unit `ExecStart` paths hardcode `/opt/bux`; the script hard-fails on any other value. |
 | `BUX_REF` | `f17c1b31d6688dd92e745ade650e00d46b4dc4da` | Reviewed bux commit. |
+| `CHROME_VERSION` / `CHROME_LINUX_AMD64_SHA256` | from `chrome-pin.json` | The pinned Google Chrome `.deb` and its SHA-256. Leave unset on managed computers so the installer and the runtime updater read the same pin; set both to override. |
 | `CDP_PORT` | `9222` | Local Chrome remote-debugging port. |
 | `PROFILE_DIR` | `/home/bux/.browser-profile` | **Must be non-default** (see gotcha #1). |
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
@@ -235,8 +237,9 @@ is the alternative long-lived-token path.
    with `BROWSER_USE_API_KEY=<dummy>` and `WITH_ZTK=0`. Cloning to `/opt/bux`
    (not `curl | bash`) is required because the systemd units hardcode
    `/opt/bux/agent/*`.
-3. **Google Chrome stable** — adds Google's apt repo, installs
-   `google-chrome-stable` (the `.deb`, **not** snap).
+3. **Google Chrome stable** — installs the pinned `google-chrome-stable` `.deb`
+   (**not** snap), keeps Google's apt repo out and holds the package at that build,
+   and writes the managed browser policy.
 4. **Browser overlay** — disables + removes the cloud keeper unit
    (`bux-browser-keeper.service`), drops in `local-browser-keeper.py`, creates the
    non-default profile dir, installs `bux-local-browser.service`.
@@ -435,13 +438,129 @@ update them yet.
   app's profile from a root-only snapshot, launches it, keeps it running and
   applies the saved view: `app` is the app full screen, `desktop` is the app in a
   window on the desktop. The gateway reaches the helper through an exact-argument
-  sudoers rule for `status`, `install`, `mode app`, `mode desktop` and `remove`
-  (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
+  sudoers rule for `status`, `install`, `mode app`, `mode desktop`, `remove` and
+  the clipboard verbs below (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
   helper never handles a Claude credential. The container's home is discarded on every
   desktop restart, so the app's own data is backed up (size-capped, root-only, one
   copy) on the same VM and restored before the app starts; that data includes the
-  app's sign-in session, no Hivra service reads it, and `remove` deletes it. Managed
-  Proxmox computers only.
+  app's sign-in session, no Hivra service reads it, and `remove` deletes it. The
+  Code tab's own data (`~/.claude`, `~/.claude.json`) is backed up the same way in a
+  second archive with its own cap, and the app starts in `~/Hivra`, the desktop's
+  one persistent folder, so projects opened from the Code tab survive restarts.
+  Managed Proxmox computers only.
+- **Desktop clipboard switch (optional, off by default).** Selkies' clipboard stays
+  off. The owner can turn on a clipboard switch on the Desktop strip; while it is on,
+  Paste in puts their clipboard's text on the desktop's clipboard and Copy out brings
+  the desktop's back, one request per press. The gateway reaches
+  `hivra-claude-app clipboard on|off`, `clipboard-put` (text on stdin, at most
+  256 KB) and `clipboard-get` through the same exact-argument sudoers rule; both
+  transfers refuse while the switch is off.
+- **Claude Code on Hivra credits.** When a Claude Code computer is launched with a
+  managed model key, the installer writes the CLI's own `~/.claude/settings.json`
+  `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
+  model tier set to the chosen model) with mode 0600; without a key the computer
+  keeps native `claude auth login` sign-in.
+- **Clean agent browser view.** The Browser tab streams the agent's own Chrome, so the
+  window must open without Chrome's own warnings. Older computers still run a keeper
+  that passes `--no-sandbox` ("unsupported command-line flag" infobar), and a pinned
+  Chrome older than eight weeks shows "Can't update Chrome" and a "Finish update" chip.
+  The installer and the runtime update now install the sandboxed keeper, write
+  `/etc/opt/chrome/policies/managed/hivra-browser.json` (default-browser prompt,
+  promotional tabs, browser sign-in and the unsupported-OS warning off; any machine
+  policy also turns Chrome's outdated-build detector off), drop Google's apt source and
+  hold `google-chrome-stable` so nothing replaces the binary under the running browser.
+  The update restarts the browser only when nobody is attached to its debugging port,
+  and puts the previous keeper back if the browser does not return. The window opens at
+  the origin at the Xvfb screen's size, so it fills the tab.
+- **Chrome moves with the pin.** The pinned Chrome build ships as `chrome-pin.json`
+  (version, SHA-256 and the build it replaced), read by the installer and by the runtime
+  update. Because Chrome is held, the pin only moves when a release moves it. The update
+  installs the pin on an existing computer whose Chrome differs, only when the browser
+  can be restarted right then (the unit is off, or nothing is attached to its debugging
+  port), after checking the `.deb`'s SHA-256 and keeping a recovery copy of the installed
+  build (`dpkg-repack`, else the pin's `previous` build). It confirms the browser answers
+  on the pin's major version and otherwise puts the previous build back. A busy browser
+  keeps its current Chrome until a later update (`HIVRA_AGENT_BROWSER state=deferred`).
+- **Chat effort.** `POST /api/chat` takes an optional `effort`, exactly one of `low`,
+  `medium`, `high`, `xhigh` or `max`; any other value, or none, runs the turn with no
+  flag. Claude Code gets `--effort <level>` (checked in the pinned 2.1.292 package, and
+  accepted with all five levels from 2.1.117). Codex gets
+  `-c model_reasoning_effort="<level>"` on fresh and resumed turns, next to any provider
+  overrides (the pinned 0.149.1 parses minimal through ultra; the gateway stops at
+  `xhigh` and passes `max` as `xhigh`, because whether a model takes a higher level is
+  the model's decision). Other agent kinds ignore it. `GET /api/meta` lists the levels
+  the gateway will pass as `chatEffort`, only for Claude Code 2.1.117 or later and Codex
+  0.149.1 or later (a CLI that is older, or whose version could not be read, gets no
+  flag and no `chatEffort`), so a client shows the picker exactly when it has an effect.
+  `server.js` is a runtime update asset, so existing computers receive this with the
+  update.
+- **Hermes Agent.** `--agent-kind hermes` installs the official Hermes Agent with its own
+  installer (no Hivra image, fork or patch), points it at the launch model settings, and
+  runs Hermes's own web UI as `bux-hermes.service` on `127.0.0.1:9119`. The gateway proxies
+  it at `/hermes/` behind the token gate, HTTP and WebSocket, with the prefix stripped and
+  `X-Forwarded-Prefix: /hermes`. Updates are `hermes update` (Terminal, or the Update Hermes
+  button, which runs `hermes update --yes` as the agent user); the version comes from
+  `hermes --version`.
+  The Hermes gateway (scheduled tasks and chat channels) runs as a user service of the
+  agent user with linger, installed by `hermes gateway install`, at launch and by the
+  runtime update on existing Hermes computers.
+  From `2026.11.11.7`, `/hermes/` shows Hermes's own Desktop workspace in the browser
+  (`hermes webapp`) instead of the admin dashboard. The guest installer sets
+  `webapp.enabled` and runs `hermes webapp --build-only`; Hermes's gateway then serves the
+  Webapp on `127.0.0.1:9120`. Opening `/hermes/` through `/auth/bootstrap` goes to
+  `/hermes-sign-in`, which asks Hermes for a one-use launch link (`hermes webapp --no-open
+  --skip-build`) and redirects to it, so the owner is signed in without a token. While the
+  Webapp is not served, `/hermes/` keeps showing the dashboard on `:9119`. Update Hermes
+  turns the setting on, builds the Webapp after `hermes update` and restarts the gateway,
+  which is how existing Hermes computers switch over.
+  From `2026.11.12.1`, Manage › Model reads and sets Hermes's own model (`model.default`)
+  through `/api/model`, which runs `hermes config get`/`hermes config set` as the agent
+  user. It applies to new chats, like Hermes's own model picker. A Hermes the owner pointed
+  at another provider in Hermes itself is left alone (the endpoint answers 409).
+- **Git guard for Claude Code approvals (`2026.11.12.2`).** New computers ignore
+  `.claude/settings.local.json` in the agent user's git ignore, and every repository
+  created or cloned there gets a `pre-commit` hook (system `init.templateDir`) that refuses
+  a commit staging that file. Claude Code's "don't ask again" saves approved commands,
+  passwords included, in it. Existing computers are unchanged.
+- **Hermes restore points (`2026.11.12.3`).** `/api/restore-points` on a Hermes computer
+  reads and sets Hermes's own `checkpoints.enabled` with `hermes config get`/`set`. With it on,
+  Hermes snapshots a project before it changes files, and `/rollback` or `/undo` in a Hermes
+  chat goes back. Manage shows the switch only when `NEXT_PUBLIC_HIVRA_RESTORE_POINTS_ENABLED`
+  is `true`. Existing computers get it from the connection service update.
+- **OpenBot (CopilotKit).** From `2026.11.12.4`, `--agent-kind openbot` pulls the latest
+  official `ghcr.io/copilotkit/openbot` image (no Hivra image, fork or patch), records its
+  `OPENBOT_BUILD_VERSION`, and runs it by digest as `hivra-openbot.service` on host
+  networking at `127.0.0.1:3101` with its embedded PostgreSQL, in OpenBot's single-user
+  mode. Launch model settings become its `OPENAI_BASE_URL`/`OPENAI_API_KEY` (Chat
+  Completions). OpenBot has no base path, so the gateway serves it at the root of the box
+  origin behind the token gate, HTTP and WebSocket, presenting OpenBot's own loopback Host
+  and (for requests from the box's own origin) Origin; the gateway keeps only its own paths
+  (`/api/meta`, terminals, files and the other Hivra routes). `/openbot/` is the entry: it
+  asks once for the owner's CopilotKit Intelligence key (OpenBot refuses to start without
+  one), stores it in `~/.hivra/openbot-intelligence-key`, and the service, which waits for
+  that file, starts. Update OpenBot (`hivra-agent-app-update.sh openbot latest`) pulls the
+  latest image, swaps only if it is new, copies the database aside first and puts the
+  previous image and database back if the new release does not answer.
+- **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
+  model as a complete set. On a fresh install the guest writes the runtime's
+  `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
+  account, before the service first starts; a restart or replay leaves them alone. With
+  none of the three, the computer starts without a model, as before.
+- **Linux server computer.** The `linux-server` kind is the Ubuntu computer without a
+  desktop: the same access base, `~/Hivra` workspace, Files and two terminals as Linux
+  Desktop, with no desktop capability and no Claude app helper. It takes the same
+  version 3 launch document on Proxmox and reports `linux-server` from `/api/meta`.
+- **Codex sign-in freshness.** The computer's chat page reports a repeat Codex
+  sign-in as fresh only when the credential changed, and says why one is not finished
+  yet.
+- **Launch and start hardening.** The installer waits for the dpkg lock and
+  retries `apt-get`, the pinned downloads and the npm/git fetches a bounded number
+  of times; the host launch script bounds the provisioner copy and the in-guest
+  install with `timeout` and SSH keepalives (still over the VMID-attested key) and
+  fails with a reason instead of staying in "provisioning"; the host start script
+  waits up to five minutes for the named tunnel. `system-prompt.md` and
+  `system-prompt-codex.md` tell the agent to send owners to **Manage** for updates,
+  restarts and restore points and not to upgrade or restart Hivra's own services.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops

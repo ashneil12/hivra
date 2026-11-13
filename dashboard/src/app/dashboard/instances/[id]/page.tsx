@@ -44,18 +44,15 @@ import {
   dismissStandingTasksNudge,
   readStandingTasksNudgeDismissed,
 } from "@/lib/nudges/standing-tasks-dismissal";
-import { fetchPlanStrict, isFreePlanInfo, type PlanInfo } from "@/lib/hivra/agent-api";
-import { isSleepUpgradePromptEnabled, isArchiveUpgradeWallEnabled } from "@/lib/flags/upgrade-prompts";
-import { SleepWakeUpgradePrompt } from "@/components/billing/SleepWakeUpgradePrompt";
-import { ArchiveUpgradeWall } from "@/components/billing/ArchiveUpgradeWall";
-import { getArchiveCountdownDays, shouldShowArchiveUpgradeWall } from "@/lib/hivra/archive-countdown";
 import { MemoryPauseBanner } from "@/components/instances/MemoryPauseBanner";
 import { UpdateAvailableBanner } from "@/components/instances/UpdateAvailableBanner";
 import { NoForkMigrationCard } from "@/components/instances/NoForkMigrationCard";
+import { MoveToOfficialCard } from "@/components/instances/MoveToOfficialCard";
 import { useRecordVisit } from "@/components/workspace/useRecordVisit";
 import { hermesRuntimeUid } from "@/lib/workspace/runtime-selection";
 import { resourceInventory } from "@/lib/workspace/resource-inventory";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 interface Instance {
   id: string;
   name: string;
@@ -67,8 +64,7 @@ interface Instance {
   // UX; see PausedStateBanner below.
   paused_reason?: string | null;
   // Timestamp of the last lifecycle transition (set by the inactivity-sweep when
-  // it pauses). For an inactivity-paused free agent this drives the archive
-  // countdown (deadline = this + dormant-reclaim window); see archive-countdown.
+  // it pauses).
   last_lifecycle_transition_at?: string | null;
   backend?: "gateway" | "webui" | null;
   provider: string;
@@ -307,7 +303,7 @@ function CommandPanelSheet({ onClose, children }: { onClose: () => void; childre
           boxSizing: "border-box",
           background: "var(--bg-surface)",
           borderTop: "1px solid var(--etched-border)",
-          boxShadow: "0 -18px 50px rgba(0,0,0,0.22)",
+          boxShadow: "var(--hg-shadow-lg)",
           paddingBottom: "env(safe-area-inset-bottom, 0px)",
           paddingLeft: "env(safe-area-inset-left, 0px)",
           paddingRight: "env(safe-area-inset-right, 0px)",
@@ -350,7 +346,7 @@ const CONNECT_MODAL_PANEL_STYLE: React.CSSProperties = {
   boxSizing: 'border-box',
   background: 'color-mix(in srgb, var(--bg-surface) 96%, transparent)',
   border: '1px solid var(--etched-border)',
-  boxShadow: '0 24px 80px rgba(0, 0, 0, 0.22)',
+  boxShadow: 'var(--hg-shadow-lg)',
 };
 
 function ConnectModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
@@ -747,34 +743,6 @@ export default function InstanceDetailPage() {
     instance,
   ]);
 
-  // The user's real plan — only needed to gate the free→paid sleep-wake pitch
-  // (Moment #1), so we fetch it lazily, and ONLY when this instance is in the
-  // inactivity-paused state that surfaces the pitch. Keeps the hot instance page
-  // from doing an extra /api/billing/usage call on every open. Starts null
-  // (unknown) so a paying customer never flashes the pitch before their plan
-  // resolves; paid tiers are also structurally exempt from the inactivity sweep.
-  const [plan, setPlan] = useState<PlanInfo | null>(null);
-  const planFetchedRef = useRef(false);
-  useEffect(() => {
-    // Both consumers (sleep banner + archive wall) are dark unless a flag is
-    // on — skip the fetch entirely so the dark features add zero API calls.
-    if (!isSleepUpgradePromptEnabled() && !isArchiveUpgradeWallEnabled()) return;
-    if (instance?.paused_reason !== "inactivity") return;
-    if (planFetchedRef.current) return;
-    planFetchedRef.current = true;
-    let alive = true;
-    void fetchPlanStrict()
-      .then((p) => {
-        if (alive) setPlan(p);
-      })
-      .catch(() => {
-        // Unknown plan stays null (≠ free) → no pitch for an unresolved payer.
-      });
-    return () => {
-      alive = false;
-    };
-  }, [instance?.paused_reason]);
-
   // Fire free_limit_hit once per RAM-capped instance — the in-product paywall
   // view event. Deduped per instance like inactivityWakeFiredRef above.
   const ramCapBannerViewedRef = useRef<string | null>(null);
@@ -967,16 +935,16 @@ export default function InstanceDetailPage() {
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, height: "100%" }}>
-      <Loader2 size={20} style={{ opacity: 0.3, animation: "spin 1s linear infinite" }} />
+      <ThinkingOrb state="searching" size={32} />
     </div>
   );
 
   if (error || !instance) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, height: "100%", padding: 16, boxSizing: "border-box" }}>
-      <div data-testid="instance-load-error" style={{ display: "grid", gap: 14, border: "1px solid #fca5a5", background: "#fef2f2", padding: 20, width: "min(480px, 100%)", boxSizing: "border-box" }}>
+      <div data-testid="instance-load-error" style={{ display: "grid", gap: 14, border: "1px solid var(--hg-bad)", background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)", padding: 20, width: "min(480px, 100%)", boxSizing: "border-box" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <AlertTriangle size={16} style={{ color: "#ef4444", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#dc2626", fontWeight: 500, overflowWrap: "anywhere" }}>{error || "Agent not found"}</span>
+          <AlertTriangle size={16} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: "var(--hg-bad)", fontWeight: 500, overflowWrap: "anywhere" }}>{error || "Agent not found"}</span>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
@@ -994,7 +962,7 @@ export default function InstanceDetailPage() {
             type="button"
             onClick={() => router.push("/dashboard/agents")}
             className="mono"
-            style={{ minHeight: 44, padding: "0 16px", border: "1px solid var(--hivra-red)", background: "transparent", color: "#dc2626", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "pointer" }}
+            style={{ minHeight: 44, padding: "0 16px", border: "1px solid var(--hivra-red)", background: "transparent", color: "var(--hg-bad)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "pointer" }}
           >
             Back to agents
           </button>
@@ -1175,7 +1143,7 @@ export default function InstanceDetailPage() {
             data-testid="instance-starter-prompts"
             className="instance-chat-banner instance-chat-banner-nudge"
             style={{
-              background: 'rgba(212, 175, 55, 0.12)',
+              background: 'var(--hg-fill-2)',
               borderBottom: '1px solid var(--gold-leaf)',
               padding: '12px 24px',
               display: 'flex',
@@ -1232,7 +1200,7 @@ export default function InstanceDetailPage() {
             data-testid="instance-telegram-banner"
             className="instance-chat-banner instance-chat-banner-nudge"
             style={{
-              background: 'rgba(212, 175, 55, 0.12)',
+              background: 'var(--hg-fill-2)',
               borderBottom: '1px solid var(--gold-leaf)',
               padding: '12px 24px',
               display: 'flex',
@@ -1291,7 +1259,7 @@ export default function InstanceDetailPage() {
             data-testid="instance-standing-tasks-banner"
             className="instance-chat-banner instance-chat-banner-nudge"
             style={{
-              background: 'rgba(212, 175, 55, 0.08)',
+              background: 'var(--hg-fill-2)',
               borderBottom: '1px solid var(--etched-border)',
               padding: '12px 24px',
               display: 'flex',
@@ -1346,7 +1314,7 @@ export default function InstanceDetailPage() {
             data-testid="instance-channels-banner"
             className="instance-chat-banner instance-chat-banner-nudge"
             style={{
-              background: 'rgba(212, 175, 55, 0.08)',
+              background: 'var(--hg-fill-2)',
               borderBottom: '1px solid var(--etched-border)',
               padding: '12px 24px',
               display: 'flex',
@@ -1398,36 +1366,12 @@ export default function InstanceDetailPage() {
         */}
         {(instance.paused_reason === "inactivity" &&
           (instance.status === "stopped" || instance.status === "provisioning")) ? (
-          // Moment #3 (the HARD wall) takes precedence when the free agent is
-          // actually counting down to the dormant-reclaim archive: same slot,
-          // loss-aversion copy + real countdown. shouldShowArchiveUpgradeWall
-          // fails closed on paid plans and any non-inactivity state, and the flag
-          // is default-OFF.
-          shouldShowArchiveUpgradeWall({
-            enabled: isArchiveUpgradeWallEnabled(),
-            plan,
-            instance,
-          }) ? (
-            <ArchiveUpgradeWall
-              instanceId={id}
-              instanceName={instance.name}
-              daysUntilArchive={getArchiveCountdownDays(instance) ?? 0}
-            />
-          ) :
-          // Moment #1: when the flag is ON and the user is confirmed FREE, swap
-          // the plain wake banner for the sharpened always-on pitch (paid users
-          // never reach this — inactivity-sweep exempts them — and the flag is
-          // default-OFF). Otherwise keep the existing live banner unchanged so
-          // there is no regression while the copy is under review.
-          isSleepUpgradePromptEnabled() && isFreePlanInfo(plan) ? (
-            <SleepWakeUpgradePrompt instanceId={id} instanceName={instance.name} />
-          ) : (
           <div
             data-testid="instance-inactivity-wake-banner"
             className="instance-chat-banner"
             style={{
-              background: 'rgba(59, 130, 246, 0.10)',
-              borderBottom: '1px solid rgba(59, 130, 246, 0.24)',
+              background: 'var(--hg-fill-2)',
+              borderBottom: '1px solid var(--hg-stroke-strong)',
               padding: '12px 24px',
               display: 'flex',
               alignItems: 'center',
@@ -1438,15 +1382,15 @@ export default function InstanceDetailPage() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 460px' }}>
-              <Loader2 size={18} strokeWidth={2.25} style={{ color: '#1d4ed8' }} className="animate-spin" />
+              <Loader2 size={18} strokeWidth={2.25} style={{ color: 'var(--hg-fg)' }} className="animate-spin" />
               <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
                 <span
                   className="mono"
-                  style={{ fontSize: 11, fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.12em' }}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--hg-fg)', textTransform: 'uppercase', letterSpacing: '0.12em' }}
                 >
                   Warming up your agent
                 </span>
-                <span style={{ fontSize: 13, color: 'rgba(17, 24, 39, 0.78)', lineHeight: 1.45 }}>
+                <span style={{ fontSize: 13, color: 'var(--hg-text-2)', lineHeight: 1.45 }}>
                   {instance.name} was paused after a few idle days. Booting it back up now (~30s). A paid plan keeps the computer running, so it is ready the second you are.
                 </span>
               </div>
@@ -1468,8 +1412,8 @@ export default function InstanceDetailPage() {
                   router.push('/dashboard/billing');
                 }}
                 style={{
-                  background: '#1a1a1a',
-                  color: '#ffffff',
+                  background: 'var(--hg-accent)',
+                  color: 'var(--hg-on-accent)',
                   border: 'none',
                   padding: '8px 14px',
                   fontSize: 11,
@@ -1485,7 +1429,6 @@ export default function InstanceDetailPage() {
               </button>
             </div>
           </div>
-          )
         ) : null}
         {/*
           RAM-cap banner: rendered when the resource-watchdog cron paused
@@ -1506,8 +1449,8 @@ export default function InstanceDetailPage() {
             data-testid="instance-cold-storage-restore-banner"
             className="instance-chat-banner"
             style={{
-              background: 'rgba(59, 130, 246, 0.10)',
-              borderBottom: '1px solid rgba(59, 130, 246, 0.24)',
+              background: 'var(--hg-fill-2)',
+              borderBottom: '1px solid var(--hg-stroke-strong)',
               padding: '14px 24px',
               display: 'flex',
               alignItems: 'center',
@@ -1519,18 +1462,18 @@ export default function InstanceDetailPage() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 460px' }}>
               {isColdStorageRestoringInstance(instance) ? (
-                <Loader2 size={18} strokeWidth={2.25} style={{ color: '#1d4ed8' }} className="animate-spin" />
+                <Loader2 size={18} strokeWidth={2.25} style={{ color: 'var(--hg-fg)' }} className="animate-spin" />
               ) : (
-                <RotateCcw size={18} strokeWidth={2.25} style={{ color: '#1d4ed8' }} />
+                <RotateCcw size={18} strokeWidth={2.25} style={{ color: 'var(--hg-fg)' }} />
               )}
               <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
                 <span
                   className="mono"
-                  style={{ fontSize: 11, fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.12em' }}
+                  style={{ fontSize: 11, fontWeight: 700, color: 'var(--hg-fg)', textTransform: 'uppercase', letterSpacing: '0.12em' }}
                 >
                   {isColdStorageRestoringInstance(instance) ? 'Restoring from cold storage' : 'Paused in cold storage'}
                 </span>
-                <span style={{ fontSize: 13, color: 'rgba(17, 24, 39, 0.82)', lineHeight: 1.45 }}>
+                <span style={{ fontSize: 13, color: 'var(--hg-text-2)', lineHeight: 1.45 }}>
                   {isColdStorageRestoringInstance(instance)
                     ? 'Restore is already running. Chat history and settings will come back when the agent is online.'
                     : 'Your data is safe. Start restore to bring chat history and settings back online; the first restore usually takes about 5 minutes.'}
@@ -1551,9 +1494,9 @@ export default function InstanceDetailPage() {
                 }}
                 disabled={actionLoading}
                 style={{
-                  background: actionLoading ? 'rgba(255, 255, 255, 0.6)' : '#1d4ed8',
-                  color: actionLoading ? '#1d4ed8' : '#ffffff',
-                  border: '1px solid rgba(29, 78, 216, 0.26)',
+                  background: actionLoading ? 'var(--hg-glass-strong)' : 'var(--hg-fg)',
+                  color: actionLoading ? 'var(--hg-fg)' : 'var(--hg-on-accent)',
+                  border: '1px solid var(--hg-stroke-strong)',
                   padding: '8px 14px',
                   fontSize: 11,
                   fontWeight: 700,
@@ -1579,8 +1522,8 @@ export default function InstanceDetailPage() {
             data-testid="instance-failure-alert"
             className="instance-chat-banner"
             style={{
-              background: "rgba(255, 255, 255, 0.76)",
-              borderBottom: "1px solid rgba(185, 28, 28, 0.14)",
+              background: "var(--hg-glass-strong)",
+              borderBottom: "1px solid color-mix(in srgb, var(--hg-bad) 14%, transparent)",
               padding: "8px 18px",
               display: "flex",
               alignItems: "center",
@@ -1591,18 +1534,18 @@ export default function InstanceDetailPage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "1 1 420px" }}>
-              <AlertTriangle size={16} strokeWidth={2.25} style={{ color: "#b91c1c", flexShrink: 0 }} />
+              <AlertTriangle size={16} strokeWidth={2.25} style={{ color: "var(--hg-bad)", flexShrink: 0 }} />
               <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
                 <span
                   className="mono"
-                  style={{ fontSize: 10, fontWeight: 700, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0 }}
+                  style={{ fontSize: 10, fontWeight: 700, color: "var(--hg-bad)", textTransform: "uppercase", letterSpacing: 0 }}
                 >
                   {instance.failureAlert.ownerLabel} · {instance.failureAlert.phaseLabel}
                 </span>
                 <span
                   style={{
                     fontSize: 12,
-                    color: "rgba(17, 24, 39, 0.82)",
+                    color: "var(--hg-text-2)",
                     lineHeight: 1.4,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -1610,7 +1553,7 @@ export default function InstanceDetailPage() {
                 >
                   <strong>{instance.failureAlert.title}</strong>: {instance.failureAlert.message}
                 </span>
-                <span className="mono" style={{ fontSize: 10, color: "rgba(17, 24, 39, 0.48)", letterSpacing: 0 }}>
+                <span className="mono" style={{ fontSize: 10, color: "var(--hg-text-3)", letterSpacing: 0 }}>
                   Recovery: {instance.failureAlert.recoveryLabel}
                   {instance.failureAlert.requestId ? ` · Request: ${instance.failureAlert.requestId}` : ""}
                 </span>
@@ -1619,7 +1562,7 @@ export default function InstanceDetailPage() {
                   summary={instance.failureAlert.title}
                   instanceId={instance.id}
                   errorContext={`${instance.failureAlert.title}: ${instance.failureAlert.message}${instance.failureAlert.requestId ? ` (request ${instance.failureAlert.requestId})` : ""}`}
-                  style={{ marginTop: 4, color: "rgba(17, 24, 39, 0.62)" }}
+                  style={{ marginTop: 4, color: "var(--hg-text-3)" }}
                 />
               </div>
             </div>
@@ -1628,9 +1571,9 @@ export default function InstanceDetailPage() {
                 type="button"
                 onClick={() => router.push(`/dashboard/instances/${instance.id}/console`)}
                 style={{
-                  border: "1px solid rgba(185, 28, 28, 0.18)",
-                  background: "rgba(255,255,255,0.68)",
-                  color: "#9f1239",
+                  border: "1px solid color-mix(in srgb, var(--hg-bad) 18%, transparent)",
+                  background: "var(--hg-glass-strong)",
+                  color: "var(--hg-bad)",
                   padding: "6px 10px",
                   fontSize: 10,
                   fontWeight: 700,
@@ -1654,9 +1597,9 @@ export default function InstanceDetailPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  border: "1px solid rgba(17, 24, 39, 0.12)",
-                  background: "rgba(255,255,255,0.58)",
-                  color: "rgba(17, 24, 39, 0.58)",
+                  border: "1px solid var(--hg-stroke)",
+                  background: "var(--hg-glass-strong)",
+                  color: "var(--hg-text-3)",
                   cursor: "pointer",
                 }}
               >
@@ -1666,16 +1609,18 @@ export default function InstanceDetailPage() {
           </div>
         ) : null}
         <div style={{ padding: "0 16px" }}>
-          <UpdateAvailableBanner instanceId={instance.id} selfConfirm />
-          <NoForkMigrationCard instanceId={instance.id} />
+          <MoveToOfficialCard instanceId={instance.id}>
+            <UpdateAvailableBanner instanceId={instance.id} selfConfirm />
+            <NoForkMigrationCard instanceId={instance.id} />
+          </MoveToOfficialCard>
         </div>
         {instance.updateAlert ? (
           <div
             data-testid="instance-update-alert"
             className="instance-chat-banner"
             style={{
-              background: "rgba(245, 158, 11, 0.12)",
-              borderBottom: "1px solid rgba(180, 83, 9, 0.24)",
+              background: "color-mix(in srgb, var(--hg-warn) 12%, transparent)",
+              borderBottom: "1px solid color-mix(in srgb, var(--hg-warn) 24%, transparent)",
               padding: "12px 24px",
               display: "flex",
               alignItems: "center",
@@ -1686,11 +1631,11 @@ export default function InstanceDetailPage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <AlertTriangle size={18} strokeWidth={2.5} style={{ color: "#92400e" }} />
+              <AlertTriangle size={18} strokeWidth={2.5} style={{ color: "var(--hg-warn)" }} />
               <div style={{ display: "grid", gap: 4 }}>
                 <span
                   className="mono"
-                  style={{ fontSize: 12, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.12em" }}
+                  style={{ fontSize: 12, fontWeight: 700, color: "var(--hg-warn)", textTransform: "uppercase", letterSpacing: "0.12em" }}
                 >
                   Update attention needed
                 </span>
@@ -1707,9 +1652,9 @@ export default function InstanceDetailPage() {
                 disabled={actionLoading}
                 onClick={() => powerAction("repair_runtime")}
                 style={{
-                  border: "1px solid rgba(180, 83, 9, 0.4)",
-                  background: "#b45309",
-                  color: "#ffffff",
+                  border: "1px solid color-mix(in srgb, var(--hg-warn) 40%, transparent)",
+                  background: "var(--hg-warn)",
+                  color: "var(--hg-on-accent)",
                   padding: "8px 14px",
                   fontSize: 11,
                   fontWeight: 700,
@@ -1726,9 +1671,9 @@ export default function InstanceDetailPage() {
                 type="button"
                 onClick={() => router.push(`/dashboard/instances/${instance.id}/console`)}
                 style={{
-                  border: "1px solid rgba(180, 83, 9, 0.24)",
-                  background: "rgba(255,255,255,0.6)",
-                  color: "#92400e",
+                  border: "1px solid color-mix(in srgb, var(--hg-warn) 24%, transparent)",
+                  background: "var(--hg-glass-strong)",
+                  color: "var(--hg-warn)",
                   padding: "8px 14px",
                   fontSize: 11,
                   fontWeight: 700,
@@ -1849,7 +1794,7 @@ export default function InstanceDetailPage() {
             letterSpacing: "0.1em",
             padding: "9px 10px",
             cursor: "pointer",
-            boxShadow: "-6px 6px 18px rgba(0,0,0,0.12)",
+            boxShadow: "var(--hg-shadow-lg)",
           }}
         >
           <PanelRightOpen size={13} /> Panel
@@ -2152,7 +2097,7 @@ export default function InstanceDetailPage() {
               aria-label="Close file explorer"
               whileTap={reduceMotion ? undefined : { scale: 0.94 }}
               transition={dockSpring}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--hg-text)'; e.currentTarget.style.background = 'var(--hg-fill-2)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = 'none'; }}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

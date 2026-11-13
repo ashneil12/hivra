@@ -49,6 +49,7 @@ class Fixture:
         self.calls: list[list[str]] = []
         self.container_up = True
         self.responses: list[tuple[str, Completed]] = []
+        self.container_inputs: list[bytes | None] = []
         patches = [
             mock.patch.object(app, "STATE", base / "state"),
             mock.patch.object(app, "CACHE", base / "cache"),
@@ -56,6 +57,9 @@ class Fixture:
             mock.patch.object(app, "ENABLED", base / "state" / "enabled"),
             mock.patch.object(app, "MODE_FILE", base / "state" / "mode"),
             mock.patch.object(app, "SNAPSHOT", base / "state" / "profile.tar.gz"),
+            mock.patch.object(app, "CODE_SNAPSHOT", base / "state" / "code-profile.tar.gz"),
+            mock.patch.object(app, "CLIPBOARD_STATE", base / "clipboard"),
+            mock.patch.object(app, "CLIPBOARD_ENABLED", base / "clipboard" / "enabled"),
             mock.patch.object(app, "INSTALL_LOCK", base / "state" / "install.lock"),
             mock.patch.object(app, "LAST_ERROR", base / "state" / "last-error"),
             mock.patch.object(app, "container_running", lambda: self.container_up),
@@ -76,6 +80,7 @@ class Fixture:
 
     def in_container(self, argv, **kwargs):
         self.calls.append(list(argv))
+        self.container_inputs.append(kwargs.get("input_bytes"))
         joined = " ".join(argv)
         for needle, completed in self.responses:
             if needle in joined:
@@ -186,7 +191,11 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("--exclude=.config/Claude/Cache", tar)
         self.assertIn("--exclude=.config/Claude/claude-code", tar)
         self.assertEqual(tar[-1], ".config/Claude")
-        self.assertEqual(sorted(path.name for path in app.SNAPSHOT.parent.iterdir()), ["profile.tar.gz"], "no second copy is left behind")
+        # The Code tab's data is its own archive, so its size never blocks the sign-in backup.
+        code_tar = [call for call in fixture.calls if "tar" in call and "-czf" in call][1]
+        self.assertEqual(code_tar[-2:], [".claude", ".claude.json"])
+        self.assertIn("--exclude=.claude/shell-snapshots", code_tar)
+        self.assertEqual(sorted(path.name for path in app.SNAPSHOT.parent.iterdir()), ["code-profile.tar.gz", "profile.tar.gz"], "no temporary copy is left behind")
 
     def test_a_failed_snapshot_never_replaces_the_previous_one(self):
         fixture = Fixture(self)
@@ -219,20 +228,125 @@ class ProfileTests(unittest.TestCase):
     def test_restore_never_overwrites_a_populated_profile(self):
         fixture = Fixture(self)
         app.write_state(app.SNAPSHOT, "snapshot")
-        fixture.respond("Local\\ Storage", Completed(returncode=0))  # the profile already exists
+        fixture.respond("Local Storage", Completed(returncode=0))  # the profile already exists
         self.assertFalse(app.restore_profile())
         self.assertEqual(fixture.streams_in, [])
 
     def test_restore_unpacks_as_the_desktop_user_without_ownership_or_modes(self):
         fixture = Fixture(self)
         app.write_state(app.SNAPSHOT, "snapshot")
-        fixture.respond("Local\\ Storage", Completed(returncode=1))
+        fixture.respond("Local Storage", Completed(returncode=1))
         self.assertTrue(app.restore_profile())
         argv, sent = fixture.streams_in[0]
         self.assertEqual(argv[:6], [app.DOCKER, "exec", "-i", "-u", app.DESKTOP_USER, app.CONTAINER])
         self.assertIn("--no-same-owner", argv)
         self.assertIn("--no-same-permissions", argv)
         self.assertEqual(sent, "snapshot")
+
+
+    def test_code_tab_data_is_restored_only_into_an_empty_home(self):
+        fixture = Fixture(self)
+        app.write_state(app.CODE_SNAPSHOT, "code")
+        fixture.respond("Local Storage", Completed(returncode=0))
+        fixture.respond("/home/ubuntu/.claude", Completed(returncode=1))
+        app.restore_profile()
+        self.assertEqual([sent for _, sent in fixture.streams_in], ["code"])
+        fixture.streams_in.clear()
+        fixture.responses.clear()
+        fixture.respond("Local Storage", Completed(returncode=0))
+        fixture.respond("/home/ubuntu/.claude", Completed(returncode=0))
+        app.restore_profile()
+        self.assertEqual(fixture.streams_in, [], "an existing ~/.claude is never overwritten")
+
+    def test_a_failed_code_tab_restore_still_lets_the_app_start(self):
+        fixture = Fixture(self)
+        app.write_state(app.SNAPSHOT, "snapshot")
+        app.write_state(app.CODE_SNAPSHOT, "code")
+        fixture.respond("test -e", Completed(returncode=1))
+        calls = {"n": 0}
+        original = fixture.stream_from_file
+        def flaky(argv, path, timeout=600):
+            calls["n"] += 1
+            if Path(path) == app.CODE_SNAPSHOT:
+                raise RuntimeError("tar failed")
+            return original(argv, path, timeout)
+        with mock.patch.object(app, "stream_from_file", flaky):
+            self.assertTrue(app.restore_profile())
+        self.assertEqual(calls["n"], 2)
+
+
+class LauncherTests(unittest.TestCase):
+    def test_the_launcher_starts_in_the_hivra_folder_and_is_replaced_atomically(self):
+        fixture = Fixture(self)
+        app.write_launcher()
+        script = next(data for data in fixture.container_inputs if data)
+        self.assertIn(b"cd /home/ubuntu/Hivra 2>/dev/null || cd\n", script)
+        self.assertIn(b"--password-store=basic", script)
+        command = " ".join(next(call for call in fixture.calls if "cat > " in " ".join(call)))
+        self.assertIn(f"mv -f {app.LAUNCHER}.tmp {app.LAUNCHER}", command)
+
+
+class ClipboardTests(unittest.TestCase):
+    def call(self, function, *args, stdin=b""):
+        with mock.patch("builtins.print") as printed, mock.patch.object(sys, "stdin", mock.Mock(buffer=__import__("io").BytesIO(stdin))):
+            code = function(*args)
+        return code, json.loads(printed.call_args[0][0]) if printed.call_args else None
+
+    def test_the_switch_is_off_by_default_and_refuses_both_directions(self):
+        fixture = Fixture(self)
+        self.assertFalse(app.status()["clipboard"])
+        self.assertEqual(self.call(app.verb_clipboard_put, stdin=b"secret"), (3, {"ok": False, "error": "clipboard_off"}))
+        self.assertEqual(self.call(app.verb_clipboard_get), (3, {"ok": False, "error": "clipboard_off"}))
+        self.assertFalse(any("xclip" in command for command in fixture.commands()), "nothing reaches the desktop while off")
+
+    def test_turning_it_on_and_off_is_a_root_only_flag_outside_the_app_state(self):
+        fixture = Fixture(self)
+        self.assertEqual(self.call(app.verb_clipboard, "on"), (0, {"ok": True, "clipboard": True}))
+        self.assertEqual(oct(app.CLIPBOARD_STATE.stat().st_mode & 0o777), "0o700")
+        self.assertTrue(app.status()["clipboard"])
+        with mock.patch("builtins.print"):
+            app.verb_remove()
+        self.assertTrue(app.clipboard_enabled(), "removing the Claude app leaves the clipboard switch alone")
+        self.assertEqual(self.call(app.verb_clipboard, "off"), (0, {"ok": True, "clipboard": False}))
+        with mock.patch("builtins.print"):
+            self.assertEqual(app.verb_clipboard("maybe"), 2)
+
+    def test_paste_in_sets_the_desktop_clipboard_as_the_desktop_user(self):
+        fixture = Fixture(self)
+        self.call(app.verb_clipboard, "on")
+        code, result = self.call(app.verb_clipboard_put, stdin="héllo".encode())
+        self.assertEqual((code, result), (0, {"ok": True, "bytes": 6}))
+        index = next(i for i, call in enumerate(fixture.calls) if "xclip" in " ".join(call))
+        self.assertIn("xclip -selection clipboard -in >/dev/null 2>&1", " ".join(fixture.calls[index]))
+        self.assertEqual(fixture.container_inputs[index], "héllo".encode())
+
+    def test_paste_in_refuses_binary_and_oversized_input(self):
+        Fixture(self)
+        self.call(app.verb_clipboard, "on")
+        self.assertEqual(self.call(app.verb_clipboard_put, stdin=b"\xff\xfe")[1]["error"], "not_text")
+        self.assertEqual(self.call(app.verb_clipboard_put, stdin=b"a" * (app.CLIPBOARD_MAX_BYTES + 1))[1]["error"], "too_large")
+
+    def test_copy_out_reads_the_desktop_clipboard_and_treats_no_owner_as_empty(self):
+        fixture = Fixture(self)
+        self.call(app.verb_clipboard, "on")
+        fixture.respond("xclip -selection clipboard -out", Completed(stdout="from the desktop".encode()))
+        self.assertEqual(self.call(app.verb_clipboard_get), (0, {"ok": True, "text": "from the desktop"}))
+        fixture.responses.clear()
+        fixture.respond("xclip -selection clipboard -out", Completed(returncode=1, stderr=b"Error: target STRING not available"))
+        self.assertEqual(self.call(app.verb_clipboard_get), (0, {"ok": True, "text": ""}))
+
+    def test_a_stopped_desktop_is_reported(self):
+        fixture = Fixture(self)
+        self.call(app.verb_clipboard, "on")
+        fixture.container_up = False
+        self.assertEqual(self.call(app.verb_clipboard_get)[1]["error"], "desktop_not_running")
+
+    def test_main_routes_only_exact_clipboard_verbs(self):
+        Fixture(self)
+        with mock.patch.object(os, "geteuid", lambda: 0), mock.patch("builtins.print"):
+            self.assertEqual(app.main(["x", "clipboard"]), 2)
+            self.assertEqual(app.main(["x", "clipboard-get", "extra"]), 2)
+            self.assertEqual(app.main(["x", "clipboard", "on"]), 0)
 
 
 class InstallTests(unittest.TestCase):
@@ -385,7 +499,8 @@ class SudoersContractTests(unittest.TestCase):
         provisioning = self.sudoers_commands("provision-claude-code-box.sh")
         update = self.sudoers_commands("hivra-guest-runtime-update.sh")
         self.assertEqual(provisioning, update)
-        self.assertEqual(provisioning, [["status"], ["install"], ["mode", "app"], ["mode", "desktop"], ["remove"]])
+        self.assertEqual(provisioning, [["status"], ["install"], ["mode", "app"], ["mode", "desktop"], ["remove"],
+                                        ["clipboard", "on"], ["clipboard", "off"], ["clipboard-put"], ["clipboard-get"]])
 
     def test_every_granted_command_is_accepted_and_nothing_else_is(self):
         with mock.patch.object(os, "geteuid", return_value=0), \
@@ -394,10 +509,15 @@ class SudoersContractTests(unittest.TestCase):
              mock.patch.object(app, "verb_mode", return_value=0), \
              mock.patch.object(app, "verb_remove", return_value=0), \
              mock.patch.object(app, "supervise", return_value=0), \
+             mock.patch.object(app, "verb_clipboard", return_value=0), \
+             mock.patch.object(app, "verb_clipboard_put", return_value=0), \
+             mock.patch.object(app, "verb_clipboard_get", return_value=0), \
              mock.patch("builtins.print"):
-            for args in (["status"], ["install"], ["mode", "app"], ["mode", "desktop"], ["remove"]):
+            for args in (["status"], ["install"], ["mode", "app"], ["mode", "desktop"], ["remove"],
+                         ["clipboard", "on"], ["clipboard", "off"], ["clipboard-put"], ["clipboard-get"]):
                 self.assertEqual(app.main(["x"] + args), 0, args)
-            for args in ([], ["status", "extra"], ["install", "--force"], ["mode"], ["mode", "app", "x"], ["restore"], ["snapshot"], ["install-run", "x"]):
+            for args in ([], ["status", "extra"], ["install", "--force"], ["mode"], ["mode", "app", "x"], ["restore"], ["snapshot"], ["install-run", "x"],
+                         ["clipboard"], ["clipboard-put", "text"], ["clipboard-get", "x"]):
                 self.assertEqual(app.main(["x"] + args), 2, args)
             # The job's own verb exists, but only root's transient unit runs it.
             with mock.patch.object(app, "verb_install_run", return_value=0):

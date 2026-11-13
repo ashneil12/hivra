@@ -36,6 +36,8 @@ import {
 } from "./agent-lifecycle-host";
 import {
   agentSoftwareSubject,
+  HERMES_UPDATE_TARGET,
+  isLatestTargetApp,
   parseAgentAppReport,
   parseAgentCliReport,
   type AgentAppUpdateReport,
@@ -106,7 +108,9 @@ export async function runHivraAgentRuntimeUpdate(input: RuntimeUpdateInput): Pro
     const report = !outcome.ok ? null : subject.cli
       ? (outcome.agentCli?.name === subject.cli ? outcome.agentCli : null)
       : (outcome.agentApp?.name === subject.app ? outcome.agentApp : null);
-    const tested = subject.cli ? AGENT_CLI_VERSIONS[subject.cli] : AGENT_APP_VERSIONS[subject.app!].version;
+    // Hermes has no tested version: its update aims at whatever its own updater finds.
+    const tested = subject.cli ? AGENT_CLI_VERSIONS[subject.cli]
+      : isLatestTargetApp(subject.app) ? HERMES_UPDATE_TARGET : AGENT_APP_VERSIONS[subject.app!].version;
     const target = report?.target ?? tested;
     const result = requestResultOf(outcome.ok ? { ok: true, report } : outcome);
     // An owner's request is recorded once it reached the host (or found it

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 
 export const CANONICAL_AGENT_COMPUTER_CONTRACT_VERSION = "2026-09-04" as const;
 
@@ -305,6 +306,7 @@ const KNOWN_HIVRA_CLI_RUNTIMES = new Set([
   "codex",
   "openclaw",
   "agent-zero",
+  "openbot",
   "deepseek-harness",
 ]);
 const KNOWN_HIVRA_DASHBOARD_RUNTIMES = new Set(["aeon"]);
@@ -417,6 +419,7 @@ function hivraCapabilities(
   status: string | null,
   isComputer: boolean,
   computerSubstrate: string | null,
+  computerProfile: string | null,
 ) {
   const knownAgent = Boolean(
     type && (KNOWN_HIVRA_CLI_RUNTIMES.has(type) || KNOWN_HIVRA_DASHBOARD_RUNTIMES.has(type)),
@@ -431,7 +434,9 @@ function hivraCapabilities(
       return {
         surfaces: isGvisorTerminal
           ? (["terminal"] as const)
-          : (["files", "terminal", "desktop"] as const),
+          : computerHasDesktop(computerProfile)
+          ? (["files", "terminal", "desktop"] as const)
+          : (["files", "terminal"] as const),
         actions: isGvisorTerminal
           ? (["stop", "delete", "resize"] as const)
           : hasProxmoxLifecycle
@@ -666,6 +671,7 @@ export function projectCanonicalHivraShadow(
         tombstoned ? "deleted" : status,
         isComputer,
         computerSubstrate,
+        osProfile ?? null,
       ),
     ),
     state: {

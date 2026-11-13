@@ -210,6 +210,10 @@ const nextConfig: NextConfig = {
     "/enroll/script": ["./bootstrap/server-enroll.sh"],
     "/enroll/script.sha256": ["./bootstrap/server-enroll.sh"],
     "/api/infrastructure/server-enrollments": ["./bootstrap/server-enroll.sh"],
+    // The home connector's installer carries the connector's own three files.
+    "/api/infrastructure/home-connector/install": ["./bootstrap/home-connector/*"],
+    // The local bridge's installer carries the bridge program and the connector module it imports.
+    "/api/hivra/bridge/install": ["./bootstrap/local-bridge/*"],
     // The four documents the token geo-policy applies to are not public files:
     // each handler reads its full and token-free copy, staged by
     // scripts/stage-litepaper.mjs, and picks one by the viewer's country

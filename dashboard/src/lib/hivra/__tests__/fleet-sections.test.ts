@@ -112,6 +112,11 @@ describe("fleet entry destination", () => {
     expect(fleetEntryHref(ubuntu)).toBe("/dashboard/agent/ubuntu?tab=desktop");
   });
 
+  it("opens an errored computer on Manage, where the reason and the fix are, not on a blank desktop", () => {
+    expect(fleetEntryHref({ ...ubuntu, state: "error", missingOnHost: true })).toBe("/dashboard/agent/ubuntu?tab=manage");
+    expect(fleetEntryHref({ ...ubuntu, state: "error" })).toBe("/dashboard/agent/ubuntu?tab=manage");
+  });
+
   it("opens a Linux Sandbox on Manage and never promises it a desktop", () => {
     // A sandbox is terminal-only; the agent page lands it on Manage.
     const sandbox = agent("x-sandbox", "MY_LINUX_SANDBOX", {
@@ -124,6 +129,23 @@ describe("fleet entry destination", () => {
     expect(fleetEntryOpenLabel(sandbox)).toBe("Open sandbox");
     expect(fleetEntryOpenLabel(ubuntu)).toBe("Open desktop");
     expect(fleetEntryOpenLabel(codexAgent)).toBe("Open agent");
+  });
+
+  it("opens a Linux computer on its files and never promises it a desktop", () => {
+    const server = agent("x-server", "MY_LINUX_COMPUTER", {
+      resourceKind: "computer",
+      typeLabel: "Linux computer",
+      agentType: "linux-desktop",
+      computerProfile: "ubuntu-server",
+    });
+    expect(fleetEntryHref(server)).toBe("/dashboard/agent/server?tab=files");
+    expect(fleetEntryOpenLabel(server)).toBe("Open computer");
+    // A profile Hivra does not know fails closed the same way.
+    expect(fleetEntryHref({ ...server, computerProfile: "plan9" as never })).toBe("/dashboard/agent/server?tab=files");
+    // Ubuntu Desktop, Omarchy and a computer with no stored profile keep the desktop.
+    expect(fleetEntryHref(ubuntu)).toBe("/dashboard/agent/ubuntu?tab=desktop");
+    expect(fleetEntryHref({ ...ubuntu, computerProfile: null })).toBe("/dashboard/agent/ubuntu?tab=desktop");
+    expect(fleetEntryOpenLabel({ ...ubuntu, computerProfile: "omarchy" })).toBe("Open desktop");
   });
 
   it("sends a Hermes instance to the instance route, not the agent route", () => {

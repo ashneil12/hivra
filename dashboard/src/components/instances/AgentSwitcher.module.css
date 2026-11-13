@@ -21,9 +21,10 @@
   font-family: var(--font-mono), monospace;
   font-size: 11px;
   cursor: pointer;
+  border-radius: var(--hg-radius-sm);
 }
 .tool:hover { border-color: var(--text-muted); }
-.tool:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.tool:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 @media (pointer: coarse) { .tool { min-height: 44px; } }
 
 /* Web switcher: a floating handle that expands to the pill, tools and list. */
@@ -62,7 +63,7 @@
   pointer-events: auto;
   box-sizing: border-box;
   border: 1px solid var(--etched-border);
-  border-radius: 0;
+  border-radius: var(--hg-radius-md);
   background: var(--bg-elevated);
   cursor: pointer;
 }
@@ -75,17 +76,17 @@
   color: var(--ink-black);
   line-height: 1;
   opacity: 0.82;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-  transition: opacity 0.15s ease, border-color 0.15s ease;
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
+  transition: opacity var(--hg-fast) var(--hg-ease), border-color var(--hg-fast) var(--hg-ease);
 }
 .handleDot { width: 6px; height: 6px; flex-shrink: 0; }
 .handleChevron { flex-shrink: 0; opacity: 0.7; }
 .handleLabel {
   display: none;
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 .collapse {
@@ -96,8 +97,8 @@
   width: 26px;
   height: 26px;
   color: var(--text-muted);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-  transition: border-color 0.15s ease, color 0.15s ease;
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
+  transition: border-color var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease);
 }
 .pill {
   display: inline-flex;
@@ -110,12 +111,12 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
+  transition: border-color var(--hg-fast) var(--hg-ease), background var(--hg-fast) var(--hg-ease);
 }
 .pillDot { width: 7px; height: 7px; flex-shrink: 0; }
 .pillName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pillChevron { flex-shrink: 0; opacity: 0.6; transition: transform 0.18s ease; }
+.pillChevron { flex-shrink: 0; opacity: 0.6; transition: transform var(--hg-fast) var(--hg-ease); }
 .pillChevronOpen { transform: rotate(180deg); }
 .chip {
   display: inline-flex;
@@ -124,15 +125,15 @@
   flex-shrink: 0;
   padding: 5px 10px;
   color: var(--ink-black);
-  font-family: var(--font-mono), monospace;
-  font-size: 10.5px;
-  font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   line-height: 1;
   text-decoration: none;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-  transition: border-color 0.15s ease;
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-md);
+  transition: border-color var(--hg-fast) var(--hg-ease);
 }
 .menu {
   pointer-events: auto;
@@ -141,9 +142,13 @@
   max-height: min(60vh, 420px);
   display: flex;
   flex-direction: column;
-  background: var(--bg-surface);
+  background: var(--hg-glass);
   border: 1px solid var(--etched-border);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--hg-shadow-lg);
+  backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+  box-shadow: var(--hg-glass-edge), var(--hg-shadow-sm);
+  border-radius: var(--hg-radius-lg);
 }
 .menuHeader {
   display: flex;
@@ -213,10 +218,10 @@
   border: none;
   border-top: 1px solid var(--etched-border);
   color: var(--text-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
 }

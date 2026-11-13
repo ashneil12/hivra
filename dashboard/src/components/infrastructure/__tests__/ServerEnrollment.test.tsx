@@ -107,6 +107,8 @@ describe("the command panel", () => {
     renderDialog();
     expect(await screen.findByTestId("server-enrollment-command")).toHaveTextContent(ISSUED.command);
     expect(screen.getByRole("button", { name: "Copy the setup command" })).toBeInTheDocument();
+    // A ready-made prompt lets the owner hand the setup to their own coding agent.
+    expect(screen.getByRole("button", { name: "Copy the prompt for your coding agent" })).toBeInTheDocument();
     // The command asks for the code at a prompt, so the panel shows it beside the command.
     expect(screen.getByTestId("server-enrollment-code")).toHaveTextContent(CODE);
     expect(ISSUED.command).not.toContain(CODE);
@@ -434,5 +436,15 @@ describe("Is this your server?", () => {
     expect(screen.getByText(/The setup command doesn't connect Proxmox VE yet\. Proxmox VE servers connect with a root login/))
       .toBeInTheDocument();
     expect(screen.queryByText(/Rebuild this server/)).not.toBeInTheDocument();
+  });
+
+  it("says what a one-command Ubuntu server can run, and points Proxmox owners to SSH details", async () => {
+    const handlers = renderDialog();
+    await screen.findByTestId("server-enrollment-command");
+    expect(screen.getByText(/An Ubuntu server connected this way runs Linux Sandbox\. Claude Code, Codex, OpenClaw, Agent Zero, Aeon and Ubuntu Desktop need a Proxmox VE server connected with SSH details\./)).toBeInTheDocument();
+    expect(screen.getByText(/Running Proxmox\?/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect it with SSH details instead" }));
+    expect(handlers.onUseSshDetails).toHaveBeenCalledTimes(1);
+    expect(cancelServerEnrollment).not.toHaveBeenCalled();
   });
 });

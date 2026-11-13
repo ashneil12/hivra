@@ -80,14 +80,14 @@ export default function SharedTemplatePage({ params }: { params: Promise<{ token
           This template link is no longer available.
         </div>
       ) : (
-        <div style={{ border: "1px solid var(--ink-black)", background: "var(--bg-surface)", padding: "clamp(1.25rem, 5vw, 2rem)", boxShadow: "6px 6px 0px rgba(0,0,0,0.08)" }}>
+        <div style={{ border: "1px solid var(--ink-black)", background: "var(--bg-surface)", padding: "clamp(1.25rem, 5vw, 2rem)", boxShadow: "var(--hg-shadow-md)" }}>
           <div className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.2em", opacity: 0.5, marginBottom: "1.5rem" }}>
             Shared agent template
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1.5rem" }}>
             <span style={{ fontSize: 40 }}>{template.emoji || "🤖"}</span>
             <div>
-              <h2 className="serif" style={{ fontSize: "2rem", fontWeight: 300, lineHeight: 1.1 }}>{template.name || "Untitled agent"}</h2>
+              <h2 className="serif" style={{ fontSize: "1.5rem", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1 }}>{template.name || "Untitled agent"}</h2>
               <div className="mono" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", opacity: 0.5, marginTop: 4 }}>{template.type}</div>
             </div>
           </div>

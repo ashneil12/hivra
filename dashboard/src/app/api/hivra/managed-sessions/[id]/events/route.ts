@@ -15,15 +15,13 @@ import {
   ManagedSessionError,
   streamManagedSessionEvents,
 } from "@/lib/hivra/do-managed-sessions";
-import { managedSessionFailure, noStore, UUID, hivraApiUnavailable } from "../../route-support";
+import { managedSessionFailure, noStore, UUID } from "../../route-support";
 
 const EVENT_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 const STREAM_WINDOW_MS = 280_000;
 const HEARTBEAT_MS = 20_000;
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;

@@ -5,8 +5,9 @@
 // Slot counts come from the authoritative source (subscription/agent-slots, pure data).
 
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
+import { isOpenBotAgentEnabled } from "./openbot-flag";
 
-export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
+export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "openbot" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
 export type PlanTier = "free" | "pro" | "power";
 
 export interface AgentDef {
@@ -74,8 +75,9 @@ export interface AgentDef {
    * translation shim before any provider can be listed). `providers` is which
    * alternatives the user may pick (Venice via BYOK or the managed gateway);
    * empty = native vendor auth only, no picker. Drives the box-side inference
-   * routing (~/.hivra/llm-provider.json + per-spawn model_providers). Hermes is
-   * configured through its own lane (/api/instances) and omits this.
+   * routing (~/.hivra/llm-provider.json + per-spawn model_providers). On a Hivra
+   * computer Hermes writes the same managed or Venice settings into its own
+   * config at install; the older Hermes lane (/api/instances) is separate.
    */
   llm?: { wire: "openai" | "anthropic"; providers: "venice"[] };
 }
@@ -95,20 +97,33 @@ const ALL_AGENTS: AgentDef[] = [
     id: "hermes",
     name: "Hermes",
     vendor: "Nous Research",
-    tagline: "Lightweight, general-purpose agent. The default.",
+    tagline: "The official Hermes Agent, with its own web workspace. The default.",
     minPlan: "free",
     weight: 1,
     browser: false,
     badge: "Default",
     accent: "var(--gold-leaf)",
     available: true,
-    cliKind: "claude",
+    // On a Hivra computer, Hermes is the official Hermes Agent, installed by its
+    // own installer and updated by `hermes update`. Hivra serves Hermes's own
+    // Desktop workspace in the browser (`hermes webapp`, from Hermes's gateway on
+    // loopback :9120) behind the token gate under /hermes, falling back to
+    // `hermes dashboard` (loopback :9119) until the Webapp is built, and points
+    // it at Venice inference through its own config. Nothing about
+    // Hermes is built, forked or patched by Hivra. (The older Hermes lane,
+    // /api/instances, does not read this entry's surface.)
+    surface: "dashboard",
+    dashboardPort: 9119,
+    // The official installer builds Hermes's web UI, which needs about 2 GB.
+    floor: { cpu: 1, ram: 2 },
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
   },
   {
     id: "claude-code",
     name: "Claude Code",
     vendor: "Anthropic",
-    tagline: "Coding agent with a live self-hosted browser. Use your own login.",
+    tagline: "Anthropic's coding agent. Runs on Hivra credits or your own Claude login.",
     minPlan: "free",
     weight: 2,
     browser: true,
@@ -116,15 +131,20 @@ const ALL_AGENTS: AgentDef[] = [
     accent: "#d97757",
     available: true,
     cliKind: "claude",
-    // Speaks Anthropic Messages only — providers stays empty until the
-    // Anthropic↔OpenAI gateway shim ships (managed-Venice translation boundary).
+    // Hivra credits: the launch mints a managed-Venice key and the installer
+    // points Claude Code at the Anthropic Messages shim
+    // (/api/managed-venice/anthropic) through ~/.claude/settings.json. Only the
+    // managed mode works: Venice itself speaks OpenAI chat, so a raw Venice key
+    // can't reach it, which is why `providers` (the Venice key/model picker in
+    // Manage, Codex's coordinator path) stays empty.
+    managedVenice: true,
     llm: { wire: "anthropic", providers: [] },
   },
   {
     id: "codex",
     name: "Codex",
     vendor: "OpenAI",
-    tagline: "OpenAI's coding agent. Use your own ChatGPT login.",
+    tagline: "OpenAI's coding agent. Runs on Hivra credits or your own ChatGPT login.",
     minPlan: "free",
     weight: 2,
     // Same box-level browser stack as Claude Code: CDP Chrome + the cdp
@@ -231,6 +251,31 @@ const ALL_AGENTS: AgentDef[] = [
     llm: { wire: "openai", providers: ["venice"] },
   },
   {
+    id: "openbot",
+    name: "OpenBot",
+    vendor: "CopilotKit",
+    tagline: "CopilotKit's open-source AI coworkers, each with its own browser and files, in OpenBot's own workspace.",
+    // Runs OpenBot's official Docker image on the box (not pool-exempt).
+    minPlan: "pro",
+    weight: 2,
+    // OpenBot brings its own browser; the box's CDP Chrome stack is not wired.
+    browser: false,
+    badge: "Coworkers",
+    accent: "#6e56cf",
+    // Off until NEXT_PUBLIC_HIVRA_OPENBOT_AGENT is set.
+    available: isOpenBotAgentEnabled(),
+    // OpenBot's web UI listens on box loopback :3101 and is served by the
+    // gateway at the box origin root; /openbot/ is its entry path. No chat-CLI
+    // surface and no vendor login on Hivra's side.
+    surface: "dashboard",
+    floor: { cpu: 1, ram: 3 },
+    dashboardPort: 3101,
+    // Inference: managed-Venice key minted at LAUNCH over the generic
+    // HIVRA_MODEL_* env, written into OpenBot's env by the box.
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
+  },
+  {
     id: "linux-desktop",
     name: "Ubuntu Desktop",
     vendor: "Hivra",
@@ -252,7 +297,7 @@ const ALL_AGENTS: AgentDef[] = [
     id: "linux-terminal",
     name: "Linux Sandbox",
     vendor: "Hivra",
-    tagline: "A lightweight Python and terminal workspace isolated by gVisor on a Linux host you connected.",
+    tagline: "A locked-down Linux terminal on a server you've connected.",
     minPlan: "free",
     weight: 1,
     browser: false,
@@ -267,18 +312,25 @@ const ALL_AGENTS: AgentDef[] = [
     id: "deepseek-harness",
     name: "DeepSeek Harness",
     vendor: "DeepSeek",
-    tagline: "Developer-preview coding harness with its complete native interface.",
+    tagline: "DeepSeek's coding agent, in its own interface on a computer of its own. Runs on DeepSeek V4.1 Flash.",
     minPlan: "pro",
     weight: 2,
     browser: false,
-    badge: "Experimental",
+    badge: "Alpha",
     accent: "#4f7cff",
-    // The runtime is fully described so retained/private acceptance rows render
-    // their native surface correctly. Keep it out of AGENTS until the exact
-    // disposable provider UI/model/restart/revocation/teardown gate passes.
-    available: false,
+    // Launchable on Hivra Cloud only, through the same managed Proxmox launch
+    // its acceptance harness exercises (dashboard/scripts/deepseek-proxmox-canary.ts):
+    // no browser, named HTTPS access required. The launch route refuses it on a
+    // connected server or a computer in the owner's own cloud, which have no
+    // acceptance for it. DeepSeek's own settings refuse a key from a remote
+    // browser, so it gets its model at LAUNCH over the generic HIVRA_MODEL_* env
+    // (same path as Agent Zero): Hivra credits through managed Venice, or the
+    // owner's own Venice key. No connect step.
+    available: true,
     surface: "dashboard",
     floor: { cpu: 2, ram: 3 },
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
   },
 ];
 
@@ -289,10 +341,22 @@ export const AGENTS: AgentDef[] = ALL_AGENTS.filter(
   (agent) => agent.available && agent.resourceKind !== "computer",
 );
 
+// The Linux computer without a desktop (profile `ubuntu-server`) is stored as a
+// `linux-desktop` agent, so its resize floor is keyed on the computer profile;
+// the desktop floor must not apply to it.
+export const UBUNTU_SERVER_FLOOR = { cpu: 0.5, ram: 1 } as const;
+
 // Resize floor for an agent type at a given browser-automation state. Starts
 // from the agent's own floor override (Aeon hosts a tiny dashboard → 0.5/0.5)
-// or BASE_FLOOR, plus the browser surcharge for agents that ship one.
-export function resizeFloor(id: AgentId | string, browserOn: boolean): { cpu: number; ram: number } {
+// or BASE_FLOOR, plus the browser surcharge for agents that ship one. Pass the
+// computer profile for a computer so a light machine is not held to the desktop
+// floor.
+export function resizeFloor(
+  id: AgentId | string,
+  browserOn: boolean,
+  computerProfile?: string | null,
+): { cpu: number; ram: number } {
+  if (id === "linux-desktop" && computerProfile === "ubuntu-server") return { ...UBUNTU_SERVER_FLOOR };
   const def = ALL_AGENTS.find((a) => a.id === id);
   const base = def?.floor ?? BASE_FLOOR;
   const withBrowser = browserOn && Boolean(def?.browser);
@@ -318,7 +382,9 @@ interface PlanDef {
 }
 
 export const PLANS: Record<PlanTier, PlanDef> = {
-  free: { id: "free", name: "Free", maxAgents: AGENT_SLOTS.free, cpu: 0.5, ramGb: 1, blurb: "One lean agent, within limits. No browser automation." },
+  // A free account is sign-up only: the owner connects their own computer.
+  // It holds no Hivra-run computer, so it has no CPU or memory here.
+  free: { id: "free", name: "Free", maxAgents: AGENT_SLOTS.free, cpu: 0, ramGb: 0, blurb: "Connect your own computer. Hivra-run computers need a paid plan." },
   pro: { id: "pro", name: "Pro", maxAgents: AGENT_SLOTS.operator, cpu: 2, ramGb: 4, blurb: "Up to 3 agents. Full capability." },
   power: { id: "power", name: "Power", maxAgents: AGENT_SLOTS.fleet, cpu: 4, ramGb: 8, blurb: "Up to 5 agents. No capability caps." },
 };
@@ -358,13 +424,22 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
     return `This creates an isolated Linux VM with Hivra's contained authenticated desktop plus shared terminal, files, lifecycle, and recovery surfaces. ${credentialNotice}`;
   }
   if (def.id === "hermes") {
-    return `This runs Hermes (${def.vendor}) on the agent's private virtual machine, with Hivra's chat, terminal, files and skills interfaces. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
+    return `This installs the official Hermes Agent from ${def.vendor} on the agent's private virtual machine, with Hermes's own installer, and opens Hermes's own web UI through Hivra's authenticated gateway. Hivra adds no modifications to Hermes. You update it with \`hermes update\` in the terminal, or with the Update button. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
   }
   if (def.id === "aeon") {
     return `This hosts the Aeon dashboard on the agent's private virtual machine. Aeon's automated tasks run on your own GitHub Actions using the GitHub credentials you connect. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Aeon project.`;
   }
   if (def.id === "openclaw") {
     return `This hosts OpenClaw on the agent's private virtual machine. Its Control UI is bound to localhost and reached through Hivra's authenticated gateway. Configure your model providers and messaging channels inside that UI. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the OpenClaw project.`;
+  }
+  if (def.id === "claude-code") {
+    return `This runs the official ${def.name} CLI from ${def.vendor} on the agent's private virtual machine. Sign in with your own ${def.vendor} account inside the CLI, or launch it on Hivra credits, which reach models through Venice. ${credentialNotice} The ${def.browser ? "chat, terminal, files, skills, and browser" : "chat, terminal, files, and skills"} tabs connect to that runtime. Hivra is independent and isn't affiliated with, sponsored by, or endorsed by ${def.vendor}.`;
+  }
+  if (def.id === "deepseek-harness") {
+    return `This runs ${def.name}, ${def.vendor}'s coding agent, on the agent's private virtual machine. Its own interface is reached through Hivra's authenticated gateway. It runs on DeepSeek V4.1 Flash through Hivra credits, or your own Venice API key. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
+  }
+  if (def.id === "openbot") {
+    return `This installs the official OpenBot image from CopilotKit on the agent's private virtual machine and opens OpenBot's own workspace through Hivra's authenticated gateway. OpenBot needs a CopilotKit Intelligence key (CopilotKit has a free plan); you paste it once when you first open it. Models run through Venice on your Hivra credits by default. Update it with the Update button. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by CopilotKit.`;
   }
   if (def.id === "agent-zero") {
     return `This hosts Agent Zero in a container on the agent's private virtual machine. Its dashboard is bound to localhost and reached through Hivra's authenticated gateway. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Agent Zero project.`;

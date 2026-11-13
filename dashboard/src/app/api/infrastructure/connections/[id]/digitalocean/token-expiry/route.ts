@@ -10,14 +10,12 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { setDigitalOceanTokenExpiry } from "@/lib/hivra/do-managed-sessions";
 import { ProviderTokenExpiryInputSchema } from "@/lib/infrastructure/contracts";
-import { hivraApiUnavailable, managedSessionFailure, noStore, readMutationBody, UUID } from "@/app/api/hivra/managed-sessions/route-support";
+import { managedSessionFailure, noStore, readMutationBody, UUID } from "@/app/api/hivra/managed-sessions/route-support";
 
 const Body = z.object({ tokenExpiry: ProviderTokenExpiryInputSchema }).strict();
 
 /** Record when the owner says this connection's token expires. The token is untouched. */
 export async function PUT(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;

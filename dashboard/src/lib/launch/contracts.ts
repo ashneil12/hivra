@@ -8,8 +8,11 @@ export const LAUNCH_DRAFT_SCHEMA_VERSION = 1 as const;
  * type and profile screens are restored by the draft store. */
 export type LaunchStage = "choose" | "plan" | "review" | "launch";
 export type LaunchResourceKind = "agent" | "computer";
-export type LaunchAgentProfileId = "claude-code" | "codex" | "hermes" | "openclaw" | "agent-zero" | "aeon";
-export type LaunchComputerProfileId = "ubuntu-desktop" | "linux-terminal" | "omarchy" | "windows";
+/** "hermes" is the Hermes instance lane; "hermes-computer" is Hermes as a Hivra
+ * computer (the official Hermes, its own web UI), offered where the Hermes
+ * computer lane is on. Both are named Hermes to the owner. */
+export type LaunchAgentProfileId = "claude-code" | "codex" | "hermes" | "hermes-computer" | "openclaw" | "agent-zero" | "openbot" | "aeon" | "deepseek-harness";
+export type LaunchComputerProfileId = "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "omarchy" | "windows";
 export type LaunchProfileId = LaunchAgentProfileId | LaunchComputerProfileId;
 export type LaunchState = "idle" | "submitting" | "uncertain" | "accepted" | "failed";
 
@@ -189,19 +192,20 @@ export const DEFAULT_MODEL_ACCESS: LaunchModelAccess = {
   baseUrl: "",
 };
 
-/** Where a runtime's launch request goes. Hermes keeps its own instance lane;
- * every other runtime uses the Hivra agent launch. */
+/** Where a runtime's launch request goes. Hermes (the "hermes" profile) keeps
+ * its own instance lane; every other runtime, including Hermes as a Hivra
+ * computer ("hermes-computer"), uses the Hivra agent launch. */
 export type LaunchLane = "hivra-agent" | "hermes-instance" | "prepared-computer" | "windows-installer";
 
 export const PROFILE_DETAILS: Record<LaunchProfileId, {
   resourceKind: LaunchResourceKind;
   name: string;
-  runtimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "aeon" | "linux-desktop" | "linux-terminal";
+  runtimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "openbot" | "aeon" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
   /** Compatibility evidence required from the exact selected launch target.
    * This is deliberately separate from the guest runtime sent at launch: a
    * generic Linux desktop adapter is not evidence of Windows capability. */
-  placementRuntimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "aeon"
-    | "linux-desktop" | "linux-terminal" | "windows-installer";
+  placementRuntimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "openbot" | "aeon" | "deepseek-harness"
+    | "linux-desktop" | "linux-server" | "linux-terminal" | "windows-installer";
   managedCapacity: "plan" | "entitlement-required" | "self-managed-only";
   /** Whether a server the owner connected can run it. Hermes runs on Hivra
    * Cloud only. */
@@ -263,6 +267,24 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     cpuOptions: [0.5, 1, 2, 4, 8],
     ramOptions: [1, 2, 4, 8, 16],
   },
+  "hermes-computer": {
+    resourceKind: "agent",
+    name: "Hermes",
+    runtimeId: "hermes",
+    placementRuntimeId: "hermes",
+    managedCapacity: "plan",
+    // Hivra Cloud only for now: the install and its readiness are accepted
+    // there first (Canary); a connected server or a computer in the owner's
+    // own cloud comes after.
+    ownServer: false,
+    lane: "hivra-agent",
+    browser: "none",
+    sizing: "pinned",
+    recommended: { ...recommendedResourceEnvelope("hermes-computer"), source: "recommended" },
+    // Hermes's web UI is built on the computer at install: 1 CPU / 2 GB is the least that holds it.
+    cpuOptions: [1, 2, 4, 8],
+    ramOptions: [2, 4, 8, 16],
+  },
   openclaw: {
     resourceKind: "agent",
     name: "OpenClaw",
@@ -291,6 +313,20 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     cpuOptions: [1, 2, 4, 8],
     ramOptions: [2, 4, 8, 16],
   },
+  openbot: {
+    resourceKind: "agent",
+    name: "OpenBot",
+    runtimeId: "openbot",
+    placementRuntimeId: "openbot",
+    managedCapacity: "plan",
+    ownServer: true,
+    lane: "hivra-agent",
+    browser: "none",
+    sizing: "pinned",
+    recommended: { ...recommendedResourceEnvelope("openbot"), source: "recommended" },
+    cpuOptions: [1, 2, 4, 8],
+    ramOptions: [3, 4, 8, 16],
+  },
   aeon: {
     resourceKind: "agent",
     name: "Aeon",
@@ -307,6 +343,23 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     cpuOptions: [0.5, 1, 2, 4],
     ramOptions: [1, 2, 4, 8],
   },
+  "deepseek-harness": {
+    resourceKind: "agent",
+    name: "DeepSeek Harness",
+    runtimeId: "deepseek-harness",
+    placementRuntimeId: "deepseek-harness",
+    managedCapacity: "plan",
+    // Accepted only on Hivra's managed hosts: no connected server, no computer
+    // in the owner's own cloud.
+    ownServer: false,
+    lane: "hivra-agent",
+    browser: "none",
+    // The size its acceptance ran at, always kept: the route accepts no maxima.
+    sizing: "pinned",
+    recommended: { ...recommendedResourceEnvelope("deepseek-harness"), source: "recommended" },
+    cpuOptions: [2, 4, 8],
+    ramOptions: [3, 4, 8, 16],
+  },
   "ubuntu-desktop": {
     resourceKind: "computer",
     name: "Ubuntu Desktop",
@@ -320,6 +373,22 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     recommended: { ...recommendedResourceEnvelope("ubuntu-desktop"), source: "recommended" },
     cpuOptions: [2, 4, 8],
     ramOptions: [4, 8, 16],
+  },
+  "ubuntu-server": {
+    resourceKind: "computer",
+    name: "Linux computer",
+    // Stored and launched as the linux-desktop type with the ubuntu-server
+    // profile; only its provisioner kind and placement evidence are new.
+    runtimeId: "linux-desktop",
+    placementRuntimeId: "linux-server",
+    managedCapacity: "plan",
+    ownServer: true,
+    lane: "hivra-agent",
+    browser: "none",
+    sizing: "burst",
+    recommended: { ...recommendedResourceEnvelope("ubuntu-server"), source: "recommended" },
+    cpuOptions: [0.5, 1, 2, 4],
+    ramOptions: [1, 2, 4, 8],
   },
   "linux-terminal": {
     resourceKind: "computer",
@@ -367,10 +436,19 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
   },
 };
 
+/** The profiles a launch link, draft or tile may name. The native route
+ * grammar mirrors this list. */
 export const LAUNCH_PROFILE_IDS: readonly LaunchProfileId[] = [
-  "claude-code", "codex", "hermes", "openclaw", "agent-zero", "aeon",
-  "ubuntu-desktop", "linux-terminal", "omarchy", "windows",
+  "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "aeon", "deepseek-harness",
+  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
 ];
+
+/** Profiles that run on Hivra Cloud only, whatever else was chosen. Hermes has
+ * its own instance lane; DeepSeek Harness and Hermes as a Hivra computer are
+ * accepted only on Hivra's hosts so far. */
+export function runsOnHivraCloudOnly(profileId: LaunchProfileId | null): boolean {
+  return profileId !== null && (PROFILE_DETAILS[profileId].lane === "hermes-instance" || profileId === "deepseek-harness" || profileId === "hermes-computer");
+}
 
 /** Profiles whose computer can carry the optional browser. */
 export function profileHasBrowser(profileId: LaunchProfileId | null): boolean {

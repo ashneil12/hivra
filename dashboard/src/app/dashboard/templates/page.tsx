@@ -8,6 +8,7 @@
 // routes (the dashboard layout already enforces Clerk auth). No sidebar changes
 // — this page is reached from a link on /dashboard/library.
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Save, Trash2, Rocket, Link2, Lock, Globe, Copy, Check } from "lucide-react";
@@ -205,8 +206,8 @@ export default function TemplatesPage() {
         >
           <ArrowLeft size={12} /> Library
         </button>
-        <h2 className="serif" style={{ fontSize: "3rem", fontWeight: 300, lineHeight: 1.1, marginBottom: "1rem" }}>
-          Agent <em style={{ fontStyle: "italic" }}>templates</em>
+        <h2 className="serif" style={{ fontSize: "2.2rem", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.1, marginBottom: "1rem" }}>
+          Agent <em style={{ fontStyle: "normal" }}>templates</em>
         </h2>
         <p style={{ opacity: 0.8, fontSize: 14, maxWidth: 620, lineHeight: 1.6 }}>
           Snapshot a configured agent into a reusable template, then launch it again in one click — or
@@ -223,7 +224,7 @@ export default function TemplatesPage() {
 
       {loading ? (
         <div style={{ display: "flex", justifyContent: "center", padding: "3rem" }}>
-          <Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.55 }} />
+          <ThinkingOrb state="searching" size={32} />
         </div>
       ) : (
         <>
@@ -342,7 +343,7 @@ export default function TemplatesPage() {
                               type="button"
                               onClick={() => deleteTemplate(t.id)}
                               disabled={busy}
-                              style={{ ...ROW_CONTROL, background: "transparent", border: "1px solid var(--hivra-red)", color: "var(--hivra-red)", cursor: busy ? "default" : "pointer" }}
+                              style={{ ...ROW_CONTROL, background: "transparent", border: "1px solid var(--hg-stroke-strong)", color: "var(--hg-text)", cursor: busy ? "default" : "pointer" }}
                             >
                               {busy ? <Loader2 size={12} aria-hidden="true" style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} aria-hidden="true" />}
                               Delete?

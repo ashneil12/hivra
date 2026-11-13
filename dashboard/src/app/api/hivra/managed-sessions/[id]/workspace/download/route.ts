@@ -9,7 +9,7 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { downloadManagedSessionWorkspace } from "@/lib/hivra/do-managed-sessions";
-import { hivraApiUnavailable, managedSessionFailure, noStore, UUID } from "../../../route-support";
+import { managedSessionFailure, noStore, UUID } from "../../../route-support";
 
 function contentDisposition(fileName: string): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
@@ -21,8 +21,6 @@ function contentDisposition(fileName: string): string {
  * never rendered on Hivra's origin, whatever the file contains.
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;

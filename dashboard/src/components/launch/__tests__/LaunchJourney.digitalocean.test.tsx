@@ -143,14 +143,14 @@ beforeEach(() => {
 });
 
 async function chooseAgent(name: string) {
-  render(<LaunchJourney />);
+  render(<LaunchJourney legacyHermesLane />);
   await screen.findByRole("heading", { name: "What do you want to launch?" });
   fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`) }));
-  expect(screen.getByRole("heading", { name: `${name} — here's the plan` })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: `Review and launch ${name} 1` })).toBeInTheDocument();
 }
 
 async function chooseTeam() {
-  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  fireEvent.click(screen.getByRole("button", { name: "Change where it runs" }));
   fireEvent.click(await screen.findByRole("button", { name: /^DigitalOcean · Studio team/ }));
 }
 
@@ -169,8 +169,11 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   expect(within(size).getAllByRole("option").map(option => option.textContent)).toEqual(["1 vCPU / 1 GB", "2 vCPU / 4 GB"]);
   expect(modelChoice(/^Use my OpenAI API key/)).toHaveAttribute("aria-pressed", "true");
   expect(modelChoice(/^Sign in after it opens, or Hivra credits/)).toBeDisabled();
-  expect(screen.getByText("DigitalOcean bills this sandbox per second while it runs, to your team.")).toBeInTheDocument();
-  expect(await screen.findByText(/Prepaid balance \$25\.00/)).toBeInTheDocument();
+  expect(screen.getAllByText("DigitalOcean bills this sandbox per second while it runs, to your team.")).not.toHaveLength(0);
+  expect((await screen.findAllByText(/Prepaid balance \$25\.00/)).length).toBeGreaterThan(0);
+  // The owner has a choice to make, so the heading says so and the controls stay open.
+  expect(screen.getByRole("heading", { name: "Your launch" })).toBeInTheDocument();
+  expect(screen.queryByText("When you launch")).not.toBeInTheDocument();
   // No Hivra plan, host size or browser applies to a DigitalOcean sandbox.
   expect(screen.queryByRole("checkbox", { name: /Browser for Codex/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("group", { name: "Size" })).not.toBeInTheDocument();
@@ -185,14 +188,13 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
   fireEvent.change(screen.getByLabelText("First task (optional)"), { target: { value: "Summarize the repo" } });
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
   expect(JSON.stringify({ ...window.localStorage })).not.toContain(OPENAI_KEY);
-  fireEvent.click(screen.getByTestId("launch-primary-action"));
 
-  const review = within(screen.getByLabelText("Launch review"));
-  expect(review.getByText(/DigitalOcean · Studio team/)).toBeInTheDocument();
+  const review = within(screen.getByTestId("launch-journey"));
+  expect(review.getAllByText(/DigitalOcean · Studio team/).length).toBeGreaterThan(0);
   expect(review.getByText("1 vCPU / 1 GB DigitalOcean sandbox")).toBeInTheDocument();
   expect(review.getByText("Your OpenAI API key, sent to DigitalOcean for this sandbox")).toBeInTheDocument();
-  expect(review.getByText(/Creates one DigitalOcean sandbox on Studio team and starts it\. DigitalOcean bills from now\. Hivra sends it a short setup note/)).toBeInTheDocument();
-  expect(review.getByText("Summarize the repo")).toBeInTheDocument();
+  // The first task shows in its field and again under More details.
+  expect(review.getAllByText("Summarize the repo")).toHaveLength(2);
   const launch = screen.getByTestId("launch-primary-action");
   expect(launch).toHaveTextContent("Launch and start billing");
   fireEvent.click(launch);
@@ -215,7 +217,7 @@ it("runs Codex on the owner's DigitalOcean team: its sizes, a vendor key, what D
 it("takes the team a DigitalOcean card handed over for the agent the owner picks", async () => {
   targetParams = [TARGET_ID];
   await chooseAgent("Claude Code");
-  expect(await screen.findByText("DigitalOcean · Studio team")).toBeInTheDocument();
+  expect(await screen.findAllByText("DigitalOcean · Studio team")).not.toHaveLength(0);
   expect(modelChoice(/^Use my Anthropic API key/)).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByLabelText("Anthropic API key")).toBeInTheDocument();
 });
@@ -240,7 +242,6 @@ it("runs Hermes on DigitalOcean Inference only, with DigitalOcean's model list",
   fireEvent.change(model, { target: { value: "openai-gpt-oss-120b" } });
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
   fireEvent.click(screen.getByTestId("launch-primary-action"));
-  fireEvent.click(screen.getByTestId("launch-primary-action"));
 
   await waitFor(() => expect(launchBodies).toHaveLength(1));
   expect(launchBodies[0]).toMatchObject({
@@ -263,7 +264,7 @@ it("lets the owner type a model slug when DigitalOcean's list is unavailable", a
 
 it("never offers DigitalOcean to an agent it can't run", async () => {
   await chooseAgent("OpenClaw");
-  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  fireEvent.click(screen.getByRole("button", { name: "Change where it runs" }));
   await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/managed-sessions", expect.anything()));
   expect(screen.queryByRole("button", { name: /^DigitalOcean ·/ })).not.toBeInTheDocument();
 });
@@ -293,8 +294,7 @@ describe("a provider key saved in the Vault", () => {
 
     fireEvent.click(consent);
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    const review = within(screen.getByLabelText("Launch review"));
+    const review = within(screen.getByTestId("launch-journey"));
     expect(review.getByText("Your saved OpenAI API key ••3f2a, sent to DigitalOcean for this sandbox")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("launch-primary-action"));
 
@@ -310,8 +310,7 @@ describe("a provider key saved in the Vault", () => {
     fireEvent.change(screen.getByLabelText("OpenAI API key"), { target: { value: OPENAI_KEY } });
     fireEvent.click(screen.getByRole("checkbox", { name: "Save it in my Vault for next time, replacing your saved key ••3f2a" }));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
-    expect(within(screen.getByLabelText("Launch review"))
+    expect(within(screen.getByTestId("launch-journey"))
       .getByText("Your OpenAI API key, sent to DigitalOcean for this sandbox and saved in your Vault, replacing ••3f2a")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("launch-primary-action"));
 
@@ -329,11 +328,10 @@ describe("a provider key saved in the Vault", () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: /Send this key to DigitalOcean for Codex 1/ }));
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     fireEvent.click(screen.getByTestId("launch-primary-action"));
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
 
     cleanup();
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("launch-primary-action"));
@@ -351,11 +349,10 @@ describe("a provider key saved in the Vault", () => {
     fireEvent.change(screen.getByLabelText("OpenAI API key"), { target: { value: OPENAI_KEY } });
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     fireEvent.click(screen.getByTestId("launch-primary-action"));
-    fireEvent.click(screen.getByTestId("launch-primary-action"));
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
 
     cleanup();
-    render(<LaunchJourney />);
+    render(<LaunchJourney legacyHermesLane />);
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     expect(screen.getByTestId("launch-primary-action")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("API key"), { target: { value: OPENAI_KEY } });

@@ -35,14 +35,28 @@ describe("tailscale private access service helpers", () => {
       authKeyEnvVar: "TAILSCALE_AUTH_KEY",
       machineName: "atlas-agent",
       tags: ["tag:prod", "tag:hermes"],
-      enableSsh: true,
+      enableSsh: false,
     });
 
     expect(command).toContain('tailscale up --auth-key "$TAILSCALE_AUTH_KEY"');
     expect(command).toContain("--hostname='atlas-agent'");
     expect(command).toContain("--advertise-tags='tag:prod,tag:hermes'");
-    expect(command).toContain("--ssh");
+    expect(command).toContain("--ssh=false --accept-routes=false --advertise-exit-node=false --accept-dns=false");
     expect(command).not.toContain("tskey-auth-");
+  });
+
+  it("can read the auth key from a private file instead of the command line", () => {
+    const command = buildTailscaleEnrollCommand({ authKeyFileVar: "TAILSCALE_AUTH_FILE" });
+    expect(command).toContain('--auth-key="file:$TAILSCALE_AUTH_FILE"');
+    expect(command).not.toContain('--auth-key "$');
+  });
+
+  it("never builds a command that turns Tailscale SSH on", () => {
+    expect(() => buildTailscaleEnrollCommand({ authKeyEnvVar: "K", enableSsh: true })).toThrow("Tailscale SSH is not available");
+  });
+
+  it("gives an apt failure its own failure code", () => {
+    expect(buildTailscaleInstallScript()).toContain("HIVRA_PRIVATE_ACCESS_FAILURE apt_failed");
   });
 
   it("shell-quotes enrollment values that come from request data", () => {
@@ -75,6 +89,12 @@ describe("tailscale private access service helpers", () => {
     );
     expect(script).toContain("systemctl disable --now tailscaled");
     expect(script).toContain("pkill -x tailscaled");
+    expect(script).toContain("nft delete table inet hivra_private_access");
+  });
+
+  it("reads only the tags the node reports", () => {
+    expect(parseTailscaleStatusJson(JSON.stringify({ Self: { Tags: ["tag:hivra"] } })).tags).toEqual(["tag:hivra"]);
+    expect(parseTailscaleStatusJson(JSON.stringify({ Self: {} })).tags).toBeUndefined();
   });
 
   it("parses a tailscale status payload into a dashboard snapshot", () => {

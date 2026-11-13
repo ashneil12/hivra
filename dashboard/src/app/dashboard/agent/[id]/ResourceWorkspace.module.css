@@ -1,99 +1,60 @@
 .workspace { min-width: 0; container-type: inline-size; container-name: resource-workspace; }
-/* Legacy full-width header. The identity it carried now lives inside the
-   surface bar (.identity), because the two rows named the same resource and
-   cost 56px of every session. Kept for the native-shell path, which suppresses
-   the bar and therefore has nowhere else to show the name or the way back. */
-.header { display: flex; align-items: center; flex-shrink: 0; gap: 12px; min-height: 56px; padding: 8px clamp(12px, 2cqi, 24px); border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); min-width: 0; }
-.identity { display: flex; align-items: center; flex: 0 1 280px; min-width: 140px; max-width: 32%; margin-right: 16px; padding-right: 16px; border-right: 1px solid var(--etched-border); }
-.backButton, .newTabButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--etched-border); background: transparent; color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
-.name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; font-weight: 400; color: var(--ink-black); }
-/* Inside the bar the name runs at UI size, not the display-serif 18px the
-   standalone header used — that header had a whole row to itself. */
-.identity .name { flex: 0 1 auto; font-size: 13px; font-weight: 600; }
-.identity .backButton { min-height: 30px; padding: 4px 8px; border-color: transparent; }
-.identity .status { font-size: 11px; }
-/* "Update available" beside the agent's name; empty when there is nothing to say. */
-.softwareChip { display: inline-flex; flex-shrink: 0; margin-left: 8px; }
-.softwareChip:empty { display: none; }
-/* With something to say, the identity takes the width of the name and the
-   chip together (up to 45% of the bar) instead of its fixed 280px, so the
-   chip never squeezes the agent's name. */
-@container resource-workspace (width > 900px) {
-  .identity:has(> .softwareChip:not(:empty)) { flex: 0 1 auto; max-width: 45%; }
-}
-.metadata { flex-shrink: 0; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
-.status { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; text-transform: capitalize; flex-shrink: 0; }
-.status > span { width: 6px; height: 6px; border-radius: 50%; }
+/* A DigitalOcean session has no sidebar of its own, so its page keeps one quiet way back. */
+.backBar { display: flex; align-items: center; flex-shrink: 0; min-height: 40px; padding: 0 8px; border-bottom: 1px solid var(--hg-stroke-subtle); }
+.backLink { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border: 0; border-radius: var(--hg-radius-sm); background: transparent; color: var(--hg-text-3); font-size: 13px; font-weight: 500; cursor: pointer; }
+.backLink:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.backLink:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+@media (pointer: coarse) { .backLink { min-height: 44px; } }
 .workPane { overflow: auto; overscroll-behavior: contain; }
-.surfaceToolbar { display: flex; align-items: center; flex-shrink: 0; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); min-width: 0; }
-.surfaceDescription { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; }
-.newTabButton:disabled { opacity: .5; cursor: default; }
+/* "Open in new tab" when the title bar did not take it: a small ghost icon in the pane's corner. */
+.newTabCorner { position: absolute; top: 8px; right: 22px; z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--hg-radius-sm); background: transparent; color: var(--hg-text-3); cursor: pointer; opacity: .6; transition: opacity var(--hg-fast) var(--hg-ease), background var(--hg-fast) var(--hg-ease); }
+.newTabCorner:hover, .newTabCorner:focus-visible { opacity: 1; background: var(--hg-fill-hover); color: var(--hg-text); }
+.newTabCorner:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
+@media (pointer: coarse) { .newTabCorner { width: 44px; height: 44px; } }
 /* Parallel terminal sessions: one strip of session tabs over retained frames. */
-.terminalStack { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.sessionStrip { display: flex; align-items: stretch; flex-shrink: 0; gap: 2px; padding: 3px 8px 0; border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); overflow-x: auto; scrollbar-width: thin; }
-.sessionTab { display: inline-flex; align-items: center; flex-shrink: 0; border: 1px solid transparent; border-bottom: 0; color: var(--text-muted); }
-.sessionTab[data-active] { border-color: var(--etched-border); background: var(--bg-elevated); color: var(--ink-black); }
-.sessionTab > button:first-child { min-height: 30px; padding: 4px 10px; border: 0; background: transparent; color: inherit; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
-.sessionClose, .sessionAdd { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 30px; padding: 0 6px; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
+.terminalStack { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
+.sessionStrip { display: flex; align-items: center; flex-shrink: 0; gap: 2px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid var(--hg-stroke-subtle); background: transparent; overflow-x: auto; scrollbar-width: none; }
+.sessionStrip::-webkit-scrollbar { display: none; }
+.sessionTab { display: inline-flex; align-items: center; flex-shrink: 0; border: 0; border-radius: var(--hg-radius-sm); transition: background var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease); color: var(--hg-text-3); }
+.sessionTab:hover { background: var(--hg-fill-hover); color: var(--hg-text); }
+.sessionTab[data-active] { background: var(--hg-fill-2); color: var(--hg-text); }
+.sessionTab > button:first-child { min-height: 28px; padding: 0 4px 0 10px; border: 0; background: transparent; color: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.sessionClose, .sessionAdd { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; min-height: 28px; padding: 0 6px; border-radius: var(--hg-radius-sm); border: 0; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
 .sessionClose:hover, .sessionAdd:hover:not(:disabled) { color: var(--ink-black); }
+.sessionAdd { gap: 4px; font-size: 13px; font-weight: 500; white-space: nowrap; }
 .sessionAdd:disabled { opacity: .4; cursor: default; }
+/* A lone session has no strip; its new-terminal control floats at the top right,
+   clear of the terminal's own scrollbar, and stays findable by keyboard and screen reader. */
+.sessionNew { position: absolute; top: 8px; right: 22px; z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--hg-radius-sm); background: transparent; color: var(--hg-text-3); cursor: pointer; opacity: .6; transition: opacity var(--hg-fast) var(--hg-ease), background var(--hg-fast) var(--hg-ease); }
+.sessionNew:hover, .sessionNew:focus-visible { opacity: 1; background: var(--hg-fill-hover); color: var(--hg-text); }
+.sessionNew:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 .sessionPanel { flex: 1; min-height: 0; }
 .sessionPanel[hidden] { display: none; }
-.sessionTab button:focus-visible, .sessionAdd:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.sessionTab button:focus-visible, .sessionAdd:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
 /* Touch tablets keep the wide strip but need finger-sized close and add. */
 @media (pointer: coarse) { .sessionClose, .sessionAdd { min-width: 44px; min-height: 44px; } }
+@media (pointer: coarse) { .sessionNew { width: 44px; height: 44px; } }
 .statusPanel { flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: clamp(20px, 5cqi, 48px) clamp(16px, 4cqi, 32px); text-align: center; color: var(--text-muted); overflow-wrap: anywhere; }
-.statusPanel > h3 { color: var(--ink-black); font-size: 22px; font-weight: 400; }
+.statusPanel > h3 { margin-bottom: 6px; color: var(--hg-text); font-size: 22px; font-weight: 600; letter-spacing: -0.03em; }
 .statusPanel > p { max-width: 480px; margin-inline: auto; }
 .statusPanel button { min-height: 44px; font-size: 13px; }
-.backButton:focus-visible, .newTabButton:focus-visible, .statusPanel button:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.statusActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 18px; }
+.statusPrimary, .statusSecondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 16px; border-radius: var(--hg-radius-md); font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease, transform 80ms ease; }
+.statusPrimary { border: 1px solid transparent; background: var(--hg-accent); color: var(--hg-on-accent); }
+.statusPrimary:hover:not(:disabled) { opacity: .88; }
+.statusSecondary { border: 1px solid var(--hg-stroke-strong); background: var(--hg-fill-1); color: var(--hg-text); }
+.statusSecondary:hover:not(:disabled) { background: var(--hg-fill-2); }
+.statusPrimary:active:not(:disabled), .statusSecondary:active:not(:disabled) { transform: scale(.98); }
+.statusPrimary:disabled, .statusSecondary:disabled { opacity: .55; cursor: progress; }
+.statusNote { margin-top: 12px; font-size: 12px; color: var(--text-muted); }
+@media (prefers-reduced-motion: reduce) { .statusPrimary, .statusSecondary { transition: none; } .statusPrimary:active:not(:disabled), .statusSecondary:active:not(:disabled) { transform: none; } }
+.statusPanel button:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 2px; }
 /* First-launch "While you wait" fields. */
-.personalizationField { border: 1px solid var(--etched-border); background: transparent; color: var(--ink-black); padding: 9px 10px; font-size: 13px; }
+.personalizationField { border: 1px solid var(--hg-stroke); border-radius: var(--hg-radius-md); background: transparent; color: var(--ink-black); padding: 9px 10px; font-size: 13px; }
 textarea.personalizationField { padding: 10px; resize: vertical; }
 @media (max-width: 767px) { .personalizationField { min-height: 44px; } }
-@container resource-workspace (max-width: 760px) { .metadata { display: none; } }
-/* Preserve the resource name on narrow screens; surfaces get their own row. */
-@container resource-workspace (max-width: 900px) {
-  .identity { flex-basis: 100%; max-width: none; border-right: 0; margin: 0; padding: 0; }
-  .identity .name { display: none; }
-}
 @container resource-workspace (max-width: 600px) {
-  .header { min-height: 52px; padding: 4px 10px; gap: 8px; }
-  .backButton { width: 44px; min-height: 44px; padding: 0; border-color: transparent; }
-  .backButton > span { display: none; }
-  .name { font-size: 16px; }
-  .status { font-size: 11px; max-width: 90px; }
-  .surfaceToolbar { padding: 4px 10px; }
-  .surfaceDescription { font-size: 10px; }
-  .newTabButton { min-height: 44px; padding-inline: 8px; font-size: 10px; }
   .sessionTab > button:first-child, .sessionClose, .sessionAdd { min-height: 44px; }
   .sessionClose, .sessionAdd { min-width: 44px; }
   .statusPanel { padding: 20px 16px; }
-  /* One 44px identity line so the surfaces sit directly under it: icon,
-     name, chevron, then a status dot and word at the far edge. The switcher
-     keeps its markup and accessible name; its copy is flattened in place. */
-  .identity > button { width: 100%; gap: 8px; padding-block: 0; }
-  .identity > button > span { display: contents; }
-  .identity > button > svg:first-child { width: 16px; height: 16px; }
-  .identity > button strong { flex: 0 1 auto; min-width: 0; }
-  .identity > button > svg:last-child { order: 2; }
-  /* The chip keeps its accessible name and a short word beside its icon. */
-  .softwareChip [data-chip-text] { display: none; }
-  .softwareChip [data-chip-short] { display: inline; }
-  .identity > button small { order: 3; display: inline-flex; align-items: center; flex-shrink: 0; margin-left: auto; padding-left: 8px; }
-  .identity [data-switcher-part="kind"], .identity [data-switcher-part="separator"] { display: none; }
-  .identity [data-switcher-part="status"] { display: inline-flex; align-items: center; gap: 6px; }
-  /* Shape as well as colour, so the state still reads once the word goes:
-     running solid, busy half filled, stopped hollow, error a diamond. */
-  .identity [data-switcher-part="status"]::before { content: ""; box-sizing: border-box; width: 6px; height: 6px; flex-shrink: 0; border: 1px solid var(--text-muted); background: transparent; }
-  .identity [data-tone="ok"]::before { border-color: var(--green); background: var(--green); }
-  .identity [data-tone="busy"]::before { border-color: var(--yellow); background: linear-gradient(to top, var(--yellow) 50%, transparent 50%); }
-  .identity [data-tone="error"]::before { border-color: var(--hivra-red); background: var(--hivra-red); transform: rotate(45deg); }
-  /* While typing, only the surface row stays above the work surface. The
-     switcher's own search keeps its anchor, so the menu stays put. */
-  :global([data-keyboard-open="true"]) .identity:not(:has([aria-haspopup="dialog"][aria-expanded="true"])) { display: none; }
-}
-@container resource-workspace (max-width: 359px) {
-  .identity [data-switcher-part="status"] { font-size: 0; gap: 0; }
-  .identity [data-switcher-part="status"]::before { width: 8px; height: 8px; }
 }

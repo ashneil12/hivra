@@ -1,4 +1,5 @@
 import { AGENTS, BASE_FLOOR, canLaunchAgent, getAgent, hostingDisclaimer, isPoolExempt, resizeFloor } from "../agent-catalog";
+import { isOpenBotAgentEnabled } from "../openbot-flag";
 import { WELCOME_AGENT_TYPES } from "@/lib/welcome-agent-catalog";
 
 describe("Hivra agent catalog", () => {
@@ -59,8 +60,8 @@ describe("Hivra agent catalog", () => {
     expect(canLaunchAgent(claude!, "free")).toEqual({ ok: true });
   });
 
-  it("offers Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero as launchable box agents", () => {
-    expect(AGENTS.map((agent) => agent.id)).toEqual(["hermes", "claude-code", "codex", "aeon", "openclaw", "agent-zero"]);
+  it("offers Hermes, Claude Code, Codex, Aeon, OpenClaw, Agent Zero, and DeepSeek Harness as launchable box agents", () => {
+    expect(AGENTS.map((agent) => agent.id)).toEqual(["hermes", "claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness"]);
     expect(getAgent("codex")).toMatchObject({
       id: "codex",
       cliKind: "codex",
@@ -156,14 +157,73 @@ describe("Hivra agent catalog", () => {
     expect(canLaunchAgent(agentZero!, "pro")).toEqual({ ok: true });
   });
 
-  it("describes DeepSeek Harness for retained native rows without exposing an unaccepted launch card", () => {
+  it("defines OpenBot as a dashboard agent that is launchable only behind its flag", () => {
+    const openbot = getAgent("openbot");
+
+    expect(openbot).toMatchObject({
+      id: "openbot",
+      name: "OpenBot",
+      vendor: "CopilotKit",
+      surface: "dashboard",
+      browser: false,
+      minPlan: "pro",
+      weight: 2,
+      badge: "Coworkers",
+      accent: "#6e56cf",
+      dashboardPort: 3101,
+      managedVenice: true,
+      llm: { wire: "openai", providers: ["venice"] },
+      available: isOpenBotAgentEnabled(),
+    });
+    expect(openbot!.cliKind).toBeUndefined();
+    expect(isPoolExempt("openbot")).toBe(false);
+    expect(resizeFloor("openbot", false)).toEqual({ cpu: 1, ram: 3 });
+    expect(AGENTS.some((agent) => agent.id === "openbot")).toBe(isOpenBotAgentEnabled());
+    const copy = hostingDisclaimer(openbot);
+    expect(copy).toContain("official OpenBot image from CopilotKit");
+    expect(copy).toContain("Hivra administrators retain infrastructure access");
+    expect(copy).not.toMatch(/[\u2013\u2014]/);
+    expect(hostingDisclaimer(openbot, "self-managed")).toContain("Hivra does not become the host operator");
+  });
+
+  it("keeps OpenBot out of the launch picker while its flag is off", () => {
+    expect(getAgent("openbot")).toBeDefined();
+    if (!isOpenBotAgentEnabled()) expect(canLaunchAgent(getAgent("openbot")!, "pro")).toEqual({ ok: false, reason: "Coming soon" });
+  });
+
+  it("lists DeepSeek Harness as a launchable dashboard agent that keeps its floor", () => {
     const harness = getAgent("deepseek-harness");
-    expect(harness).toMatchObject({ surface: "dashboard", available: false, minPlan: "pro", floor: { cpu: 2, ram: 3 } });
-    expect(AGENTS.some(agent => agent.id === "deepseek-harness")).toBe(false);
-    expect(canLaunchAgent(harness!, "power")).toEqual({ ok: false, reason: "Coming soon" });
+    expect(harness).toMatchObject({ surface: "dashboard", available: true, minPlan: "pro", floor: { cpu: 2, ram: 3 }, browser: false });
+    expect(AGENTS.some(agent => agent.id === "deepseek-harness")).toBe(true);
+    expect(canLaunchAgent(harness!, "free")).toEqual({ ok: false, reason: "Needs Pro" });
+    expect(canLaunchAgent(harness!, "pro")).toEqual({ ok: true });
+    // It gets its model at launch: Hivra credits through managed Venice, or a Venice key.
+    expect(harness?.llm).toEqual({ wire: "openai", providers: ["venice"] });
+    expect(harness?.managedVenice).toBe(true);
+    expect(resizeFloor("deepseek-harness", false)).toEqual({ cpu: 2, ram: 3 });
+  });
+
+  it("describes DeepSeek Harness's hosting without claiming a CLI sign-in or Hivra tabs it lacks", () => {
+    const text = hostingDisclaimer(getAgent("deepseek-harness"));
+    expect(text).toContain("DeepSeek's coding agent");
+    expect(text).toContain("It runs on DeepSeek V4.1 Flash through Hivra credits, or your own Venice API key.");
+    expect(text).not.toMatch(/official .* CLI|chat, terminal, files/);
   });
 
   it("keeps the standard BASE_FLOOR for CLI agents (no per-agent override)", () => {
     expect(resizeFloor("claude-code", false)).toEqual({ cpu: BASE_FLOOR.cpu, ram: BASE_FLOOR.ram });
+  });
+});
+
+describe("resize floor by computer profile", () => {
+  it("holds a desktop to 2 CPU / 4 GB and a Linux computer without a desktop to 0.5 CPU / 1 GB", () => {
+    expect(resizeFloor("linux-desktop", false)).toEqual({ cpu: 2, ram: 4 });
+    expect(resizeFloor("linux-desktop", false, "ubuntu-desktop")).toEqual({ cpu: 2, ram: 4 });
+    expect(resizeFloor("linux-desktop", false, null)).toEqual({ cpu: 2, ram: 4 });
+    expect(resizeFloor("linux-desktop", false, "ubuntu-server")).toEqual({ cpu: 0.5, ram: 1 });
+  });
+
+  it("does not let the profile change any other type's floor", () => {
+    expect(resizeFloor("codex", false, "ubuntu-server")).toEqual(resizeFloor("codex", false));
   });
 });

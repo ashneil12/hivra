@@ -10,7 +10,7 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { forgetManagedSession } from "@/lib/hivra/do-managed-sessions";
 import { ManagedSessionForgetSchema } from "@/lib/hivra/managed-session-contracts";
-import { hivraApiUnavailable, managedSessionFailure, noStore, readMutationBody, UUID } from "../../route-support";
+import { managedSessionFailure, noStore, readMutationBody, UUID } from "../../route-support";
 
 /**
  * Remove a DigitalOcean agent from Hivra when its saved token can no longer
@@ -18,8 +18,6 @@ import { hivraApiUnavailable, managedSessionFailure, noStore, readMutationBody, 
  * acknowledge that the session may remain there.
  */
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;

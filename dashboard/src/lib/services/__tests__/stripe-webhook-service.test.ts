@@ -51,7 +51,6 @@ jest.mock("@/lib/posthog", () => ({
 
 jest.mock("@/lib/billing/credits", () => ({
   grantStripeTopUpCredits: jest.fn().mockResolvedValue({ inserted: true, balance: 1000 }),
-  grantSubscriptionCycleCredits: jest.fn().mockResolvedValue({ inserted: true, balance: 2090 }),
   isTopUpPackageCredits: jest.fn((credits: number) =>
     [500, 1000, 2500, 5000].includes(credits)
   ),
@@ -142,7 +141,6 @@ import {
 import { posthogClient } from "@/lib/posthog";
 import {
   grantStripeTopUpCredits,
-  grantSubscriptionCycleCredits,
 } from "@/lib/billing/credits";
 import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-wallets";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
@@ -776,13 +774,6 @@ describe("StripeWebhookService", () => {
           plan: "operator",
           status: "active"
       });
-      expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith({
-        userId: "user_1",
-        planKey: "operator",
-        subscriptionId: "sub_1",
-        periodStart: 1000,
-        periodEnd: 2000,
-      });
     });
 
     it("accepts a configured yearly Stripe price for the matching plan", async () => {
@@ -838,13 +829,6 @@ describe("StripeWebhookService", () => {
           expect.anything(),
           expect.anything()
         );
-        expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith({
-          userId: "user_1",
-          planKey: "operator",
-          subscriptionId: "sub_yearly",
-          periodStart: 1000,
-          periodEnd: 2000,
-        });
       } finally {
         operatorPlan.stripePriceId = originalMonthlyPriceId;
         operatorPlan.stripeYearlyPriceId = originalYearlyPriceId;
@@ -943,7 +927,6 @@ describe("StripeWebhookService", () => {
         } as unknown as Stripe.Subscription);
 
         expect(supabaseAdmin!.from).not.toHaveBeenCalled();
-        expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
         expect(log.error).toHaveBeenCalledWith(
           "subscription plan/price mismatch — refusing to apply",
           expect.anything(),
@@ -1268,7 +1251,6 @@ describe("StripeWebhookService", () => {
       expect(stringifiedContext).not.toContain("subscription-upsert-secret-leak");
       expect(stringifiedContext).not.toContain("subscription-upsert-details-leak");
       expect(stringifiedContext).not.toContain("subscription-upsert-hint-leak");
-      expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
     });
   });
 
@@ -1645,39 +1627,6 @@ describe("StripeWebhookService", () => {
       );
     });
 
-    it("does not power anything off when the instances were not suspended (legacy hard-delete flag)", async () => {
-      process.env.HERMES_BILLING_LEGACY_HARD_DELETE = "true";
-      try {
-        mockInstanceUpdateCapture();
-        await StripeWebhookService.handleSubscriptionDeleted({
-          id: "sub_1",
-          metadata: { user_id: "user_1" },
-        } as unknown as Stripe.Subscription);
-        expect(enforceGraceExpiredComputeStop).not.toHaveBeenCalled();
-      } finally {
-        delete process.env.HERMES_BILLING_LEGACY_HARD_DELETE;
-      }
-    });
-
-    it("does NOT write the suspend shape when the legacy hard-delete revert flag is set", async () => {
-      process.env.HERMES_BILLING_LEGACY_HARD_DELETE = "true";
-      try {
-        const sub = {
-          id: "sub_1",
-          metadata: { user_id: "user_1" },
-        } as unknown as Stripe.Subscription;
-        const payloads = mockInstanceUpdateCapture();
-        await StripeWebhookService.handleSubscriptionDeleted(sub);
-        // Flag routes to the legacy scheduleInstancesForDeletion path, so the
-        // new suspend shape must never be written.
-        expect(
-          payloads.find((p) => p.entitlement_state === "suspended")
-        ).toBeUndefined();
-      } finally {
-        delete process.env.HERMES_BILLING_LEGACY_HARD_DELETE;
-      }
-    });
-
     it("does not cancel or suspend when the row was rebound to another subscription after it was read", async () => {
       const payloads = mockInstanceUpdateCapture();
       const fromImpl = (supabaseAdmin!.from as jest.Mock).getMockImplementation() as (table: string) => MockBuilder;
@@ -2028,28 +1977,6 @@ describe("StripeWebhookService", () => {
       expect(enforceGraceExpiredComputeStop).not.toHaveBeenCalled();
     });
 
-    it("subscription.deleted arms no deletion fuse under the legacy hard-delete flag", async () => {
-      process.env.HERMES_BILLING_LEGACY_HARD_DELETE = "true";
-      const scheduleSpy = jest
-        .spyOn(StripeWebhookService, "scheduleInstancesForDeletion")
-        .mockResolvedValue(undefined);
-      try {
-        await mockApplyTierChange();
-        (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce(YEARLY_POWER);
-        mockInstanceUpdateCapture();
-
-        await StripeWebhookService.handleSubscriptionDeleted({
-          id: "sub_1",
-          metadata: { user_id: "user_1" },
-        } as unknown as Stripe.Subscription);
-
-        expect(scheduleSpy).not.toHaveBeenCalled();
-      } finally {
-        scheduleSpy.mockRestore();
-        delete process.env.HERMES_BILLING_LEGACY_HARD_DELETE;
-      }
-    });
-
     it("subscription.deleted downgrades and suspends when no other lane pays", async () => {
       const applyTierChange = await mockApplyTierChange();
       const payloads = mockInstanceUpdateCapture();
@@ -2177,7 +2104,6 @@ describe("StripeWebhookService", () => {
       } as unknown as Stripe.Invoice);
 
       expect(subscriptionUpdates).toHaveLength(0);
-      expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
       expect(log.error).toHaveBeenCalledWith(
         expect.stringContaining("invoice.paid for a canceled subscription"),
         expect.anything(),
@@ -2425,7 +2351,6 @@ describe("StripeWebhookService", () => {
 
           expect(db.to("hermes_subscriptions")).toEqual([]);
           expect(db.to("hermes_instances")).toEqual([]);
-          expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
           // The payment still lands on the lane's own row.
           expect(db.to("workspace_cloud_subscriptions")).toEqual([
             expect.objectContaining({
@@ -2593,9 +2518,6 @@ describe("StripeWebhookService", () => {
             })
           );
           // The Operator cycle was paid, so its credits are still granted.
-          expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith(
-            expect.objectContaining({ userId: USER, planKey: "operator", subscriptionId: "sub_hivra" })
-          );
         }
       );
 
@@ -2613,7 +2535,6 @@ describe("StripeWebhookService", () => {
 
         expect(db.row()).toMatchObject({ status: "past_due" });
         expect(db.to("hermes_instances")).toEqual([]);
-        expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
       });
 
       it("invoice.paid activates only the row bound to that exact subscription", async () => {
@@ -2638,9 +2559,6 @@ describe("StripeWebhookService", () => {
         expect(
           db.to("hermes_instances").find((w) => w.payload.entitlement_state === "ok")
         ).toBeTruthy();
-        expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith(
-          expect.objectContaining({ userId: USER, planKey: "operator", subscriptionId: "sub_hivra" })
-        );
         expect(db.to("workspace_cloud_subscriptions")).toEqual([]);
       });
 
@@ -2697,393 +2615,6 @@ describe("StripeWebhookService", () => {
         expect(maybeSendPaymentFailedRecoveryEmail).toHaveBeenCalledTimes(1);
         expect(db.to("workspace_cloud_subscriptions")).toEqual([]);
       });
-    });
-  });
-
-  describe("instance deletion scheduling", () => {
-    it("starts shutdowns concurrently before awaiting the first one", async () => {
-      const shutdownServerMock = shutdownServer as jest.MockedFunction<typeof shutdownServer>;
-      const firstShutdown = createDeferredPromise<{ action: { id: number } }>();
-      const secondShutdown = createDeferredPromise<{ action: { id: number } }>();
-      shutdownServerMock
-        .mockImplementationOnce(() => firstShutdown.promise)
-        .mockImplementationOnce(() => secondShutdown.promise);
-
-      const updatedInstanceIds: string[] = [];
-      const updatedHostIds: string[] = [];
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        const builder = createMockBuilder();
-        if (table === "hermes_instances") {
-          builder.select.mockImplementation(() => {
-            const selectBuilder = createMockBuilder();
-            selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.not.mockImplementation(() => selectBuilder);
-            selectBuilder.then = (resolve: (value: unknown) => void) =>
-              resolve({
-                data: [
-                  { id: "inst_1", host_id: "host_1", hetzner_server_id: "srv_1", status: "running" },
-                  { id: "inst_2", host_id: "host_2", hetzner_server_id: "srv_2", status: "running" },
-                ],
-                error: null,
-              });
-            return selectBuilder;
-          });
-
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((column: string, value: string) => {
-              if (column === "id") updatedInstanceIds.push(value);
-              return updateBuilder;
-            });
-            return updateBuilder;
-          });
-        }
-
-        if (table === "hermes_hosts") {
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedHostIds.push(value);
-              return Promise.resolve({ error: null });
-            });
-            return updateBuilder;
-          });
-        }
-        return builder;
-      });
-
-      const pending = StripeWebhookService.scheduleInstancesForDeletion("user_1");
-      await flushAsyncStart();
-
-      expect(shutdownServerMock).toHaveBeenCalledTimes(2);
-
-      firstShutdown.resolve({ action: { id: 1 } });
-      secondShutdown.resolve({ action: { id: 2 } });
-      await pending;
-
-      expect(updatedInstanceIds).toEqual(expect.arrayContaining(["inst_1", "inst_2"]));
-      expect(updatedHostIds).toEqual(expect.arrayContaining(["host_1", "host_2"]));
-    });
-
-    it("deduplicates shared-host shutdowns and host sync writes", async () => {
-      const shutdownServerMock = shutdownServer as jest.MockedFunction<typeof shutdownServer>;
-      shutdownServerMock.mockResolvedValue({ action: { id: 1 } });
-
-      const updatedInstanceIds: string[] = [];
-      const updatedHostIds: string[] = [];
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        const builder = createMockBuilder();
-        if (table === "hermes_instances") {
-          builder.select.mockImplementation(() => {
-            const selectBuilder = createMockBuilder();
-            selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.not.mockImplementation(() => selectBuilder);
-            selectBuilder.then = (resolve: (value: unknown) => void) =>
-              resolve({
-                data: [
-                  {
-                    id: "inst_1",
-                    host_id: "host_1",
-                    hetzner_server_id: "srv_1",
-                    status: "running",
-                    scheduled_deletion_at: null,
-                  },
-                  {
-                    id: "inst_2",
-                    host_id: "host_1",
-                    hetzner_server_id: "srv_1",
-                    status: "running",
-                    scheduled_deletion_at: null,
-                  },
-                ],
-                error: null,
-              });
-            return selectBuilder;
-          });
-
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((column: string, value: string) => {
-              if (column === "id") updatedInstanceIds.push(value);
-              return updateBuilder;
-            });
-            return updateBuilder;
-          });
-        }
-
-        if (table === "hermes_hosts") {
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedHostIds.push(value);
-              return Promise.resolve({ error: null });
-            });
-            return updateBuilder;
-          });
-        }
-        return builder;
-      });
-
-      await StripeWebhookService.scheduleInstancesForDeletion("user_1");
-
-      expect(shutdownServerMock).toHaveBeenCalledTimes(1);
-      expect(updatedHostIds).toEqual(["host_1"]);
-      expect(updatedInstanceIds).toEqual(expect.arrayContaining(["inst_1", "inst_2"]));
-    });
-
-    it("redacts shutdown errors before logging them", async () => {
-      (log.error as jest.Mock).mockClear();
-      const shutdownServerMock = shutdownServer as jest.MockedFunction<typeof shutdownServer>;
-      shutdownServerMock.mockRejectedValue({
-        name: "ShutdownFailure",
-        message: "shutdown-secret-leak",
-        stack: "shutdown-stack-leak",
-      });
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        const builder = createMockBuilder();
-        if (table === "hermes_instances") {
-          builder.select.mockImplementation(() => {
-            const selectBuilder = createMockBuilder();
-            selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.not.mockImplementation(() => selectBuilder);
-            selectBuilder.then = (resolve: (value: unknown) => void) =>
-              resolve({
-                data: [{ id: "inst_1", hetzner_server_id: "srv_1", status: "running" }],
-                error: null,
-              });
-            return selectBuilder;
-          });
-
-          builder.update.mockImplementation(() => ({
-            eq: jest.fn().mockResolvedValue({ error: null }),
-          }));
-        }
-        return builder;
-      });
-
-      await StripeWebhookService.scheduleInstancesForDeletion("user_1");
-
-      expect(log.error).toHaveBeenCalledWith(
-        "failed to shutdown hetzner server",
-        expect.anything(),
-        expect.objectContaining({
-          source: "stripe-webhook-service",
-          failureType: "instance_server_transition_failed",
-          action: "shutdown",
-          hetznerServerId: "srv_1",
-        })
-      );
-      const contextCalls = (log.error as jest.Mock).mock.calls.map((call) => call[2]);
-      const stringifiedContext = JSON.stringify(contextCalls);
-      expect(stringifiedContext).not.toContain("shutdown-secret-leak");
-      expect(stringifiedContext).not.toContain("shutdown-stack-leak");
-    });
-
-    it("still marks the row scheduled_for_deletion when Hetzner shutdown fails — purge cron converges later", async () => {
-      // Regression: 2026-04-29 trial cohort. Hetzner shutdown threw on
-      // some subscriptions (e.g. already-off VMs from a prior delivery
-      // of the same webhook); old behavior returned early so the DB
-      // row stayed 'running' forever and purge-expired (which filters
-      // status='scheduled_for_deletion') never picked them up. Result:
-      // canceled trials with phantom VMs accumulating Hetzner billing.
-      (log.error as jest.Mock).mockClear();
-      const shutdownServerMock = shutdownServer as jest.MockedFunction<typeof shutdownServer>;
-      shutdownServerMock.mockRejectedValue({
-        name: "ShutdownFailure",
-        message: "shutdown-secret-leak",
-        stack: "shutdown-stack-leak",
-      });
-
-      const updatedInstanceIds: string[] = [];
-      const updatedHostIds: string[] = [];
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        const builder = createMockBuilder();
-        if (table === "hermes_instances") {
-          builder.select.mockImplementation(() => {
-            const selectBuilder = createMockBuilder();
-            selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.not.mockImplementation(() => selectBuilder);
-            selectBuilder.then = (resolve: (value: unknown) => void) =>
-              resolve({
-                data: [
-                  {
-                    id: "inst_1",
-                    host_id: "host_1",
-                    hetzner_server_id: "srv_1",
-                    status: "running",
-                    scheduled_deletion_at: null,
-                  },
-                ],
-                error: null,
-              });
-            return selectBuilder;
-          });
-
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((column: string, value: string) => {
-              if (column === "id") updatedInstanceIds.push(value);
-              return updateBuilder;
-            });
-            return updateBuilder;
-          });
-        }
-
-        if (table === "hermes_hosts") {
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((_: string, value: string) => {
-              updatedHostIds.push(value);
-              return Promise.resolve({ error: null });
-            });
-            return updateBuilder;
-          });
-        }
-        return builder;
-      });
-
-      await StripeWebhookService.scheduleInstancesForDeletion("user_1");
-
-      expect(updatedInstanceIds).toEqual(["inst_1"]);
-      expect(updatedHostIds).toEqual(["host_1"]);
-      expect(log.error).toHaveBeenCalledWith(
-        "failed to shutdown hetzner server",
-        expect.anything(),
-        expect.objectContaining({
-          source: "stripe-webhook-service",
-          failureType: "instance_server_transition_failed",
-          action: "shutdown",
-          hetznerServerId: "srv_1",
-        })
-      );
-      const contextCalls = (log.error as jest.Mock).mock.calls.map((call) => call[2]);
-      expect(JSON.stringify(contextCalls)).not.toContain("shutdown-secret-leak");
-    });
-
-    it("redacts unexpected instance update errors before logging them", async () => {
-      (log.error as jest.Mock).mockClear();
-      const shutdownServerMock = shutdownServer as jest.MockedFunction<typeof shutdownServer>;
-      shutdownServerMock.mockResolvedValue({ action: { id: 1 } });
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        const builder = createMockBuilder();
-        if (table === "hermes_instances") {
-          builder.select.mockImplementation(() => {
-            const selectBuilder = createMockBuilder();
-            selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.not.mockImplementation(() => selectBuilder);
-            selectBuilder.then = (resolve: (value: unknown) => void) =>
-              resolve({
-                data: [{ id: "inst_1", hetzner_server_id: "srv_1", status: "running" }],
-                error: null,
-              });
-            return selectBuilder;
-          });
-
-          builder.update.mockImplementation(() => ({
-            eq: jest.fn().mockRejectedValue({
-              name: "InstanceUpdateFailure",
-              message: "instance-update-secret-leak",
-              stack: "instance-update-stack-leak",
-            }),
-          }));
-        }
-        return builder;
-      });
-
-      await StripeWebhookService.scheduleInstancesForDeletion("user_1");
-
-      expect(log.error).toHaveBeenCalledWith(
-        "failed to soft-delete instance instance lifecycle row",
-        expect.anything(),
-        expect.objectContaining({
-          source: "stripe-webhook-service",
-          failureType: "instance_state_update_failed",
-          action: "soft-delete instance",
-          instanceId: "inst_1",
-        })
-      );
-      const contextCalls = (log.error as jest.Mock).mock.calls.map((call) => call[2]);
-      const stringifiedContext = JSON.stringify(contextCalls);
-      expect(stringifiedContext).not.toContain("instance-update-secret-leak");
-      expect(stringifiedContext).not.toContain("instance-update-stack-leak");
-    });
-
-    it("still updates instance rows when the shared host sync fails after shutdown succeeds", async () => {
-      (log.error as jest.Mock).mockClear();
-      const shutdownServerMock = shutdownServer as jest.MockedFunction<typeof shutdownServer>;
-      shutdownServerMock.mockResolvedValue({ action: { id: 1 } });
-      const updatedInstanceIds: string[] = [];
-
-      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
-        const builder = createMockBuilder();
-        if (table === "hermes_instances") {
-          builder.select.mockImplementation(() => {
-            const selectBuilder = createMockBuilder();
-            selectBuilder.eq.mockImplementation(() => selectBuilder);
-            selectBuilder.not.mockImplementation(() => selectBuilder);
-            selectBuilder.then = (resolve: (value: unknown) => void) =>
-              resolve({
-                data: [
-                  {
-                    id: "inst_1",
-                    host_id: "host_1",
-                    hetzner_server_id: "srv_1",
-                    status: "running",
-                    scheduled_deletion_at: null,
-                  },
-                ],
-                error: null,
-              });
-            return selectBuilder;
-          });
-
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockImplementation((column: string, value: string) => {
-              if (column === "id") updatedInstanceIds.push(value);
-              return updateBuilder;
-            });
-            return updateBuilder;
-          });
-        }
-
-        if (table === "hermes_hosts") {
-          builder.update.mockImplementation(() => {
-            const updateBuilder = createMockBuilder();
-            updateBuilder.eq.mockResolvedValue({
-              error: {
-                message: "host-update-secret-leak",
-              },
-            });
-            return updateBuilder;
-          });
-        }
-
-        return builder;
-      });
-
-      await StripeWebhookService.scheduleInstancesForDeletion("user_1");
-
-      expect(updatedInstanceIds).toEqual(["inst_1"]);
-      expect(log.error).toHaveBeenCalledWith(
-        "failed to sync host lifecycle state",
-        expect.anything(),
-        expect.objectContaining({
-          source: "stripe-webhook-service",
-          failureType: "host_state_update_failed",
-          action: "soft-delete instance",
-          hostId: "host_1",
-        })
-      );
-      const contextCalls = (log.error as jest.Mock).mock.calls.map((call) => call[2]);
-      const stringifiedContext = JSON.stringify(contextCalls);
-      expect(stringifiedContext).not.toContain("host-update-secret-leak");
-      expect(stringifiedContext).not.toContain("host-update-stack-leak");
     });
   });
 

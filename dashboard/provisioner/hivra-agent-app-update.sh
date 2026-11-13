@@ -7,6 +7,20 @@
 #   hivra-agent-app-update.sh aeon <40-hex commit>
 #   hivra-agent-app-update.sh openclaw <x.y.z>
 #   hivra-agent-app-update.sh agent-zero sha256:<64 hex>
+#   hivra-agent-app-update.sh hermes latest
+#   hivra-agent-app-update.sh openbot latest
+#
+# Hermes is the exception: it has no Hivra pin and is never rebuilt or
+# rolled back by Hivra. "hermes latest" waits for the same idle moment, holds
+# the same surface lock, and runs Hermes's own `hermes update --yes` as the
+# agent's user (exactly what the owner would type in Terminal), then restarts
+# the dashboard, makes sure Hermes's gateway serves its Webapp and reports the
+# version it finds.
+#
+# OpenBot has no Hivra pin either: "openbot latest" pulls upstream's latest
+# image, and only if it is a new one waits for the same idle moment, copies
+# OpenBot's database aside, restarts on the new image and checks it answers
+# with the new release; on failure the previous image and database go back.
 #
 # hivra-update-guest-runtime.sh starts it as a transient systemd unit, so a slow
 # download or build never holds the dashboard's update request. It first
@@ -29,7 +43,9 @@ case "$NAME" in
   aeon) [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid Aeon commit" >&2; exit 64; } ;;
   openclaw) [[ "$TARGET" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || { echo "invalid OpenClaw version" >&2; exit 64; } ;;
   agent-zero) [[ "$TARGET" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid Agent Zero image digest" >&2; exit 64; } ;;
-  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION" >&2; exit 64 ;;
+  hermes) [ "$TARGET" = latest ] || { echo "Hermes updates to latest only" >&2; exit 64; } ;;
+  openbot) [ "$TARGET" = latest ] || { echo "OpenBot updates to latest only" >&2; exit 64; } ;;
+  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION | hermes|openbot latest" >&2; exit 64 ;;
 esac
 
 # Fixed guest paths; the overrides exist only for the offline test fixture.
@@ -53,7 +69,7 @@ LOCK_SETTLE_SECONDS="${HIVRA_AGENT_APP_LOCK_SETTLE_SECONDS:-2}"
 HEALTH_SECONDS="${HIVRA_AGENT_APP_HEALTH_SECONDS:-180}"
 HEALTH_POLL_SECONDS="${HIVRA_AGENT_APP_HEALTH_POLL_SECONDS:-3}"
 ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-AGENT_PATH="$AGENT_HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+AGENT_PATH="$AGENT_HOME/.local/bin:$AGENT_HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
 if [ -n "${HIVRA_AGENT_APP_TEST_BIN:-}" ]; then
   ROOT_PATH="$HIVRA_AGENT_APP_TEST_BIN:$ROOT_PATH"
   AGENT_PATH="$HIVRA_AGENT_APP_TEST_BIN:$AGENT_PATH"
@@ -86,6 +102,24 @@ case "$NAME" in
     DATA="$A0_ROOT/usr"
     DATA_BACKUP="$A0_ROOT/usr.hivra-update-backup"
     NEED_FREE_MB=12288
+    ;;
+  hermes)
+    UNIT=bux-hermes.service
+    BIN="$AGENT_HOME/.local/bin/hermes"
+    HERMES_HOME_DIR="$AGENT_HOME/.hermes"
+    # `hermes update` fetches code and rebuilds its environment in place.
+    HERMES_UPDATE_SECONDS="${HIVRA_HERMES_UPDATE_SECONDS:-1800}"
+    NEED_FREE_MB=3072
+    ;;
+  openbot)
+    UNIT=hivra-openbot.service
+    IMAGE_REPO=ghcr.io/copilotkit/openbot
+    OB_ROOT="${HIVRA_OPENBOT_ROOT:-/opt/openbot}"
+    OB_PORT="${HIVRA_OPENBOT_PORT:-3101}"
+    OB_KEY_FILE="$AGENT_HOME/.hivra/openbot-intelligence-key"
+    OB_VOLUME_DIR="${HIVRA_OPENBOT_VOLUME_DIR:-/var/lib/docker/volumes/hivra-openbot-data/_data}"
+    OB_DATA_BACKUP="$OB_ROOT/data.hivra-update-backup"
+    NEED_FREE_MB=4096
     ;;
 esac
 UNIT_FILE="$SYSTEMD_DIR/$UNIT"
@@ -170,6 +204,13 @@ installed_version() {
       [ -e "$BIN" ] || return 1
       as_agent timeout -k 5 60 "$BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
       ;;
+    hermes)
+      [ -e "$BIN" ] || return 1
+      as_agent timeout -k 5 60 "$BIN" --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1
+      ;;
+    openbot)
+      openbot_image_version "$(head -n 1 "$OB_ROOT/image" 2>/dev/null || true)"
+      ;;
     agent-zero)
       local ref
       ref="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)"
@@ -189,6 +230,14 @@ installed_version() {
       fi
       ;;
   esac
+}
+
+# The x.y.z release an OpenBot image names (its OPENBOT_BUILD_VERSION).
+openbot_image_version() {
+  local image="$1"
+  [[ "$image" =~ ^ghcr\.io/copilotkit/openbot@sha256:[0-9a-f]{64}$ ]] || return 1
+  docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" 2>/dev/null \
+    | sed -n 's/^OPENBOT_BUILD_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1
 }
 
 # ── per app: is anything using it? ──────────────────────────────────────────
@@ -249,6 +298,15 @@ app_working() {
       # the agent's user: the folder is the agent's own.
       [ -d "$AGENT_HOME/.openclaw" ] || return 1
       as_agent python3 -I -c "$CHANGED_SINCE_PY" "$AGENT_HOME/.openclaw" '*/sessions/*' "$since"
+      ;;
+    hermes)
+      # A chat turn appends to its session as it runs; read as the agent.
+      [ -d "$HERMES_HOME_DIR/sessions" ] || return 1
+      as_agent python3 -I -c "$CHANGED_SINCE_PY" "$HERMES_HOME_DIR/sessions" '*' "$since"
+      ;;
+    openbot)
+      # OpenBot keeps its work in its database; use through Hivra is the signal.
+      return 1
       ;;
     agent-zero)
       # A scheduled task marked running, or a chat that saved a step recently.
@@ -351,6 +409,7 @@ healthy() {
     openclaw) url="http://127.0.0.1:$(unit_port 18789 '--port[ =][0-9]+')/healthz" ;;
     agent-zero) url="http://127.0.0.1:$(unit_port 50080 '127\.0\.0\.1:[0-9]+')/" ;;
     aeon) url="http://127.0.0.1:$(unit_port 5555 '-p[ =][0-9]+')/aeon" ;;
+    hermes) url="http://127.0.0.1:$(unit_port 9119 '--port[ =][0-9]+')/" ;;
   esac
   while :; do
     if systemctl is-active --quiet "$UNIT"; then
@@ -520,6 +579,190 @@ trap 'exit 143' TERM INT HUP
 
 # ── run ─────────────────────────────────────────────────────────────────────
 
+# Waits for a quiet moment and holds the app's surface (release_lock lets it
+# go). Past the wait limit the update is deferred, not forced.
+wait_until_idle() {
+  local deadline=$(( $(date +%s) + WAIT_LIMIT_SECONDS ))
+  while :; do
+    # Only an app that looks idle is held, then checked again: someone who
+    # arrived meanwhile is counted and the hold is let go at once.
+    if ! in_use; then
+      hold_lock
+      sleep "$LOCK_SETTLE_SECONDS"
+      in_use || break
+      release_lock
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      write_status deferred app_in_use
+      exit 0
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+# The agent page shows Hermes's Webapp (its Desktop workspace in a browser),
+# which Hermes's gateway serves on loopback once webapp.enabled is on. A
+# computer set up before that gets it here, with Hermes's own commands: the
+# setting goes on before `hermes update` (which then builds the Webapp with the
+# rest of Hermes), the bundle is built if it is still missing, and the gateway,
+# which reads the setting when it starts, is restarted once if it does not
+# serve the Webapp yet. None of this fails the update: until the Webapp is
+# served, the agent page shows the dashboard.
+HERMES_WEBAPP_URL="http://127.0.0.1:${HIVRA_HERMES_WEBAPP_PORT:-9120}/"
+as_agent_session() {
+  local uid; uid="$(id -u "$AGENT_USER")" || return 1
+  runuser -u "$AGENT_USER" -- env -i PATH="$AGENT_PATH" HOME="$AGENT_HOME" LANG=C.UTF-8 \
+    XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" "$@"
+}
+hermes_webapp_on() {
+  as_agent timeout -k 10 120 "$BIN" config set webapp.enabled true >/dev/null 2>&1 </dev/null
+}
+hermes_webapp_ready() {
+  local i
+  as_agent timeout -k 30 "$HERMES_UPDATE_SECONDS" "$BIN" webapp --build-only >/dev/null 2>&1 </dev/null || return 1
+  [ "$(http_code "$HERMES_WEBAPP_URL")" = 200 ] && return 0
+  as_agent_session timeout -k 10 240 "$BIN" gateway restart >/dev/null 2>&1 </dev/null || return 1
+  for i in $(seq 1 40); do
+    [ "$(http_code "$HERMES_WEBAPP_URL")" = 200 ] && return 0
+    sleep "$HEALTH_POLL_SECONDS"
+  done
+  return 1
+}
+
+# Hermes: no pin, no staged copy, no rollback. Hermes's own updater does the
+# work as the agent's user; this only waits for a quiet moment, holds the
+# surface, restarts the dashboard, makes sure the Webapp is served and reports
+# what it finds.
+run_hermes() {
+  local rc=0 now
+  [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
+  FROM="$(installed_version || true)"
+  if [ "$(free_mb "$AGENT_HOME")" -lt "$NEED_FREE_MB" ]; then
+    write_status failed no_space
+    exit 1
+  fi
+  write_status waiting
+  wait_until_idle
+  write_status installing
+  hermes_webapp_on || echo "WARNING: could not turn on Hermes's Webapp (hermes config set webapp.enabled true)" >&2
+  as_agent timeout -k 30 "$HERMES_UPDATE_SECONDS" "$BIN" update --yes >/dev/null 2>&1 </dev/null || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # Exit 2 is Hermes saying it would not touch local changes (or another
+    # update holds its lock); anything else did not complete.
+    systemctl is-active --quiet "$UNIT" || systemctl start "$UNIT" || true
+    release_lock
+    write_record "$(installed_version || true)"
+    if [ "$rc" -eq 2 ]; then write_status failed local_changes; else write_status failed install_failed; fi
+    exit 1
+  fi
+  systemctl restart "$UNIT" || true
+  now="$(installed_version || true)"
+  if [ -z "$now" ] || ! healthy "$now"; then
+    release_lock
+    write_record "$now"
+    write_status failed install_failed
+    exit 1
+  fi
+  hermes_webapp_ready || echo "WARNING: Hermes's Webapp is not served; the agent page shows the dashboard until it is (hermes webapp --build-only, then hermes gateway restart)" >&2
+  release_lock
+  write_record "$now"
+  write_status done
+  exit 0
+}
+
+# OpenBot: pull upstream's latest; nothing to do when it is the image running.
+# Otherwise wait for a quiet moment, hold the surface, copy the database aside
+# (OpenBot migrates it on start), restart on the new image and check it answers
+# with the new release. Before the owner has given OpenBot its Intelligence
+# key the service only waits, so then the new image is simply recorded.
+openbot_write_image() {
+  printf '%s\n' "$1" > "$OB_ROOT/image.next"
+  chmod 0600 "$OB_ROOT/image.next"
+  mv -f -- "$OB_ROOT/image.next" "$OB_ROOT/image"
+}
+openbot_running() { [ -s "$OB_KEY_FILE" ] && [ ! -L "$OB_KEY_FILE" ]; }
+openbot_healthy() {
+  local version="$1" deadline=$(( $(date +%s) + HEALTH_SECONDS ))
+  openbot_running || { systemctl is-active --quiet "$UNIT"; return; }
+  while :; do
+    if systemctl is-active --quiet "$UNIT" && [ "$(http_code "http://127.0.0.1:$OB_PORT/")" = 200 ]; then
+      sleep "$HEALTH_POLL_SECONDS"
+      if systemctl is-active --quiet "$UNIT" && [ "$(installed_version || true)" = "$version" ]; then return 0; fi
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep "$HEALTH_POLL_SECONDS"
+  done
+}
+run_openbot() {
+  local old_image new_image new_version
+  [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
+  old_image="$(head -n 1 "$OB_ROOT/image" 2>/dev/null || true)"
+  FROM="$(installed_version || true)"
+  if [ "$(free_mb "$OB_ROOT")" -lt "$NEED_FREE_MB" ]; then write_status failed no_space; exit 1; fi
+  write_status downloading
+  if ! bounded 3600 docker pull "$IMAGE_REPO:latest" >/dev/null 2>&1 </dev/null; then
+    write_status failed download_failed; exit 1
+  fi
+  new_image="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_REPO:latest" 2>/dev/null \
+    | grep -m1 -E "^$IMAGE_REPO@sha256:[0-9a-f]{64}$" || true)"
+  new_version="$(openbot_image_version "$new_image" || true)"
+  if [ -z "$new_image" ] || [ -z "$new_version" ]; then write_status failed download_failed; exit 1; fi
+  if [ "$new_image" = "$old_image" ]; then
+    write_record "$FROM"
+    write_status done
+    exit 0
+  fi
+  if ! openbot_running; then
+    openbot_write_image "$new_image"
+    write_record "$new_version"
+    write_status done
+    exit 0
+  fi
+  write_status waiting
+  wait_until_idle
+  write_status installing
+  systemctl stop "$UNIT" || true
+  rm -rf -- "$OB_DATA_BACKUP"
+  if [ -d "$OB_VOLUME_DIR" ] && ! cp -a -- "$OB_VOLUME_DIR" "$OB_DATA_BACKUP"; then
+    rm -rf -- "$OB_DATA_BACKUP"
+    systemctl start "$UNIT" || true
+    release_lock
+    write_status failed no_space
+    exit 1
+  fi
+  openbot_write_image "$new_image"
+  systemctl start "$UNIT" || true
+  if openbot_healthy "$new_version"; then
+    release_lock
+    rm -rf -- "$OB_DATA_BACKUP"
+    if [ -n "$old_image" ] && [ "$old_image" != "$new_image" ]; then docker image rm "$old_image" >/dev/null 2>&1 || true; fi
+    write_record "$new_version"
+    write_status done
+    exit 0
+  fi
+  # The new release did not come up: the previous image on its own database.
+  systemctl stop "$UNIT" || true
+  if [ -d "$OB_DATA_BACKUP" ]; then
+    rm -rf -- "$OB_VOLUME_DIR.hivra-replaced"
+    if [ -d "$OB_VOLUME_DIR" ]; then mv -- "$OB_VOLUME_DIR" "$OB_VOLUME_DIR.hivra-replaced"; fi
+    mv -- "$OB_DATA_BACKUP" "$OB_VOLUME_DIR"
+  fi
+  [ -z "$old_image" ] || openbot_write_image "$old_image"
+  systemctl start "$UNIT" || true
+  release_lock
+  if [ -n "$FROM" ] && openbot_healthy "$FROM"; then
+    write_record "$FROM"
+    write_status rolled_back install_failed
+  else
+    write_record "$(installed_version || true)"
+    write_status failed install_failed
+  fi
+  exit 1
+}
+
+[ "$NAME" != hermes ] || run_hermes
+[ "$NAME" != openbot ] || run_openbot
+
 # A swap cut short (a reboot) left its journal behind. If the new version is
 # the one running and it answers, the swap finished in all but name: keep it.
 # Otherwise put the previous version back.
@@ -565,22 +808,7 @@ if ! prepare; then
 fi
 
 write_status waiting
-deadline=$(( $(date +%s) + WAIT_LIMIT_SECONDS ))
-while :; do
-  # Only an app that looks idle is held, then checked again: someone who
-  # arrived meanwhile is counted and the hold is let go at once.
-  if ! in_use; then
-    hold_lock
-    sleep "$LOCK_SETTLE_SECONDS"
-    in_use || break
-    release_lock
-  fi
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    write_status deferred app_in_use
-    exit 0
-  fi
-  sleep "$POLL_SECONDS"
-done
+wait_until_idle
 
 # Agent Zero copies its data aside first; that must fit next to it.
 if [ "$NAME" = agent-zero ] && [ -d "$DATA" ]; then

@@ -180,7 +180,7 @@ live("the real runner against a disposable enrolled server", () => {
   });
 
   it("verifies an enrollment key the way Replace does: pinned key, this key, sudo as UID 0", async () => {
-    const run = (key: string) => verifyEnrollmentKeyOnServer({ connectionId: CONNECTION_ID, sshHost: config!.host, sshPort: 22,
+    const run = (key: string) => verifyEnrollmentKeyOnServer({ userId: "user_1", connectionId: CONNECTION_ID, sshHost: config!.host, sshPort: 22,
       pinnedFingerprint: config!.hostFingerprintSha256Hex, privateKey: readFileSync(key, "utf8"), refuseProxmox: true },
     { run: runProxmoxHostScript, resolve: resolveValidatedSshDestination });
     await expect(run(config!.adminPrivateKeyPath)).resolves.toBeNull();

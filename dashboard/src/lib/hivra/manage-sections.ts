@@ -104,8 +104,12 @@ export interface ManageCapabilities {
   selfUpdate: { lines: string[]; openDesktop: boolean } | null;
   /** Claude Code or Codex and the version Hivra has tested, for the Updates section. */
   agentCli: { name: "claude-code" | "codex"; vetted: string } | null;
-  /** The Aeon dashboard, OpenClaw or Agent Zero and the name of the version Hivra has tested. */
-  agentApp: { name: "aeon" | "openclaw" | "agent-zero"; vetted: string } | null;
+  /**
+   * The Aeon dashboard, OpenClaw, Agent Zero, Hermes or OpenBot and the name of the
+   * version Hivra has tested. Hermes and OpenBot have none: they are updated by Hermes's own
+   * updater, so `vetted` is null.
+   */
+  agentApp: { name: "aeon" | "openclaw" | "agent-zero" | "hermes" | "openbot"; vetted: string | null } | null;
   /** The Agents section (adding an agent to this computer). */
   attachAgents: boolean;
   /** What the agent is told about its computer (Computer Contract). */

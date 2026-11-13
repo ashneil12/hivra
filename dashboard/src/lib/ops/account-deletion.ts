@@ -117,6 +117,28 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     reason: "the hash of each agent's key for using linked computers",
     optionalIfMissing: true,
   },
+  // Local bridge: requests and allowances first, then the enrolled computers.
+  {
+    table: "hivra_bridge_requests",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "commands agents asked to run on the owner's own computer, and the owner's decisions",
+    optionalIfMissing: true,
+  },
+  {
+    table: "hivra_bridge_allowances",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "one-hour allowances the owner gave an agent for the local bridge",
+    optionalIfMissing: true,
+  },
+  {
+    table: "hivra_bridge_computers",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "computers the owner enrolled for the local bridge",
+    optionalIfMissing: true,
+  },
   {
     table: "hermes_conversations",
     filterColumn: "user_id",

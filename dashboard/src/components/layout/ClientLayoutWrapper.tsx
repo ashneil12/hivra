@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { usePathname } from 'next/navigation';
 import { Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
@@ -15,6 +15,8 @@ import { NativeWorkspaceProvider, useNativeWorkspace, useNativeWorkspaceEnabled 
 import { accountCode } from '@/lib/account-code';
 import { WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
 import { useDesktopShell } from './useDesktopShell';
+import { AppShellContext } from './AppShellContext';
+import { PendingBridgeCard } from '@/components/hivra/PendingBridgeCard';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -24,6 +26,9 @@ interface ClientLayoutWrapperProps {
   showOpsLink?: boolean;
 }
 
+const AGENT_VIEW_ROUTE_PATTERN = /^\/dashboard\/agent\/[^/]+\/?$/;
+// Where a command an agent is waiting to run on your computer is shown, so it is never missed.
+const BRIDGE_CARD_ROUTE_PATTERN = /^\/dashboard\/?$|^\/dashboard\/agent\/[^/]+\/?$/;
 const FULLSCREEN_TUI_ROUTE_PATTERN = /^\/dashboard\/instances\/[^/]+\/tui(?:\/|$)/;
 
 function NativeAccountHeader({ userName }: { userName: string }) {
@@ -57,9 +62,6 @@ export function ClientLayoutWrapper({
 }: ClientLayoutWrapperProps) {
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [activeResource, setActiveResource] = useState<{
-    owner: string; pathname: string | null; kind: 'agent' | 'computer' | null;
-  } | null>(null);
   const [attention, setAttention] = useState<{ owner: string; count: number } | null>(null);
   const pathname = usePathname();
   const nativeWorkspace = useNativeWorkspaceEnabled();
@@ -73,19 +75,18 @@ export function ClientLayoutWrapper({
   // resourceOwnerKey is the signed-in user id: the account code shown in the
   // account menu is the one the server setup script names.
   const ownerAccountCode = resourceOwnerKey ? accountCode(resourceOwnerKey) : null;
-  const handleActiveResourceKindChange = useCallback((kind: 'agent' | 'computer' | null) => {
-    setActiveResource((current) => current?.owner === owner && current.pathname === pathname && current.kind === kind
-      ? current : { owner, pathname, kind });
-  }, [owner, pathname]);
-  const activeResourceKind = activeResource?.owner === owner && activeResource.pathname === pathname
-    ? activeResource.kind : null;
   const handleAttentionCountChange = useCallback((count: number) => {
     setAttention((current) => current?.owner === owner && current.count === count ? current : { owner, count });
   }, [owner]);
   const attentionCount = attention?.owner === owner ? attention.count : 0;
   const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
+  const appShell = useMemo(() => ({ openSwitcher, userName }), [openSwitcher, userName]);
   const isInstancePage = pathname?.startsWith('/dashboard/instances/');
   const isWorkspacePage = pathname === '/dashboard/workspace' || /^\/dashboard\/agent\/[^/]+$/.test(pathname ?? '');
+  // The agent view draws its own sidebar beside the global rail, so the rail
+  // stays as icons there: Home, computers and settings are always one click
+  // away. A native client's page keeps the global chrome it has today.
+  const compactRail = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '') && !nativeWorkspace;
   // Runtime pages carry identity and back in their own resource bar.
   const showMobileHeader = !desktopShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
   const showPwaBottomNavigation = !desktopShell && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
@@ -101,6 +102,7 @@ export function ClientLayoutWrapper({
         the sidebar does with the same key. */}
     <WorkspaceOwnerContext.Provider value={owner}>
     <WorkspaceModalLayerProvider onActiveChange={setWorkspaceModalOpen}>
+    <AppShellContext.Provider value={appShell}>
       <div data-testid="dashboard-viewport" data-keyboard-open={keyboardOpen} className={`flex flex-col md:flex-row w-full overflow-hidden relative ${styles.viewport}`}>
       {/* ServiceWorkerRegistration now mounts in the root layout so the offline
           shell registers on public routes too — see src/app/layout.tsx. */}
@@ -142,11 +144,11 @@ export function ClientLayoutWrapper({
             userEmail={userEmail}
             accountCode={ownerAccountCode}
             resourceOwnerKey={resourceOwnerKey}
-            onActiveResourceKindChange={handleActiveResourceKindChange}
             onAttentionCountChange={handleAttentionCountChange}
             switcherOpen={switcherOpen}
             onSwitcherOpenChange={setSwitcherOpen}
             showOpsLink={showOpsLink}
+            compact={compactRail}
           />
         </div>}
 
@@ -171,12 +173,12 @@ export function ClientLayoutWrapper({
             </div>
           )}
           {desktopShell && pathname === '/dashboard/settings' && <NativeAccountHeader userName={userName} />}
+          {BRIDGE_CARD_ROUTE_PATTERN.test(pathname ?? '') && <PendingBridgeCard />}
           {children}
         </main>
 
         {showPwaBottomNavigation && (
           <PwaBottomNavigation
-            resourceKind={activeResourceKind}
             attentionCount={attentionCount}
             userName={userName}
             userEmail={userEmail}
@@ -186,6 +188,7 @@ export function ClientLayoutWrapper({
         )}
       </div>
       </div>
+    </AppShellContext.Provider>
     </WorkspaceModalLayerProvider>
     </WorkspaceOwnerContext.Provider>
     </NativeWorkspaceProvider>

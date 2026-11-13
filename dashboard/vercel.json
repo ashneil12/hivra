@@ -233,6 +233,10 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/cron/first-win-emails",
+      "schedule": "25 * * * *"
+    },
+    {
       "path": "/api/cron/feedback-emails",
       "schedule": "0 15 * * *"
     },
@@ -253,10 +257,6 @@
       "schedule": "20 * * * *"
     },
     {
-      "path": "/api/cron/aeon-tick",
-      "schedule": "*/15 * * * *"
-    },
-    {
       "path": "/api/cron/park-idle-hivra-agents",
       "schedule": "15 5 * * *"
     },
@@ -267,6 +267,34 @@
     {
       "path": "/api/cron/update-hivra-agent-clis",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/sample-agent-activity",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/venice-promo-expiry",
+      "schedule": "35 * * * *"
+    },
+    {
+      "path": "/api/cron/purge-bridge-results",
+      "schedule": "17 3 * * *"
+    },
+    {
+      "path": "/api/cron/venice-promo-weekly-report",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/cron/advance-hermes-moves",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/agent-inbox-install",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/observe-agent-sleep",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

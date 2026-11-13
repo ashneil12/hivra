@@ -227,9 +227,9 @@ inferring them from a live host.
   - SHA-256: `527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9`
   - upstream license: Apache-2.0 (`LICENSE` retained at `/usr/share/doc/hivra-caddy/LICENSE`)
 - Google Chrome stable Linux amd64:
-  `https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_152.0.7977.64-1_amd64.deb`
-  - package version: `152.0.7977.64-1`
-  - SHA-256: `4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7`
+  `https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_157.0.8103.50-1_amd64.deb`
+  - package version: `157.0.8103.50-1` (shipped as `chrome-pin.json`, which the installer and the runtime update both read; the build it replaced, `152.0.7977.64-1`, SHA-256 `4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7`, stays in its `previous` list so an existing computer can be put back)
+  - SHA-256: `92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79`
 - GitHub CLI Linux amd64:
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
@@ -543,6 +543,330 @@ shutdown budget; the DeepSeek native broker renews its upstream session without
 a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
+
+Release `2026.11.12.4` builds on `2026.11.12.3` and adds OpenBot by CopilotKit as an agent
+kind. The guest installer (`provision-claude-code-box.sh`) installs Docker, pulls CopilotKit's
+official `ghcr.io/copilotkit/openbot` image at its latest release and records it by digest, and
+runs it on the computer's loopback (port 3101) in OpenBot's single-user mode under
+`hivra-openbot.service`. OpenBot will not start without a CopilotKit Intelligence key, so the box
+gateway (`hivra-chat/server.js`) shows a one-step page at `/openbot/` to paste it, keeps it on the
+computer at `~/.hivra/openbot-intelligence-key` (0600), and then serves OpenBot's own workspace at
+the root of the computer's address behind the Hivra sign-in. `hivra-agent-app-update.sh` updates
+it to upstream's latest image, backing up its database first and putting the previous image and
+data back if the new one does not start. The typed installer, host provisioner, guest runtime
+update, receipt and agent shell learn the kind. `hivra-provider-worker.py` advances its release
+labels. This source release does not deploy, install, or update any existing computer.
+
+Release `2026.11.12.3` builds on `2026.11.12.2` and lets the owner turn on Hermes's own
+restore points (checkpoints) from Hivra's Manage page. Before Hermes changes files in a turn,
+it snapshots the project into its own shadow git store (`~/.hermes/checkpoints`), and the owner
+goes back with `/rollback` or `/undo` in a Hermes chat. Hermes keeps the store, its size cap and
+its pruning. The box gateway (`hivra-chat/server.js`) adds `/api/restore-points`, which reads and
+sets Hermes's `checkpoints.enabled` through `hermes config get`/`hermes config set` as the agent
+user, refuses while Hermes is being updated, and answers 404 on other agents.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, or update any existing computer.
+
+Release `2026.11.12.2` builds on `2026.11.12.1` and keeps Claude Code's per-project
+approvals file, `.claude/settings.local.json`, out of commits made on a computer. "Yes, and
+don't ask again" saves the approved command there, passwords and tokens included. The guest
+installer now adds `**/.claude/settings.local.json` to the agent user's default git ignore
+(`~/.config/git/ignore`), and sets the system `init.templateDir` to a copy of git's stock
+template with a `pre-commit` hook, so every repository created or cloned on the computer
+refuses a commit that stages that file (removing it is still allowed). A repository with
+its own `core.hooksPath` runs its own hooks instead. `hivra-provider-worker.py` advances
+its release labels. This source release does not deploy, install, or update any existing
+computer.
+
+Release `2026.11.12.1` builds on `2026.11.11.7` and lets the owner choose a Hermes
+computer's model from Hivra's Manage page. Hermes keeps its model in its own config
+(`model.default`), the setting its own model picker writes, and uses it for new chats.
+On a Hermes computer, `hivra-chat/server.js` now answers `GET /api/model` from Hermes's own
+`hermes config get model.default` and `model.base_url`, and `POST /api/model` runs
+`hermes config set model.default <model>`, only when Hermes still points at Venice (Hivra's
+managed gateway or Venice's API) and not while Hermes is being updated. Before this
+release the endpoint wrote a file Hermes never read. `hivra-provider-worker.py` advances
+its release labels. This source release does not deploy, install, or update any existing
+computer.
+
+Release `2026.11.11.7` builds on `2026.11.11.6` and shows Hermes's own Desktop workspace
+at `/hermes` on Hermes computers. Before this release `/hermes` served `hermes dashboard`,
+Hermes's admin page, and its pages went blank when opened under `/hermes`. Upstream Hermes
+also serves its Desktop workspace in a browser (`hermes webapp`) from its gateway on
+`127.0.0.1:9120` once `webapp.enabled` is on. `provision-claude-code-box.sh` now turns that
+setting on and builds the Webapp with Hermes's own `hermes webapp --build-only`.
+`hivra-chat/server.js` proxies `/hermes` to the Webapp when it is served and signs the owner
+in with the one-use launch link `hermes webapp --no-open --skip-build` prints; while the
+Webapp is not served it keeps proxying the dashboard, so older computers keep working.
+`hivra-agent-app-update.sh` (Update Hermes) turns the setting on, runs `hermes update`, then
+builds the Webapp and restarts Hermes's gateway, which is how existing Hermes computers move
+over. Hermes itself is still installed and updated unmodified by its own commands.
+`hivra-provider-worker.py` advances its release labels. This source release does not
+deploy, install, or update any existing computer.
+
+Release `2026.11.11.6` builds on `2026.11.11.5` and lets the official Hermes installer
+finish on a fresh Hermes computer. Hermes's installer downloads the official Node.js
+build, which links the host's `libatomic.so.1`; the Ubuntu 22.04 cloud image leaves that
+library out, and the installer can only add it with root (`sudo -n apt-get install -y
+libatomic1`), which the agent user does not have. Every Node step then failed and the
+installer exited non-zero, so no Hermes computer finished its launch.
+`provision-claude-code-box.sh` now installs the `libatomic1` OS package as root just
+before it runs Hermes's installer. Hermes itself is still installed unmodified by its own
+installer. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, or update any existing computer.
+
+Release `2026.11.11.5` builds on `2026.11.11.4` and runs Hermes's gateway on Hermes
+computers. Upstream Hermes runs scheduled tasks and chat channels (Telegram, Discord,
+Slack) in its gateway process, separate from the dashboard, so before this release they
+never ran. `provision-claude-code-box.sh` now turns on linger for the agent user, starts
+its user manager and runs Hermes's own installer for the gateway as that user
+(`hermes gateway install --start-now --start-on-login`, then `hermes gateway start`, with stdin from /dev/null and one retry without the flags for an older stable channel), the
+setup upstream recommends for headless machines so `hermes update` restarts the gateway
+without root. Hivra writes no gateway unit and no drop-in. A gateway failure only warns
+and is recorded; the dashboard still comes up, and readiness reports the gateway as
+active or as a warning. `hivra-guest-runtime-update.sh` does the same, idempotently, for
+an existing Hermes computer and does nothing on any other kind; it never fails the update.
+`hivra-provider-worker.py` advances its release labels. This source release does not
+deploy, install, or update any existing computer.
+
+Release `2026.11.11.4` builds on `2026.11.11.3` and adds the official Hermes Agent
+(NousResearch/hermes-agent) as a kind of Hivra computer, as thinly as possible. There is
+no Hivra-built image, fork, overlay or patch: `provision-claude-code-box.sh` downloads
+Hermes's own installer over HTTPS and runs it as the agent user with
+`--non-interactive --skip-browser --channel stable`, writes `~/.hermes/config.yaml` with
+`hermes config set` and the inference key to `~/.hermes/.env` (mode 600) from the launch
+model settings (default model `deepseek-v4-1-flash`, the managed inference endpoint), and
+runs Hermes's own web UI as `bux-hermes.service`
+(`hermes dashboard --host 127.0.0.1 --port 9119 --no-open`). The gateway
+(`hivra-chat/server.js`) serves it at `/hermes/` behind the same token gate as every other
+route: HTTP and the dashboard's WebSockets (`/api/ws`, `/api/pty`), with the prefix
+stripped, `X-Forwarded-Prefix: /hermes`, `Host` set to `127.0.0.1:9119` and `Origin`
+rewritten to loopback, because the dashboard refuses any other host or origin. It records
+the installed version from `hermes --version` and reports it on `GET /api/meta`. Owners
+update with `hermes update` in Terminal, or the Update Hermes button, which runs exactly
+`hermes update --yes` as the agent user (`hivra-agent-app-update.sh hermes latest`, a
+runtime update asset): exit status 2 (local changes, or another update running) is
+reported as such and nothing is forced. Hermes has no Hivra-pinned version, so the update
+target is the literal `latest`. The runtime-update scripts, the receipt and the install
+allow-lists learn the `hermes` kind. `hivra-provider-worker.py` advances its native and
+desktop release labels. The placement minimum for `hermes` is this release. This source
+release does not deploy, install, or update any existing computer.
+
+Release `2026.11.11.3` builds on `2026.11.11.2` and makes the chat's reasoning effort
+real. The gateway (`hivra-chat/server.js`) accepts an optional `effort` on
+`POST /api/chat`, strictly one of `low`, `medium`, `high`, `xhigh` or `max` (anything
+else is ignored), and advertises the levels it will pass as `chatEffort` on
+`GET /api/meta`. It was verified against the pinned CLI packages, not assumed. Claude
+Code `2.1.292` (`@anthropic-ai/claude-code-linux-x64`, the native binary the main
+package installs): the binary declares `--effort <level>` with the description "Effort
+level for the current session (low, medium, high, xhigh, max)" and an allowed list of
+those five; an unknown value is warned about and ignored there. Releases older than
+`2.1.117` differ (`2.1.100` stops at `max`, and a value outside its list ends the turn
+with a usage error), so the gateway passes `--effort` only when the installed CLI
+reports `2.1.117` or later. Codex `0.149.1` (`@openai/codex@0.149.1-linux-x64`): the
+binary has the `model_reasoning_effort` config key and a reasoning-effort enumeration of
+`minimal`, `low`, `medium`, `high`, `xhigh`, `max` and `ultra`; the gateway passes
+`-c model_reasoning_effort="<level>"` for `low`, `medium`, `high` and `xhigh`, and maps
+`max` to `xhigh`, because each model lists the levels it supports and the pinned CLI
+cannot be asked which. That ceiling is one table in `server.js`. The override is placed
+with the other `-c` overrides, so it applies to fresh and resumed turns and next to a
+configured provider. Generic, Aeon, OpenClaw and Agent Zero computers ignore `effort`
+and advertise nothing. No other asset changes: `server.js` is already a runtime update
+asset, so existing computers receive it with the update. `hivra-provider-worker.py`
+advances its native and desktop release labels. No runtime's placement minimum moves.
+This source release does not deploy, install, or update any existing computer.
+
+Release `2026.11.11.2` builds on `2026.11.11.1` and moves the agent's pinned Google
+Chrome from `152.0.7977.64-1` to `157.0.8103.50-1` (SHA-256
+`92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79`), the Linux stable
+that Google's version history lists as serving all users on 2026-11-09. The versioned
+`.deb` is in Google's pool at the URL the installer already used. Because the previous
+release turned Chrome's outdated-build warning off and holds the package, the pin no
+longer moves by itself; this release moves it deliberately, and ships it as data.
+`chrome-pin.json` carries the version, the SHA-256 and a `previous` list (the build it
+replaced, with its SHA-256); the installer reads it instead of carrying its own copy,
+and it is a runtime update asset, so the installer and the update read one file (the
+`CHROME_VERSION` and `CHROME_LINUX_AMD64_SHA256` variables still override it when both
+are set). New computers install the pinned build. For an existing computer, the guest
+half of the runtime update moves `google-chrome-stable` to the pin when the installed
+version differs, and only when the browser can be restarted right then: the unit is not
+running, or nothing is established on its debugging port (re-checked just before the
+binary is replaced, after the downloads). Otherwise it prints
+`HIVRA_AGENT_BROWSER state=deferred` and leaves Chrome alone, because replacing the
+binary under a running Chrome shows "Finish update". It downloads the `.deb` over https
+with the installer's curl flags, verifies its SHA-256, then lifts the hold, installs it
+with apt, drops Google's apt source again, holds the package, restarts the unit and waits
+up to 30 seconds for `/json/version`, which must report the pin's major version. Before
+it touches anything it keeps a recovery copy of the installed build: `dpkg-repack` when
+installed, else the build's own `.deb` when the pin's `previous` list names it with its
+SHA-256; with neither, the upgrade is skipped (`deferred`). If the new browser does not
+answer, or apt refuses it, the previous build and the previous keeper are installed back
+and the state is `restored`. It does not start without 600 seconds of the update's budget
+and 1 GiB of free disk, so the update unit's own time limit cannot cut an install short.
+None of this can fail the committed update. The sandbox stays on, there is no
+`--no-sandbox` or `--test-type`, and the managed policy is unchanged. The keeper's
+`--hide-crash-restore-bubble` and `--window-position=0,0` were checked against Chrome
+157: both switches are present in the binary, a headless run with the keeper's flags
+answers on its debugging port as `Chrome/157.0.8103.50`, and
+`chrome/browser/ui/startup/bad_flags_prompt.cc` at tag `157.0.8103.50` lists none of the
+keeper's flags (it adds Landlock and WebNN compiler sandbox switches, which the test now
+covers too). Chrome's outdated-build detector (`upgrade_detector_impl.cc`) is still
+skipped for a managed browser. Google keeps old versioned `.deb` files in its pool for an
+unpublished period, so the pinned build and the `previous` build must be re-checked at
+every Chrome move. The remote-desktop assets, service units, broker and other package
+pins are unchanged. `hivra-provider-worker.py` advances its native and desktop release
+labels and raises the number of files it accepts in a bundle manifest from 64 to 72:
+`chrome-pin.json` is the 65th file, and the previous bundle already held 64. The bundle
+stays far below the worker's size limits, and no other check in the worker changes. This
+source release does not deploy, install, or update any existing computer.
+
+Release `2026.11.11.1` builds on `2026.11.10.5` and gives the agent's live browser a
+clean view. Computers provisioned before `2026.11.03.1` still ran a keeper that passes
+`--no-sandbox`, which Chrome answers with an "unsupported command-line flag" infobar
+(`chrome/browser/ui/startup/bad_flags_prompt.cc` lists the flag; nothing else the keeper
+passes is listed), and the runtime updater never reinstalled the keeper. The pinned
+Chrome `.deb` (packaged 2026-08-24) also passed Chrome's own outdated-build threshold
+of eight weeks (`UpgradeDetectorImpl`, `kOutdatedBuildAge`), which shows the "Can't
+update Chrome" bubble and the "Finish update" chip; that detector is skipped whenever
+the browser is managed, and any mandatory machine-level policy makes it managed
+(`ChromeBrowserPolicyConnector::HasMachineLevelPolicies`). The installer and the guest
+half of the runtime update now write `/etc/opt/chrome/policies/managed/hivra-browser.json`
+with `DefaultBrowserSettingEnabled`, `PromotionsEnabled`, `BrowserSignin` and
+`SuppressUnsupportedOSWarning`, all documented Chrome policies and none of them touching
+the sandbox, site isolation or the debugging port. Chrome stays on its pinned build:
+`/etc/default/google-chrome` is written with `repo_add_once="false"` before the `.deb`
+installs (Google's documented switch), Google's apt source is removed and
+`google-chrome-stable` is held, so an apt upgrade cannot replace the binary under the
+running browser. The keeper also passes `--hide-crash-restore-bubble` and
+`--window-position=0,0` (beside its `--window-size`, equal to the Xvfb screen, so the
+window fills the Browser tab where no window manager places it), and still launches
+with Chromium's sandbox on and `about:blank` as its start page. The runtime
+update installs this release's keeper and policy on computers that have the browser
+unit, restarts the browser only when nothing is attached to its debugging port (the
+keeper and policy otherwise apply at its next start), and puts the previous keeper
+back when the browser does not answer on its port within 30 seconds. The remote-desktop
+assets, service units, broker and package pins are unchanged. `hivra-provider-worker.py`
+only advances its native and desktop release labels. This source release does not
+deploy, install, or update any existing computer.
+
+Release `2026.11.10.5` builds on `2026.11.10.4` and gives DeepSeek Harness its model
+at launch. The upstream web UI only allows settings writes from a local browser, so a
+remote owner could not choose one, and the guest refused launch-time model settings.
+The strict version 2 launch document (`hivra-install-agent.py`) now carries the model
+key, the HTTPS base URL and the model name as a complete set or not at all, with typed
+validation that never echoes an input; `hivra-provision-on-host.sh` forwards the set
+and refuses a partial one. On a fresh install only, `deepseek-harness/install-guest.py`
+runs a child with dropped privileges as the `bux` account (no supplementary groups,
+umask 077, minimal environment, the secret on its stdin alone) that creates the
+runtime's private home directories with mode 0700 and writes `settings.yaml` (one
+hand-declared OpenAI-compatible route plus the default model) and `.credentials.yaml`
+(mode 0600, the key by reference) exclusively and without following links. A replay or
+restart never rewrites them, so later owner edits survive, and the shared base
+installer no longer receives the model variables for this kind. The Linux computer
+documents still refuse a model. The service unit, broker, gateway policy, native
+package pins and remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. `hivra-provider-worker.py` only
+advances its native and desktop release labels. This source release does not deploy,
+install, or update any existing computer.
+
+Release `2026.11.10.4` builds on `2026.11.10.3` and adds the `linux-server` kind:
+the Ubuntu computer without a desktop (Files and the two terminals only). It reuses
+the whole `linux-desktop` guest base and skips only the desktop capability install
+and the Claude app helper. `hivra-provision-on-host.sh`, `hivra-install-agent.py`,
+`hivra-runtime-receipt.py`, `hivra-agent-shell`, `hivra-chat/server.js`,
+`hivra-guest-runtime-update.sh` and `provision-claude-code-box.sh` accept the new
+kind; the strict launch-document parser takes a version 3 document for it (computer
+id, control origin and named tunnel, exactly as `linux-desktop`) on Proxmox only and
+still refuses every document it refused before. The kind reports `linux-server` from
+`/api/meta`, so a control plane that expects it can tell it from a desktop. Every
+`linux-desktop` line is unchanged. `hivra-provider-worker.py` only advances its
+native and desktop release labels. Not touched: `hivra-start-on-host.sh` (no kind
+logic), `prepare-proxmox-host.sh` and the remote-desktop assets, so the
+remote-desktop bundle revision and every session revision are preserved. An older
+host that has not synced this release rejects the kind and stays out of placement.
+This source release does not deploy, install, or update any existing computer.
+
+Release `2026.11.10.3` builds on `2026.11.10.2` and ships the Codex sign-in
+freshness fix. `hivra-chat/server.js` reports a repeat Codex sign-in as fresh only
+when the credential actually changed, and says why a repeat sign-in is not finished
+yet. `hivra-provider-worker.py` only advances its native and desktop release labels.
+No installer, sudoers rule, service or credential path changes, and the
+remote-desktop assets are unchanged, so the remote-desktop bundle revision and every
+session revision are preserved. This source release does not deploy, install, or
+update any existing computer.
+
+Release `2026.11.10.2` builds on `2026.11.10.1` and lets Claude Code run on
+Hivra credits. `provision-claude-code-box.sh` gains
+`configure_claude_managed_model`: for a Claude Code computer launched with a
+managed model key, it validates the key's format, the Hivra Anthropic Messages
+base URL (`https://<host>/api/managed-venice/anthropic`) and the model name, then
+merges them into the agent user's `~/.claude/settings.json` `env` block
+(`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and every model tier mapped to the
+chosen model, with non-essential traffic disabled) through a mode-0600 atomic
+write, keeping the owner's other settings. With no managed key the computer keeps
+native `claude auth login` sign-in, and every other agent is untouched.
+`hivra-provider-worker.py` only advances its native and desktop release labels.
+No sudoers rule, service or credential path outside that settings file changes,
+and the remote-desktop assets are unchanged, so the remote-desktop bundle
+revision and every session revision are preserved. This source release does not
+deploy, install, or update any existing computer.
+
+Release `2026.11.10.1` builds on `2026.11.03.1` and hardens first launch and
+start against slow or flaky networks, and tells the agent how to look after its
+own computer. `provision-claude-code-box.sh` waits for the dpkg lock (a fresh
+cloud image runs apt-daily right after first boot) and retries `apt-get` up to
+four times through one `apt_get` helper, retries the bux checkout, the pinned
+Claude Code and Codex npm installs through `with_retries`, and adds
+`--retry-connrefused --retry-delay 3` to every pinned download, whose size and
+SHA-256 checks are unchanged. `qemu-guest-agent` is still installed and enabled
+on Proxmox computers and its failure still stops the launch. The Codex CLI is
+installed under `~/.npm-global` and the installer now requires it at exactly
+that path, where chat, the terminal and the CLI updater run it. Agent Zero's
+model name and base URL are validated before they are written to its env file,
+the default port in messages matches the unit's (50080), and its readiness wait
+is five minutes. `hivra-provision-on-host.sh` bounds the provisioner copy (600
+seconds) and the in-guest install (45 minutes) with `timeout` and SSH
+keepalives, still through the VMID-attested key (`GSCP`/`GSSH`), and fails the
+launch with a reason instead of hanging in "provisioning"; the existing EXIT
+trap still reports `ready:false` and cleans up. `hivra-start-on-host.sh` waits
+up to five minutes, matching provisioning, for the named tunnel after a start.
+`system-prompt.md` and `system-prompt-codex.md` gain a "Looking after this
+computer" section that points the owner to Manage for updates, restarts and
+restore points, tells the agent not to upgrade its own CLI or touch the Hivra
+connection services, and asks it to confirm before deleting anything of the
+owner's. No runtime behaviour, sudoers rule, service or credential path
+changes, and the remote-desktop assets are unchanged, so the remote-desktop
+bundle revision and every session revision are preserved. This source release
+does not deploy, install, or update any existing computer.
+
+Release `2026.11.03.1` builds on `2026.10.20.2` and makes the optional Claude
+app easier to work in. `hivra-claude-app` gains the owner's clipboard switch for
+the desktop: `clipboard on|off` sets a root-only flag in
+`/var/lib/hivra/desktop-clipboard` (off by default, kept apart from the app's own
+state so removing the app never changes it), and `clipboard-put` /
+`clipboard-get` move UTF-8 text, at most 256 KB, between the gateway and the
+desktop's X clipboard through `xclip` run as the desktop user inside the
+container. They refuse while the switch is off. Selkies' own clipboard stays
+disabled, as do files, audio, microphone, camera, gamepad and upstream
+commands: text moves only when the owner presses Paste in or Copy out on the
+Desktop strip (`/api/claude-app/clipboard`, `/clipboard/paste`,
+`/clipboard/copy`, behind the box token), and the gateway passes pasted text to
+the helper on stdin, never as an argument. The sudoers rule written by the
+installer and by the runtime updater's guest half grows by exactly those four
+verbs. The app's launcher now starts in `~/Hivra`, the desktop's one persistent
+folder, and is rewritten before every launch. Claude Code's own data from the
+app's Code tab (`~/.claude`, `~/.claude.json`) is saved in a second root-only
+archive with its own 512 MB cap and restored only into an empty home, so a
+desktop restart keeps Code tab sessions; `remove` deletes it. The agent's own
+browser (`local-browser-keeper.py`) no longer passes `--no-sandbox`: the pinned
+Google Chrome runs as `bux` with its setuid sandbox, and Chrome's errors reach
+the keeper's log. The runtime updater does not reinstall the keeper, so that
+change reaches computers provisioned from this release. The Claude app itself
+still runs with `--no-sandbox`, because the contained desktop keeps Docker's
+default seccomp profile and no-new-privileges; the remote-desktop assets are
+unchanged, so the remote-desktop bundle revision and every session revision are
+preserved. This source release does not deploy, install, or update any
+existing computer.
 
 Release `2026.10.20.2` builds on `2026.10.20.1` and lets owners update the
 hosted app of an Aeon, OpenClaw or Agent Zero computer the way Claude Code and

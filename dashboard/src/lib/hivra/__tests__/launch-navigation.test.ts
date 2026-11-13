@@ -24,13 +24,15 @@ describe("launch navigation", () => {
 
   it("opens a new launch of the agent a link named, or the agent choice", () => {
     expect(buildAgentLaunchHref("general")).toBe("/dashboard/launch?kind=agent&start=1&profile=hermes");
+    expect(buildAgentLaunchHref("deepseek-harness")).toBe("/dashboard/launch?kind=agent&start=1&profile=deepseek-harness");
+    expect(launchProfileForAgentType("deepseek-harness")).toBe("deepseek-harness");
     expect(buildAgentLaunchHref("nope")).toBe("/dashboard/launch?kind=agent&start=1");
     expect(buildAgentLaunchHref()).toBe("/dashboard/launch?kind=agent&start=1");
   });
 
   it("sends ready capacity to Launch for every runtime, never to the retired welcome forms", () => {
     const target = "33333333-3333-4333-8333-333333333333";
-    for (const resource of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "linux-desktop", "linux-terminal", "windows"] as const) {
+    for (const resource of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "linux-desktop", "linux-terminal", "windows"] as const) {
       expect(buildLaunchSetupHref(resource, target)).toMatch(/^\/dashboard\/launch\?/);
     }
     // A new launch from Capacity; the launch Capacity was opened from continues.

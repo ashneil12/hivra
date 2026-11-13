@@ -350,6 +350,91 @@ const recipes = Object.freeze({
     workerSha256: "459b4bebc712be048d5c250ac6ea8a98a355d2c0b3c0dfe3209fe659c5f14c9e",
     workerSize: 45185,
   }),
+  "2026.11.03.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the desktop clipboard switch and Code tab backup to the Claude app helper and turns the agent browser's sandbox back on.
+    workerSha256: "5f30e02197d1daca7530ccd12610cdeea568aa0399a37ce1ff4a7a332ee89919",
+    workerSize: 45185,
+  }),
+  "2026.11.10.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens first launch and start against slow networks (apt lock, retries, bounded SSH steps) and adds the "Looking after this computer" guidance to the agent system prompts.
+    workerSha256: "1d07dd4c82c14bf566837c9c87a3b7389881cba49342557f41222a8dc78590d7",
+    workerSize: 45185,
+  }),
+  "2026.11.10.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release has the installer point Claude Code at Hivra credits through its own settings.json env (configure_claude_managed_model).
+    workerSha256: "edfebf2b849a397c9f26a27e3020e855c7b5ba974f08e5b7e144c8ca6cfc75ad",
+    workerSize: 45185,
+  }),
+  "2026.11.10.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release carries the Codex sign-in freshness fix in the computer's chat page (hivra-chat/server.js).
+    workerSha256: "a8459abda395b12e2113fc7fbb4347a5ef050e8f141a3a8f1910f34ad42690c1",
+    workerSize: 45185,
+  }),
+  "2026.11.10.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the desktop-free linux-server kind to the guest and host scripts. The worker only advances its release labels.
+    workerSha256: "bf584e9d5eb7eea01ba5542d83722f245d527de4d6a1a21177af4eea33256c69",
+    workerSize: 45185,
+  }),
+  "2026.11.10.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release gives DeepSeek Harness its launch-time model in the guest and host scripts. The worker only advances its release labels.
+    workerSha256: "8fe3d90ebcae733730bf094f7c062ba99557b6c7b3c1ea8d5604dfac1c55a35d",
+    workerSize: 45185,
+  }),
+  "2026.11.11.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release gives the agent's browser a clean view (keeper, managed policy, pinned Chrome) on new computers and through the runtime update. The worker only advances its release labels.
+    workerSha256: "5be0eedad458669ea8efba8d5a42f4263d94cb778d93b90b5330c9da6854cf02",
+    workerSize: 45185,
+  }),
+  "2026.11.11.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release moves the agent's pinned Chrome (chrome-pin.json) on new computers and through the runtime update. The worker only advances its release labels.
+    workerSha256: "5cb9d2fa1659860d7a87bc0fce6812e2bf657d6e0aac887506e65aae6a3f4e16",
+    workerSize: 45185,
+  }),
+  "2026.11.11.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release makes the chat's reasoning effort real in the gateway (server.js), on new computers and through the runtime update. The worker only advances its release labels.
+    workerSha256: "1686c9fd7a69213565cc8adec37f978a42b2d04a50b480d1801b361e0a4f7ce3",
+    workerSize: 45185,
+  }),
+  "2026.11.11.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the official Hermes Agent as a computer kind (installer, gateway proxy, update), on new computers and through the runtime update. The worker only advances its release labels and learns the kind.
+    workerSha256: "5468a8903917bd64c57f065dba5b89fd1c5ca131ecfd9015507dde33180075b6",
+    workerSize: 45195,
+  }),
+  "2026.11.11.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release runs the Hermes gateway (scheduled tasks and chat channels) on Hermes computers, at launch and through the runtime update. The worker only advances its release labels.
+    workerSha256: "a0c9fee41a68a6a73b3282c882673fe34fd3902da6cedb90febb3adfaa58d242",
+    workerSize: 45195,
+  }),
+  "2026.11.11.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release installs the libatomic1 OS library before Hermes's own installer so its Node.js steps succeed on the Ubuntu image. The worker only advances its release labels.
+    workerSha256: "b053788bb30f0faaab1543510683987fbb2628f775436f311ec588e3235779af",
+    workerSize: 45195,
+  }),
+  "2026.11.11.7": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Hermes's own Desktop Webapp at /hermes (the box gateway, guest installer and Update Hermes change). The worker only advances its release labels.
+    workerSha256: "ee41d3606f887223a35a8c3845c5560cabd486372cb4e7717f63d384ef0c48b2",
+    workerSize: 45195,
+  }),
+  "2026.11.12.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets Hivra read and set Hermes's own model through Hermes's CLI (the box gateway changes). The worker only advances its release labels.
+    workerSha256: "9abab12289cd7978348324e16278019d4668e521405d1e180d7c4dd3011427cf",
+    workerSize: 45195,
+  }),
+  "2026.11.12.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the guest git guard that keeps Claude Code's local approvals file out of commits (the guest installer changes). The worker only advances its release labels.
+    workerSha256: "279c849b8ee4720a70d3509c453984f7098e6504cf2ac333f055201bfee9cf61",
+    workerSize: 45195,
+  }),
+  "2026.11.12.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds Hermes restore points to the box gateway (/api/restore-points). The worker only advances its release labels.
+    workerSha256: "ccd68eccf4a4a25c88f67d88c9688244ae4b8adf0f6fa31b737436944954af94",
+    workerSize: 45195,
+  }),
+  "2026.11.12.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds OpenBot (CopilotKit) as an agent kind. The worker accepts the kind and advances its release labels.
+    workerSha256: "ed590be9e1dde134bdba172cea0f182f2c1ab0b6e0681cd8e128257878b4024a",
+    workerSize: 45206,
+  }),
 });
 
 type Version = keyof typeof recipes;

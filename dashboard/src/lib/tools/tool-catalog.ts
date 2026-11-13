@@ -29,6 +29,8 @@ import { CLAUDE_PLAN_FACTS, usd } from "./claude-plan-facts";
 import { KEEP_AWAKE_FACTS } from "./keep-awake";
 import { TMUX_FACTS, TMUX_KEYS_NOTE } from "./tmux-sheet";
 import { monthYear } from "@/lib/tools/month-year";
+import { isAgentToolsEnabled } from "./agent-tools-flag";
+import { AGENT_TOOL_ENTRIES } from "./agent-tools/entries";
 
 export type ToolComponentKey =
   | "plan-calculator"
@@ -36,7 +38,14 @@ export type ToolComponentKey =
   | "hosting-cost-calculator"
   | "limit-reset-calculator"
   | "keep-mac-awake"
-  | "tmux-cheat-sheet";
+  | "tmux-cheat-sheet"
+  | "agent-picker"
+  | "agent-running-cost"
+  | "agent-model-finder"
+  | "agent-job-library"
+  | "bot-connect-wizard"
+  | "agent-security-check"
+  | "soul-md-builder";
 
 export interface ToolFaq {
   q: string;
@@ -183,7 +192,7 @@ export const TOOLS_CLOSING = {
   staysOn: `A paid ${PLAN_DISPLAY.entry} computer stays on and is not paused for inactivity.`,
   aiUsage:
     "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
-  claudeCodeSignIn: "Claude Code uses your own Anthropic sign-in, not Hivra credits.",
+  claudeCodeSignIn: "Claude Code can use your own Anthropic sign-in or Hivra credits.",
   guaranteeLead: "There is a",
   guarantee: MONEY_BACK_GUARANTEE,
   guaranteeHref: "/terms",
@@ -360,7 +369,7 @@ const PLAN_CALCULATOR_ENTRY: ToolEntry = {
   ],
 };
 
-export const TOOL_ENTRIES: ToolEntry[] = [
+const BASE_TOOL_ENTRIES: ToolEntry[] = [
   PLAN_CALCULATOR_ENTRY,
   {
     slug: "agent-survival-check",
@@ -773,6 +782,12 @@ export const TOOL_ENTRIES: ToolEntry[] = [
     ],
   },
 ];
+
+/**
+ * Every tool the site shows. The agent tools join the six original ones only while
+ * NEXT_PUBLIC_HIVRA_AGENT_TOOLS_ENABLED is on, so merging them is not launching them.
+ */
+export const TOOL_ENTRIES: ToolEntry[] = isAgentToolsEnabled() ? [...BASE_TOOL_ENTRIES, ...AGENT_TOOL_ENTRIES] : BASE_TOOL_ENTRIES;
 
 export function getToolEntry(slug: string): ToolEntry | undefined {
   return TOOL_ENTRIES.find((entry) => entry.slug === slug);

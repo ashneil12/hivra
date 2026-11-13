@@ -91,7 +91,7 @@ export function ManageHistory({ agentId }: { agentId: string }) {
           {loading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />} Refresh
         </button>
       </div>
-      {error ? <div role="alert" style={{ ...manageMuted, color: "#e06c5a" }}>{error}</div>
+      {error ? <div role="alert" style={{ ...manageMuted, color: "var(--hg-bad)" }}>{error}</div>
         : events === null ? <div style={manageMuted}>Loading history…</div>
           : events.length === 0 ? <div style={manageMuted}>No history yet.</div>
             : (
@@ -128,11 +128,16 @@ export function ManageNotAvailable({ items }: { items: ManageCapabilities["notAv
 }
 
 /** A size that can't be changed here, and why. */
-export function ManageFixedSize({ size, reason }: { size: string; reason: string }) {
+export function ManageFixedSize({ size, reason, plain = false }: {
+  size: string;
+  reason: string;
+  /** The reason already says the size in plain words, so there is no heading. */
+  plain?: boolean;
+}) {
   return (
     <div style={{ ...manageCard }} data-testid="manage-fixed-size">
-      <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Fixed size · {size}</div>
-      <div style={manageMuted}>{reason}</div>
+      {plain ? null : <div className="serif" style={{ fontSize: 16, fontWeight: 600, color: "var(--ink-black)" }}>Fixed size · {size}</div>}
+      <div style={plain ? { ...manageValue, lineHeight: 1.55 } : manageMuted}>{reason}</div>
     </div>
   );
 }

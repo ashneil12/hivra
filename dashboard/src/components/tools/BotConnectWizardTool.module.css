@@ -1,0 +1,29 @@
+/* Bot connect wizard: the step list, the permission grid and the inline fields. Uses the same
+   variables as the shared tools module so it sits in the same card. */
+.steps { display:flex; flex-wrap:wrap; gap:8px; list-style:none; margin:0 0 24px; padding:0; }
+.stepButton { min-height:44px; display:inline-flex; align-items:center; gap:8px; padding:0 12px; font:13px var(--font-sans); color:var(--text-secondary); background:transparent; border:1px solid var(--etched-border); border-radius:var(--hg-radius-sm); cursor:pointer; transition:border-color .2s,color .2s; text-align:left; }
+.stepButton:hover { border-color:var(--gold-leaf); color:var(--ink-black); }
+.stepButton[aria-current="step"] { background:var(--ink-black); color:var(--vellum-bg); border-color:var(--ink-black); }
+.stepNum { font-weight:650; }
+.stepBody { margin-bottom:24px; }
+.stepBody h3 { font-size:22px; font-weight:500; letter-spacing:-.03em; color:var(--ink-black); margin:0 0 12px; }
+.stepBody p { font-size:15px; line-height:1.75; margin:0 0 12px; max-width:68ch; }
+.stepBody ol, .stepBody ul { font-size:15px; line-height:1.75; margin:0 0 16px; padding-left:22px; max-width:68ch; }
+.stepBody li + li { margin-top:6px; }
+.nav { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
+.nav button { margin-top:0; }
+.permGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:0 24px; margin:12px 0 16px; }
+.permRisky { color:var(--text-muted); }
+.presetRow { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 4px; }
+.presetRow button { margin-top:0; }
+.fieldBlock { max-width:560px; margin:12px 0 16px; }
+.urlBox { font:13px/1.6 var(--font-sans); padding:14px 16px; margin:12px 0; background:var(--vellum-bg); color:var(--ink-black); border:1px solid var(--etched-border); overflow-wrap:anywhere; word-break:break-all; }
+.warn { margin:8px 0 0; font-size:14px; line-height:1.6; color:color-mix(in srgb,var(--gold-leaf) 80%,var(--ink-black)); }
+.cmdRow { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:6px 0; }
+.cmdRow code { font:13px var(--font-sans); font-variant-ligatures:none; color:var(--ink-black); overflow-wrap:anywhere; }
+.cmdRow button { margin-top:0; }
+.showRow { margin-top:4px; }
+.leak { border-left:2px solid var(--gold-leaf); }
+@media (max-width:640px) {
+  .stepButton { flex:1 1 100%; }
+}

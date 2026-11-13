@@ -252,7 +252,7 @@ reload_or_recover_caddy() {
   if ! verify_caddy; then
     echo "caddy recovery verification failed" >&2
     return 1
-  }
+  fi
 }
 
 if ! reload_or_recover_caddy; then

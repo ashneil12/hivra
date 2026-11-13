@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 // unsettled (security review 2026-09).
 export const maxDuration = 300;
 
+import { tryGrantLaunchCredit } from "@/lib/venice/promo/service";
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 
@@ -54,6 +55,7 @@ import {
   ManagedVeniceInsufficientBalanceError,
 } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
+import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
   anthropicRequestToOpenAi,
   openAiResponseToAnthropic,
@@ -146,6 +148,9 @@ export async function POST(req: NextRequest) {
   }
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
+  if (walletType === "card") {
+    await tryGrantLaunchCredit({ userId: verifiedKey.userId });
+  }
 
   // The hold covers the translated request's worst case. Claude Code sends a
   // large max_tokens; above the model maximum it is written down to it, and
@@ -168,7 +173,7 @@ export async function POST(req: NextRequest) {
       return anthropicError({
         status: 402,
         type: "billing_error",
-        message: `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ${managedVeniceTopUpUrl(walletType)}`,
+        message: managedVeniceSpendCapMessage(error, managedVeniceTopUpUrl(walletType)),
       });
     }
     if (error instanceof ManagedVeniceBalanceHeldError) {

@@ -2,7 +2,24 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.10.20.2.json";
+import currentRelease from "../../../provisioner-releases/2026.11.12.4.json";
+import restorePointsRelease from "../../../provisioner-releases/2026.11.12.3.json";
+import gitGuardRelease from "../../../provisioner-releases/2026.11.12.2.json";
+import hermesModelRelease from "../../../provisioner-releases/2026.11.12.1.json";
+import webappRelease from "../../../provisioner-releases/2026.11.11.7.json";
+import libatomicRelease from "../../../provisioner-releases/2026.11.11.6.json";
+import gatewayRelease from "../../../provisioner-releases/2026.11.11.5.json";
+import hermesRelease from "../../../provisioner-releases/2026.11.11.4.json";
+import chatEffortRelease from "../../../provisioner-releases/2026.11.11.3.json";
+import chromePinRelease from "../../../provisioner-releases/2026.11.11.2.json";
+import browserViewRelease from "../../../provisioner-releases/2026.11.11.1.json";
+import deepseekModelRelease from "../../../provisioner-releases/2026.11.10.5.json";
+import linuxServerRelease from "../../../provisioner-releases/2026.11.10.4.json";
+import freshnessRelease from "../../../provisioner-releases/2026.11.10.3.json";
+import creditsRelease from "../../../provisioner-releases/2026.11.10.2.json";
+import hardeningRelease from "../../../provisioner-releases/2026.11.10.1.json";
+import clipboardRelease from "../../../provisioner-releases/2026.11.03.1.json";
+import appUpdateRelease from "../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../provisioner-releases/2026.10.20.1.json";
 import claudeAppRelease from "../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../provisioner-releases/2026.09.24.4.json";
@@ -85,8 +102,42 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.10.20.2"
+  const release = identity.bundle.provisionerVersion === "2026.11.12.4"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.3"
+      ? restorePointsRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.2"
+      ? gitGuardRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.1"
+      ? hermesModelRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.7"
+      ? webappRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.6"
+      ? libatomicRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.5"
+      ? gatewayRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.4"
+      ? hermesRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.3"
+      ? chatEffortRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.2"
+      ? chromePinRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.1"
+      ? browserViewRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.5"
+      ? deepseekModelRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.4"
+      ? linuxServerRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.3"
+      ? freshnessRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.2"
+      ? creditsRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.1"
+      ? hardeningRelease
+    : identity.bundle.provisionerVersion === "2026.11.03.1"
+      ? clipboardRelease
+    : identity.bundle.provisionerVersion === "2026.10.20.2"
+      ? appUpdateRelease
     : identity.bundle.provisionerVersion === "2026.10.20.1"
       ? ownedUpdateRelease
     : identity.bundle.provisionerVersion === "2026.10.07.1"

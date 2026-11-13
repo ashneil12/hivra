@@ -180,3 +180,57 @@ describe("managed readiness against a host bundle without the capacity admission
     expect(result.stdout).toContain("HIVRA_HOST_READY");
   });
 });
+
+describe("managed readiness per runtime", () => {
+  const versionsIn = (script: string) => {
+    const start = script.indexOf('case "$OBSERVED_VERSION" in');
+    return [...script.slice(start, script.indexOf("\nesac", start)).matchAll(/'(\d{4}\.\d\d\.\d\d\.\d+)'/g)].map(m => m[1]);
+  };
+
+  it.each(["aeon", "openclaw", "agent-zero"])("excludes releases before agent-app-versions.json for %s", (runtime) => {
+    const versions = versionsIn(managedHivraHostReadinessScript("default", "provision", false, runtime));
+    expect(versions).not.toContain("2026.10.20.1");
+    expect(versions).not.toContain("2026.09.24.4");
+    expect(versions).toContain("2026.10.20.2");
+    expect(versions).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  });
+
+  it("lets only hosts on the release that ships linux-server take it, and keeps Linux Desktop on older hosts", () => {
+    for (const purpose of ["provision", "runtime-update"] as const) {
+      expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "linux-server"))).toEqual(
+        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+      // DeepSeek Harness needs the release that seeds its launch-time model.
+      expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "deepseek-harness"))).toEqual(
+        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    }
+    // Hermes is placed only from the release that lets Hivra set its own model (2026.11.12.1) on.
+    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual(["2026.11.12.1", "2026.11.12.2", "2026.11.12.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    const desktop = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "linux-desktop"));
+    expect(desktop).toContain("2026.11.10.3");
+    expect(desktop).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
+    expect(desktop).toEqual(versionsIn(managedHivraHostReadinessScript("default", "provision", false, null)));
+  });
+
+  it("keeps older compatible hosts for other agents", () => {
+    for (const runtime of ["claude-code", "codex", null]) {
+      expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, runtime))).toContain("2026.10.20.1");
+    }
+  });
+
+  it("requires the app version files only for the runtimes that read them", () => {
+    expect(managedHivraHostReadinessScript("default", "provision", false, "agent-zero")).toContain('need_file "$PROVISIONER_DIR/agent-app-versions.json"');
+    expect(managedHivraHostReadinessScript("default", "provision", false, "agent-zero")).toContain('need_file "$PROVISIONER_DIR/hivra-agent-app-update.sh"');
+    expect(managedHivraHostReadinessScript("default", "provision", false, "claude-code")).not.toContain("agent-app-versions.json");
+    expect(managedHivraHostReadinessScript("default", "provision")).not.toContain("agent-app-versions.json");
+  });
+
+  it("explains that the server needs an update instead of reporting no capacity", async () => {
+    const { checkManagedHivraHostReadiness } = await import("../managed-provisioner-readiness");
+    const result = await checkManagedHivraHostReadiness(
+      { targetId: "t1", env: {}, channel: "default", runtimeId: "agent-zero", runtimeLabel: "Agent Zero" },
+      async () => ({ ok: false, stdout: "", stderr: "Hivra provisioner version mismatch", error: "exit 1" }) as never,
+    );
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("needs an update before it can run Agent Zero"),
+      error: { code: "HIVRA_HOST_NEEDS_UPDATE" } });
+  });
+});

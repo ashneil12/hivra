@@ -88,7 +88,7 @@ it("claims and dispatches one exact freshly inspected guardian grant", async () 
     connectionIpv4: descriptor.route.publicIpv4,
     serverCertificatePem: SERVER_CERTIFICATE, serverCertificateSha256: "8".repeat(64),
   });
-  expect(deps.inspectCapability).toHaveBeenCalledWith(COMPUTER_ID, expect.anything(), { persistReceipt: false });
+  expect(deps.inspectCapability).toHaveBeenCalledWith(COMPUTER_ID, expect.anything(), { persistReceipt: false, omarchyInspectionMode: "native" });
   expect(deps.claimActivation).toHaveBeenCalledTimes(1);
   expect(deps.recordGrant).toHaveBeenCalledWith({
     userId: USER_ID, sessionId: SESSION_ID, activationId: ACTIVATION_ID,
@@ -158,4 +158,16 @@ it("polls only the read-only observer while startup is pending", async () => {
     "activate", "observe-ready", "observe-ready",
   ]);
   expect(deps.wait).toHaveBeenCalledTimes(1);
+});
+
+it("refuses browser-only evidence before claiming a native activation", async () => {
+  const deps = dependencies({ inspectCapability: jest.fn().mockResolvedValue({
+    ok: true, receipt: { capabilityGeneration: GENERATION },
+    nativeDescriptor: { ...descriptor, route: { status: "browser-only", publicIpv4: "198.51.100.11" } },
+  }) });
+  await expect(activateOmarchyNativeSession(USER_ID, {
+    computerId: COMPUTER_ID, sessionId: SESSION_ID, sessionToken: `hrs1_${"t".repeat(43)}`,
+  }, deps as never)).resolves.toEqual({ ok: false, code: "computer_not_ready" });
+  expect(deps.claimActivation).not.toHaveBeenCalled();
+  expect(deps.executeGuardian).not.toHaveBeenCalled();
 });
