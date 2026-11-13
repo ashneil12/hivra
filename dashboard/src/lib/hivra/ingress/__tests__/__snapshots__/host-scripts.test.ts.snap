@@ -1,5 +1,45 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`host wake proxy scripts (pure) matches the reviewed snapshots: credential-remove 1`] = `
+"#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+EXPECTED_HOSTNAME='fixturenode'
+uptime_ms() { awk '{ printf "%d", $1 * 1000 }' /proc/uptime; }
+STARTED_MS="$(uptime_ms)"
+ACTUAL_HOSTNAME="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+[ "$ACTUAL_HOSTNAME" = "$EXPECTED_HOSTNAME" ] \\
+  || { echo "wake proxy target identity mismatch" >&2; printf 'HIVRA_WAKE_PROXY_RESULT status=failed step=identity changed=0 ms=0\\n'; exit 1; }
+LIB_DIR='/usr/local/lib/hivra-ingress'
+PY="$LIB_DIR/hivra-wake-proxy.py"
+CF_BIN='/usr/local/bin/hivra-cloudflared'
+ROUTES_DIR=/etc/hivra/ingress/routes
+front_door_code() {
+  python3 -I -c 'import http.client,sys; c=http.client.HTTPConnection("127.0.0.1",8080,timeout=3); c.request("GET","/",headers={"Host":"hivra-health.invalid"}); print(c.getresponse().status)' 2>/dev/null || printf '0\\n'
+}
+route_count() {
+  if [ -d "$ROUTES_DIR" ]; then find "$ROUTES_DIR" -maxdepth 1 -type f -name '*.json' | wc -l; else printf '0\\n'; fi
+}
+connector_env_count() {
+  if [ -d /etc/hivra/ingress ]; then find /etc/hivra/ingress -maxdepth 1 -type f -name '*.env' | wc -l; else printf '0\\n'; fi
+}
+active_connector_count() {
+  systemctl list-units --type=service --state=active --no-legend --plain 'hivra-cf@*' 2>/dev/null | grep -c . || true
+}
+MARK='HIVRA_WAKE_PROXY_RESULT'
+STEP=credential
+CHANGED=0
+emit() {
+  printf '%s status=%s step=%s changed=%s ms=%s\\n' "$MARK" "$1" "$STEP" "$CHANGED" "$(( $(uptime_ms) - STARTED_MS ))"
+}
+trap 'status=$?; trap - EXIT; if [ "$status" != 0 ]; then emit failed; fi; exit "$status"' EXIT
+CRED_DEST='/etc/hivra/ingress/host-credential.json'
+if [ -e "$CRED_DEST" ] || [ -L "$CRED_DEST" ]; then CHANGED=1; rm -f -- "$CRED_DEST"; fi
+trap - EXIT
+if [ "$CHANGED" = 1 ]; then emit removed; else emit absent; fi
+"
+`;
+
 exports[`host wake proxy scripts (pure) matches the reviewed snapshots: install 1`] = `
 "#!/usr/bin/env bash
 set -euo pipefail
@@ -219,6 +259,252 @@ until health_ok; do
   if [ "$FORCE_HEALTH_FAILURE" = 1 ] || [ "$(uptime_ms)" -ge "$HEALTH_DEADLINE_MS" ]; then echo "wake proxy health check failed" >&2; exit 1; fi
   sleep 0.5
 done
+COMMITTED=1
+if [ "$CHANGED" = 1 ]; then emit installed; else emit unchanged; fi
+"
+`;
+
+exports[`host wake proxy scripts (pure) matches the reviewed snapshots: install-with-credential 1`] = `
+"#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+EXPECTED_HOSTNAME='fixturenode'
+uptime_ms() { awk '{ printf "%d", $1 * 1000 }' /proc/uptime; }
+STARTED_MS="$(uptime_ms)"
+ACTUAL_HOSTNAME="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+[ "$ACTUAL_HOSTNAME" = "$EXPECTED_HOSTNAME" ] \\
+  || { echo "wake proxy target identity mismatch" >&2; printf 'HIVRA_WAKE_PROXY_RESULT status=failed step=identity changed=0 ms=0\\n'; exit 1; }
+LIB_DIR='/usr/local/lib/hivra-ingress'
+PY="$LIB_DIR/hivra-wake-proxy.py"
+CF_BIN='/usr/local/bin/hivra-cloudflared'
+ROUTES_DIR=/etc/hivra/ingress/routes
+front_door_code() {
+  python3 -I -c 'import http.client,sys; c=http.client.HTTPConnection("127.0.0.1",8080,timeout=3); c.request("GET","/",headers={"Host":"hivra-health.invalid"}); print(c.getresponse().status)' 2>/dev/null || printf '0\\n'
+}
+route_count() {
+  if [ -d "$ROUTES_DIR" ]; then find "$ROUTES_DIR" -maxdepth 1 -type f -name '*.json' | wc -l; else printf '0\\n'; fi
+}
+connector_env_count() {
+  if [ -d /etc/hivra/ingress ]; then find /etc/hivra/ingress -maxdepth 1 -type f -name '*.env' | wc -l; else printf '0\\n'; fi
+}
+active_connector_count() {
+  systemctl list-units --type=service --state=active --no-legend --plain 'hivra-cf@*' 2>/dev/null | grep -c . || true
+}
+umask 022
+MARK='HIVRA_WAKE_PROXY_RESULT'
+BUNDLE='/root/hivra-provisioner'
+CHANNEL='default'
+EXPECTED_VERSION='2026.11.13.1'
+CF_VERSION='2026.8.2'
+CF_URL='https://github.com/cloudflare/cloudflared/releases/download/2026.8.2/cloudflared-linux-amd64'
+CF_SHA256='f8378fe3c407287e39658252b4807925f9478e1931c2c935f4e4614caaa068dc'
+FORCE_HEALTH_FAILURE=0
+CRED_DEST='/etc/hivra/ingress/host-credential.json'
+CRED_STATE=none
+# The credential document arrives on stdin only: never in the script, its argv or a log.
+CRED_IN="$(head -c 4097)"
+STEP=preflight
+CHANGED=0
+TOUCHED=0
+COMMITTED=0
+CREATED_USER=0
+CREATED_LIB_DIR=0
+STAGE=""
+HELPER_WAS_ACTIVE=0
+PROXY_WAS_ACTIVE=0
+HELPER_WAS_ENABLED=0
+PROXY_WAS_ENABLED=0
+emit() {
+  printf '%s status=%s step=%s changed=%s cloudflared=%s credential=%s ms=%s\\n' "$MARK" "$1" "$STEP" "$CHANGED" "$CF_VERSION" "$CRED_STATE" "$(( $(uptime_ms) - STARTED_MS ))"
+}
+digest_of() { sha256sum < "$1" | cut -d' ' -f1; }
+# Write DEST from SRC only when it differs; keep the previous file for rollback.
+place_file() {
+  src="$1"; dest="$2"; mode="$3"; idx="$4"
+  if [ -f "$dest" ] && [ ! -L "$dest" ] && cmp -s -- "$src" "$dest"; then return 0; fi
+  TOUCHED=1
+  if [ -e "$dest" ] || [ -L "$dest" ]; then cp -a -- "$dest" "$STAGE/prev.$idx"; fi
+  printf '%s\\n' "$dest" > "$STAGE/dest.$idx"
+  install -m "$mode" -o root -g root -- "$src" "$dest.hivra-new"
+  mv -f -- "$dest.hivra-new" "$dest"
+  CHANGED=1
+}
+restore_files() {
+  for marker in "$STAGE"/dest.*; do
+    [ -f "$marker" ] || continue
+    idx="\${marker##*.}"
+    dest="$(cat "$marker")"
+    rm -f -- "$dest.hivra-new"
+    if [ -e "$STAGE/prev.$idx" ] || [ -L "$STAGE/prev.$idx" ]; then
+      mv -f -- "$STAGE/prev.$idx" "$dest"
+    else
+      rm -f -- "$dest"
+    fi
+  done
+}
+# Before the files go back: stop and disable what was not running or enabled before.
+unwind_unit() {
+  unit="$1"; was_active="$2"; was_enabled="$3"
+  [ "$was_active" = 1 ] || systemctl stop "$unit" 2>/dev/null
+  [ "$was_enabled" = 1 ] || systemctl disable "$unit" 2>/dev/null
+}
+# After the files are back: run what ran before, on its previous files.
+resume_unit() {
+  unit="$1"; was_active="$2"; was_enabled="$3"
+  [ "$was_enabled" = 0 ] || systemctl enable "$unit" 2>/dev/null
+  if [ "$was_active" = 1 ]; then
+    if [ "$CHANGED" = 1 ]; then systemctl restart "$unit"; else systemctl start "$unit"; fi
+  fi
+}
+cleanup() {
+  if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi
+}
+on_exit() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$COMMITTED" = 1 ]; then cleanup; exit "$status"; fi
+  set +e
+  [ "$status" != 0 ] || status=1
+  if [ "$TOUCHED" = 1 ]; then
+    unwind_unit hivra-wake-proxy.service "$PROXY_WAS_ACTIVE" "$PROXY_WAS_ENABLED"
+    unwind_unit hivra-wake-helper.service "$HELPER_WAS_ACTIVE" "$HELPER_WAS_ENABLED"
+    restore_files
+    systemctl daemon-reload
+    resume_unit hivra-wake-helper.service "$HELPER_WAS_ACTIVE" "$HELPER_WAS_ENABLED"
+    resume_unit hivra-wake-proxy.service "$PROXY_WAS_ACTIVE" "$PROXY_WAS_ENABLED"
+    if [ "$CREATED_LIB_DIR" = 1 ]; then rmdir -- "$LIB_DIR" 2>/dev/null; fi
+    if [ "$CREATED_USER" = 1 ]; then
+      # A first install: no computer can have a nap marker or route here yet.
+      rm -rf -- /run/hivra-ingress /run/hivra-ingress-fwd /run/hivra-ingress-state
+      rmdir -- /etc/hivra/ingress/routes /etc/hivra/ingress 2>/dev/null
+      userdel hivra-ingress 2>/dev/null
+    fi
+    emit rolled_back
+  else
+    emit failed
+  fi
+  cleanup
+  exit "$status"
+}
+trap on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+for tool in python3 systemctl systemd-tmpfiles sha256sum flock curl install cmp mktemp getent useradd ss awk; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "wake proxy install needs $tool" >&2; exit 1; }
+done
+[ "$(uname -m)" = x86_64 ] || { echo "wake proxy install supports x86_64 hosts only" >&2; exit 1; }
+install -d -m 0755 /run/lock
+exec 8>/run/lock/hivra-allocation.lock
+flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+STEP=bundle
+[ -d "$BUNDLE" ] && [ -f "$BUNDLE/BUNDLE.sha256" ] || { echo "channel bundle directory is missing" >&2; exit 1; }
+(cd "$BUNDLE" && sha256sum -c --status BUNDLE.sha256) || { echo "channel bundle does not match its BUNDLE.sha256" >&2; exit 1; }
+[ "$(tr -d '[:space:]' < "$BUNDLE/VERSION")" = "$EXPECTED_VERSION" ] \\
+  || { echo "channel bundle is not the expected provisioner version" >&2; exit 1; }
+grep -qxF '975dabe5c0b22caa817a32d47a9a7ba3411b83f31cfd9c4b1f057d6987f3a29c  hivra-wake-proxy.py' "$BUNDLE/BUNDLE.sha256" \\
+  || { echo 'bundle manifest does not list the reviewed hivra-wake-proxy.py' >&2; exit 1; }
+[ "$(sha256sum < "$BUNDLE/hivra-wake-proxy.py" | cut -d' ' -f1)" = '975dabe5c0b22caa817a32d47a9a7ba3411b83f31cfd9c4b1f057d6987f3a29c' ] \\
+  || { echo 'bundle file hivra-wake-proxy.py does not match its reviewed digest' >&2; exit 1; }
+grep -qxF 'bfb6468953893a1af4d388775c495ad65cce67004a8e1bc49ba8c525b32acecc  hivra-wake-helper.service' "$BUNDLE/BUNDLE.sha256" \\
+  || { echo 'bundle manifest does not list the reviewed hivra-wake-helper.service' >&2; exit 1; }
+[ "$(sha256sum < "$BUNDLE/hivra-wake-helper.service" | cut -d' ' -f1)" = 'bfb6468953893a1af4d388775c495ad65cce67004a8e1bc49ba8c525b32acecc' ] \\
+  || { echo 'bundle file hivra-wake-helper.service does not match its reviewed digest' >&2; exit 1; }
+grep -qxF '4a3b26e724e2d6cc19b2e1fecf446445d7845eb4fcd7ebaf66d2711438c8bfb4  hivra-wake-proxy.service' "$BUNDLE/BUNDLE.sha256" \\
+  || { echo 'bundle manifest does not list the reviewed hivra-wake-proxy.service' >&2; exit 1; }
+[ "$(sha256sum < "$BUNDLE/hivra-wake-proxy.service" | cut -d' ' -f1)" = '4a3b26e724e2d6cc19b2e1fecf446445d7845eb4fcd7ebaf66d2711438c8bfb4' ] \\
+  || { echo 'bundle file hivra-wake-proxy.service does not match its reviewed digest' >&2; exit 1; }
+grep -qxF 'd4fc45eda18fe9ff9b852dc175c5d8e06900ba5858a85548fe6da158d2c2f1f6  hivra-cf-template.service' "$BUNDLE/BUNDLE.sha256" \\
+  || { echo 'bundle manifest does not list the reviewed hivra-cf-template.service' >&2; exit 1; }
+[ "$(sha256sum < "$BUNDLE/hivra-cf-template.service" | cut -d' ' -f1)" = 'd4fc45eda18fe9ff9b852dc175c5d8e06900ba5858a85548fe6da158d2c2f1f6' ] \\
+  || { echo 'bundle file hivra-cf-template.service does not match its reviewed digest' >&2; exit 1; }
+grep -qxF '8d30ae08e3daaccba7d241054152d242d1bd9053cd97dc35c3f584010ee61fc7  hivra-ingress.tmpfiles.conf' "$BUNDLE/BUNDLE.sha256" \\
+  || { echo 'bundle manifest does not list the reviewed hivra-ingress.tmpfiles.conf' >&2; exit 1; }
+[ "$(sha256sum < "$BUNDLE/hivra-ingress.tmpfiles.conf" | cut -d' ' -f1)" = '8d30ae08e3daaccba7d241054152d242d1bd9053cd97dc35c3f584010ee61fc7' ] \\
+  || { echo 'bundle file hivra-ingress.tmpfiles.conf does not match its reviewed digest' >&2; exit 1; }
+python3 -I -c 'import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_text(), sys.argv[1], "exec")' "$BUNDLE/hivra-wake-proxy.py"
+STEP=preflight
+systemctl is-active --quiet hivra-wake-helper.service && HELPER_WAS_ACTIVE=1
+systemctl is-active --quiet hivra-wake-proxy.service && PROXY_WAS_ACTIVE=1
+systemctl is-enabled --quiet hivra-wake-helper.service 2>/dev/null && HELPER_WAS_ENABLED=1
+systemctl is-enabled --quiet hivra-wake-proxy.service 2>/dev/null && PROXY_WAS_ENABLED=1
+if [ "$PROXY_WAS_ACTIVE" = 0 ] && ss -Hltn '( sport = :8080 )' | grep -q .; then
+  echo "port 8080 is already in use on this host" >&2; exit 1
+fi
+STAGE="$(mktemp -d /root/.hivra-wake-proxy-install.XXXXXXXX)"
+STEP=credential
+printf '%s' "$CRED_IN" > "$STAGE/host-credential.in"
+CRED_IN=""
+python3 -I -c 'import json,re,sys; raw=open(sys.argv[1],'\\''rb'\\'').read(); assert len(raw)<=4096; d=json.loads(raw.decode('\\''utf-8'\\'')); assert isinstance(d,dict) and sorted(d)==['\\''credential'\\'','\\''generation'\\'','\\''host_id'\\'','\\''origin'\\'','\\''version'\\'']; assert d['\\''version'\\'']==1 and d['\\''host_id'\\'']==sys.argv[3]; assert type(d['\\''generation'\\'']) is int and 1<=d['\\''generation'\\'']<=1000000000; assert isinstance(d['\\''credential'\\''],str) and re.fullmatch('\\''[0-9a-f]{64}'\\'',d['\\''credential'\\'']); assert isinstance(d['\\''origin'\\''],str) and re.fullmatch('\\''https://[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]'\\'',d['\\''origin'\\'']); open(sys.argv[2],'\\''w'\\'').write(json.dumps(d,sort_keys=True,separators=('\\'','\\'','\\'':'\\''))+'\\''\\n'\\'')' "$STAGE/host-credential.in" "$STAGE/host-credential.json" "$EXPECTED_HOSTNAME" 2>/dev/null \\
+  || { echo "host credential document is invalid" >&2; exit 1; }
+rm -f -- "$STAGE/host-credential.in"
+STEP=cloudflared
+NEED_CF=1
+if [ -f "$CF_BIN" ] && [ ! -L "$CF_BIN" ] && [ "$(digest_of "$CF_BIN")" = "$CF_SHA256" ]; then NEED_CF=0; fi
+if [ "$NEED_CF" = 1 ]; then
+  curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --connect-timeout 10 --max-time 180 -o "$STAGE/cloudflared" "$CF_URL" \\
+    || { echo "cloudflared download failed" >&2; exit 1; }
+  [ "$(digest_of "$STAGE/cloudflared")" = "$CF_SHA256" ] \\
+    || { echo "cloudflared download does not match the pinned sha256" >&2; exit 1; }
+fi
+STEP=user
+if ! getent passwd hivra-ingress >/dev/null 2>&1; then
+  TOUCHED=1
+  useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin hivra-ingress
+  CREATED_USER=1
+fi
+STEP=files
+if [ ! -d "$LIB_DIR" ]; then TOUCHED=1; install -d -m 0755 -o root -g root "$LIB_DIR"; CREATED_LIB_DIR=1; fi
+if [ "$NEED_CF" = 1 ]; then place_file "$STAGE/cloudflared" "$CF_BIN" 0755 cf; fi
+place_file "$BUNDLE/hivra-wake-proxy.py" '/usr/local/lib/hivra-ingress/hivra-wake-proxy.py' 0644 0
+place_file "$BUNDLE/hivra-wake-helper.service" '/etc/systemd/system/hivra-wake-helper.service' 0644 1
+place_file "$BUNDLE/hivra-wake-proxy.service" '/etc/systemd/system/hivra-wake-proxy.service' 0644 2
+place_file "$BUNDLE/hivra-cf-template.service" '/etc/systemd/system/hivra-cf@.service' 0644 3
+place_file "$BUNDLE/hivra-ingress.tmpfiles.conf" '/etc/tmpfiles.d/hivra-ingress.conf' 0644 4
+printf 'channel=%s version=%s cloudflared=%s\\n' "$CHANNEL" "$EXPECTED_VERSION" "$CF_VERSION" > "$STAGE/SOURCE"
+place_file "$STAGE/SOURCE" "$LIB_DIR/SOURCE" 0644 source
+STEP=start
+# The drill's forced failure must exercise the rollback even when nothing changed.
+[ "$FORCE_HEALTH_FAILURE" = 0 ] || TOUCHED=1
+systemd-tmpfiles --create /etc/tmpfiles.d/hivra-ingress.conf
+if [ "$CHANGED" = 1 ]; then systemctl daemon-reload; fi
+if [ "$HELPER_WAS_ENABLED" = 0 ] || [ "$PROXY_WAS_ENABLED" = 0 ]; then
+  TOUCHED=1
+  systemctl enable hivra-wake-helper.service hivra-wake-proxy.service
+fi
+if [ "$CHANGED" = 1 ]; then
+  systemctl restart hivra-wake-helper.service
+  systemctl restart hivra-wake-proxy.service
+elif [ "$HELPER_WAS_ACTIVE" = 0 ] || [ "$PROXY_WAS_ACTIVE" = 0 ]; then
+  TOUCHED=1
+  systemctl start hivra-wake-helper.service hivra-wake-proxy.service
+fi
+STEP=health
+health_ok() {
+  [ "$FORCE_HEALTH_FAILURE" = 0 ] || return 1
+  systemctl is-active --quiet hivra-wake-helper.service || return 1
+  systemctl is-active --quiet hivra-wake-proxy.service || return 1
+  python3 -I -B "$PY" ctl health > "$STAGE/health.json" 2>/dev/null || return 1
+  python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("ok") is True and d.get("forwarder") is True else 1)' "$STAGE/health.json" || return 1
+  [ "$(front_door_code)" = 503 ] || return 1
+}
+HEALTH_DEADLINE_MS=$(( $(uptime_ms) + 30000 ))
+until health_ok; do
+  if [ "$FORCE_HEALTH_FAILURE" = 1 ] || [ "$(uptime_ms)" -ge "$HEALTH_DEADLINE_MS" ]; then echo "wake proxy health check failed" >&2; exit 1; fi
+  sleep 0.5
+done
+STEP=credential
+install -d -m 0700 -o root -g root /etc/hivra/ingress
+if [ -f "$CRED_DEST" ] && [ ! -L "$CRED_DEST" ] && cmp -s -- "$STAGE/host-credential.json" "$CRED_DEST"; then
+  CRED_STATE=unchanged
+else
+  TOUCHED=1
+  if [ -e "$CRED_DEST" ] || [ -L "$CRED_DEST" ]; then cp -a -- "$CRED_DEST" "$STAGE/prev.cred"; fi
+  printf '%s\\n' "$CRED_DEST" > "$STAGE/dest.cred"
+  install -m 0600 -o root -g root -- "$STAGE/host-credential.json" "$CRED_DEST.hivra-new"
+  mv -f -- "$CRED_DEST.hivra-new" "$CRED_DEST"
+  CRED_STATE=written
+fi
 COMMITTED=1
 if [ "$CHANGED" = 1 ]; then emit installed; else emit unchanged; fi
 "

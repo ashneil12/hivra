@@ -80,7 +80,7 @@ describe("proxy config", () => {
   it("keeps /api/instances/:id/aeon-gate out of the Clerk proxy matcher", async () => {
     const { config } = await import("@/proxy");
 
-    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "infrastructure/home-connector/install$", "infrastructure/home-connector/enrol$", "activity/ingest$", "activity/collector/renew$", "agent-link$", "agent-bridge$", "hivra/bridge/install$", "hivra/bridge/enrol$"]);
+    expect(apiExclusions(config.matcher)).toEqual(["instances/[^/]+/aeon-gate$", "infrastructure/first-boot/enroll$", "infrastructure/server-enrollments/report$", "infrastructure/home-connector/install$", "infrastructure/home-connector/enrol$", "activity/ingest$", "activity/collector/renew$", "agent-link$", "agent-bridge$", "hivra/bridge/install$", "hivra/bridge/enrol$", "hivra/ingress/wake-report$", "hivra/ingress/wake-request$"]);
   });
 
   // The exclusion used to end at "aeon-gate" with no `$`, unlike every other
@@ -123,6 +123,18 @@ describe("proxy config", () => {
     // The owner route and every sibling or child stay behind Clerk.
     for (const url of ["/api/hivra/bridge", "/api/hivra/bridge/install/x", "/api/hivra/bridge/enrol-other",
       "/api/hivra/bridge/enrol/x", "/api/hivra/bridges/install", "/api/hivra/agents"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
+    }
+  });
+
+  it("routes only the exact host wake-report and wake-request paths around Clerk", async () => {
+    const { config } = await import("@/proxy");
+    for (const url of ["/api/hivra/ingress/wake-report", "/api/hivra/ingress/wake-request"]) {
+      expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
+    }
+    // Siblings and children stay behind Clerk.
+    for (const url of ["/api/hivra/ingress", "/api/hivra/ingress/wake-report/x", "/api/hivra/ingress/wake-requests",
+      "/api/hivra/ingress/wake-report-other", "/api/ops/hivra/ingress/status", "/api/hivra/agents"]) {
       expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
     }
   });

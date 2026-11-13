@@ -450,6 +450,11 @@ const recipes = Object.freeze({
     workerSha256: "5f3df66045f47cbf8fc303f7ae094f8403615d78657a888028c8faa31cc87a37",
     workerSize: 45216,
   }),
+  "2026.11.13.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets the host wake proxy call Hivra with a host credential. The worker only advances its release labels.
+    workerSha256: "4c8558bea03db55790d1d4bfc086f52bf39ba2eed07425a2b183a57776c58954",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

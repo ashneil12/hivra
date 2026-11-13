@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     // The host wake proxy install step: separate from bundle sync, so the sync
     // keeps proving that nothing else on the host changed.
     if (!isHostWakeProxyAction(body.action)) {
-      return apiError("action must be install-wake-proxy, wake-proxy-status or remove-wake-proxy", 400);
+      return apiError("action must be install-wake-proxy, wake-proxy-status, remove-wake-proxy or revoke-host-credential", 400);
     }
     const action = body.action;
     try {

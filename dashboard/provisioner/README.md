@@ -570,6 +570,12 @@ update them yet.
   The proxy resumes only a paused VM whose nap marker holds the running QEMU pid, answers
   an unknown host or a napping computer with 503, and wakes only on a signed, short-lived,
   single-use `POST /__hivra/wake` ticket.
+- **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
+  (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
+  the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks
+  `POST /api/hivra/ingress/wake-request` to wake a computer it cannot resume itself. Calls are
+  signed with the host credential (HMAC of host id and generation; revoked by moving the
+  generation on). No credential file: no calls, unchanged behaviour.
 - **Host ingress at start (shipped, dark).** From `2026.11.13.2`, `hivra-start-on-host.sh`
   checks for `/etc/hivra/ingress/routes/<vmid>.json`. When it names the computer's own
   hostname (the per-agent cutover wrote it), the start re-applies the host's ARP/IP pin
