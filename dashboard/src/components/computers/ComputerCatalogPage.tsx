@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { LocalBridgePanel } from "@/components/hivra/LocalBridgePanel";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -354,6 +355,11 @@ export function ComputerCatalogPage(
           ) : null}
         </div>
       </section>
+
+      {/* Your own computer (the local bridge). Renders nothing while the flag is off. */}
+      <div id="your-own-computer">
+        <LocalBridgePanel />
+      </div>
 
       <details
         className={styles.osSection}
