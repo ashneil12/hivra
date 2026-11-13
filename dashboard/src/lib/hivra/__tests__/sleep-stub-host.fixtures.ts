@@ -242,6 +242,10 @@ const SLEEP = "#!/usr/bin/env bash\nexit 0\n";
 
 const ADMISSION = `#!/usr/bin/env bash
 echo "admission $*" >> "$STUB_DIR/calls.log"
+if [ -n "\${STUB_ADMISSION_QM:-}" ]; then
+  echo "admission-qm-config $(qm config "$1" | tr '\\n' ';')" >> "$STUB_DIR/calls.log"
+  echo "admission-qm-status $(qm status "$1")" >> "$STUB_DIR/calls.log"
+fi
 [ -z "\${STUB_ADMISSION_REFUSES:-}" ] || { echo "not enough memory" >&2; exit 1; }
 exit 0
 `;
@@ -296,9 +300,13 @@ export function makeHostHarness(): HostHarness {
       const local = script
         .replaceAll("/var/run/qemu-server", "@@QEMU@@")
         .replaceAll("/run/lock", "@@LOCK@@")
+        .replaceAll("/var/lib/hivra-sleep", "@@MARK@@")
+        .replaceAll("/etc/pve/qemu-server", "@@PVECONF@@")
         .replaceAll("/run/", `${runDir}/`)
         .replaceAll("@@QEMU@@", qemuDir)
-        .replaceAll("@@LOCK@@", path.join(runDir, "lock"));
+        .replaceAll("@@LOCK@@", path.join(runDir, "lock"))
+        .replaceAll("@@MARK@@", path.join(dir, "var-lib-hivra-sleep"))
+        .replaceAll("@@PVECONF@@", path.join(dir, "pve-qemu-server"));
       const pidFile = path.join(dir, "qemu.pid");
       rmSync(pidFile, { force: true });
       const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID)], { stdio: "ignore", timeout: 15_000 });

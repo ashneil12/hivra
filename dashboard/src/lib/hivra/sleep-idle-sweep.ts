@@ -198,6 +198,13 @@ interface Context {
   startedAt: number;
   deadline: number;
   summary: SleepIdleSweepSummary;
+  /**
+   * Work that outlived its step: wakes past their wait, sleeps cut off at the
+   * budget. The run waits for it before returning, up to the hard limit, because
+   * a serverless function is frozen once it answers, and work left running then
+   * only moves on when the next request happens to reach the same instance.
+   */
+  pending: Promise<unknown>[];
 }
 
 function fail(ctx: Context, message: string, error: unknown, failureType: string) {
@@ -315,8 +322,12 @@ async function runScheduledWakes(ctx: Context): Promise<void> {
       });
     } else summary.wakes.failed += 1;
   });
-  // Wakes still running after their wait get the rest of this step to finish.
-  if (background.length > 0) await untilDeadline(ctx, Promise.allSettled(background), stepDeadline);
+  // Wakes still running after their wait get the rest of this step to finish,
+  // and the run waits for any that are still going before it answers.
+  if (background.length > 0) {
+    await untilDeadline(ctx, Promise.allSettled(background), stepDeadline);
+    ctx.pending.push(...background);
+  }
 }
 
 // --- Step 2: stale lease recovery ---------------------------------------------
@@ -701,12 +712,14 @@ async function runHostWork(
     calls += 1;
     counts.attempted += 1;
     try {
+      const sleeping = sleepHivraAgent(candidate.id, { tier, trigger: "sweep", env: ctx.env, now: ctx.now });
       const done = await untilDeadline(
         ctx,
-        sleepHivraAgent(candidate.id, { tier, trigger: "sweep", env: ctx.env, now: ctx.now }),
+        sleeping,
         tier === "hibernate" ? ctx.startedAt + HIBERNATE_HARD_LIMIT_MS : ctx.deadline,
       );
       if (done.timedOut) {
+        ctx.pending.push(sleeping);
         ctx.summary.timedOut = true;
         counts.failed += 1;
         log.warn("agent sleep did not finish inside the sweep budget; its lease is settled later", {
@@ -808,6 +821,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     startedAt,
     deadline: startedAt + (options.budgetMs ?? SWEEP_BUDGET_MS),
     summary,
+    pending: [],
   };
 
   const steps: Array<[string, (c: Context) => Promise<void>]> = [
@@ -826,6 +840,21 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
       await step(ctx);
     } catch (error) {
       fail(ctx, `sleep sweep step failed: ${name}`, error, "sleep_sweep_step_failed");
+    }
+  }
+
+  // Finish what is still running before answering (see Context.pending). No new work starts here.
+  if (ctx.pending.length > 0) {
+    const hardLimit = startedAt + HIBERNATE_HARD_LIMIT_MS;
+    const drained = hardLimit > now()
+      ? await untilDeadline(ctx, Promise.allSettled(ctx.pending), hardLimit)
+      : { timedOut: true as const };
+    if (drained.timedOut) {
+      log.warn("sleep sweep work still running at the hard limit; its leases are settled later", {
+        source: LOG_SOURCE,
+        failureType: "sleep_sweep_pending_at_hard_limit",
+        pending: ctx.pending.length,
+      });
     }
   }
 

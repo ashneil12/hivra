@@ -1,5 +1,7 @@
 /** @jest-environment node */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import {
   buildIdleProbeHostScript, buildSleepHostScript, buildWakeHostScript, idleVerdict, parseIdleProbeOutput,
   parseIdleProbeRefusal, parseSleepReceipt, parseWakeReceipt, type WakeAdmission,
@@ -14,6 +16,8 @@ const ADMISSION = (dir: string): WakeAdmission => ({
 });
 
 const hasTools = ["bash", "python3", "perl"].every((cmd) => spawnSync("which", [cmd]).status === 0);
+/** The host's mark that a hibernate turned autostart off, inside a harness. */
+const onbootMark = (h: HostHarness) => path.join(h.dir, "var-lib-hivra-sleep", `onboot-${VMID}`);
 const host = hasTools ? describe : describe.skip;
 function explain<T>(run: { stdout: string; stderr?: string }, parsed: T | null): T | null {
   // Every receipt these tests read must parse, so a null fails here with the output in the message.
@@ -259,6 +263,8 @@ host("sleep script against a stub host", () => {
       expect(r).toMatchObject({ ok: true, tier: "hibernate", from: "awake", to: "hibernated", reason: "hibernated" });
       expect(r?.probe).not.toBeNull();
       expect(run.state).toMatchObject({ status: "stopped", lock: "suspended", vmstate: true, onboot: 0 });
+      // The autostart it turned off is marked on the host, for the wake to give back.
+      expect(existsSync(onbootMark(h))).toBe(true);
       const order = (prefix: string) => run.calls.findIndex((c) => c.startsWith(prefix));
       expect(order("lvs")).toBeGreaterThan(-1);
       expect(order("lvs")).toBeLessThan(order(`qm set ${VMID} --onboot 0`));
@@ -266,6 +272,14 @@ host("sleep script against a stub host", () => {
       expect(run.calls).toContain("timeout 240");
       expect(run.calls).toContain(`systemd-run --unit=hivra-sleep-${VMID} --collect --wait --quiet qm suspend ${VMID} --todisk 1`);
       expect(Object.keys(r?.steps ?? {})).toEqual(expect.arrayContaining(["pool", "hibernate"]));
+    });
+
+    it("leaves an autostart that was off alone, with no mark", () => {
+      rmSync(onbootMark(h), { force: true });
+      const run = h.run(hib(), withProbe({ ...AWAKE, onboot: 0 }));
+      expect(receipt(run)).toMatchObject({ ok: true, to: "hibernated" });
+      expect(run.calls.some((c) => c.startsWith(`qm set ${VMID} --onboot`))).toBe(false);
+      expect(existsSync(onbootMark(h))).toBe(false);
     });
 
     it("skips the probe for a paused computer", () => {
@@ -378,6 +392,8 @@ host("wake script against a stub host", () => {
   });
 
   it("restores a hibernated computer under admission, holding the lock until it runs", () => {
+    mkdirSync(path.dirname(onbootMark(h)), { recursive: true });
+    writeFileSync(onbootMark(h), "");
     const run = h.run(wake(), HIBERNATED);
     expect(receipt(run)).toMatchObject({ ok: true, from: "hibernated", to: "awake", reason: "restored", via: "socket" });
     expect(run.state).toMatchObject({ status: "running", qmp: "running", lock: "", onboot: 1 });
@@ -391,6 +407,55 @@ host("wake script against a stub host", () => {
     expect(at(`qm set ${VMID} --onboot 1`)).toBeLessThan(at("qga exec"));
     expect(run.calls.some((c) => c === "qmp cont")).toBe(false);
     expect(Object.keys(receipt(run)?.steps ?? {})).toEqual(expect.arrayContaining(["admission", "start", "fixup"]));
+    expect(existsSync(onbootMark(h))).toBe(false);
+    // With no mark the hibernate never turned autostart off, so the wake leaves it as it is.
+    const unmarked = h.run(wake(), HIBERNATED);
+    expect(receipt(unmarked)).toMatchObject({ ok: true, reason: "restored" });
+    expect(unmarked.calls.some((c) => c.startsWith(`qm set ${VMID} --onboot`))).toBe(false);
+    expect(unmarked.state.onboot).toBe(0);
+  });
+
+  it("gives the admission helper fast qm reads from the host's own files, and the CLI for anything else", () => {
+    const conf = path.join(h.dir, "pve-qemu-server");
+    mkdirSync(conf, { recursive: true });
+    const cli = (run: { calls: string[] }) => run.calls.filter((c) => /^qm (config|status) /.test(c));
+    const line = (run: { calls: string[] }, prefix: string) => run.calls.find((c) => c.startsWith(prefix)) ?? "";
+
+    // A plain config file is read directly; snapshot sections and comments are left out.
+    writeFileSync(path.join(conf, `${VMID}.conf`), "#note\nmemory: 4096\ncores: 2\n\n[snap1]\nmemory: 1\n");
+    const fast = h.run(wake(), HIBERNATED, { STUB_ADMISSION_QM: "1" });
+    expect(receipt(fast)).toMatchObject({ ok: true, reason: "restored" });
+    expect(line(fast, "admission-qm-config")).toBe("admission-qm-config memory: 4096;cores: 2;");
+    // No pid file: stopped, without asking the CLI.
+    expect(line(fast, "admission-qm-status")).toBe("admission-qm-status status: stopped");
+    const before = cli(fast).length;
+
+    // Pending changes go to the CLI, whose answer applies them.
+    writeFileSync(path.join(conf, `${VMID}.conf`), "memory: 4096\n[PENDING]\nmemory: 8192\n");
+    const pending = h.run(wake(), HIBERNATED, { STUB_ADMISSION_QM: "1" });
+    expect(line(pending, "admission-qm-config")).toContain("memory: 4096");
+    expect(cli(pending).length).toBe(before + 1);
+
+    // A pid file that points at this VM's process reads as running.
+    const proc = spawn("python3", ["-c", "import time; time.sleep(60)", "-id", String(VMID)], { stdio: "ignore" });
+    const pid = proc.pid as number;
+    try {
+      // The harness moves this path into its own directory, as it does for the script.
+      const runDir = "/var/run/qemu-server";
+      const withPid = h.run(
+        `mkdir -p ${runDir}; echo ${pid} > ${runDir}/${VMID}.pid\n${wake()}`,
+        HIBERNATED,
+        { STUB_ADMISSION_QM: "1" },
+      );
+      expect(line(withPid, "admission-qm-status")).toBe("admission-qm-status status: running");
+      // A pid file for some other process goes to the CLI.
+      const stray = h.run(`mkdir -p ${runDir}; echo $$ > ${runDir}/${VMID}.pid\n${wake()}`, HIBERNATED, { STUB_ADMISSION_QM: "1" });
+      expect(line(stray, "admission-qm-status")).toBe("admission-qm-status status: stopped");
+      expect(stray.calls.some((c) => c === `qm status ${VMID}`)).toBe(true);
+    } finally {
+      try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+      rmSync(path.join(conf, `${VMID}.conf`), { force: true });
+    }
   });
 
   it("retries the guest agent until it answers after a restore", () => {
