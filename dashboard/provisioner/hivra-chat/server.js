@@ -596,6 +596,198 @@ function handleAuthBootstrap(req, res) {
   });
 }
 
+// ---- Connect links ----
+// POST /connect/grant (management bearer only, minted by the dashboard's
+// "Connect app" action) registers a username+password pair whose
+// sha256("user:pass") digest is kept, with its expiry and the surface it opens,
+// in ~/.hivra/connect-grants.json: owner-only 0600, replaced atomically, bound
+// to this computer's API token like the session store (a token rotation
+// revokes every link). Neither half of a pair reaches disk, the map is pruned
+// and bounded, and entries outliving the maximum lifetime make the file
+// untrusted rather than quietly eternal.
+// A grant redeems two ways, both minting the same ordinary surface cookie:
+//   GET  /connect/<user>:<pass>          — a link an external client can open
+//   POST /login  {username,password,next} — Agent Zero's own sign-in form, so a
+//        remote-Instance client (the A0 desktop app) authenticates exactly as
+//        it would against a self-hosted Agent Zero.
+// The link/credentials are themselves the credential until their expiry:
+// DELETE /connect/grant wipes them all.
+const CONNECT_GRANT_FILE = path.join(HOME, ".hivra", "connect-grants.json");
+const CONNECT_GRANT_VERSION = 1;
+const CONNECT_GRANT_MAX = 16;
+const CONNECT_GRANT_MAX_BYTES = 16 * 1024;
+const CONNECT_GRANT_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CONNECT_GRANT_MIN_TTL_MS = 60 * 1000;
+const CONNECT_GRANT_PASSWORD = /^[a-f0-9]{64}$/;
+const CONNECT_GRANT_USERNAME = /^[A-Za-z0-9_-]{1,64}$/;
+// sha256("user:pass") -> {e: expiry ms, d: destination}. Only digests persist.
+const CONNECT_GRANTS = new Map();
+function connectGrantDigest(username, password) {
+  return crypto.createHash("sha256").update(String(username) + ":" + String(password)).digest("hex");
+}
+function readConnectGrants(now) {
+  if (!authStoreDirectoryTrusted()) return null;
+  let fd = null;
+  try {
+    fd = fs.openSync(CONNECT_GRANT_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > CONNECT_GRANT_MAX_BYTES) {
+      authStoreWarn("connect links: the saved file is not a private regular file of this user, or is too large");
+      return null;
+    }
+    const raw = fs.readFileSync(fd);
+    if (raw.length > CONNECT_GRANT_MAX_BYTES) throw new Error("connect grant file too large");
+    const doc = JSON.parse(raw.toString("utf8"));
+    if (!doc || typeof doc !== "object" || doc.v !== CONNECT_GRANT_VERSION
+      || !Array.isArray(doc.grants) || doc.grants.length > CONNECT_GRANT_MAX) {
+      throw new Error("unrecognised connect grant store");
+    }
+    // Written for another API token: every link in it is revoked.
+    if (typeof doc.binding !== "string" || !safeEq(doc.binding, AUTH_STORE_BINDING)) {
+      authStoreWarn("connect links: the API token changed, so every saved link is revoked");
+      return null;
+    }
+    const grants = new Map();
+    for (const entry of doc.grants) {
+      const digest = entry && entry.h, expiresAt = entry && entry.e, destination = entry && entry.d;
+      if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest) || grants.has(digest)
+        || !Number.isSafeInteger(expiresAt) || expiresAt > now + CONNECT_GRANT_MAX_TTL_MS + 5 * 60 * 1000
+        || !safeBootstrapDestination(destination)) {
+        throw new Error("invalid connect grant entry");
+      }
+      if (expiresAt > now) grants.set(digest, { e: expiresAt, d: destination });
+    }
+    return grants;
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") authStoreWarn("connect links: " + ((error && (error.code || error.message)) || "unreadable"));
+    return null;
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+function writeConnectGrants() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(CONNECT_GRANT_FILE);
+  const temp = path.join(directory, ".connect-grants." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    const grants = [];
+    for (const [h, g] of CONNECT_GRANTS) grants.push({ h, e: g.e, d: g.d });
+    const body = JSON.stringify({ v: CONNECT_GRANT_VERSION, binding: AUTH_STORE_BINDING, grants });
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, CONNECT_GRANT_FILE);
+    return true;
+  } catch (error) {
+    authStoreWarn("connect links: cannot save: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+(function loadConnectGrants() {
+  const loaded = readConnectGrants(Date.now());
+  if (loaded) for (const [digest, g] of loaded) CONNECT_GRANTS.set(digest, g);
+  if (loaded && loaded.size) writeConnectGrants();
+})();
+function pruneConnectGrants(now) {
+  for (const [digest, g] of CONNECT_GRANTS) if (g.e <= now) CONNECT_GRANTS.delete(digest);
+}
+function createConnectGrant(username, password, ttlMs, destination) {
+  const now = Date.now();
+  pruneConnectGrants(now);
+  while (CONNECT_GRANTS.size >= CONNECT_GRANT_MAX) {
+    let oldest = null;
+    for (const [digest, g] of CONNECT_GRANTS) {
+      if (oldest === null || g.e < CONNECT_GRANTS.get(oldest).e) oldest = digest;
+    }
+    CONNECT_GRANTS.delete(oldest);
+  }
+  const expiresAt = now + ttlMs;
+  CONNECT_GRANTS.set(connectGrantDigest(username, password), { e: expiresAt, d: destination });
+  writeConnectGrants();
+  return expiresAt;
+}
+// The redeeming value is a valid surface cookie for the stored destination, or
+// null. Both redemption paths run through this, so expiry and the token binding
+// apply identically to a shared link and to a sign-in form.
+function redeemConnectGrant(username, password) {
+  if (!CONNECT_GRANT_USERNAME.test(username) || !CONNECT_GRANT_PASSWORD.test(password)) return null;
+  const grant = CONNECT_GRANTS.get(connectGrantDigest(username, password));
+  if (!grant || grant.e <= Date.now()) return null;
+  return grant.d;
+}
+function answerConnectSession(res, destination) {
+  const session = createAuthSession();
+  res.setHeader("Set-Cookie", AUTH_COOKIE + "=" + session + "; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=" + Math.floor(AUTH_SESSION_TTL_MS / 1000));
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  res.writeHead(303, { Location: destination });
+  res.end();
+}
+function handleConnectGrantCreate(req, res) {
+  readBody(req, (body) => {
+    let parsed = null;
+    try { parsed = JSON.parse(body); } catch {}
+    const username = parsed && typeof parsed.username === "string" ? parsed.username : "";
+    const password = parsed && typeof parsed.password === "string" ? parsed.password : "";
+    if (!CONNECT_GRANT_USERNAME.test(username) || !CONNECT_GRANT_PASSWORD.test(password)) {
+      return jsonRes(res, 400, { error: "username must be 1-64 [A-Za-z0-9_-] and password 64 lowercase hex" });
+    }
+    const destination = safeBootstrapDestination(parsed && parsed.destination);
+    if (!destination) return jsonRes(res, 400, { error: "unsafe destination" });
+    const requested = parsed && Number(parsed.ttlMs);
+    const ttlMs = Number.isSafeInteger(requested)
+      ? Math.min(Math.max(requested, CONNECT_GRANT_MIN_TTL_MS), CONNECT_GRANT_MAX_TTL_MS)
+      : CONNECT_GRANT_MAX_TTL_MS;
+    const expiresAt = createConnectGrant(username, password, ttlMs, destination);
+    return jsonRes(res, 200, { ok: true, expiresAt });
+  });
+}
+function handleConnectGrantRevoke(res) {
+  CONNECT_GRANTS.clear();
+  writeConnectGrants();
+  return jsonRes(res, 200, { ok: true });
+}
+// GET /connect/<user>:<pass> — the shareable form of a grant. The URL itself is
+// the credential, so treat one like a password until it expires or is revoked.
+function handleConnectRedeem(req, res, rawCode) {
+  let code = "";
+  try { code = decodeURIComponent(rawCode); } catch { return denyHtml(res); }
+  const separator = code.indexOf(":");
+  const destination = separator > 0 ? redeemConnectGrant(code.slice(0, separator), code.slice(separator + 1)) : null;
+  if (!destination) return denyHtml(res);
+  return answerConnectSession(res, destination);
+}
+// POST /login — Agent Zero's own sign-in form. A remote-Instance client (the
+// A0 desktop app) POSTs {username, password, next} exactly as it would to a
+// self-hosted Agent Zero; here the pair is checked against this box's connect
+// grants instead of Agent Zero's own login, which the /agent-zero proxy logs
+// into upstream already.
+function handleConnectLogin(req, res) {
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 16 * 1024) { tooBig = true; req.destroy(); }
+  });
+  req.on("end", () => {
+    if (tooBig) return;
+    const form = new URLSearchParams(body);
+    const granted = redeemConnectGrant(String(form.get("username") || "").trim(), String(form.get("password") || ""));
+    if (!granted) return denyHtml(res);
+    // Agent Zero's own semantics: honour the form's `next` when it points at a
+    // real path on this box; its default "/" (what a self-hosted A0 root would
+    // be) means the surface the grant was minted for.
+    const next = safeBootstrapDestination(form.get("next"));
+    return answerConnectSession(res, next && next !== "/" ? next : granted);
+  });
+}
+
 // ---- Box introspection: chat-history sessions, file browser, skills ----
 // Credential paths, aliases and special files are rejected before I/O.
 const SESS_DIR = AGENT_KIND === "codex"
@@ -3547,6 +3739,13 @@ const server = http.createServer((req, res) => {
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
   }
   if (req.method === "POST" && u === "/auth/bootstrap") return handleAuthBootstrap(req, res);
+  // Connect links: minted/revoked with the bearer only (the dashboard's
+  // "Connect app" action); redeemed without one — the pair in the URL or the
+  // sign-in form is the credential until its expiry.
+  if (req.method === "POST" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantCreate(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "DELETE" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantRevoke(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u.startsWith("/connect/")) return handleConnectRedeem(req, res, u.slice("/connect/".length));
+  if (req.method === "POST" && u === "/login") return handleConnectLogin(req, res);
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
   // controls, so these land on the box root — this chat server — and die as 404s.

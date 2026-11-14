@@ -51,7 +51,7 @@ import {
  * and an action that needs a glyph not in this set is a signal that it
  * probably should not have been lifted.
  */
-export type SurfaceActionIcon = "external-link";
+export type SurfaceActionIcon = "external-link" | "link";
 
 export interface SurfaceAction {
   /** Stable within a surface, e.g. "open-in-new-tab". */
