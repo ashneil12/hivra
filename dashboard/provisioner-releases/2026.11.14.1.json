@@ -160,7 +160,7 @@
     {
       "path": "hivra-provider-worker.py",
       "bytes": 45216,
-      "sha256": "2e3996e3ce750eb2be92b7ae2f168b94c2951db333b913fcb3f99d6a830c6ab1"
+      "sha256": "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a"
     },
     {
       "path": "hivra-copy-desktop-image.py",
