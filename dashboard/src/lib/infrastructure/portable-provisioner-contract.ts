@@ -8,7 +8,7 @@
 import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
 import agentAppVersions from "../../../provisioner/agent-app-versions.json";
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.13.6";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.14.1";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
