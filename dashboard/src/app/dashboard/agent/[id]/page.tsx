@@ -339,6 +339,7 @@ function AuthenticatedSurface({
   surfaceId,
   active = true,
   onAccessReady,
+  connectName,
 }: {
   url: string;
   token: string;
@@ -351,6 +352,9 @@ function AuthenticatedSurface({
   active?: boolean;
   /** Called once the runtime is verified and the surface is being opened. */
   onAccessReady?: () => void;
+  /** When set, this surface can be handed to an external app (e.g. Agent Zero's
+      desktop app "Add remote Instance") via a connect link or its sign-in form. */
+  connectName?: string;
 }) {
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const signInEpoch = useContext(SurfaceSignInEpoch);
@@ -392,6 +396,55 @@ function AuthenticatedSurface({
     form.requestSubmit();
   }, [accessStatus, bootstrapUrl, destination, token]);
 
+  // "Connect app": mints a username+password grant on the box (the digest is
+  // all it keeps) and shows the URL/credentials an external app can sign in
+  // with — e.g. Agent Zero's desktop "Add remote Instance". The same pair also
+  // forms a one-click connect link for browsers.
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connectBusy, setConnectBusy] = useState<"mint" | "revoke" | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectCopied, setConnectCopied] = useState<string | null>(null);
+  const [connectPair, setConnectPair] = useState<{ url: string; username: string; password: string } | null>(null);
+  const mintConnect = useCallback(async () => {
+    if (!surfaceOrigin || !destination || !token) return;
+    setConnectBusy("mint");
+    setConnectError(null);
+    try {
+      const username = "hivra";
+      const password = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const answer = await fetch(`${surfaceOrigin}/connect/grant`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ username, password, ttlMs: 30 * 24 * 60 * 60 * 1000, destination }),
+        cache: "no-store",
+      });
+      if (!answer.ok) throw new Error(String(answer.status));
+      setConnectPair({
+        url: `${surfaceOrigin}${destination}`,
+        username,
+        password,
+      });
+    } catch {
+      setConnectError("This computer’s connection service can’t create connect links yet. Open Manage and choose Update connection service, then try again.");
+    } finally {
+      setConnectBusy(null);
+    }
+  }, [surfaceOrigin, destination, token]);
+  const revokeConnect = useCallback(async () => {
+    if (!surfaceOrigin || !token) return;
+    setConnectBusy("revoke");
+    try {
+      await fetch(`${surfaceOrigin}/connect/grant`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      setConnectPair(null);
+    } finally {
+      setConnectBusy(null);
+    }
+  }, [surfaceOrigin, token]);
+  const copyConnect = useCallback(async (field: string, value: string) => {
+    try { await navigator.clipboard.writeText(value); setConnectCopied(field); } catch { setConnectCopied(null); }
+  }, []);
+  const connectLink = connectPair ? `${surfaceOrigin}/connect/${encodeURIComponent(connectPair.username)}:${encodeURIComponent(connectPair.password)}` : null;
+
   // "Open in new tab" is the everyday action of this surface, so it belongs in
   // the title bar with the rest of the chrome. The button below still drives
   // the same hidden form — the behaviour does not move, only where it is drawn.
@@ -406,8 +459,20 @@ function AuthenticatedSurface({
         onSelect: openInNewTab,
         disabled: accessStatus !== "ready",
       },
+      ...(connectName
+        ? [{
+            id: "connect-app",
+            label: "Connect app",
+            icon: "link" as const,
+            onSelect: () => {
+              setConnectOpen(true);
+              if (!connectPair && connectBusy !== "mint") void mintConnect();
+            },
+            disabled: accessStatus !== "ready",
+          }]
+        : []),
     ],
-    [openInNewTab, accessStatus],
+    [openInNewTab, accessStatus, connectName, connectPair, connectBusy, mintConnect],
   );
   const { published: actionsLifted } = useSurfaceAction(
     surfaceId,
@@ -417,6 +482,56 @@ function AuthenticatedSurface({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
+      {connectName && connectOpen ? (
+        <div role="dialog" aria-label="Connect app" style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(12,12,12,0.45)", padding: 20 }}>
+          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", maxWidth: 500, width: "100%", padding: "20px 22px", color: "var(--ink-black)" }}>
+            <div className="serif" style={{ fontSize: 20, marginBottom: 10 }}>Connect the {connectName} app</div>
+            {connectPair ? (
+              <>
+                <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>
+                  {connectName === "Agent Zero"
+                    ? "In the Agent Zero app choose “Add remote” and enter:"
+                    : `In the ${connectName} app’s remote settings, enter:`}
+                </p>
+                {([
+                  ["URL", connectPair.url],
+                  ["Username", connectPair.username],
+                  ["Password", connectPair.password],
+                ] as const).map(([field, value]) => (
+                  <div key={field} className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                    <span style={{ width: 72, color: "var(--ink-soft)" }}>{field}</span>
+                    <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "var(--bg-page)", padding: "6px 8px", border: "1px solid var(--etched-border)" }}>{value}</code>
+                    <button type="button" className="mono" onClick={() => void copyConnect(field, value)} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
+                      {connectCopied === field ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                ))}
+                <p style={{ fontSize: 12, lineHeight: 1.6, margin: "10px 0 0", color: "var(--ink-soft)" }}>
+                  {connectLink ? <>Or paste this connect link into any browser: <button type="button" className="mono" onClick={() => void copyConnect("link", connectLink)} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "4px 8px", cursor: "pointer" }}>{connectCopied === "link" ? "Copied" : "Copy link"}</button></> : null}
+                  {" "}Anyone with the password or the link can open your dashboard — keep them private. They stop working after 30 days or when you Disconnect.
+                </p>
+              </>
+            ) : connectError ? (
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>{connectError}</p>
+            ) : (
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>{connectBusy === "revoke" ? "Disconnecting…" : "Creating your sign-in…"}</p>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+              {connectPair ? (
+                <button type="button" className="mono" onClick={() => void mintConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  New link
+                </button>
+              ) : null}
+              <button type="button" className="mono" onClick={() => void revokeConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                Disconnect
+              </button>
+              <button type="button" className="mono" onClick={() => setConnectOpen(false)} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {accessStatus === "ready" ? (
         <>
           <form ref={formRef} action={bootstrapUrl} method="POST" target={frameName} style={{ display: "none" }}>
@@ -616,8 +731,8 @@ function RetainedTerminal({ active, surfaceId, label, sessionName, ...surface }:
 // Embedded web dashboard (Aeon) — the box hosts a Next.js app on a loopback
 // port; the box's token-gated proxy fronts it under /aeon. Rendered in an iframe
 // just like the terminal/browser surfaces.
-function DashboardView({ url, token, label, onManage, surfaceId, active = true }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+function DashboardView({ url, token, label, onManage, surfaceId, active = true, connectName }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; connectName?: string }) {
+  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} active={active} connectName={connectName} />;
 }
 
 // Live browser — the agent's real Chrome (headful on the box's Xvfb), streamed
@@ -1468,7 +1583,7 @@ export default function AgentPage() {
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
               : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
-              token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
+              token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} connectName={def?.name} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
           )

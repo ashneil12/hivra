@@ -470,6 +470,11 @@ const recipes = Object.freeze({
     workerSha256: "2e3996e3ce750eb2be92b7ae2f168b94c2951db333b913fcb3f99d6a830c6ab1",
     workerSize: 45216,
   }),
+  "2026.11.14.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release ships box connect grants for external app sign-in. The worker only advances its release labels.
+    workerSha256: "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

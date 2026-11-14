@@ -544,6 +544,18 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.14.1` builds on `2026.11.13.6` and lets the owner sign an external app into a
+computer's dashboard surface: the dashboard's Connect app action asks the box for a connect
+grant (`POST /connect/grant`, management bearer only), which keeps only the
+`sha256("user:pass")` digest, the expiry and the destination in
+`~/.hivra/connect-grants.json` (owner-only, atomically replaced, bounded, bound to the API
+token so rotation revokes every link). A grant redeems as `GET /connect/<user>:<pass>` or as
+Agent Zero's own `POST /login` (`{username, password, next}`), so the A0 desktop app's remote
+instance flow signs in exactly as it would to a self-hosted install; both hand out the ordinary
+surface cookie. `DELETE /connect/grant` revokes them all. Changed: `hivra-chat/server.js`,
+plus the documents, the version and the provider worker's release labels; no file is added.
+This source release does not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.13.6` builds on `2026.11.13.5` and hardens the host wake proxy, the doorbell and their units
 after review. Changed: `hivra-wake-proxy.py`, `hivra-wake-doorbell.py`, `hivra-wake-proxy.service`,
 `hivra-wake-helper.service`, `hivra-cf-template.service`, `hivra-wake-doorbell.service`, plus the documents, the

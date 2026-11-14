@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Link2 } from "lucide-react";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import {
@@ -20,6 +20,7 @@ import styles from "./ResourceSurfaceNavigation.module.css";
 
 const ICONS: Record<SurfaceActionIcon, typeof ExternalLink> = {
   "external-link": ExternalLink,
+  link: Link2,
 };
 
 const EMPTY_ACTIONS: readonly SurfaceAction[] = Object.freeze([]);

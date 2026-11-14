@@ -383,6 +383,170 @@ describe("Hivra guest surface authentication runtime", () => {
     expect(upstreamUpgradeCount).toBe(before + 1);
   });
 
+  it("mints a connect grant only for the management bearer, never for a surface cookie", async () => {
+    const cookie = await sessionCookie();
+    const body = JSON.stringify({ username: "hivra", password: "b".repeat(64), destination: "/aeon/" });
+    const headers = { "Content-Type": "application/json" };
+    expect((await request("/connect/grant", { method: "POST", headers, body })).status).toBe(401);
+    expect((await request("/connect/grant", { method: "POST", headers: { ...headers, Cookie: cookie }, body })).status).toBe(401);
+    const granted = await request("/connect/grant", {
+      method: "POST",
+      headers: { ...headers, Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body,
+    });
+    expect(granted.status).toBe(200);
+    const parsed = JSON.parse(granted.body);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.expiresAt).toBeGreaterThan(Date.now());
+    expect(JSON.stringify(granted.headers)).not.toContain("b".repeat(64));
+  });
+
+  it.each([
+    { username: "hivra", password: "not-hex", destination: "/aeon/" },
+    { username: "bad user!", password: "b".repeat(64), destination: "/aeon/" },
+    { username: "hivra", password: "b".repeat(64), destination: "https://attacker.example/" },
+    { username: "hivra", password: "b".repeat(64), destination: "//attacker.example/" },
+    { username: "hivra", password: "b".repeat(64), destination: "/aeon/\r\nX-Injected: yes" },
+  ])("rejects a malformed or unsafe connect grant %j", async (payload) => {
+    const result = await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify(payload),
+    });
+    expect(result.status).toBe(400);
+  });
+
+  it("clamps a connect grant's lifetime into its bounds", async () => {
+    const granted = await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username: "hivra", password: "c".repeat(64), destination: "/aeon/", ttlMs: 1 }),
+    });
+    expect(granted.status).toBe(200);
+    const expiresAt = JSON.parse(granted.body).expiresAt;
+    expect(expiresAt).toBeGreaterThanOrEqual(Date.now() + 59_000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 61_000);
+  });
+
+  it("redeems a connect link into the same surface cookie the dashboard bootstrap mints", async () => {
+    const username = "hivra";
+    const password = "d".repeat(64);
+    const granted = await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/aeon/" }),
+    });
+    expect(granted.status).toBe(200);
+
+    const redeem = await request(`/connect/${username}:${password}`);
+    expect(redeem.status).toBe(303);
+    expect(redeem.headers.location).toBe("/aeon/");
+    const cookie = redeem.headers["set-cookie"]?.[0] ?? "";
+    expect(cookie).toMatch(new RegExp(`^${AUTH_COOKIE}=[a-f0-9]{64};`));
+    expect(cookie).toContain("; HttpOnly");
+    expect(cookie).toContain("; Secure");
+    expect(cookie).toContain("; SameSite=None");
+    expect(cookie).toContain("; Partitioned");
+
+    const surface = await request("/aeon/", { headers: { Cookie: cookie.split(";")[0] } });
+    expect(surface.status).toBe(200);
+    expect(surface.body).toBe("fixture surface reached");
+  });
+
+  it.each([
+    "/connect/hivra:wrong-password",
+    "/connect/hivra:not-hex-at-all",
+    "/connect/unknown-user:" + "e".repeat(64),
+    "/connect/no-separator",
+    "/connect/",
+  ])("denies an unredeemable connect link %j without a cookie or redirect", async (pathname) => {
+    const result = await request(pathname);
+    expect(result.status).toBe(401);
+    expect(result.headers["set-cookie"]).toBeUndefined();
+    expect(result.headers.location).toBeUndefined();
+  });
+
+  it("redeems Agent Zero's native sign-in form against the same grant", async () => {
+    const username = "hivra";
+    const password = "f".repeat(64);
+    await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/agent-zero/" }),
+    });
+
+    // The A0 desktop app's remote-instance client POSTs exactly this shape.
+    const login = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "/agent-zero" }).toString(),
+    });
+    expect(login.status).toBe(303);
+    expect(login.headers.location).toBe("/agent-zero");
+    const cookie = login.headers["set-cookie"]?.[0] ?? "";
+    expect(cookie).toMatch(new RegExp(`^${AUTH_COOKIE}=[a-f0-9]{64};`));
+
+    // A0's default next="/" means "the surface the grant was minted for".
+    const defaulted = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "/" }).toString(),
+    });
+    expect(defaulted.status).toBe(303);
+    expect(defaulted.headers.location).toBe("/agent-zero/");
+  });
+
+  it("rejects a sign-in form with the wrong password or an unsafe next", async () => {
+    const username = "hivra";
+    const password = "0".repeat(64);
+    await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/aeon/" }),
+    });
+    const wrong = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password: "9".repeat(64), next: "/aeon/" }).toString(),
+    });
+    expect(wrong.status).toBe(401);
+    expect(wrong.headers["set-cookie"]).toBeUndefined();
+    // next is never trusted over the box's own path rules.
+    const unsafe = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "https://attacker.example/" }).toString(),
+    });
+    expect(unsafe.status).toBe(303);
+    expect(unsafe.headers.location).toBe("/aeon/");
+  });
+
+  it("revokes every connect grant on DELETE /connect/grant", async () => {
+    const username = "hivra";
+    const password = "1".repeat(64);
+    await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/aeon/" }),
+    });
+    expect((await request(`/connect/${username}:${password}`)).status).toBe(303);
+
+    // Revocation itself needs the management bearer.
+    expect((await request("/connect/grant", { method: "DELETE" })).status).toBe(401);
+    const revoked = await request("/connect/grant", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${FIXTURE_TOKEN}` },
+    });
+    expect(revoked.status).toBe(200);
+    expect((await request(`/connect/${username}:${password}`)).status).toBe(401);
+    const login = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "/aeon/" }).toString(),
+    });
+    expect(login.status).toBe(401);
+  });
+
   it("does not expose Agent Zero root extension or Socket.IO aliases on another runtime", async () => {
     const headers = { Authorization: `Bearer ${FIXTURE_TOKEN}` };
     for (const [pathname, method] of [["/extensions/webui/fixture.js", "GET"], ["/socket.io/?EIO=4&transport=polling", "GET"], ["/socket.io/?EIO=4&transport=polling", "POST"]]) {
