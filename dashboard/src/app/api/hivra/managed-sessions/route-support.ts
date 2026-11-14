@@ -3,7 +3,6 @@ import type { NextRequest } from "next/server";
 import { apiError } from "@/lib/api-response";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { ManagedSessionError, type ManagedSessionErrorCode } from "@/lib/hivra/do-managed-sessions";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 
 const STATUS: Record<ManagedSessionErrorCode, number> = {
   not_found: 404,
@@ -20,11 +19,6 @@ const STATUS: Record<ManagedSessionErrorCode, number> = {
   provider_unavailable: 502,
   database_failed: 500,
 };
-
-/** Hivra agent APIs are canary-only (see isHivraApiAllowed); so are these. */
-export function hivraApiUnavailable(request: Request): Response | null {
-  return isHivraApiAllowed(request.headers.get("host")) ? null : noStore(apiError("Not found", 404));
-}
 
 export function noStore(response: Response): Response {
   response.headers.set("Cache-Control", "no-store");
@@ -60,3 +54,6 @@ export async function readMutationBody(request: NextRequest, maxBytes: number): 
 }
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** RFC 4122 UUID with a version digit of 1-8 (stricter than UUID above). */
+export const UUID_V1_TO_8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

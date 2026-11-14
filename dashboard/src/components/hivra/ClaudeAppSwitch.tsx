@@ -11,10 +11,13 @@ import {
   type ClaudeAppView,
 } from "@/lib/hivra/agent-api";
 import styles from "./ClaudeAppSwitch.module.css";
+import { DesktopClipboard } from "./DesktopClipboard";
 
 // Polling is quick while something is changing and slow once it has settled.
 const FAST_POLL_MS = 3_000;
 const SLOW_POLL_MS = 30_000;
+// A status read that fails backs off instead of hammering an unreachable computer.
+const FAILED_POLL_MS = [3_000, 10_000, 30_000];
 
 type Panel = null | "add" | "update" | "remove";
 
@@ -28,6 +31,8 @@ const clockMs = () => Date.now();
  * all on a computer that does not offer the app.
  *
  * Nothing here handles a Claude sign-in: the owner signs in inside the app.
+ * The desktop's clipboard switch sits beside it, since both are reached through
+ * the same helper on the computer.
  */
 export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: string; token?: string | null; active?: boolean }) {
   const [available, setAvailable] = useState(false);
@@ -41,6 +46,7 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
 
   const settledRef = useRef(false);
   const stoppedRef = useRef(false);
+  const failedRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const aliveRef = useRef(false);
 
@@ -51,11 +57,13 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
     // updated, so stop asking it for as long as this screen stays open.
     stoppedRef.current = !result.available;
     if (result.status) {
+      failedRef.current = 0;
       setStatus(result.status);
       if (clockMs() - choiceAtRef.current > 4_000) setView(result.status.mode);
       // Quick while something is changing, slow once it has settled.
       settledRef.current = !result.status.installing && (!result.status.enabled || result.status.appRunning);
     } else {
+      failedRef.current += 1;
       settledRef.current = false;
     }
   }, [boxUrl, token]);
@@ -68,10 +76,14 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = undefined;
       if (!aliveRef.current || stoppedRef.current) return;
+      const failed = failedRef.current;
+      const delay = failed > 0
+        ? FAILED_POLL_MS[Math.min(failed, FAILED_POLL_MS.length) - 1]
+        : settledRef.current ? SLOW_POLL_MS : FAST_POLL_MS;
       timerRef.current = setTimeout(async () => {
         await refresh();
         scheduleRef.current();
-      }, settledRef.current ? SLOW_POLL_MS : FAST_POLL_MS);
+      }, delay);
     };
   }, [refresh]);
 
@@ -163,6 +175,14 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
             …
           </button>
         </>
+      ) : null}
+      {status.clipboard !== null ? (
+        <DesktopClipboard
+          boxUrl={boxUrl}
+          token={token}
+          enabled={status.clipboard}
+          onChanged={(clipboard) => setStatus((current) => current ? { ...current, clipboard } : current)}
+        />
       ) : null}
       {status.lastError && !installing ? (
         <span className={styles.error} role="alert" title={status.lastError}>

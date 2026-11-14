@@ -68,7 +68,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       "stat_date, total_tokens, sessions, api_calls, tool_calls, estimated_cost_usd, by_model"
     )
     .eq("instance_id", id)
-    .gte("stat_date", sinceIso);
+    .gte("stat_date", sinceIso)
+    // The gte bound includes the boundary date, so the window can hold days + 1
+    // snapshots. Keep the most recent `days` in a defined order (newest first);
+    // an unordered limit could drop a day from the middle of the window.
+    .order("stat_date", { ascending: false })
+    .limit(days);
   if (error) {
     log.warn("usage-summary snapshot query failed", {
       source: "instance-usage-summary",

@@ -21,6 +21,17 @@ describe("daily instance (restic) backup host script", () => {
     expect(decodeEmbeddedResticScript()).toBe(sourceScript);
   });
 
+  it("attests the guest's SSH host key before any rsync or ssh, with checks on", () => {
+    const attest = sourceScript.indexOf("attest_guest_ssh_pin 12 || exit 10");
+    expect(attest).toBeGreaterThan(-1);
+    expect(attest).toBeLessThan(sourceScript.indexOf('rsync_pull "$WEBUI_STATE_VOL"'));
+    expect(attest).toBeLessThan(sourceScript.indexOf('ssh $SSH_OPTS "hermes@$GUEST_IP"'));
+    expect(sourceScript).toContain("qm guest exec \"$VMID\" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub");
+    expect(sourceScript).toContain("StrictHostKeyChecking=yes");
+    expect(sourceScript).not.toContain("StrictHostKeyChecking=no");
+    expect(sourceScript).not.toContain("UserKnownHostsFile=/dev/null");
+  });
+
   it("keeps the universal backup safety net enabled for the base tier", () => {
     expect(sourceScript).toContain("refusing restic backup for unsupported tier");
     expect(sourceScript).toMatch(/operator\|fleet\|command/);

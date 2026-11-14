@@ -470,21 +470,26 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
     });
   } catch (err) {
     console.error("managed-venice venice upstream fetch failed", String(err));
-    await release("upstream_fetch_failed");
-    return { response: jsonError(502, "Venice upstream request failed.", "venice_upstream_error") };
+    // Answer the box now; the release retries run under waitUntil.
+    return {
+      response: jsonError(502, "Venice upstream request failed.", "venice_upstream_error"),
+      settled: release("upstream_fetch_failed"),
+    };
   }
 
   if (streaming) {
     if (!upstream.ok || !upstream.body) {
       // Upstream error before any billable stream — release the hold and relay
-      // the error to the box so the agent can retry. Key stays live.
-      await release(upstream.ok ? "stream_missing_body" : "upstream_non_2xx", upstream.status);
+      // the error to the box so the agent can retry. Key stays live. The
+      // release starts now and is awaited under waitUntil, not before the reply.
+      const settled = release(upstream.ok ? "stream_missing_body" : "upstream_non_2xx", upstream.status);
       const text = await upstream.text().catch(() => "");
       return {
         response: new Response(text || JSON.stringify({ error: { message: "Venice stream unavailable." } }), {
           status: upstream.ok ? 502 : upstream.status,
           headers: { "Content-Type": "application/json" },
         }),
+        settled,
       };
     }
     return streamToBox(upstream, upstream.body, settle);
@@ -498,19 +503,18 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
     console.error("managed-venice venice response unreadable", String(err));
     const response = jsonError(502, "Venice response could not be read.", "venice_upstream_error");
     if (upstream.ok) return { response, settled: settle(null, upstream.status, "body_unreadable", 0) };
-    await release("upstream_non_2xx", upstream.status);
-    return { response };
+    return { response, settled: release("upstream_non_2xx", upstream.status) };
   }
   const json = safeJsonParse(text);
   const usage = json?.usage ?? null;
 
   if (!upstream.ok && !usage) {
-    await release("upstream_non_2xx", upstream.status);
     return {
       response: new Response(text, {
         status: upstream.status,
         headers: { "Content-Type": "application/json" },
       }),
+      settled: release("upstream_non_2xx", upstream.status),
     };
   }
 

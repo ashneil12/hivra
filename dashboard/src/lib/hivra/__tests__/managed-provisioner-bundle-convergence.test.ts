@@ -168,6 +168,35 @@ describe("managed provisioner bundle convergence", () => {
     }
   });
 
+  it("probes at most four hosts at a time", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const probe = jest.fn(async (_channel: string, targetId: string) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return present(targetId, "2026.09.30.1");
+    });
+    const sync = jest.fn(async (channel: "default" | "canary", targetId: string) => synced(channel, targetId));
+    const hosts = ["fixturenode11", "fixturenode12", "fixturenode13", "fixturenode14", "fixturenode15", "fixturenode16"];
+
+    const summary = await runManagedProvisionerBundleConvergence({
+      supabase: fakeSupabase(
+        hosts.map((host, index) => ({ id: `b${index}`, proxmox_host: host, managed_provisioner_channel: "canary" })),
+        [],
+      ),
+      env: { HIVRA_MANAGED_BUNDLE_SYNC_ENABLED: "true" },
+      channel: "canary",
+      dependencies: { loadBundle: jest.fn().mockResolvedValue(bundle()), probe, sync },
+    });
+
+    expect(probe).toHaveBeenCalledTimes(hosts.length);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(summary.hosts.map((host) => host.targetId)).toEqual([...hosts].sort());
+  });
+
   it("serves only its own channel and syncs the busiest stale host first, one per run", async () => {
     const probe = jest.fn(async (_channel: string, targetId: string) => present(targetId, "2026.09.30.1"));
     const sync = jest.fn(async (channel: "default" | "canary", targetId: string) => synced(channel, targetId));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Copy, Check } from "lucide-react";
 import { captureClientOpsEvent } from "@/lib/client/ops-events";
 import { getLastRequestId } from "@/lib/client/request-id-tracker";
@@ -114,6 +114,13 @@ function headlineForAgentError(detail: AgentErrorDetail | undefined): string | n
 
 export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBannerProps) {
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
 
   if (!error) return null;
 
@@ -133,7 +140,7 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
     }
 
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1500);
 
     void captureClientOpsEvent({
       source: context?.source || "client.diagnostic",
@@ -151,10 +158,10 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
   return (
     <div
       style={{
-        backgroundColor: "rgba(239,68,68,0.08)",
-        border: "1px solid rgba(239,68,68,0.25)",
+        backgroundColor: "color-mix(in srgb, var(--hg-bad) 8%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--hg-bad) 25%, transparent)",
         padding: "12px 16px",
-        borderRadius: 0,
+        borderRadius: 10,
         display: "flex",
         flexWrap: "wrap",
         gap: 10,
@@ -206,9 +213,9 @@ export function ErrorBanner({ error, context, agentError, errorDetail }: ErrorBa
           fontWeight: 700,
           color: "var(--red)",
           background: "transparent",
-          border: "1px solid rgba(239,68,68,0.4)",
+          border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)",
           cursor: "pointer",
-          borderRadius: 0,
+          borderRadius: 10,
         }}
       >
         {copied ? <Check size={12} /> : <Copy size={12} />}

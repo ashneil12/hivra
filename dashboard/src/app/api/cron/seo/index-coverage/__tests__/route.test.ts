@@ -307,6 +307,8 @@ describe("GET /api/cron/seo/index-coverage", () => {
     expect(body.data.ok).toBe(true);
     expect(body.data.quotaExhausted).toBe(true);
     expect(body.data.checked).toBe(0);
+    // Both URLs were taken before the 429 landed and neither was inspected.
+    expect(body.data.skipped).toBe(2);
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 

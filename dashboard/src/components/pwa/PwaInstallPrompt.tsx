@@ -176,7 +176,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
           aria-label={installError ? "Install Hivra unavailable" : "Install Hivra"}
           disabled={installPending || !deferredPrompt}
           onClick={() => void handleInstall()}
-          className="mx-auto mb-4 flex min-h-[44px] min-w-[44px] items-center justify-center border border-[var(--etched-border)] bg-[var(--bg-surface)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+          className="mx-auto mb-4 flex min-h-[44px] min-w-[44px] items-center justify-center border border-[var(--hg-stroke)] bg-[var(--hg-glass)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2"
           style={{
             cursor: installPending
               ? "wait"
@@ -203,7 +203,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
   }
 
   return (
-    <div className="mb-6 border border-[var(--etched-border)] bg-[var(--bg-surface)] p-4">
+    <div className="mb-6 rounded-[14px] border border-[var(--hg-stroke)] bg-[var(--hg-glass)] p-4 backdrop-blur-xl">
       <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <p
@@ -225,7 +225,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
         <button
           aria-label="Dismiss install prompt"
           onClick={() => setDismissed(true)}
-          className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border border-[var(--etched-border)] text-[var(--text-muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+          className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border border-[var(--hg-stroke)] text-[var(--text-muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2"
           style={{
             cursor: "pointer",
           }}
@@ -242,7 +242,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
             aria-label="Install Hivra"
             disabled={installPending}
             onClick={() => void handleInstall()}
-            className="mono inline-flex min-h-[44px] items-center gap-2 border border-[var(--ink-black)] bg-[var(--ink-black)] px-4 text-[12px] font-semibold text-[var(--bg-surface)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-2"
+            className="inline-flex min-h-[44px] items-center gap-2 border border-[var(--hg-accent)] bg-[var(--hg-accent)] px-4 text-[12px] font-semibold text-[var(--hg-on-accent)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-2"
             style={{
               cursor: installPending ? "wait" : "pointer",
             }}
@@ -251,7 +251,7 @@ export function PwaInstallPrompt({ expanded = true }: { expanded?: boolean }) {
             {installPending ? "Opening install prompt…" : "Install Hivra"}
           </button>
         ) : (
-          <div className="mono inline-flex min-h-[44px] items-center gap-2 border border-dashed border-[var(--etched-border)] px-4 text-[12px] font-semibold text-[var(--ink-black)]">
+          <div className="inline-flex min-h-[44px] items-center gap-2 border border-dashed border-[var(--hg-stroke)] px-4 text-[12px] font-semibold text-[var(--ink-black)]">
             <Share2 size={14} />
             {mode === "ios"
               ? "Share, then Add to Home Screen"

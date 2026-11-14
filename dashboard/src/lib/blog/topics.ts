@@ -44,6 +44,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "claude-max-vs-pro-for-claude-code",
       "codex-pricing-by-chatgpt-plan",
       "cursor-cloud-agents",
+      "run-managed-agents-on-your-own-computer",
       "ai-agent-api-cost-optimization",
       "byo-api-key-explained",
     ],

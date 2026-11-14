@@ -96,8 +96,8 @@ describe("the roadmap's status words follow README.md and ROADMAP.md", () => {
   // own computer, so the page says plainly that you can connect a server you already have. That is true only if the
   // release that ships it includes the connect flow, and ROADMAP.md still lists it among what is on Canary and "not yet
   // on hivra.cloud" (its "Where things stand" paragraph and the Slice 3 row). The check below stays as the tripwire:
-  // when ROADMAP.md changes, confirm that the release includes the connect flow. (ROADMAP.md uses the word "private
-  // preview" only for Windows and Omarchy.)
+  // when ROADMAP.md changes, confirm that the release includes the connect flow. (docs/STATUS.md is the source of
+  // truth for availability; Windows and Omarchy are offered with conditions, not in preview.)
   const repoRoot = path.resolve(__dirname, "../../../../..");
 
   it("has a README that still calls self-hosting a preview and a ROADMAP that still lists connect-your-server as Canary only", () => {

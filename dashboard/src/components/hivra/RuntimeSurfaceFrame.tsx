@@ -16,7 +16,8 @@
 // generation so no history entry is added, and waits, for a bounded time, for
 // a native runtime (DeepSeek) to be ready before opening it.
 
-import { ExternalLink, Loader2 } from "lucide-react";
+import { ExternalLink } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useId, useRef } from "react";
 import { useSurfaceBootstrap } from "@/components/hivra/useSurfaceBootstrap";
 
@@ -102,7 +103,7 @@ export function RuntimeSurfaceFrame({
         <div className="flex shrink-0 items-center gap-2 border-b border-[var(--etched-border)] px-3 py-1">
           <span
             aria-hidden="true"
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#22c55e]"
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--hg-ok)]"
           />
           <span className="mono truncate text-[11px] text-[var(--text-muted)]">
             {description || label}
@@ -131,11 +132,7 @@ export function RuntimeSurfaceFrame({
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           {accessStatus === "checking" || accessStatus === "starting" ? (
-            <Loader2
-              size={20}
-              className="animate-spin text-[var(--text-muted)]"
-              aria-hidden="true"
-            />
+            <ThinkingOrb size={32} state="connecting" />
           ) : null}
           <p className="serif text-[20px] text-[var(--ink-black)]">
             {accessStatus === "checking"

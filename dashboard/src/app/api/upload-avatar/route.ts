@@ -15,6 +15,25 @@ import {
 
 const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
 
+// The avatars bucket either exists or it doesn't — one check per process is
+// enough, and a failed create retries on the next request (the promise is
+// replaced only on success).
+let avatarsBucketEnsured: Promise<void> | null = null;
+function ensureAvatarsBucket(): Promise<void> {
+  if (!avatarsBucketEnsured) {
+    avatarsBucketEnsured = (async () => {
+      const { data: buckets } = await supabaseAdmin!.storage.listBuckets();
+      if (!buckets?.some(b => b.name === 'avatars')) {
+        await supabaseAdmin!.storage.createBucket('avatars', { public: true });
+      }
+    })();
+    avatarsBucketEnsured.catch(() => {
+      avatarsBucketEnsured = null;
+    });
+  }
+  return avatarsBucketEnsured;
+}
+
 export async function POST(req: Request) {
   try {
     const { userId } = await auth();
@@ -93,11 +112,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // Ensure bucket exists
-    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-    if (!buckets?.some(b => b.name === 'avatars')) {
-      await supabaseAdmin.storage.createBucket('avatars', { public: true });
-    }
+    // Ensure bucket exists — memoized per process so uploads don't pay a
+    // listBuckets round-trip every time.
+    await ensureAvatarsBucket();
 
     const fileName = `${uuidv4()}.${detected.extension}`;
     const filePath = `${fileName}`;

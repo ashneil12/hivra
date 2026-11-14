@@ -9,7 +9,6 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   shutdownProxmoxInstance,
   getProxmoxInfrastructure,
-  getProxmoxHostRoutingConfigFromInfrastructure,
   isProxmoxVmMissingResult,
 } from "@/lib/services/proxmox-instance-service";
 import {
@@ -271,6 +270,42 @@ describe("enforceGraceExpiredComputeStop", () => {
       expect(updates[0].reasons).toEqual(
         expect.arrayContaining(["subscription_canceled", "subscription_past_due"])
       );
+    });
+
+    it("a cancelled owner who is now on the Free account is still stopped", async () => {
+      // The Free row never pays for a hosted computer. Counting it as an
+      // entitlement let a cancelled customer keep a box running just by
+      // picking Free afterwards.
+      process.env.DUNNING_GRACE_ENFORCE_LIVE = "true";
+      (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({
+        source: "free",
+        plan: "free",
+        status: "active",
+      });
+      const updates = stubInstances([cancelled()]);
+
+      const result = await enforceGraceExpiredComputeStop("user_1");
+      expect(result.outcome).toBe("stopped");
+      expect(shutdownProxmoxInstance).toHaveBeenCalledWith(
+        infra,
+        expect.objectContaining({ setOnboot: 0 })
+      );
+      expect(updates[0].patch).toMatchObject({
+        entitlement_reason: GRACE_EXPIRED_ENTITLEMENT_REASON,
+      });
+    });
+
+    it("a cancelled owner left with only a trial is still stopped", async () => {
+      process.env.DUNNING_GRACE_ENFORCE_LIVE = "true";
+      (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({
+        source: "apple_iap",
+        plan: "operator",
+        status: "trialing",
+      });
+      stubInstances([cancelled()]);
+
+      const result = await enforceGraceExpiredComputeStop("user_1");
+      expect(result.outcome).toBe("stopped");
     });
 
     it("an owner with another lane's entitlement is not stopped", async () => {

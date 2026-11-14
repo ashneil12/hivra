@@ -4,11 +4,12 @@ import type { Variants } from "framer-motion";
 import { CreditsPanel, CryptoTopUpPanel } from "@/components/billing/BillingPanels";
 import { ManagedVeniceByokSwitchPanel } from "@/components/billing/ManagedVeniceByokSwitchPanel";
 import { ManagedVeniceKeysPanel } from "@/components/billing/ManagedVeniceKeysPanel";
+import { VenicePromoBox } from "@/components/billing/VenicePromoBox";
 import { ManagedVeniceWalletPanel } from "@/components/billing/ManagedVeniceWalletPanel";
 import type { BillingController } from "../useBillingController";
 import styles from "../Billing.module.css";
 
-/** DOM id deep links use to land on model credits (e.g. HermesDashboardPage). */
+/** DOM id deep links use to land on model credits. */
 export const MANAGED_VENICE_ANCHOR_ID = "managed-venice";
 
 export function CreditsTab({ c, variants }: { c: BillingController; variants: Variants }) {
@@ -41,9 +42,11 @@ export function CreditsTab({ c, variants }: { c: BillingController; variants: Va
             <>
               <ManagedVeniceWalletPanel
                 summary={summary}
-                tokenPaymentsEnabled={billingV2Enabled && tokenFeatures}
+                tokenPaymentsEnabled={billingV2Enabled && tokenFeatures && c.tokenPayments.available}
+                tokenUnit={c.tokenPayments.displayUnit}
                 onDeposit={(walletType) => c.openManagedVeniceDeposit(walletType)}
               />
+              <VenicePromoBox />
               <ManagedVeniceKeysPanel keys={summary.keys} />
               <ManagedVeniceByokSwitchPanel />
             </>

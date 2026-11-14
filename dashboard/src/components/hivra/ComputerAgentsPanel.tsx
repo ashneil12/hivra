@@ -10,6 +10,7 @@
 // nothing is bought, and a limit is stated, never worked around.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import Link from "next/link";
 import { AlertTriangle, Bot, Loader2, MessageSquareText, Plus, RefreshCw, Trash2 } from "lucide-react";
 
@@ -209,11 +210,20 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
   const ended = !current ? ready?.attachments[0] ?? null : null;
   const pending = Boolean(current && (live(current) || openOperation(current)));
 
-  // Follow an open step by its receipts.
+  // Follow an open step by its receipts: one read at a time, and none while the tab is hidden.
   useEffect(() => {
     if (!pending) return;
-    const timer = window.setInterval(() => { void load(); }, ATTACH_POLL_MS);
-    return () => window.clearInterval(timer);
+    let alive = true;
+    let timer: number | undefined;
+    const tick = async () => {
+      try {
+        if (!document.hidden) await load();
+      } finally {
+        if (alive) timer = window.setTimeout(tick, ATTACH_POLL_MS);
+      }
+    };
+    timer = window.setTimeout(tick, ATTACH_POLL_MS);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [pending, load]);
 
   // Tell the page when something finished, so its tabs follow (Chat appears or goes).
@@ -279,7 +289,7 @@ export function ComputerAgentsPanel({ computerId, computerName, autoOpenAdd }: {
   const heading = <h3 id={`computer-agents-${computerId}`} className={styles.heading}>Agents on this computer</h3>;
   if (gate.state === "loading") {
     return <section className={styles.section} aria-labelledby={`computer-agents-${computerId}`}>{heading}
-      <div className={styles.panel}><p className={styles.body}><Loader2 size={13} className={styles.spinner} aria-hidden /> Checking this computer…</p></div>
+      <div className={styles.panel}><p className={styles.body}><ThinkingOrb size={20} state="searching" /> Checking this computer…</p></div>
     </section>;
   }
   // Where attach is not offered (production), the honest slot as before.

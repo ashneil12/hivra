@@ -11,7 +11,7 @@
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   runProxmoxHostScript: jest.fn(),
-  resolveProxmoxHostEnv: jest.fn((hostConfig: unknown, env: Record<string, string | undefined>) => ({
+  resolveProxmoxHostEnv: jest.fn((_hostConfig: unknown, env: Record<string, string | undefined>) => ({
     ...env,
     HERMES_TEST_ENV_SOURCE: "hostConfig",
   })),

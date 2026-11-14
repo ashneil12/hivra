@@ -39,19 +39,48 @@ function candidate() {
   };
 }
 
-// A supabase query builder that is BOTH chainable and thenable: the candidate
-// query terminates on .limit() (resolves candidates); the reconcile keep-set
-// query is awaited directly (resolves the keep rows via .then).
-function makeMock(candidates: unknown[], keepIds: string[]) {
+// PostgREST returns at most this many rows for an unpaged read.
+const PG_MAX_ROWS = 1000;
+
+// A supabase query builder that is chainable and thenable. Three reads go through it:
+// the candidate query (selects proxmox_vmid, ends on .limit()); the reconcile keep-set
+// (selects id, paged with .gt + .limit, or awaited directly, which PostgREST caps at
+// PG_MAX_ROWS); and the fresh count (count: exact, resolves to liveCount).
+function makeMock(candidates: unknown[], keepIds: string[], liveCount = keepIds.length) {
   return jest.fn(() => {
+    const state: { cols: string; counting: boolean; cursor: string | null; limit: number | null } = {
+      cols: "",
+      counting: false,
+      cursor: null,
+      limit: null,
+    };
+    const resultFor = () => {
+      if (state.cols.includes("proxmox_vmid")) return { data: candidates, error: null };
+      if (state.counting) return { count: liveCount, data: null, error: null };
+      const sorted = [...keepIds].sort();
+      const after = state.cursor === null ? sorted : sorted.filter((id) => id > state.cursor!);
+      const page = after.slice(0, state.limit ?? PG_MAX_ROWS);
+      return { data: page.map((id) => ({ id })), error: null };
+    };
     const builder: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "is", "not", "in", "or", "order"]) {
+    builder.select = jest.fn((cols: string, opts?: { count?: string }) => {
+      state.cols = cols;
+      state.counting = Boolean(opts?.count);
+      return builder;
+    });
+    for (const m of ["eq", "is", "not", "in", "or", "order"]) {
       builder[m] = jest.fn(() => builder);
     }
-    builder.limit = jest.fn(() => Promise.resolve({ data: candidates, error: null }));
+    builder.gt = jest.fn((_column: string, value: string) => {
+      state.cursor = value;
+      return builder;
+    });
+    builder.limit = jest.fn((n: number) => {
+      state.limit = n;
+      return Promise.resolve(resultFor());
+    });
     builder.update = jest.fn(() => ({ eq: jest.fn(() => Promise.resolve({ error: null })) }));
-    builder.then = (resolve: (v: unknown) => void) =>
-      resolve({ data: keepIds.map((id) => ({ id })), error: null });
+    builder.then = (resolve: (v: unknown) => void) => resolve(resultFor());
     return builder;
   });
 }
@@ -146,6 +175,34 @@ describe("GET /api/cron/daily-instance-backups — mirror reconcile", () => {
     // no reconcile script was sent to the host
     expect(scripts.some((s) => s.includes("HERMES_RESTIC_KEEP_SET"))).toBe(false);
     // the backup still ran
+    expect(scripts.some((s) => s.includes("backup-vm-restic.sh"))).toBe(true);
+  });
+
+  it("keeps every live mirror past the 1000-row cap, so none is trimmed as stale", async () => {
+    const many = Array.from(
+      { length: 2500 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`
+    );
+    mockedFrom.mockImplementation(makeMock([candidate()], many));
+
+    await GET(request());
+
+    const scripts = mockedRun.mock.calls.map((c) => c[0] as string);
+    const reconcileScript = scripts.find((s) => s.includes("HERMES_RESTIC_KEEP_SET"));
+    expect(reconcileScript).toBeDefined();
+    expect(reconcileScript).toContain(many[999]);
+    expect(reconcileScript).toContain(many[1000]);
+    expect(reconcileScript).toContain(many[2499]);
+  });
+
+  it("skips the trim when a fresh count disagrees with the paged keep-set", async () => {
+    // Two rows were listed, but the table now holds three live rows for this host.
+    mockedFrom.mockImplementation(makeMock([candidate()], [CAND_ID, OTHER_LIVE_ID], 3));
+
+    await GET(request());
+
+    const scripts = mockedRun.mock.calls.map((c) => c[0] as string);
+    expect(scripts.some((s) => s.includes("HERMES_RESTIC_KEEP_SET"))).toBe(false);
     expect(scripts.some((s) => s.includes("backup-vm-restic.sh"))).toBe(true);
   });
 });

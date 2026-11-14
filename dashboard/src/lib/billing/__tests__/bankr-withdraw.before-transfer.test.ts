@@ -99,6 +99,40 @@ it("flags a failed submit as possibly sent", async () => {
   expect(result).toMatchObject({ status: "transfer_failed", transferMayHaveBeenSent: true });
 });
 
+it("keeps the in-flight claim held when the transfer throws after it may have reached Bankr", async () => {
+  const fetchImpl = jest.fn(async (url: string) => {
+    if (url.includes("/api-keys")) return { ok: true, status: 200, json: async () => ({ apiKey: "k" }) };
+    throw new Error("socket hang up");
+  });
+  const result = await withdrawAllHermesTokensForUser({
+    userId: "user_1",
+    destination: "verified_wallet",
+    fetchImpl: fetchImpl as never,
+    beforeTransfer: async () => undefined,
+  });
+  expect(result).toMatchObject({ status: "transfer_failed", transferMayHaveBeenSent: true });
+  expect(result.errorMessage).toMatch(/pending verification/);
+  // Nothing may release or finalize the claim: a release lets a retry send twice.
+  expect(mockClaimUpdates).toEqual([]);
+});
+
+it("releases the claim only when Bankr refused the transfer with a 4xx answer", async () => {
+  const fetchImpl = jest.fn(async (url: string) =>
+    url.includes("/api-keys")
+      ? { ok: true, status: 200, json: async () => ({ apiKey: "k" }) }
+      : { ok: false, status: 400, json: async () => ({}), text: async () => "insufficient_funds_for_gas" }
+  );
+  const result = await withdrawAllHermesTokensForUser({
+    userId: "user_1",
+    destination: "verified_wallet",
+    fetchImpl: fetchImpl as never,
+    beforeTransfer: async () => undefined,
+  });
+  expect(result).toMatchObject({ status: "transfer_failed" });
+  expect(result.transferMayHaveBeenSent).toBeUndefined();
+  expect(mockClaimUpdates).toEqual([expect.objectContaining({ status: "failed" })]);
+});
+
 it("sends nothing and cancels the claim when the hook throws", async () => {
   const fetchImpl = bankrFetch();
   const result = await withdrawAllHermesTokensForUser({

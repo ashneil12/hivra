@@ -77,13 +77,20 @@ function respond(data = snapshot) {
     json: async () => ({ data }),
   });
 }
+// Activity opens on Needs you whenever something needs the person, so tests
+// about the timeline pick History first.
+async function renderHistory(ui: React.ReactElement) {
+  const view = render(ui);
+  fireEvent.click(screen.getByRole("button", { name: "History" }));
+  return view;
+}
 beforeEach(() => {
   global.fetch = jest.fn();
   respond();
 });
 
 it("inspects real evidence and source provenance and filters without inventing controls", async () => {
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   fireEvent.click(
     screen.getByRole("button", { name: /Agent action reported/ }),
@@ -111,18 +118,22 @@ it("inspects real evidence and source provenance and filters without inventing c
   ).not.toBeInTheDocument();
 });
 it("combines attention, agent, and kind filters and clears stale inspector content", async () => {
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
-  fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Needs you/ }));
   expect(
     screen.queryByRole("button", { name: /Agent started/ }),
   ).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Filter by agent")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "History" }));
   fireEvent.change(screen.getByLabelText("Filter by agent"), {
     target: { value: "a1" },
   });
+  fireEvent.change(screen.getByLabelText("Filter by kind"), {
+    target: { value: "trace_span" },
+  });
   expect(screen.getByText(/No recorded events match/)).toBeVisible();
   expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "History" }));
   fireEvent.change(screen.getByLabelText("Filter by agent"), {
     target: { value: "all" },
   });
@@ -136,26 +147,22 @@ it("combines attention, agent, and kind filters and clears stale inspector conte
     screen.queryByRole("button", { name: /Agent started/ }),
   ).not.toBeInTheDocument();
 });
-it("shows missing coverage explicitly and keeps usage opt-in", async () => {
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
+it("explains what Hivra keeps a record of without technical details, and keeps usage opt-in", async () => {
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
   expect(screen.queryByText("Metered usage panel")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
-  expect(screen.getByText("Agent tool use · No records yet")).toBeVisible();
+  fireEvent.click(screen.getByText("Sources"));
   expect(screen.getByText(/Missing reports do not tell us/)).toBeVisible();
+  expect(screen.queryByText("Technical source details")).not.toBeInTheDocument();
   expect(
-    screen.getByText("Independent process monitoring is not connected."),
-  ).not.toBeVisible();
-  fireEvent.click(screen.getAllByText("Technical source details")[1]);
-  expect(
-    screen.getByText("Independent process monitoring is not connected."),
-  ).toBeVisible();
+    screen.queryByText("Independent process monitoring is not connected."),
+  ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Usage" }));
   expect(screen.getByText("Metered usage panel")).toBeVisible();
 });
 it("does not interpret degraded empty results as no activity", async () => {
   respond({ ...snapshot, events: [], degraded: true, truncated: true });
-  render(<ActivityObservatory showUsage={false} />);
+  await renderHistory(<ActivityObservatory showUsage={false} />);
   expect(
     await screen.findByText(/This history may be incomplete/),
   ).toBeVisible();
@@ -169,7 +176,7 @@ it("does not interpret degraded empty results as no activity", async () => {
 });
 it("has an honest healthy empty state and retries errors", async () => {
   (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 503 });
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Activity could not be loaded",
   );
@@ -180,7 +187,7 @@ it("has an honest healthy empty state and retries errors", async () => {
   ).toBeVisible();
 });
 it("preserves the previous snapshot with a freshness warning when refresh fails", async () => {
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 503 });
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -209,7 +216,7 @@ function withNarrowScreen(run: (scroll: jest.Mock) => Promise<void>) {
 it(
   "opens the tapped record in place on a narrow screen and keeps it in view",
   withNarrowScreen(async (scroll) => {
-    render(<ActivityObservatory />);
+    await renderHistory(<ActivityObservatory />);
     const started = await screen.findByRole("button", { name: /Agent started/ });
     // No record is opened for the user; the list comes first.
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
@@ -247,7 +254,7 @@ it(
 it(
   "brings a tapped record to the top when its detail would open below the fold",
   withNarrowScreen(async (scroll) => {
-    render(<ActivityObservatory />);
+    await renderHistory(<ActivityObservatory />);
     const started = await screen.findByRole("button", { name: /Agent started/ });
     const rect = jest
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
@@ -281,14 +288,14 @@ it(
 it(
   "scrolls only for a tap, not when an open record returns after a view or search change",
   withNarrowScreen(async (scroll) => {
-    render(<ActivityObservatory />);
+    await renderHistory(<ActivityObservatory />);
     const started = await screen.findByRole("button", { name: /Agent started/ });
     fireEvent.click(started);
     expect(scroll).toHaveBeenCalledTimes(1);
 
     // The open record leaves the list and comes back with its detail still
     // open; the page stays where the user is working.
-    fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Needs you/ }));
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(
@@ -315,13 +322,13 @@ it(
 it(
   "folds view guidance into a collapsed disclosure on a narrow screen",
   withNarrowScreen(async () => {
-    render(<ActivityObservatory />);
+    await renderHistory(<ActivityObservatory />);
     await screen.findByRole("button", { name: /Agent started/ });
     const help = screen.getByText(/This is your saved history/);
     expect(help).not.toBeVisible();
     fireEvent.click(screen.getByText("About this view"));
     expect(help).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Runs" }));
     expect(screen.getByText(/not an audit of the computer/)).toBeVisible();
     expect(
       within(screen.getByRole("region", { name: "Agent runs" })).queryByText(
@@ -337,7 +344,7 @@ it("appends older events once, preserves selection and coverage, and refresh res
     truncated: true,
     nextCursor: "page/2",
   } as typeof snapshot);
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   fireEvent.click(
     screen.getByRole("button", { name: /Agent action reported/ }),
@@ -374,8 +381,6 @@ it("appends older events once, preserves selection and coverage, and refresh res
   expect(
     screen.queryByRole("button", { name: "Load older events" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
-  expect(screen.getByText("Agent tool use · No records yet")).toBeVisible();
   respond(snapshot);
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await screen.findByRole("button", { name: "Refresh" });
@@ -395,7 +400,7 @@ it("preserves loaded events and cursor after a pagination error", async () => {
     truncated: true,
     nextCursor: "retry-cursor",
   } as typeof snapshot);
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 503 });
   fireEvent.click(screen.getByRole("button", { name: "Load older events" }));
@@ -417,7 +422,7 @@ it("retains a failed source and retry cursor when an older page is degraded", as
     truncated: true,
     nextCursor: "retry-cursor",
   } as typeof snapshot);
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Agent started/ });
   respond({
     ...snapshot,
@@ -434,10 +439,8 @@ it("retains a failed source and retry cursor when an older page is degraded", as
   expect(
     screen.getByRole("button", { name: "Load older events" }),
   ).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
+  fireEvent.click(screen.getByText("Sources"));
   expect(screen.getByText("Unable to load")).toBeVisible();
-  fireEvent.click(screen.getAllByText("Technical source details")[0]);
-  expect(screen.getByText("Read failed.")).toBeVisible();
 });
 
 it("explains desktop authorization without inventing a connection or actor", async () => {
@@ -452,7 +455,7 @@ it("explains desktop authorization without inventing a connection or actor", asy
       },
     ],
   } as typeof snapshot);
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Desktop access allowed/ });
   const inspector = within(screen.getByRole("complementary"));
   expect(
@@ -478,19 +481,117 @@ it("explains desktop authorization without inventing a connection or actor", asy
   ).toBeVisible();
 });
 
-it("provides failure guidance and scopes the attention count to loaded records", async () => {
+it("opens on Needs you with a plain sentence and one Open action per flagged record", async () => {
   render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: /Agent action reported/ });
-  fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
-  const inspector = within(screen.getByRole("complementary"));
-  expect(inspector.getByText("What to do")).toBeVisible();
-  expect(
-    inspector.getByText(
-      /Open the agent or computer to check its current state/,
-    ),
-  ).toBeVisible();
-  expect(screen.getByText(/count covers loaded records/)).toBeVisible();
-  expect(inspector.getByText("Reported a problem")).toBeVisible();
+  await screen.findByText(/Last updated/);
+  expect(screen.getByRole("button", { name: /Needs you/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "History" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  const list = within(screen.getByRole("region", { name: "Needs you" }));
+  expect(list.getByText(/Researcher: /)).toBeVisible();
+  expect(list.getByText("Reported a problem")).toBeVisible();
+  expect(list.getByRole("link", { name: "Open Researcher" })).toHaveAttribute(
+    "href",
+    "/dashboard/agent/a2",
+  );
+  expect(screen.queryByLabelText("Filter by agent")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Agent started/)).not.toBeInTheDocument();
+});
+
+it("hides the Needs you tab, and opens History, when nothing needs the person", async () => {
+  respond({
+    ...snapshot,
+    events: [snapshot.events[0]],
+    resources: [tracingResource("c1", "Healthy box", "running", { state: "observed" })],
+  });
+  render(<ActivityObservatory />);
+  expect(await screen.findByRole("button", { name: /Agent started/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Needs you/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "History" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Runs" })).toBeVisible();
+  expect(screen.queryByText(/Monitoring limits|observatory|telemetry/i)).not.toBeInTheDocument();
+});
+
+it("says a computer stopped reporting, with a relative time and an Open action", async () => {
+  respond({
+    ...snapshot,
+    resources: [
+      tracingResource("c1", "Stale box", "running", { state: "stale", lastSeenAt: "2026-09-21T11:30:00Z" }),
+      tracingResource("c2", "Expired box", "running", { state: "expired", expiresAt: "2026-09-20T10:00:00Z" }),
+      tracingResource("c3", "Stopped box", "stopped", { state: "not_running" }),
+      tracingResource("c4", "Healthy box", "running", { state: "observed" }),
+    ],
+  });
+  render(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
+  // One flagged record plus two reporting gaps.
+  expect(screen.getByRole("button", { name: /Needs you/ })).toHaveTextContent("Needs you3");
+  const list = within(screen.getByRole("region", { name: "Needs you" }));
+  expect(list.getByText("Stale box stopped reporting 30 minutes ago")).toBeVisible();
+  expect(list.getByText(/^Expired box stopped reporting/)).toBeVisible();
+  expect(list.getByRole("link", { name: "Open Stale box" })).toHaveAttribute(
+    "href",
+    "/dashboard/agent/c1",
+  );
+  expect(list.queryByText(/Stopped box|Healthy box/)).not.toBeInTheDocument();
+});
+
+it("keeps Sources collapsed at the bottom of History and explains it in plain words", async () => {
+  respond({
+    ...snapshot,
+    resources: [
+      {
+        ...tracingResource("c1", "Codex box", "running", { state: "observed" }),
+        lastSeenAt: "2026-09-21T11:58:00Z",
+      },
+    ],
+  });
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
+  expect(screen.getByText("What Hivra keeps a record of")).not.toBeVisible();
+  fireEvent.click(screen.getByText("Sources"));
+  expect(screen.getByText("What Hivra keeps a record of")).toBeVisible();
+  expect(screen.getByText("Last reported 2 minutes ago")).toBeVisible();
+  expect(screen.queryByText("c1")).not.toBeInTheDocument();
+  expect(screen.queryByText("Technical source details")).not.toBeInTheDocument();
+});
+
+it("states why each computer is or is not reporting, in plain words", async () => {
+  respond({
+    ...snapshot,
+    resources: [
+      tracingResource("m1", "Legacy box", "running", { state: "missing", reason: "not_set_up" }),
+      tracingResource("m3", "Failed box", "running", {
+        state: "missing",
+        reason: "install_failed",
+        installFailedAt: "2026-09-21T11:01:00Z",
+        installFailureReason: "transfer_failed",
+      }),
+      tracingResource("x1", "Reissued box", "running", {
+        state: "expired",
+        reason: "expired_credential_presented",
+        issuedAt: "2026-09-21T11:30:00Z",
+        expiresAt: "2026-09-28T11:30:00Z",
+        lastSeenAt: "2026-09-19T10:00:00Z",
+      }),
+      { id: "p1", name: "Provider box", agentType: "claude-code", status: "running", capabilities: [{ key: "native_tracing", label: "Agent run reporting", state: "unsupported", reason: "substrate" }] },
+    ],
+  });
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
+  fireEvent.click(screen.getByText("Sources"));
+  expect(screen.getByText("Not set up")).toBeVisible();
+  expect(screen.getByText("Reporter could not be installed")).toBeVisible();
+  expect(screen.getByText("Reporting credential expired")).toBeVisible();
+  expect(screen.getByText("Not available on this host type")).toBeVisible();
 });
 
 it("distinguishes a reported successful action from overall task completion", async () => {
@@ -505,7 +606,7 @@ it("distinguishes a reported successful action from overall task completion", as
       },
     ],
   });
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Reported successful/ });
   expect(
     within(screen.getByRole("complementary")).getByText("Reported successful"),
@@ -516,45 +617,27 @@ it("distinguishes a reported successful action from overall task completion", as
 });
 
 it("distinguishes readable sources from capabilities with actual records", async () => {
-  respond({
-    ...snapshot,
-    events: [],
-    resources: [
-      {
-        ...snapshot.resources[0],
-        capabilities: [
-          { key: "lifecycle", label: "Lifecycle", state: "observed" },
-        ],
-      },
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
+  respond({ ...snapshot, events: [] });
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
+  fireEvent.click(screen.getByText("Sources"));
   expect(screen.getByText("Available to read", { exact: true })).toBeVisible();
-  expect(
-    screen.getByText("Computer changes · Records available"),
-  ).toBeVisible();
-  expect(
-    screen.getByText(/there may be no records in the last 30 days/),
-  ).toBeVisible();
 });
 
 it("does not present an unconfirmed resource list as a healthy empty list", async () => {
   respond({ ...snapshot, resources: [], degraded: true });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", {
-    name: "Some records could not be loaded",
-  });
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Some records could not be loaded/);
+  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  fireEvent.click(screen.getByText("Sources"));
   expect(
     screen.getByText(
-      "No computers or agents are shown. Some information could not be loaded; refresh to try again.",
+      "No computers or agents are shown. Some information could not be loaded; try again.",
     ),
   ).toBeVisible();
   expect(
     screen.queryByText(
-      "No computers or agents were returned by the available history.",
+      "No computers or agents have reported yet.",
     ),
   ).not.toBeInTheDocument();
 });
@@ -569,7 +652,7 @@ it.each<[ActivityEventKind, string]>([
       ...snapshot,
       events: [{ ...snapshot.events[1], kind, title: "tool.call operation" }],
     });
-    render(<ActivityObservatory />);
+    await renderHistory(<ActivityObservatory />);
     await screen.findByRole("button", { name: new RegExp(title) });
     expect(screen.getByText("tool.call operation")).not.toBeVisible();
     fireEvent.click(screen.getByText("Technical details"));
@@ -616,10 +699,10 @@ it("shows bounded run steps and lets a step open its original evidence", async (
       },
     ],
   });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Agent runs" });
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByRole("button", { name: "Runs" });
+  await screen.findByText(/Last updated/);
+  fireEvent.click(screen.getByRole("button", { name: "Runs" }));
   const runs = within(
     screen.getByRole("region", { name: "Agent runs" }),
   );
@@ -653,9 +736,9 @@ it("does not present successful or unknown steps as a completed run", async () =
       },
     ],
   });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
+  fireEvent.click(screen.getByRole("button", { name: "Runs" }));
   expect(screen.getByText("Final result not confirmed")).toBeVisible();
   expect(
     within(
@@ -678,213 +761,6 @@ const tracingResource = (
     { key: "lifecycle", label: "Lifecycle", state: "observed" },
     { key: "native_tracing", label: "Agent run reporting", state: "observed", ...capability },
   ],
-});
-
-it("shows agent run reporting per computer with its check-in, credential and an honest explanation", async () => {
-  respond({
-    ...snapshot,
-    resources: [
-      tracingResource("c1", "Codex box", "running", {
-        state: "observed",
-        lastSeenAt: "2026-09-21T11:58:00Z",
-        expiresAt: "2026-09-25T12:00:00Z",
-      }),
-      tracingResource("c2", "Old box", "running", { state: "missing" }),
-      tracingResource("c3", "Paused box", "stopped", { state: "not_running", lastSeenAt: "2026-09-20T10:00:00Z" }),
-      tracingResource("c4", "Expired box", "running", {
-        state: "expired",
-        lastSeenAt: "2026-09-19T10:00:00Z",
-        expiresAt: "2026-09-20T10:00:00Z",
-      }),
-      { id: "c5", name: "Desktop box", agentType: "linux-desktop", status: "running", capabilities: [{ key: "native_tracing", label: "Agent run reporting", state: "unsupported" }] },
-    ],
-    sources: [
-      ...snapshot.sources,
-      { id: "agent-tracing", label: "Agent run reporting", state: "stale", detail: "1 of 3 running Codex/Claude Code computers reporting." },
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
-  const coverage = within(screen.getByRole("region", { name: "Monitoring coverage" }));
-  expect(coverage.getByText(/not proof that nothing happened/)).toBeVisible();
-  expect(coverage.getByText(/some of its runs may be missing/)).toBeVisible();
-  expect(coverage.getByText("Reporting")).toBeVisible();
-  expect(coverage.getByText(/Reporter last checked in: Sep 21, 2026/)).toBeVisible();
-  expect(coverage.getByText(/Reporting credential valid until Sep 25, 2026/)).toBeVisible();
-  // A computer with no collector row predates reporting: it was never set up.
-  expect(coverage.getByText("Not set up")).toBeVisible();
-  expect(coverage.getByText(/get it when they are restarted after their host is updated/)).toBeVisible();
-  expect(coverage.getByText("Agent not running")).toBeVisible();
-  expect(coverage.getByText("Stopped; no reports expected until it starts again.")).toBeVisible();
-  expect(coverage.getAllByText("Reporting credential expired").length).toBeGreaterThan(0);
-  expect(coverage.getByText(/Reporting credential expired Sep 20, 2026/)).toBeVisible();
-  expect(coverage.getByText("Not available for this agent")).toBeVisible();
-  expect(coverage.getByText(/Claude Code and Codex computers only/)).toBeVisible();
-  // The history capabilities keep their chips; run reporting is not repeated as a chip.
-  expect(coverage.getAllByText("Computer changes · Records available")).toHaveLength(4);
-  expect(coverage.queryByText(/Agent run reporting ·/)).not.toBeInTheDocument();
-});
-
-it("tells a computer that was never set up apart from one set up but silent and one whose reporter could not be installed", async () => {
-  respond({
-    ...snapshot,
-    resources: [
-      tracingResource("m1", "Legacy box", "running", { state: "missing", reason: "not_set_up" }),
-      tracingResource("m2", "Silent box", "running", {
-        state: "missing",
-        reason: "never_checked_in",
-        issuedAt: "2026-09-21T10:00:00Z",
-        expiresAt: "2026-09-28T10:00:00Z",
-      }),
-      tracingResource("m3", "Failed box", "running", {
-        state: "missing",
-        reason: "install_failed",
-        issuedAt: "2026-09-21T11:00:00Z",
-        installFailedAt: "2026-09-21T11:01:00Z",
-        installFailureReason: "transfer_failed",
-      }),
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
-  const coverage = within(screen.getByRole("region", { name: "Monitoring coverage" }));
-  const row = (name: string) =>
-    within(coverage.getByText(name, { selector: "strong" }).closest("div")!.parentElement!);
-  const legacy = row("Legacy box");
-  expect(legacy.getByText("Not set up")).toBeVisible();
-  expect(legacy.getByText(/has not been set up on this computer/)).toBeVisible();
-  expect(legacy.queryByText(/Reporting set up/)).not.toBeInTheDocument();
-  const silent = row("Silent box");
-  expect(silent.getByText("No reports received")).toBeVisible();
-  expect(silent.getByText(/Reporting was set up, but the reporter has never checked in/)).toBeVisible();
-  expect(silent.getByText(/Reporting set up Sep 21, 2026/)).toBeVisible();
-  expect(silent.queryByText(/launched before automatic reporting/)).not.toBeInTheDocument();
-  const failed = row("Failed box");
-  expect(failed.getByText("Reporter could not be installed")).toBeVisible();
-  expect(failed.getByText(/could not be installed, so runs on this computer are not being recorded/)).toBeVisible();
-  expect(failed.getByText(/Last install attempt failed Sep 21, 2026.*: it could not be copied to the computer/)).toBeVisible();
-  expect(failed.queryByText(/launched before automatic reporting/)).not.toBeInTheDocument();
-});
-
-it("names the host type when Claude Code or Codex runs where reporting is not supported", async () => {
-  respond({
-    ...snapshot,
-    resources: [
-      { id: "p1", name: "Provider box", agentType: "claude-code", status: "running", capabilities: [{ key: "native_tracing", label: "Agent run reporting", state: "unsupported", reason: "substrate" }] },
-    ],
-    sources: [
-      ...snapshot.sources,
-      { id: "agent-tracing", label: "Agent run reporting", state: "missing", detail: "Available for Claude Code and Codex computers on Hivra hosts." },
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
-  const coverage = within(screen.getByRole("region", { name: "Monitoring coverage" }));
-  expect(coverage.getByText("Not available on this host type")).toBeVisible();
-  expect(coverage.getByText(/this computer’s host type isn’t supported yet/)).toBeVisible();
-  expect(coverage.getByText(/Your Claude Code or Codex computers run on a host type that isn’t supported yet/)).toBeVisible();
-  expect(coverage.queryByText(/computers only/)).not.toBeInTheDocument();
-  expect(coverage.queryByText(/No running Claude Code or Codex computer is reporting/)).not.toBeInTheDocument();
-});
-
-it("words an expired credential presented after a re-issue without claiming the valid one is in use", async () => {
-  respond({
-    ...snapshot,
-    resources: [
-      tracingResource("x1", "Reissued box", "running", {
-        state: "expired",
-        reason: "expired_credential_presented",
-        issuedAt: "2026-09-21T11:30:00Z",
-        expiresAt: "2026-09-28T11:30:00Z",
-        lastSeenAt: "2026-09-19T10:00:00Z",
-      }),
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "What is monitored" }));
-  const coverage = within(screen.getByRole("region", { name: "Monitoring coverage" }));
-  expect(coverage.getByText("Reporting credential expired")).toBeVisible();
-  expect(coverage.getByText(/presented an expired reporting credential after its latest one was issued/)).toBeVisible();
-  expect(coverage.getByText(/New reporting credential issued Sep 21, 2026.*the computer has not checked in with it/)).toBeVisible();
-  expect(coverage.queryByText(/valid until/)).not.toBeInTheDocument();
-});
-
-it("says how many attention items the search and filters hide, and clearing them shows every item the badge counts", async () => {
-  respond({
-    ...snapshot,
-    resources: [
-      tracingResource("c1", "Stale box", "running", { state: "stale", lastSeenAt: "2026-09-21T11:30:00Z" }),
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: /Agent started/ });
-  // One flagged record plus one reporting gap.
-  expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("Needs attention2");
-  fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
-  expect(screen.queryByText(/hidden by your search or filters/)).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Stale box" } });
-  expect(screen.getByRole("region", { name: "Reporting gaps" })).toBeVisible();
-  expect(screen.getByText(/No recorded events match/)).toBeVisible();
-  expect(screen.getByText(/1 item needs attention but is hidden by your search or filters/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Filter by kind"), { target: { value: "trace_span" } });
-  expect(screen.queryByRole("region", { name: "Reporting gaps" })).not.toBeInTheDocument();
-  expect(screen.getByText(/2 items need attention but are hidden by your search or filters/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Clear search and filters" }));
-  expect(screen.queryByText(/hidden by your search or filters/)).not.toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "Reporting gaps" })).toBeVisible();
-  expect(
-    within(screen.getByRole("region", { name: "Recorded events" })).getAllByRole("button"),
-  ).toHaveLength(1);
-  expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("Needs attention2");
-});
-
-it("raises reporting gaps on running computers in Needs attention and counts them in the badge", async () => {
-  respond({
-    ...snapshot,
-    resources: [
-      tracingResource("c1", "Stale box", "running", { state: "stale", lastSeenAt: "2026-09-21T11:30:00Z" }),
-      tracingResource("c2", "Expired box", "running", { state: "expired", expiresAt: "2026-09-20T10:00:00Z" }),
-      tracingResource("c3", "Stopped box", "stopped", { state: "not_running" }),
-      tracingResource("c4", "Healthy box", "running", { state: "observed" }),
-    ],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: /Agent started/ });
-  // One flagged record plus two reporting gaps.
-  expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("Needs attention3");
-  fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
-  const gaps = within(screen.getByRole("region", { name: "Reporting gaps" }));
-  expect(gaps.getByText("Stale box: run reporting stopped checking in")).toBeVisible();
-  expect(gaps.getByText(/Hasn’t checked in for 15\+ min while running/)).toBeVisible();
-  expect(gaps.getByText("Expired box: run reporting credential expired")).toBeVisible();
-  expect(gaps.getByText(/Reporter last checked in: No check-in received/)).toBeVisible();
-  expect(gaps.queryByText(/Stopped box|Healthy box/)).not.toBeInTheDocument();
-  // Gaps are not recorded events; the event list still holds only flagged records.
-  expect(
-    within(screen.getByRole("region", { name: "Recorded events" })).getAllByRole("button"),
-  ).toHaveLength(1);
-  fireEvent.change(screen.getByLabelText("Filter by agent"), { target: { value: "a1" } });
-  expect(screen.queryByRole("region", { name: "Reporting gaps" })).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Filter by agent"), { target: { value: "all" } });
-  fireEvent.click(screen.getByRole("button", { name: "See what is monitored" }));
-  expect(screen.getByRole("region", { name: "Monitoring coverage" })).toBeVisible();
-});
-
-it("does not show a reporting gap or badge when every running computer is reporting", async () => {
-  respond({
-    ...snapshot,
-    events: [snapshot.events[0]],
-    resources: [tracingResource("c1", "Healthy box", "running", { state: "observed" })],
-  });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: /Agent started/ });
-  expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent(/^Needs attention$/);
-  fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
-  expect(screen.queryByRole("region", { name: "Reporting gaps" })).not.toBeInTheDocument();
 });
 
 it("shows a native run's status and steps, and a tool error as a warning that is not an alert", async () => {
@@ -913,16 +789,16 @@ it("shows a native run's status and steps, and a tool error as a warning that is
       { ...base, id: "start", role: "run.started", occurredAt: "2026-09-21T11:40:00Z", spanId: "1".repeat(16) },
     ],
   });
-  render(<ActivityObservatory />);
+  await renderHistory(<ActivityObservatory />);
   await screen.findByRole("button", { name: /Tool Bash reported an error/ });
-  expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent(/^Needs attention$/);
+  expect(screen.queryByRole("button", { name: /Needs you/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Tool Bash reported an error/ }));
   const inspector = within(screen.getByRole("complementary", { name: "Event inspector" }));
   expect(inspector.getByText(/Agents often recover from tool errors/)).toBeVisible();
   fireEvent.click(inspector.getByText("Technical details"));
   expect(inspector.getByText("tool.failed")).toBeVisible();
   expect(inspector.getByText("Claude Code")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+  fireEvent.click(screen.getByRole("button", { name: "Runs" }));
   const run = within(screen.getByRole("article", { name: "Researcher Claude Code run" }));
   expect(run.getByText("Finished in 5.0 s (reported by the agent)")).toBeVisible();
   expect(run.getByText(/1 tool call · 1 tool error/)).toBeVisible();
@@ -969,9 +845,9 @@ it.each<[string | undefined, RegExp, boolean]>([
       },
     ],
   });
-  render(<ActivityObservatory />);
-  await screen.findByRole("button", { name: "Monitoring limits" });
-  fireEvent.click(screen.getByRole("button", { name: "Agent runs" }));
+  await renderHistory(<ActivityObservatory />);
+  await screen.findByText(/Last updated/);
+  fireEvent.click(screen.getByRole("button", { name: "Runs" }));
   const run = within(screen.getByRole("article", { name: "Researcher Codex run" }));
   expect(run.getByText(note)).toBeVisible();
   if (offered) expect(screen.getByRole("button", { name: "Load older events" })).toBeVisible();

@@ -195,11 +195,28 @@ describe("POST /api/billing/managed-venice/hermesos/settle", () => {
     expect(mockMemory.tables.managed_venice_reconciliation_items).toHaveLength(1);
   });
 
-  it("returns a safe 500 when the quote does not exist", async () => {
+  it("returns a 404 (not a retryable 500) when the quote does not exist", async () => {
     const response = await deliver("0xpaid", QUOTED, IN_WINDOW, "missing");
 
-    expect(response.status).toBe(500);
-    expect(((await response.json()) as { error?: string }).error).toBe("Failed to settle managed Venice token quote.");
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { error?: string }).error).toBe("Managed Venice token quote not found.");
+  });
+
+  it("takes the transfer's time from the chain, so a caller cannot claim a late transfer into the quote window", async () => {
+    // Mined at 11:00, after the quote window (10:20 to 10:40). The caller claims 10:21.
+    rpc.addTransfer(transfer("0xlate", QUOTED, "2026-05-16T11:00:00.000Z"));
+
+    const response = await settle({
+      quoteId: "quote_1",
+      transactionHash: "0xlate",
+      tokenAmountRaw: QUOTED.toString(),
+      observedAt: IN_WINDOW,
+      blockTimestamp: IN_WINDOW,
+    });
+
+    expect(await data(response)).toEqual({ status: "manual_review_required" });
+    expect(mockMemory.tables.managed_venice_token_lots).toHaveLength(0);
+    expect(quote()).toMatchObject({ status: "manual_review_required", transaction_hash: null });
   });
 });
 

@@ -14,7 +14,7 @@ This is the manual checklist to close that gap. Run it once before the next reas
 
 ## Provision step
 
-1. Sign in to the live dashboard as an account listed in `COMMAND_CENTER_V2_ALLOWLIST` if you also want to re-exercise the canary branch.
+1. Sign in to the live dashboard.
 2. Provision a fresh WebUI VM.
 3. Note the `instance_id` returned in the URL after provisioning.
 

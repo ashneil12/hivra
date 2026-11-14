@@ -14,6 +14,7 @@
 
 import { Resend } from "resend";
 
+import { escapeHtml } from "@/lib/email/escape-html";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { log } from "@/lib/logger";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -170,8 +171,8 @@ export async function sendCapacityPausedEmail(
     eyebrow: "Taking a nap",
     title: "Your agent is taking a nap.",
     body: `
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${agentLabel(params.agentName, params.agentType)} hadn't been used in a while, and the platform is running close to capacity right now — so we tucked it in for a nap to keep things fast and healthy for everyone.</p>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(greeting(params.firstName))}</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(agentLabel(params.agentName, params.agentType))} hadn't been used in a while, and the platform is running close to capacity right now — so we tucked it in for a nap to keep things fast and healthy for everyone.</p>
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Nothing is lost. Your data, chat history, and settings are exactly where you left them — hitting Start wakes it right back up.</p>
     `,
     ctaText: "Wake it up",

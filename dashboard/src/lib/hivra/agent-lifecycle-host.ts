@@ -50,6 +50,8 @@ export type HivraLifecycleAgentRow = Record<string, unknown> & {
   vmid?: unknown;
   ip?: unknown;
   proxmox_host?: unknown;
+  /** Where the computer is on the sleep ladder; absent counts as awake. */
+  sleep_state?: unknown;
 };
 
 export interface HivraLifecycleTarget {
@@ -116,7 +118,7 @@ export async function resolveHivraLifecycleTarget(input: {
       targetId: executionContext.host,
       env,
       channel: executionContext.provisionerChannel,
-      purpose: action === "update_runtime" ? "runtime-update" : "lifecycle",
+      purpose: action === "update_runtime" ? "runtime-update" : action === "resize" ? "resize" : "lifecycle",
     });
     if (!readiness.ok) {
       // error, not warn: a blocked start/restart/resize is a customer-visible

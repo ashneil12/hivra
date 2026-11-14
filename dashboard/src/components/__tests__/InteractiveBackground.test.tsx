@@ -126,6 +126,40 @@ describe('InteractiveBackground', () => {
     expect(random.mock.calls.length).toBeGreaterThan(seeded);
   });
 
+  it('strokes the link lines in a few opacity steps per frame, not once per particle pair', () => {
+    const ctx = {
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      beginPath: jest.fn(),
+      arc: jest.fn(),
+      closePath: jest.fn(),
+      fill: jest.fn(),
+      clearRect: jest.fn(),
+      moveTo: jest.fn(),
+      lineTo: jest.fn(),
+      stroke: jest.fn(),
+    };
+    jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: jest.fn(() => ({ matches: false })),
+    });
+    Object.defineProperty(window.navigator, 'connection', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 700 });
+    // Every particle starts on the same spot and does not drift, so every pair is linked.
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    render(<InteractiveBackground />);
+    const frame = (window.requestAnimationFrame as jest.Mock).mock.calls[0][0] as FrameRequestCallback;
+    frame(0);
+
+    expect(ctx.moveTo.mock.calls.length).toBeGreaterThan(100);
+    expect(ctx.stroke.mock.calls.length).toBeGreaterThan(0);
+    expect(ctx.stroke.mock.calls.length).toBeLessThanOrEqual(16);
+  });
+
   it('is web chrome a desktop app hides, and does not animate there unseen', () => {
     mockCanvasContext();
     Object.defineProperty(window, 'matchMedia', {

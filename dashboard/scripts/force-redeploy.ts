@@ -33,8 +33,18 @@ async function main() {
     const user = await clerk.users.getUser(instance.user_id);
     globalSettings = extractGlobalHermesSettings(user.publicMetadata);
   } catch (e) {
+    // Only a Clerk 404 (owner gone) falls back to {}. Any other failure would
+    // redeploy with the owner's global settings silently blanked.
+    if ((e as { status?: number }).status !== 404) {
+      console.error(
+        `[force-redeploy] couldn't fetch Clerk public metadata, not redeploying: ${
+          (e as Error).message
+        }`
+      );
+      process.exit(1);
+    }
     console.warn(
-      `[force-redeploy] couldn't fetch Clerk public metadata, defaulting to {}: ${
+      `[force-redeploy] Clerk user not found, defaulting to {}: ${
         (e as Error).message
       }`
     );

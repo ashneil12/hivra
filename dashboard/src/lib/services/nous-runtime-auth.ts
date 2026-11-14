@@ -203,6 +203,8 @@ export async function syncNousRuntimeAuthStore(
   bundle: NousVaultBundle,
   hermesHomeDir: string
 ): Promise<{ changed: boolean }> {
+  // The auth store carries OAuth access and refresh tokens. It travels on the
+  // SSH stdin, never in the command text, so it stays out of argv and ps output.
   const authStoreB64 = Buffer.from(buildNousHermesAuthStore(bundle), "utf-8").toString("base64");
   const innerScript = buildNousRuntimeAuthSyncInnerScript();
   const containerNames = getNousRuntimeContainerNames(instanceId);
@@ -213,14 +215,17 @@ export async function syncNousRuntimeAuthStore(
       `set -e`,
       `BASE_HOME=${JSON.stringify(hermesHomeDir)}`,
       `LEGACY_BASE_HOME=${JSON.stringify(legacyMirrorHomeDir)}`,
-      `AUTH_B64="${authStoreB64}"`,
+      `AUTH_B64="$(cat)"`,
+      `export AUTH_B64`,
       `changed=0`,
       `synced=0`,
       `for container_name in ${containerNames.join(" ")}; do`,
       `  if ! docker inspect --format='{{.State.Running}}' "$container_name" 2>/dev/null | grep -q true; then`,
       `    continue`,
       `  fi`,
-      `  container_changed="$(docker exec -u root -i -e BASE_HOME="$BASE_HOME" -e LEGACY_BASE_HOME="$LEGACY_BASE_HOME" -e AUTH_B64="$AUTH_B64" "$container_name" sh -s <<'SH'`,
+      // Bare -e AUTH_B64 copies the value from this shell's environment, so
+      // docker's own argv never carries it.
+      `  container_changed="$(docker exec -u root -i -e BASE_HOME="$BASE_HOME" -e LEGACY_BASE_HOME="$LEGACY_BASE_HOME" -e AUTH_B64 "$container_name" sh -s <<'SH'`,
       innerScript,
       `SH`,
       `)"`,
@@ -231,7 +236,10 @@ export async function syncNousRuntimeAuthStore(
       `done`,
       `printf "{\\"changed\\":%s,\\"synced\\":%s}\\n" "$changed" "$synced"`,
     ].join("\n"),
-    guestTarget ? { proxmoxHostConfig: guestTarget } : {}
+    {
+      stdin: authStoreB64,
+      ...(guestTarget ? { proxmoxHostConfig: guestTarget } : {}),
+    }
   );
 
   if (!syncResult.ok) {

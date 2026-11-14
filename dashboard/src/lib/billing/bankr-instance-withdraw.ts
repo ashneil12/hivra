@@ -19,8 +19,19 @@ import {
   HERMESOS_TOKEN_DECIMALS,
   normalizeEvmAddress,
   parseTokenAmountToRaw,
+  platformTokenBalanceConfig,
 } from "@/lib/billing/token-holdings";
-import { submitBankrTransfer } from "@/lib/billing/bankr-withdraw";
+import { getActiveHivraToken } from "@/lib/billing/token-registry";
+import { BankrTransferHttpError, submitBankrTransfer } from "@/lib/billing/bankr-withdraw";
+
+/**
+ * Only an explicit 4xx from Bankr (other than a request timeout) proves the
+ * transfer was refused before anything was broadcast. Any other throw leaves
+ * the outcome unknown, so the withdrawal claim must stay held.
+ */
+function transferRefusedBeforeSend(err: unknown): boolean {
+  return err instanceof BankrTransferHttpError && err.status >= 400 && err.status < 500 && err.status !== 408;
+}
 import {
   withdrawDestinationHeldMessage,
   withdrawDestinationHeldUntil,
@@ -31,7 +42,7 @@ type JsonRpcFetch = typeof fetch;
 
 type QueryError = { code?: string; message?: string; details?: string; hint?: string } | null;
 
-export type InstanceBankrWithdrawAsset = "HERMESOS" | "ETH";
+export type InstanceBankrWithdrawAsset = "HERMESOS" | "ETH" | "HIVRA";
 
 const BASE_ETH_DECIMALS = 18;
 const BANKR_NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -351,6 +362,8 @@ async function finalizeWithdrawalClaim(params: {
 
 type WithdrawForInstanceParams = {
   instanceId: string;
+  /** Clock for the $HIVRA live check (tests). */
+  now?: Date;
   userId: string;
   expectedRecipient?: string;
   amountDisplay: string;
@@ -373,7 +386,7 @@ interface WithdrawAssetConfig {
   }) => Promise<{ balanceRaw: string; balanceDisplay: string }>;
 }
 
-const WITHDRAW_ASSETS: Record<InstanceBankrWithdrawAsset, WithdrawAssetConfig> = {
+const WITHDRAW_ASSETS: Record<Exclude<InstanceBankrWithdrawAsset, "HIVRA">, WithdrawAssetConfig> = {
   HERMESOS: {
     displayName: "HERMESOS",
     decimals: HERMESOS_TOKEN_DECIMALS,
@@ -389,6 +402,28 @@ const WITHDRAW_ASSETS: Record<InstanceBankrWithdrawAsset, WithdrawAssetConfig> =
     readBalance: fetchBaseEthBalance,
   },
 };
+
+/**
+ * Withdraw config for an asset selector, or null when it is not withdrawable
+ * now. $HIVRA's contract, decimals and symbol come from the token registry
+ * (hivra-token-launch.ts), never a copy here.
+ */
+function resolveWithdrawAsset(
+  asset: InstanceBankrWithdrawAsset,
+  now: Date = new Date()
+): WithdrawAssetConfig | null {
+  if (asset !== "HIVRA") return WITHDRAW_ASSETS[asset];
+  const hivra = getActiveHivraToken(now);
+  if (!hivra) return null;
+  const balanceConfig = platformTokenBalanceConfig(hivra);
+  return {
+    displayName: hivra.displayUnit,
+    decimals: hivra.decimals,
+    bankrTokenAddress: hivra.address,
+    isNativeToken: false,
+    readBalance: (readParams) => fetchTokenBalance({ ...readParams, token: balanceConfig }),
+  };
+}
 
 function normalizeWithdrawalToken(token: BaseWithdrawalToken): BaseWithdrawalToken & {
   bankrTokenAddress: string;
@@ -485,6 +520,8 @@ async function readBaseTokenBalance(params: {
 
 type WithdrawCoreParams = {
   userId: string;
+  /** Clock for the $HIVRA live check (tests). */
+  now?: Date;
   amountDisplay: string;
   expectedRecipient?: string;
   rpcUrl?: string;
@@ -504,7 +541,14 @@ async function withdrawAssetCore(
     loadRecord: LoadWalletRecord;
   }
 ): Promise<InstanceBankrWithdrawResult> {
-  const asset = WITHDRAW_ASSETS[params.asset];
+  const asset = resolveWithdrawAsset(params.asset, params.now);
+  if (!asset) {
+    // Refused before any wallet read, key decrypt, claim or transfer.
+    return {
+      status: "invalid_token",
+      errorMessage: "$HIVRA withdrawals open once $HIVRA is live.",
+    };
+  }
   const db = params.db ?? supabaseAdmin;
   const record = await params.loadRecord(db);
 
@@ -612,6 +656,17 @@ async function withdrawAssetCore(
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    if (!transferRefusedBeforeSend(err)) {
+      // The transfer may already have reached Bankr: keep the in-flight claim
+      // held so a retry cannot send the funds a second time.
+      return {
+        status: "transfer_failed",
+        errorMessage: `Withdrawal pending verification: ${errorMessage}. Withdrawals stay locked until the outcome is confirmed; try again later.`,
+        amountRaw,
+        amountDisplay,
+        recipientAddress: recipient,
+      };
+    }
     await finalizeWithdrawalClaim({
       claimId: claim.claimId,
       db,
@@ -777,6 +832,17 @@ async function withdrawBaseTokenCore(
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    if (!transferRefusedBeforeSend(err)) {
+      // The transfer may already have reached Bankr: keep the in-flight claim
+      // held so a retry cannot send the funds a second time.
+      return {
+        status: "transfer_failed",
+        errorMessage: `Withdrawal pending verification: ${errorMessage}. Withdrawals stay locked until the outcome is confirmed; try again later.`,
+        amountRaw,
+        amountDisplay,
+        recipientAddress: recipient,
+      };
+    }
     await finalizeWithdrawalClaim({
       claimId: claim.claimId,
       db,
@@ -882,13 +948,15 @@ export async function withdrawBaseTokenForInstance(params: {
 
 type WithdrawForOwnerParams = {
   owner: BankrWalletOwner;
+  /** Clock for the $HIVRA live check (tests). */
+  now?: Date;
   userId: string;
   /** Optional client echo of the saved destination, checked before transfer. */
   expectedRecipient?: string;
   /** Required when `token` is supplied; must equal the saved destination. */
   recipientAddress?: string;
   amountDisplay: string;
-  /** Convenience asset selector (HERMESOS / ETH) when no explicit token. */
+  /** Convenience asset selector (HERMESOS / ETH, HIVRA once live) when no explicit token. */
   asset?: InstanceBankrWithdrawAsset;
   /** Explicit Base token (symbol + address + decimals) for arbitrary ERC-20s. */
   token?: BaseWithdrawalToken;
@@ -932,6 +1000,7 @@ export async function withdrawForOwner(
     amountDisplay: params.amountDisplay,
     expectedRecipient: params.expectedRecipient,
     asset: params.asset ?? "HERMESOS",
+    now: params.now,
     rpcUrl: params.rpcUrl,
     fetchImpl: params.fetchImpl,
     env: params.env,
@@ -948,6 +1017,27 @@ export async function withdrawHermesTokensForInstance(
     amountDisplay: params.amountDisplay,
     expectedRecipient: params.expectedRecipient,
     asset: "HERMESOS",
+    rpcUrl: params.rpcUrl,
+    fetchImpl: params.fetchImpl,
+    env: params.env,
+    db: params.db,
+    loadRecord: (db) => getBankrWalletForInstance({ instanceId: params.instanceId, db }),
+  });
+}
+
+/**
+ * $HIVRA from a Hermes instance's agent wallet. Refused (invalid_token) until
+ * $HIVRA is live in the token registry.
+ */
+export async function withdrawHivraTokensForInstance(
+  params: WithdrawForInstanceParams
+): Promise<InstanceBankrWithdrawResult> {
+  return withdrawAssetCore({
+    userId: params.userId,
+    amountDisplay: params.amountDisplay,
+    expectedRecipient: params.expectedRecipient,
+    asset: "HIVRA",
+    now: params.now,
     rpcUrl: params.rpcUrl,
     fetchImpl: params.fetchImpl,
     env: params.env,

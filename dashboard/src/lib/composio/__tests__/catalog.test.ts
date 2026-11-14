@@ -44,3 +44,33 @@ describe("normalizeCatalog", () => {
     expect(apps[0].toolCount).toBe(0);
   });
 });
+
+describe("getComposioCatalog failure backoff", () => {
+  const originalFetch = global.fetch;
+  const originalNow = Date.now;
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    Date.now = originalNow;
+    jest.resetModules();
+  });
+
+  it("does not refetch the upstream while a failed refresh is backing off, then retries", async () => {
+    let now = 1_700_000_000_000;
+    Date.now = () => now;
+    const fetchMock = jest.fn().mockRejectedValue(new Error("network down"));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { getComposioCatalog } = await import("@/lib/composio/catalog");
+
+    const first = await getComposioCatalog();
+    const second = await getComposioCatalog();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+    expect(first.apps.length).toBeGreaterThan(0);
+
+    now += FIVE_MINUTES_MS + 1;
+    await getComposioCatalog();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

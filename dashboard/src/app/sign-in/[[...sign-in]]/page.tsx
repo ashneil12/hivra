@@ -4,15 +4,10 @@ import { FunnelHeader } from "@/components/layout/LandingHeader";
 import { AUTH_CARD_ELEMENTS, authCardAppearance } from "@/components/auth/auth-card-appearance";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { PLANS, type PlanKey } from "@/lib/subscription";
+import { safeInternalPath } from "@/lib/safe-internal-path";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import { buildAgentLaunchHref, launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
 import { buildAgentTypeQuery, resolveWelcomeAgentTypeKey } from "@/lib/welcome-agent-catalog";
-
-function safeInternalRedirect(value: string | string[] | undefined): string | undefined {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
-    ? value
-    : undefined;
-}
 
 export default async function SignInPage({
   searchParams,
@@ -24,7 +19,7 @@ export default async function SignInPage({
   const plan = planParam && planParam in PLANS ? (planParam as PlanKey) : undefined;
   const agentTypeParam = typeof resolvedParams?.agentType === "string" ? resolvedParams.agentType : undefined;
   const agentTypeQuery = buildAgentTypeQuery(resolveWelcomeAgentTypeKey(agentTypeParam));
-  const requestedRedirect = safeInternalRedirect(resolvedParams?.redirect_url);
+  const requestedRedirect = safeInternalPath(resolvedParams?.redirect_url) ?? undefined;
   // An agent a link asked for opens its plan in Launch. Otherwise Home: it
   // lists a returning owner's agents and computers, and offers Launch to an
   // account that has none yet.

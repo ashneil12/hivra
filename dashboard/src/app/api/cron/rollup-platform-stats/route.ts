@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -29,6 +30,8 @@ import { reportOpsEvent } from "@/lib/ops-events";
 
 const MAX_BACKFILL_DAYS = 90;
 const DEFAULT_DAYS = 2;
+// Snapshot RPCs run this many days at a time; each one scans a 30-day window.
+const SNAPSHOT_CONCURRENCY = 4;
 
 // Each snapshot scans a 30-day activity window; a deep backfill can run a
 // while on a busy prod DB. 300s is the Pro-plan cap — ample headroom.
@@ -72,17 +75,17 @@ export async function GET(req: NextRequest) {
     ? Math.min(Math.max(Math.trunc(daysRaw), 1), MAX_BACKFILL_DAYS)
     : DEFAULT_DAYS;
 
-  let computed = 0;
-  let errors = 0;
-
-  for (let i = 0; i < days; i++) {
+  // Each UTC day's snapshot is independent of the others, so run a few at a time
+  // instead of one round trip after another (a 90-day backfill was 90 serial RPCs).
+  const admin = supabaseAdmin;
+  const dayIndexes = Array.from({ length: days }, (_, i) => i);
+  const daySucceeded = await mapWithConcurrencyLimit(dayIndexes, SNAPSHOT_CONCURRENCY, async (i) => {
     const statDate = utcDateNDaysAgo(i);
-    const { error } = await supabaseAdmin.rpc("compute_platform_stats_snapshot", {
+    const { error } = await admin.rpc("compute_platform_stats_snapshot", {
       p_date: statDate,
     });
 
     if (error) {
-      errors++;
       log.error("platform stats snapshot failed", new Error(error.message || "rpc returned error"), {
         source: "rollup-platform-stats",
         route: "/api/cron/rollup-platform-stats",
@@ -90,11 +93,13 @@ export async function GET(req: NextRequest) {
         failureType: "platform_stats_snapshot_failed",
         statDate,
       });
-      continue;
+      return false;
     }
 
-    computed++;
-  }
+    return true;
+  });
+  const computed = daySucceeded.filter(Boolean).length;
+  const errors = days - computed;
 
   if (errors > 0 && computed === 0) {
     return apiError("All platform stats snapshots failed", 500, {

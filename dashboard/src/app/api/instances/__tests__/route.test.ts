@@ -213,6 +213,41 @@ describe("GET /api/instances", () => {
     ).toBe(false);
   });
 
+  it("keeps a running Hetzner instance's stored status when the Hetzner lookup itself fails", async () => {
+    instanceRows = [
+      {
+        id: "inst-123",
+        name: "Atlas",
+        status: "running",
+        provider: "openai",
+        gateway_url: "https://atlas.example.com",
+        api_server_key_encrypted: "gateway-secret",
+        ipv4_address: "203.0.113.10",
+        hetzner_server_id: 42,
+        config: { model: "gpt-test" },
+        lifecycle_state: "active",
+        created_at: "2026-04-18T10:00:00.000Z",
+      },
+    ];
+    (getHetznerInstanceStatus as jest.Mock).mockResolvedValueOnce({
+      status: "error",
+      lookupFailed: true,
+    });
+
+    const response = await GET(new NextRequest("http://localhost/api/instances"));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data).toEqual([
+      expect.objectContaining({ id: "inst-123", status: "running" }),
+    ]);
+    expect(
+      instancesUpdateMock.mock.calls.some(
+        ([payload]) => payload && typeof payload === "object" && (payload as { status?: string }).status === "error"
+      )
+    ).toBe(false);
+  });
+
   it("probes WebUI-backed Hetzner instances through /health before marking them running", async () => {
     instanceRows = [
       {
@@ -682,6 +717,7 @@ describe("GET /api/instances", () => {
         status: "running",
         provider: "openai",
         gateway_url: "https://atlas.example.com",
+        api_key_encrypted: "provider-key-ciphertext",
         api_server_key_encrypted: "gateway-secret",
         ipv4_address: "203.0.113.10",
         hetzner_server_id: 42,
@@ -716,6 +752,8 @@ describe("GET /api/instances", () => {
     // server-only secret pulled in by select("*"). Full mode must redact
     // it (the `...inst` spread would otherwise serialize it to the client).
     expect(json.data[0]).not.toHaveProperty("api_server_key_encrypted");
+    // ...and the same for every other encrypted column, the provider key included.
+    expect(Object.keys(json.data[0]).filter((key) => key.endsWith("_encrypted"))).toEqual([]);
     // The probe still RUNS — we just don't act on a single miss for a running box.
     expect(fetchFirstReachableGatewayResponse).toHaveBeenCalledWith(
       expect.objectContaining({

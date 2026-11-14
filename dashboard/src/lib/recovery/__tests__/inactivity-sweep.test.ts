@@ -55,10 +55,12 @@ const NOW_LATE = new Date("2026-05-14T18:15:00.000Z");
 function buildSweepStub(params: {
   freeRows: CandidateRow[];
   paidRows: CandidateRow[];
-  tokenRows?: CandidateRow[];
   // instanceId -> newest stat_date with sessions>0, as instance_usage_snapshots
   // would report it.
   agentUsage?: Record<string, string>;
+  // Full set of sessions>0 snapshot rows, when a test needs more than one row
+  // per instance. Overrides agentUsage.
+  agentUsageRows?: Array<{ instance_id: string; stat_date: string }>;
   // when set, the instance_usage_snapshots query errors (fail-closed path).
   agentUsageError?: string;
   // instance ids with a row in channel_connections (Telegram/Discord connected).
@@ -96,16 +98,24 @@ function buildSweepStub(params: {
     ...row,
   });
   const freeRows = params.freeRows.map(withProbe);
-  const tokenRows = (params.tokenRows ?? []).map(withProbe);
   const paidRows = params.paidRows.map(withProbe);
-  const allRows = [...freeRows, ...tokenRows, ...paidRows];
+  const allRows = [...freeRows, ...paidRows];
   const agentUsage = params.agentUsage ?? {};
   const channelConnectedIds = new Set(params.channelConnectedIds ?? []);
 
   // instance_usage_snapshots: the corroborating agent-side activity gate.
-  //   .select().in(ids).gt('sessions',0).gte('stat_date',day) — .gte is terminal.
+  //   .select().in(ids).gt('sessions',0).gte('stat_date',day)
+  //     .order('instance_id').order('stat_date').range(from, to)
+  // Like PostgREST, the read answers at most 1000 rows, ordered by the primary
+  // key. Awaiting the chain without .range() gets that first capped page, which
+  // is how an unpaged read silently drops the rows past the cap.
+  const usageRows =
+    params.agentUsageRows ??
+    Object.entries(agentUsage).map(([instance_id, stat_date]) => ({ instance_id, stat_date }));
   const agentUsageQuery = () => {
     let requestedIds: string[] = [];
+    let cutoffDay = "";
+    let pageWindow: [number, number] | null = null;
     const query: Record<string, unknown> = {};
     query.select = jest.fn().mockReturnValue(query);
     query.in = jest.fn((_col: string, values: string[]) => {
@@ -113,15 +123,27 @@ function buildSweepStub(params: {
       return query;
     });
     query.gt = jest.fn().mockReturnValue(query);
-    query.gte = jest.fn(async (_col: string, cutoffDay: string) => {
+    query.gte = jest.fn((_col: string, day: string) => {
+      cutoffDay = day;
+      return query;
+    });
+    query.order = jest.fn().mockReturnValue(query);
+    query.range = jest.fn((from: number, to: number) => {
+      pageWindow = [from, to];
+      return query;
+    });
+    const run = () => {
       if (params.agentUsageError) {
         return { data: null, error: { message: params.agentUsageError } };
       }
-      const data = requestedIds
-        .filter((id) => agentUsage[id] && agentUsage[id] >= cutoffDay)
-        .map((id) => ({ instance_id: id, stat_date: agentUsage[id] }));
-      return { data, error: null };
-    });
+      const matching = usageRows
+        .filter((row) => requestedIds.includes(row.instance_id) && row.stat_date >= cutoffDay)
+        .sort((a, b) => (a.instance_id < b.instance_id ? -1 : a.instance_id > b.instance_id ? 1 : a.stat_date < b.stat_date ? -1 : a.stat_date > b.stat_date ? 1 : 0));
+      const page = pageWindow ? matching.slice(pageWindow[0], pageWindow[1] + 1) : matching;
+      return { data: page.slice(0, 1000), error: null };
+    };
+    query.then = (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) =>
+      Promise.resolve(run()).then(resolve, reject);
     return query;
   };
 
@@ -167,7 +189,7 @@ function buildSweepStub(params: {
     // Distinguish the two selects by their column list (only the candidate fetch
     // selects user_id); update chains resolve via the thenable below. Candidate
     // rows are routed by the requested TIER, not by call order — the sweep now
-    // issues a variable number of selects (free, token, and paid only when opted in).
+    // issues a variable number of selects (free, and paid only when opted in).
     let mode: "select-candidates" | "select-recheck" | "update" | null = null;
     let rows: CandidateRow[] = [];
     let recheckId: string | null = null;
@@ -193,8 +215,7 @@ function buildSweepStub(params: {
     });
     query.in = jest.fn((_column: string, values: string[]) => {
       filter.tier = values;
-      if (values.includes("token_base")) rows = tokenRows;
-      else if (values.includes("credit_base")) rows = freeRows;
+      if (values.includes("credit_base")) rows = freeRows;
       else rows = paidRows;
       return query;
     });
@@ -319,7 +340,6 @@ describe("runInactivitySweep", () => {
       activityUnknown: 0,
       channelGuarded: 0,
       freeIdleDays: 4,
-      tokenIdleDays: 30,
       paidIdleDays: null,
       enabled: false,
       timedOut: false,
@@ -342,7 +362,6 @@ describe("runInactivitySweep", () => {
       activityUnknown: 0,
       channelGuarded: 0,
       freeIdleDays: 4,
-      tokenIdleDays: 30,
       paidIdleDays: null,
       enabled: true,
       timedOut: false,
@@ -354,78 +373,23 @@ describe("runInactivitySweep", () => {
     expect(paid).toBeUndefined();
   });
 
-  it("gives token_base its own 30-day idle window, separate from the 4-day free window", async () => {
-    // $HERMES holders were promised a 30-day grace and were nevertheless swept on
-    // the 4-day free schedule, because token_base sat inside FREE_TIER_VALUES.
-    // The two tiers must be scanned against different cutoffs.
+  it("scans no separate window for the removed Starter tier (token_base)", async () => {
+    // token_base had its own 30-day window. The tier is gone (hosted computers
+    // are paid only; its rows moved to credit_base), so by default the sweep
+    // scans the free tier alone.
     const { filters } = buildSweepStub({ freeRows: [], paidRows: [] });
     const summary = await runInactivitySweep({ now: NOW_EARLY });
 
-    expect(summary.freeIdleDays).toBe(4);
-    expect(summary.tokenIdleDays).toBe(30);
-
-    const free = filters.find((f) => f.tier.includes("credit_base"));
-    const token = filters.find((f) => f.tier.includes("token_base"));
-
-    // credit_base and token_base are no longer scanned together.
-    expect(free?.tier).not.toContain("token_base");
-    expect(token?.tier).toEqual(["token_base"]);
-
-    expect(free?.cutoff).toBe("2026-05-06T12:00:00.000Z"); // now - 4d
-    expect(token?.cutoff).toBe("2026-04-10T12:00:00.000Z"); // now - 30d
-  });
-
-  it("does not pause a token_base instance idle for only 10 days", async () => {
-    // Inside the 30-day grace. Under the old code this row sat in the free scan
-    // and was paused at day 4.
-    const tokenRow: CandidateRow = {
-      id: "inst_token_young",
-      user_id: "user_token",
-      resource_tier: "token_base",
-      proxmox_node: "fixturenode1",
-      proxmox_vmid: 210,
-      host_id: null,
-      config: { infrastructure: baseProxmoxInfra },
-      last_activity_at: "2026-04-30T12:00:00.000Z", // 10 days before NOW_EARLY
-      created_at: "2026-04-01T12:00:00.000Z",
-    };
-
-    buildSweepStub({ freeRows: [], paidRows: [], tokenRows: [tokenRow] });
-
-    const summary = await runInactivitySweep({ now: NOW_EARLY });
-
-    expect(summary.scanned).toBe(1);
-    expect(summary.swept).toBe(0);
-    expect(summary.skipped).toBe(1);
-    expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
-  });
-
-  it("pauses a token_base instance once it passes 30 days idle", async () => {
-    const tokenRow: CandidateRow = {
-      id: "inst_token_old",
-      user_id: "user_token",
-      resource_tier: "token_base",
-      proxmox_node: "fixturenode1",
-      proxmox_vmid: 211,
-      host_id: null,
-      config: { infrastructure: baseProxmoxInfra },
-      last_activity_at: "2026-04-01T12:00:00.000Z", // 39 days before NOW_EARLY
-      created_at: "2026-03-01T12:00:00.000Z",
-    };
-
-    buildSweepStub({ freeRows: [], paidRows: [], tokenRows: [tokenRow] });
-
-    const summary = await runInactivitySweep({ now: NOW_EARLY });
-
-    expect(summary.scanned).toBe(1);
-    expect(summary.swept).toBe(1);
-    expect(shutdownProxmoxInstance).toHaveBeenCalledTimes(1);
+    expect(summary).not.toHaveProperty("tokenIdleDays");
+    expect(filters.map((f) => f.tier)).toEqual([["credit_base"]]);
   });
 
   it("judges each tier's agent-side usage against ITS OWN cutoff, not the widest one", async () => {
-    // The usage table is read once against the OLDEST cutoff (token's 30 days).
-    // A free-tier box whose last session was 20 days ago is inside that read but
-    // well outside its own 4-day window — it must still be paused.
+    // The usage table is read once against the OLDEST cutoff (here an opted-in
+    // 30-day paid window). A free-tier box whose last session was 20 days ago is
+    // inside that read but well outside its own 4-day window — it must still be
+    // paused.
+    process.env.HERMES_INACTIVITY_PAID_DAYS = "30";
     const freeRow: CandidateRow = {
       id: "inst_free_old_session",
       user_id: "user_free",
@@ -445,10 +409,14 @@ describe("runInactivitySweep", () => {
       agentUsage: { inst_free_old_session: "2026-04-20" },
     });
 
-    const summary = await runInactivitySweep({ now: NOW_EARLY });
+    try {
+      const summary = await runInactivitySweep({ now: NOW_EARLY });
 
-    expect(summary.agentActive).toBe(0);
-    expect(summary.swept).toBe(1);
+      expect(summary.agentActive).toBe(0);
+      expect(summary.swept).toBe(1);
+    } finally {
+      delete process.env.HERMES_INACTIVITY_PAID_DAYS;
+    }
   });
 
   it("sweeps paid tiers only when HERMES_INACTIVITY_PAID_DAYS is explicitly set", async () => {
@@ -732,6 +700,38 @@ describe("runInactivitySweep", () => {
     expect(summary.agentActive).toBe(1);
     expect(summary.swept).toBe(0);
     expect(summary.skipped).toBe(0);
+    expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
+  });
+
+  it("spares an instance whose recent agent usage sits past the 1000-row read cap", async () => {
+    // A busy instance's snapshots sort ahead of the quiet instance's single
+    // in-window row. An unpaged read stops at 1000 rows and drops that row, so
+    // the quiet instance read as idle and was paused while it was in use.
+    const dormantRow = {
+      user_id: "user_telegram",
+      resource_tier: "credit_base",
+      proxmox_node: "fixturenode1",
+      host_id: null,
+      config: { infrastructure: baseProxmoxInfra },
+      last_activity_at: "2026-05-01T12:00:00.000Z",
+      created_at: "2026-05-01T12:00:00.000Z",
+      last_lifecycle_transition_at: "2026-05-01T12:00:00.000Z",
+    };
+    const busyRow: CandidateRow = { ...dormantRow, id: "inst_aa_busy", proxmox_vmid: 216 };
+    const quietRow: CandidateRow = { ...dormantRow, id: "inst_zz_quiet", proxmox_vmid: 217 };
+    const windowDays = ["2026-05-10", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14"];
+    const agentUsageRows = [
+      ...Array.from({ length: 1100 }, (_, i) => ({ instance_id: "inst_aa_busy", stat_date: windowDays[i % windowDays.length] })),
+      { instance_id: "inst_zz_quiet", stat_date: "2026-05-13" },
+    ];
+
+    buildSweepStub({ freeRows: [busyRow, quietRow], paidRows: [], now: NOW_LATE, agentUsageRows });
+
+    const summary = await runInactivitySweep({ now: NOW_LATE });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.agentActive).toBe(2);
+    expect(summary.swept).toBe(0);
     expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
   });
 

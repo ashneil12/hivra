@@ -19,6 +19,7 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { resolveFromEmail, resolveReplyToEmail } from "@/lib/email/config";
 import { withdrawDestinationCooldownHours } from "@/lib/billing/withdraw-destination-policy";
 import { SITE_URL } from "@/lib/seo-urls";
+import { pickVerifiedSdkEmail } from "@/lib/email/clerk-verified-email";
 
 export type WithdrawDestinationKind = "lock_wallet" | "agent_wallet" | "verified_wallet";
 
@@ -100,7 +101,7 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
   try {
     const client = await clerkClient();
     const user = await client.users.getUser(userId);
-    return user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    return pickVerifiedSdkEmail(user);
   } catch {
     return null;
   }

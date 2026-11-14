@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { HetznerCloudApiError } from "@/lib/hetzner/client";
 import { POST } from "../route";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -66,6 +67,11 @@ interface InstanceRow {
   lifecycle_state?: string;
 }
 
+interface SiblingCountResult {
+  count: number;
+  error: { message: string } | null;
+}
+
 interface OwnerSubsResult {
   data: Array<{ status?: string | null }> | null;
   error: { message: string } | null;
@@ -84,10 +90,20 @@ interface OwnerSubsResult {
  */
 function buildSupabaseStub(
   instance: InstanceRow | null,
-  ownerSubs: OwnerSubsResult = { data: [], error: null }
+  ownerSubs: OwnerSubsResult = { data: [], error: null },
+  siblings: SiblingCountResult = { count: 0, error: null },
 ) {
-  const updateEq = jest.fn().mockResolvedValue({ error: null });
+  // The shared-server sibling count (select, eq, neq, neq, awaited) and the
+  // lifecycle update (update, eq, awaited) both run on the second
+  // hermes_instances call. The `eq` result is a thenable that resolves to the
+  // sibling count, and to a clean `{ error: null }` for the update.
+  const afterEq: Record<string, unknown> = {};
+  afterEq.neq = jest.fn(() => afterEq);
+  afterEq.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+    Promise.resolve({ data: null, count: siblings.count, error: siblings.error }).then(resolve, reject);
+  const updateEq = jest.fn(() => afterEq);
   const updateQuery = {
+    select: jest.fn().mockReturnThis(),
     update: jest.fn().mockReturnThis(),
     eq: updateEq,
   };
@@ -276,6 +292,99 @@ describe("POST /api/ops/instances/[id]/force-delete", () => {
     expect(res.status).toBe(200);
     expect(deleteHetznerServer).toHaveBeenCalledWith(99999);
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+  });
+
+  it("treats a Hetzner 404 as already gone and still marks the row deleted", async () => {
+    const { updateQuery } = buildSupabaseStub({
+      id: "inst_hetz_gone",
+      user_id: "user_hetz",
+      hetzner_server_id: 99999,
+      host_id: null,
+      config: {},
+      status: "running",
+      lifecycle_state: "active",
+    });
+    (deleteHetznerServer as jest.Mock).mockRejectedValue(
+      new HetznerCloudApiError(404, "DELETE", "/servers/99999", "request_failed", "not_found")
+    );
+
+    const res = await POST(makeRequest(), makeParams("inst_hetz_gone"));
+
+    expect(res.status).toBe(200);
+    expect(updateQuery.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "deleted", lifecycle_state: "deleted" })
+    );
+  });
+
+  it("refuses (409) and leaves the server and row alone when another live agent still runs on the Hetzner server (F011)", async () => {
+    // Regression: force-delete logged "keeping server" and then marked the row
+    // deleted and removed its DNS, while the VM and the other agent kept
+    // running. The kill switch must refuse instead of reporting success.
+    const { updateQuery } = buildSupabaseStub(
+      {
+        id: "inst_shared",
+        user_id: "user_shared",
+        hetzner_server_id: 99999,
+        host_id: "host-shared",
+        config: {},
+        status: "running",
+        lifecycle_state: "active",
+      },
+      undefined,
+      { count: 1, error: null },
+    );
+    const { removeInstanceDnsBestEffort } = jest.requireMock("@/lib/services/cloudflare-dns");
+
+    const res = await POST(makeRequest(), makeParams("inst_shared"));
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.success).toBe(false);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(removeInstanceDnsBestEffort).not.toHaveBeenCalled();
+    expect(updateQuery.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses to touch the server or the row when the shared-server sibling count fails (F011)", async () => {
+    const { updateQuery } = buildSupabaseStub(
+      {
+        id: "inst_shared_err",
+        user_id: "user_shared",
+        hetzner_server_id: 99999,
+        host_id: "host-shared",
+        config: {},
+        status: "running",
+        lifecycle_state: "active",
+      },
+      undefined,
+      { count: 0, error: { message: "connection reset" } },
+    );
+
+    const res = await POST(makeRequest(), makeParams("inst_shared_err"));
+
+    expect(res.status).toBe(502);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(updateQuery.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps a non-404 Hetzner failure as a 502 and does not mark the row deleted", async () => {
+    const { updateQuery } = buildSupabaseStub({
+      id: "inst_hetz_err",
+      user_id: "user_hetz",
+      hetzner_server_id: 99999,
+      host_id: null,
+      config: {},
+      status: "running",
+      lifecycle_state: "active",
+    });
+    (deleteHetznerServer as jest.Mock).mockRejectedValue(
+      new HetznerCloudApiError(500, "DELETE", "/servers/99999", "request_failed")
+    );
+
+    const res = await POST(makeRequest(), makeParams("inst_hetz_err"));
+
+    expect(res.status).toBe(502);
+    expect(updateQuery.update).not.toHaveBeenCalled();
   });
 
   it("is idempotent on an already-deleted row (still flips lifecycle + logs ops_events)", async () => {

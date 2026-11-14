@@ -17,7 +17,7 @@ export const metadata = {
   }),
 };
 
-const LAST_UPDATED = "September 24, 2026";
+const LAST_UPDATED = "October 28, 2026";
 
 export default function PrivacyPage() {
   return (<PublicSite className={styles.page} data-page="privacy">
@@ -34,6 +34,7 @@ export default function PrivacyPage() {
           <p>We collect information necessary to provide our services:</p>
           <ul>
             <li><strong>Account Data:</strong> Email address and authentication data when you create an account, managed securely via Clerk.</li>
+            <li><strong>Sign-up Source:</strong> If you answer the optional &quot;How did you hear about Hivra?&quot; question when you sign up, your answer, saved with your account alongside the campaign tags and referring site of the link that first brought you to Hivra. We use it to learn which channels bring people to Hivra.</li>
             <li><strong>API Keys:</strong> Keys submitted to access third-party AI models (e.g., OpenRouter, OpenAI, Anthropic). These are encrypted at rest and injected directly into your agent instances at runtime.</li>
             <li><strong>Usage Metrics:</strong> Aggregated system logs, compute usage metrics, and error reports necessary to maintain service stability and infrastructure scaling.</li>
             <li><strong>Diagnostic Telemetry:</strong> Runtime exception reports, incident metadata, and operator-visible troubleshooting events generated when the product fails or behaves unexpectedly.</li>

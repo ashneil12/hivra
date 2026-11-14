@@ -90,6 +90,8 @@ import {
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { markAgentAwake } from "./sleep-aware";
+import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
 
@@ -102,6 +104,17 @@ const STUCK_AGENT_COLUMNS = "id, user_id, type, computer_profile, computer_subst
  * only re-probed and never failed merely for crossing this threshold.
  */
 export const STUCK_PROVISIONING_THRESHOLD_MS = 10 * 60 * 1000;
+
+/**
+ * Hard deadline for a first launch. The guest installer is bounded at 45
+ * minutes and the copy step has its own bound, so a launch still without a
+ * terminal result 75 minutes after the row was created will not finish on its
+ * own. Past this, a VM that exists with no completion marker and no healthy
+ * tunnel is cleaned up and the row is marked `error`. Applies only to the
+ * first-launch lease (`provision`): running computers carry no lease, and a
+ * runtime update or power change is a different operation kind.
+ */
+export const PROVISION_HARD_DEADLINE_MS = 75 * 60 * 1000;
 
 /** Per-run cap: each candidate costs an SSH round-trip (and maybe an HTTPS probe). */
 const MAX_CANDIDATES_PER_RUN = 12;
@@ -657,21 +670,24 @@ async function markError(row: StuckAgentRow, reason: string, message: string): P
   if (flipped && (row.cf_tunnel_id || row.cf_hostname)) {
     await deleteBoxTunnel({ tunnelId: row.cf_tunnel_id, hostname: row.cf_hostname });
   }
-  await logHivraAgentEvent({
-    userId: row.user_id,
-    event: "failed",
-    agentId: row.id,
-    agentType: row.type,
-    detail: { vmid: row.vmid, reason },
-  });
-  log.error("stuck hivra agent marked as failed", new Error(message), {
-    source: LOG_SOURCE,
-    failureType: "hivra_agent_stuck_provisioning_terminal",
-    agentId: row.id,
-    vmid: row.vmid,
-    proxmoxHost: row.proxmox_host,
-    reason,
-  });
+  // Record the failure only when this call moved the row: a superseded row is not failed.
+  if (flipped) {
+    await logHivraAgentEvent({
+      userId: row.user_id,
+      event: "failed",
+      agentId: row.id,
+      agentType: row.type,
+      detail: { vmid: row.vmid, reason },
+    });
+    log.error("stuck hivra agent marked as failed", new Error(message), {
+      source: LOG_SOURCE,
+      failureType: "hivra_agent_stuck_provisioning_terminal",
+      agentId: row.id,
+      vmid: row.vmid,
+      proxmoxHost: row.proxmox_host,
+      reason,
+    });
+  }
   return flipped;
 }
 
@@ -787,8 +803,37 @@ async function compensateFailedOwnedProvision(
   return { ...base, action: "cancelled_delete", reason: "delete superseded an exactly compensated provision" };
 }
 
+// The one-shot provision bearer is consumed into api_token as soon as any
+// recovery branch flips the row to running. Remove it on every such branch,
+// not only the ready:true marker branch, or it stays readable on the host.
+async function removeConsumedProvisionSecret(
+  row: StuckAgentRow,
+  context: HivraAgentExecutionContext,
+  secret: string | null,
+): Promise<void> {
+  if (!row.vmid || !secret) return;
+  const secretPath = hivraAgentProvisionSecretPath(context, row.vmid);
+  const cleanup = await runProxmoxHostScript(
+    `rm -f -- ${shellQuote(secretPath)} && [ ! -e ${shellQuote(secretPath)} ]`,
+    context.env,
+    { timeoutMs: SSH_TIMEOUT_MS },
+  );
+  if (!cleanup.ok) {
+    log.warn("recovered provision secret cleanup failed", {
+      source: LOG_SOURCE,
+      failureType: "hivra_agent_stuck_provisioning_secret_cleanup_failed",
+      agentId: row.id,
+      vmid: row.vmid,
+      errorMessage: cleanup.error ?? cleanup.stderr?.slice(0, 300) ?? null,
+    });
+  }
+}
+
 async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryResult> {
   const base = { agentId: row.id, vmid: row.vmid };
+  if (row.operation_payload?.stage === PREPARED_OMARCHY_REFRESH_STAGE) {
+    return { ...base, action: "skipped", reason: "prepared Omarchy refresh owns this reservation" };
+  }
   if (!row.operation_id || !row.operation_started_at) {
     return { ...base, action: "skipped", reason: "durable operation recovery evidence is missing" };
   }
@@ -1281,6 +1326,12 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         expectedDesiredState: "stopped",
         status: vmStatus,
       });
+      // A stop that converged here never reached the route's own reset: a computer that was
+      // napping or hibernated when it was switched off must not keep a sleep record, or
+      // Start would refuse it as asleep. Best effort; the sweep also clears these.
+      if (completed && vmStatus === "stopped") {
+        try { await markAgentAwake(row.id); } catch { /* the stop stands */ }
+      }
       return completed
         ? {
             ...base,
@@ -1377,23 +1428,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
     if (!flipped) {
       return { ...base, action: "skipped", reason: "status changed concurrently before recovery" };
     }
-    const secretPath = hivraAgentProvisionSecretPath(context, row.vmid);
-    if (secretPath && secret) {
-      const cleanup = await runProxmoxHostScript(
-        `rm -f -- ${shellQuote(secretPath)} && [ ! -e ${shellQuote(secretPath)} ]`,
-        context.env,
-        { timeoutMs: SSH_TIMEOUT_MS },
-      );
-      if (!cleanup.ok) {
-        log.warn("recovered provision secret cleanup failed", {
-          source: LOG_SOURCE,
-          failureType: "hivra_agent_stuck_provisioning_secret_cleanup_failed",
-          agentId: row.id,
-          vmid: row.vmid,
-          errorMessage: cleanup.error ?? cleanup.stderr?.slice(0, 300) ?? null,
-        });
-      }
-    }
+    await removeConsumedProvisionSecret(row, context, secret);
     return { ...base, action: "recovered_from_log", reason: "orchestrator log marker ready:true" };
   }
 
@@ -1423,6 +1458,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         now,
       );
       if (!flipped) return { ...base, action: "skipped", reason: "running completion was superseded" };
+      await removeConsumedProvisionSecret(row, context, secret);
       return { ...base, action: "recovered_via_tunnel", reason: "marker ready:false but tunnel serves healthz" };
     }
     if (["start", "restart", "resize"].includes(String(row.operation_kind))) {
@@ -1484,6 +1520,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
       now,
     );
     if (!flipped) return { ...base, action: "skipped", reason: "running completion was superseded" };
+    await removeConsumedProvisionSecret(row, context, secret);
     return { ...base, action: "recovered_via_tunnel", reason: "no marker yet but tunnel serves healthz" };
   }
   if (["start", "restart", "resize"].includes(String(row.operation_kind))) {
@@ -1495,6 +1532,18 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
     );
   }
   if (row.operation_kind === "provision" && !nMinusOneCompatibility) {
+    const createdAtMs = Date.parse(String(row.created_at));
+    if (Number.isFinite(createdAtMs) && now.getTime() - createdAtMs >= PROVISION_HARD_DEADLINE_MS) {
+      // Same exact-ownership cleanup as a reported failure: the VM is removed
+      // only with matching provider tags, then the row is marked error and the
+      // tunnel released. Without ownership evidence it is left for an operator.
+      return compensateFailedOwnedProvision(
+        row,
+        context,
+        "provision_hard_deadline",
+        "This computer did not finish setting up in time, so Hivra stopped the attempt and cleaned it up. You can launch it again.",
+      );
+    }
     // The observation threshold is not an installation deadline. A cold desktop
     // image can still be building with no public tunnel or completion marker.
     // Ownership proves which VM this is, not that its installer has failed.
@@ -1681,13 +1730,16 @@ export async function runRecoverStuckHivraProvisioningSweep(
     // Desktop preparation has its own evidence rules and candidate cap below,
     // and an attached agent's steps end only through the attach worker's own
     // receipts; their long-lived leases must not be cleared by, or starve,
-    // this limited lifecycle sweep.
-    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)")
+    // this limited lifecycle sweep. A sleep or wake lease is the sleep sweep's
+    // to settle from the host's observed state: this sweep reads the start log,
+    // which a sleep never writes, and could end such a lease as an error.
+    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach,sleep,wake)")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
     // intentionally retained leases must not fill the oldest-12 snapshot/
     // lifecycle sweep forever and starve unrelated recoverable computers.
     .or("operation_kind.neq.restore,operation_payload->>folderRecoveryId.is.null")
+    .or("operation_payload->>stage.is.null,operation_payload->>stage.neq.prepared_omarchy_refresh")
     .order("operation_started_at", { ascending: true })
     .limit(MAX_CANDIDATES_PER_RUN);
   if (options.agentId) query = query.eq("id", options.agentId);

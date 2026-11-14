@@ -40,6 +40,16 @@ jest.mock("@/lib/hivra/computer-contract-client", () => ({
 jest.mock("@/components/instances/CookieImportModal", () => ({ CookieImportModal: () => null }));
 jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => null }));
 jest.mock("../HivraPrivateAccessPanel", () => ({ HivraPrivateAccessPanel: () => null }));
+jest.mock("../HivraLogin", () => ({
+  HivraLogin: ({ reauth, agentKind, onDone }: { reauth?: boolean; agentKind?: string; onDone: () => void }) => (
+    <button type="button" onClick={onDone}>login-{agentKind}-{reauth ? "again" : "first"}</button>
+  ),
+}));
+jest.mock("../HivraGitHubConnect", () => ({
+  HivraGitHubConnect: ({ reconnect, onDone }: { reconnect?: boolean; onDone: () => void }) => (
+    <button type="button" onClick={onDone}>github-{reconnect ? "change" : "first"}</button>
+  ),
+}));
 jest.mock("@/components/billing/UpgradePaywallModal", () => ({ UpgradePaywallModal: () => null }));
 
 const TESTED = "0.149.1";
@@ -192,4 +202,43 @@ it("opens Updates from the #agent-software link", async () => {
   renderManage();
   expect(screen.getByRole("tab", { name: "Updates" })).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByTestId("agent-software-state")).toBeVisible();
+});
+
+it("opens Recovery from a failed update that couldn't be undone", async () => {
+  mockGetSoftware.mockResolvedValue(software({ kind: "update_failed", reason: "install_failed", target: TESTED, installed: null }));
+  renderManage();
+  openSection("Updates");
+  fireEvent.click(await screen.findByRole("button", { name: /Open (Recovery|Advanced)/ }));
+  expect(window.location.search).toMatch(/section=(recovery|advanced)/);
+});
+
+it("offers Sign in again for a running Codex agent, in place, and closes it when done", async () => {
+  const { onChanged } = renderManage();
+  const card = screen.getByTestId("manage-sign-in-again");
+  fireEvent.click(within(card).getByRole("button", { name: "Sign in again" }));
+  fireEvent.click(within(card).getByRole("button", { name: "login-codex-again" }));
+  expect(onChanged).toHaveBeenCalledTimes(1);
+  expect(within(card).getByText("Signed in again.")).toBeInTheDocument();
+});
+
+it("lets a person back out of signing in again", () => {
+  renderManage();
+  const card = screen.getByTestId("manage-sign-in-again");
+  fireEvent.click(within(card).getByRole("button", { name: "Sign in again" }));
+  fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+  expect(within(card).getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
+});
+
+it("offers no sign-in control for a stopped agent", () => {
+  renderManage({ agent: { ...agent, status: "stopped" } });
+  expect(screen.queryByTestId("manage-sign-in-again")).not.toBeInTheDocument();
+});
+
+it("offers Change GitHub token for a running Aeon agent", () => {
+  const aeonRow = { ...row, id: "agent-b", type: "aeon" };
+  const aeon = { ...(aeonRow as unknown as HivraAgent), manage: manageCapabilitiesFor(aeonRow, { preparedMatch: true }) };
+  renderManage({ agent: aeon, def: getAgent("aeon") });
+  const card = screen.getByTestId("manage-sign-in-again");
+  fireEvent.click(within(card).getByRole("button", { name: "Change GitHub token" }));
+  expect(within(card).getByRole("button", { name: "github-change" })).toBeInTheDocument();
 });

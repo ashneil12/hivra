@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
@@ -24,7 +25,12 @@ type LinkedInstanceDeleteRow = {
   host_id?: string | null;
   config?: unknown;
   subdomain?: string | null;
+  proxmox_node?: string | null;
 };
+
+// How many provider lanes (one per Proxmox node, one per other instance, one
+// per Hetzner server) tear down at the same time during a host delete.
+const HOST_TEARDOWN_CONCURRENCY = 3;
 
 type ProviderTeardownResult = {
   proxmoxDeleted: number;
@@ -57,7 +63,7 @@ async function deleteLinkedProviderResources(params: {
   // Phase 1: tear down each instance's provider resource best-effort. A single
   // stuck VM must NOT abort teardown of its siblings (the partial-teardown /
   // manual-cleanup failure class), so we collect errors and keep going.
-  for (const instance of instances) {
+  async function teardownInstance(instance: LinkedInstanceDeleteRow): Promise<void> {
     const proxmoxInfra = getProxmoxInfrastructure(instance.config);
     if (proxmoxInfra) {
       const { deleteProxmoxInstance } = await import(
@@ -91,8 +97,49 @@ async function deleteLinkedProviderResources(params: {
           proxmoxVmid: proxmoxInfra.vmid,
         });
         errors.push({ instanceId: instance.id, reason: "proxmox_delete_failed" });
-        continue;
+        return;
       }
+      // The host script exits 0 when the VM is not on the routed host, so a
+      // miss there is not proof of teardown. Only a fleet-wide NOT_FOUND (every
+      // known host checked) counts as gone; otherwise the instance stays visible.
+      const vmMissingOnRoutedHost = (result.stdout || "")
+        .split(/\r?\n/)
+        .some((line) => /^HERMES_PROXMOX_DELETE_VM_MISSING \d+$/.test(line.trim()));
+      if (vmMissingOnRoutedHost) {
+        const { locateProxmoxInstanceAcrossFleet } = await import(
+          "@/lib/recovery/recover-orphan-provisioning"
+        );
+        const recovery = await locateProxmoxInstanceAcrossFleet({
+          id: instance.id,
+          user_id: userId,
+          proxmox_node: instance.proxmox_node ?? null,
+          config:
+            instance.config && typeof instance.config === "object" && !Array.isArray(instance.config)
+              ? (instance.config as Record<string, unknown>)
+              : null,
+          subdomain: instance.subdomain ?? null,
+        });
+        if (recovery.status !== "gone") {
+          log.warn("proxmox vm missing on routed host but not proven gone; instance left visible", {
+            source: "hosts-by-id",
+            route: "/api/hosts/[id]",
+            method: "DELETE",
+            failureType: "host_delete_proxmox_vm_unverified",
+            hostId: host.id,
+            instanceId: instance.id,
+            userId,
+            proxmoxVmid: proxmoxInfra.vmid,
+            recoveryStatus: recovery.status,
+          });
+          errors.push({
+            instanceId: instance.id,
+            reason:
+              recovery.status === "found" ? "proxmox_vm_found_elsewhere" : "proxmox_vm_unverified",
+          });
+          return;
+        }
+      }
+
       proxmoxDeleted += 1;
       deletableInstanceIds.add(instance.id);
 
@@ -103,7 +150,7 @@ async function deleteLinkedProviderResources(params: {
         instanceId: instance.id,
         userId,
       });
-      continue;
+      return;
     }
 
     if (typeof instance.hetzner_server_id === "number") {
@@ -127,6 +174,29 @@ async function deleteLinkedProviderResources(params: {
     }
   }
 
+  // Instances on one Proxmox node are torn down one after another, so the
+  // node never gets parallel destroys; every other instance is its own lane.
+  // Lanes run HOST_TEARDOWN_CONCURRENCY at a time instead of one by one.
+  const teardownLanes = new Map<string, LinkedInstanceDeleteRow[]>();
+  for (const instance of instances) {
+    const proxmoxInfra = getProxmoxInfrastructure(instance.config);
+    const laneKey = proxmoxInfra
+      ? `proxmox:${proxmoxInfra.node ?? ""}`
+      : `instance:${instance.id}`;
+    const lane = teardownLanes.get(laneKey) ?? [];
+    lane.push(instance);
+    teardownLanes.set(laneKey, lane);
+  }
+  await mapWithConcurrencyLimit(
+    Array.from(teardownLanes.values()),
+    HOST_TEARDOWN_CONCURRENCY,
+    async (lane) => {
+      for (const instance of lane) {
+        await teardownInstance(instance);
+      }
+    },
+  );
+
   // The host's own Hetzner server (if any) is not tied to a specific instance.
   const hostServerId =
     typeof host.hetzner_server_id === "number" ? host.hetzner_server_id : null;
@@ -136,7 +206,7 @@ async function deleteLinkedProviderResources(params: {
   // Phase 2: destroy each Hetzner server best-effort. A transient blip on one
   // server only blocks the instance(s) that depend on it, not the whole delete.
   let hetznerDeleted = 0;
-  for (const serverId of allServerIds) {
+  async function destroyServer(serverId: number): Promise<void> {
     const dependentInstanceIds = hetznerServerToInstances.get(serverId) ?? [];
     try {
       await deleteHetznerServer(serverId);
@@ -156,7 +226,7 @@ async function deleteLinkedProviderResources(params: {
         });
         // 404 = already gone, so dependents are safe to soft-delete.
         for (const instanceId of dependentInstanceIds) deletableInstanceIds.add(instanceId);
-        continue;
+        return;
       }
       log.error("failed to delete hetzner server for host deletion", new Error("hetzner_delete_failed"), {
         source: "hosts-by-id",
@@ -173,6 +243,11 @@ async function deleteLinkedProviderResources(params: {
       // failure class.
     }
   }
+  await mapWithConcurrencyLimit(
+    Array.from(allServerIds),
+    HOST_TEARDOWN_CONCURRENCY,
+    (serverId) => destroyServer(serverId),
+  );
 
   return {
     proxmoxDeleted,
@@ -221,7 +296,7 @@ export async function DELETE(
 
     const { data: linkedInstances, error: linkedInstancesError } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, hetzner_server_id, host_id, config, subdomain")
+      .select("id, hetzner_server_id, host_id, config, subdomain, proxmox_node")
       .eq("host_id", id)
       .eq("user_id", userId)
       .neq("status", "deleted");

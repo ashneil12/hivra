@@ -188,12 +188,12 @@ export async function sendAgentApprovalNeededEmail(
     : "";
 
   const html = shellHtml({
-    preheader: `${labelCap} is paused and waiting for you to respond.`,
+    preheader: `${escapeHtml(labelCap)} is paused and waiting for you to respond.`,
     eyebrow: isClarify ? "Waiting for your answer" : "Waiting for your approval",
-    title: `${labelCap} needs you.`,
+    title: `${escapeHtml(labelCap)} needs you.`,
     body: `
-      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${greeting(params.firstName)}</p>
-      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${labelCap} ${ask}, and it's paused waiting for you.</p>
+      <p style="margin:0 0 16px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(greeting(params.firstName))}</p>
+      <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">${escapeHtml(labelCap)} ${ask}, and it's paused waiting for you.</p>
       ${summaryHtml}
       <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:#1a1a1a;">Open the workspace to review and respond — it picks up right where it left off.</p>
     `,

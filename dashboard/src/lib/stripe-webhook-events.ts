@@ -97,7 +97,11 @@ export async function beginStripeWebhookEvent(
     }
   }
 
-  const { error: retryError } = await supabaseAdmin
+  // Reclaim compare-and-set on the row we read: a worker that reclaimed or
+  // finished this event first changed updated_at, so the update then matches
+  // 0 rows — and we must not also run the handler. The select makes the lost
+  // race visible (PostgREST returns the updated rows).
+  const { data: reclaimed, error: retryError } = await supabaseAdmin
     .from("stripe_webhook_events")
     .update({
       event_type: eventType,
@@ -107,10 +111,18 @@ export async function beginStripeWebhookEvent(
       last_error: null,
     })
     .eq("event_id", eventId)
-    .in("status", ["failed", "processing"]);
+    .eq("updated_at", existing.updated_at)
+    .in("status", ["failed", "processing"])
+    .select("event_id");
 
   if (retryError) {
     throw new Error(`Failed to retry Stripe webhook event: ${retryError.message}`);
+  }
+
+  if (Array.isArray(reclaimed) && reclaimed.length === 0) {
+    // Lost the race: re-read to report what actually happened to the event.
+    const current = await getExistingEvent(eventId);
+    return current?.status === "processed" ? "duplicate" : "processing";
   }
 
   return "reserved";

@@ -612,6 +612,11 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(script).toContain("ip link show vmbr1");
     expect(script).toContain("missing private bridge vmbr1");
     expect(script).toContain('qm clone "$TEMPLATE_ID" "$VMID" --name "$VM_NAME" --full 0');
+    // A fresh launch skips cloud-init's first-boot apt upgrade, before the VM
+    // boots, and tolerates hosts too old to know the option.
+    const ciupgradeIdx = script.indexOf('qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true');
+    expect(ciupgradeIdx).toBeGreaterThan(-1);
+    expect(ciupgradeIdx).toBeLessThan(script.indexOf('qm start "$VMID"'));
     expect(script).toContain("DISK_SIZE_GB='30'");
     expect(script).toContain('qm resize "$VMID" scsi0 "${DISK_SIZE_GB}G"');
     expect(script).toContain('qm set "$VMID" --scsi0 "$SCSI0_DISK,discard=on,aio=threads"');
@@ -1488,7 +1493,9 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     // The proactive lock wait runs before the first apt-get update so we
     // don't burn a failed attempt on the obvious first-boot race.
     expect(bootstrap.indexOf("wait_for_apt_locks\nrun_apt_get update -qq")).toBeGreaterThan(-1);
-    expect(bootstrap).toContain("curl -fsSL https://get.docker.com | sh");
+    expect(bootstrap).toContain("curl -fsSLo /tmp/gd.sh https://get.docker.com");
+    expect(bootstrap).toContain("sh /tmp/gd.sh");
+    expect(bootstrap).not.toContain("curl -fsSL https://get.docker.com | sh");
     expect(bootstrap).toContain("qemu-guest-agent");
     expect(bootstrap).toContain("hermes_ensure_time_sync()");
     expect(bootstrap).toContain("/var/log/hermes-time-sync.log");
@@ -1497,7 +1504,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     expect(bootstrap).toContain("run_apt_get install -y --no-install-recommends systemd-timesyncd");
     expect(bootstrap).toContain("hwclock --systohc --utc");
     expect(bootstrap.indexOf("hermes_ensure_time_sync")).toBeLessThan(
-      bootstrap.indexOf("curl -fsSL https://get.docker.com | sh")
+      bootstrap.indexOf("curl -fsSLo /tmp/gd.sh https://get.docker.com")
     );
     expect(bootstrap).toContain("/etc/docker/daemon.json");
     expect(bootstrap).toContain('"max-size": "20m"');
@@ -2686,7 +2693,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     const script = buildProxmoxDormantArchiveScript({
       vmid: 610,
       archiveDir: "/mnt/hermes-dormant",
-      instanceId: "inst_610",
+      instanceId: "00000000-0000-4000-8000-000000000610",
     });
 
     expect(script).toContain("vzdump \"$VMID\"");
@@ -3255,10 +3262,10 @@ esac
   });
 
   it("buildProxmoxResizeScript clamps balloonFloorMb to [64, memoryMb]", () => {
-    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
+    const tooLow = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cores: 1, memoryMb: 2048, balloonFloorMb: 8 });
     expect(tooLow).toContain("BALLOON_FLOOR_MB='64'");
 
-    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 1, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
+    const tooHigh = buildProxmoxResizeScript({ expectedInstanceId: TEST_INSTANCE_ID, vmid: 201, cores: 1, memoryMb: 2048, balloonFloorMb: 9999 });
     expect(tooHigh).toContain("BALLOON_FLOOR_MB='2048'");
   });
 
@@ -3828,8 +3835,9 @@ esac
           // Safe prod fallback: the webui builder reads HERMES_BROWSER_SIDECAR_IMAGE
           // from process.env; absent there, it must NOT leak the canary package into
           // prod provisioning.
-          expect(decodedDeploy).toContain("ghcr.io/ashneil12/hermes-browser-sidecar:stable");
-          expect(decodedDeploy).not.toContain("hermes-browser-sidecar-canary");
+          expect(decodedDeploy).toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar@sha256:39ef9d7b0439d15b146ea9101106068ea173f656c5ffa85f1b3a060754e55c61");
+          // The old -canary package may appear only in the image prune list.
+          expect(decodedDeploy).not.toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar-canary");
           // The sidecar's live browser view is served same-origin via /vnc/* →
           // the sidecar's noVNC on :6080 (VNC-password gated), replacing the old
           // forward_auth :8789 signed-URL handoff.

@@ -5,7 +5,6 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
-import { log } from "@/lib/logger";
 import { ensureManagedVeniceWalletAccount } from "@/lib/billing/managed-venice-wallets";
 import { generateManagedVenicePlaintextKey, hashManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";

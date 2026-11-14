@@ -139,6 +139,8 @@ export type ServerEnrollmentDto = z.infer<typeof ServerEnrollmentDtoSchema>;
  * the command carries the one-time code. */
 export const ServerEnrollmentIssueResultSchema = z.object({
   enrollment: ServerEnrollmentDtoSchema,
+  /** The one-time code; the commands ask for it at a prompt. */
+  code: z.string().min(1).max(64),
   command: z.string().min(1).max(512),
   dryRunCommand: z.string().min(1).max(512),
   downloadCommand: z.string().min(1).max(512),

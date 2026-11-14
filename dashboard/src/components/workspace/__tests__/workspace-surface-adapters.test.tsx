@@ -14,6 +14,9 @@ import {
   type WorkspaceSurfaceSource,
 } from "../workspace-surface-adapters";
 
+jest.mock("@/components/ui/ThinkingOrb", () => ({
+  ThinkingOrb: ({ label }: { label?: string }) => <span data-testid="thinking-orb" role="img" aria-label={label ?? "Working"} />,
+}));
 jest.mock("@/components/explorer/FileExplorer", () => ({
   FileExplorer: jest.fn(() => <div data-testid="real-hermes-files">Hermes files</div>),
 }));
@@ -237,6 +240,27 @@ describe("workspace surface adapters", () => {
     ]);
     const desktop = render(adapter!.renderSurface("desktop", jest.fn())!);
     expect(desktop.container.querySelector('[data-testid="surface-frame"]')).not.toBeNull();
+  });
+
+  it("gives a Linux computer (ubuntu-server) files and a terminal and never a desktop", () => {
+    const adapter = resolveWorkspaceSurfaceAdapter({
+      ...hivraSource,
+      uid: "x-server-one",
+      agent: {
+        ...hivraSource.agent,
+        id: "server-one",
+        type: "linux-desktop",
+        computer_profile: "ubuntu-server",
+      },
+    });
+
+    expect(adapter?.computer.capabilities.surfaces).toEqual(["files", "terminal"]);
+    expect(adapter?.descriptors.map(({ surface }) => surface)).toEqual(["files", "terminal"]);
+    // Even when asked for the desktop directly, nothing mounts one.
+    const asked = render(adapter!.renderSurface("desktop", jest.fn())!);
+    expect(asked.container.querySelector('[data-testid="real-remote-desktop"]')).toBeNull();
+    expect(asked.container.querySelector('[data-testid="real-omarchy-desktop"]')).toBeNull();
+    expect(asked.container.querySelector('[data-testid="real-windows-desktop"]')).toBeNull();
   });
 
   it("opens a profile-less computer on the general Linux desktop", () => {

@@ -7,6 +7,7 @@ import {
   isWorkspaceAgentUid,
   restoreWorkspaceSelection,
 } from "./workspace-persistence";
+import { isRecord } from "@/lib/billing/db-utils";
 
 /**
  * The agents and computers you used in this browser, most recently used first,
@@ -66,10 +67,6 @@ function browserStorage(): RecentsStorage | null {
 function hasExactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(record).sort();
   return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export function isRecentTab(value: unknown): value is AgentSurfaceId {

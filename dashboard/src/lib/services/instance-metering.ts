@@ -232,33 +232,26 @@ export async function recordInstanceMeteringSample(
  */
 export async function getInstanceMeteringRollup(
   instanceId: string,
-  since: Date | null = null,
+  since: Date,
   db: MeteringDb | null = supabaseAdmin as unknown as MeteringDb | null
 ): Promise<InstanceMeteringRollup> {
   if (!db) {
     return emptyRollup();
   }
 
-  const baseSelect = db
+  // The lookback is mandatory: every tick writes a row (with JSONB metadata),
+  // so an open-ended read would pull the instance's whole history.
+  const sinceQuery = db
     .from("instance_metering_events")
     .select(
       "sampled_at, cpu_seconds_total, ram_peak_bytes, disk_used_bytes, disk_total_bytes, runtime_seconds, net_out_bytes, metadata"
     )
-    .eq("instance_id", instanceId);
-
-  let query: { data?: unknown; error?: { message?: string } | null };
-  if (since && typeof baseSelect.gte === "function") {
-    const sinceQuery = baseSelect.gte("sampled_at", since.toISOString());
-    if (sinceQuery && typeof sinceQuery.order === "function") {
-      query = await sinceQuery.order("sampled_at", { ascending: true });
-    } else {
-      query = (await Promise.resolve(sinceQuery)) as typeof query;
-    }
-  } else if (typeof baseSelect.order === "function") {
-    query = await baseSelect.order("sampled_at", { ascending: true });
-  } else {
-    query = (await Promise.resolve(baseSelect)) as typeof query;
+    .eq("instance_id", instanceId)
+    .gte?.("sampled_at", since.toISOString());
+  if (!sinceQuery?.order) {
+    throw new Error("instance metering rollup needs a db that supports a sampled_at lower bound");
   }
+  const query = await sinceQuery.order("sampled_at", { ascending: true });
 
   if (query?.error) {
     throw new Error(query.error.message || "Failed to read metering rollup");

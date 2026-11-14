@@ -79,6 +79,10 @@ export async function fetchLatestVvvSnapshotsByUser(
  * Latest balance per live platform token ($HermesOS, plus $HIVRA once active)
  * per user. A token with no snapshot for a user is absent from that user's
  * entry, so the evaluator never judges a tier on a balance it did not read.
+ *
+ * One query reads every live token's rows for these users, newest first, and
+ * the first row per (user, token) wins. A row that fails to parse falls back to
+ * the next older row for that pair, as the per-token reader did.
  */
 export async function fetchLatestPlatformTokenBalancesByUser(
   userIds: string[],
@@ -86,11 +90,35 @@ export async function fetchLatestPlatformTokenBalancesByUser(
   now: Date = new Date()
 ): Promise<Map<string, Partial<Record<PlatformTokenKey, bigint>>>> {
   const out = new Map<string, Partial<Record<PlatformTokenKey, bigint>>>();
-  for (const token of livePlatformTokens(now)) {
-    const byUser = await fetchLatestSnapshotsByUserForToken(token.address, userIds, db);
-    for (const [userId, balance] of byUser) {
-      out.set(userId, { ...(out.get(userId) ?? {}), [token.key]: balance });
+  const tokens = livePlatformTokens(now);
+  if (!db || userIds.length === 0 || tokens.length === 0) return out;
+
+  const keyByAddress = new Map<string, PlatformTokenKey>(
+    tokens.map((token) => [token.address, token.key] as const)
+  );
+
+  const { data, error } = await (db.from("token_holding_snapshots") as SnapshotQuery)
+    // ::text casts numeric(78,0) to text so PostgREST keeps every digit (see
+    // fetchLatestSnapshotsByUserForToken).
+    .select("user_id, token_address, balance_raw::text, checked_at")
+    .in("user_id", userIds)
+    .in("token_address", tokens.map((token) => token.address))
+    .order("checked_at", { ascending: false });
+
+  if (error || !Array.isArray(data)) return out;
+
+  for (const row of data as Array<SnapshotRow & { token_address: string; checked_at: string }>) {
+    const key = keyByAddress.get(row.token_address);
+    if (!key) continue;
+    const byUser = out.get(row.user_id) ?? {};
+    if (byUser[key] !== undefined) continue;
+    try {
+      byUser[key] = BigInt(normalizeNumericToBigIntString(row.balance_raw));
+    } catch {
+      // Skip malformed snapshot rows; an older row for this token can still apply.
+      continue;
     }
+    out.set(row.user_id, byUser);
   }
   return out;
 }

@@ -9,6 +9,7 @@ import {
   assertSupportedProxmoxGatewayHost,
   buildProxmoxGatewayCaddySite,
   isCoveredByProxmoxStaticOriginCert,
+  isSafeGatewayHostname,
 } from "@/lib/services/proxmox-gateway-caddy-site";
 import {
   buildHermesBrowserSidecarCacheCleanupFunction,
@@ -58,13 +59,41 @@ export const DEFAULT_PROXMOX_VM_DISK_GB = 30;
 export function shQuote(value: string | number): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
+/**
+ * SEC-03 build-time VMID gate. Every builder that splices a VMID into `qm`
+ * arguments or the `/run/hermes-vm-claims/<vmid>.claim` path asserts here
+ * first: a non-integer or sub-100 VMID is a bug or a hostile DB/env read and
+ * must fail at script-build time rather than reach a host, where it could
+ * address the wrong guest or escape its quoting. Proxmox VMIDs start at 100.
+ */
+export function assertValidProxmoxVmid(vmid: number): void {
+  if (!Number.isSafeInteger(vmid) || vmid < 100) {
+    throw new Error(`Invalid Proxmox VMID: ${String(vmid)}`);
+  }
+}
+/**
+ * SEC-03 build-time hostname gate for builders that turn a gateway host into
+ * a `rm`-able site path (`<caddySitesDir>/<host>.caddy`). shQuote keeps the
+ * path shell-safe but cannot stop `../` traversal or Caddy metacharacters;
+ * the hostname shape can. Cert-policy checks stay in
+ * assertSupportedProxmoxGatewayHost — delete/cleanup must still work for
+ * legacy nested hostnames.
+ */
+export function assertSafeGatewaySiteHost(gatewayHost: string): void {
+  if (!isSafeGatewayHostname(gatewayHost)) {
+    throw new Error(
+      `Refusing to build Proxmox host script for unsafe gateway hostname: ${gatewayHost}`,
+    );
+  }
+}
 export function buildProxmoxGuestBootstrapScript(): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-# Block until cloud-init's first-boot work is done. The template ships
-# with \`package_upgrade: true\`, so cloud-init runs apt-get on first boot
+# Block until cloud-init's first-boot work is done. The clone turns
+# cloud-init's \`package_upgrade\` off (ciupgrade 0), but a host older than
+# Proxmox VE 8.1 can't, and there cloud-init runs apt-get on first boot
 # and holds /var/lib/apt/lists/lock for a few minutes. SSH frequently
 # comes up before that finishes, and DPkg::Lock::Timeout below covers
 # the dpkg lock but NOT the apt-lists lock — so apt-get update would die
@@ -203,7 +232,9 @@ systemctl enable --now fstrim.timer >/dev/null 2>&1 || true
 ${buildHermesMemoryGuardProvisioningScript()}
 
 if ! command -v docker >/dev/null 2>&1; then
-  curl -fsSL https://get.docker.com | sh
+  # Download-then-run (not "curl | sh"): a truncated body can't run.
+  curl -fsSLo /tmp/gd.sh https://get.docker.com
+  sh /tmp/gd.sh
 fi
 
 mkdir -p /etc/docker
@@ -915,6 +946,13 @@ if [ -n "$SCSI0_DISK" ]; then
 fi
 qm set "$VMID" --cores "$CORES" --cpulimit "$CPU_LIMIT" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"
 qm set "$VMID" --ipconfig0 "ip=\${PRIVATE_IP}/\${PRIVATE_CIDR},gw=\${PRIVATE_GATEWAY}" --nameserver "$NAMESERVER" --onboot 1
+# Skip cloud-init's first-boot package upgrade (Proxmox's ciupgrade defaults to
+# on). It ran a full apt upgrade before the agent could start, which was most
+# of a fresh launch's wait. The guest still takes Ubuntu's security updates
+# from its own daily unattended-upgrades run, which bootstrap pauses only while
+# it works. Hosts older than Proxmox VE 8.1 have no ciupgrade option, so a
+# refusal there is ignored and the clone behaves as before.
+qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
 # Phase 2 attests this VM's SSH host key through the QEMU Guest Agent before
 # the deploy (which carries the box's secrets) goes over SSH. The agent's
 # virtio channel only exists if it is configured before boot, so set it here
@@ -1226,6 +1264,7 @@ done
 `;
 }
 export function buildProxmoxTemplateAvailabilityScript(params: { templateId: number }): string {
+  assertValidProxmoxVmid(params.templateId);
   return `#!/usr/bin/env bash
 set -euo pipefail
 TEMPLATE_ID=${shQuote(params.templateId)}
@@ -1252,6 +1291,7 @@ echo "HERMES_PROXMOX_TEMPLATE_READY $TEMPLATE_ID"
 `;
 }
 export function buildProxmoxStatusScript(vmid: number): string {
+  assertValidProxmoxVmid(vmid);
   return `#!/usr/bin/env bash
 set -euo pipefail
 if ! qm status ${shQuote(vmid)} >/dev/null 2>&1; then
@@ -1281,6 +1321,7 @@ export function buildProxmoxMetricsScript(
   vmid: number,
   opts: { vmSshUser?: string; vmSshKeyPath?: string } = {}
 ): string {
+  assertValidProxmoxVmid(vmid);
   // Emit verbose qm status. We grep for the keys we care about and prefix
   // each with METRIC for unambiguous parsing on the orchestrator side.
   return `#!/usr/bin/env bash
@@ -1427,6 +1468,7 @@ export const PROXMOX_VM_IDENTITY_MISMATCH_MARKER = "HERMES_VM_IDENTITY_MISMATCH"
  * both forms are accepted, nothing else is.
  */
 export function buildProxmoxVmOwnedByInstanceCheck(vmid: number, expectedInstanceId: string): string {
+  assertValidProxmoxVmid(vmid);
   if (!INSTANCE_ID_PATTERN.test(expectedInstanceId)) {
     throw new Error("Proxmox lifecycle instance identity is invalid.");
   }
@@ -1458,7 +1500,17 @@ export function buildProxmoxDeleteScript(params: {
   caddySitesDir: string;
   /** Seconds to wait for graceful ACPI/agent shutdown before hard-stop. Default 30. */
   gracefulShutdownTimeoutSeconds?: number;
+  /**
+   * Dormant reclaim only. The sweep chose this VM while it was paused, and its
+   * owner may have started it since, or a PVE onboot may have. With this set, a
+   * guest whose state is not exactly `stopped` is refused (exit 44) before any
+   * shutdown or hard stop, and a stopped guest is destroyed directly. Default
+   * false keeps the user-initiated graceful delete.
+   */
+  refuseIfRunning?: boolean;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
+  assertSafeGatewaySiteHost(params.gatewayHost);
   const siteFile = `${params.caddySitesDir.replace(/\/+$/g, "")}/${params.gatewayHost}.caddy`;
   const gracefulTimeout = Math.max(0, Math.floor(params.gracefulShutdownTimeoutSeconds ?? 30));
 
@@ -1467,6 +1519,25 @@ export function buildProxmoxDeleteScript(params: {
   // auto-deletion this matters less (VM was already suspended), but it keeps
   // the user-initiated delete path clean — e.g. a paying user shutting down
   // their own agent doesn't want a kill -9 mid-request.
+  //
+  // The dormant path must not touch a guest its owner has started: only a guest
+  // that is exactly stopped is destroyed. Any other state (running, paused, ...)
+  // is refused outright, so there is no shutdown or hard stop to take it down.
+  const powerDown = params.refuseIfRunning
+    ? `  vm_state="$( (qm status ${params.vmid} 2>/dev/null || true) | sed -n 's/^status:[[:space:]]*//p' | head -1)"
+  if [ "$vm_state" != "stopped" ]; then
+    echo "HERMES_PROXMOX_DELETE_VM_RUNNING_REFUSED ${params.vmid} state=$vm_state" >&2
+    exit 44
+  fi
+`
+    : `  if qm shutdown ${params.vmid} --timeout ${gracefulTimeout} >/dev/null 2>&1; then
+    echo "HERMES_PROXMOX_DELETE_VM_GRACEFUL_SHUTDOWN ${params.vmid}"
+  else
+    echo "HERMES_PROXMOX_DELETE_VM_GRACEFUL_TIMEOUT ${params.vmid}" >&2
+    qm stop ${params.vmid} --skiplock 1 >/dev/null 2>&1 || true
+  fi
+`;
+
   return `#!/usr/bin/env bash
 set -euo pipefail
 expected_instance_id=${shQuote(params.expectedInstanceId)}
@@ -1480,13 +1551,7 @@ if qm status ${params.vmid} >/dev/null 2>&1; then
     echo "HERMES_PROXMOX_DELETE_IDENTITY_MISMATCH ${params.vmid}" >&2
     exit 42
   fi
-  if qm shutdown ${params.vmid} --timeout ${gracefulTimeout} >/dev/null 2>&1; then
-    echo "HERMES_PROXMOX_DELETE_VM_GRACEFUL_SHUTDOWN ${params.vmid}"
-  else
-    echo "HERMES_PROXMOX_DELETE_VM_GRACEFUL_TIMEOUT ${params.vmid}" >&2
-    qm stop ${params.vmid} --skiplock 1 >/dev/null 2>&1 || true
-  fi
-  if qm destroy ${params.vmid} --purge 1; then
+${powerDown}  if qm destroy ${params.vmid} --purge 1; then
     echo "HERMES_PROXMOX_DELETE_VM_DESTROYED ${params.vmid}"
   elif qm status ${params.vmid} >/dev/null 2>&1; then
     echo "HERMES_PROXMOX_DELETE_VM_DESTROY_FAILED ${params.vmid}" >&2
@@ -1551,8 +1616,9 @@ export function buildProxmoxCaddySiteCleanupScript(params: {
     .map((h) => h.trim())
     .filter(Boolean)
     .map((h) => {
+      assertSafeGatewaySiteHost(h);
       const file = `${dir}/${h}.caddy`;
-      return `if [ -f ${shQuote(file)} ]; then rm -f ${shQuote(file)} && echo "HERMES_CADDY_SITE_REMOVED ${h}"; else echo "HERMES_CADDY_SITE_ABSENT ${h}"; fi`;
+      return `if [ -f ${shQuote(file)} ]; then rm -f ${shQuote(file)} && echo ${shQuote(`HERMES_CADDY_SITE_REMOVED ${h}`)}; else echo ${shQuote(`HERMES_CADDY_SITE_ABSENT ${h}`)}; fi`;
     })
     .join("\n");
   return `#!/usr/bin/env bash
@@ -1629,6 +1695,7 @@ export function buildProxmoxPowerScript(params: {
   setOnboot?: 0 | 1;
   verifyOnboot?: boolean;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
   const timeout = Math.max(
     1,
     Math.min(600, Math.floor(params.shutdownTimeoutSeconds ?? 90))
@@ -1727,6 +1794,8 @@ export function buildProxmoxOrphanCleanupScript(params: {
   gatewayHost: string;
   caddySitesDir: string;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
+  assertSafeGatewaySiteHost(params.gatewayHost);
   const siteFile = `${params.caddySitesDir.replace(/\/+$/g, "")}/${params.gatewayHost}.caddy`;
   return `#!/usr/bin/env bash
 set +e
@@ -1750,24 +1819,38 @@ rm -f ${shQuote(siteFile)}
 echo HERMES_PROXMOX_ORPHAN_CLEANUP done
 `;
 }
+/** Stderr marker for a dormant archive refused because the guest is not exactly stopped. */
+export const DORMANT_ARCHIVE_NOT_STOPPED_MARKER = "HERMES_DORMANT_ARCHIVE_VM_NOT_STOPPED";
+
 export function buildProxmoxDormantArchiveScript(params: {
   vmid: number;
   archiveDir: string;
   instanceId: string;
 }): string {
+  assertValidProxmoxVmid(params.vmid);
   return `#!/usr/bin/env bash
 set -euo pipefail
 VMID=${shQuote(params.vmid)}
 ARCHIVE_DIR=${shQuote(params.archiveDir)}
 INSTANCE_ID=${shQuote(params.instanceId)}
 mkdir -p "$ARCHIVE_DIR"
-before="$(mktemp)"
-find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -print 2>/dev/null | sort > "$before"
 if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "HERMES_DORMANT_ARCHIVE_VM_MISSING $VMID" >&2
-  rm -f "$before"
   exit 1
 fi
+# The VMID may now hold another control plane's guest on a shared host (the row is
+# stale). Dump only a VM that carries this instance's identity, before vzdump runs.
+${buildProxmoxVmIdentityGuardScript(params.vmid, params.instanceId)}
+# vzdump --mode stop shuts a running guest down for the dump. A guest that is running
+# or paused was started by someone other than this row's sweep, so refuse anything
+# that is not exactly stopped, before any dump file is written.
+vm_state="$( (qm status "$VMID" 2>/dev/null || true) | sed -n 's/^status:[[:space:]]*//p' | head -1)"
+if [ "$vm_state" != "stopped" ]; then
+  echo "${DORMANT_ARCHIVE_NOT_STOPPED_MARKER} $VMID state=$vm_state" >&2
+  exit 45
+fi
+before="$(mktemp)"
+find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -print 2>/dev/null | sort > "$before"
 vzdump "$VMID" \\
   --mode stop \\
   --compress zstd \\
@@ -1776,9 +1859,8 @@ vzdump "$VMID" \\
   --remove 0
 archive_path="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -print 2>/dev/null | sort | comm -13 "$before" - | tail -1)"
 rm -f "$before"
-if [ -z "$archive_path" ]; then
-  archive_path="$(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "vzdump-qemu-$VMID-*" -printf "%T@ %p\\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
-fi
+# Only a file this vzdump run created is this archive. An older dump of the same VMID is
+# never picked up here: the sweep removes whatever path this prints when it abandons a reclaim.
 if [ -z "$archive_path" ]; then
   echo "HERMES_DORMANT_ARCHIVE_PATH_NOT_FOUND $VMID" >&2
   exit 1
@@ -1792,6 +1874,29 @@ echo "HERMES_DORMANT_ARCHIVE_PATH=$archive_path"
 echo "HERMES_DORMANT_ARCHIVE_SIZE_BYTES=$archive_size_bytes"
 `;
 }
+
+/**
+ * Removes a dormant dump the sweep abandoned. The path must be a vzdump file held
+ * directly in the archive directory; any other path is refused (exit 46) and left alone.
+ */
+export function buildProxmoxDormantArchiveRemoveScript(params: {
+  archiveDir: string;
+  archivePath: string;
+}): string {
+  const archiveDir = params.archiveDir.replace(/\/+$/g, "");
+  return `#!/usr/bin/env bash
+set -euo pipefail
+ARCHIVE_DIR=${shQuote(archiveDir)}
+ARCHIVE_PATH=${shQuote(params.archivePath)}
+if [ "$(dirname -- "$ARCHIVE_PATH")" != "$ARCHIVE_DIR" ] || [[ "$(basename -- "$ARCHIVE_PATH")" != vzdump-qemu-* ]]; then
+  echo "HERMES_DORMANT_ARCHIVE_REMOVE_REFUSED $ARCHIVE_PATH" >&2
+  exit 46
+fi
+rm -f -- "$ARCHIVE_PATH"
+echo "HERMES_DORMANT_ARCHIVE_REMOVED $ARCHIVE_PATH"
+`;
+}
+
 export function buildProxmoxResizeScript(params: {
   vmid: number;
   /** The row's instance id. A VMID holding any other VM is never resized. */
@@ -1802,6 +1907,7 @@ export function buildProxmoxResizeScript(params: {
    *  semantics. Omit to preserve the legacy fully-pinned allocation. */
   balloonFloorMb?: number;
 }) {
+  assertValidProxmoxVmid(params.vmid);
   const cores = Math.max(1, Math.floor(params.cores));
   const cpuLimit = Math.max(0.1, params.cores);
   const memoryMb = Math.max(1024, Math.floor(params.memoryMb));
@@ -1830,4 +1936,3 @@ qm set "$VMID" --cores "$CORES" --cpulimit "$CPU_LIMIT" --memory "$MEMORY_MB" --
  * `-autoheal` (64M), `-dashboard-sidecar` — are deliberately fixed-size and
  * must NOT be resized with the tier.
  */
-const TIER_CEILING_CONTAINER_SUFFIXES = ["gateway", "official-dashboard"] as const;

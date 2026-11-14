@@ -178,7 +178,7 @@ const BASE_MARKETING_COPY = {
         home: "Home",
         computers: "Computers",
         agents: "Agents",
-        infrastructure: "Capacity",
+        infrastructure: "Servers",
         collaboration: "Collaboration",
         settings: "Settings",
         launch: "Launch",
@@ -354,6 +354,7 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "hold $HermesOS and VVV yourself, then sign a message to verify ownership. Your free account always works without token verification.",
         priceUnavailable: "Token price unavailable — please try again later.",
+        tokenPaymentsNotReady: "Token payments aren't available yet.",
         restricted: {
           eyebrow: "Wallet",
           title: "Your wallets.",
@@ -443,7 +444,6 @@ const BASE_MARKETING_COPY = {
           available: "available",
           description:
             "Account credits pay for usage. They don't set your plan: that comes from a subscription, a yearly $HermesOS payment or holding $HermesOS.",
-          monthlyGrantSuffix: "monthly plan credits",
         },
         activity: {
           eyebrow: "Billing Activity",
@@ -739,7 +739,7 @@ const BASE_MARKETING_COPY = {
         home: "首页",
         computers: "电脑",
         agents: "智能体",
-        infrastructure: "容量",
+        infrastructure: "服务器",
         collaboration: "协作",
         settings: "设置",
         launch: "启动",
@@ -908,6 +908,7 @@ const BASE_MARKETING_COPY = {
         selfCustodyIntroBody:
           "自行持有 $HermesOS 和 VVV，然后签名验证所有权。你的免费账户始终无需代币验证即可使用。",
         priceUnavailable: "代币价格暂不可用，请稍后重试。",
+        tokenPaymentsNotReady: "代币支付暂未开放。",
         restricted: {
           eyebrow: "钱包",
           title: "你的钱包。",
@@ -992,7 +993,6 @@ const BASE_MARKETING_COPY = {
           title: "积分余额",
           available: "可用",
           description: "账户积分用于支付用量，不决定你的计划：计划来自订阅、按年用 $HermesOS 付款或持有 $HermesOS。",
-          monthlyGrantSuffix: "每月计划积分",
         },
         activity: {
           eyebrow: "账单动态",
@@ -1325,7 +1325,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Inicio",
         "computers": "Ordenadores",
         "agents": "Agentes",
-        "infrastructure": "Capacidad",
+        "infrastructure": "Servidores",
         "collaboration": "Colaboración",
         "settings": "Configuración",
         "launch": "Lanzar",
@@ -1492,6 +1492,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecta tu propia billetera",
         "selfCustodyIntroBody": "mantén $HermesOS y VVV tú mismo, luego firma un mensaje para verificar la propiedad. Tu cuenta gratuita siempre funciona sin verificación de token.",
         "priceUnavailable": "El precio del token no está disponible. Inténtalo de nuevo más tarde.",
+        "tokenPaymentsNotReady": "Los pagos con token aún no están disponibles.",
         "restricted": {
           "eyebrow": "Billetera",
           "title": "Tus billeteras.",
@@ -1576,7 +1577,6 @@ const LOCALE_COPY_OVERRIDES = {
           "title": "Saldo de créditos",
           "available": "disponibles",
           "description": "Los créditos de la cuenta pagan el uso. No definen tu plan: eso viene de una suscripción, un pago anual con $HermesOS o de tener $HermesOS.",
-          "monthlyGrantSuffix": "créditos mensuales del plan"
         },
         "activity": {
           "eyebrow": "Actividad de facturación",
@@ -1862,7 +1862,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Início",
         "computers": "Computadores",
         "agents": "Agentes",
-        "infrastructure": "Capacidade",
+        "infrastructure": "Servidores",
         "collaboration": "Colaboração",
         "settings": "Configurações",
         "launch": "Lançar",
@@ -2029,6 +2029,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Conecte sua própria carteira",
         "selfCustodyIntroBody": "mantenha $HermesOS e VVV você mesmo, depois assine uma mensagem para verificar a propriedade. Sua conta gratuita sempre funciona sem verificação de token.",
         "priceUnavailable": "Preço do token indisponível — tente novamente mais tarde.",
+        "tokenPaymentsNotReady": "Os pagamentos com token ainda não estão disponíveis.",
         "restricted": {
           "eyebrow": "Carteira",
           "title": "Suas carteiras.",
@@ -2113,7 +2114,6 @@ const LOCALE_COPY_OVERRIDES = {
           "title": "Saldo de créditos",
           "available": "disponíveis",
           "description": "Os créditos da conta pagam o uso. Eles não definem seu plano: isso vem de uma assinatura, de um pagamento anual em $HermesOS ou de manter $HermesOS.",
-          "monthlyGrantSuffix": "créditos do plano mensal"
         },
         "activity": {
           "eyebrow": "Atividade de Cobrança",
@@ -2399,7 +2399,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Accueil",
         "computers": "Ordinateurs",
         "agents": "Agents IA",
-        "infrastructure": "Capacité",
+        "infrastructure": "Serveurs",
         "collaboration": "Coopération",
         "settings": "Paramètres",
         "launch": "Lancer",
@@ -2566,6 +2566,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Connectez votre propre portefeuille",
         "selfCustodyIntroBody": "détenez $HermesOS et VVV vous-même, puis signez un message pour prouver votre propriété. Votre compte gratuit fonctionne toujours sans vérification de token.",
         "priceUnavailable": "Prix du token indisponible — veuillez réessayer plus tard.",
+        "tokenPaymentsNotReady": "Les paiements en token ne sont pas encore disponibles.",
         "restricted": {
           "eyebrow": "Portefeuille",
           "title": "Vos portefeuilles.",
@@ -2650,7 +2651,6 @@ const LOCALE_COPY_OVERRIDES = {
           "title": "Solde de crédits",
           "available": "disponibles",
           "description": "Les crédits du compte paient l'utilisation. Ils ne définissent pas votre offre : elle vient d'un abonnement, d'un paiement annuel en $HermesOS ou de la détention de $HermesOS.",
-          "monthlyGrantSuffix": "crédits du plan mensuel"
         },
         "activity": {
           "eyebrow": "Activité de facturation",
@@ -2936,7 +2936,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "Startseite",
         "computers": "Computer",
         "agents": "Agenten",
-        "infrastructure": "Infrastruktur",
+        "infrastructure": "Server",
         "collaboration": "Zusammenarbeit",
         "settings": "Einstellungen",
         "launch": "Starten",
@@ -3103,6 +3103,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "Verbinde deine eigene Wallet",
         "selfCustodyIntroBody": "$HermesOS und VVV selbst halten, dann eine Nachricht signieren um den Besitz zu bestätigen. Dein kostenloses Konto funktioniert immer ohne Token-Verifizierung.",
         "priceUnavailable": "Token-Preis nicht verfügbar — bitte später erneut versuchen.",
+        "tokenPaymentsNotReady": "Token-Zahlungen sind noch nicht verfügbar.",
         "restricted": {
           "eyebrow": "Krypto-Wallet",
           "title": "Deine Wallets.",
@@ -3187,7 +3188,6 @@ const LOCALE_COPY_OVERRIDES = {
           "title": "Guthaben",
           "available": "verfügbar",
           "description": "Kontoguthaben bezahlt die Nutzung. Es bestimmt nicht deinen Tarif: Der kommt aus einem Abo, einer Jahreszahlung in $HermesOS oder dem Halten von $HermesOS.",
-          "monthlyGrantSuffix": "monatliche Plan-Credits"
         },
         "activity": {
           "eyebrow": "Abrechnungsaktivität",
@@ -3473,7 +3473,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "ホーム",
         "computers": "コンピューター",
         "agents": "エージェント",
-        "infrastructure": "インフラストラクチャ",
+        "infrastructure": "サーバー",
         "collaboration": "コラボレーション",
         "settings": "設定",
         "launch": "起動",
@@ -3640,6 +3640,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "自分のウォレットを接続",
         "selfCustodyIntroBody": "$HermesOS と VVV を自分で保有し、メッセージに署名して所有権を証明します。無料アカウントはトークン認証なしで常時利用可能です。",
         "priceUnavailable": "トークン価格を取得できません —— しばらくしてから再試行してください。",
+        "tokenPaymentsNotReady": "トークンでの支払いはまだご利用いただけません。",
         "restricted": {
           "eyebrow": "ウォレット",
           "title": "あなたのウォレット。",
@@ -3724,7 +3725,6 @@ const LOCALE_COPY_OVERRIDES = {
           "title": "クレジット残高",
           "available": "利用可能",
           "description": "アカウントのクレジットは利用料金の支払いに使われます。プランはクレジットでは決まらず、サブスクリプション、$HermesOS での年払い、または $HermesOS の保有で決まります。",
-          "monthlyGrantSuffix": "月次プランクレジット"
         },
         "activity": {
           "eyebrow": "請求アクティビティ",
@@ -4010,7 +4010,7 @@ const LOCALE_COPY_OVERRIDES = {
         "home": "홈",
         "computers": "컴퓨터",
         "agents": "에이전트",
-        "infrastructure": "인프라",
+        "infrastructure": "서버",
         "collaboration": "협업",
         "settings": "설정",
         "launch": "시작",
@@ -4177,6 +4177,7 @@ const LOCALE_COPY_OVERRIDES = {
         "selfCustodyIntroStrong": "내 지갑 연결",
         "selfCustodyIntroBody": "$HermesOS와 VVV를 직접 보유하고, 메시지에 서명해 소유권을 인증하세요. 무료 계정은 토큰 인증 없이 항상 이용 가능합니다.",
         "priceUnavailable": "토큰 가격을 불러올 수 없습니다 — 나중에 다시 시도하세요.",
+        "tokenPaymentsNotReady": "토큰 결제는 아직 이용할 수 없습니다.",
         "restricted": {
           "eyebrow": "지갑",
           "title": "내 지갑.",
@@ -4261,7 +4262,6 @@ const LOCALE_COPY_OVERRIDES = {
           "title": "크레딧 잔액",
           "available": "사용 가능",
           "description": "계정 크레딧은 사용료를 결제합니다. 요금제는 크레딧이 아니라 구독, $HermesOS 연간 결제 또는 $HermesOS 보유로 정해집니다.",
-          "monthlyGrantSuffix": "월간 플랜 크레딧"
         },
         "activity": {
           "eyebrow": "결제 내역",

@@ -17,23 +17,27 @@ jest.mock("@/lib/billing/hivra-token-launch", () => ({
     activatesAt: "2026-01-01T00:00:00Z",
   },
 }));
-jest.mock("@/lib/claim/conversion-links-config", () => ({
-  ...jest.requireActual("@/lib/claim/conversion-links-config"),
-  CONVERSION_LINKS: {
-    termsUrl: "https://hivra.cloud/terms",
-    conversionUrl: "https://bankr-lookalike.example/convert",
+jest.mock("@/lib/claim/hivra-airdrop-config", () => ({
+  ...jest.requireActual("@/lib/claim/hivra-airdrop-config"),
+  HIVRA_AIRDROP: {
+    senderAddress: "0x3333333333333333333333333333333333333333",
+    snapshotBlock: 36000000,
+    snapshotTakenAt: null,
+    snapshotUrl: "https://hivra-lookalike.example/snapshot",
+    claim: { campaignUrl: "https://app.sablier.com.evil.example/campaign", opensAt: null, closesAt: null },
   },
 }));
 
-describe("/dashboard/convert with a live $HIVRA and a rejected conversion link", () => {
-  it("keeps conversion closed and logs why", async () => {
+describe("/dashboard/convert with a live $HIVRA, a rejected snapshot link and a rejected claim link", () => {
+  it("hides the snapshot and logs why", async () => {
     render(await ConvertPage());
 
     expect(screen.getByText("0x1111111111111111111111111111111111111111")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /go to conversion/i })).not.toBeInTheDocument();
-    expect(jest.mocked(log.warn)).toHaveBeenCalledWith("HIVRA conversion links rejected", {
+    expect(screen.queryByRole("link", { name: "Open the published snapshot" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("convert-snapshot-pending")).toBeInTheDocument();
+    expect(jest.mocked(log.warn)).toHaveBeenCalledWith("HIVRA airdrop config rejected", {
       source: "dashboard/convert",
-      problems: "conversionUrl must be https on an allowed host",
+      problems: "snapshotUrl must be https on an allowed Hivra location; claim.campaignUrl must be a plain https link on app.sablier.com",
     });
   });
 });

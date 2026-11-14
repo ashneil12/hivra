@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { POST } from "../route";
 import { decryptApiKey } from "@/lib/crypto";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
@@ -18,12 +19,18 @@ jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("@/lib/rate-limit", () => ({
+  enforceRateLimit: jest.fn(() => ({ success: true })),
+  getIP: jest.fn(() => "203.0.113.7"),
+}));
+
 const INSTANCE_ID = "11111111-2222-3333-4444-555555555555";
 const KEY = "k".repeat(64);
 
 const mockedFrom = supabaseAdmin!.from as unknown as jest.Mock;
 const mockedDecrypt = decryptApiKey as jest.MockedFunction<typeof decryptApiKey>;
 const mockedOps = reportOpsEvent as jest.MockedFunction<typeof reportOpsEvent>;
+const mockedRateLimit = enforceRateLimit as jest.MockedFunction<typeof enforceRateLimit>;
 
 function req(body: unknown, bearer: string | null = KEY) {
   return new NextRequest("http://localhost/api/internal/agent-notify", {
@@ -279,5 +286,45 @@ describe("prompt.resolved", () => {
     mockInstanceLookup(AUTHED_ROW);
     mockPendingUpdate({ message: "db down" });
     expect((await POST(req(RESOLVED))).status).toBe(500);
+  });
+});
+
+describe("rate limiting", () => {
+  it("429s once the instance's limit is exceeded, without writing", async () => {
+    mockInstanceLookup(AUTHED_ROW);
+    mockedRateLimit.mockReturnValueOnce({ success: false, retryAfterMs: 30_000 });
+
+    const res = await POST(req(PENDING));
+    const json = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(json.error).toBe("Too many requests");
+    expect(mockedFrom).toHaveBeenCalledTimes(1); // lookup only — no write
+    expect(mockedOps).not.toHaveBeenCalled();
+  });
+
+  it("limits per instance at 60 requests a minute", async () => {
+    mockInstanceLookup(AUTHED_ROW);
+    mockPendingUpsert();
+
+    await POST(req(PENDING));
+
+    expect(mockedRateLimit).toHaveBeenCalledWith(`agent-notify:${INSTANCE_ID}`, {
+      limit: 60,
+      windowMs: 60_000,
+    });
+  });
+
+  // The limit sits after bearer verification on purpose: a request that fails
+  // auth gets the 401 and never consumes a slot — only a caller holding the
+  // box key (the thing being capped) can burn the instance's budget.
+  it("does not rate-limit requests that fail auth", async () => {
+    mockInstanceLookup(AUTHED_ROW);
+    mockedDecrypt.mockReturnValue("wrong");
+
+    const res = await POST(req(PENDING));
+
+    expect(res.status).toBe(401);
+    expect(mockedRateLimit).not.toHaveBeenCalled();
   });
 });

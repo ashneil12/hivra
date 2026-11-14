@@ -53,4 +53,12 @@ describe("POST /api/ops/hivra/runtime-receipt", () => {
     expect(response.status).toBe(503);
     expect((await response.json()).error).toBe("Runtime receipt could not be verified.");
   });
+
+  it("answers 404 for an unknown computer and 409 for an unstable one, not 503", async () => {
+    mockInspect.mockResolvedValueOnce({ ok: false, agentId: AGENT_ID, targetId: null, vmid: null, error: "Agent not found.", status: 404 });
+    expect((await POST(request({ agentId: AGENT_ID }))).status).toBe(404);
+    mockInspect.mockResolvedValueOnce({ ok: false, agentId: AGENT_ID, targetId: null, vmid: 1112,
+      error: "Agent is not in a stable, identity-bound running state.", status: 409 });
+    expect((await POST(request({ agentId: AGENT_ID }))).status).toBe(409);
+  });
 });

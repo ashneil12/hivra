@@ -1,9 +1,9 @@
-.navigation { display: flex; align-items: center; gap: 8px; padding: 10px clamp(12px, 3vw, 20px); border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); position: relative; z-index: 30; flex-shrink: 0; min-width: 0; }
+.navigation { display: flex; align-items: center; gap: 8px; padding: 10px clamp(12px, 3vw, 20px); border-bottom: 1px solid var(--hg-stroke-subtle); background: var(--hg-glass); position: relative; z-index: 30; flex-shrink: 0; min-width: 0; }
 .primary { flex: 1; display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .surface { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-height: 36px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; padding: 7px 10px; cursor: pointer; white-space: nowrap; }
-.surface:hover { color: var(--ink-black); background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
-.surface[aria-pressed="true"] { color: var(--ink-black); border-color: var(--etched-border); box-shadow: inset 0 -2px var(--red); }
-.surface:focus-visible, .popover button:focus-visible, .popover a:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.surface:hover { color: var(--hg-text); background: var(--hg-fill-1); }
+.surface[aria-pressed="true"] { color: var(--hg-text); border-color: var(--hg-stroke); background: var(--hg-fill-2); box-shadow: none; }
+.surface:focus-visible, .popover button:focus-visible, .popover a:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
 .tools { margin-left: auto; flex-shrink: 0; position: relative; }
 /* Actions lifted from the active surface. Sits between the pills and the
    overflow, and never inside .primary — the pill row scrolls horizontally when
@@ -12,16 +12,16 @@
 .actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin-left: auto; }
 .actions + .tools, .actions + .manage { margin-left: 0; }
 .actionIcon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 30px; min-height: 30px; padding: 0; border: 1px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; }
-.actionIcon:hover { color: var(--ink-black); background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
+.actionIcon:hover { color: var(--hg-text); background: var(--hg-fill-1); }
 .actionIcon:disabled { opacity: .5; cursor: default; }
-.actionIcon:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.actionIcon:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
 .manage { margin-left: auto; }
 .tools + .manage { margin-left: 0; }
 .catcher { display: none; }
-.popover { position: absolute; right: 0; top: calc(100% + 8px); width: min(245px, calc(100vw - 32px)); max-height: 420px; overscroll-behavior: contain; overflow-y: auto; padding: 6px; border: 1px solid var(--etched-border); background: var(--bg-surface); box-shadow: 0 12px 35px #0003; }
-.label { display: block; padding: 8px; font-family: var(--font-mono), monospace; text-transform: uppercase; letter-spacing: .1em; font-size: 9px; color: var(--text-muted); }
+.popover { position: absolute; right: 0; top: calc(100% + 8px); width: min(245px, calc(100vw - 32px)); max-height: 420px; overscroll-behavior: contain; overflow-y: auto; padding: 6px; border: 1px solid var(--hg-stroke); border-radius: var(--hg-radius-lg); background: var(--hg-glass-strong); backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3); box-shadow: var(--hg-shadow-lg); }
+.label { display: block; padding: 8px; font-family: var(--font-sans); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; font-size: 11px; color: var(--hg-text-3); }
 .popover button, .popover a { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; min-height: 44px; padding: 9px; background: transparent; color: var(--text-secondary); text-align: left; text-decoration: none; font-size: 13px; cursor: pointer; }
-.popover button:hover, .popover a:hover, .popover button[aria-pressed="true"] { color: var(--ink-black); background: color-mix(in srgb, var(--ink-black) 6%, transparent); }
+.popover button:hover, .popover a:hover, .popover button[aria-pressed="true"] { color: var(--hg-text); background: var(--hg-fill-2); }
  .toolsIcon { display: none; }
 @container (max-width: 600px) {
   .navigation { gap: 2px; padding: 4px 8px; }
@@ -50,13 +50,13 @@
   .label { font-size: 11px; }
 }
 /* Grouped agent pages: the active group's own surfaces, one row under the bar. */
-.subnav { display: flex; align-items: center; gap: 2px; padding: 6px clamp(12px, 3vw, 20px); border-bottom: 1px solid var(--etched-border); background: var(--bg-surface); flex-shrink: 0; min-width: 0; overflow-x: auto; scrollbar-width: thin; position: relative; z-index: 29; }
+.subnav { display: flex; align-items: center; gap: 2px; padding: 6px clamp(12px, 3vw, 20px); border-bottom: 1px solid var(--hg-stroke-subtle); background: var(--hg-glass); flex-shrink: 0; min-width: 0; overflow-x: auto; scrollbar-width: thin; position: relative; z-index: 29; }
 .subSurface, .subExport { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 32px; padding: 5px 10px; border: 1px solid transparent; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; text-decoration: none; }
-.subSurface:hover, .subExport:hover { color: var(--ink-black); }
-.subSurface[aria-selected="true"] { color: var(--ink-black); border-color: var(--etched-border); background: color-mix(in srgb, var(--ink-black) 4%, transparent); }
-.subSurface:focus-visible, .subExport:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+.subSurface:hover, .subExport:hover { color: var(--hg-text); background: var(--hg-fill-1); }
+.subSurface[aria-selected="true"] { color: var(--hg-text); border-color: var(--hg-stroke); background: var(--hg-fill-2); }
+.subSurface:focus-visible, .subExport:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
 .subExport { margin-left: auto; }
-.subNote { margin-left: auto; padding-left: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono), monospace; font-size: 11px; color: var(--text-muted); }
+.subNote { margin-left: auto; padding-left: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
 .subExport + .subNote { margin-left: 0; }
 .barExport { text-decoration: none; }
 .nativeActions {

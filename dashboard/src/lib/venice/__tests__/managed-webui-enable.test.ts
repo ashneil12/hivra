@@ -10,6 +10,10 @@ import {
   ManagedVeniceEnableError,
 } from "../managed-webui-enable";
 import { encryptApiKey } from "@/lib/crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const TEST_ENCRYPTION_KEY = "a".repeat(64);
 
@@ -518,6 +522,95 @@ describe("managed Venice → BYOK switch helpers", () => {
         previouslyManagedProxyKeyId: "key_existing",
       },
     });
+  });
+
+  // The BYOK key is written to the instance compose .env, which Docker Compose
+  // parses as an env_file. An apostrophe or a trailing backslash must reach that
+  // file unchanged, so the switch applies instead of failing after the config was
+  // already written.
+  async function applyByokKeyToRunningWebUI(apiKey: string) {
+    const { db } = buildHermesInstancesDb({
+      id: "inst_123",
+      user_id: "user_123",
+      name: "Ada",
+      status: "running",
+      backend: "webui",
+      provider: "venice",
+      api_key_encrypted: encryptApiKey("hven_live_old_proxy"),
+      config: {
+        model: "deepseek-v4-pro",
+        managedVenice: { enabled: true, walletType: "hermesos", proxyKeyId: "key_existing" },
+        agentSettings: { runtimeMode: "managed" },
+      },
+    });
+    const revokeProxyKey = jest.fn(async () => ({ revoked: true }));
+    const api = {
+      baseUrl: "https://ada.example.test/web-api",
+      get: jest.fn(async () => new Response(JSON.stringify({ model: { provider: "venice" } }))),
+      post: jest.fn(),
+      put: jest.fn(),
+      del: jest.fn(),
+    };
+    const putConfig = jest.fn(async () => ({ ok: true }));
+    const ssh = jest.fn(async () => ({ ok: true, stdout: "", stderr: "" }));
+
+    const result = await disableManagedVeniceForWebUIInstance(
+      { instanceId: "inst_123", userId: "user_123", apiKey, model: "deepseek-v4-pro", apply: true },
+      {
+        db,
+        revokeProxyKey: revokeProxyKey as never,
+        now: () => new Date("2026-05-19T12:00:00.000Z"),
+        getSecureInstance: jest.fn(async () => ({
+          instance: { id: "inst_123", user_id: "user_123", status: "running" },
+          apiServerKey: null,
+          instanceIpv4: "10.240.0.5",
+          error: null,
+        })) as never,
+        agentWebApiFactory: jest.fn(async () => api) as never,
+        putConfig: putConfig as never,
+        ssh: ssh as never,
+      }
+    );
+
+    expect(result).toMatchObject({ applied: true, applyError: null });
+
+    // The ssh command carries the env patch as a base64 python script. Run that
+    // script against a temp file, swapping only the instance path for it.
+    const command = (ssh.mock.calls[0] as unknown as [string, string])[1];
+    const b64 = command.match(/echo "([^"]+)" \| base64 -d/);
+    expect(b64).not.toBeNull();
+    const python = Buffer.from(b64![1], "base64")
+      .toString("utf-8")
+      .split("/opt/hermes/instances/inst_123/.env")
+      .join(envFile);
+    const patch = spawnSync("python3", ["-I", "-"], { input: python, encoding: "utf-8" });
+    expect(patch.status).toBe(0);
+    return { result, envContent: fs.readFileSync(envFile, "utf-8") };
+  }
+
+  let envDir = "";
+  let envFile = "";
+  beforeEach(() => {
+    envDir = fs.mkdtempSync(path.join(os.tmpdir(), "byok-env-"));
+    envFile = path.join(envDir, ".env");
+  });
+  afterEach(() => {
+    fs.rmSync(envDir, { recursive: true, force: true });
+  });
+
+  it("applies a BYOK key with an apostrophe to the running WebUI agent and writes it unquoted for compose", async () => {
+    const { result, envContent } = await applyByokKeyToRunningWebUI("vk_live_it's_key");
+
+    expect(result).toMatchObject({ applied: true, applyError: null });
+    expect(envContent).toContain("OPENAI_API_KEY=vk_live_it's_key\n");
+    expect(envContent).toContain("VENICE_API_KEY=vk_live_it's_key\n");
+  });
+
+  it("applies a BYOK key that ends in a backslash to the running WebUI agent", async () => {
+    const { result, envContent } = await applyByokKeyToRunningWebUI("vk_live_tail\\");
+
+    expect(result).toMatchObject({ applied: true, applyError: null });
+    expect(envContent).toContain("OPENAI_API_KEY=vk_live_tail\\\n");
   });
 
   it("rejects a stopped instance that was never on managed Venice", async () => {

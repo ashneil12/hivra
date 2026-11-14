@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ManagedVeniceDepositModal } from "../ManagedVeniceDepositModal";
 import { redirectToCheckoutUrl } from "@/lib/billing/client";
@@ -130,6 +130,48 @@ describe("ManagedVeniceDepositModal", () => {
     });
     expect(await screen.findByText(/payment confirmed/i)).toBeInTheDocument();
     expect(onRefreshSummary).toHaveBeenCalled();
+  });
+
+  it("runs the $HermesOS background check on schedule even while the modal re-renders", async () => {
+    jest.useFakeTimers();
+    // A fresh element each time, so React re-renders the modal (a reused element bails out).
+    const renderModal = () => (
+      <ManagedVeniceDepositModal
+        isOpen
+        initialWalletType="hermesos"
+        initialAmountUsd={50}
+        onClose={jest.fn()}
+      />
+    );
+    const checkCalls = () =>
+      (global.fetch as jest.Mock).mock.calls.filter(([url]) => String(url).includes("/hermesos/check")).length;
+    const flush = async () => {
+      await act(async () => {
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+      });
+    };
+
+    const { rerender } = render(renderModal());
+    fireEvent.click(screen.getByRole("button", { name: /start \$HermesOS top-up/i }));
+    await flush();
+    expect(screen.getByText(/rate locked/i)).toBeInTheDocument();
+
+    // The first background check is due 15 s after the quote appears. Re-render
+    // the parent every second in between, as a live amount or wallet refresh would.
+    for (let second = 0; second < 14; second++) {
+      act(() => {
+        jest.advanceTimersByTime(1000);
+      });
+      rerender(renderModal());
+    }
+    expect(checkCalls()).toBe(0);
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    await flush();
+    expect(checkCalls()).toBeGreaterThan(0);
+
+    jest.useRealTimers();
   });
 
   it("starts card checkout for managed Venice card credits", async () => {

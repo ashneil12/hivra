@@ -19,8 +19,8 @@ import {
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const KEY_ID = "22222222-2222-4222-8222-222222222222";
 const STARTING_BALANCE_MICRO_USD = 5_000_000;
-// claude-opus-4-8 in the static catalog: $6 / $30 per million tokens.
-const OPUS_OUTPUT_MICRO_USD_PER_TOKEN = 30;
+// claude-opus-4-8 in the static catalog: $6 / $25 per million tokens.
+const OPUS_OUTPUT_MICRO_USD_PER_TOKEN = 25;
 
 let mockMemory: ManagedVeniceMemoryDb;
 const mockFetch = jest.fn();
@@ -357,8 +357,8 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
     await client.cancel();
     await waitFor(() => reservation().status !== "active");
 
-    // Venice's exact usage: 5 input tokens at $6 and 20 output tokens at $30 per million.
-    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: 30 + 600 });
+    // Venice's exact usage: 5 input tokens at $5 and 20 output tokens at $25 per million.
+    expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: 25 + 500 });
 
     const second = openUpstreamStream([contentFrame("hi")]);
     mockFetch.mockResolvedValueOnce(
@@ -463,7 +463,7 @@ describe("managed Venice chat stream: a 200 stream is charged what it streamed",
       promptTokens: usage.prompt_tokens,
       completionTokens: usage.completion_tokens,
     }).actualCostMicroUsd;
-    expect(exact).toBeGreaterThan(750_000);
+    expect(exact).toBeGreaterThan(550_000);
     expect(reservation()).toMatchObject({ status: "captured", captured_micro_usd: exact });
     const summary = await getManagedVeniceWalletSummary(USER_ID, mockMemory.db);
     expect(summary.hermesos).toMatchObject({ totalValueMicroUsd: STARTING_BALANCE_MICRO_USD - exact, reservedMicroUsd: 0 });

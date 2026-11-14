@@ -169,34 +169,6 @@ export async function countAccountsWithFingerprint(
 }
 
 /**
- * Find a risk assessment by Stripe SetupIntent id. Used by the webhook
- * handler when setup_intent.succeeded fires — we don't get the user_id in
- * that event payload (only the intent id), so we look it up here.
- */
-async function findByCardSetupIntent(
-  intentId: string
-): Promise<RiskAssessmentRow | null> {
-  if (!supabaseAdmin) return null;
-
-  const { data, error } = await supabaseAdmin
-    .from("signup_risk_assessments")
-    .select("*")
-    .eq("card_setup_intent_id", intentId)
-    .maybeSingle();
-
-  if (error) {
-    log.warn("findByCardSetupIntent failed", {
-      source: LOG_SOURCE,
-      failureType: "find_by_setup_intent_failed",
-      errorCode: error.code,
-    });
-    return null;
-  }
-
-  return (data as RiskAssessmentRow | null) ?? null;
-}
-
-/**
  * Mark a user as having a card on file (called from setup_intent.succeeded
  * webhook). Sets card_satisfied_at + card_payment_method_id and flips
  * decision back to "allow" so subsequent provisioning attempts succeed.

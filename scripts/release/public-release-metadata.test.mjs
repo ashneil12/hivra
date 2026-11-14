@@ -361,7 +361,10 @@ test('every third-party GitHub Action is pinned to an immutable commit', () => {
   // 13: the host-connector job adds one pinned actions/checkout.
   // 19: Dashboard CI's parallel jobs each pin checkout and setup-node, and the
   // attach fixtures job adds one more of each.
-  assert.equal(actionCount, 19, 'review the complete workflow action inventory when it changes');
+  // 23: the browser-sidecar workflow adds checkout to its test and image jobs,
+  // setup-node to its test job, and one upload of the tested image (its
+  // publish job fetches that with the preinstalled gh CLI, not a new action).
+  assert.equal(actionCount, 23, 'review the complete workflow action inventory when it changes');
 });
 
 test('workflow action inventory fails closed on alternate uses-key forms', () => {

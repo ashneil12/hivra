@@ -10,6 +10,12 @@ import { NextRequest } from "next/server";
 // one jest.setup.tsx gives other suites, and never replace the policy for them:
 // if the list stopped reaching the routes, these would fail. The dormant cases
 // below still empty the policy on purpose.
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
 
 const mockFrom = jest.fn();

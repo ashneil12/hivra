@@ -33,6 +33,7 @@ import {
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/purge-error-agents";
 
@@ -52,17 +53,21 @@ const MAX_CANDIDATES_PER_RUN = 12;
 const SSH_TIMEOUT_MS = 120_000;
 
 interface ErrorAgentRow {
+  operation_payload?: Record<string, unknown> | null;
   id: string;
   user_id: string;
   type: string | null;
   status: string;
   vmid: number | null;
   proxmox_host: string | null;
+  allocation_operation_id: string | null;
   cf_tunnel_id: string | null;
   cf_hostname: string | null;
   error: string | null;
   created_at: string;
 }
+
+const ALLOCATION_OPERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type ErrorPurgeAction = "purged" | "skipped";
 
@@ -86,13 +91,23 @@ export interface PurgeErrorHivraAgentsOptions {
   now?: Date;
 }
 
-// Same script as the user-facing DELETE route: idempotent destroy that exits
-// non-zero unless the VM is verifiably gone (qm status AND local-lvm volumes),
-// so result.ok === "nothing of this VM remains on the host".
-function buildDestroyScript(vmid: number): string {
+// Destroy-and-verify script. It exits non-zero unless the VM is verifiably gone
+// (qm status AND local-lvm volumes), so result.ok === "nothing of this VM remains
+// on the host". It refuses to stop or destroy a VM whose provider tags do not
+// carry this row's allocation tag, so a stale VMID reused by another box is never
+// touched. NOT yet equivalent to the user-facing DELETE route: that route also
+// gates on the infrastructure binding tag and claims the durable delete lease.
+// Both must land before ERROR_PURGE_PROVIDER_MUTATION_ENABLED can flip.
+export function buildDestroyScript(vmid: number, allocationOperationId: string): string {
+  const allocationTag = `hivra-op-${allocationOperationId.replace(/-/g, "").toLowerCase()}`;
   return `set -euo pipefail
 VMID='${vmid}'
 if qm status "$VMID" >/dev/null 2>&1; then
+  TAGS="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')"
+  if ! printf '%s' "$TAGS" | tr ';' '\\n' | grep -Fxq '${allocationTag}'; then
+    echo "VMID $VMID is not tagged as owned by this row; refusing to destroy" >&2
+    exit 1
+  fi
   qm stop "$VMID" --timeout 30 2>/dev/null || true
   qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1
 fi
@@ -110,17 +125,26 @@ echo "destroyed $VMID"`;
 
 async function purgeOne(row: ErrorAgentRow): Promise<ErrorPurgeResult> {
   const base = { agentId: row.id, vmid: row.vmid };
+  if (row.operation_payload?.stage === PREPARED_OMARCHY_REFRESH_STAGE) {
+    return { ...base, action: "skipped", reason: "prepared Omarchy refresh owns this reservation" };
+  }
   if (!supabaseAdmin) return { ...base, action: "skipped", reason: "no database client" };
 
   // A vmid means a VM may have allocated before the provision failed (the POST
   // persists identity before any post-allocation step can error). Confirm it's
   // gone — destroying it if still present — before the row is retired.
   if (row.vmid) {
+    // Without the allocation id the destroy script cannot prove ownership, so
+    // a row with a VMID is never sent to the host.
+    const allocationOperationId = row.allocation_operation_id;
+    if (!allocationOperationId || !ALLOCATION_OPERATION_ID_PATTERN.test(allocationOperationId)) {
+      return { ...base, action: "skipped", reason: "no verified VM ownership evidence; VM not touched" };
+    }
     const env = resolveProxmoxTargetConfiguration(
       process.env,
       resolveHivraProxmoxHost(row.proxmox_host),
     ).env;
-    const destroy = await runProxmoxHostScript(buildDestroyScript(row.vmid), env, {
+    const destroy = await runProxmoxHostScript(buildDestroyScript(row.vmid, allocationOperationId), env, {
       timeoutMs: SSH_TIMEOUT_MS,
     });
     if (!destroy.ok) {
@@ -208,12 +232,13 @@ export async function runPurgeErrorHivraAgentsSweep(
 
   let query = supabaseAdmin
     .from("hivra_agents")
-    .select("id, user_id, type, status, vmid, proxmox_host, cf_tunnel_id, cf_hostname, error, created_at")
+    .select("id, user_id, type, status, vmid, proxmox_host, allocation_operation_id, cf_tunnel_id, cf_hostname, error, created_at, operation_payload")
     .eq("status", "error")
     // The managed purge uses managed credentials, paths and storage defaults.
     // Bound BYO rows require their owner-scoped target execution context.
     .is("deployment_target_id", null)
     .lt("created_at", cutoffIso)
+    .or("operation_payload->>stage.is.null,operation_payload->>stage.neq.prepared_omarchy_refresh")
     .order("created_at", { ascending: true })
     .limit(MAX_CANDIDATES_PER_RUN);
   if (options.agentId) query = query.eq("id", options.agentId);

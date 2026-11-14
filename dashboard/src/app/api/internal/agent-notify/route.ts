@@ -29,6 +29,7 @@ import { z } from "zod";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { decryptApiKey } from "@/lib/crypto";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const ROUTE = "/api/internal/agent-notify";
@@ -170,6 +171,24 @@ export async function POST(request: NextRequest) {
         method: "POST",
         source: SOURCE,
         failureType: "bearer_mismatch",
+        instanceId: payload.instance_id,
+        logLevel: "warn",
+      });
+    }
+
+    // Only reached once the bearer verified, so the limit keys on the instance
+    // (the credential's scope), not the caller IP. A compromised box key can
+    // still talk — but it cannot flood instance_pending_prompts at line rate.
+    const rateLimit = enforceRateLimit(`agent-notify:${payload.instance_id}`, {
+      limit: 60,
+      windowMs: 60_000,
+    });
+    if (!rateLimit.success) {
+      return apiError("Too many requests", 429, undefined, undefined, {
+        route: ROUTE,
+        method: "POST",
+        source: SOURCE,
+        failureType: "rate_limited",
         instanceId: payload.instance_id,
         logLevel: "warn",
       });

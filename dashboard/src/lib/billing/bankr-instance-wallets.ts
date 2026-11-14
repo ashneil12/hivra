@@ -11,7 +11,7 @@ import {
   type BankrPartnerFetch,
   type BankrWalletApiKeyRequest,
 } from "@/lib/billing/bankr-wallets";
-import { HERMESOS_TOKEN } from "@/lib/billing/token-registry";
+import { getActiveHivraToken, HERMESOS_TOKEN } from "@/lib/billing/token-registry";
 import {
   decodeUint256RpcResult,
   encodeErc20BalanceOfCallData,
@@ -248,6 +248,26 @@ const BASE_TRACKED_ERC20_TOKENS = [
     decimals: 18,
   },
 ] as const;
+
+/**
+ * Base ERC-20s read for an agent wallet's balances at `now`: the fixed list,
+ * plus $HIVRA once the token registry says it is live (listed right after
+ * HERMESOS). While $HIVRA is dormant this is exactly the fixed list.
+ */
+export function trackedBaseErc20Tokens(
+  now: Date = new Date()
+): ReadonlyArray<{ symbol: string; address: string; decimals: number }> {
+  const hivra = getActiveHivraToken(now);
+  if (!hivra) return BASE_TRACKED_ERC20_TOKENS;
+  const tokens: Array<{ symbol: string; address: string; decimals: number }> = [];
+  for (const token of BASE_TRACKED_ERC20_TOKENS) {
+    tokens.push(token);
+    if (token.symbol === "HERMESOS") {
+      tokens.push({ symbol: hivra.symbol, address: hivra.address, decimals: hivra.decimals });
+    }
+  }
+  return tokens;
+}
 const DEFAULT_BASE_RPC_URL = "https://mainnet.base.org";
 const BALANCE_CACHE_TTL_MS = 60_000;
 const balanceCache = new Map<string, { expiresAt: number; value: InstanceBankrWalletBalance }>();
@@ -1143,7 +1163,7 @@ function bankrUserFetchImpl(fetchImpl?: BankrUserFetch): BankrUserFetch {
  * accepts any valid key (read-only included) and returns the account's
  * addresses, so it proves the key works without moving anything.
  */
-export async function lookupBankrApiKeyWallet(params: {
+async function lookupBankrApiKeyWallet(params: {
   apiKey: string;
   env?: Record<string, string | undefined>;
   fetchImpl?: BankrUserFetch;
@@ -1649,7 +1669,7 @@ export async function readInstanceBankrWalletBalances(params: {
   }
 
   const tokenBalances = await Promise.all(
-    BASE_TRACKED_ERC20_TOKENS.map(async (token) => {
+    trackedBaseErc20Tokens().map(async (token) => {
       const raw = decodeUint256RpcResult(
         await rpcCall<string>(
           rpcUrl,

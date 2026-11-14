@@ -299,6 +299,17 @@ class RuntimeReceiptTest(unittest.TestCase):
         self.assertEqual(value.agent_kind, "linux-desktop")
         self.assertIsNone(value.agent_zero_image)
 
+    def test_argument_contract_accepts_linux_server_without_an_agent_image(self):
+        with patch("sys.argv", ["receipt", "--provisioner-version", "2026.11.10.4", "--agent-kind", "linux-server",
+                                "--substrate", "proxmox-kvm", "--browser-enabled", "0"]):
+            value = receipt.arguments()
+        self.assertEqual(value.agent_kind, "linux-server")
+        self.assertIsNone(value.agent_zero_image)
+        with patch("sys.argv", ["receipt", "--provisioner-version", "2026.11.10.4", "--agent-kind", "linux-servers",
+                                "--substrate", "proxmox-kvm", "--browser-enabled", "0"]), \
+                patch("sys.stderr"), self.assertRaises(SystemExit):
+            receipt.arguments()
+
 
 if __name__ == "__main__":
     unittest.main()

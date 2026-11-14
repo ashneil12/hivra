@@ -3,8 +3,8 @@ import "server-only";
 import { reportResponseBody } from "./server-enrollment-receiver";
 import { renderRefusalLine } from "./server-enrollment-script";
 
-export const SERVER_ENROLLMENT_REPORT_PATH = "/api/infrastructure/server-enrollments/report";
-export const SERVER_ENROLLMENT_SCRIPT_PATH = "/enroll";
+const SERVER_ENROLLMENT_REPORT_PATH = "/api/infrastructure/server-enrollments/report";
+const SERVER_ENROLLMENT_SCRIPT_PATH = "/enroll";
 
 /**
  * Before showing a command, check that this deployment answers both machine

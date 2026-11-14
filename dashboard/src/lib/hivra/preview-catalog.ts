@@ -1,4 +1,4 @@
-type HivraPreviewId = "deepseek-harness" | "buzz" | "omarchy";
+type HivraPreviewId = "buzz";
 
 export interface HivraPreviewDefinition {
   id: HivraPreviewId;
@@ -21,17 +21,6 @@ export interface HivraPreviewDefinition {
  */
 export const HIVRA_PREVIEWS: readonly HivraPreviewDefinition[] = [
   {
-    id: "deepseek-harness",
-    name: "DeepSeek Harness",
-    kind: "agent-runtime",
-    eyebrow: "Private preview",
-    summary: "DeepSeek's coding agent, in its own interface on a computer of its own, using the model key you choose. It's in private preview and can't be launched yet.",
-    href: "/dashboard/agents#deepseek-harness",
-    actionLabel: "Open Agents",
-    usableNow: false,
-    launchable: false,
-  },
-  {
     id: "buzz",
     name: "Buzz",
     kind: "collaboration",
@@ -40,17 +29,6 @@ export const HIVRA_PREVIEWS: readonly HivraPreviewDefinition[] = [
     href: "/dashboard/collaboration#buzz",
     actionLabel: "Open collaboration",
     usableNow: true,
-    launchable: false,
-  },
-  {
-    id: "omarchy",
-    name: "Omarchy",
-    kind: "computer-image",
-    eyebrow: "Operating system",
-    summary: "The Omarchy desktop on a computer of its own. It's in preview.",
-    href: "/dashboard/computers#omarchy",
-    actionLabel: "Inspect computer",
-    usableNow: false,
     launchable: false,
   },
 ] as const;

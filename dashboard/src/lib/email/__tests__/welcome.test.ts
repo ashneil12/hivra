@@ -89,6 +89,15 @@ describe("sendWelcomeEmail", () => {
     );
   });
 
+  it("escapes the first name in the HTML greeting but not the plain-text one", async () => {
+    sendMock.mockResolvedValue({ data: { id: "email_1" }, error: null });
+    await sendWelcomeEmail({ email: "user@example.com", firstName: '<img src=x onerror="alert(1)">' });
+    const payload = sendMock.mock.calls[0][0] as { text: string; html: string };
+    expect(payload.html).not.toContain("<img src=x");
+    expect(payload.html).toContain("Hey &lt;img src=x onerror=&quot;alert(1)&quot;&gt;,");
+    expect(payload.text).toContain('Hey <img src=x onerror="alert(1)">,');
+  });
+
   it("says the Hivra computer stays on, not the agent on any computer", async () => {
     sendMock.mockResolvedValue({ data: { id: "email_1" }, error: null });
     await sendWelcomeEmail({ email: "user@example.com", firstName: "Sam" });

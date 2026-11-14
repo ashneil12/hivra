@@ -19,8 +19,8 @@ export function MemoryPauseBanner({ status, pausedReason, ramLimitMb, actionLoad
     data-testid="instance-ram-cap-banner"
     className="instance-chat-banner"
     style={{
-      background: 'rgba(180, 83, 9, 0.10)',
-      borderBottom: '1px solid rgba(180, 83, 9, 0.28)',
+      background: 'color-mix(in srgb, var(--hg-warn) 10%, transparent)',
+      borderBottom: '1px solid color-mix(in srgb, var(--hg-warn) 28%, transparent)',
       padding: '14px 24px',
       display: 'flex',
       alignItems: 'center',
@@ -31,15 +31,15 @@ export function MemoryPauseBanner({ status, pausedReason, ramLimitMb, actionLoad
     }}
   >
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 460px' }}>
-      <AlertTriangle size={18} strokeWidth={2.25} style={{ color: '#92400e', flexShrink: 0 }} />
+      <AlertTriangle size={18} strokeWidth={2.25} style={{ color: 'var(--hg-warn)', flexShrink: 0 }} />
       <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
         <span
           className="mono"
-          style={{ fontSize: 11, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.12em' }}
+          style={{ fontSize: 11, fontWeight: 700, color: 'var(--hg-warn)', textTransform: 'uppercase', letterSpacing: '0.12em' }}
         >
           {MEMORY_PAUSE_TITLE}
         </span>
-        <span style={{ fontSize: 13, color: 'rgba(17, 24, 39, 0.82)', lineHeight: 1.45 }}>
+        <span style={{ fontSize: 13, color: 'var(--hg-text-2)', lineHeight: 1.45 }}>
           {memoryPauseMessage(ramLimitMb)}
         </span>
       </div>
@@ -49,8 +49,8 @@ export function MemoryPauseBanner({ status, pausedReason, ramLimitMb, actionLoad
         type="button"
         onClick={onReviewResources}
         style={{
-          background: '#1a1a1a',
-          color: '#ffffff',
+          background: 'var(--hg-accent)',
+          color: 'var(--hg-on-accent)',
           border: 'none',
           padding: '8px 14px',
           fontSize: 11,
@@ -68,9 +68,9 @@ export function MemoryPauseBanner({ status, pausedReason, ramLimitMb, actionLoad
         onClick={onRestart}
         disabled={actionLoading}
         style={{
-          background: 'rgba(255, 255, 255, 0.6)',
-          color: '#92400e',
-          border: '1px solid rgba(180, 83, 9, 0.28)',
+          background: 'var(--hg-glass-strong)',
+          color: 'var(--hg-warn)',
+          border: '1px solid color-mix(in srgb, var(--hg-warn) 28%, transparent)',
           padding: '8px 14px',
           fontSize: 11,
           fontWeight: 700,

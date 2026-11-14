@@ -9,6 +9,7 @@ import { useLocale } from '@/components/i18n/LocaleProvider';
 import { TokenGeoNotice } from '@/components/token/TokenGeoNotice';
 import { tokenFeaturesShown, useTokenGeoAccess } from '@/hooks/useTokenGeoAccess';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
+import { pollWhenVisible } from '@/lib/poll-when-visible';
 import { STEP_UP_CANCELLED_VERIFY_MESSAGE, useStepUpJsonRequest } from '@/components/wallet/useStepUpJsonRequest';
 import { readJsonWithDiagnostics } from '@/lib/client/json-response-diagnostics';
 import { LAUNCH_ROUTE } from '@/lib/hivra/launch-navigation';
@@ -36,6 +37,7 @@ import {
   isRecord,
   lockedQuantityForTier,
   lockedThresholdFor,
+  lockWalletHivraToShow,
   nextSelfCustodyLockTier,
   readChallengeData,
   readWalletAccounts,
@@ -100,6 +102,23 @@ interface WalletApiPayload {
   depositWallet: BankrDepositWalletSummary | null;
   creditDepositWallet: BankrDepositWalletSummary | null;
   tokenLockWallet: BankrDepositWalletSummary | null;
+  /**
+   * The lock wallet's live $HIVRA balance. Present only once $HIVRA is live
+   * (null when the wallet holds none); absent while it is dormant.
+   */
+  tokenLockHivra?: {
+    tokenSymbol: string;
+    tokenAddress: string;
+    tokenDecimals: number;
+    balanceRaw: string;
+    balanceDisplay: string;
+  } | null;
+  /**
+   * Whether the lock wallet holds any $HermesOS. Present only once $HIVRA is
+   * live; false for a lock wallet that holds only $HIVRA, which then shows its
+   * $HIVRA withdraw and none of the $HermesOS panels.
+   */
+  tokenLockHoldsHermes?: boolean;
 }
 
 
@@ -157,6 +176,7 @@ const walletLinkButtonStyle: React.CSSProperties = {
   minHeight: 44,
   padding: '10px 14px',
   border: '1px solid var(--ink-black)',
+  borderRadius: 10,
   background: 'var(--ink-black)',
   color: 'var(--bg-surface)',
   textDecoration: 'none',
@@ -223,6 +243,7 @@ function WalletEnvironmentNotice({
         gap: 6,
         padding: '6px 10px',
         border: '1px solid var(--ink-black)',
+        borderRadius: 7,
         background: 'transparent',
         color: 'var(--ink-black)',
         cursor: 'pointer',
@@ -245,6 +266,7 @@ function WalletEnvironmentNotice({
           role="status"
           style={{
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
+            borderRadius: 10,
             background: 'color-mix(in srgb, var(--gold-leaf) 6%, transparent)',
             padding: '12px 16px',
             display: 'flex',
@@ -293,23 +315,24 @@ function WalletEnvironmentNotice({
         <div
           role="alert"
           style={{
-            border: '1px solid #dc2626',
-            background: 'color-mix(in srgb, #dc2626 5%, transparent)',
+            border: '1px solid var(--hg-bad)',
+            borderRadius: 10,
+            background: 'color-mix(in srgb, var(--hg-bad) 5%, transparent)',
             padding: '12px 16px',
             display: 'flex',
             alignItems: 'flex-start',
             gap: 10,
           }}
         >
-          <AlertTriangle size={15} style={{ color: '#dc2626', flexShrink: 0, marginTop: 2 }} />
+          <AlertTriangle size={15} style={{ color: 'var(--hg-bad)', flexShrink: 0, marginTop: 2 }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: '#dc2626' }}>{connectError}</p>
+            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--hg-bad)' }}>{connectError}</p>
             {!hasProvider && copyButton}
           </div>
         </div>
       )}
       {showSuccess && (
-        <p role="status" style={{ fontSize: 12.5, color: '#16a34a', margin: 0, lineHeight: 1.5 }}>
+        <p role="status" style={{ fontSize: 12.5, color: 'var(--hg-ok)', margin: 0, lineHeight: 1.5 }}>
           {connectSuccess}
         </p>
       )}
@@ -329,9 +352,17 @@ export default function WalletPage() {
   const stepUpRequest = useStepUpJsonRequest();
   const fromWelcome = searchParams?.get('from') === 'welcome';
   const welcomeRedirectFiredRef = useRef(false);
+  const withdrawReloadTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (withdrawReloadTimerRef.current !== null) window.clearTimeout(withdrawReloadTimerRef.current);
+  }, []);
   const [data, setData] = useState<WalletApiPayload | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityPayload | null>(null);
   const [priceUnavailable, setPriceUnavailable] = useState(false);
+  // New $HIVRA tiers are off for this account until $HIVRA passes the price
+  // gate (eligibility answers reason "hivra_not_ready", or reports
+  // newTiersAvailable: false for a tier already held). Not a price outage.
+  const [hivraNotReady, setHivraNotReady] = useState(false);
   const [status, setStatus] = useState<WalletStatus>('loading');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -496,13 +527,21 @@ export default function WalletPage() {
             const nextWalletAddress = walletAddressFromEligibility(nextEligibility);
             if (nextWalletAddress) setVerifiedWalletAddress(nextWalletAddress);
             setPriceUnavailable(false);
+            setHivraNotReady(nextEligibility.tokenAccess?.newTiersAvailable === false);
           }
         } catch {
           // ignore — eligibility section just won't render
         }
       } else if (eligibilityResponse.status === 503) {
+        const failure = await eligibilityResponse.json().catch(() => ({}));
         setEligibility(null);
-        setPriceUnavailable(true);
+        if (failure?.reason === 'hivra_not_ready') {
+          setHivraNotReady(true);
+          setPriceUnavailable(false);
+        } else {
+          setHivraNotReady(false);
+          setPriceUnavailable(true);
+        }
       }
     } catch (err) {
       setStatus('error');
@@ -760,9 +799,31 @@ export default function WalletPage() {
     }
   }, []);
 
+  // After a withdrawal: refresh once now (the post-withdraw eligibility re-check
+  // already wrote a fresh snapshot) and again 60s later — by which time Base has
+  // definitely confirmed the tx and the chain read is authoritative.
+  const handleWithdrew = useCallback(() => {
+    void load({ silent: true });
+    if (withdrawReloadTimerRef.current !== null) window.clearTimeout(withdrawReloadTimerRef.current);
+    withdrawReloadTimerRef.current = window.setTimeout(() => {
+      withdrawReloadTimerRef.current = null;
+      void load({ silent: true });
+    }, 60_000);
+  }, [load]);
+
   const tokenLockAddress = data?.tokenLockWallet?.normalizedAddress || data?.tokenLockWallet?.address || null;
-  const isLegacyCustody = Boolean(data?.custodyMode === 'legacy_custody' || data?.tokenLockWallet);
+  // Legacy custody follows the lock wallet's $HermesOS. A lock wallet that holds
+  // only $HIVRA (tokenLockHoldsHermes false, sent only once $HIVRA is live) is
+  // not legacy custody: it gets its $HIVRA withdraw and no $HermesOS panels.
+  const isLegacyCustody = Boolean(
+    data?.custodyMode === 'legacy_custody' || (data?.tokenLockWallet && data?.tokenLockHoldsHermes !== false)
+  );
   const isSelfCustody = Boolean(data?.custodyMode === 'self_custody' || (status === 'ready' && !isLegacyCustody));
+  // The lock wallet's $HIVRA, shown only when the server reports a non-zero
+  // balance of the token this build knows as live $HIVRA.
+  const lockWalletHivra = lockWalletHivraToShow(data?.tokenLockHivra);
+  // The withdraw rows: $HermesOS for legacy custody, $HIVRA whenever the lock wallet holds it.
+  const showLockWalletActions = isLegacyCustody || Boolean(lockWalletHivra && tokenLockAddress);
   // Token geo-policy: the panels that invite a NEW token action (verify a wallet to
   // qualify, lock a price, tier thresholds, the hold-to-unlock prompt, deposit) are
   // for a viewer the server allows and for a blocked user who already holds token
@@ -807,9 +868,15 @@ export default function WalletPage() {
       return;
     }
 
-    setWithdrawAddress(null);
-    setWithdrawAddressLoading(false);
-    setWithdrawAddressFormOpen(false);
+    if (showLockWalletActions) {
+      // A lock wallet holding only $HIVRA still withdraws to the saved address.
+      setWithdrawAddressLoading(true);
+      void loadWithdrawAddress();
+    } else {
+      setWithdrawAddress(null);
+      setWithdrawAddressLoading(false);
+      setWithdrawAddressFormOpen(false);
+    }
     setQuoteError(null);
 
     if (isSelfCustody && connectedSelfCustodyAddress) {
@@ -818,7 +885,7 @@ export default function WalletPage() {
     }
 
     setQuotes({ pro: null, power: null });
-  }, [connectedSelfCustodyAddress, isLegacyCustody, isSelfCustody, loadWithdrawAddress, loadQuotes]);
+  }, [connectedSelfCustodyAddress, isLegacyCustody, isSelfCustody, showLockWalletActions, loadWithdrawAddress, loadQuotes]);
 
   // Auto-refresh eligibility + quotes on a 5-min cadence so the live-priced
   // threshold and the lock countdown stay current without a manual refresh
@@ -826,10 +893,10 @@ export default function WalletPage() {
   // served from cache, only one in twelve actually hits CoinGecko.
   useEffect(() => {
     const intervalMs = 5 * 60 * 1000;
-    const handle = window.setInterval(() => {
+    const handle = window.setInterval(pollWhenVisible(() => {
       void load({ silent: true });
       if (isLegacyCustody || connectedSelfCustodyAddress) void loadQuotes();
-    }, intervalMs);
+    }), intervalMs);
     return () => window.clearInterval(handle);
   }, [connectedSelfCustodyAddress, isLegacyCustody, load, loadQuotes]);
 
@@ -864,7 +931,7 @@ export default function WalletPage() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.4 }}
+      transition={{ duration: 0.2 }}
       style={{
         maxWidth: 'min(960px, 100%)',
         margin: '1rem auto 5rem',
@@ -881,6 +948,7 @@ export default function WalletPage() {
             gap: 8,
             padding: '5px 12px',
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 30%, transparent)',
+            borderRadius: 7,
             background: 'color-mix(in srgb, var(--gold-leaf) 5%, transparent)',
             fontSize: 9,
             textTransform: 'uppercase',
@@ -939,6 +1007,7 @@ export default function WalletPage() {
         <div
           style={{
             border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
+            borderRadius: 10,
             background: 'color-mix(in srgb, var(--gold-leaf) 5%, transparent)',
             padding: '12px 16px',
             marginBottom: '1.5rem',
@@ -993,11 +1062,13 @@ export default function WalletPage() {
           error={walletConnectError}
           success={walletConnectSuccess}
           onConnect={handleConnectWallet}
-          onLockPrice={handleLockPrice}
+          onLockPrice={hivraNotReady ? undefined : handleLockPrice}
         />
       )}
 
-      {tokenPanels && isReady && isLegacyCustody && (
+      {/* While new $HIVRA tiers are off, no new price lock is offered; a
+          quote already locked stays visible. */}
+      {tokenPanels && isReady && isLegacyCustody && (!hivraNotReady || quotes.pro || quotes.power) && (
         <QuotePanel
           proQuote={quotes.pro}
           powerQuote={quotes.power}
@@ -1011,9 +1082,31 @@ export default function WalletPage() {
       )}
 
       {tokenPanels && quoteError && (
-        <p style={{ fontSize: 12, color: '#dc2626', marginTop: '-0.5rem', marginBottom: '1rem' }}>
+        <p style={{ fontSize: 12, color: 'var(--hg-bad)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
           {quoteError}
         </p>
+      )}
+
+      {tokenPanels && hivraNotReady && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
+            background: 'var(--hg-glass)',
+            padding: '1rem 1.25rem',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <AlertTriangle size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
+          <span>{walletCopy.tokenPaymentsNotReady}</span>
+        </div>
       )}
 
       {tokenPanels && !eligibility && priceUnavailable && (
@@ -1021,8 +1114,9 @@ export default function WalletPage() {
           role="status"
           aria-live="polite"
           style={{
-            border: '1px solid var(--etched-border)',
-            background: 'var(--bg-surface)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 10,
+            background: 'var(--hg-glass)',
             padding: '1rem 1.25rem',
             marginBottom: '1.5rem',
             display: 'flex',
@@ -1076,10 +1170,10 @@ export default function WalletPage() {
       />
 
       {error && (
-        <p style={{ fontSize: 12, color: '#dc2626', margin: '0 0 1rem' }}>{error}</p>
+        <p style={{ fontSize: 12, color: 'var(--hg-bad)', margin: '0 0 1rem' }}>{error}</p>
       )}
 
-      {isLegacyCustody && (
+      {showLockWalletActions && (
         <section aria-label="Wallet actions" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: '1.5rem' }}>
           <WithdrawDestinationCard
             address={withdrawAddress}
@@ -1087,34 +1181,38 @@ export default function WalletPage() {
             loading={withdrawAddressLoading}
             onEdit={() => setWithdrawAddressFormOpen(true)}
           />
-          {tokenPanels && (
+          {tokenPanels && isLegacyCustody && (
             <ActionRow
               icon={<ArrowDownToLine size={14} />}
               label="Deposit"
               description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
             />
           )}
-          <WithdrawSection
-            tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
-            balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
-            withdrawAddress={withdrawAddress}
-            withdrawAvailableAt={withdrawAvailableAt}
-            onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
-            onWithdrew={() => {
-              // Refresh once now (the post-withdraw eligibility re-check
-              // already wrote a fresh snapshot) and again 60s later — by
-              // which time Base has definitely confirmed the tx and the
-              // chain read is authoritative.
-              void load({ silent: true });
-              window.setTimeout(() => {
-                void load({ silent: true });
-              }, 60_000);
-            }}
-          />
+          {isLegacyCustody && (
+            <WithdrawSection
+              tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
+              balanceDisplay={eligibility?.balance?.balanceDisplay ?? '—'}
+              withdrawAddress={withdrawAddress}
+              withdrawAvailableAt={withdrawAvailableAt}
+              onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
+              onWithdrew={handleWithdrew}
+            />
+          )}
+          {lockWalletHivra && (
+            <WithdrawSection
+              asset="HIVRA"
+              tokenSymbol={lockWalletHivra.tokenSymbol}
+              balanceDisplay={lockWalletHivra.balanceDisplay}
+              withdrawAddress={withdrawAddress}
+              withdrawAvailableAt={withdrawAvailableAt}
+              onRequestSetAddress={() => setWithdrawAddressFormOpen(true)}
+              onWithdrew={handleWithdrew}
+            />
+          )}
         </section>
       )}
 
-      {isLegacyCustody && withdrawAddressFormOpen && (
+      {showLockWalletActions && withdrawAddressFormOpen && (
         <WithdrawAddressForm
           initialAddress={withdrawAddress}
           onCancel={() => setWithdrawAddressFormOpen(false)}

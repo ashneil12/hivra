@@ -11,6 +11,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
+// A 25 MB upload plus transcription can legitimately take minutes; past this
+// the upstream is hung and the route should answer instead of holding open.
+const OPENAI_TRANSCRIPTION_TIMEOUT_MS = 180_000;
 const DEFAULT_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const TRANSCRIPTION_OPENAI_API_KEY_ENV = "VOICE_TRANSCRIPTION_OPENAI_API_KEY";
 // Internal sentinel — `resolveRequestError` matches on this exact string to
@@ -195,16 +198,37 @@ export async function POST(request: Request) {
       upstreamFormData.set("prompt", promptValue.trim());
     }
 
-    const upstreamResponse = await fetch(
-      "https://api.openai.com/v1/audio/transcriptions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openAiApiKey}`,
-        },
-        body: upstreamFormData,
+    let upstreamResponse: Response;
+    try {
+      upstreamResponse = await fetch(
+        "https://api.openai.com/v1/audio/transcriptions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${openAiApiKey}`,
+          },
+          body: upstreamFormData,
+          signal: AbortSignal.timeout(OPENAI_TRANSCRIPTION_TIMEOUT_MS),
+        }
+      );
+    } catch (error) {
+      // AbortSignal.timeout rejects with a DOMException named TimeoutError.
+      if ((error as { name?: unknown } | null)?.name === "TimeoutError") {
+        return apiError(
+          "OpenAI transcription timed out. Please try again.",
+          504,
+          {
+            failureType: "openai_transcription_timeout",
+          },
+          undefined,
+          {
+            route: ROUTE_PATH,
+            source: "openai-transcriptions",
+          }
+        );
       }
-    );
+      throw error;
+    }
 
     if (!upstreamResponse.ok) {
       return apiError(

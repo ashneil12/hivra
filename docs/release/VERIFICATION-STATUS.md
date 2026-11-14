@@ -5,6 +5,9 @@ Canary receipts remain in the private engineering history because they contain
 disposable instance identities, host placement, network addresses, local paths,
 and other environment-specific operational data.
 
+This file records evidence, not availability. What a person can launch today,
+and the owner decisions behind it, is in [`STATUS.md`](../STATUS.md).
+
 ## Source and self-hosting
 
 - The credential gate for the fresh source-only repository is reconciled.

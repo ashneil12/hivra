@@ -460,7 +460,7 @@ it("cannot use readiness after the journal refuses it", async () => {
   expect(h.deps.beginShutdown).not.toHaveBeenCalled(); expect(h.power.dispatch).not.toHaveBeenCalled();
 });
 
-it("retains the one-use marker but sends no power when readiness ages out during the final provider read", async () => {
+it("does not consume the one-use marker when readiness ages out during the final provider read", async () => {
   const h = resizedRunning();
   let wallTime = Date.parse(NOW); h.deps.now = () => new Date(wallTime);
   (h.provider.getServer as jest.Mock).mockResolvedValueOnce({ ...server("target"), status: "running" })
@@ -469,7 +469,21 @@ it("retains the one-use marker but sends no power when readiness ages out during
       return { ...server("target"), status: "running" };
     });
   await advanceProviderResize(h.current.input, "dispatch", h.deps);
-  expect(h.current.shutdownAttemptedAt).toBe(NOW); expect(h.power.dispatch).not.toHaveBeenCalled();
+  expect(h.deps.beginShutdown).not.toHaveBeenCalled();
+  expect(h.current.shutdownAttemptedAt).toBeNull(); expect(h.power.dispatch).not.toHaveBeenCalled();
+});
+
+// Regression: a stale readiness used to consume the one-use marker with no stop
+// sent, so the resize could never reach its shutdown and stayed on a running computer.
+it("sends no stop and leaves the marker unused when readiness is 16s old at dispatch", async () => {
+  const h = resizedRunning();
+  const stale = new Date(Date.parse(NOW) - 16_000).toISOString();
+  h.deps.inspectReadiness.mockResolvedValueOnce({ observedAt: stale, hostFingerprintSha256: `SHA256:${"A".repeat(43)}`,
+    receipt: { version: 1 as const, ready: true as const, bootId: TARGET_ID, powerHandlerPid: 649 } } as never);
+  await advanceProviderResize(h.current.input, "dispatch", h.deps);
+  expect(h.deps.beginShutdown).not.toHaveBeenCalled();
+  expect(h.current.shutdownAttemptedAt).toBeNull();
+  expect(h.power.dispatch).not.toHaveBeenCalled();
 });
 
 it("does not repeat an uncertain shutdown or unlock a stopped computer without its original receipt", async () => {
@@ -506,13 +520,14 @@ it("will not shut down after deletion intent wins or the atomic grant is decline
   expect(declined.power.dispatch).not.toHaveBeenCalled();
 });
 
-it("retains the marker without dispatch when the final provider read changes or the local fence expires", async () => {
+it("leaves the marker unused when the final provider read changes, and retains it when the local fence expires after the grant", async () => {
   const changed = resizedRunning();
   (changed.provider.getServer as jest.Mock)
     .mockResolvedValueOnce({ ...server("target"), status: "running" })
     .mockResolvedValueOnce({ ...server("target"), primary_disk_size: 160, status: "running" });
   await advanceProviderResize(changed.current.input, "dispatch", changed.deps);
-  expect(changed.current.shutdownAttemptedAt).toBe(NOW);
+  expect(changed.deps.beginShutdown).not.toHaveBeenCalled();
+  expect(changed.current.shutdownAttemptedAt).toBeNull();
   expect(changed.power.dispatch).not.toHaveBeenCalled();
   const expired = resizedRunning();
   expired.deps.beginShutdown.mockImplementationOnce(async () => {

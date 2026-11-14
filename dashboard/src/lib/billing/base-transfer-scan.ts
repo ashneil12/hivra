@@ -37,6 +37,58 @@ const INTERPOLATION_PROBES = 4;
 // with a handful of transfers; anything far above that is refused, not scanned.
 const MAX_SCAN_SPAN_BLOCKS = 50_000;
 const MAX_TRANSFER_TIMESTAMP_LOOKUPS = 200;
+
+/**
+ * Dust floor for a payment session: transfers below a thousandth of the
+ * amount the session asks for are skipped before any per-block timestamp
+ * lookup. Without it, anyone can stall a deposit address by spraying tiny
+ * transfers across more blocks than the lookup cap. Nothing below the floor
+ * can pay the session (payments are matched or banded at the full amount).
+ */
+export function paymentDustFloor(requiredRaw: bigint): bigint {
+  return requiredRaw > 0n ? requiredRaw / 1000n : 0n;
+}
+
+/**
+ * Timestamps for the blocks a scan's transfers sit in. Up to the lookup cap,
+ * each block is read. Above it (a flood of transfers across many blocks), Base's
+ * fixed block time is used instead of one read per block: the earliest block is
+ * read and checked against the head, and when the spacing is exactly the block
+ * time every block between them is computed. If the spacing does not hold, the
+ * scan refuses as before rather than guess.
+ */
+export async function blockTimestampsFor(
+  chain: { blockTimestamp(block: number): Promise<number> },
+  blocks: Set<number>,
+  head: { block: number; timestampSec: number },
+  label: string,
+): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (blocks.size <= MAX_TRANSFER_TIMESTAMP_LOOKUPS) {
+    for (const block of blocks) out.set(block, await chain.blockTimestamp(block));
+    return out;
+  }
+  const earliest = Math.min(...blocks);
+  const earliestSec = await chain.blockTimestamp(earliest);
+  if (head.timestampSec - earliestSec !== (head.block - earliest) * BASE_BLOCK_TIME_SEC) {
+    throw new Error(
+      `${label} found transfers in ${blocks.size} blocks (over ${MAX_TRANSFER_TIMESTAMP_LOOKUPS} lookups) and block ` +
+        `${earliest} is not on the fixed ${BASE_BLOCK_TIME_SEC} s spacing to the head; refusing to guess block times`
+    );
+  }
+  for (const block of blocks) {
+    out.set(block, head.timestampSec - (head.block - block) * BASE_BLOCK_TIME_SEC);
+  }
+  return out;
+}
+
+/**
+ * Dust floor when no amount is asked for (a wrong-token sweep): a
+ * ten-thousandth of one whole token.
+ */
+export function tokenDustFloor(decimals: number): bigint {
+  return 10n ** BigInt(Math.max(0, Math.trunc(decimals) - 4));
+}
 // A provider that accepts the connection and then stalls would otherwise hold
 // the request until the platform kills the function (undici's default header
 // timeout is 300 s). Time out, and let the retry layer try again.
@@ -292,6 +344,8 @@ export interface TransferWindowScan {
   transfers: ScannedTransfer[];
   // Every block at or before this time has >= minConfirmations.
   confirmedHeadMs: number;
+  // Transfers skipped as dust (below minAmount); never credited or surfaced.
+  dustSkipped: number;
 }
 
 /**
@@ -307,6 +361,8 @@ export async function scanErc20TransfersInWindow(params: {
   fromMs: number;
   toMs: number;
   minConfirmations: number;
+  /** Transfers below this many base units are dust: skipped, never looked up. */
+  minAmount?: bigint;
 }): Promise<TransferWindowScan> {
   const { chain } = params;
   const tokenAddress = normalizeEvmAddress(params.tokenAddress);
@@ -338,6 +394,8 @@ export async function scanErc20TransfersInWindow(params: {
     toBlock,
   });
 
+  const minAmount = params.minAmount ?? 0n;
+  let dustSkipped = 0;
   const parsed = new Map<
     string,
     Omit<ScannedTransfer, "timestampMs" | "observedAt"> & { logTimestampSec: number | null }
@@ -353,6 +411,10 @@ export async function scanErc20TransfersInWindow(params: {
       const amount = decodeUint256LogData(log.data);
       // Zero-value Transfer events are address-poisoning spam, not payments.
       if (amount <= 0n) continue;
+      if (amount < minAmount) {
+        dustSkipped += 1;
+        continue;
+      }
       if (log.topics?.[1] === toTopic) continue; // the wallet paying itself
       const blockNumber = parseRpcQuantity(log.blockNumber, "log block number");
       const logIndex = parseRpcQuantity(log.logIndex, "log index");
@@ -376,14 +438,15 @@ export async function scanErc20TransfersInWindow(params: {
   const blocksToFetch = new Set(
     [...parsed.values()].filter((entry) => entry.logTimestampSec === null).map((entry) => entry.blockNumber)
   );
-  if (blocksToFetch.size > MAX_TRANSFER_TIMESTAMP_LOOKUPS) {
-    throw new Error(
-      `Transfer scan found transfers in ${blocksToFetch.size} blocks; refusing to look up more than ${MAX_TRANSFER_TIMESTAMP_LOOKUPS}`
-    );
-  }
+  const blockTimes = await blockTimestampsFor(
+    chain,
+    blocksToFetch,
+    { block: latest, timestampSec: latestSec },
+    "Transfer scan"
+  );
   const transfers: ScannedTransfer[] = [];
   for (const { logTimestampSec, ...transfer } of parsed.values()) {
-    const timestampSec = logTimestampSec ?? (await chain.blockTimestamp(transfer.blockNumber));
+    const timestampSec = logTimestampSec ?? blockTimes.get(transfer.blockNumber)!;
     transfers.push({
       ...transfer,
       timestampMs: timestampSec * 1000,
@@ -396,5 +459,5 @@ export async function scanErc20TransfersInWindow(params: {
   const confirmedHeadMs =
     confirmedHead >= 0 ? (await chain.blockTimestamp(confirmedHead)) * 1000 : Number.NEGATIVE_INFINITY;
 
-  return { transfers, confirmedHeadMs };
+  return { transfers, confirmedHeadMs, dustSkipped };
 }

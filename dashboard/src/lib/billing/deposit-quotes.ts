@@ -47,6 +47,7 @@ import {
   type HermesPriceQuote,
 } from "./price-feed";
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
+import { assertHivraReadyFor } from "./hivra-readiness";
 
 const DEPOSIT_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
 const DEPOSIT_QUOTE_SELECT =
@@ -194,6 +195,9 @@ export async function createDepositQuote(
   if (existingActive.length > 0) {
     return existingActive[0];
   }
+
+  // A NEW $HIVRA hold quote (a new holder tier) needs $HIVRA usable.
+  await assertHivraReadyFor(access, tokenKey, { now });
 
   await assertNoActiveCryptoPaymentSession({
     userId: params.userId,

@@ -6,12 +6,14 @@
 // never needs doctl or a terminal. Everything shown is folded from events
 // DigitalOcean reported — nothing here marks a run done on its own.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertTriangle, Check, Info, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { AGENT_MARKDOWN_COMPONENTS } from "@/components/markdown/agent-markdown-image";
 import { computerContractDisplayText } from "@/lib/agent-computers/computer-contract";
 import {
   answerManagedSessionApproval,
@@ -39,7 +41,8 @@ import {
 
 import styles from "./ManagedSessionChat.module.css";
 
-const MD_COMPONENTS = {
+export const MD_COMPONENTS = {
+  ...AGENT_MARKDOWN_COMPONENTS,
   code(props: { className?: string; children?: React.ReactNode }) {
     const text = String(props.children ?? "").replace(/\n$/, "");
     const lang = /language-(\w+)/.exec(props.className || "")?.[1];
@@ -47,6 +50,14 @@ const MD_COMPONENTS = {
     return <code>{text}</code>;
   },
 };
+
+const MD_REMARK_PLUGINS = [remarkGfm];
+
+/** Memoized on the rendered text so re-renders (polls, keystrokes) don't
+ *  re-parse transcript markdown that's already on screen. */
+const Md = memo(function Md({ text }: { text: string }) {
+  return <ReactMarkdown remarkPlugins={MD_REMARK_PLUGINS} components={MD_COMPONENTS}>{text}</ReactMarkdown>;
+});
 
 type StreamState = "idle" | "connecting" | "live" | "reconnecting" | "stopped";
 
@@ -72,7 +83,7 @@ function HivraSetupNote({ text, agentName }: { text: string; agentName: string }
         <span className={styles.setupSummary}>Hivra told {agentName} where it runs and how you see its work.</span>
       </summary>
       <div className={styles.setupBody}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{computerContractDisplayText(text)}</ReactMarkdown>
+        <Md text={computerContractDisplayText(text)} />
       </div>
     </details>
   );
@@ -109,7 +120,7 @@ function RunView({
             {run.tools.map((tool) => (
               <div key={tool.id} className={styles.tool}>
                 {tool.status === "running"
-                  ? <Loader2 size={13} className={styles.spin} aria-label="Running" />
+                  ? <ThinkingOrb size={20} state="working" label="Running" />
                   : tool.status === "done" ? <Check size={13} aria-label="Done" /> : <X size={13} aria-label="Failed" />}
                 <span className={styles.toolLabel}>
                   {tool.label}
@@ -145,8 +156,8 @@ function RunView({
             )}
           </div>
         ))}
-        {run.text ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{run.text}</ReactMarkdown> : null}
-        {!hasOutput && run.state === "running" ? <Loader2 size={15} className={styles.spin} aria-label="Working" /> : null}
+        {run.text ? <Md text={run.text} /> : null}
+        {!hasOutput && run.state === "running" ? <ThinkingOrb size={20} state="working" label="Working" /> : null}
         {run.error ? <div className={styles.runError}>⚠ {run.error}</div> : null}
         {run.state === "completed" && (run.tokensIn || run.tokensOut) ? (
           <div className={styles.runMeta}>
@@ -235,19 +246,34 @@ export function ManagedSessionChat({
 
   useEffect(() => { lastEventIdRef.current = transcript.lastEventId; }, [transcript.lastEventId]);
 
-  // A starting session is reconciled against DigitalOcean until it settles.
+  // A starting session is reconciled against DigitalOcean until it settles. Each
+  // read is scheduled only after the last one settles, backing off, and hidden
+  // tabs skip the read, so one slow or failing read never stacks up behind another.
   useEffect(() => {
     if (session.status !== "provisioning" && session.status !== "deleting") return;
     const controller = new AbortController();
-    const timer = window.setInterval(() => {
+    const DELAYS_MS = [2_500, 5_000, 10_000, 30_000];
+    let attempt = 0;
+    let timer: number | undefined;
+    const schedule = () => {
+      timer = window.setTimeout(tick, DELAYS_MS[Math.min(attempt, DELAYS_MS.length - 1)]);
+    };
+    const tick = () => {
+      if (document.hidden) { schedule(); return; }
       void getManagedSession(agentId, { reconcile: true, signal: controller.signal })
         .then((next) => {
           setSession(next);
           if (next.status === "deleted") onDeletedRef.current?.();
+          attempt += 1;
+          if (!controller.signal.aborted) schedule();
         })
-        .catch(() => undefined);
-    }, 2_500);
-    return () => { controller.abort(); window.clearInterval(timer); };
+        .catch(() => {
+          attempt += 1;
+          if (!controller.signal.aborted) schedule();
+        });
+    };
+    schedule();
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [agentId, session.status, setSession]);
 
   // Stored history first, then the live tail from the last event it held.
@@ -427,7 +453,7 @@ export function ManagedSessionChat({
         <div className={styles.inner}>
           {session.status === "provisioning" ? (
             <div className={styles.empty}>
-              <Loader2 size={18} className={styles.spin} aria-hidden /><br />
+              <ThinkingOrb size={32} state="connecting" /><br />
               DigitalOcean is starting this session’s microVM.
             </div>
           ) : transcript.runs.length === 0 && orphanPrompts.length === 0 ? (

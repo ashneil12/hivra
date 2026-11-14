@@ -1,6 +1,5 @@
 import { requireDb } from "@/lib/billing/db-utils";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PLANS, type PlanKey } from "@/lib/subscription";
 
 // SCRIPTURE_ANCHOR: credits-measure | Luke 6:38 | Verse: Give, and it will be given to you: good measure, pressed down, shaken together, and running over.
 export const CREDIT_UNIT_LABEL = "100 credits = $1";
@@ -47,6 +46,7 @@ type DbChain = {
 
 type DbUpdateFilter = {
   eq: (...args: unknown[]) => DbUpdateFilter;
+  is: (...args: unknown[]) => DbUpdateFilter;
   then: Promise<{ error: QueryError }>["then"];
 };
 
@@ -72,25 +72,6 @@ interface AppendLedgerEntryParams {
   reason: CreditLedgerReason;
   referenceId: string;
   metadata?: Record<string, unknown>;
-}
-
-interface SubscriptionGrantParams {
-  userId: string;
-  planKey: string;
-  subscriptionId: string;
-  periodStart: number | string | null | undefined;
-  periodEnd: number | string | null | undefined;
-  /**
-   * Ledger provenance for the cycle grant. Defaults preserve the original
-   * hardcoded Stripe behavior byte-for-byte; the Apple IAP lane passes
-   * source "apple" / actor "apple_webhook" / referencePrefix
-   * "apple_subscription" with subscriptionId = originalTransactionId, giving
-   * the idempotency ref
-   * `apple_subscription:${originalTransactionId}:${periodStart}:${periodEnd}`.
-   */
-  source?: CreditLedgerSource;
-  actor?: string;
-  referencePrefix?: string;
 }
 
 interface StripeTopUpGrantParams {
@@ -151,18 +132,6 @@ function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
 }
 
-function normalizePeriodPart(value: number | string | null | undefined): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-
-  return "unknown";
-}
-
 function isUniqueConflict(error: QueryError): boolean {
   return error?.code === "23505";
 }
@@ -187,20 +156,20 @@ export function creditsToUsd(credits: number): number {
   return credits / 100;
 }
 
-export function getPlanMonthlyCreditGrant(planKey: string | null | undefined): number {
-  if (!planKey || !(planKey in PLANS)) {
-    return 0;
+async function readCreditAccount(
+  userId: string,
+  client: SupabaseLike
+): Promise<CreditAccount | null> {
+  const { data, error } = await table(client, "credit_accounts")
+    .select("id, user_id, stripe_customer_id, balance_cached_credits")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(error.message || "Failed to read credit account");
   }
 
-  const typedPlanKey = planKey as PlanKey;
-  const bonusMultiplier: Record<PlanKey, number> = {
-    free: 0,
-    operator: 1.1,
-    fleet: 1.2,
-    command: 1.3,
-  };
-
-  return Math.round(PLANS[typedPlanKey].price * bonusMultiplier[typedPlanKey]);
+  const rows = Array.isArray(data) ? (data as CreditAccount[]) : [];
+  return rows[0] ?? null;
 }
 
 async function ensureCreditAccount(
@@ -225,11 +194,17 @@ async function ensureCreditAccount(
   return data as CreditAccount;
 }
 
+/**
+ * Claims the account's Stripe customer id, but only while none is stored. Two
+ * top-ups can race past the first read and each create a customer; the first
+ * conditional write wins, and this returns the stored id so the loser uses the
+ * winner's customer instead of overwriting it.
+ */
 export async function setCreditAccountStripeCustomerId(
   userId: string,
   stripeCustomerId: string,
   db: SupabaseLike | null | undefined = supabaseAdmin
-): Promise<void> {
+): Promise<string> {
   const client = requireDb(db);
   const account = await ensureCreditAccount(userId, client);
   const { error } = await table(client, "credit_accounts")
@@ -237,11 +212,18 @@ export async function setCreditAccountStripeCustomerId(
       stripe_customer_id: stripeCustomerId,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", account.id);
+    .eq("id", account.id)
+    .is("stripe_customer_id", null);
 
   if (error) {
     throw new Error(error.message || "Failed to update credit account customer");
   }
+
+  const storedId = await getCreditAccountStripeCustomerId(userId, client);
+  if (!storedId) {
+    throw new Error("Credit account has no Stripe customer after claim");
+  }
+  return storedId;
 }
 
 export async function getCreditAccountStripeCustomerId(
@@ -290,14 +272,22 @@ export async function getCachedCreditBalance(
   db: SupabaseLike | null | undefined = supabaseAdmin
 ): Promise<number> {
   const client = requireDb(db);
-  const account = await ensureCreditAccount(userId, client);
+  // Read-only for an existing account: ensureCreditAccount upserts, which
+  // rewrites updated_at on every poll. It runs only to create a missing row.
+  const account =
+    (await readCreditAccount(userId, client)) ?? (await ensureCreditAccount(userId, client));
   if (
     account.balance_cached_credits !== null &&
     account.balance_cached_credits !== undefined
   ) {
     return account.balance_cached_credits;
   }
-  // Backfill on first read.
+  // Backfill on first read. The SQL recompute sums the ledger in the database;
+  // the app-side sum below runs only when that RPC is unavailable.
+  const rpcBalance = await refreshCachedBalanceViaRpc(client, account.id);
+  if (rpcBalance !== null) {
+    return rpcBalance;
+  }
   const fresh = await deriveCreditBalance(userId, client);
   const { error: updateError } = await table(client, "credit_accounts")
     .update({
@@ -658,40 +648,6 @@ export async function recordLlmUsageEvent(
   };
 }
 
-export async function grantSubscriptionCycleCredits(
-  params: SubscriptionGrantParams,
-  db: SupabaseLike | null | undefined = supabaseAdmin
-): Promise<{ inserted: boolean; balance: number }> {
-  const amountCredits = getPlanMonthlyCreditGrant(params.planKey);
-  if (amountCredits <= 0) {
-    return { inserted: false, balance: await deriveCreditBalance(params.userId, db) };
-  }
-
-  const periodStart = normalizePeriodPart(params.periodStart);
-  const periodEnd = normalizePeriodPart(params.periodEnd);
-  const source = params.source ?? "stripe";
-  const actor = params.actor ?? "stripe_webhook";
-  const referencePrefix = params.referencePrefix ?? "stripe_subscription";
-
-  return appendCreditLedgerEntry(
-    {
-      userId: params.userId,
-      amountCredits,
-      source,
-      actor,
-      reason: "subscription_grant",
-      referenceId: `${referencePrefix}:${params.subscriptionId}:${periodStart}:${periodEnd}`,
-      metadata: {
-        plan: params.planKey,
-        subscriptionId: params.subscriptionId,
-        periodStart,
-        periodEnd,
-      },
-    },
-    db
-  );
-}
-
 async function recordStripeTopUpTransaction(
   params: StripeTopUpGrantParams,
   db: SupabaseLike | null | undefined = supabaseAdmin
@@ -749,14 +705,13 @@ export async function getCreditSummary(
   userId: string,
   planKey?: string | null,
   db: SupabaseLike | null | undefined = supabaseAdmin
-): Promise<{ balance: number; monthlyGrant: number; unit: string }> {
+): Promise<{ balance: number; unit: string }> {
   // Read the cached balance instead of summing the entire ledger on every
   // call. Dashboard polls this on a timer and the previous full-scan
   // implementation didn't scale. The cache is maintained synchronously
   // with each ledger write inside `appendCreditLedgerEntry`.
   return {
     balance: await getCachedCreditBalance(userId, db),
-    monthlyGrant: getPlanMonthlyCreditGrant(planKey),
     unit: CREDIT_UNIT_LABEL,
   };
 }

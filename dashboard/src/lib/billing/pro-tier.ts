@@ -6,12 +6,11 @@ import {
   evaluateComputeEntitlement,
   normalizeEntitlementInstance,
 } from "@/lib/billing/entitlements";
-import { getLatestAccessTokenHoldingSnapshot } from "@/lib/billing/token-access";
 import type { TierKey } from "@/lib/services/tier-specs";
 
 // Single source of truth for "is this user entitled to a Pro+ feature?".
 //
-// Pro+ = operator | fleet | command. Everything else (credit_base, token_base,
+// Pro+ = operator | fleet | command. Everything else (credit_base,
 // undefined) returns false. Network/DB failures fail closed — better to deny
 // access during a transient outage than leak a paid feature to a free user.
 //
@@ -35,29 +34,40 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
     return { ok: false, tier: null, reason: "no_db" };
   }
   try {
-    const [{ data: subscription }, { data: instances }, creditSummary, reservedCredits, tokenSnapshot] =
-      await Promise.all([
-        supabaseAdmin
-          .from("hermes_subscriptions")
-          // grace_period_ends_at feeds the dunning cutoff in
-          // evaluateComputeEntitlement — without it a grace-expired past_due
-          // row keeps every Pro+ feature for Stripe's whole retry window.
-          .select("plan, status, grace_period_ends_at")
-          .eq("user_id", userId)
-          .maybeSingle<{
-            plan: string | null;
-            status: string | null;
-            grace_period_ends_at: string | null;
-          }>(),
-        supabaseAdmin
-          .from("hermes_instances")
-          .select("id, lifecycle_state, status, cpu_limit, ram_limit")
-          .eq("user_id", userId)
-          .not("status", "in", '("deleted")'),
-        getCreditSummary(userId, null),
-        deriveReservedCreditBalance(userId),
-        getLatestAccessTokenHoldingSnapshot(userId),
-      ]);
+    const [
+      { data: subscription, error: subscriptionError },
+      { data: instances, error: instancesError },
+      creditSummary,
+      reservedCredits,
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("hermes_subscriptions")
+        // grace_period_ends_at feeds the dunning cutoff in
+        // evaluateComputeEntitlement — without it a grace-expired past_due
+        // row keeps every Pro+ feature for Stripe's whole retry window.
+        .select("plan, status, grace_period_ends_at")
+        .eq("user_id", userId)
+        .maybeSingle<{
+          plan: string | null;
+          status: string | null;
+          grace_period_ends_at: string | null;
+        }>(),
+      supabaseAdmin
+        .from("hermes_instances")
+        .select("id, lifecycle_state, status, cpu_limit, ram_limit")
+        .eq("user_id", userId)
+        .not("status", "in", '("deleted")'),
+      getCreditSummary(userId, null),
+      deriveReservedCreditBalance(userId),
+    ]);
+    // A failed read is an outage, not a downgrade: throw so the catch below
+    // reports lookup_failed instead of "no_entitlement".
+    if (subscriptionError) {
+      throw new Error(`subscription read failed: ${subscriptionError.message ?? "unknown error"}`);
+    }
+    if (instancesError) {
+      throw new Error(`instances read failed: ${instancesError.message ?? "unknown error"}`);
+    }
 
     const decision = evaluateComputeEntitlement({
       userId,
@@ -70,9 +80,6 @@ export async function isProTierUser(userId: string): Promise<ProTierCheck> {
         : null,
       creditBalanceCredits: creditSummary.balance,
       reservedCredits,
-      tokenHolding: tokenSnapshot
-        ? { verified: true, balance: tokenSnapshot.balance }
-        : { verified: false, balance: 0 },
       activeInstances: (instances ?? []).map(normalizeEntitlementInstance),
     });
 

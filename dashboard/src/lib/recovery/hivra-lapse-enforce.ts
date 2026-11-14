@@ -11,8 +11,8 @@ import { rotatingContainmentBatch } from "./orphaned-instances";
 /**
  * Stops running Hivra Cloud computers whose owner no longer has a paid plan.
  *
- * "No paid plan" is exactly what resolveEffectiveSubscription says: no
- * entitlement, or only the Free account. That one rule already covers a card
+ * "No paid plan" is read from resolveEffectiveSubscription: no entitlement,
+ * only the Free account, or only a trial. That one rule already covers a card
  * failure inside its 48 hour window (entitled, so left running), a cancelled
  * or unpaid plan, an ended Apple or yearly plan, and a lost token tier. The
  * computer is stopped, never deleted: its disk and files stay.

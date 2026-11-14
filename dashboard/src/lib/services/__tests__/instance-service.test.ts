@@ -471,10 +471,10 @@ describe("isFreeTierKey", () => {
 });
 
 describe("isSingleInstanceBaseTierKey", () => {
-  it("limits Free and token-base tiers to one active base instance", () => {
+  it("limits Free tiers to one active base instance (the Starter tier is gone)", () => {
     expect(isSingleInstanceBaseTierKey("free")).toBe(true);
     expect(isSingleInstanceBaseTierKey("credit_base")).toBe(true);
-    expect(isSingleInstanceBaseTierKey("token_base")).toBe(true);
+    expect(isSingleInstanceBaseTierKey("token_base")).toBe(false);
     expect(isSingleInstanceBaseTierKey("operator")).toBe(false);
   });
 });
@@ -2000,69 +2000,6 @@ describe("InstanceService.createInstance free-tier guard", () => {
         })
       );
     }
-  });
-
-  it("rejects a second token-base provision before any backend call", async () => {
-    const subscriptionQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({
-        data: {
-          plan: "token_base",
-          status: "active",
-          instance_limit: 1,
-          total_cpu_budget: 0.5,
-          total_ram_budget: 1024,
-        },
-      }),
-    };
-
-    const baseGuardQuery = {
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      or: jest.fn().mockReturnThis(),
-      not: jest.fn().mockReturnThis(),
-      neq: jest.fn().mockReturnThis(),
-      limit: jest.fn(async () => ({
-        data: [{ id: "inst_existing_token_base" }],
-        error: null,
-      })),
-    };
-
-    let hermesInstancesCall = 0;
-    const proxmoxHostsRegistry = createEmptyProxmoxHostsRegistry();
-    (supabaseAdmin!.from as jest.Mock).mockImplementation((tableName: string) => {
-      if (tableName === "hermes_subscriptions") return subscriptionQuery;
-      if (tableName === "hermes_instances") {
-        hermesInstancesCall += 1;
-        return baseGuardQuery;
-      }
-      if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
-      throw new Error(`Unexpected table lookup: ${tableName}`);
-    });
-
-    const result = await InstanceService.createInstance(
-      "user_token",
-      CreateInstanceSchema.parse({
-        name: "Token Agent",
-        provider: "openrouter",
-        apiKey: "sk-or-test",
-      })
-    );
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: false,
-        status: 403,
-        message: expect.stringMatching(/one active base-tier agent/i),
-        error: expect.objectContaining({
-          code: "FREE_INSTANCE_LIMIT_REACHED",
-          existingInstanceId: "inst_existing_token_base",
-        }),
-      })
-    );
-    expect(hermesInstancesCall).toBe(1);
-    expect(provisionProxmoxInstance).not.toHaveBeenCalled();
   });
 
   it("falls through to the next Proxmox target when the primary target VMID range is full", async () => {
@@ -6820,6 +6757,160 @@ describe("InstanceService.createInstance free-tier guard", () => {
       },
     });
     expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+  });
+});
+
+describe("InstanceService.createInstance host capacity", () => {
+  const SAVED_ENV = {
+    HERMES_INFRA_PROVIDER: process.env.HERMES_INFRA_PROVIDER,
+    HERMES_PROXMOX_ENABLED_USER_IDS: process.env.HERMES_PROXMOX_ENABLED_USER_IDS,
+    HERMES_PROXMOX_MAX_TENANT_INSTANCES: process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES,
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (guardProxmoxHostPlacementReadiness as jest.Mock).mockResolvedValue({ skip: false });
+    (getProxmoxTemplateAvailability as jest.Mock).mockResolvedValue({
+      ok: true,
+      targetId: "fixturenode1_node",
+      templateId: 9000,
+    });
+    (getProxmoxVmidAvailability as jest.Mock).mockResolvedValue({
+      ok: true,
+      vmidStart: 200,
+      vmidEnd: 219,
+      occupiedVmids: [],
+      freeVmids: [200],
+    });
+    process.env.HERMES_INFRA_PROVIDER = "proxmox";
+    process.env.HERMES_PROXMOX_ENABLED_USER_IDS = "user_free";
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "test";
+    (clerkClient as jest.Mock).mockResolvedValue({
+      users: { getUser: jest.fn().mockResolvedValue({ publicMetadata: {} }) },
+    });
+    (resolveCodexDeploymentSecret as jest.Mock).mockImplementation((apiKey: string) => ({ apiKey }));
+    (decryptApiKey as jest.Mock).mockImplementation((value: string) => value);
+    (createManagedVeniceProxyKey as jest.Mock).mockResolvedValue({
+      id: "managed_key_1",
+      plaintextKey: "hven_live_instance_proxy",
+      keyPrefix: "hven_live_instance_",
+      defaultWalletType: "hermesos",
+    });
+    (fetchFirstReachableGatewayResponse as jest.Mock).mockRejectedValue(
+      new Error("agent gateway unavailable in test")
+    );
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(SAVED_ENV)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("does not count a purged instance still attached to the host against its capacity", async () => {
+    // The host has 2 CPU. A purged instance keeps host_id and its 2 CPU limit
+    // (purge sets lifecycle_state deleted and leaves the rest in place). Counting
+    // it made a 1-CPU request look like 4 CPU of demand and returned a false 400.
+    const host = {
+      id: "host_capacity",
+      user_id: "user_free",
+      name: "Host Capacity",
+      total_cpu: 2,
+      total_ram: 4096,
+      hetzner_server_id: null,
+      ipv4_address: null,
+      ssh_host_fingerprint_sha256: null,
+      status: "active",
+    };
+    const siblings = [
+      { status: "running", lifecycle_state: "active", cpu_limit: 1, ram_limit: 1024 },
+      { status: "stopped", lifecycle_state: "deleted", cpu_limit: 2, ram_limit: 3072 },
+    ];
+    let siblingReads = 0;
+    // Applies .not(column, "in", list) like PostgREST: a row is dropped when its
+    // value is in the list.
+    const applyNots = (nots: Array<[string, string]>) =>
+      siblings.filter((row) =>
+        nots.every(([column, list]) => !list.includes(String((row as Record<string, unknown>)[column])))
+      );
+
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_hosts") {
+        const builder: Record<string, unknown> = {};
+        builder.select = jest.fn(() => builder);
+        builder.eq = jest.fn(() => builder);
+        builder.single = jest.fn().mockResolvedValue({ data: host, error: null });
+        return builder;
+      }
+      if (table === "hermes_subscriptions") {
+        const builder: Record<string, unknown> = {};
+        builder.select = jest.fn(() => builder);
+        builder.eq = jest.fn(() => builder);
+        builder.maybeSingle = jest.fn().mockResolvedValue({
+          data: { plan: "operator", status: "active", instance_limit: 10, total_cpu_budget: 16, total_ram_budget: 32768 },
+          error: null,
+        });
+        return builder;
+      }
+      if (table === "hermes_instances") {
+        const nots: Array<[string, string]> = [];
+        let hostScoped = false;
+        const builder: Record<string, unknown> = {};
+        const resolveRows = () => {
+          if (!hostScoped) return { data: [], count: 0, error: null };
+          siblingReads += 1;
+          return { data: applyNots(nots), error: null };
+        };
+        builder.select = jest.fn(() => builder);
+        builder.eq = jest.fn((column: string) => {
+          if (column === "host_id") hostScoped = true;
+          return builder;
+        });
+        builder.not = jest.fn((column: string, _op: string, list: string) => {
+          nots.push([column, list]);
+          return builder;
+        });
+        builder.single = jest.fn().mockResolvedValue({
+          data: { id: "inst_host_capacity", name: "Host Capacity Agent", subdomain: "host-capacity" },
+          error: null,
+        });
+        builder.insert = jest.fn(() => builder);
+        builder.update = jest.fn(() => builder);
+        builder.delete = jest.fn(() => builder);
+        builder.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+          Promise.resolve(resolveRows()).then(resolve, reject);
+        return builder;
+      }
+      if (table === "proxmox_hosts") return createEmptyProxmoxHostsRegistry()();
+      throw new Error(`Unexpected table lookup: ${table}`);
+    });
+
+    // Capacity passes; the placement itself is stubbed to fail, which is outside
+    // what this test checks.
+    (provisionProxmoxInstance as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: "stubbed placement failure",
+      failureType: "other",
+    });
+
+    const result = await InstanceService.createInstance(
+      "user_free",
+      CreateInstanceSchema.parse({
+        name: "Host Capacity Agent",
+        provider: "openrouter",
+        apiKey: "sk-or-test",
+        cpuLimit: 1,
+        ramLimit: 1024,
+        hostId: "host_capacity",
+      })
+    );
+
+    expect(siblingReads).toBe(1);
+    expect(result).not.toEqual(
+      expect.objectContaining({ message: expect.stringContaining("Insufficient Host capacity") })
+    );
   });
 });
 

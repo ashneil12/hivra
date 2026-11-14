@@ -14,7 +14,7 @@ export const LINK_ROW_COLUMNS = [
   "bootstrapped_at", "operation_id", "deployment_mode", "proxmox_host", "infrastructure_connection_id",
   "deployment_target_id", "infrastructure_connection_revision", "infrastructure_binding_token_hash",
   "infrastructure_binding_token_enforced", "managed_provisioner_channel", "provider_capacity_order_id",
-  "provider_enrollment_attempt_id", "provider_server_id",
+  "provider_enrollment_attempt_id", "provider_server_id", "sleep_state",
 ].join(", ");
 
 export type OwnedRow = LinkRow & Record<string, unknown> & { id: string; user_id: string };
@@ -86,6 +86,10 @@ export interface LinkCandidate {
   id: string;
   name: string;
   kind: string;
+  /** The row's lifecycle status, so two rows with one name can be told apart. */
+  status: string;
+  /** Awake, napping and so on, when the row says; the picker shows a sleeping computer as asleep. */
+  sleepState?: string | null;
   linked: boolean;
   available: boolean;
   reason?: string;
@@ -99,6 +103,8 @@ export function candidatesFor(subject: OwnedRow, rows: OwnedRow[], linkedIds: Se
     return {
       id: row.id, name: linkLabel(row.name, subjectIsComputer ? "Agent" : "Computer"),
       kind: subjectIsComputer ? String(row.type ?? "agent") : computerKindLabel(row),
+      status: String(row.status ?? "unknown"),
+      ...(typeof row.sleep_state === "string" ? { sleepState: row.sleep_state } : {}),
       linked: linkedIds.has(row.id), available: side.ok, ...(side.ok ? {} : { reason: side.reason }),
     };
   });
@@ -141,12 +147,14 @@ export interface KeyRecord {
  * still goes out once it runs again.
  */
 export async function markKitDirty(userId: string, agentIds: string[]): Promise<void> {
-  for (const agentId of new Set(agentIds)) {
-    await db().from("hivra_agent_link_keys").upsert({ agent_id: agentId, user_id: userId }, { onConflict: "agent_id", ignoreDuplicates: true });
-    const { error } = await db().from("hivra_agent_link_keys").update({ kit_sha256: null, updated_at: new Date().toISOString() })
-      .eq("agent_id", agentId).eq("user_id", userId);
-    if (error) throw new Error("database_unavailable");
-  }
+  const ids = [...new Set(agentIds)];
+  if (ids.length === 0) return;
+  // Seeding missing key rows is best effort, as before; the dirty flag below is what must land.
+  await db().from("hivra_agent_link_keys")
+    .upsert(ids.map((agentId) => ({ agent_id: agentId, user_id: userId })), { onConflict: "agent_id", ignoreDuplicates: true });
+  const { error } = await db().from("hivra_agent_link_keys").update({ kit_sha256: null, updated_at: new Date().toISOString() })
+    .in("agent_id", ids).eq("user_id", userId);
+  if (error) throw new Error("database_unavailable");
 }
 
 export async function loadKeyRecord(agentId: string): Promise<KeyRecord | null> {

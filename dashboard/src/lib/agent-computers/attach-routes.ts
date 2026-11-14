@@ -8,7 +8,9 @@ import { ATTACH_INSTALLER_SHA256, ATTACH_NOT_AVAILABLE, attachSupported, type At
 import { ATTACH_GRANT_POLICY_SHA256, ATTACHED_SERVICE_POLICY_V2_SHA256, accessReviewSha256, attachReviewSha256,
   removeReviewSha256 } from "./attach-review";
 import { createAttachmentLifecycleStore, type AttachmentLifecycleStore, type AttachmentView, type AttachTarget } from "./attachment-lifecycle-store";
-import { readAttachedGatewayProtocol } from "./attached-gateway-protocol";
+import { readAttachedGatewayProtocol, type AttachedGatewayProtocol } from "./attached-gateway-protocol";
+import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
+import { wakeAgentForUserAction } from "@/lib/hivra/sleep-aware";
 
 // What the attach routes decide (design 5.6, 5.8): owner from auth only, the
 // computer looked up with that owner, the review recomputed here, the plan's
@@ -27,13 +29,15 @@ export interface ComputerFacts {
   computerSubstrate: string | null;
   bindingEnforced: boolean | null;
   chatUrl: string | null;
+  /** Where the computer is on the sleep ladder. Absent counts as awake. */
+  sleepState?: string | null;
 }
 
 /** The owner's own computer row, or null: a foreign or missing id is a 404 before any RPC (T1). */
 export async function loadOwnedComputer(ownerId: string, computerId: string): Promise<ComputerFacts | null> {
   if (!supabaseAdmin) throw new Error("database_unavailable");
   const { data, error } = await supabaseAdmin.from("hivra_agents")
-    .select("id, name, type, cpu, ram, deployment_mode, status, computer_profile, computer_substrate, infrastructure_binding_token_enforced, chat_url")
+    .select("id, name, type, cpu, ram, deployment_mode, status, computer_profile, computer_substrate, infrastructure_binding_token_enforced, chat_url, sleep_state")
     .eq("id", computerId).eq("user_id", ownerId).neq("status", "deleted").maybeSingle();
   if (error) throw new Error("database_unavailable");
   if (!data) return null;
@@ -41,7 +45,8 @@ export async function loadOwnedComputer(ownerId: string, computerId: string): Pr
   return { id: String(row.id), name: String(row.name ?? ""), type: String(row.type ?? ""), cpu: Number(row.cpu) || 0,
     ramGb: Number(row.ram) || 0, deploymentMode: (row.deployment_mode as string | null) ?? null, status: (row.status as string | null) ?? null,
     computerProfile: (row.computer_profile as string | null) ?? null, computerSubstrate: (row.computer_substrate as string | null) ?? null,
-    bindingEnforced: (row.infrastructure_binding_token_enforced as boolean | null) ?? null, chatUrl: (row.chat_url as string | null) ?? null };
+    bindingEnforced: (row.infrastructure_binding_token_enforced as boolean | null) ?? null, chatUrl: (row.chat_url as string | null) ?? null,
+    sleepState: typeof row.sleep_state === "string" ? row.sleep_state : null };
 }
 
 export type AttachReason = "unsupported_computer" | "agent_present" | "computer_not_running" | "computer_not_ready" | "computer_busy"
@@ -87,17 +92,64 @@ export interface AttachDependencies {
   planSlots: typeof resolvePlanAgentSlots;
   /** Whether the computer's gateway serves attached agents (release 2026.09.24.3 on). */
   gatewayProtocol: typeof readAttachedGatewayProtocol;
+  /** Wakes a sleeping computer; `ok` is false while it is still asleep. */
+  wake?: (computerId: string) => Promise<{ ok: boolean }>;
 }
 
 export function attachDependencies(overrides: Partial<AttachDependencies> = {}): AttachDependencies {
   return { store: createAttachmentLifecycleStore(), loadComputer: loadOwnedComputer, validate: validateAgentResources,
-    planSlots: resolvePlanAgentSlots, gatewayProtocol: readAttachedGatewayProtocol, ...overrides };
+    planSlots: resolvePlanAgentSlots, gatewayProtocol: readAttachedGatewayProtocol,
+    ...overrides };
+}
+
+const wakeComputer = async (computerId: string) => ({ ok: (await wakeAgentForUserAction(computerId)).ok });
+
+const STILL_WAKING: { status: 409; message: string; reason: string } = {
+  status: 409, reason: "computer_asleep", message: "This computer is still waking up. Try again in a few seconds." };
+
+/**
+ * A sleeping computer cannot take an attach step, and its sleep lease would
+ * read as "busy". Adding, changing or removing an agent is the owner's own
+ * action, so it wakes the computer first. Null when the computer is awake.
+ */
+async function wakeBeforeAttach(computer: ComputerFacts, deps: AttachDependencies): Promise<typeof STILL_WAKING | null> {
+  if (isAgentAwake({ sleep_state: computer.sleepState }) || computer.status !== "running") return null;
+  let woke = false;
+  try { woke = (await (deps.wake ?? wakeComputer)(computer.id)).ok; } catch { woke = false; }
+  return woke ? null : STILL_WAKING;
 }
 
 /** A gateway that answered without attached agents refuses the gate; one that
  * did not answer is left to the claim and to the computer's own check. */
 async function gatewayRefusal(chatUrl: string | null | undefined, deps: AttachDependencies): Promise<AttachReason | null> {
   return await deps.gatewayProtocol(chatUrl) === "update_required" ? "computer_update_required" : null;
+}
+
+/** The list's gateway answers, reused for a minute per origin: a gateway's protocol changes only when its
+ * owner updates it, and the list is read often. Only the list reuses them; the claim asks again. */
+const GATEWAY_LIST_TTL_MS = 60_000;
+const gatewayListAnswers = new Map<string, { answer: Promise<AttachedGatewayProtocol>; expiresAt: number }>();
+
+function listedGatewayRefusal(chatUrl: string | null | undefined, deps: AttachDependencies): Promise<AttachReason | null> {
+  let origin: string;
+  try {
+    const parsed = new URL(chatUrl ?? "");
+    if (parsed.protocol !== "https:") throw new Error("not https");
+    origin = parsed.origin;
+  } catch {
+    return gatewayRefusal(chatUrl, deps);
+  }
+  const now = Date.now();
+  let entry = gatewayListAnswers.get(origin);
+  if (!entry || entry.expiresAt <= now) {
+    const answer = Promise.resolve().then(() => deps.gatewayProtocol(chatUrl));
+    entry = { answer, expiresAt: now + GATEWAY_LIST_TTL_MS };
+    gatewayListAnswers.set(origin, entry);
+    answer.catch(() => {
+      if (gatewayListAnswers.get(origin)?.answer === answer) gatewayListAnswers.delete(origin);
+    });
+  }
+  return entry.answer.then((answer): AttachReason | null => answer === "update_required" ? "computer_update_required" : null);
 }
 
 function subject(computer: ComputerFacts) {
@@ -160,7 +212,7 @@ export async function readAttachChoices(ownerId: string,
   const targets = await Promise.all(listed.map((computer) => deps.store.readTarget(ownerId, computer.id)));
   // Only a computer the gate would otherwise open is asked, all at once.
   const gateways = await Promise.all(listed.map((computer, index) =>
-    targets[index]?.eligible ? gatewayRefusal(computer.chatUrl, deps) : Promise.resolve(null)));
+    targets[index]?.eligible ? listedGatewayRefusal(computer.chatUrl, deps) : Promise.resolve(null)));
   let plan: AttachChoice | null | undefined;
   const choices = new Map<string, AttachChoice>();
   for (const [index, computer] of listed.entries()) {
@@ -228,6 +280,8 @@ export async function claimAttach(ownerId: string, computerId: string, input: { 
   deps: AttachDependencies): Promise<AttachMutation> {
   const computer = await deps.loadComputer(ownerId, computerId);
   if (!computer) return { ok: false, status: 404, message: "Computer not found." };
+  const asleep = await wakeBeforeAttach(computer, deps);
+  if (asleep) return { ok: false, ...asleep };
   if (attachReviewSha256(subject(computer), input.grants) !== input.reviewSha256) {
     return { ok: false, status: 409, message: REVIEW_CHANGED, reason: "review_changed" };
   }
@@ -289,6 +343,8 @@ export async function beginAttachmentOperation(ownerId: string, computerId: stri
   deps: AttachDependencies): Promise<AttachMutation> {
   const computer = await deps.loadComputer(ownerId, computerId);
   if (!computer) return { ok: false, status: 404, message: "Computer not found." };
+  const asleep = await wakeBeforeAttach(computer, deps);
+  if (asleep) return { ok: false, ...asleep };
   const attachments = await deps.store.readAttachments(ownerId, computerId);
   const attachment = attachments.find((item) => item.id === attachmentId);
   if (!attachment) return { ok: false, status: 404, message: "Codex is not on this computer." };

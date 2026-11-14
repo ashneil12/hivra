@@ -6,11 +6,7 @@ import { GET } from "../route";
 // required) and that only stripped, non-private shared-template data comes back.
 
 const mockGetPublicTemplateByShareToken = jest.fn();
-let mockHivraAllowed = true;
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraApiAllowed: () => mockHivraAllowed,
-}));
 
 jest.mock("@/lib/hivra/agent-templates", () => ({
   getPublicTemplateByShareToken: (...args: unknown[]) => mockGetPublicTemplateByShareToken(...args),
@@ -32,7 +28,6 @@ function makeParams(token: string) {
 describe("GET /api/hivra/templates/shared/[token]", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockHivraAllowed = true;
   });
 
   it("returns the shared template to an UNAUTHENTICATED viewer (token is the capability)", async () => {
@@ -80,15 +75,5 @@ describe("GET /api/hivra/templates/shared/[token]", () => {
     const body = await response.json();
     expect(body.success).toBe(false);
     expect(body.error).toMatch(/not found/i);
-  });
-
-  it("404s when the Hivra surface is not allowed on this host (canary-only gate)", async () => {
-    mockHivraAllowed = false;
-
-    const response = await GET(makeRequest() as never, makeParams(VALID_TOKEN));
-
-    expect(response.status).toBe(404);
-    // Gate short-circuits before any template lookup.
-    expect(mockGetPublicTemplateByShareToken).not.toHaveBeenCalled();
   });
 });

@@ -22,6 +22,11 @@ const MAX_INSTANCE_IDS = 50;
 // sweep never ripple-restarts boxes / drops live agent sessions.
 const RECONCILE_DEFAULT_LIMIT = 40;
 const RECONCILE_MAX_LIMIT = 100;
+// Each per-box sync is a remote SSH/agent-API round trip, so a serial loop over
+// a full window of boxes can burn the whole 300s budget on unreachable hosts.
+// Bounded fan-out keeps the sweep inside the window; per-box errors are already
+// isolated and the sync is idempotent config-only (restart: "never").
+const SYNC_CONCURRENCY = 8;
 
 function parseInstanceIds(body: unknown): string[] | null {
   const raw = (body as { instanceIds?: unknown } | null)?.instanceIds;
@@ -90,34 +95,46 @@ export async function POST(req: NextRequest) {
     ((data || []) as unknown as HermesInstanceRow[]).map((row) => [row.id, row]),
   );
 
-  const results: SyncResult[] = [];
-  for (const id of instanceIds) {
-    const instance = rowsById.get(id);
-    if (!instance) {
-      results.push({ id, applied: false, reason: "not_found" });
-      continue;
-    }
-    const userId = (instance as { user_id?: string | null }).user_id;
-    if (!userId) {
-      results.push({ id, applied: false, reason: "no_owner" });
-      continue;
-    }
-    if (dryRun) {
-      results.push({ id, applied: false, reason: "dry_run" });
-      continue;
-    }
-    try {
-      const result = await syncComposioToInstance({ instanceId: id, userId, instance, restart: "never" });
-      results.push({ id, ...result });
-    } catch (err) {
-      log.error(
-        "connectors-sync backfill failed for instance",
-        err instanceof Error ? err : new Error(String(err)),
-        { source: SOURCE, route: ROUTE, method: "POST", instanceId: id, failureType: "connectors_sync_failed" },
-      );
-      results.push({ id, applied: false, error: err instanceof Error ? err.message : String(err) });
-    }
+  const results: SyncResult[] = new Array(instanceIds.length);
+  let cursor = 0;
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < Math.min(SYNC_CONCURRENCY, instanceIds.length); i++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const idx = cursor++;
+          if (idx >= instanceIds.length) return;
+          const id = instanceIds[idx];
+          const instance = rowsById.get(id);
+          if (!instance) {
+            results[idx] = { id, applied: false, reason: "not_found" };
+            continue;
+          }
+          const userId = (instance as { user_id?: string | null }).user_id;
+          if (!userId) {
+            results[idx] = { id, applied: false, reason: "no_owner" };
+            continue;
+          }
+          if (dryRun) {
+            results[idx] = { id, applied: false, reason: "dry_run" };
+            continue;
+          }
+          try {
+            const result = await syncComposioToInstance({ instanceId: id, userId, instance, restart: "never" });
+            results[idx] = { id, ...result };
+          } catch (err) {
+            log.error(
+              "connectors-sync backfill failed for instance",
+              err instanceof Error ? err : new Error(String(err)),
+              { source: SOURCE, route: ROUTE, method: "POST", instanceId: id, failureType: "connectors_sync_failed" },
+            );
+            results[idx] = { id, applied: false, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+      })()
+    );
   }
+  await Promise.all(workers);
 
   const appliedCount = results.filter((r) => r.applied).length;
 
@@ -192,7 +209,11 @@ export async function GET(req: NextRequest) {
     .select("*")
     .eq("lifecycle_state", "active")
     .eq("infrastructure_provider", "proxmox")
+    // created_at alone is not unique, so equal timestamps could come back in a
+    // different order on each run and the window would skip or repeat a box.
+    // id is the unique tie-breaker that keeps the windows stable.
     .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
     .range(from, from + limit - 1);
   if (error) return apiError("Failed to query instances", 500);
 
@@ -203,33 +224,45 @@ export async function GET(req: NextRequest) {
   let applied = 0;
   let changed = 0;
   let errored = 0;
-  for (const instance of rows) {
-    const userId = (instance as { user_id?: string | null }).user_id as string;
-    try {
-      const result = await syncComposioToInstance({
-        instanceId: instance.id,
-        userId,
-        instance,
-        restart: "never",
-      });
-      if (result.applied) {
-        applied += 1;
-        if (result.changed) changed += 1;
-      }
-    } catch (err) {
-      errored += 1;
-      // Per-box reachability failures are expected background noise on a fleet
-      // sweep (booting / mid-roll boxes); log at info, don't raise an ops event.
-      log.info("connectors-sync reconcile skipped a box", {
-        source: SOURCE,
-        route: ROUTE,
-        method: "GET",
-        instanceId: instance.id,
-        failureType: "connectors_sync_reconcile_skip",
-        errorName: err instanceof Error ? err.name : typeof err,
-      });
-    }
+  let cursor = 0;
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < Math.min(SYNC_CONCURRENCY, rows.length); i++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const idx = cursor++;
+          if (idx >= rows.length) return;
+          const instance = rows[idx];
+          const userId = (instance as { user_id?: string | null }).user_id as string;
+          try {
+            const result = await syncComposioToInstance({
+              instanceId: instance.id,
+              userId,
+              instance,
+              restart: "never",
+            });
+            if (result.applied) {
+              applied += 1;
+              if (result.changed) changed += 1;
+            }
+          } catch (err) {
+            errored += 1;
+            // Per-box reachability failures are expected background noise on a fleet
+            // sweep (booting / mid-roll boxes); log at info, don't raise an ops event.
+            log.info("connectors-sync reconcile skipped a box", {
+              source: SOURCE,
+              route: ROUTE,
+              method: "GET",
+              instanceId: instance.id,
+              failureType: "connectors_sync_reconcile_skip",
+              errorName: err instanceof Error ? err.name : typeof err,
+            });
+          }
+        }
+      })()
+    );
   }
+  await Promise.all(workers);
 
   return apiSuccess({ scanned: rows.length, applied, changed, errored, limit, total, window: { from, windows } });
 }

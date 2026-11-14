@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   claudeAppInstall,
   claudeAppRemove,
@@ -15,12 +15,15 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   claudeAppInstall: jest.fn(),
   claudeAppSetView: jest.fn(),
   claudeAppRemove: jest.fn(),
+  desktopClipboardSet: jest.fn(),
+  desktopClipboardPaste: jest.fn(),
+  desktopClipboardCopy: jest.fn(),
 }));
 jest.mock("../ClaudeAppSwitch.module.css", () => new Proxy({}, { get: (_target, key) => String(key) }));
 
 const base: ClaudeAppStatus = {
   enabled: true, desktopRunning: true, installedVersion: "2.26454.0", pinnedVersion: "2.26454.0", updateAvailable: false,
-  appRunning: true, mode: "app", profileSaved: true, installing: false, lastError: null,
+  appRunning: true, mode: "app", profileSaved: true, installing: false, lastError: null, clipboard: null,
 };
 const showing = (status: Partial<ClaudeAppStatus>) =>
   jest.mocked(claudeAppStatus).mockResolvedValue({ available: true, status: { ...base, ...status }, error: null });
@@ -59,6 +62,23 @@ it("renders nothing while the status cannot be read, rather than guessing", asyn
   const { container } = mount();
   await waitFor(() => expect(claudeAppStatus).toHaveBeenCalled());
   expect(container.textContent).toBe("");
+});
+
+it("backs off while the status cannot be read, instead of polling every 3 s", async () => {
+  jest.useFakeTimers();
+  try {
+    jest.mocked(claudeAppStatus).mockResolvedValue({ available: true, status: null, error: "HTTP 502" });
+    mount();
+    await waitFor(() => expect(claudeAppStatus).toHaveBeenCalledTimes(1));
+    await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
+    expect(claudeAppStatus).toHaveBeenCalledTimes(2);
+    await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
+    expect(claudeAppStatus).toHaveBeenCalledTimes(2);
+    await act(async () => { await jest.advanceTimersByTimeAsync(7_000); });
+    expect(claudeAppStatus).toHaveBeenCalledTimes(3);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it("does not poll while the desktop tab is not shown", () => {
@@ -184,4 +204,17 @@ describe("with the app added", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove the Claude app" }));
     await waitFor(() => expect(claudeAppRemove).toHaveBeenCalledWith("https://box.example", "t"));
   });
+});
+
+it("shows the clipboard switch, off, on a computer that has it, even before the app is added", async () => {
+  showing({ enabled: false, clipboard: false });
+  mount();
+  expect(await screen.findByRole("button", { name: "Clipboard off" })).toBeTruthy();
+});
+
+it("hides the clipboard switch on a computer whose software predates it", async () => {
+  showing({ clipboard: null });
+  mount();
+  await screen.findByRole("radiogroup", { name: "Desktop view" });
+  expect(screen.queryByRole("button", { name: /Clipboard/ })).toBeNull();
 });

@@ -1,7 +1,11 @@
 import { HIVRA_TOKEN_LAUNCH } from "@/lib/billing/hivra-token-launch";
 import {
   HERMESOS_TOKEN,
+  HIVRA_MIN_PRICE_LIQUIDITY_USD,
+  HIVRA_MIN_QUOTE_LIQUIDITY_USD,
+  NATIVE_ETH_ADDRESS,
   getActiveHivraToken,
+  isEthQuoteAddress,
   getHivraTokenPhase,
   isHivraActive,
   livePlatformTokens,
@@ -13,6 +17,7 @@ import {
 import { displayTokenUnit } from "@/lib/billing/token-plan-prices";
 import { HERMESOS_TOKEN_ADDRESS, HERMESOS_TOKEN_SYMBOL } from "@/lib/billing/token-holdings";
 import { getTokenPageEntries } from "@/lib/token-verification-content";
+import { dormantTokenPageEntries } from "@/test-utils/token-entries";
 
 const TEST_HIVRA = {
   contractAddress: "0x1111111111111111111111111111111111111111",
@@ -68,8 +73,23 @@ describe("platform token registry", () => {
     expect(platformTokenByAddress(HERMESOS_TOKEN.publishedAddress, TEST_HIVRA)).toBe(HERMESOS_TOKEN);
   });
 
+  it("prices $HIVRA only against ETH, with an ETH-side floor; $HermesOS keeps its floors as they were", () => {
+    expect(isEthQuoteAddress(NATIVE_ETH_ADDRESS)).toBe(true);
+    expect(isEthQuoteAddress("0x4200000000000000000000000000000000000006")).toBe(true);
+    expect(isEthQuoteAddress(" 0x4200000000000000000000000000000000000006 ".toUpperCase().replace("0X", "0x"))).toBe(true);
+    expect(isEthQuoteAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")).toBe(false); // USDC
+    expect(isEthQuoteAddress("")).toBe(false);
+    expect(isEthQuoteAddress(null)).toBe(false);
+    const hivra = getActiveHivraToken(AFTER, TEST_HIVRA);
+    expect(hivra?.minPriceLiquidityUsd).toBe(HIVRA_MIN_PRICE_LIQUIDITY_USD);
+    expect(hivra?.minQuoteLiquidityUsd).toBe(HIVRA_MIN_QUOTE_LIQUIDITY_USD);
+    expect(HIVRA_MIN_QUOTE_LIQUIDITY_USD).toBeGreaterThan(0);
+    expect(HERMESOS_TOKEN.minPriceLiquidityUsd).toBe(10_000);
+    expect(HERMESOS_TOKEN.minQuoteLiquidityUsd).toBeNull();
+  });
+
   it.each([
-    ["address only", { ...TEST_HIVRA, poolId: "", activatesAt: "" }],
+    ["address only",{ ...TEST_HIVRA, poolId: "", activatesAt: "" }],
     ["bad address", { ...TEST_HIVRA, contractAddress: "0x123" }],
     ["zero address", { ...TEST_HIVRA, contractAddress: `0x${"0".repeat(40)}` }],
     ["the $HermesOS address", { ...TEST_HIVRA, contractAddress: HERMESOS_TOKEN.publishedAddress }],
@@ -100,10 +120,27 @@ describe("displayTokenUnit", () => {
 
 describe("/token page entries", () => {
   it("lists $HermesOS and a not-launched $HIVRA while dormant", () => {
-    const entries = getTokenPageEntries(AFTER);
+    // The entries read the committed launch block, so build them from an empty one.
+    const entries = dormantTokenPageEntries(AFTER);
     expect(entries.map((entry) => [entry.label, entry.status, entry.contractAddress])).toEqual([
       ["$HermesOS", "live", HERMESOS_TOKEN.publishedAddress],
       ["$HIVRA", "not_launched", null],
     ]);
+  });
+
+  it("lists the committed launch: $HIVRA scheduled after $HermesOS before its instant, then live and first", () => {
+    const activatesAt = new Date(HIVRA_TOKEN_LAUNCH.activatesAt);
+    expect(Number.isNaN(activatesAt.getTime())).toBe(false);
+    const before = getTokenPageEntries(new Date(activatesAt.getTime() - 1000));
+    expect(before.map((entry) => [entry.label, entry.status, entry.contractAddress])).toEqual([
+      ["$HermesOS", "live", HERMESOS_TOKEN.publishedAddress],
+      ["$HIVRA", "scheduled", HIVRA_TOKEN_LAUNCH.contractAddress],
+    ]);
+    const after = getTokenPageEntries(activatesAt);
+    expect(after.map((entry) => [entry.label, entry.status, entry.contractAddress])).toEqual([
+      ["$HIVRA", "live", HIVRA_TOKEN_LAUNCH.contractAddress],
+      ["$HermesOS", "legacy", HERMESOS_TOKEN.publishedAddress],
+    ]);
+    expect(after[0].basescanUrl).toBe(`https://basescan.org/token/${HIVRA_TOKEN_LAUNCH.contractAddress}`);
   });
 });

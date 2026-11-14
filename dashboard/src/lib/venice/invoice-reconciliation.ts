@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireDb } from "@/lib/billing/db-utils";
 
 type QueryError = { code?: string; message?: string } | null;
 
@@ -13,8 +14,13 @@ type DbChain = {
   in: (column: string, values: unknown[]) => DbChain;
   order: (column: string, options?: { ascending?: boolean }) => DbChain;
   limit: (count: number) => DbChain;
+  range: (from: number, to: number) => DbChain;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
+
+// PostgREST caps unpaged selects (default 1000 rows), so the usage window is
+// read in pages. Without this the invoice cross-check silently under-counts.
+const USAGE_EVENT_PAGE_SIZE = 1000;
 
 type UsageEventRow = {
   model: string | null;
@@ -31,11 +37,6 @@ function asInt(value: number | string | null | undefined): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function requireDb(db: SupabaseLike | null | undefined): SupabaseLike {
-  if (!db) throw new Error("Database not configured");
-  return db;
 }
 
 interface ManagedVeniceUsageBucket {
@@ -98,20 +99,26 @@ export async function getManagedVeniceUsageSummary(
   db: SupabaseLike | null | undefined = supabaseAdmin
 ): Promise<ManagedVeniceUsageSummary> {
   const client = requireDb(db);
-  const query = (client.from("managed_venice_usage_events") as DbChain)
-    .select(
-      "model, prompt_tokens, completion_tokens, actual_cost_micro_usd, " +
-        "charged_micro_usd, upstream_status, created_at"
-    )
-    .gte("created_at", params.from.toISOString())
-    .lt("created_at", params.to.toISOString());
-
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message || "Failed to load managed Venice usage events");
+  const rows: UsageEventRow[] = [];
+  for (let from = 0; ; from += USAGE_EVENT_PAGE_SIZE) {
+    const { data, error } = await (client.from("managed_venice_usage_events") as DbChain)
+      .select(
+        "model, prompt_tokens, completion_tokens, actual_cost_micro_usd, " +
+          "charged_micro_usd, upstream_status, created_at"
+      )
+      .gte("created_at", params.from.toISOString())
+      .lt("created_at", params.to.toISOString())
+      // Unique tie-breaker so the paged windows are stable between requests.
+      .order("id")
+      .range(from, from + USAGE_EVENT_PAGE_SIZE - 1);
+    if (error) {
+      throw new Error(error.message || "Failed to load managed Venice usage events");
+    }
+    const page = (data as UsageEventRow[] | null) ?? [];
+    rows.push(...page);
+    if (page.length < USAGE_EVENT_PAGE_SIZE) break;
   }
 
-  const rows = (data as UsageEventRow[] | null) ?? [];
   const buckets = new Map<string, ManagedVeniceUsageBucket>();
   let totalRequests = 0;
   let totalPrompt = 0;

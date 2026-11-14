@@ -1,5 +1,7 @@
 # Production cutover snapshot: candidate `1f825ba` (2026-09-23)
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 A worked run of [PROD-CUTOVER-PACKET.md](PROD-CUTOVER-PACKET.md). Everything here
 was read-only. It goes stale as soon as `canary` or either database changes;
 recompute with the packet before acting on it.

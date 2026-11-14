@@ -23,6 +23,8 @@ export type HivraAgentOperationKind =
   | "restore"
   | "desktop_prepare"
   | "private_access"
+  | "sleep"
+  | "wake"
   | "delete";
 
 /** Display-only lifecycle signal. No operation IDs, payloads, or target authority. */

@@ -30,6 +30,14 @@ type PooledSshConnection = {
 
 const connectionPool = new Map<string, PooledSshConnection>();
 
+// Operations running on each pooled client. The idle timer may close a client only
+// when none are left, so one operation finishing cannot cut off another.
+const activeOperations = new WeakMap<Client, number>();
+
+function trackOperation(conn: Client, delta: 1 | -1) {
+    activeOperations.set(conn, (activeOperations.get(conn) ?? 0) + delta);
+}
+
 function formatPreviewMegabytes(maxBytes: number) {
     return `${(maxBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
@@ -350,6 +358,10 @@ async function withSftpChannel<T>(
 
     try {
         conn = await getConnection(ip);
+        const client = conn;
+        const pooled = connectionPool.get(ip);
+        if (pooled && pooled.conn === client) clearIdleTimer(pooled);
+        trackOperation(client, 1);
 
         const result = await new Promise<T>((resolve, reject) => {
             conn!.sftp((err, sftp) => {
@@ -387,17 +399,28 @@ async function withSftpChannel<T>(
                     (error) => finish(error),
                 );
             });
+        }).finally(() => {
+            trackOperation(client, -1);
         });
 
+        // Re-arm the idle timer only once nothing else is still using this client.
         const entry = connectionPool.get(ip);
-        if (entry && entry.conn === conn && entry.state === "ready") {
+        if (entry && entry.conn === client && entry.state === "ready" && !activeOperations.get(client)) {
             scheduleIdleCleanup(ip, entry);
         }
 
         return result;
     } catch (err) {
-        if (conn) {
-            destroyConnection(ip);
+        // Only a connection-level failure tears down the shared client. An application
+        // error (for example a readdir ENOENT) leaves it usable for the other operations
+        // running on it.
+        const entry = conn ? connectionPool.get(ip) : undefined;
+        if (entry && entry.conn === conn && (entry.state !== "ready" || isRetryableConnectionError(err))) {
+            destroyConnection(ip, entry);
+        } else if (entry && entry.conn === conn && entry.state === "ready" && !activeOperations.get(entry.conn)) {
+            // The client stays pooled after an application error, so it needs its idle
+            // timer back or it would stay open until some later operation succeeds.
+            scheduleIdleCleanup(ip, entry);
         }
 
         if (attempt === 0 && isRetryableConnectionError(err)) {

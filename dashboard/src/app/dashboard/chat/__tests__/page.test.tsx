@@ -5,6 +5,7 @@ import { render, screen } from "@testing-library/react";
 import ChatIndexPage from "../page";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { resolveDefaultHivraResource } from "@/lib/workspace/default-resource";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
@@ -27,6 +28,7 @@ jest.mock("@/lib/workspace/default-resource", () => ({
 }));
 
 let mockHermesRow: { id: string; backend: string | null } | null = null;
+const mockMaybeSingle = jest.fn(async () => ({ data: mockHermesRow }));
 jest.mock("@/lib/supabase", () => {
   const builder = {
     select: () => builder,
@@ -34,7 +36,7 @@ jest.mock("@/lib/supabase", () => {
     neq: () => builder,
     order: () => builder,
     limit: () => builder,
-    maybeSingle: async () => ({ data: mockHermesRow }),
+    maybeSingle: () => mockMaybeSingle(),
   };
   return { supabaseAdmin: { from: () => builder } };
 });
@@ -69,6 +71,25 @@ describe("ChatIndexPage", () => {
     expect(mockedRedirect).toHaveBeenCalledTimes(1);
     expect(mockedRedirect.mock.calls[0][0]).toMatch(/^\/dashboard\/instances\/inst_1/);
     expect(mockedResolveHivra).not.toHaveBeenCalled();
+  });
+
+  it("looks up the fallback instance while a stale last-chat cookie is still being checked", async () => {
+    (cookies as unknown as jest.Mock).mockResolvedValueOnce({
+      get: (name: string) => (name === "hermes_last_chat" ? { value: "inst_gone" } : undefined),
+    });
+    let answerLastChat!: (result: { data: null }) => void;
+    mockMaybeSingle
+      .mockImplementationOnce(() => new Promise((resolve) => { answerLastChat = resolve; }))
+      .mockImplementationOnce(async () => ({ data: { id: "inst_2", backend: null } }));
+
+    const page = ChatIndexPage(props);
+    // Let the page reach its lookups before the stale cookie answers.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockMaybeSingle).toHaveBeenCalledTimes(2);
+    answerLastChat({ data: null });
+
+    await expect(page).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockedRedirect.mock.calls[0][0]).toMatch(/^\/dashboard\/instances\/inst_2/);
   });
 
   it("offers Launch and Home, with no retry loop, when the account has no agents", async () => {

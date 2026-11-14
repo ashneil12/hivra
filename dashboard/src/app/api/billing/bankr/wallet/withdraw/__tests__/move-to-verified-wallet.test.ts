@@ -151,6 +151,14 @@ it("keeps the hold when the submit failed but may have been broadcast", async ()
   expect(clearTierBreachHold).not.toHaveBeenCalled();
 });
 
+it("bounds how long the request waits for the move's receipt", async () => {
+  (waitForTransferReceipt as jest.Mock).mockResolvedValue("pending");
+  await POST(post({ destination: "verified_wallet" }));
+  const args = (waitForTransferReceipt as jest.Mock).mock.calls[0][0];
+  // Sleeps between polls: (attempts - 1) * interval. Must stay well inside a request budget.
+  expect((args.attempts - 1) * args.intervalMs).toBeLessThanOrEqual(8_000);
+});
+
 it("drops its own hold when the move reverts", async () => {
   (waitForTransferReceipt as jest.Mock).mockResolvedValue("failed");
   const body = await (await POST(post({ destination: "verified_wallet" }))).json();

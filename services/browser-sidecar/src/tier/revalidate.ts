@@ -14,13 +14,15 @@ export interface TierCheckResult {
 // with the instance ID and a signed token. The dashboard's response is the source
 // of truth — this code does not interpret tier values, it just trusts the boolean.
 //
-// On non-200 or tier_ok=false: caller (server.ts) exits 0. The watchdog/reconcile
-// job stops restarting the container.
+// On tier_ok=false or a 4xx answer: caller (server.ts) exits 0. The
+// watchdog/reconcile job stops restarting the container. A 4xx means the
+// dashboard deliberately refused the check (bad token, unknown instance) —
+// that is a definitive negative, not a transient outage, so it fails CLOSED.
 //
-// On network failure: we fail OPEN, not CLOSED. Layer 1 (provisioning) means the
-// container only exists if the user qualified; transient dashboard outages should
-// not knock out paying users mid-session. The reconcile job catches lingering
-// downgrades within minutes via the webhook path.
+// On 5xx or network failure: we fail OPEN, not CLOSED. Layer 1 (provisioning)
+// means the container only exists if the user qualified; transient dashboard
+// outages should not knock out paying users mid-session. The reconcile job
+// catches lingering downgrades within minutes via the webhook path.
 export async function revalidateTierOrExit(
   config: Config,
   logger: Logger,
@@ -75,7 +77,14 @@ export async function revalidateTierOrExit(
     });
 
     if (!res.ok) {
-      logger.warn({ status: res.status }, "tier-check non-200; failing open");
+      if (res.status >= 400 && res.status < 500) {
+        // Definitive refusal (bad token, unknown instance, revoked access) —
+        // not an outage. Fail closed so a downgraded or misconfigured box
+        // cannot ride out a permanent bypass.
+        logger.error({ status: res.status }, "tier-check refused (4xx); failing closed");
+        return { ok: false, reason: "tier-check-refused" };
+      }
+      logger.warn({ status: res.status }, "tier-check 5xx; failing open (dashboard outage)");
       return { ok: true, reason: "dashboard-unreachable" };
     }
 

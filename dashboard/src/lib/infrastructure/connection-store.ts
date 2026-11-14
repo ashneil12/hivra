@@ -5,6 +5,7 @@ import { z } from "zod";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { normalizeProxmoxSshHostFingerprint } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { connectorHostAllowedForUser, revokeConnectorForRemovedConnection } from "./home-connector";
 
 import { SshPrivateKeyError, unlockSshPrivateKey } from "./ssh-private-key";
 import {
@@ -512,18 +513,18 @@ export async function listInfrastructureConnections(
   userId: string,
 ): Promise<InfrastructureConnectionDto[]> {
   const db = database();
-  const { data: connectionRows, error: connectionError } = await db
-    .from("infrastructure_connections")
-    .select(CONNECTION_SELECT)
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (connectionError) throw databaseError(connectionError);
-
   // Presence only: encrypted_bundle is intentionally never selected here.
-  const { data: secretRows, error: secretError } = await db
-    .from("infrastructure_connection_secrets")
-    .select("connection_id")
-    .eq("user_id", userId);
+  const [{ data: connectionRows, error: connectionError }, { data: secretRows, error: secretError }] =
+    await Promise.all([
+      db.from("infrastructure_connections")
+        .select(CONNECTION_SELECT)
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false }),
+      db.from("infrastructure_connection_secrets")
+        .select("connection_id")
+        .eq("user_id", userId),
+    ]);
+  if (connectionError) throw databaseError(connectionError);
   if (secretError) throw databaseError(secretError);
 
   const configuredIds = new Set(
@@ -539,8 +540,11 @@ export async function getInfrastructureConnection(
   userId: string,
   connectionId: string,
 ): Promise<InfrastructureConnectionDto> {
-  const row = await ownerConnectionRow(userId, connectionId);
-  return dtoFromRow(row, await credentialsConfigured(userId, connectionId));
+  const [row, configured] = await Promise.all([
+    ownerConnectionRow(userId, connectionId),
+    credentialsConfigured(userId, connectionId),
+  ]);
+  return dtoFromRow(row, configured);
 }
 
 export async function listInfrastructureDeploymentTargets(
@@ -587,6 +591,10 @@ export async function createInfrastructureConnection(
     // Provider-token validation and first persistence use the dedicated
     // provider services. This SSH-only path must never reinterpret a provider
     // credential as a private key.
+    throw new InfrastructureConnectionStoreError("invalid_request");
+  }
+  // A connector name as the SSH host is only for the owner who enrolled that machine.
+  if (!(await connectorHostAllowedForUser(userId, input.endpoint.sshHost))) {
     throw new InfrastructureConnectionStoreError("invalid_request");
   }
   // Resolve encryption configuration before the transaction starts. The RPC
@@ -650,6 +658,12 @@ export async function updateInfrastructureConnection(
     }))
   ) {
     throw new InfrastructureConnectionStoreError("conflict");
+  }
+  // Only when the host actually changes: an unrelated edit must not depend on the connector row.
+  const hostChanged = Boolean(input.endpoint?.sshHost)
+    && input.endpoint!.sshHost.trim().toLowerCase() !== (current.ssh_host ?? "").trim().toLowerCase();
+  if (hostChanged && !(await connectorHostAllowedForUser(userId, input.endpoint!.sshHost))) {
+    throw new InfrastructureConnectionStoreError("invalid_request");
   }
   const nextSetupMode = input.setupMode ?? current.setup_mode;
   const currentConfiguration = normalizedConfiguration(current.config);
@@ -854,6 +868,9 @@ export async function deleteInfrastructureConnection(
   if (disposition !== "deleted") {
     throw new InfrastructureConnectionStoreError("database_error");
   }
+  // A machine reached through its connector stops being reachable with the
+  // connection: bump its generation and tell the relay. Never fails the delete.
+  await revokeConnectorForRemovedConnection(userId, current.ssh_host);
 }
 
 export async function forceForgetHetznerCloudConnection(

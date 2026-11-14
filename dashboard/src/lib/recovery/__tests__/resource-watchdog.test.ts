@@ -40,8 +40,10 @@ jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn(async () => ({
     users: {
       getUser: jest.fn(async () => ({
-        primaryEmailAddress: { emailAddress: "user@example.com" },
-        emailAddresses: [{ emailAddress: "user@example.com" }],
+        primaryEmailAddressId: "email_1",
+        emailAddresses: [
+          { id: "email_1", emailAddress: "user@example.com", verification: { status: "verified" } },
+        ],
       })),
     },
   })),
@@ -323,6 +325,59 @@ describe("runResourceWatchdog", () => {
       })
     );
     // The RAM path must not borrow the paid-tier CPU email.
+    expect(sendResourceWatchdogCustomerEmail).not.toHaveBeenCalled();
+  });
+
+  it("does not email a free-tier owner whose only address is one Clerk has not verified (F106)", async () => {
+    const instance: InstanceRow = {
+      id: "inst_free_unverified",
+      user_id: "user_unverified",
+      resource_tier: "credit_base",
+      cpu_limit: 0.5,
+      ram_limit: 1024,
+      proxmox_node: "fixturenode1",
+      proxmox_vmid: 201,
+      host_id: null,
+      config: { infrastructure: baseInfra },
+      name: "Free Agent",
+    };
+    const samples: Sample[] = [
+      {
+        sampled_at: "2026-05-10T11:30:00.000Z",
+        cpu_seconds_total: 100,
+        ram_peak_bytes: RAM_PINNED,
+        runtime_seconds: 7200,
+      },
+    ];
+    // The SDK user carries the unverified address as its primary, as Clerk reports it.
+    const unverifiedOwner = {
+      id: "user_unverified",
+      primaryEmailAddressId: "email_1",
+      primaryEmailAddress: {
+        id: "email_1",
+        emailAddress: "victim@example.com",
+        verification: { status: "unverified" },
+      },
+      emailAddresses: [
+        { id: "email_1", emailAddress: "victim@example.com", verification: { status: "unverified" } },
+      ],
+    };
+    const { clerkClient } = jest.requireMock("@clerk/nextjs/server") as {
+      clerkClient: jest.Mock;
+    };
+    clerkClient.mockResolvedValueOnce({
+      users: { getUser: jest.fn(async () => unverifiedOwner) },
+    });
+
+    buildWatchdogStub({
+      instances: [instance],
+      samplesByInstance: { inst_free_unverified: samples },
+    });
+
+    await runResourceWatchdog({ now: new Date("2026-05-10T12:00:00.000Z") });
+
+    // The pause still happens (control); only the owner email is withheld.
+    expect(sendFreeRamPressureEmail).not.toHaveBeenCalled();
     expect(sendResourceWatchdogCustomerEmail).not.toHaveBeenCalled();
   });
 

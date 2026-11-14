@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ResourceSurfaceNavigation } from "../ResourceSurfaceNavigation";
 
 const surfaces = ["chat", "terminal", "desktop", "files", "git", "skills", "box", "manage"]
@@ -62,7 +62,7 @@ it("keeps the computer's short set of surfaces directly available", () => {
   expect(screen.queryByRole("button", { name: "Tools" })).not.toBeInTheDocument();
 });
 
-it("repositions an open menu when the usable screen space changes", () => {
+it("repositions an open menu when the usable screen space changes", async () => {
   const bottomNav = document.createElement("nav");
   bottomNav.dataset.testid = "pwa-bottom-navigation";
   document.body.append(bottomNav);
@@ -78,7 +78,8 @@ it("repositions an open menu when the usable screen space changes", () => {
     expect(menu.style.maxHeight).toBe("303px");
     anchorTop = 410;
     fireEvent(window, new Event("resize"));
-    expect(menu.style.maxHeight).toBe("394px");
+    // The reposition runs on the next animation frame.
+    await waitFor(() => expect(menu.style.maxHeight).toBe("394px"));
     expect(menu.style.bottom).toBe("calc(100% + 8px)");
   } finally {
     unmount();
@@ -115,19 +116,19 @@ it("closes Tools from the tap-catcher layer without selecting anything", () => {
 describe("grouped agent surfaces: Agent · Computer · Manage", () => {
   const agentSurfaces = [
     { id: "chat", label: "Chat" }, { id: "terminal", label: "Codex session" },
-    { id: "box", label: "Terminal" }, { id: "files", label: "Files" }, { id: "browser", label: "Browser" }, { id: "git", label: "Git" },
+    { id: "desktop", label: "Desktop" }, { id: "box", label: "Terminal" }, { id: "files", label: "Files" }, { id: "browser", label: "Browser" },
     { id: "manage", label: "Manage" }, { id: "skills", label: "Skills" },
   ].map(surface => ({ ...surface, icon: null }));
   const groups = [
     { id: "work", label: "Agent", icon: null, surfaces: ["chat", "terminal"], home: "chat" },
-    { id: "computer", label: "Computer", icon: null, surfaces: ["box", "files", "browser", "git"] },
+    { id: "computer", label: "Computer", icon: null, surfaces: ["desktop", "browser", "files", "box"], start: "files" },
     { id: "manage", label: "Manage", icon: null, surfaces: ["manage", "skills"], home: "manage" },
   ];
 
   function Harness({ initial = "chat", exportHref }: { initial?: string; exportHref?: string }) {
     const [active, setActive] = useState(initial);
     return <ResourceSurfaceNavigation surfaces={agentSurfaces} groups={groups} active={active} onSelect={setActive}
-      panelId="work-pane" exportHref={exportHref} groupNotes={{ computer: "On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)" }} />;
+      panelId="work-pane" exportHref={exportHref} groupNotes={{ computer: "Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB" }} />;
   }
 
   it("shows three destinations and the active one's own views as tabs", () => {
@@ -142,17 +143,17 @@ describe("grouped agent surfaces: Agent · Computer · Manage", () => {
     expect(screen.queryByRole("button", { name: /^Tools/ })).not.toBeInTheDocument();
   });
 
-  it("opens Terminal first under Computer, then reopens the view last used there", () => {
+  it("opens Files first under Computer (not the Desktop choice), then reopens the view last used there", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
-    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Terminal", "Files", "Browser", "Git"]);
-    expect(screen.getByText("On its own computer (Hivra Cloud · 1.5 CPU / 3 GB)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Desktop", "Browser", "Files", "Terminal"]);
+    expect(screen.getByText("Codex 1’s own computer · Hivra Cloud · 1.5 CPU / 3 GB")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
     fireEvent.click(screen.getByRole("button", { name: "Manage" }));
     expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(screen.getByRole("button", { name: "Computer" }));
-    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("always opens Chat from the Agent button, even after the agent's session was last used", () => {
@@ -189,14 +190,26 @@ describe("grouped agent surfaces: Agent · Computer · Manage", () => {
     expect(screen.getByRole("button", { name: "Manage" })).toHaveTextContent(/^Manage$/);
   });
 
+  it("opens a group's first view when it names no start view", () => {
+    const plain = groups.map(group => group.id === "computer" ? { ...group, start: undefined } : group);
+    function Plain() {
+      const [active, setActive] = useState("chat");
+      return <ResourceSurfaceNavigation surfaces={agentSurfaces} groups={plain} active={active} onSelect={setActive} />;
+    }
+    render(<Plain />);
+    fireEvent.click(screen.getByRole("button", { name: "Computer" }));
+    expect(screen.getByRole("tab", { name: "Desktop" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("moves between a group's views with the arrow keys and keeps focus on the chosen tab", () => {
     render(<Harness initial="box" />);
     const terminal = screen.getByRole("tab", { name: "Terminal" });
     terminal.focus();
-    fireEvent.keyDown(terminal, { key: "ArrowLeft" });
-    expect(screen.getByRole("tab", { name: "Git" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Git" })).toHaveFocus();
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Git" }), { key: "ArrowRight" });
+    fireEvent.keyDown(terminal, { key: "ArrowRight" });
+    // Terminal is last: the arrow wraps to the first view.
+    expect(screen.getByRole("tab", { name: "Desktop" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Desktop" })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Desktop" }), { key: "ArrowLeft" });
     expect(screen.getByRole("tab", { name: "Terminal" })).toHaveFocus();
   });
 

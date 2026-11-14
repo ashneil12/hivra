@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import net from "node:net";
 
 import { accountCode } from "@/lib/account-code";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 
 import {
@@ -198,6 +199,8 @@ export async function issueServerEnrollment(
   const finalLine = renderEnrollFinalLine({ origin, code, adminPublicKey: keyPair.publicKey, accountCode: ownerAccountCode });
   return {
     enrollment: serverEnrollmentDto(row, null, deps.now()),
+    // The commands ask for this at a prompt, so the panel shows it beside them.
+    code,
     ...serverEnrollmentCommands(origin, code),
     finalLine,
     downloadSha256: sha256Hex(servedScript(body, finalLine)),
@@ -216,7 +219,9 @@ export async function getServerEnrollment(userId: string, enrollmentId: string, 
 
 export async function listServerEnrollments(userId: string, now = new Date()): Promise<ServerEnrollmentList> {
   const rows = await listServerEnrollmentRows(userId, now);
-  const enrollments = await Promise.all(rows.map(row => enrollmentView(userId, row, now)));
+  // Each reported row looks up its known server (up to three queries), so the
+  // list runs a few rows at a time instead of all at once.
+  const enrollments = await mapWithConcurrencyLimit(rows, 4, row => enrollmentView(userId, row, now));
   const origin = trustedAppOrigin();
   return { enrollments, uninstallCommand: origin ? serverUninstallCommand(origin) : null };
 }
@@ -231,11 +236,11 @@ function pendingReport(row: ServerEnrollmentRow | null, now: Date): ServerEnroll
 
 /** An owner-entered address: what the manual wizard accepts, checked with the
  * same SSRF rules before anything is stored. */
-async function ownerAddress(raw: string): Promise<string> {
+async function ownerAddress(userId: string, raw: string): Promise<string> {
   const parsed = ProxmoxSshHostSchema.safeParse(raw);
   if (!parsed.success) throw new ServerEnrollmentError("address_invalid");
   try {
-    await resolveValidatedSshDestination(parsed.data);
+    await resolveValidatedSshDestination(parsed.data, { userId });
   } catch (error) {
     if (error instanceof InfrastructureNetworkError && error.code === "ssh_host_forbidden") {
       throw new ServerEnrollmentError("address_blocked");
@@ -265,7 +270,7 @@ export async function confirmServerEnrollment(
   }
   let sshHost: string;
   if (request.sshHost) {
-    sshHost = await ownerAddress(request.sshHost);
+    sshHost = await ownerAddress(userId, request.sshHost);
   } else {
     // Checked again at Yes: IPv4 and not a reserved range.
     if (!row.observed_address || net.isIP(row.observed_address) !== 4 || !isAllowedSshAddress(row.observed_address)) {
@@ -308,13 +313,13 @@ type ReplaceDependencies = {
  * it accepted this enrollment's key, and sudo ran without a password as
  * UID 0. Nothing on the server changes. */
 export async function verifyEnrollmentKeyOnServer(input: {
-  connectionId: string; sshHost: string; sshPort: number; pinnedFingerprint: string; privateKey: string;
+  userId: string; connectionId: string; sshHost: string; sshPort: number; pinnedFingerprint: string; privateKey: string;
   /** A switch refuses a server that runs Proxmox VE while gate T43 is off. */
   refuseProxmox: boolean;
 }, deps: Pick<ReplaceDependencies, "run" | "resolve">): Promise<ReplacementFailure | null> {
   let destination: Awaited<ReturnType<typeof resolveValidatedSshDestination>>;
   try {
-    destination = await deps.resolve(input.sshHost);
+    destination = await deps.resolve(input.sshHost, { userId: input.userId });
   } catch {
     return "connection_failed";
   }
@@ -366,7 +371,7 @@ export async function replaceServerEnrollmentAccess(
   const mode = known.offer === "replace_key" ? "key" : "switch";
   // A key-only change can't move the address, as in credential recovery.
   if (mode === "key" && request.sshHost) throw new ServerEnrollmentError("address_invalid");
-  const chosenHost = mode === "switch" && request.sshHost ? await ownerAddress(request.sshHost) : null;
+  const chosenHost = mode === "switch" && request.sshHost ? await ownerAddress(userId, request.sshHost) : null;
   const connection = await loadInfrastructureConnectionSecret(userId, request.connectionId);
   if (connection.revision !== request.connectionRevision) throw new ServerEnrollmentError("connection_changed");
   const privateKey = await loadServerEnrollmentAdminKey(userId, enrollmentId);
@@ -380,7 +385,7 @@ export async function replaceServerEnrollmentAccess(
   let failure: ReplacementFailure | null;
   try {
     failure = await verifyEnrollmentKeyOnServer({
-      connectionId: connection.id, sshHost: chosenHost ?? connection.endpoint.sshHost,
+      userId, connectionId: connection.id, sshHost: chosenHost ?? connection.endpoint.sshHost,
       sshPort: connection.endpoint.sshPort, pinnedFingerprint: connection.endpoint.sshHostFingerprintSha256,
       privateKey,
       // A key-only change keeps the privilege the connection already has, so
@@ -392,7 +397,7 @@ export async function replaceServerEnrollmentAccess(
     failure = "connection_failed";
   }
   if (failure) {
-    await failServerEnrollmentReplacement({ userId, enrollmentId, runId, failure });
+    await failServerEnrollmentReplacement({ userId, enrollmentId, runId, failure }).catch(() => undefined);
     throw new ServerEnrollmentError("verification_failed", failure);
   }
   const completed = await completeServerEnrollmentReplacement({

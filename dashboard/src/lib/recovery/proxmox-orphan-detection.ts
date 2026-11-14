@@ -43,6 +43,7 @@
  * recycled VMID can never be touched.
  */
 
+import { chunk } from "@/lib/array-utils";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
@@ -584,27 +585,36 @@ async function loadDbVmidsForHost(
   return vmids;
 }
 
+// PostgREST puts the .in() list in the query string; keep each request well
+// under the gateway's request-line limit (see ARCHIVE_ID_CHUNK_SIZE in
+// instance-health-sweep.ts).
+const ID_LOOKUP_CHUNK_SIZE = 100;
+
 /**
  * Load the instance rows named by orphan VMs (uuid extracted from the VM
  * name) so classifyLeakedRestoreClones can cross-check lifecycle state. Reads
  * only; soft-deleted rows are INCLUDED on purpose — a deleted row with a
  * running VM is exactly the leak signature.
  */
-async function loadInstanceRowsByIds(
+export async function loadInstanceRowsByIds(
   supabase: SupabaseAdmin,
   ids: readonly string[],
 ): Promise<Map<string, InstanceLifecycleRow>> {
   const out = new Map<string, InstanceLifecycleRow>();
   if (ids.length === 0) return out;
-  const { data, error } = await supabase
-    .from("hermes_instances")
-    .select("id, lifecycle_state, proxmox_vmid")
-    .in("id", [...ids]);
-  if (error) {
-    throw new Error(`hermes_instances id lookup failed: ${error.message}`);
-  }
-  for (const row of (data ?? []) as InstanceLifecycleRow[]) {
-    if (typeof row.id === "string" && row.id.length > 0) out.set(row.id, row);
+  // Chunked: a long .in() list overflows the gateway's request-line limit and
+  // the whole lookup 400s (same landmine as instance-health-sweep).
+  for (const idChunk of chunk([...ids], ID_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from("hermes_instances")
+      .select("id, lifecycle_state, proxmox_vmid")
+      .in("id", idChunk);
+    if (error) {
+      throw new Error(`hermes_instances id lookup failed: ${error.message}`);
+    }
+    for (const row of (data ?? []) as InstanceLifecycleRow[]) {
+      if (typeof row.id === "string" && row.id.length > 0) out.set(row.id, row);
+    }
   }
   return out;
 }

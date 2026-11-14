@@ -144,6 +144,13 @@ guest("computer contract guest program", () => {
   });
 });
 
+const CONTRACT_AUTHORITY = {
+  env: {},
+  infrastructureBindingTag: "hivra-bind-0123456789abcdef0123456789abcdef",
+  infrastructureBindingTagEnforced: true,
+  paths: { vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" },
+};
+
 describe("computer contract seed transport", () => {
   const request = (): ComputerContractGuestRequest => {
     const content = block(1);
@@ -160,22 +167,41 @@ describe("computer contract seed transport", () => {
   it("returns a receipt only for exactly one well-formed result line", async () => {
     const line = `HIVRA_CONTRACT_RESULT ${JSON.stringify({ status: "delivered", revision: 1, contentSha256: "a".repeat(64), observed: "a".repeat(64), replay: false, bootId: null })}`;
     runProxmoxHostScript.mockResolvedValueOnce({ ok: true, stdout: `noise\n${line}\n` });
-    await expect(runComputerContractSeed("10.253.0.5", request(), {})).resolves.toEqual({ ok: true, result: expect.objectContaining({ status: "delivered" }) });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(), CONTRACT_AUTHORITY)).resolves.toEqual({ ok: true, result: expect.objectContaining({ status: "delivered" }) });
     runProxmoxHostScript.mockResolvedValueOnce({ ok: true, stdout: `${line}\n${line}\n` });
-    await expect(runComputerContractSeed("10.253.0.5", request(), {})).resolves.toEqual({ ok: false, error: "unrecognized_output" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(), CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "unrecognized_output" });
     runProxmoxHostScript.mockResolvedValueOnce({ ok: true, stdout: "HIVRA_CONTRACT_RESULT {\"status\":\"delivered\"}\n" });
-    await expect(runComputerContractSeed("10.253.0.5", request(), {})).resolves.toEqual({ ok: false, error: "unrecognized_output" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(), CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "unrecognized_output" });
     runProxmoxHostScript.mockResolvedValueOnce({ ok: false, stdout: line, error: "ssh failed" });
-    await expect(runComputerContractSeed("10.253.0.5", request(), {})).resolves.toEqual({ ok: false, error: "unreachable" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(), CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "unreachable" });
     runProxmoxHostScript.mockRejectedValueOnce(new Error("timeout"));
-    await expect(runComputerContractSeed("10.253.0.5", request(), {})).resolves.toEqual({ ok: false, error: "unreachable" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(), CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "unreachable" });
+  });
+
+  it("sends nothing to a box whose identity can't be pinned to its VMID", async () => {
+    runProxmoxHostScript.mockClear();
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(),
+      { ...CONTRACT_AUTHORITY, infrastructureBindingTagEnforced: false })).resolves.toEqual({ ok: false, error: "unreachable" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: null }, request(), CONTRACT_AUTHORITY))
+      .resolves.toEqual({ ok: false, error: "unreachable" });
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("delivers only over the VMID-bound path, never with host-key checking off", async () => {
+    runProxmoxHostScript.mockClear();
+    runProxmoxHostScript.mockResolvedValueOnce({ ok: false, stdout: "", error: "x" });
+    await runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, request(), CONTRACT_AUTHORITY);
+    const script = runProxmoxHostScript.mock.calls[0][0] as string;
+    expect(script).toContain("VMID=1161");
+    expect(script).toContain("EXPECTED_BINDING_TAG=");
+    expect(script).not.toContain("StrictHostKeyChecking=no");
   });
 
   it("refuses a bad address or a block without its markers before any host call", async () => {
     runProxmoxHostScript.mockClear();
-    await expect(runComputerContractSeed("box.example.com", request(), {})).resolves.toEqual({ ok: false, error: "invalid_request" });
-    await expect(runComputerContractSeed("10.253.0.5", { ...request(), block: "no markers" }, {})).resolves.toEqual({ ok: false, error: "invalid_request" });
-    await expect(runComputerContractSeed("10.253.0.5", { ...request(), expected: "nope" }, {})).resolves.toEqual({ ok: false, error: "invalid_request" });
+    await expect(runComputerContractSeed({ ip: "box.example.com", vmid: 1161 }, request(), CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "invalid_request" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, { ...request(), block: "no markers" }, CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "invalid_request" });
+    await expect(runComputerContractSeed({ ip: "10.253.0.5", vmid: 1161 }, { ...request(), expected: "nope" }, CONTRACT_AUTHORITY)).resolves.toEqual({ ok: false, error: "invalid_request" });
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
   });
 });

@@ -13,7 +13,8 @@ interface SupabaseMockBuilder {
   update: jest.Mock;
   upsert: jest.Mock;
   eq: jest.Mock;
-  single: jest.Mock;
+  neq: jest.Mock;
+  maybeSingle: jest.Mock;
   then: (resolve: (val: { data: unknown; error: unknown }) => void) => void;
 }
 
@@ -23,7 +24,8 @@ const createMockBuilder = (): SupabaseMockBuilder => {
       update: jest.fn().mockReturnThis(),
       upsert: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
-      single: jest.fn().mockReturnThis(),
+      neq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockReturnThis(),
       then: (resolve: (val: { data: unknown; error: unknown }) => void) => resolve({ data: null, error: null }),
     };
     return builder as unknown as SupabaseMockBuilder;
@@ -68,7 +70,7 @@ describe("console-helpers", () => {
 
       (supabaseAdmin!.from as unknown as jest.Mock).mockImplementation(() => {
         const builder = createMockBuilder();
-        builder.single.mockImplementation(() => Promise.resolve({ data: null }));
+        builder.maybeSingle.mockImplementation(() => Promise.resolve({ data: null }));
         return builder;
       });
 
@@ -76,12 +78,44 @@ describe("console-helpers", () => {
       expect(result.errorResponse?.status).toBe(404);
     });
 
+    it("never resolves a soft-deleted instance (status 'deleted' is filtered out)", async () => {
+      (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user-1" });
+
+      let builder!: SupabaseMockBuilder;
+      (supabaseAdmin!.from as unknown as jest.Mock).mockImplementation(() => {
+        builder = createMockBuilder();
+        builder.maybeSingle.mockImplementation(() => Promise.resolve({ data: null, error: null }));
+        return builder;
+      });
+
+      const result = await validateConsoleAccess(Promise.resolve({ id: "inst-1" }));
+      expect(builder.neq).toHaveBeenCalledWith("status", "deleted");
+      expect(result.errorResponse?.status).toBe(404);
+      expect(resolveInstanceIpv4).not.toHaveBeenCalled();
+    });
+
+    it("reports a database error as 500, not as a missing instance", async () => {
+      (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user-1" });
+
+      (supabaseAdmin!.from as unknown as jest.Mock).mockImplementation(() => {
+        const builder = createMockBuilder();
+        builder.maybeSingle.mockImplementation(() =>
+          Promise.resolve({ data: null, error: { message: "connection reset" } })
+        );
+        return builder;
+      });
+
+      const result = await validateConsoleAccess(Promise.resolve({ id: "inst-1" }));
+      expect(result.errorResponse?.status).toBe(500);
+      expect(resolveInstanceIpv4).not.toHaveBeenCalled();
+    });
+
     it("returns 404 if instance offline", async () => {
       (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user-1" });
 
       (supabaseAdmin!.from as unknown as jest.Mock).mockImplementation(() => {
         const builder = createMockBuilder();
-        builder.single.mockImplementation(() => Promise.resolve({ data: { id: "inst-1", user_id: "user-1" } }));
+        builder.maybeSingle.mockImplementation(() => Promise.resolve({ data: { id: "inst-1", user_id: "user-1" } }));
         return builder;
       });
 
@@ -97,7 +131,7 @@ describe("console-helpers", () => {
 
       (supabaseAdmin!.from as unknown as jest.Mock).mockImplementation(() => {
         const builder = createMockBuilder();
-        builder.single.mockImplementation(() => Promise.resolve({ data: { id: "inst-1", user_id: "user-1" } }));
+        builder.maybeSingle.mockImplementation(() => Promise.resolve({ data: { id: "inst-1", user_id: "user-1" } }));
         return builder;
       });
 

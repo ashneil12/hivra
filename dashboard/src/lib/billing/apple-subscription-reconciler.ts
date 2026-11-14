@@ -42,16 +42,16 @@ import {
   getAppStoreServerAPIClient,
   getAppleSignedDataVerifier,
 } from "@/lib/billing/apple-verifier";
+import {
+  APPLE_LIVE_STATUS_ACTIVE,
+  APPLE_LIVE_STATUS_BILLING_GRACE_PERIOD,
+  APPLE_LIVE_STATUS_BILLING_RETRY,
+  APPLE_LIVE_STATUS_EXPIRED,
+  APPLE_LIVE_STATUS_REVOKED,
+} from "@/lib/billing/apple-live-status";
 import { AppleWebhookService } from "@/lib/services/apple-webhook-service";
 
 export const APPLE_RECONCILER_LOG_SOURCE = "apple-subscription-reconciler";
-
-/** App Store Server API status codes (Status enum). */
-const APPLE_STATUS_ACTIVE = 1;
-const APPLE_STATUS_EXPIRED = 2;
-const APPLE_STATUS_BILLING_RETRY = 3;
-const APPLE_STATUS_BILLING_GRACE_PERIOD = 4;
-const APPLE_STATUS_REVOKED = 5;
 
 interface AppleReconcileEntry {
   userId: string;
@@ -213,7 +213,7 @@ export async function reconcileAppleSubscriptions(
         : null;
 
       switch (lastTransaction.status) {
-        case APPLE_STATUS_ACTIVE: {
+        case APPLE_LIVE_STATUS_ACTIVE: {
           if (!transaction) {
             entry.action = "manual_review";
             entry.detail = "live status ACTIVE but no signedTransactionInfo";
@@ -236,7 +236,7 @@ export async function reconcileAppleSubscriptions(
           }
           break;
         }
-        case APPLE_STATUS_BILLING_GRACE_PERIOD: {
+        case APPLE_LIVE_STATUS_BILLING_GRACE_PERIOD: {
           await AppleWebhookService.markGracePeriod({
             userId: row.user_id,
             renewalInfo,
@@ -246,7 +246,7 @@ export async function reconcileAppleSubscriptions(
           result.converged += 1;
           break;
         }
-        case APPLE_STATUS_BILLING_RETRY: {
+        case APPLE_LIVE_STATUS_BILLING_RETRY: {
           await AppleWebhookService.markBillingRetry(
             row.user_id,
             "RECONCILE_BILLING_RETRY"
@@ -255,7 +255,7 @@ export async function reconcileAppleSubscriptions(
           result.converged += 1;
           break;
         }
-        case APPLE_STATUS_EXPIRED: {
+        case APPLE_LIVE_STATUS_EXPIRED: {
           await AppleWebhookService.expireSubscription(
             row.user_id,
             "RECONCILE_EXPIRED"
@@ -264,7 +264,7 @@ export async function reconcileAppleSubscriptions(
           result.converged += 1;
           break;
         }
-        case APPLE_STATUS_REVOKED: {
+        case APPLE_LIVE_STATUS_REVOKED: {
           await AppleWebhookService.revokeSubscription(
             row.user_id,
             "RECONCILE_REVOKED"

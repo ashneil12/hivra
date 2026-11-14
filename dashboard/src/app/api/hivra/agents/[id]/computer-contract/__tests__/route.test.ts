@@ -11,9 +11,9 @@ const mockSendSetup = jest.fn();
 const mockContext = jest.fn();
 const mockRateLimit = jest.fn();
 const queries: Array<Array<[string, unknown]>> = [];
+let mockDbError: { code: string; message: string } | null = null;
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   RATE_LIMIT_PRESETS: { settingsWrite: { limit: 10, windowMs: 60_000 } },
   enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args),
@@ -27,7 +27,7 @@ jest.mock("@/lib/supabase", () => ({
         select: () => builder,
         eq: (column: string, value: unknown) => { filters.push([column, value]); return builder; },
         neq: (column: string, value: unknown) => { filters.push([`not ${column}`, value]); return builder; },
-        maybeSingle: async () => ({ data: mockAgent(filters), error: null }),
+        maybeSingle: async () => ({ data: mockAgent(filters), error: mockDbError }),
       };
       return builder;
     },
@@ -117,7 +117,7 @@ describe("POST /api/hivra/agents/[id]/computer-contract", () => {
     const response = await POST(post({ action }), params);
     expect(response.status).toBe(200);
     expect(mockContext).toHaveBeenCalledWith("user_1", CODEX);
-    expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, { PROXMOX_NODE: "fixturenode10" }, action, { deadline: expect.any(Number) });
+    expect(mockAdvance).toHaveBeenCalledWith("user_1", CODEX, expect.objectContaining({ env: { PROXMOX_NODE: "fixturenode10" } }), action, { deadline: expect.any(Number) });
   });
 
   it("gives each step a deadline inside the route's 60 s budget", async () => {
@@ -169,5 +169,19 @@ describe("POST /api/hivra/agents/[id]/computer-contract", () => {
     expect((await POST(post({ action: "check" }), params)).status).toBe(429);
     expect(mockRateLimit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ routeKey: "hivra_computer_contract_post", userId: "user_1" }));
     expect(mockAdvance).not.toHaveBeenCalled();
+  });
+
+  it("answers 503, not 404, when the agent lookup fails, and never acts on it", async () => {
+    mockDbError = { code: "08006", message: "connection failure" };
+    try {
+      const getResponse = await GET(get(), params);
+      expect(getResponse.status).toBe(503);
+      const postResponse = await POST(post({ action: "deliver" }), params);
+      expect(postResponse.status).toBe(503);
+      expect(mockAdvance).not.toHaveBeenCalled();
+      expect(mockStatus).not.toHaveBeenCalled();
+    } finally {
+      mockDbError = null;
+    }
   });
 });

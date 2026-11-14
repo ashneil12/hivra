@@ -4,6 +4,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { deriveReservedCreditBalance, getCreditSummary } from "@/lib/billing/credits";
 import { getLatestHermesTokenHoldingSnapshot } from "@/lib/billing/token-holdings";
 
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
 }));
@@ -39,7 +45,6 @@ describe("GET /api/billing/entitlements", () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: mockUserId });
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 0,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
     (deriveReservedCreditBalance as jest.Mock).mockResolvedValue(0);
@@ -130,7 +135,7 @@ describe("GET /api/billing/entitlements", () => {
     expect(getLatestHermesTokenHoldingSnapshot).toHaveBeenCalledWith(mockUserId, undefined);
   });
 
-  it("uses the latest token snapshot for dry-run token-base access", async () => {
+  it("reports the token snapshot but grants no compute from a token holding alone", async () => {
     const subscriptionQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
@@ -165,10 +170,11 @@ describe("GET /api/billing/entitlements", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    // The 1-token Starter tier is gone: hosted computers are paid only.
     expect(body.data.decision).toMatchObject({
-      allowedTier: "token_base",
-      canProvision: true,
-      shouldPause: false,
+      allowedTier: null,
+      canProvision: false,
+      failClosed: true,
     });
     expect(body.data.tokenHolding).toMatchObject({
       id: "snapshot_1",
@@ -196,7 +202,6 @@ describe("GET /api/billing/entitlements", () => {
 
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 500,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
@@ -238,7 +243,6 @@ describe("GET /api/billing/entitlements", () => {
 
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 500,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
     (deriveReservedCreditBalance as jest.Mock).mockResolvedValue(350);

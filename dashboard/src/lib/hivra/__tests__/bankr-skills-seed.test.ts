@@ -106,17 +106,27 @@ describe("buildBankrSkillsGuestScript", () => {
   });
 });
 
-describe("buildBankrSkillsHostScript", () => {
-  const host = buildBankrSkillsHostScript("10.250.20.42", "echo hi");
+const TAG = "hivra-bind-0123456789abcdef0123456789abcdef";
+const TARGET = { vmid: 1161, ip: "10.250.20.42", bindingTag: TAG, vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" };
+const AUTHORITY = {
+  env: {},
+  infrastructureBindingTag: TAG,
+  infrastructureBindingTagEnforced: true,
+  paths: { vmSshKeyPath: TARGET.vmSshKeyPath },
+};
 
-  it("uses the provisioner's host->guest key", () => {
-    expect(host).toContain("KEY=/etc/hivra/keys/vm-orchestrator");
+describe("buildBankrSkillsHostScript", () => {
+  const host = buildBankrSkillsHostScript(TARGET, "echo hi");
+
+  it("pins delivery to the VMID that carries the agent's binding tag", () => {
+    expect(host).toContain("VMID=1161");
+    expect(host).toContain(`EXPECTED_BINDING_TAG='${TAG}'`);
+    expect(host).not.toContain("StrictHostKeyChecking=no");
+    expect(host).not.toContain("UserKnownHostsFile=/dev/null");
   });
 
   it("streams the payload over stdin (not as an ssh argv) to avoid ARG_MAX", () => {
-    // The large suite must not be inlined into the inner ssh command.
-    expect(host).toMatch(/printf '%s' '[A-Za-z0-9+/=]+' \| ssh /);
-    expect(host).toContain('"base64 -d | sudo bash"');
+    expect(host).toMatch(/printf '%s' '[A-Za-z0-9+/=]+' \| "\$\{GUEST_SSH\[@\]\}"/);
     expect(host).not.toMatch(/ssh [^|]*"echo /);
   });
 });
@@ -125,13 +135,13 @@ describe("seedBankrSkillsOntoBox", () => {
   beforeEach(() => mockedRunScript.mockReset());
 
   it("skips unsupported agent types without touching SSH", async () => {
-    const res = await seedBankrSkillsOntoBox({ id: "a", type: "aeon", ip: "10.240.0.1" }, {});
+    const res = await seedBankrSkillsOntoBox({ id: "a", type: "aeon", ip: "10.240.0.1", vmid: 1161 }, AUTHORITY);
     expect(res).toEqual({ ok: false, count: 0, skipped: "unsupported_type" });
     expect(mockedRunScript).not.toHaveBeenCalled();
   });
 
   it("rejects a missing/invalid box ip", async () => {
-    const res = await seedBankrSkillsOntoBox({ id: "a", type: "codex", ip: "" }, {});
+    const res = await seedBankrSkillsOntoBox({ id: "a", type: "codex", ip: "", vmid: 1161 }, AUTHORITY);
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/ip/i);
     expect(mockedRunScript).not.toHaveBeenCalled();
@@ -143,7 +153,7 @@ describe("seedBankrSkillsOntoBox", () => {
       stdout: "HIVRA_BANKR_SKILLS_OK\n",
       stderr: "",
     } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
-    const res = await seedBankrSkillsOntoBox({ id: "a", type: "claude-code", ip: "10.250.20.42" }, {});
+    const res = await seedBankrSkillsOntoBox({ id: "a", type: "claude-code", ip: "10.250.20.42", vmid: 1161 }, AUTHORITY);
     expect(res.ok).toBe(true);
     expect(res.count).toBeGreaterThan(0);
     expect(mockedRunScript).toHaveBeenCalledTimes(1);
@@ -156,8 +166,18 @@ describe("seedBankrSkillsOntoBox", () => {
       stderr: "boom",
       error: "ssh failed",
     } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
-    const res = await seedBankrSkillsOntoBox({ id: "a", type: "codex", ip: "10.250.20.42" }, {});
+    const res = await seedBankrSkillsOntoBox({ id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 }, AUTHORITY);
     expect(res.ok).toBe(false);
     expect(res.error).toBeTruthy();
+  });
+
+  it("sends nothing to a box whose owner binding is not enforced", async () => {
+    const res = await seedBankrSkillsOntoBox(
+      { id: "a", type: "codex", ip: "10.250.20.42", vmid: 1161 },
+      { ...AUTHORITY, infrastructureBindingTagEnforced: false },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("identity can't be verified");
+    expect(mockedRunScript).not.toHaveBeenCalled();
   });
 });

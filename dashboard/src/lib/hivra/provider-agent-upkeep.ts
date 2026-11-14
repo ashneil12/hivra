@@ -120,9 +120,17 @@ export async function advanceProviderAgentUpkeep(
         const at = deps.now().toISOString();
         for (const part of confirmed) {
           const column = SEED_COLUMN[part];
-          const { data: updated } = await supabaseAdmin.from("hivra_agents").update({ [column]: at })
+          const { data: updated, error: stampError } = await supabaseAdmin.from("hivra_agents").update({ [column]: at })
             .eq("id", agentId).eq("user_id", userId).is(column, null).select().maybeSingle();
-          if (updated) current = updated as UpkeepRow;
+          if (stampError) {
+            // The column stays null, so the next page load sends this seed again.
+            log.warn("provider agent seed stamp could not be saved; retrying later", {
+              source: LOG_SOURCE, failureType: "provider_agent_seed_stamp_failed", userId, agentId, code: stampError.code,
+            });
+            continue;
+          }
+          if (!updated) continue;
+          current = updated as UpkeepRow;
           await logHivraAgentEvent({ userId, event: SEED_EVENT[part], agentId, agentType: String(current.type) });
         }
         if (attempted.length > confirmed.length) {

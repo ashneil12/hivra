@@ -23,6 +23,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getCreditSummary, deriveReservedCreditBalance } from "@/lib/billing/credits";
 import { getLatestHermesTokenHoldingSnapshot } from "@/lib/billing/token-holdings";
 
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 jest.mock("@/lib/billing/credits", () => ({
   getCreditSummary: jest.fn(),
@@ -152,13 +158,12 @@ function entitlementFor(sub: {
   plan: string;
   status: string;
   grace_period_ends_at?: string | null;
-}, tokenBalance = 0) {
+}) {
   return evaluateComputeEntitlement({
     userId: "user_123",
     subscription: sub,
     creditBalanceCredits: null,
     reservedCredits: 0,
-    tokenHolding: { verified: tokenBalance > 0, balance: tokenBalance },
     activeInstances: [],
     requestedInstance: { cpu: 0.5, ram: 1024 },
   });
@@ -178,17 +183,6 @@ describe("evaluateComputeEntitlement — dunning cutoff", () => {
       allowedTier: null,
       canProvision: false,
     });
-  });
-
-  it("flag ON: falls THROUGH to a token entitlement rather than hard-denying", () => {
-    // A user who also holds $HERMES keeps token_base — the cutoff drops the
-    // Stripe grant, it does not blanket-revoke the account.
-    setFlag(true);
-    const decision = entitlementFor(
-      { plan: "operator", status: "past_due", grace_period_ends_at: EXPIRED },
-      1
-    );
-    expect(decision).toMatchObject({ verified: true, allowedTier: "token_base" });
   });
 
   it("flag ON: keeps the plan tier while still inside the 48h grace window", () => {

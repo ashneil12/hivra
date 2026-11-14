@@ -4,15 +4,10 @@ import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-video-retrieve | Habakkuk 2:3 | Verse: For the vision is yet for an appointed time… though it tarry, wait for it.
 const VENICE_VIDEOS_BASE_URL = "https://api.venice.ai/api/v1/video";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 function jsonResponseFromText(text: string, status: number) {
   return new Response(text, {

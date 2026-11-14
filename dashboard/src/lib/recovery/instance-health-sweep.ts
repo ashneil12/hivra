@@ -695,191 +695,196 @@ export async function runInstanceHealthSweep(): Promise<InstanceHealthSweepResul
     if (results[i].ok) healthyInstanceIds.add(probable[i].id);
   }
 
-  await Promise.all(
-    results.map(async (result, index) => {
-      if (result.ok) return;
-      const row = probable[index];
+  // Persist per result in bounded batches, as instance-egress-sweep does: an
+  // unbounded wave of ops-event writes stampedes after a fleet-wide failure.
+  const indexedResults = results.map((result, index) => ({ result, index }));
+  for (const batch of chunk(indexedResults, PROBE_BATCH_SIZE)) {
+    await Promise.all(
+      batch.map(async ({ result, index }) => {
+        if (result.ok) return;
+        const row = probable[index];
 
-      // tlsWedged path: HTTP/2 broke but HTTP/1.1 worked. This is the
-      // Caddy certmagic-panic signature — invisible to the simpler
-      // "probe failed" path. Severity=fatal so it surfaces above the
-      // noise on /dashboard/ops, and the title/source string lets an
-      // operator grep for it. Recovery is the caddy stop/start in the
-      // message below.
-      if (result.tlsWedged) {
-        failed += 1;
-        await reportOpsEvent({
-          source: "synthetic.tls-wedged",
-          severity: "fatal",
-          // Title + message MUST be stable for a given wedged instance — this is
-          // a fatal event on the every-5-min probe cron, and reportOpsEvent
-          // fingerprints on (source,title,message,route,instanceId) and pages only
-          // on first sighting. The raw h2 error string + h1.1 status vary probe to
-          // probe for the SAME wedge (undici surfaces many error shapes), so
-          // embedding them here re-paged every 5 min. They live in metadata
-          // (h2ErrorName/h2ErrorMessage/h11Status), which is NOT fingerprinted.
-          title: `Caddy TLS wedged on ${result.gatewayUrl} — h2 fails, h1.1 works`,
-          message:
-            `HTTP/2 probe to ${result.gatewayUrl}/health failed with a TLS/protocol ` +
-            `error, but the same request over HTTP/1.1 succeeded. Browsers negotiate ` +
-            `h2 by default and cannot reach this agent. Recovery: SSH to the Proxmox ` +
-            `host and run 'systemctl stop caddy && sleep 2 && systemctl start caddy'. ` +
-            `The exact h2 error + h1.1 status are in this event's metadata.`,
-          instanceId: row.id,
-          userId: row.user_id,
-          metadata: {
-            failureOwner: "hypervisor",
-            failurePhase: "network",
-            failureType: "caddy_tls_wedged",
-            recoveryAction: "restart_gateway",
-            gatewayUrl: result.gatewayUrl,
-            h2ErrorName: result.errorName,
-            h2ErrorMessage: result.errorMessage,
-            h11Status: result.status,
-            backend: row.backend,
-            durationMs: result.durationMs,
-          },
-        });
-        return;
-      }
-
-      if (result.expectedGatewayUrl) {
-        failed += 1;
-        await reportOpsEvent({
-          source: "synthetic.gateway-config",
-          severity: "fatal",
-          title: `Hetzner gateway URL is not canonical: ${result.gatewayUrl}`,
-          message:
-            `Hetzner instance ${row.id} has gateway_url=${result.gatewayUrl}, ` +
-            `but Hetzner gateways must use ${result.expectedGatewayUrl}. ` +
-            `Custom hermesos.cloud hostnames do not self-create DNS records and ` +
-            `will fail before reaching the instance. Recovery: update gateway_url ` +
-            `and the instance Caddy site label to ${result.expectedGatewayUrl}.`,
-          instanceId: row.id,
-          userId: row.user_id,
-          metadata: {
-            failureOwner: "control-plane",
-            failurePhase: "routing",
-            failureType: "hetzner_gateway_url_not_sslip",
-            recoveryAction: "canonicalize_gateway_url",
-            gatewayUrl: result.gatewayUrl,
-            expectedGatewayUrl: result.expectedGatewayUrl,
-            hetznerServerId: row.hetzner_server_id ?? null,
-            ipv4Address: row.ipv4_address ?? null,
-            backend: row.backend,
-          },
-        });
-        return;
-      }
-
-      if (
-        result.tlsError &&
-        row.infrastructure_provider === "proxmox" &&
-        result.gatewayUrl.includes(".agents.hermesos.cloud")
-      ) {
-        failed += 1;
-        await reportOpsEvent({
-          source: "synthetic.gateway-route",
-          severity: "fatal",
-          title: `Proxmox gateway route or certificate missing: ${result.gatewayUrl}`,
-          message:
-            `TLS failed before ${result.gatewayUrl}/health returned an HTTP response. ` +
-            `For Proxmox agents.hermesos.cloud gateways this usually means the host Caddy ` +
-            `does not have a current site route/certificate for the DB gateway_url. ` +
-            `Recovery: rebuild the per-instance Caddy route for VM ${row.proxmox_vmid ?? "<unknown>"}, ` +
-            `validate Caddy, reload it, and re-probe the gateway.`,
-          instanceId: row.id,
-          userId: row.user_id,
-          metadata: {
-            failureOwner: "hypervisor",
-            failurePhase: "routing",
-            failureType: "proxmox_caddy_route_or_cert_missing",
-            recoveryAction: "rebuild_caddy_route",
-            gatewayUrl: result.gatewayUrl,
-            proxmoxVmid: row.proxmox_vmid ?? null,
-            backend: row.backend,
-            durationMs: result.durationMs,
-            errorName: result.errorName,
-            errorMessage: result.errorMessage,
-          },
-        });
-        return;
-      }
-
-      // Generic gateway failure. If the primary probe THREW (status null —
-      // a TLS/network error where the stored gateway host might be down
-      // while a fallback candidate URL still answers), confirm against the
-      // recover-unhealthy-active reachable set before opening an event. An
-      // HTTP response (5xx, or a Cloudflare 520–527 edge code) is NOT
-      // re-confirmed: the gateway host already answered, so re-probing the
-      // same set can't disagree — emit straight away and let host-wedge
-      // aggregation correlate the edge codes. This is the guard that stops
-      // the prober from flagging instances recover-unhealthy-active is
-      // simultaneously probing healthy and archiving.
-      if (result.status === null) {
-        const reachable = await confirmReachableViaRecoverySet(row);
-        if (reachable) {
-          recoveredViaFallback += 1;
-          healthyInstanceIds.add(row.id);
-          log.info("instance-health-sweep generic failure rescued by fallback URL", {
-            source: "probe-instance-health",
-            failureType: "instance_health_fallback_reachable",
+        // tlsWedged path: HTTP/2 broke but HTTP/1.1 worked. This is the
+        // Caddy certmagic-panic signature — invisible to the simpler
+        // "probe failed" path. Severity=fatal so it surfaces above the
+        // noise on /dashboard/ops, and the title/source string lets an
+        // operator grep for it. Recovery is the caddy stop/start in the
+        // message below.
+        if (result.tlsWedged) {
+          failed += 1;
+          await reportOpsEvent({
+            source: "synthetic.tls-wedged",
+            severity: "fatal",
+            // Title + message MUST be stable for a given wedged instance — this is
+            // a fatal event on the every-5-min probe cron, and reportOpsEvent
+            // fingerprints on (source,title,message,route,instanceId) and pages only
+            // on first sighting. The raw h2 error string + h1.1 status vary probe to
+            // probe for the SAME wedge (undici surfaces many error shapes), so
+            // embedding them here re-paged every 5 min. They live in metadata
+            // (h2ErrorName/h2ErrorMessage/h11Status), which is NOT fingerprinted.
+            title: `Caddy TLS wedged on ${result.gatewayUrl} — h2 fails, h1.1 works`,
+            message:
+              `HTTP/2 probe to ${result.gatewayUrl}/health failed with a TLS/protocol ` +
+              `error, but the same request over HTTP/1.1 succeeded. Browsers negotiate ` +
+              `h2 by default and cannot reach this agent. Recovery: SSH to the Proxmox ` +
+              `host and run 'systemctl stop caddy && sleep 2 && systemctl start caddy'. ` +
+              `The exact h2 error + h1.1 status are in this event's metadata.`,
             instanceId: row.id,
             userId: row.user_id,
-            gatewayUrl: result.gatewayUrl,
+            metadata: {
+              failureOwner: "hypervisor",
+              failurePhase: "network",
+              failureType: "caddy_tls_wedged",
+              recoveryAction: "restart_gateway",
+              gatewayUrl: result.gatewayUrl,
+              h2ErrorName: result.errorName,
+              h2ErrorMessage: result.errorMessage,
+              h11Status: result.status,
+              backend: row.backend,
+              durationMs: result.durationMs,
+            },
           });
           return;
         }
-      }
 
-      failed += 1;
+        if (result.expectedGatewayUrl) {
+          failed += 1;
+          await reportOpsEvent({
+            source: "synthetic.gateway-config",
+            severity: "fatal",
+            title: `Hetzner gateway URL is not canonical: ${result.gatewayUrl}`,
+            message:
+              `Hetzner instance ${row.id} has gateway_url=${result.gatewayUrl}, ` +
+              `but Hetzner gateways must use ${result.expectedGatewayUrl}. ` +
+              `Custom hermesos.cloud hostnames do not self-create DNS records and ` +
+              `will fail before reaching the instance. Recovery: update gateway_url ` +
+              `and the instance Caddy site label to ${result.expectedGatewayUrl}.`,
+            instanceId: row.id,
+            userId: row.user_id,
+            metadata: {
+              failureOwner: "control-plane",
+              failurePhase: "routing",
+              failureType: "hetzner_gateway_url_not_sslip",
+              recoveryAction: "canonicalize_gateway_url",
+              gatewayUrl: result.gatewayUrl,
+              expectedGatewayUrl: result.expectedGatewayUrl,
+              hetznerServerId: row.hetzner_server_id ?? null,
+              ipv4Address: row.ipv4_address ?? null,
+              backend: row.backend,
+            },
+          });
+          return;
+        }
 
-      // Consecutive-failure gate. A single failing tick — the classic prober
-      // AbortError under load — bumps the counter but does NOT open an event.
-      // Only the SECOND consecutive failing tick (count >= threshold) opens the
-      // generic synthetic.instance-health event, so the prober stops crying
-      // wolf. A healthy tick deletes the counter (resetHealthyProbeFailureCounters),
-      // so two non-consecutive blips never accumulate to an open. The
-      // deterministic fatal branches above (config / tls-wedged / route /
-      // host-wedge) are NOT gated — those are high-confidence, not flaky.
-      const consecutiveFailures = await bumpProbeFailureCounter(db, row.id);
-      if (consecutiveFailures < HEALTH_FAILURE_OPEN_THRESHOLD) {
-        suppressedPendingFailures += 1;
-        log.info("instance-health-sweep failure below open threshold — not yet opening event", {
-          source: "probe-instance-health",
-          failureType: "instance_health_failure_pending",
+        if (
+          result.tlsError &&
+          row.infrastructure_provider === "proxmox" &&
+          result.gatewayUrl.includes(".agents.hermesos.cloud")
+        ) {
+          failed += 1;
+          await reportOpsEvent({
+            source: "synthetic.gateway-route",
+            severity: "fatal",
+            title: `Proxmox gateway route or certificate missing: ${result.gatewayUrl}`,
+            message:
+              `TLS failed before ${result.gatewayUrl}/health returned an HTTP response. ` +
+              `For Proxmox agents.hermesos.cloud gateways this usually means the host Caddy ` +
+              `does not have a current site route/certificate for the DB gateway_url. ` +
+              `Recovery: rebuild the per-instance Caddy route for VM ${row.proxmox_vmid ?? "<unknown>"}, ` +
+              `validate Caddy, reload it, and re-probe the gateway.`,
+            instanceId: row.id,
+            userId: row.user_id,
+            metadata: {
+              failureOwner: "hypervisor",
+              failurePhase: "routing",
+              failureType: "proxmox_caddy_route_or_cert_missing",
+              recoveryAction: "rebuild_caddy_route",
+              gatewayUrl: result.gatewayUrl,
+              proxmoxVmid: row.proxmox_vmid ?? null,
+              backend: row.backend,
+              durationMs: result.durationMs,
+              errorName: result.errorName,
+              errorMessage: result.errorMessage,
+            },
+          });
+          return;
+        }
+
+        // Generic gateway failure. If the primary probe THREW (status null —
+        // a TLS/network error where the stored gateway host might be down
+        // while a fallback candidate URL still answers), confirm against the
+        // recover-unhealthy-active reachable set before opening an event. An
+        // HTTP response (5xx, or a Cloudflare 520–527 edge code) is NOT
+        // re-confirmed: the gateway host already answered, so re-probing the
+        // same set can't disagree — emit straight away and let host-wedge
+        // aggregation correlate the edge codes. This is the guard that stops
+        // the prober from flagging instances recover-unhealthy-active is
+        // simultaneously probing healthy and archiving.
+        if (result.status === null) {
+          const reachable = await confirmReachableViaRecoverySet(row);
+          if (reachable) {
+            recoveredViaFallback += 1;
+            healthyInstanceIds.add(row.id);
+            log.info("instance-health-sweep generic failure rescued by fallback URL", {
+              source: "probe-instance-health",
+              failureType: "instance_health_fallback_reachable",
+              instanceId: row.id,
+              userId: row.user_id,
+              gatewayUrl: result.gatewayUrl,
+            });
+            return;
+          }
+        }
+
+        failed += 1;
+
+        // Consecutive-failure gate. A single failing tick — the classic prober
+        // AbortError under load — bumps the counter but does NOT open an event.
+        // Only the SECOND consecutive failing tick (count >= threshold) opens the
+        // generic synthetic.instance-health event, so the prober stops crying
+        // wolf. A healthy tick deletes the counter (resetHealthyProbeFailureCounters),
+        // so two non-consecutive blips never accumulate to an open. The
+        // deterministic fatal branches above (config / tls-wedged / route /
+        // host-wedge) are NOT gated — those are high-confidence, not flaky.
+        const consecutiveFailures = await bumpProbeFailureCounter(db, row.id);
+        if (consecutiveFailures < HEALTH_FAILURE_OPEN_THRESHOLD) {
+          suppressedPendingFailures += 1;
+          log.info("instance-health-sweep failure below open threshold — not yet opening event", {
+            source: "probe-instance-health",
+            failureType: "instance_health_failure_pending",
+            instanceId: row.id,
+            userId: row.user_id,
+            gatewayUrl: result.gatewayUrl,
+            consecutiveFailures,
+          });
+          return;
+        }
+
+        await reportOpsEvent({
+          source: "synthetic.instance-health",
+          severity: "error",
+          title: `Instance gateway unhealthy: ${result.gatewayUrl}`,
+          message: result.errorMessage
+            ? `Probe to ${result.gatewayUrl}/health failed: ${result.errorName}: ${result.errorMessage}`
+            : `Probe to ${result.gatewayUrl}/health returned ${result.status}`,
           instanceId: row.id,
           userId: row.user_id,
-          gatewayUrl: result.gatewayUrl,
-          consecutiveFailures,
+          metadata: {
+            failureOwner: "runtime",
+            failurePhase: "runtime",
+            failureType: "instance_gateway_unhealthy",
+            recoveryAction: "repair_runtime",
+            gatewayUrl: result.gatewayUrl,
+            status: result.status,
+            backend: row.backend,
+            durationMs: result.durationMs,
+            errorName: result.errorName,
+            consecutiveFailures,
+          },
         });
-        return;
-      }
-
-      await reportOpsEvent({
-        source: "synthetic.instance-health",
-        severity: "error",
-        title: `Instance gateway unhealthy: ${result.gatewayUrl}`,
-        message: result.errorMessage
-          ? `Probe to ${result.gatewayUrl}/health failed: ${result.errorName}: ${result.errorMessage}`
-          : `Probe to ${result.gatewayUrl}/health returned ${result.status}`,
-        instanceId: row.id,
-        userId: row.user_id,
-        metadata: {
-          failureOwner: "runtime",
-          failurePhase: "runtime",
-          failureType: "instance_gateway_unhealthy",
-          recoveryAction: "repair_runtime",
-          gatewayUrl: result.gatewayUrl,
-          status: result.status,
-          backend: row.backend,
-          durationMs: result.durationMs,
-          errorName: result.errorName,
-          consecutiveFailures,
-        },
-      });
-    }),
-  );
+      }),
+    );
+  }
 
   await emitProxmoxHostWedgeEvents(probable, results);
 

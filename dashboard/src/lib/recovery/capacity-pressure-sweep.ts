@@ -12,7 +12,9 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { pickVerifiedEmail } from "@/lib/email/clerk-verified-email";
 import { sendCapacityPausedEmail } from "@/lib/email/capacity-pause";
+import { fetchClerkUser } from "@/lib/recovery/lifecycle-email-sweep";
 
 /**
  * Capacity-pressure sweep — when a Proxmox host runs hot on tenant COUNT
@@ -47,7 +49,7 @@ import { sendCapacityPausedEmail } from "@/lib/email/capacity-pause";
 
 const LOG_SOURCE = "capacity-pressure-sweep";
 
-const FREE_TIER_VALUES = new Set(["credit_base", "token_base"]);
+const FREE_TIER_VALUES = new Set(["credit_base"]);
 const PAID_TIER_VALUES = new Set(["operator", "fleet", "command"]);
 
 const COUNT_THRESHOLD_DEFAULT = 1.0;
@@ -66,7 +68,6 @@ const RELIEF_MARGIN = 0.05;
 // guard against a runaway query.
 const HOST_INSTANCE_BATCH_LIMIT = 500;
 
-const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
 const NOTIFICATION_KEY = "capacity_paused";
 
 type HostRow = {
@@ -324,6 +325,10 @@ async function parkInstance(
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infra, {
       host_id: candidate.host_id,
     }),
+    // Clear onboot so a PVE host reboot doesn't auto-start the parked VM. Every VM is
+    // provisioned onboot:1, and the capacity park has to keep relieving pressure after
+    // a reboot. The inactivity sweep does the same.
+    setOnboot: 0,
   });
 
   if (isProxmoxVmMissingResult(result)) {
@@ -384,22 +389,9 @@ async function parkInstance(
   return { outcome: "paused", pausedAtIso };
 }
 
-async function fetchClerkUser(secretKey: string, userId: string): Promise<ClerkUser | null> {
-  const response = await fetch(`${CLERK_API_BASE_URL}/users/${userId}`, {
-    headers: { Authorization: `Bearer ${secretKey}` },
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Clerk user fetch failed for ${userId}: ${response.status}`);
-  }
-  return (await response.json()) as ClerkUser;
-}
-
+// Only a Clerk-verified address: an unverified one may belong to someone who never signed up (F106).
 function chooseEmail(user: ClerkUser): string | null {
-  const addresses = user.email_addresses ?? [];
-  const primary = addresses.find((a) => a.id === user.primary_email_address_id);
-  const verified = addresses.find((a) => a.verification?.status === "verified");
-  return primary?.email_address ?? verified?.email_address ?? addresses[0]?.email_address ?? null;
+  return pickVerifiedEmail(user);
 }
 
 // Best-effort "your agent is napping — wake it anytime" email. A failed

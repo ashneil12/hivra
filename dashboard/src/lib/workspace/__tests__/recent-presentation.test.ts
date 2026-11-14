@@ -3,6 +3,7 @@ import { usedAgoLabel, recentSurfaceLabel, type RecentSubject } from "../recent-
 const codex: RecentSubject = { kind: "hivra", resourceKind: "agent", agentType: "codex", surfaceKind: "chat" };
 const aeon: RecentSubject = { kind: "hivra", resourceKind: "agent", agentType: "aeon", surfaceKind: "dashboard" };
 const ubuntu: RecentSubject = { kind: "hivra", resourceKind: "computer", agentType: "linux-desktop", computerProfile: "ubuntu-desktop", surfaceKind: "computer" };
+const linuxComputer: RecentSubject = { kind: "hivra", resourceKind: "computer", agentType: "linux-desktop", computerProfile: "ubuntu-server", surfaceKind: "computer" };
 const sandbox: RecentSubject = { kind: "hivra", resourceKind: "computer", agentType: "linux-terminal", surfaceKind: "computer" };
 const hermes: RecentSubject = { kind: "hermes", resourceKind: "agent", agentType: null };
 
@@ -30,6 +31,9 @@ describe("recent presentation", () => {
     [ubuntu, "chat", "Desktop"],
     [ubuntu, "terminal", "Desktop"],
     [sandbox, "desktop", "Manage"],
+    // A Linux computer has no desktop to fall back to: it opens on its terminal.
+    [linuxComputer, "desktop", "Terminal"],
+    [linuxComputer, "files", "Files"],
     [hermes, "box", "Chat"],
   ] as const)("names the view a surface the resource lacks falls back to", (subject, tab, label) => {
     expect(recentSurfaceLabel(tab, subject)).toBe(label);

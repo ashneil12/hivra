@@ -26,8 +26,12 @@ const HIVRA_PRO_NOW = 1_200n * ONE;
 const HIVRA_POWER_NOW = 2_400n * ONE;
 
 const liveMock = jest.fn();
+// $HIVRA readiness (hivra-readiness.ts) reads the gated price through this
+// module too. It passes unless a test says otherwise.
+const gatedPriceMock = jest.fn();
 jest.mock("@/lib/billing/live-thresholds", () => ({
   getLiveActiveThresholds: (...args: unknown[]) => liveMock(...args),
+  getGatedPlatformTokenPrice: (...args: unknown[]) => gatedPriceMock(...args),
 }));
 const quotesMock = jest.fn(async () => [] as unknown[]);
 const consumeMock = jest.fn(async () => undefined);
@@ -37,6 +41,7 @@ jest.mock("@/lib/billing/deposit-quotes", () => ({
 }));
 
 import { computeUserTokenAccess, TokenNotAllowedError } from "@/lib/billing/token-access";
+import { _resetHivraReadinessForTests } from "@/lib/billing/hivra-readiness";
 import { clearTierBreachHold, evaluateAndRecordTokenTierEligibility, holdTierBreachesUntil } from "@/lib/billing/token-tier-eligibility";
 
 type Row = Record<string, unknown> & { id: string; user_id: string; tier: string };
@@ -170,6 +175,9 @@ beforeEach(() => {
   liveMock.mockImplementation(async ({ token }: { token: { key: string } }) => thresholdsFor(token));
   quotesMock.mockReset();
   quotesMock.mockResolvedValue([]);
+  gatedPriceMock.mockReset();
+  gatedPriceMock.mockResolvedValue({ price: { priceUsd: "0.05" }, fetchedAt: NOW });
+  _resetHivraReadinessForTests();
 });
 
 describe("new users after $HIVRA activation", () => {
@@ -200,6 +208,62 @@ describe("new users after $HIVRA activation", () => {
     });
     expect(result.pro).toMatchObject({ transition: "qualified", tokenKey: "hivra", qualifyingQuantity: HIVRA_PRO_NOW });
     expect(db.rows[0]).toMatchObject({ tier: "pro", token_key: "hivra", qualifying_quantity: HIVRA_PRO_NOW.toString() });
+  });
+
+  it("gain no new $HIVRA tier while $HIVRA fails the price gate, as in a price outage", async () => {
+    gatedPriceMock.mockRejectedValue(new Error("pool below the ETH-side floor"));
+    const db = new FakeDb();
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "new",
+      balances: { hivra: 100n * HIVRA_POWER_NOW },
+      access: newUser,
+      db: db as unknown as DbCast,
+      now: NOW,
+    });
+    expect(result.pro?.transition).toBe("unchanged");
+    expect(result.power?.transition).toBe("unchanged");
+    expect(db.rows).toHaveLength(0);
+    expect(result.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/\$HIVRA is not usable yet/)]));
+    // No live $HIVRA threshold is even read.
+    expect(liveMock).not.toHaveBeenCalled();
+  });
+
+  it("still qualify from a $HIVRA hold quote issued while $HIVRA was usable", async () => {
+    gatedPriceMock.mockRejectedValue(new Error("pool below the ETH-side floor"));
+    quotesMock.mockResolvedValue([
+      {
+        id: "dq_hivra",
+        tier: "pro",
+        tokenKey: "hivra",
+        tokensRequiredRaw: HIVRA_PRO_AT_CONVERSION,
+        thresholdTierCode: "PRO_STANDARD",
+        priceUsdAtQuote: "0.05",
+        usdTargetCents: 10000,
+      },
+    ]);
+    const db = new FakeDb();
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "new",
+      balances: { hivra: HIVRA_PRO_AT_CONVERSION },
+      access: newUser,
+      db: db as unknown as DbCast,
+      now: NOW,
+    });
+    expect(result.pro).toMatchObject({ transition: "qualified", tokenKey: "hivra" });
+  });
+
+  it("leave a grandfathered member's evaluation alone while $HIVRA is not usable", async () => {
+    gatedPriceMock.mockRejectedValue(new Error("feed down"));
+    const db = new FakeDb();
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "old",
+      balances: { hermesos: HERMESOS_PRO },
+      access: grandfathered,
+      db: db as unknown as DbCast,
+      now: NOW,
+    });
+    expect(result.pro).toMatchObject({ transition: "qualified", tokenKey: "hermesos" });
+    expect(gatedPriceMock).not.toHaveBeenCalled();
   });
 
   it("cannot lock a $HermesOS hold-for-tier quote (refused server-side)", async () => {

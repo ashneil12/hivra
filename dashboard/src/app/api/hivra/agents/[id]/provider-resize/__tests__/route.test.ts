@@ -8,7 +8,6 @@ const mockApply = jest.fn();
 const mockLimit = jest.fn();
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockLimit(...args) }));
 jest.mock("@/lib/hivra/provider-agent-resize", () => {
   class ProviderAgentResizeError extends Error {

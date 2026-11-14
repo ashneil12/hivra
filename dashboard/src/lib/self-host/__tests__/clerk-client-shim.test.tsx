@@ -10,6 +10,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { WithdrawalDestinationModal } from "@/components/wallet/AgentWalletCards";
+import { SignIn } from "@/lib/self-host/clerk-client-shim";
 import type { AgentWalletCardData } from "@/app/dashboard/wallet/agent-wallet-data";
 
 jest.mock("@clerk/nextjs", () => jest.requireActual("@/lib/self-host/clerk-client-shim"));
@@ -67,4 +68,63 @@ it("opens the destination form and saves it for a local operator", async () => {
   );
   expect(onSaved).toHaveBeenCalledWith(saved);
   expect(onClose).toHaveBeenCalled();
+});
+
+describe("local operator sign-in redirect", () => {
+  const originalLocation = window.location;
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+  });
+
+  it.each([
+    ["a backslash after the leading slash", "/\\attacker.example"],
+    ["a literal tab", "/\t/attacker.example"],
+    ["a dot segment before a protocol-relative prefix", "/.//attacker.example"],
+    ["a double-dot segment before a protocol-relative prefix", "/..//attacker.example"],
+  ])("sends the operator to the dashboard, not %s, after a successful sign in", async (_label, target) => {
+    const assign = jest.fn();
+    Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, assign } });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    } as Response) as unknown as typeof fetch;
+
+    render(<SignIn forceRedirectUrl={target} fallbackRedirectUrl="/dashboard" />);
+    fireEvent.change(document.getElementById("hivra-local-email") as HTMLInputElement, {
+      target: { value: "operator@example.test" },
+    });
+    fireEvent.change(document.getElementById("hivra-local-password") as HTMLInputElement, {
+      target: { value: "not-a-real-password" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open command center" }));
+    });
+
+    expect(assign).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("follows a safe deep link after a successful sign in", async () => {
+    const assign = jest.fn();
+    Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, assign } });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    } as Response) as unknown as typeof fetch;
+
+    render(<SignIn forceRedirectUrl="/dashboard/computers?launch=1" fallbackRedirectUrl="/dashboard" />);
+    fireEvent.change(document.getElementById("hivra-local-email") as HTMLInputElement, {
+      target: { value: "operator@example.test" },
+    });
+    fireEvent.change(document.getElementById("hivra-local-password") as HTMLInputElement, {
+      target: { value: "not-a-real-password" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open command center" }));
+    });
+
+    expect(assign).toHaveBeenCalledWith("/dashboard/computers?launch=1");
+  });
 });

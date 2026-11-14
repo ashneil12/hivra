@@ -4,6 +4,7 @@ import { getStripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { StripeWebhookService } from "@/lib/services/stripe-webhook-service";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 
 export const SUBSCRIPTION_STATE_RECONCILER_LOG_SOURCE = "subscription-state-reconciler";
 
@@ -278,6 +279,89 @@ async function activatePendingStripeGrant(
   );
 }
 
+// Rows are independent (one user, one Stripe customer, one row-locked RPC), so
+// their Stripe lookups run a few at a time instead of one row after another.
+const RECONCILE_CONCURRENCY = 6;
+
+async function reconcileSubscriptionRow(
+  row: SubscriptionStateRow,
+  nowIso: string,
+  nowMs: number,
+  result: SubscriptionStateReconcileResult
+): Promise<void> {
+  try {
+    if (row.status === "pending") {
+      if (!isStalePending(row, nowMs)) {
+        result.skippedRecentPending += 1;
+        result.entries.push(entry(row, "skipped_recent_pending"));
+        return;
+      }
+
+      const pendingGrant = (await lookupStripeGrant(row)).live;
+      if (pendingGrant) {
+        await activatePendingStripeGrant(row, pendingGrant, result);
+        return;
+      }
+
+      if (await hasOpenCheckout(row)) {
+        result.skippedOpenCheckout += 1;
+        result.entries.push(entry(row, "skipped_open_checkout"));
+        return;
+      }
+
+      await finalizeReset(row, "reset_pending_abandoned", nowIso, result);
+      return;
+    }
+
+    if (!row.stripe_subscription_id || isManualSubscriptionId(row.stripe_subscription_id)) {
+      result.manualReview += 1;
+      result.entries.push(entry(row, "manual_review", "paid access row has no live Stripe subscription id"));
+      return;
+    }
+
+    const lookup = await lookupStripeGrant(row);
+    if (lookup.live) {
+      result.skippedStripeGrant += 1;
+      result.entries.push(entry(row, "skipped_stripe_grant"));
+      return;
+    }
+
+    // The row's own subscription exists but is terminal: route it through
+    // the canonical cancel path (status='canceled', plan + sub id retained,
+    // instances suspended on the paid-cancel ladder). The old behavior —
+    // RPC-resetting to a free/active row with a nulled sub id — erased the
+    // Stripe linkage, dropped canceled payers onto the free-tier idle-purge
+    // ladder, and minted the 2026-06→07 ghost-payer rows.
+    if (
+      lookup.terminal &&
+      lookup.terminal.id === row.stripe_subscription_id &&
+      lookup.terminal.metadata?.user_id === row.user_id
+    ) {
+      await StripeWebhookService.handleSubscriptionDeleted(lookup.terminal);
+      result.canceledTerminalStripe += 1;
+      result.entries.push(
+        entry(
+          row,
+          "canceled_terminal_stripe",
+          `subscription_id=${lookup.terminal.id}; stripe_status=${lookup.terminal.status}`
+        )
+      );
+      return;
+    }
+
+    await finalizeReset(row, "reset_terminal_stripe", nowIso, result);
+  } catch (error) {
+    log.error("subscription-state reconcile failed for row", error, {
+      source: SUBSCRIPTION_STATE_RECONCILER_LOG_SOURCE,
+      failureType: "subscription_state_row_failed",
+      userId: row.user_id,
+      subscriptionId: row.stripe_subscription_id,
+    });
+    result.errors += 1;
+    result.entries.push(entry(row, "error", error instanceof Error ? error.message : String(error)));
+  }
+}
+
 /**
  * Reconcile subscription-table state that can otherwise accumulate forever:
  *
@@ -330,79 +414,9 @@ export async function reconcileSubscriptionState(
   result.scanned = rows.length;
   const nowMs = new Date(nowIso).getTime();
 
-  for (const row of rows) {
-    try {
-      if (row.status === "pending") {
-        if (!isStalePending(row, nowMs)) {
-          result.skippedRecentPending += 1;
-          result.entries.push(entry(row, "skipped_recent_pending"));
-          continue;
-        }
-
-        const pendingGrant = (await lookupStripeGrant(row)).live;
-        if (pendingGrant) {
-          await activatePendingStripeGrant(row, pendingGrant, result);
-          continue;
-        }
-
-        if (await hasOpenCheckout(row)) {
-          result.skippedOpenCheckout += 1;
-          result.entries.push(entry(row, "skipped_open_checkout"));
-          continue;
-        }
-
-        await finalizeReset(row, "reset_pending_abandoned", nowIso, result);
-        continue;
-      }
-
-      if (!row.stripe_subscription_id || isManualSubscriptionId(row.stripe_subscription_id)) {
-        result.manualReview += 1;
-        result.entries.push(entry(row, "manual_review", "paid access row has no live Stripe subscription id"));
-        continue;
-      }
-
-      const lookup = await lookupStripeGrant(row);
-      if (lookup.live) {
-        result.skippedStripeGrant += 1;
-        result.entries.push(entry(row, "skipped_stripe_grant"));
-        continue;
-      }
-
-      // The row's own subscription exists but is terminal: route it through
-      // the canonical cancel path (status='canceled', plan + sub id retained,
-      // instances suspended on the paid-cancel ladder). The old behavior —
-      // RPC-resetting to a free/active row with a nulled sub id — erased the
-      // Stripe linkage, dropped canceled payers onto the free-tier idle-purge
-      // ladder, and minted the 2026-06→07 ghost-payer rows.
-      if (
-        lookup.terminal &&
-        lookup.terminal.id === row.stripe_subscription_id &&
-        lookup.terminal.metadata?.user_id === row.user_id
-      ) {
-        await StripeWebhookService.handleSubscriptionDeleted(lookup.terminal);
-        result.canceledTerminalStripe += 1;
-        result.entries.push(
-          entry(
-            row,
-            "canceled_terminal_stripe",
-            `subscription_id=${lookup.terminal.id}; stripe_status=${lookup.terminal.status}`
-          )
-        );
-        continue;
-      }
-
-      await finalizeReset(row, "reset_terminal_stripe", nowIso, result);
-    } catch (error) {
-      log.error("subscription-state reconcile failed for row", error, {
-        source: SUBSCRIPTION_STATE_RECONCILER_LOG_SOURCE,
-        failureType: "subscription_state_row_failed",
-        userId: row.user_id,
-        subscriptionId: row.stripe_subscription_id,
-      });
-      result.errors += 1;
-      result.entries.push(entry(row, "error", error instanceof Error ? error.message : String(error)));
-    }
-  }
+  await mapWithConcurrencyLimit(rows, RECONCILE_CONCURRENCY, (row) =>
+    reconcileSubscriptionRow(row, nowIso, nowMs, result)
+  );
 
   if (
     result.pendingReset > 0 ||

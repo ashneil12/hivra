@@ -2,6 +2,8 @@ import {
   agentComputerPair,
   agentComputerPairLabel,
   agentLaunchWatchRow,
+  agentOffersDesktopEntry,
+  agentPageSurfacesFor,
   agentSurfaceGroupOf,
   agentSurfaceGroups,
   agentSurfaceLabel,
@@ -20,7 +22,8 @@ describe("agentSurfacesFor", () => {
     expect(agentSurfacesFor({ type: "codex", ...RUNNING })).toEqual(full);
     // Browser stays discoverable while it is toggled off; the tab says so.
     expect(agentSurfacesFor({ type: "codex", status: "stopped" })).toEqual(full);
-    expect(agentSurfacesFor({ type: "hermes" })).toEqual(full.filter((id) => id !== "browser"));
+    // Hermes on a Hivra computer shows Hermes's own web UI, not Hivra's chat.
+    expect(agentSurfacesFor({ type: "hermes", ...RUNNING })).toEqual(["aeon", "box", "files", "manage"]);
   });
 
   it("never gives an agent a Desktop, and gives dashboard runtimes their dashboard", () => {
@@ -38,6 +41,16 @@ describe("agentSurfacesFor", () => {
     expect(agentSurfacesFor({ type: "linux-terminal", computer_substrate: "gvisor", ...RUNNING })).toEqual(["manage"]);
   });
 
+  it("never lists Desktop for a Linux computer (ubuntu-server) or an unknown profile", () => {
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "ubuntu-server", ...RUNNING })).toEqual(["box", "files", "manage"]);
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "ubuntu-server", status: "running" })).toEqual(["manage"]);
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "ubuntu-server", status: "stopped" })).toEqual(["manage"]);
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "plan9", ...RUNNING })).not.toContain("desktop");
+    // Existing profiles and the original image (no profile) keep Desktop.
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: null, ...RUNNING })).toContain("desktop");
+    expect(agentSurfacesFor({ type: "linux-desktop", computer_profile: "omarchy", ...RUNNING })).toContain("desktop");
+  });
+
   it("offers no Tasks tab: scheduled tasks are Hermes-only and Hivra computers have no scheduler", () => {
     for (const type of ["claude-code", "codex", "hermes", "aeon", "openclaw", "agent-zero", "linux-desktop"]) {
       expect(agentSurfacesFor({ type, ...RUNNING })).not.toContain("tasks");
@@ -50,12 +63,34 @@ describe("agentSurfacesFor", () => {
   });
 });
 
+describe("agent page tabs", () => {
+  it("drops Git from the tabs (its changes open inside Files) and gives every agent a Desktop entry", () => {
+    const tabs = agentPageSurfacesFor({ type: "codex", ...RUNNING });
+    expect(tabs).not.toContain("git");
+    expect(tabs).toEqual(["chat", "desktop", "terminal", "browser", "box", "files", "skills", "telegram", "manage"]);
+    // The shared decision still lists Git, so the Computer Contract and Review do not drift.
+    expect(agentSurfacesFor({ type: "codex", ...RUNNING })).toContain("git");
+    expect(agentPageSurfacesFor({ type: "aeon", ...RUNNING })).toEqual(["aeon", "desktop", "box", "files", "manage"]);
+  });
+
+  it("keeps a computer's tabs as they were and gives a DigitalOcean session no Desktop entry", () => {
+    const ubuntu = { type: "linux-desktop", computer_profile: "ubuntu-desktop", ...RUNNING };
+    expect(agentPageSurfacesFor(ubuntu)).toEqual(agentSurfacesFor(ubuntu));
+    expect(agentOffersDesktopEntry(ubuntu)).toBe(false);
+    expect(agentOffersDesktopEntry({ type: "codex", computer_substrate: "do-managed-session" })).toBe(false);
+    expect(agentOffersDesktopEntry({ type: "codex", computer_substrate: "proxmox-kvm" })).toBe(true);
+    expect(agentPageSurfacesFor({ type: "codex", computer_substrate: "do-managed-session", ...RUNNING })).toEqual(["chat", "files"]);
+  });
+});
+
 describe("agent page groups", () => {
-  it("groups a chat agent as Agent (Chat, its session) · Computer (Terminal, Files, Browser, Git) · Manage", () => {
+  it("groups a chat agent as Agent (Chat, its session) · Browser · Computer (Desktop, Files, Terminal) · Manage, with no Git tab", () => {
+    // The browser is its own place, not a view inside the computer (owner feedback).
     const def = getAgent("codex");
-    expect(agentSurfaceGroups(agentSurfacesFor({ type: "codex" }), def)).toEqual([
+    expect(agentSurfaceGroups(agentPageSurfacesFor({ type: "codex" }), def)).toEqual([
       { id: "work", label: "Agent", surfaces: ["chat", "terminal"] },
-      { id: "computer", label: "Computer", surfaces: ["box", "files", "browser", "git"] },
+      { id: "browser", label: "Browser", surfaces: ["browser"] },
+      { id: "computer", label: "Computer", surfaces: ["desktop", "files", "box"] },
       { id: "manage", label: "Manage", surfaces: ["manage", "skills", "telegram"] },
     ]);
   });
@@ -66,6 +101,7 @@ describe("agent page groups", () => {
       const def = getAgent(type);
       for (const group of agentSurfaceGroups(agentSurfacesFor({ type }), def)) {
         if (group.id === "manage") continue; // Its own tab reads "Settings" inside the group.
+        if (group.surfaces.length === 1) continue; // A one-view group draws no second row to repeat it.
         expect(group.surfaces.map((id) => agentSurfaceLabel(id, def))).not.toContain(group.label);
       }
     }
@@ -73,9 +109,9 @@ describe("agent page groups", () => {
 
   it("leads a dashboard runtime with its dashboard and drops empty groups", () => {
     const def = getAgent("aeon");
-    expect(agentSurfaceGroups(agentSurfacesFor({ type: "aeon" }), def)).toEqual([
+    expect(agentSurfaceGroups(agentPageSurfacesFor({ type: "aeon" }), def)).toEqual([
       { id: "work", label: "Dashboard", surfaces: ["aeon"] },
-      { id: "computer", label: "Computer", surfaces: ["box", "files"] },
+      { id: "computer", label: "Computer", surfaces: ["desktop", "files", "box"] },
       { id: "manage", label: "Manage", surfaces: ["manage"] },
     ]);
     expect(agentSurfaceGroups(["manage"], def)).toEqual([{ id: "manage", label: "Manage", surfaces: ["manage"] }]);
@@ -86,6 +122,8 @@ describe("agent page groups", () => {
     expect(agentSurfaceLabel("terminal", getAgent("codex"))).toBe("Codex session");
     expect(agentSurfaceLabel("terminal", getAgent("claude-code"))).toBe("Claude Code session");
     expect(agentSurfaceGroupOf("git")).toBe("computer");
+    expect(agentSurfaceGroupOf("desktop")).toBe("computer");
+    expect(agentSurfaceGroupOf("browser")).toBe("browser");
     expect(agentSurfaceGroupOf("telegram")).toBe("manage");
   });
 });

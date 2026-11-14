@@ -58,8 +58,25 @@ jest.mock("@/lib/billing/price-gate-alerts", () => ({
   reportPriceGateRefusal: (...args: unknown[]) => mockReportPriceGateRefusal(...args),
 }));
 
+const mockAssertHivraReady = jest.fn(async () => undefined);
+jest.mock("@/lib/billing/hivra-readiness", () => ({
+  ...jest.requireActual("@/lib/billing/hivra-readiness"),
+  assertHivraReadyFor: (...args: unknown[]) => mockAssertHivraReady(...(args as [])),
+}));
+
+// The launch block is pinned per test: dormant by default (the cases below were written for it),
+// and a filled-in, not yet active block in "with $HIVRA scheduled".
+const DORMANT_LAUNCH = { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" };
+const mockLaunch: { current: typeof DORMANT_LAUNCH } = { current: DORMANT_LAUNCH };
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  get HIVRA_TOKEN_LAUNCH() {
+    return mockLaunch.current;
+  },
+}));
+
 import { auth } from "@clerk/nextjs/server";
 import { ManagedVeniceTokenQuotePriceError } from "@/lib/billing/managed-venice-token-quotes";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
 import { POST } from "../route";
 
 function makeReq(body?: unknown): NextRequest {
@@ -103,6 +120,7 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockLaunch.current = DORMANT_LAUNCH;
     consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
@@ -139,6 +157,8 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       userId: "user_a",
       targetMicroUsd: 50_000_000,
       depositAddress: "0xmanagedvenice",
+      // The access the route resolved before provisioning, passed on.
+      access: expect.objectContaining({ phase: "dormant" }),
     });
   });
 
@@ -184,6 +204,8 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       userId: "user_a",
       tokenAmountRaw: stubQuote.tokenAmountRaw,
       depositAddress: "0xfreshmanagedvenice",
+      // The access the route resolved before provisioning, passed on.
+      access: expect.objectContaining({ phase: "dormant" }),
     });
   });
 
@@ -234,6 +256,8 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       userId: "user_a",
       targetMicroUsd: 50_000_000,
       depositAddress: "0xmanagedvenice",
+      // The access the route resolved before provisioning, passed on.
+      access: expect.objectContaining({ phase: "dormant" }),
     });
   });
 
@@ -281,6 +305,27 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
     expect(JSON.stringify(body)).not.toContain("dexscreener_uniswap_internal_detail");
   });
 
+  it("refuses a $HIVRA top-up before looking up or provisioning a deposit wallet", async () => {
+    mockAssertHivraReady.mockRejectedValueOnce(new HivraNotReadyError());
+    const response = await POST(makeReq({ targetPaidMicroUsd: 50_000_000 }));
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.reason).toBe("hivra_not_ready");
+    expect(mockGetCredential).not.toHaveBeenCalled();
+    expect(mockEnsureWallet).not.toHaveBeenCalled();
+    expect(mockCreateQuoteForUsdTarget).not.toHaveBeenCalled();
+  });
+
+  it("answers 'not available yet' (not a price-gate error) while $HIVRA is not usable", async () => {
+    mockCreateQuoteForUsdTarget.mockRejectedValueOnce(new HivraNotReadyError());
+    const response = await POST(makeReq({ targetPaidMicroUsd: 50_000_000 }));
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.error).toBe("Token payments aren't available yet.");
+    expect(body.reason).toBe("hivra_not_ready");
+    expect(mockReportPriceGateRefusal).not.toHaveBeenCalled();
+  });
+
   it("reports each price gate refusal to the rate-limited gate log and ops alert", async () => {
     const refusal = new ManagedVeniceTokenQuotePriceError("Managed Venice token deposits are temporarily disabled");
     mockCreateQuote.mockRejectedValueOnce(refusal);
@@ -309,5 +354,60 @@ describe("/api/billing/managed-venice/hermesos/quote", () => {
       "We couldn't start the $HermesOS top-up yet. Please try again in a moment, or use card credits for now."
     );
     expect(JSON.stringify(body)).not.toContain("managed_venice_token_quotes");
+  });
+});
+
+describe("/api/billing/managed-venice/hermesos/quote with $HIVRA scheduled", () => {
+  // The launch block is filled in but activatesAt is still ahead: existing $HermesOS
+  // users must keep getting $HermesOS managed-Venice quotes until the instant passes.
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    mockLaunch.current = {
+      contractAddress: "0xe3a1F26440A9FDf5d17b6B3F12F5ebB290080871",
+      decimals: 18,
+      poolId: "0x74a4449939263212decf59c4a5900f81bfaaf988241cf60f1613149bd5f7441f",
+      activatesAt: "2099-01-01T00:00:00Z",
+    };
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
+    mockGetCredential.mockResolvedValue({
+      id: "cred_1",
+      userId: "user_a",
+      purpose: "credit_deposit",
+      walletId: "w_1",
+      bankrWalletId: "bw_1",
+      evmAddress: "0xManagedVenice",
+      normalizedEvmAddress: "0xmanagedvenice",
+    });
+    mockCreateQuote.mockResolvedValue(stubQuote);
+    mockCreateQuoteForUsdTarget.mockResolvedValue(stubQuote);
+    mockAssertNoActivePayment.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockLaunch.current = DORMANT_LAUNCH;
+  });
+
+  it("still quotes $HermesOS before activatesAt, with $HermesOS as the only payment token", async () => {
+    const response = await POST(makeReq({ targetPaidMicroUsd: 50_000_000 }));
+
+    expect(response.status).toBe(200);
+    expect(mockAssertHivraReady).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "scheduled", paymentToken: "hermesos" }),
+      "hermesos",
+    );
+    expect(mockCreateQuoteForUsdTarget).toHaveBeenCalledWith({
+      userId: "user_a",
+      targetMicroUsd: 50_000_000,
+      depositAddress: "0xmanagedvenice",
+      access: expect.objectContaining({
+        phase: "scheduled",
+        paymentToken: "hermesos",
+        allowedTokens: ["hermesos"],
+        qualifyTokens: ["hermesos"],
+      }),
+    });
   });
 });

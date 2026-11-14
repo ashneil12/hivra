@@ -1,5 +1,7 @@
 # Hivra pre-launch security review — 2026-09
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](../STATUS.md).
+
 **Status:** findings report. Review performed against `origin/canary` (base `05c0c5d`;
 canary advanced to `08d2ff1` during the review, a docs/UI-only delta). Canary served
 SHA at review time: `08d2ff1` (Vercel Git deployment `dpl_Vv8jesp2ZG28cxoGDmYRhaA7uKUP`,

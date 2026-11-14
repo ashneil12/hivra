@@ -45,8 +45,6 @@ export type DashboardNavigationItem = {
    * stays reachable. Without this, those routes would highlight nothing.
    */
   selfHostRoutePrefixes?: readonly string[];
-  /** Held back until the workspace shell rollout flag is enabled for this environment. */
-  requiresWorkspaceShell?: boolean;
 };
 
 export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = [
@@ -57,13 +55,6 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     icon: LayoutDashboard,
     exactPaths: ["/dashboard"],
     routePrefixes: ["/dashboard/command", "/dashboard/ops", "/dashboard/insights"],
-  },
-  {
-    id: "computers",
-    label: "Computers",
-    href: "/dashboard/computers",
-    icon: MonitorUp,
-    routePrefixes: ["/dashboard/computers", "/dashboard/computer"],
   },
   {
     id: "agents",
@@ -79,13 +70,11 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     ],
   },
   {
-    // Where agents and computers run: Hivra Cloud, My cloud, My server.
-    // The route keeps its original path for existing links.
-    id: "infrastructure",
-    label: "Capacity",
-    href: "/dashboard/infrastructure",
-    icon: ServerCog,
-    routePrefixes: ["/dashboard/infrastructure"],
+    id: "computers",
+    label: "Computers",
+    href: "/dashboard/computers",
+    icon: MonitorUp,
+    routePrefixes: ["/dashboard/computers", "/dashboard/computer"],
   },
   {
     id: "activity",
@@ -129,6 +118,15 @@ export const DASHBOARD_SECONDARY_NAVIGATION: readonly DashboardNavigationItem[] 
     // funded, so it belongs with Billing, not Settings.
     // The optional $HermesOS → $HIVRA conversion page sits with the wallet.
     routePrefixes: ["/dashboard/billing", WALLET_ROUTE, "/dashboard/convert"],
+  },
+  {
+    // Where agents and computers run: Hivra Cloud, or a server or cloud
+    // account of your own. The route keeps its original path for existing links.
+    id: "infrastructure",
+    label: "Servers",
+    href: "/dashboard/infrastructure",
+    icon: ServerCog,
+    routePrefixes: ["/dashboard/infrastructure"],
   },
 ];
 
@@ -183,7 +181,7 @@ export type DashboardNavigationGroup = {
 
 /** Phone More sheet, in display order. Every destination not on the bar. */
 export const DASHBOARD_MOBILE_MORE_GROUPS: readonly DashboardNavigationGroup[] = [
-  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.infrastructure, PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
+  { id: "manage", items: [PRIMARY_NAVIGATION_BY_ID.activity, ...DASHBOARD_SECONDARY_NAVIGATION] },
   { id: "help", items: DASHBOARD_UTILITY_NAVIGATION },
 ];
 
@@ -226,7 +224,7 @@ export function labelForNavigationItem(
 }
 
 const MOBILE_NAVIGATION_COPY: Record<MobileNavigationCopyKey, string> = {
-  switchOrSearch: "Switch or search", needsAttention: "Needs attention", manage: "Manage", help: "Help",
+  switchOrSearch: "Switch or search", needsAttention: "Need you", manage: "Manage", help: "Help",
   account: "Account", manageAccount: "Manage account", signOut: "Sign out", signingOut: "Signing out…",
   themeDark: "Theme: Dark", themeLight: "Theme: Light", switchToDark: "Switch to dark", switchToLight: "Switch to light",
 };
@@ -247,12 +245,8 @@ export function mobileNavigationCopy(copy: DashboardNavigationCopy) {
  */
 export function filterDashboardNavigation(
   items: readonly DashboardNavigationItem[],
-  workspaceShellEnabled: boolean,
 ): DashboardNavigationItem[] {
-  return items.filter((item) =>
-    (!item.requiresWorkspaceShell || workspaceShellEnabled) &&
-    (item.id !== "billing" || !isLocalAuthMode())
-  );
+  return items.filter((item) => item.id !== "billing" || !isLocalAuthMode());
 }
 
 function matchesRoutePrefix(pathname: string, prefix: string): boolean {
@@ -277,36 +271,24 @@ export function isRuntimeDetailPath(pathname: string): boolean {
 export function isDashboardNavigationItemActive(
   item: DashboardNavigationItem,
   pathname: string | null,
-  resourceKind?: "agent" | "computer" | null,
-  workspaceShellEnabled = false,
 ): boolean {
   if (!pathname) return false;
   if (item.excludedPrefixes?.some((prefix) => matchesRoutePrefix(pathname, prefix))) return false;
 
-  if (workspaceShellEnabled) {
-    // Under the workspace shell, Home is the runtime home, so opening a runtime
-    // is still being home. Agents and Computers used to claim this route, which
-    // meant Home could not highlight while you were inside the box you reached
-    // from it — the item naming the place you came from lost to the one naming
-    // its kind. Those two still own their inventory routes.
-    if (item.id === "home" && isRuntimeDetailPath(pathname)) return true;
-    if (item.id === "agents" || item.id === "computers") {
-      return (
-        item.routePrefixes?.some(
-          (prefix) =>
-            prefix !== "/dashboard/agent" &&
-            prefix !== "/dashboard/instances" &&
-            matchesRoutePrefix(pathname, prefix),
-        ) ?? false
-      );
-    }
-  } else if (
-    (item.id === "agents" || item.id === "computers") &&
-    pathname.startsWith("/dashboard/agent/")
-  ) {
-    // Legacy shell (prod): Agents and desktop computers share the detail route;
-    // an unresolved kind stays neutral.
-    return resourceKind != null && item.id === `${resourceKind}s`;
+  // Home is the runtime home, so opening a runtime is still being home.
+  // Agents and Computers used to claim this route, which meant Home could not
+  // highlight while you were inside the box you reached from it. Those two
+  // still own their inventory routes.
+  if (item.id === "home" && isRuntimeDetailPath(pathname)) return true;
+  if (item.id === "agents" || item.id === "computers") {
+    return (
+      item.routePrefixes?.some(
+        (prefix) =>
+          prefix !== "/dashboard/agent" &&
+          prefix !== "/dashboard/instances" &&
+          matchesRoutePrefix(pathname, prefix),
+      ) ?? false
+    );
   }
 
   if (item.exactPaths?.includes(pathname)) return true;

@@ -182,6 +182,33 @@ function makeViemClients(
   };
 }
 
+// Calls for one wallet run one at a time within this process. A second caller
+// then re-reads the balance after the first top-up has confirmed, instead of
+// reading the same low balance and sending a second transfer.
+const walletQueues = new Map<string, Promise<void>>();
+
+function runSerializedForWallet<T>(wallet: string, work: () => Promise<T>): Promise<T> {
+  const previous = walletQueues.get(wallet) ?? Promise.resolve();
+  const run = previous.then(work);
+  const tail = run.then(
+    () => undefined,
+    () => undefined
+  );
+  walletQueues.set(wallet, tail);
+  void tail.then(() => {
+    if (walletQueues.get(wallet) === tail) walletQueues.delete(wallet);
+  });
+  return run;
+}
+
+// A top-up that was claimed before broadcast and has no confirmed receipt yet
+// (the hash is null when the send itself threw). Until it confirms, or this
+// window passes, the wallet is not topped up again, so an unknown outcome
+// cannot turn into a second treasury transfer. A balance that reaches the
+// minimum releases the claim. The claim lives in this process only.
+const PENDING_TOPUP_WINDOW_MS = 10 * 60 * 1000;
+const pendingTopups = new Map<Address, { hash: Hex | null; claimedAt: number }>();
+
 export async function ensureWalletHasGas(
   params: EnsureWalletGasParams
 ): Promise<EnsureWalletGasResult> {
@@ -199,13 +226,36 @@ export async function ensureWalletHasGas(
   const clients =
     params.clients ?? makeViemClients(resolveRpcUrl(params.rpcUrl, env), config);
 
+  return runSerializedForWallet(wallet, () =>
+    topUpWalletIfNeeded({ wallet, config, clients })
+  );
+}
+
+async function topUpWalletIfNeeded(params: {
+  wallet: Address;
+  config: ParsedTreasuryConfig;
+  clients: TreasuryGasClients;
+}): Promise<EnsureWalletGasResult> {
+  const { wallet, config, clients } = params;
+
   const balance = await clients.getBalance(wallet);
   if (balance >= config.minBalanceWei) {
+    pendingTopups.delete(wallet);
     return {
       status: "already_funded",
       balanceWei: balance.toString(),
       reason: `${balance} wei >= ${config.minBalanceWei} wei threshold`,
     };
+  }
+
+  const pending = pendingTopups.get(wallet);
+  if (pending) {
+    if (Date.now() - pending.claimedAt < PENDING_TOPUP_WINDOW_MS) {
+      throw new Error(
+        `Gas top-up for ${wallet} is not confirmed yet (tx ${pending.hash ?? "unknown"}); retry shortly`
+      );
+    }
+    pendingTopups.delete(wallet);
   }
 
   const treasuryBalance = await clients.getBalance(clients.treasuryAddress);
@@ -217,11 +267,18 @@ export async function ensureWalletHasGas(
     };
   }
 
+  // Claim before broadcasting. The claim is only released once the receipt
+  // confirms, so a send or receipt that fails leaves the wallet held.
+  const claim: { hash: Hex | null; claimedAt: number } = { hash: null, claimedAt: Date.now() };
+  pendingTopups.set(wallet, claim);
+
   const txHash = await clients.sendTopupTx({
     to: wallet,
     value: config.topupWei,
   });
+  claim.hash = txHash;
   await clients.waitForReceipt(txHash);
+  pendingTopups.delete(wallet);
 
   const newBalance = await clients.getBalance(wallet);
   return {

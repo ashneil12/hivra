@@ -1,5 +1,6 @@
 import "server-only";
 import { chunk } from "@/lib/array-utils";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
@@ -15,6 +16,11 @@ import { log } from "@/lib/logger";
  * - used past day 1 = an instance has activity > 24h after first_active_at
  * - paid now        = current plan is one of the paid plans
  *
+ * "Instance" covers both lanes: hermes_instances and hivra_agents (Claude Code,
+ * Codex, Agent Zero, computers…). A Hivra agent counts as active at its
+ * provisioned_at boot stamp. hivra_agents has no activity timestamp, so a
+ * Hivra-only user never counts as "used past day 1"; that stage undercounts.
+ *
  * Day-0 vs later upgrades prefer the upgraded_at column when it exists (it
  * ships in a separate instrumentation PR); until then the best available
  * inference is current_period_start - created_at, so the queries probe for
@@ -26,7 +32,7 @@ export const FUNNEL_PAID_PLANS = ["operator", "fleet", "command"] as const;
 
 const WEEKLY_COHORT_WEEKS = 8;
 const DAILY_TREND_DAYS = 14;
-/** Exported so the warm-pool campaign uses the same "engaged" window. */
+/** How recent activity must be for a user to count as engaged. */
 export const ENGAGED_POOL_ACTIVITY_DAYS = 7;
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -34,6 +40,8 @@ const HOUR_MS = 3_600_000;
 // fetch pages explicitly with a deterministic order.
 const PAGE_SIZE = 1000;
 const IN_CHUNK_SIZE = 200;
+/** Parallel PostgREST chains for the per-200-user fan-outs; bounded so a large signup window cannot flood the API. */
+const IN_CHUNK_CONCURRENCY = 4;
 
 export interface FunnelSubscriptionRow {
   user_id: string;
@@ -146,6 +154,26 @@ export function classifyUpgrade(
   if (delta < HOUR_MS) return "day0";
   if (delta > DAY_MS) return "later";
   return "unclear";
+}
+
+/** The hivra_agents columns the funnel reads. */
+export interface FunnelHivraAgentRow {
+  user_id: string | null;
+  created_at: string;
+  provisioned_at: string | null;
+}
+
+/**
+ * Map a Hivra-lane agent onto the funnel's instance shape. provisioned_at is the
+ * Hivra lane's boot stamp, the counterpart of hermes_instances.first_active_at.
+ */
+export function hivraAgentToFunnelInstance(row: FunnelHivraAgentRow): FunnelInstanceRow {
+  return {
+    user_id: row.user_id,
+    created_at: row.created_at,
+    first_active_at: row.provisioned_at,
+    last_activity_at: null,
+  };
 }
 
 export function instanceUsedPastDay1(instance: FunnelInstanceRow): boolean {
@@ -286,20 +314,32 @@ async function fetchInstancesForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<FunnelInstanceRow[]> {
-  const rows: FunnelInstanceRow[] = [];
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    rows.push(
-      ...(await fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
-        client
-          .from("hermes_instances")
-          .select("user_id, created_at, first_active_at, last_activity_at")
-          .in("user_id", ids)
-          .order("id")
-          .range(from, to)
-      ))
-    );
-  }
-  return rows;
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    IN_CHUNK_CONCURRENCY,
+    async (ids) => {
+      const [hermes, hivra] = await Promise.all([
+        fetchAllPages<FunnelInstanceRow>("funnel cohort instances", (from, to) =>
+          client
+            .from("hermes_instances")
+            .select("user_id, created_at, first_active_at, last_activity_at")
+            .in("user_id", ids)
+            .order("id")
+            .range(from, to)
+        ),
+        fetchAllPages<FunnelHivraAgentRow>("funnel cohort hivra agents", (from, to) =>
+          client
+            .from("hivra_agents")
+            .select("user_id, created_at, provisioned_at")
+            .in("user_id", ids)
+            .order("id")
+            .range(from, to)
+        ),
+      ]);
+      return [...hermes, ...hivra.map(hivraAgentToFunnelInstance)];
+    }
+  );
+  return groups.flat();
 }
 
 function fetchPayments(
@@ -328,11 +368,8 @@ function fetchPayments(
 /**
  * The engaged-free pool as user ids: free plan + a running (lifecycle_state
  * 'active') instance + last_activity_at on or after the cutoff. Sorted for
- * deterministic ordering — the warm-pool campaign slices this list, so a
- * dry-run preview and the real send must agree on order.
- *
- * Exported for the warm-pool campaign (see warm-pool-campaign-sweep.ts);
- * fetchEngagedFreePool keeps the insights panel on the same definition.
+ * deterministic ordering. fetchEngagedFreePool keeps the insights panel on the
+ * same definition.
  */
 export async function fetchEngagedFreeUserIds(
   client: AdminClient,
@@ -352,17 +389,21 @@ export async function fetchEngagedFreeUserIds(
   );
   const userIds = [...new Set(liveActive.map((r) => r.user_id).filter((id): id is string => !!id))];
   const engaged = new Set<string>();
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    const { data, error } = await client
-      .from("hermes_subscriptions")
-      .select("user_id")
-      .eq("plan", "free")
-      .in("user_id", ids);
-    if (error) throw queryError("funnel engaged free pool", error);
-    for (const row of data ?? []) {
-      if (row.user_id) engaged.add(row.user_id);
+  await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    IN_CHUNK_CONCURRENCY,
+    async (ids) => {
+      const { data, error } = await client
+        .from("hermes_subscriptions")
+        .select("user_id")
+        .eq("plan", "free")
+        .in("user_id", ids);
+      if (error) throw queryError("funnel engaged free pool", error);
+      for (const row of data ?? []) {
+        if (row.user_id) engaged.add(row.user_id);
+      }
     }
-  }
+  );
   return [...engaged].sort();
 }
 
@@ -448,7 +489,16 @@ export async function getConversionFunnel(now = new Date()): Promise<ConversionF
   try {
     const hasUpgradedAt = await probeUpgradedAtColumn(client);
 
-    const [windowSubs, deploys, activations, payments, engagedFreePool, currentTotals] =
+    const [
+      windowSubs,
+      deploys,
+      activations,
+      hivraDeploys,
+      hivraActivations,
+      payments,
+      engagedFreePool,
+      currentTotals,
+    ] =
       await Promise.all([
         fetchWindowSubscriptions(client, cohortWindowStartIso, hasUpgradedAt),
         fetchAllPages<{ created_at: string }>("funnel deploys", (from, to) =>
@@ -464,6 +514,22 @@ export async function getConversionFunnel(now = new Date()): Promise<ConversionF
             .from("hermes_instances")
             .select("first_active_at")
             .gte("first_active_at", dailyWindowStartIso)
+            .order("id")
+            .range(from, to)
+        ),
+        fetchAllPages<{ created_at: string }>("funnel hivra deploys", (from, to) =>
+          client
+            .from("hivra_agents")
+            .select("created_at")
+            .gte("created_at", dailyWindowStartIso)
+            .order("id")
+            .range(from, to)
+        ),
+        fetchAllPages<{ provisioned_at: string }>("funnel hivra activations", (from, to) =>
+          client
+            .from("hivra_agents")
+            .select("provisioned_at")
+            .gte("provisioned_at", dailyWindowStartIso)
             .order("id")
             .range(from, to)
         ),
@@ -485,8 +551,14 @@ export async function getConversionFunnel(now = new Date()): Promise<ConversionF
       ),
       daily: buildDailySeries(dayKeys, {
         signupDates: windowSubs.map((s) => s.created_at),
-        deployDates: deploys.map((d) => d.created_at),
-        activationDates: activations.map((a) => a.first_active_at),
+        deployDates: [
+          ...deploys.map((d) => d.created_at),
+          ...hivraDeploys.map((d) => d.created_at),
+        ],
+        activationDates: [
+          ...activations.map((a) => a.first_active_at),
+          ...hivraActivations.map((a) => a.provisioned_at),
+        ],
         paymentDates: payments
           .map((p) => p.upgraded_at ?? p.current_period_start)
           .filter((ts): ts is string => !!ts),

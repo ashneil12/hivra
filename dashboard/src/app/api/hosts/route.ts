@@ -2,6 +2,10 @@ import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { getHetznerInstanceStatus } from "@/lib/services/hetzner-instance-service";
+import { log } from "@/lib/logger";
+
+// Hetzner is asked at most once per host per window. Inside it the stored status is served as-is.
+const HOST_STATUS_TTL_MS = 60_000;
 
 type HostSyncStatus = "provisioning" | "running" | "stopped" | "error";
 
@@ -43,20 +47,32 @@ export async function GET() {
     // Each host's live status fetch is isolated: one unreachable host (a rejected
     // status fetch or a failed status write) must degrade to that host's last-known
     // status, NOT sink the whole list and 500 the page.
+    // updated_at is the last time this host's status was checked, so every check
+    // (changed or not) stamps it and the TTL above holds.
     const hosts = await Promise.all(
       (hostsData || []).map(async (host) => {
         if (!host.hetzner_server_id) return host;
+        const checkedAt = typeof host.updated_at === "string" ? Date.parse(host.updated_at) : Number.NaN;
+        if (Date.now() - checkedAt < HOST_STATUS_TTL_MS) return host;
         try {
           const hs = await getHetznerInstanceStatus(host.hetzner_server_id);
           const nextStatus = normalizeHostStatus(hs.status);
-          if (nextStatus && nextStatus !== host.status) {
-            await supabaseAdmin!
-              .from("hermes_hosts")
-              .update({ status: nextStatus, updated_at: new Date().toISOString() })
-              .eq("id", host.id);
-            return { ...host, status: nextStatus };
+          const { error: writeError } = await supabaseAdmin!
+            .from("hermes_hosts")
+            .update({ status: nextStatus, updated_at: new Date().toISOString() })
+            .eq("id", host.id);
+          if (writeError) {
+            log.warn("host status write failed; serving last-known status", {
+              source: "hosts",
+              route: "/api/hosts",
+              method: "GET",
+              userId,
+              hostId: host.id,
+              failureType: "host_status_write_failed",
+            }, writeError);
+            return host;
           }
-          return host;
+          return nextStatus !== host.status ? { ...host, status: nextStatus } : host;
         } catch {
           // Unreachable host or transient write failure: keep the existing row
           // (last-known status) so the rest of the fleet still renders.

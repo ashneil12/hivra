@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 import { checkOutboundUrlSafety } from "@/lib/url-safety";
 import { validateHivraChatOrigin } from "./agent-host-result";
+import { discard } from "./agent-cli-meta";
 
 export const GUEST_LLM_APPLICATION_PROTOCOL = "hivra-llm-apply-v1" as const;
 const MAX_RESPONSE_BYTES = 8192;
@@ -98,9 +99,6 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       error => { signal.removeEventListener("abort", abort); reject(error); });
     if (signal.aborted) abort();
   });
-}
-function discard(response: Response) {
-  void response.body?.cancel().catch(() => undefined);
 }
 async function json(response: Response, signal: AbortSignal): Promise<unknown> {
   if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) {

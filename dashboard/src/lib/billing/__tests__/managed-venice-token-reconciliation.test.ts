@@ -95,6 +95,35 @@ describe("managed Venice token quote reconciliation", () => {
     );
   });
 
+  it("is not stalled by a spray of dust transfers across more blocks than the timestamp lookup cap", async () => {
+    const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_1" }));
+    const dust = Array.from({ length: 250 }, (_, i) =>
+      transferAt(60 + i, 1_000n, `0xdust${i.toString(16).padStart(4, "0")}`)
+    );
+    // Head at block 400 = 10:31:40, still inside the quote window.
+    const chain = makeChain(
+      [...dust, transferAt(380, BigInt(quoteRow.token_amount_raw as string), "0xpaid")],
+      { block: 400, time: "2026-05-16T10:31:40.000Z" }
+    );
+
+    const result = await reconcileManagedVeniceTokenQuote({
+      quoteId: "quote_1",
+      userId: "user_1",
+      db: createMemoryDb([quoteRow]),
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: new Date("2026-05-16T10:31:40.000Z"),
+    });
+
+    expect(result.status).toBe("settled");
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ transactionHash: "0xpaid" }),
+      expect.anything()
+    );
+  });
+
   it("matches an over-send and settles it for the ACTUAL received amount (not no_match)", async () => {
     const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_1" }));
     // User sent 10% more than quoted — real money, inside the over-send ceiling.
@@ -433,6 +462,37 @@ describe("Base RPC 429 resilience (issue #362)", () => {
     // maxAttempts=3 → 2 backoff sleeps between the 3 attempts (one eth_blockNumber call, retried).
     expect(sleeps).toHaveLength(2);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("times out a stalled Base RPC request with a signal and retries it (no unbounded hang)", async () => {
+    const settleQuote = jest.fn();
+    const sleeps: number[] = [];
+    // Every attempt is aborted by its request timeout, as a stalled provider would be.
+    const fetchImpl = jest.fn(async (_url: string, init: { signal?: AbortSignal }) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: createMemoryDb([quoteRow]),
+      rpcUrl: "https://base.test",
+      fetchImpl: fetchImpl as never,
+      settleQuote,
+      now: new Date("2026-05-16T10:22:00.000Z"),
+      interQuoteDelayMs: 0,
+      rpcRetryConfig: { maxAttempts: 3, baseDelayMs: 5, maxDelayMs: 20 },
+      rpcSleepImpl: async (ms: number) => {
+        sleeps.push(ms);
+      },
+      rpcRandom: () => 1,
+    });
+
+    expect(summary.failed).toBe(1);
+    expect(summary.results[0].errorMessage).toBe("Base RPC eth_blockNumber timed out after 10000 ms");
+    expect(settleQuote).not.toHaveBeenCalled();
+    // The timeout is retryable: all 3 attempts were made, with 2 backoff sleeps.
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleeps).toHaveLength(2);
   });
 
   it("does NOT retry a deterministic JSON-RPC error body (no wasted rate-limit budget)", async () => {

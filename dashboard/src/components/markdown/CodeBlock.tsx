@@ -47,9 +47,9 @@ export function CodeBlock({ language, value }: ChatCodeBlockProps) {
   const parsedLang = language ? language.toLowerCase() : 'text';
 
   return (
-    <div style={{ margin: '1rem 0', overflow: 'hidden', border: '1px solid var(--ink-black)', borderRadius: 0, background: '#0d0d0d' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: "var(--ink-black)", borderBottom: '1px solid #2a2a2a' }}>
-        <span style={{ fontFamily: 'var(--font-mono), monospace', fontSize: 11, lineHeight: '16px', color: '#a3a3a3', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+    <div style={{ margin: '1rem 0', overflow: 'hidden', border: '1px solid var(--hg-stroke)', borderRadius: 10, background: 'var(--hg-surface-2)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--hg-fill-2)', borderBottom: '1px solid var(--hg-stroke-subtle)' }}>
+        <span style={{ fontFamily: 'var(--font-sans)', fontSize: 11, fontWeight: 600, lineHeight: '16px', color: 'var(--hg-text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           {parsedLang}
         </span>
         {/* 36px (44px on touch) target; the negative margin keeps the 16px
@@ -59,17 +59,17 @@ export function CodeBlock({ language, value }: ChatCodeBlockProps) {
           type="button"
           aria-label={copied ? 'Copied' : 'Copy code'}
           onClick={() => { void handleCopy(); }}
-          className={`-my-[10px] -mr-[12px] min-h-[36px] pointer-coarse:-my-[14px] pointer-coarse:min-h-[44px] ${copied ? 'text-[#22c55e]' : 'text-[#a3a3a3] [@media(hover:hover)]:hover:text-[var(--bg-surface)]'}`}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: 64, padding: '0 10px', background: 'none', border: 'none', borderRadius: 0, cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-mono), monospace', textTransform: 'uppercase' }}
+          className={`-my-[10px] -mr-[12px] min-h-[36px] pointer-coarse:-my-[14px] pointer-coarse:min-h-[44px] ${copied ? 'text-[var(--hg-ok)]' : 'text-[var(--hg-text-3)] [@media(hover:hover)]:hover:text-[var(--hg-text)]'}`}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: 64, padding: '0 10px', background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-sans)', fontWeight: 600, textTransform: 'uppercase' }}
         >
           {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
         </button>
       </div>
-      <div style={{ overflowX: 'auto', background: '#0d0d0d' }}>
+      <div style={{ overflowX: 'auto', background: 'var(--hg-surface-2)' }}>
         <SyntaxHighlighter
           language={prismLanguage(parsedLang)}
           style={vscDarkPlus}
-          customStyle={{ margin: 0, padding: '16px', background: '#0d0d0d', fontSize: '13px', lineHeight: 1.5, fontFamily: 'var(--font-mono), monospace' }}
+          customStyle={{ margin: 0, padding: '16px', background: 'var(--hg-surface-2)', fontSize: '13px', lineHeight: 1.5, fontFamily: 'var(--font-mono), monospace' }}
           PreTag="div"
         >
           {String(value).replace(/\n$/, '')}

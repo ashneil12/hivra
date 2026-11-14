@@ -3,6 +3,8 @@
 // first-party origin, so the login cookie survives the redirect — sidestepping
 // the third-party-cookie partitioning that the inline iframe handoff fights.
 
+import { isSafeHttpNavigationUrl } from "@/lib/safe-http-url";
+
 export type OpenWebuiResult =
   | { status: "opened" }
   | { status: "pending"; message: string }
@@ -57,6 +59,13 @@ export async function openWebuiWorkspaceInNewTab(instanceId: string): Promise<Op
     if (!isRecord(body) || typeof body.url !== "string") {
       opened.close();
       return { status: "error", reason: "Workspace login response was malformed." };
+    }
+
+    // The URL comes straight off the wire — never navigate the fresh tab to a
+    // non-http(s) scheme (javascript:/data: would run in our origin).
+    if (!isSafeHttpNavigationUrl(body.url)) {
+      opened.close();
+      return { status: "error", reason: "Workspace login URL was invalid." };
     }
 
     opened.location.href = body.url;

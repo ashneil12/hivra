@@ -101,7 +101,7 @@ jobs:
         with:
           persist-credentials: false
       # Standard library only: the connector runs on stock Ubuntu Python.
-      - run: python3 -m unittest -v test_hivra_connector
+      - run: python3 -m unittest -v test_hivra_connector test_hivra_bridge
 
   inventory-tests:
     runs-on: ubuntu-24.04

@@ -16,16 +16,13 @@ import { reportOpsEvent } from "@/lib/ops-events";
 const LOG_SOURCE = "inactivity-sweep";
 
 const FREE_TIER_VALUES = ["credit_base"] as const;
-// $HERMES token holders were promised a 30-day idle grace. They sat in
-// FREE_TIER_VALUES and were swept at 4 days like any free box, which is how the
-// token_base cohort got paused -> reclaimed -> cold-archived down to zero active
-// instances. They get their own tier group and their own threshold.
-const TOKEN_TIER_VALUES = ["token_base"] as const;
 const PAID_TIER_VALUES = ["operator", "fleet", "command"] as const;
 
 const FREE_TIER_IDLE_DAYS_DEFAULT = 4;
-const TOKEN_TIER_IDLE_DAYS_DEFAULT = 30;
 const SWEEP_BATCH_LIMIT = 50;
+// Page size of the instance_usage_snapshots read (PostgREST's per-request cap).
+const AGENT_USAGE_PAGE_SIZE = 1000;
+const AGENT_USAGE_MAX_PAGES = 20;
 
 // How stale the agent-side probe may be before we declare activity UNKNOWN.
 // harvest-agent-usage runs hourly; 36h tolerates a long-but-recoverable harvest
@@ -52,8 +49,8 @@ type SweepCandidate = {
 };
 
 // One DB scan per distinct idle window. Grouping by cutoff (rather than one wide
-// scan) keeps SWEEP_BATCH_LIMIT meaningful per tier — a 30-day token window and a
-// 4-day free window cannot starve each other's batch.
+// scan) keeps SWEEP_BATCH_LIMIT meaningful per tier — an opted-in paid window and
+// the 4-day free window cannot starve each other's batch.
 type TierGroup = {
   tiers: readonly string[];
   idleDays: number;
@@ -79,7 +76,6 @@ export type InactivitySweepSummary = {
   // idle, and dashboard silence means nothing for a channel user.
   channelGuarded: number;
   freeIdleDays: number;
-  tokenIdleDays: number;
   /** null = paid tiers exempt from the sweep (the default). */
   paidIdleDays: number | null;
   enabled: boolean;
@@ -219,7 +215,7 @@ function isConfirmedDormant(candidate: SweepCandidate, cutoffIso: string): boole
 // Returns instanceId -> newest stat_date with sessions>0, so each candidate can be
 // judged against ITS OWN cutoff. (Querying once against the widest window and
 // treating every hit as "active" would spare a 4-day free box on a session it ran
-// 29 days ago, once token_base widened the window to 30 days.)
+// weeks ago, inside a wider opted-in paid window.)
 //
 // Note this signal keys on the day a session STARTED, so it cannot see a long-lived
 // Telegram thread opened before the window and used inside it. last_agent_activity_at
@@ -242,29 +238,44 @@ async function fetchLatestAgentUsageByInstance(
   // agent that ran any session on the cutoff day still counts as active.
   const cutoffDay = earliestCutoffIso.slice(0, 10);
 
-  const { data, error } = await supabase
-    .from("instance_usage_snapshots")
-    .select("instance_id, stat_date")
-    .in("instance_id", instanceIds)
-    .gt("sessions", 0)
-    .gte("stat_date", cutoffDay);
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
+  // PostgREST answers at most 1000 rows per request. A silently truncated read
+  // would drop some instances' recent sessions and read them as idle, so page
+  // through every match and fail closed if the result is somehow still growing.
   const latestByInstance = new Map<string, string>();
-  for (const row of (data ?? []) as Array<{
-    instance_id: string;
-    stat_date: string;
-  }>) {
-    const current = latestByInstance.get(row.instance_id);
-    // stat_date is a zero-padded ISO calendar day, so lexicographic max == newest.
-    if (!current || row.stat_date > current) {
-      latestByInstance.set(row.instance_id, row.stat_date);
+  for (let page = 0; ; page += 1) {
+    if (page >= AGENT_USAGE_MAX_PAGES) {
+      return { ok: false, error: "instance_usage_snapshots returned more pages than the sweep reads" };
     }
+    const from = page * AGENT_USAGE_PAGE_SIZE;
+    const { data, error } = await supabase
+      .from("instance_usage_snapshots")
+      .select("instance_id, stat_date")
+      .in("instance_id", instanceIds)
+      .gt("sessions", 0)
+      .gte("stat_date", cutoffDay)
+      // (instance_id, stat_date) is the table's primary key, so this order is
+      // total and consecutive pages cannot overlap or skip rows.
+      .order("instance_id", { ascending: true })
+      .order("stat_date", { ascending: true })
+      .range(from, from + AGENT_USAGE_PAGE_SIZE - 1);
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+
+    const rows = (data ?? []) as Array<{
+      instance_id: string;
+      stat_date: string;
+    }>;
+    for (const row of rows) {
+      const current = latestByInstance.get(row.instance_id);
+      // stat_date is a zero-padded ISO calendar day, so lexicographic max == newest.
+      if (!current || row.stat_date > current) {
+        latestByInstance.set(row.instance_id, row.stat_date);
+      }
+    }
+    if (rows.length < AGENT_USAGE_PAGE_SIZE) return { ok: true, latestByInstance };
   }
-  return { ok: true, latestByInstance };
 }
 
 // Instances whose owner has wired up a messaging channel (Telegram today, Discord
@@ -559,10 +570,6 @@ export async function runInactivitySweep(
     "HERMES_INACTIVITY_FREE_DAYS",
     FREE_TIER_IDLE_DAYS_DEFAULT
   );
-  const tokenIdleDays = readPositiveIntEnv(
-    "HERMES_INACTIVITY_TOKEN_DAYS",
-    TOKEN_TIER_IDLE_DAYS_DEFAULT
-  );
   const paidIdleDays = readPaidIdleDays();
 
   if (!isSweepEnabled()) {
@@ -581,7 +588,6 @@ export async function runInactivitySweep(
       activityUnknown: 0,
       channelGuarded: 0,
       freeIdleDays,
-      tokenIdleDays,
       paidIdleDays,
       enabled: false,
       timedOut: false,
@@ -596,19 +602,13 @@ export async function runInactivitySweep(
   const cutoffFor = (idleDays: number): string =>
     new Date(nowMs - idleDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // One group per distinct idle window. token_base gets a 30-day grace (the promise
-  // made to $HERMES holders); credit_base keeps 4 days; paid tiers stay exempt
-  // unless HERMES_INACTIVITY_PAID_DAYS opts them in.
+  // One group per distinct idle window. credit_base keeps 4 days; paid tiers stay
+  // exempt unless HERMES_INACTIVITY_PAID_DAYS opts them in.
   const tierGroups: TierGroup[] = [
     {
       tiers: FREE_TIER_VALUES,
       idleDays: freeIdleDays,
       cutoffIso: cutoffFor(freeIdleDays),
-    },
-    {
-      tiers: TOKEN_TIER_VALUES,
-      idleDays: tokenIdleDays,
-      cutoffIso: cutoffFor(tokenIdleDays),
     },
     ...(paidIdleDays === null
       ? []
@@ -626,8 +626,8 @@ export async function runInactivitySweep(
   );
 
   // idleDays rides along purely so the logs say which window a box was judged
-  // against — the only way to confirm in prod that a token_base row was measured
-  // on 30 days and not the 4-day free window.
+  // against — the only way to confirm in prod that a row was measured on its own
+  // tier's window.
   const taggedCandidates = tierGroups.flatMap((group, index) =>
     groupCandidates[index].map((candidate) => ({
       candidate,
@@ -700,7 +700,6 @@ export async function runInactivitySweep(
       activityUnknown: 0,
       channelGuarded: 0,
       freeIdleDays,
-      tokenIdleDays,
       paidIdleDays,
       enabled: true,
       timedOut: false,
@@ -908,7 +907,6 @@ export async function runInactivitySweep(
     activityUnknown,
     channelGuarded,
     freeIdleDays,
-    tokenIdleDays,
     paidIdleDays,
     enabled: true,
     timedOut,

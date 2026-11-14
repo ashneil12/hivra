@@ -48,15 +48,11 @@ async function getLandingLocale() {
   });
 }
 
-export default async function StatsPage() {
-  const { userId } = await auth();
-  const locale = await getLandingLocale();
-  const tokenView = await getTokenSurfaceView(userId);
-
-  let initial: Awaited<ReturnType<typeof getAgentsDeployedStats>> | null = null;
-  let platform: PublicStats | null = null;
+async function loadStats(): Promise<
+  [Awaited<ReturnType<typeof getAgentsDeployedStats>> | null, PublicStats | null]
+> {
   try {
-    [initial, platform] = await Promise.all([
+    return await Promise.all([
       getAgentsDeployedStats({ series: true, firstDeploy: true }),
       getPublicStats(),
     ]);
@@ -65,7 +61,17 @@ export default async function StatsPage() {
       source: "stats-page",
       route: "/stats",
     });
+    return [null, null];
   }
+}
+
+export default async function StatsPage() {
+  const { userId } = await auth();
+  const [locale, tokenView, [initial, platform]] = await Promise.all([
+    getLandingLocale(),
+    getTokenSurfaceView(userId),
+    loadStats(),
+  ]);
 
   return (
     <LocaleProvider initialLocale={locale}>

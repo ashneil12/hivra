@@ -268,4 +268,14 @@ describe("ProviderResizePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review price & downtime" }));
     await waitFor(() => expect(mockReview).toHaveBeenLastCalledWith(expect.objectContaining({ targetServerType: "cpx42" })));
   });
+
+  // Regression: the page passes a new inline onChanged on every render, and that
+  // used to re-read the resize state each time, even with the same server.
+  it("re-reads the resize state only when the server changes, not on a parent re-render", async () => {
+    const view = render(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
+    await waitFor(() => expect(mockGetState).toHaveBeenCalledTimes(1));
+    view.rerender(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
+    view.rerender(<ProviderResizePanel agent={agent} onChanged={jest.fn()} />);
+    expect(mockGetState).toHaveBeenCalledTimes(1);
+  });
 });

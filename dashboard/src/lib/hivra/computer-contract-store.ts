@@ -117,13 +117,18 @@ export async function ensureComputerContractRevision(input: {
   return null;
 }
 
+/**
+ * The row as stored after the patch. A write that did not land returns the row
+ * as it was, never the patch as if saved, so a delivery is never reported as
+ * recorded when the database does not hold it.
+ */
 async function update(row: ComputerContractRow, patch: Partial<ComputerContractRow>): Promise<ComputerContractRow> {
   const { data, error } = await db().from(TABLE).update(patch)
     .eq("id", row.id).eq("agent_id", row.agent_id).eq("user_id", row.user_id)
     .select(SELECT).single();
   if (error || !data) {
     log.warn("computer contract state was not recorded", { source: LOG_SOURCE, failureType: "computer_contract_update_failed", agentId: row.agent_id, code: error?.code });
-    return { ...row, ...patch };
+    return row;
   }
   return data as unknown as ComputerContractRow;
 }

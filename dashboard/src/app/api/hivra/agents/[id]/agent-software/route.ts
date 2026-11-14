@@ -18,10 +18,9 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
-import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
+import { agentSoftwareAutoUpdates, agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
 import { readAgentSoftwareRecord, saveAgentSoftwareAutoUpdate } from "@/lib/hivra/agent-cli-store";
 import {
   agentSoftwareResponse,
@@ -30,12 +29,12 @@ import {
   observeAgentSoftware,
   type AgentSoftwareAgentRow,
 } from "@/lib/hivra/agent-software-service";
+import { noStore, UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AGENT_COLUMNS = "id, user_id, type, status, deployment_mode, computer_profile, computer_substrate, chat_url, cf_hostname, api_token";
 
 async function ownerAgent(id: string, userId: string): Promise<{ agent: AgentSoftwareAgentRow | null; failed: boolean }> {
-  if (!supabaseAdmin || !UUID.test(id)) return { agent: null, failed: false };
+  if (!supabaseAdmin || !UUID_V1_TO_8.test(id)) return { agent: null, failed: false };
   const { data, error } = await supabaseAdmin
     .from("hivra_agents")
     .select(AGENT_COLUMNS)
@@ -47,14 +46,8 @@ async function ownerAgent(id: string, userId: string): Promise<{ agent: AgentSof
   return { agent: (data as AgentSoftwareAgentRow | null) ?? null, failed: false };
 }
 
-function noStore(response: Response): Response {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
-
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
@@ -83,7 +76,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
@@ -100,7 +92,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (failed) return apiError("Could not load this agent.", 503);
     if (!agent) return apiError("Agent not found", 404);
     const subject = agentSoftwareSubject(agent);
-    if (!subject?.cli) return apiError("Hivra doesn't update this agent's software automatically.", 400);
+    if (!subject?.cli || !agentSoftwareAutoUpdates(agent)) return apiError("Hivra doesn't update this agent's software automatically.", 400);
 
     const saved = await saveAgentSoftwareAutoUpdate({ id: agent.id, user_id: userId, type: agent.type }, subject, body.autoUpdate);
     if (!saved) return apiError("Your choice couldn't be saved. Try again.", 503);

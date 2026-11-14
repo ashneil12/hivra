@@ -31,6 +31,34 @@ export type ParsedColdStorageManifest = {
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * SEC-02 path-safety character sets. archive_uri values and the compact `ts`
+ * token emitted by archive-vm-cold.sh's MANIFEST line both end up
+ * interpolated into remote shell commands (`ssh cold "..."`, rsync,
+ * restore-vm-cold.sh argv) by cold-storage-service.ts, so the accepted
+ * charset must exclude whitespace, quotes, '$', backticks, ';' and '.'
+ * entirely — anything a shell could reinterpret — while still accepting
+ * every value the scripts legitimately emit.
+ */
+const COLD_TS_COMPACT_RE = /^[0-9A-Za-z_-]{8,32}$/;
+const COLD_ARCHIVE_URI_RE =
+  /^(?:free|paid)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/data-([0-9A-Za-z_-]{8,32})\.tar\.zst$/i;
+
+/** True iff `ts` is a safe compact timestamp segment (no shell metacharacters). */
+export function isValidColdTimestampCompact(ts: string): boolean {
+  return COLD_TS_COMPACT_RE.test(ts);
+}
+
+/**
+ * True iff `archiveUri` exactly matches the canonical archive layout
+ * free|paid/<instance-uuid>/data-<ts>.tar.zst with both segments inside the
+ * shell-safe charsets above. Anything else (extra path segments, traversal,
+ * metacharacters) must be treated as tampered and never reach a shell.
+ */
+export function isValidColdArchiveUri(archiveUri: string): boolean {
+  return COLD_ARCHIVE_URI_RE.test(archiveUri);
+}
+
 function fail(manifestPath: string, field: string, reason: string): never {
   throw new Error(`Invalid cold-storage manifest ${manifestPath}: ${field} ${reason}`);
 }
@@ -148,8 +176,12 @@ export function parseColdStorageManifest(
  * needs to re-fetch the manifest for integrity checks.
  */
 export function manifestPathFromArchiveUri(archiveUri: string): string | null {
-  // archive_uri layout: free/<id>/data-<ts>.tar.zst → manifest at meta/<id>/<ts>.json
-  const match = archiveUri.match(/^(?:free|paid)\/([^/]+)\/data-([^/.]+)\.tar\.zst$/);
+  // archive_uri layout: free/<id>/data-<ts>.tar.zst → manifest at meta/<id>/<ts>.json.
+  // The segments are pinned to shell-safe charsets (SEC-02): the returned
+  // path is interpolated into `ssh cold "cat <path>"` by the service, so a
+  // poisoned archive_uri must fail closed to null rather than smuggle
+  // metacharacters into the remote command.
+  const match = archiveUri.match(COLD_ARCHIVE_URI_RE);
   if (!match) return null;
   const [, id, ts] = match;
   return `meta/${id}/${ts}.json`;

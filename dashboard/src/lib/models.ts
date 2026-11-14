@@ -240,7 +240,8 @@ models: [
     keyLabel: "Venice API Key",
     models: [
       // Venice defaults & top recommendations
-      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (via Venice · recommended)' },
+      { value: 'deepseek-v4-1-flash', label: 'DeepSeek V4.1 Flash (via Venice · recommended)' },
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash (via Venice)' },
       { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro (via Venice)' },
       { value: 'deepseek-v3.2', label: 'DeepSeek V3.2 (via Venice)' },
       { value: 'kimi-k2-6', label: 'Kimi K2.6 (via Venice)' },

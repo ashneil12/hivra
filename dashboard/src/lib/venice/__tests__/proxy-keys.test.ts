@@ -3,13 +3,14 @@ import {
   createManagedVeniceProxyKey,
   hashManagedVeniceProxyKey,
   listManagedVeniceProxyKeys,
+  ManagedVeniceProxyKeyNotFoundError,
   revokeManagedVeniceProxyKey,
   verifyManagedVeniceProxyKey,
 } from "@/lib/venice/proxy-keys";
 
 it("turns an agent-key custody guard rejection into safe clear/replace guidance", async () => {
-  const query = { eq: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({ data: null, error: { code: "55000", message: "PRIVATE fixture-key-evidence" } }) };
+  const query = { eq: jest.fn().mockReturnThis(), neq: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: { code: "55000", message: "PRIVATE fixture-key-evidence" } }) };
   const db = { from: jest.fn(() => ({ update: jest.fn(() => query) })) };
   await expect(revokeManagedVeniceProxyKey({ userId: "owner", keyId: "fixture-key" }, db)).rejects.toThrow(AgentModelKeyInUseError);
   await expect(revokeManagedVeniceProxyKey({ userId: "owner", keyId: "fixture-key" }, db)).rejects.not.toThrow("PRIVATE");
@@ -81,16 +82,24 @@ function createQuery(rows: Row[]) {
 
 function createUpdate(rows: Row[], patch: Row) {
   const filters: Array<[string, unknown]> = [];
+  const neqFilters: Array<[string, unknown]> = [];
   const query: {
     eq: (column: string, value: unknown) => typeof query;
-    select: () => { single: () => Promise<{ data: Row | null; error: null }> };
+    neq: (column: string, value: unknown) => typeof query;
+    select: () => {
+      single: () => Promise<{ data: Row | null; error: null }>;
+      maybeSingle: () => Promise<{ data: Row | null; error: null }>;
+    };
     then: Promise<{ error: null }>["then"];
   } = {} as typeof query;
 
   function applyPatch() {
     let last: Row | null = null;
     for (const row of rows) {
-      if (filters.every(([column, value]) => row[column] === value)) {
+      if (
+        filters.every(([column, value]) => row[column] === value) &&
+        neqFilters.every(([column, value]) => row[column] !== value)
+      ) {
         Object.assign(row, patch);
         last = row;
       }
@@ -102,8 +111,13 @@ function createUpdate(rows: Row[], patch: Row) {
     filters.push([column, value]);
     return query;
   };
+  query.neq = (column, value) => {
+    neqFilters.push([column, value]);
+    return query;
+  };
   query.select = () => ({
     single: async () => ({ data: applyPatch(), error: null }),
+    maybeSingle: async () => ({ data: applyPatch(), error: null }),
   });
   query.then = (resolve, reject) =>
     Promise.resolve({ error: null }).then(resolve, reject);
@@ -325,6 +339,36 @@ describe("managed Venice proxy keys", () => {
     await expect(
       verifyManagedVeniceProxyKey({ plaintextKey: created.plaintextKey, env }, db)
     ).resolves.toBeNull();
+  });
+
+  it("keeps the first revoked_at when a key is revoked again", async () => {
+    const { db, tables } = createMemoryDb();
+    const created = await createManagedVeniceProxyKey(
+      { userId: "user_1", randomBytes: fixedRandomBytes, env },
+      db
+    );
+    await revokeManagedVeniceProxyKey({ userId: "user_1", keyId: created.id }, db);
+    tables.managed_venice_proxy_keys[0].revoked_at = "2026-01-01T00:00:00.000Z";
+
+    const again = await revokeManagedVeniceProxyKey({ userId: "user_1", keyId: created.id }, db);
+
+    expect(again).toMatchObject({ revoked: true, key: { id: created.id, status: "revoked" } });
+    expect(tables.managed_venice_proxy_keys[0].revoked_at).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("reports a missing key, or another user's key, as not found", async () => {
+    const { db } = createMemoryDb();
+    const created = await createManagedVeniceProxyKey(
+      { userId: "user_1", randomBytes: fixedRandomBytes, env },
+      db
+    );
+
+    await expect(
+      revokeManagedVeniceProxyKey({ userId: "user_2", keyId: created.id }, db)
+    ).rejects.toThrow(ManagedVeniceProxyKeyNotFoundError);
+    await expect(
+      revokeManagedVeniceProxyKey({ userId: "user_1", keyId: "missing-key" }, db)
+    ).rejects.toThrow(ManagedVeniceProxyKeyNotFoundError);
   });
 
   it("lists key metadata without plaintext or hashes", async () => {

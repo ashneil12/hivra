@@ -71,7 +71,10 @@ function makeChain(rows: unknown[], table: string) {
   chain.in = record("in");
   chain.is = record("is");
   chain.gte = record("gte");
-  chain.order = passthrough;
+  chain.order = (col: string) => {
+    (capturedFilters[table] ??= []).push(["order", col]);
+    return chain;
+  };
   chain.range = (f: number, t: number) => {
     from = f;
     to = t;
@@ -241,6 +244,16 @@ describe("getUserAgentActivity", () => {
     expect(out.activeDays).toBe(2);
     expect(out.topModels.map((m) => m.model)).toEqual(["openai/gpt", "nous/hermes"]);
     expect(out.topSkills.map((s) => s.skill).sort()).toEqual(["deploy", "search"]);
+  });
+
+  it("pages snapshots by stat_date then instance_id, so rows that share a day page stably", async () => {
+    instanceRows = [{ id: "inst-a" }];
+    snapshotRows = [];
+    await getUserAgentActivity("user-1", { days: 7 }, NOW);
+    expect(capturedFilters.instance_usage_snapshots.filter(([op]) => op === "order")).toEqual([
+      ["order", "stat_date"],
+      ["order", "instance_id"],
+    ]);
   });
 
   it("returns a zeroed object (no instances) when the user has none", async () => {

@@ -19,6 +19,10 @@ describe("Hivra live browser geometry", () => {
     // Chrome would still stream the tall Xvfb framebuffer and its empty space.
     expect(display?.slice(1)).toEqual(["1280", "720", "24"]);
     expect(chromeWindow?.slice(1)).toEqual(display?.slice(1, 3));
+    // Without a window manager Chrome must be placed explicitly: origin plus the full
+    // screen size, or the Browser tab shows a bare root-window band above the window.
+    expect(keeper).toContain('"--window-position=0,0"');
+    expect(keeper).not.toContain("--start-maximized");
   });
 
   it("keeps noVNC aspect-preserving fit rather than silently resizing the active desktop", () => {

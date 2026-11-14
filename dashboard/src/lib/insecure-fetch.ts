@@ -3,19 +3,16 @@ import { Agent } from "undici";
 /**
  * Legacy gateway fetch wrapper.
  *
- * TLS verification remains enabled by default.
- *
- * For controlled break-glass migrations only, operators may explicitly opt in
- * to the previous insecure behavior with `ALLOW_INSECURE_GATEWAY_TLS=true`.
+ * TLS verification is enabled unconditionally unless the operator explicitly
+ * opts in to insecure mode with `ALLOW_INSECURE_GATEWAY_TLS=true`. That is a
+ * break-glass escape hatch for boxes whose ACME issuance is permanently
+ * broken — nothing else should need it. Managed `<ip>.sslip.io` gateways get
+ * real Let's Encrypt certs from their Caddy site label, so they verify like
+ * any other host; an sslip box that fails verification is unreachable either
+ * way during issuance, and a permanently unverifiable one is broken, not
+ * something to silently MITM-proxy forever.
  */
-function shouldAllowInsecureGatewayTls(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    if (/^\d{1,3}(?:-\d{1,3}){3}\.sslip\.io$/.test(hostname)) {
-      return true;
-    }
-  } catch {}
-
+function shouldAllowInsecureGatewayTls(): boolean {
   return process.env.ALLOW_INSECURE_GATEWAY_TLS === "true";
 }
 
@@ -35,7 +32,7 @@ export async function fetchWithInsecureTLS(
 ): Promise<Response> {
   if (
     typeof window !== "undefined" ||
-    !shouldAllowInsecureGatewayTls(url)
+    !shouldAllowInsecureGatewayTls()
   ) {
     return fetch(url, options);
   }

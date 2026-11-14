@@ -629,7 +629,7 @@ ${script.slice(start, end)}`;
             agentImage: "ghcr.io/ashneil12/vanilla-hermes-agent:latest",
           });
 
-          expect(compose).toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar:stable");
+          expect(compose).toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar@sha256:39ef9d7b0439d15b146ea9101106068ea173f656c5ffa85f1b3a060754e55c61");
           expect(compose).not.toContain("hermes-browser-sidecar-canary");
         }
       );
@@ -652,7 +652,9 @@ ${script.slice(start, end)}`;
             agentImage: "ghcr.io/ashneil12/vanilla-hermes-agent:latest",
           });
 
-          expect(compose).toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar-canary:stable");
+          // The -canary package is retired; canary runs the same pinned build.
+          expect(compose).toContain("image: ghcr.io/ashneil12/hermes-browser-sidecar@sha256:39ef9d7b0439d15b146ea9101106068ea173f656c5ffa85f1b3a060754e55c61");
+          expect(compose).not.toContain("hermes-browser-sidecar-canary");
         }
       );
     });
@@ -2153,12 +2155,21 @@ ${script.slice(start, end)}`;
     it("refuses to build a bootstrap script when an env-file body contains the heredoc terminator", () => {
       const malicious: WebUIDeployParams = {
         ...baseParams,
-        // If a name (or any user-controlled string) ever bypassed input
-        // validation, the heredoc helper must fail loud rather than splice
-        // attacker bytes into a bash heredoc that runs as root on the VM.
+        // SEC-04: env values are sanitized before emission, so the name can no
+        // longer produce a bare terminator line — the injected bytes collapse
+        // into a single inert env value instead.
         agentName: "ok\n__HERMES_EOF__\nrm -rf /\n",
       };
       const artifacts = buildWebUIProvisioningArtifacts(malicious);
+      expect(artifacts.envFile).not.toMatch(/(^|\n)__HERMES_EOF__(\r?\n|$)/);
+      expect(artifacts.envFile).toContain(
+        "HERMES_WEBUI_BOT_NAME=ok__HERMES_EOF__rm -rf /"
+      );
+
+      // If a heredoc body ever does carry a bare terminator (any artifact, any
+      // source), the helper must still fail loud rather than splice attacker
+      // bytes into a bash heredoc that runs as root on the VM.
+      artifacts.envFile += "__HERMES_EOF__\nrm -rf /\n";
       expect(() => buildWebUIBootstrapScript(artifacts, malicious)).toThrow(
         /heredoc body for ".*" contains the EOF terminator/
       );

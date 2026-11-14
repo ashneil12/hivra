@@ -196,6 +196,8 @@ export async function runAgentCliAutoUpdateSweep(options: AgentCliAutoUpdateOpti
     .from("hivra_agents")
     .select("*")
     .eq("status", "running")
+    // A sleeping computer cannot be read or updated, and this sweep never wakes one.
+    .eq("sleep_state", "awake")
     .in("type", ["claude-code", "codex"])
     .is("computer_profile", null)
     .is("operation_id", null)

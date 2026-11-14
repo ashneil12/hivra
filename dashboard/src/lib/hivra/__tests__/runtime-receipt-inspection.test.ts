@@ -132,6 +132,15 @@ describe("runtime receipt inspection", () => {
     expect(deps.runHostScript).toHaveBeenCalledWith(expect.stringContaining("VMID=1112"), expect.objectContaining({ PROXMOX_SSH_HOST: "192.0.2.11" }), { timeoutMs: 30_000, maxOutputBytes: 16 * 1024 });
   });
 
+  it("names the failure class so the route can answer 400, 404 or 409 instead of 503", async () => {
+    await expect(inspectHivraRuntimeReceipt("latest", dependencies() as never))
+      .resolves.toMatchObject({ ok: false, error: "Agent id is invalid.", status: 400 });
+    await expect(inspectHivraRuntimeReceipt(AGENT_ID, dependencies({ loadAgent: jest.fn().mockResolvedValue(null) }) as never))
+      .resolves.toMatchObject({ ok: false, error: "Agent not found.", status: 404 });
+    await expect(inspectHivraRuntimeReceipt(AGENT_ID, dependencies({ loadAgent: jest.fn().mockResolvedValue(agent({ status: "provisioning" })) }) as never))
+      .resolves.toMatchObject({ ok: false, status: 409 });
+  });
+
   it("does not expose host output when receipt verification fails", async () => {
     const deps = dependencies({ runHostScript: jest.fn().mockResolvedValue({ ok: false, stdout: "secret output", stderr: "private error" }) });
     await expect(inspectHivraRuntimeReceipt(AGENT_ID, deps as never)).resolves.toEqual({ ok: false, agentId: AGENT_ID, targetId: "fixturenode11", vmid: 1112, error: "Runtime receipt could not be verified." });

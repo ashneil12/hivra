@@ -8,14 +8,12 @@ import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { createBuzzCoordinator } from "@/lib/hivra/buzz-coordinator";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { buzzFailure, noStore, readBuzzMutation } from "./route-utils";
 
 const ConnectSchema = z.object({ relayUrl: z.string().trim().min(1).max(2_048) }).strict();
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     return noStore(apiSuccess(await createBuzzCoordinator().summary(userId)));
@@ -26,7 +24,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const mutation = await readBuzzMutation(request, userId, "hivra_buzz_connect");

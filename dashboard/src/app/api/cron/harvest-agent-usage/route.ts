@@ -201,17 +201,32 @@ export async function GET(req: NextRequest) {
   const force = url.searchParams.get("force") === "1";
   const harvestPyB64 = Buffer.from(buildHarvestPy(days), "utf8").toString("base64");
 
-  let instances: HarvestableInstance[];
+  // Keyset-paginate by id. PostgREST caps one response (~1000 rows), and a single
+  // unbounded read silently dropped the fleet's tail: those instances never got a
+  // probe stamp or a usage snapshot. Page until a short page; keyset (.gt id) is
+  // stable under concurrent writes.
+  const HARVEST_PAGE_SIZE = 1000;
+  const instances: HarvestableInstance[] = [];
   try {
-    const { data, error } = await supabaseAdmin
-      .from("hermes_instances")
-      .select(
-        "id, user_id, host_id, proxmox_node, config, first_usage_at, webfree, last_agent_activity_at"
-      )
-      .eq("lifecycle_state", "active")
-      .eq("infrastructure_provider", "proxmox");
-    if (error) throw new Error(error.message || "Failed to load active instances");
-    instances = (data ?? []) as HarvestableInstance[];
+    let cursor: string | null = null;
+    for (;;) {
+      let query = supabaseAdmin
+        .from("hermes_instances")
+        .select(
+          "id, user_id, host_id, proxmox_node, config, first_usage_at, webfree, last_agent_activity_at"
+        )
+        .eq("lifecycle_state", "active")
+        .eq("infrastructure_provider", "proxmox");
+      if (cursor) {
+        query = query.gt("id", cursor);
+      }
+      const { data, error } = await query.order("id", { ascending: true }).limit(HARVEST_PAGE_SIZE);
+      if (error) throw new Error(error.message || "Failed to load active instances");
+      const page = (data ?? []) as HarvestableInstance[];
+      instances.push(...page);
+      if (page.length < HARVEST_PAGE_SIZE) break;
+      cursor = page[page.length - 1].id;
+    }
   } catch (err) {
     return apiError("Failed to load active instances", 500, {
       failureType: "harvest_load_instances_failed",

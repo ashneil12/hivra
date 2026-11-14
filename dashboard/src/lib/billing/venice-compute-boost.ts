@@ -25,6 +25,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { chunk } from "@/lib/array-utils";
 import { VVV_TOKEN_DECIMALS } from "@/lib/billing/token-holdings";
 import { VENICE_BOOST_USD_THRESHOLD } from "@/lib/services/tier-boost";
 
@@ -278,12 +279,18 @@ export async function fetchVeniceBoostEligibleUsers(
   const out = new Set<string>();
   const client = resolveDb(db);
   if (!client || userIds.length === 0) return out;
-  const { data, error } = await client
-    .from(TABLE)
-    .select("user_id")
-    .eq("currently_eligible", true)
-    .in("user_id", userIds);
-  if (error || !Array.isArray(data)) return out;
-  for (const r of data as Array<{ user_id: string }>) out.add(r.user_id);
+  for (const ids of chunk(userIds, 200)) {
+    const { data, error } = await client
+      .from(TABLE)
+      .select("user_id")
+      .eq("currently_eligible", true)
+      .in("user_id", ids);
+    // An unread eligibility list is not an empty one: the tier cron would strip
+    // every boosted customer's VM boost. Throw so the run stops instead.
+    if (error || !Array.isArray(data)) {
+      throw new Error(`Failed to load Venice boost eligibility: ${(error as { message?: string } | null)?.message ?? "no data"}`);
+    }
+    for (const r of data as Array<{ user_id: string }>) out.add(r.user_id);
+  }
   return out;
 }

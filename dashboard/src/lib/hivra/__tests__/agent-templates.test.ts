@@ -39,23 +39,29 @@ function resetTables() {
 }
 
 let lastInsert: Record<string, unknown> | null = null;
-let lastUpdate: Record<string, unknown> | null = null;
+// The slug candidates each agent_templates `.in("slug", ...)` lookup asked about.
+const slugLookups: string[][] = [];
 
 function makeBuilder(table: string) {
   const store = tables[table];
-  const filters: Array<[string, unknown]> = [];
+  const filters: Array<(row: Record<string, unknown>) => boolean> = [];
   let op: "select" | "insert" | "update" | "delete" = "select";
   let insertPayload: Record<string, unknown> | null = null;
   let updatePayload: Record<string, unknown> | null = null;
 
-  const matches = (row: Record<string, unknown>) => filters.every(([k, v]) => row[k] === v);
+  const matches = (row: Record<string, unknown>) => filters.every((filter) => filter(row));
 
   const builder: Record<string, unknown> = {
     select() {
       return builder;
     },
     eq(col: string, val: unknown) {
-      filters.push([col, val]);
+      filters.push((row) => row[col] === val);
+      return builder;
+    },
+    in(col: string, vals: unknown[]) {
+      if (table === "agent_templates" && col === "slug") slugLookups.push(vals as string[]);
+      filters.push((row) => vals.includes(row[col]));
       return builder;
     },
     order() {
@@ -71,7 +77,6 @@ function makeBuilder(table: string) {
     update(payload: Record<string, unknown>) {
       op = "update";
       updatePayload = payload;
-      lastUpdate = payload;
       return builder;
     },
     delete() {
@@ -124,7 +129,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 beforeEach(() => {
   resetTables();
   lastInsert = null;
-  lastUpdate = null;
+  slugLookups.length = 0;
   mockSnapshot.mockReset();
   mockSnapshot.mockResolvedValue([]);
 });
@@ -208,6 +213,17 @@ describe("createTemplateFromAgent", () => {
     expect(t1?.slug).toBeTruthy();
     expect(t2?.slug).toBeTruthy();
     expect(t1?.slug).not.toBe(t2?.slug);
+  });
+
+  it("checks every slug candidate in one lookup and takes the first free one", async () => {
+    tables.hivra_agents.rows.push({ id: "a3", user_id: "owner", type: "codex", name: "Lookup Name" });
+    tables.agent_templates.rows.push({ id: "taken", owner_user_id: "other", slug: "lookup-name", type: "codex", visibility: "private", share_token: null });
+    const tpl = await createTemplateFromAgent("owner", "a3");
+    expect(slugLookups).toHaveLength(1);
+    expect(slugLookups[0]).toHaveLength(6);
+    expect(slugLookups[0][0]).toBe("lookup-name");
+    expect(tpl?.slug).not.toBe("lookup-name");
+    expect(tpl?.slug.startsWith("lookup-name-")).toBe(true);
   });
 });
 
@@ -333,8 +349,10 @@ describe("getTemplateForLaunch", () => {
     expect(JSON.stringify(stranger?.llm_config)).not.toContain("proxy-key-internal-id");
     expect(JSON.stringify(stranger?.llm_config)).not.toContain("do-not-show");
     expect(stranger?.llm_config).toMatchObject({ provider: "venice", mode: "managed", model: "venice-uncensored" });
-    // The owner still gets the stored object, unchanged.
-    expect(JSON.stringify(owner?.llm_config)).toContain("proxy-key-internal-id");
+    // The owner gets the same template allow-list: no minted key id or prefix.
+    expect(JSON.stringify(owner?.llm_config)).not.toContain("proxy-key-internal-id");
+    expect(JSON.stringify(owner?.llm_config)).not.toContain("hven_live_ab");
+    expect(owner?.llm_config).toMatchObject({ provider: "venice", mode: "managed", model: "venice-uncensored" });
   });
 });
 
@@ -382,5 +400,87 @@ describe("listUserTemplates + deleteTemplate", () => {
     // The owner can.
     expect(await deleteTemplate("owner", "o1")).toBe(true);
     expect(await listUserTemplates("owner")).toHaveLength(0);
+  });
+});
+
+describe("managed key prefix never leaves a template (F083)", () => {
+  const managedConfig = {
+    provider: "venice",
+    mode: "managed",
+    model: "venice-uncensored",
+    proxyKeyId: "proxy-key-internal-id",
+    keyPrefix: "hven_live_ab",
+    enabledAt: "2026-09-01T00:00:00.000Z",
+  };
+
+  it("does not persist keyPrefix when a template is created from a managed agent", async () => {
+    tables.hivra_agents.rows.push({
+      id: "agent-managed",
+      user_id: "owner",
+      type: "claude-code",
+      name: "Managed Agent",
+      llm_config: managedConfig,
+    });
+
+    const tpl = await createTemplateFromAgent("owner", "agent-managed");
+    expect(tpl).not.toBeNull();
+    expect(JSON.stringify(lastInsert)).not.toContain("hven_live_ab");
+    expect(JSON.stringify(tpl)).not.toContain("hven_live_ab");
+    expect(lastInsert?.llm_config).toMatchObject({ provider: "venice", mode: "managed", model: "venice-uncensored" });
+  });
+
+  it("strips keyPrefix from the owner's listing of a template stored with one", async () => {
+    tables.agent_templates.rows.push({
+      id: "legacy-managed",
+      owner_user_id: "owner",
+      slug: "legacy-managed",
+      type: "claude-code",
+      visibility: "private",
+      share_token: null,
+      llm_config: managedConfig,
+    });
+
+    const [mine] = await listUserTemplates("owner");
+    expect(mine.llm_config).toMatchObject({ provider: "venice", mode: "managed", model: "venice-uncensored" });
+    expect(JSON.stringify(mine)).not.toContain("hven_live_ab");
+    expect(JSON.stringify(mine)).not.toContain("keyPrefix");
+  });
+
+  it("omits keyPrefix from the anonymous share view", async () => {
+    tables.agent_templates.rows.push({
+      id: "tp-managed",
+      owner_user_id: "owner",
+      slug: "tp-managed",
+      type: "codex",
+      name: "Managed Shared",
+      llm_config: managedConfig,
+      skills: [],
+      visibility: "public",
+      share_token: "tok-managed",
+    });
+
+    const tpl = await getPublicTemplateByShareToken("tok-managed");
+    expect(tpl?.llm_config).toMatchObject({ provider: "venice", mode: "managed", model: "venice-uncensored" });
+    expect(JSON.stringify(tpl)).not.toContain("hven_live_ab");
+    expect(JSON.stringify(tpl)).not.toContain("keyPrefix");
+  });
+
+  it("omits keyPrefix from the launch identity for the owner and for a stranger", async () => {
+    tables.agent_templates.rows.push({
+      id: "00000000-0000-4000-8000-000000000199",
+      owner_user_id: "owner",
+      slug: "launch-managed",
+      type: "claude-code",
+      name: "Launch Managed",
+      visibility: "public",
+      llm_config: managedConfig,
+      skills: [],
+    });
+
+    const owner = await getTemplateForLaunch("launch-managed", "owner");
+    const stranger = await getTemplateForLaunch("launch-managed", "stranger");
+    expect(JSON.stringify(owner)).not.toContain("hven_live_ab");
+    expect(JSON.stringify(stranger)).not.toContain("hven_live_ab");
+    expect(owner?.llm_config).toMatchObject({ mode: "managed", model: "venice-uncensored" });
   });
 });

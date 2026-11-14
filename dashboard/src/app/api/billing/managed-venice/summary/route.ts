@@ -41,6 +41,16 @@ function formatTokenDisplay(rawValue: string) {
   return `${Number(whole).toLocaleString("en-US")} Hivra`;
 }
 
+// The subsidy numbers and the kill switch decide what discount a user gets. When
+// either read fails the summary fails closed (503) instead of showing an unused
+// allowance or the kill switch as off.
+class SubsidyStateUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SubsidyStateUnavailableError";
+  }
+}
+
 async function loadSubsidyState(userId: string) {
   if (!supabaseAdmin) {
     return {
@@ -51,11 +61,17 @@ async function loadSubsidyState(userId: string) {
   }
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await supabaseAdmin
+  const { data, error: eventsError } = await supabaseAdmin
     .from("managed_venice_financial_events")
     .select("discount_micro_usd, metadata, created_at")
     .eq("user_id", userId)
     .eq("event_type", "subsidy_applied");
+
+  if (eventsError) {
+    throw new SubsidyStateUnavailableError(
+      eventsError.message || "managed_venice_financial_events read failed"
+    );
+  }
 
   const events = Array.isArray(data) ? data : [];
   let launchSubsidyUsedMicroUsd = 0;
@@ -73,11 +89,17 @@ async function loadSubsidyState(userId: string) {
     }
   }
 
-  const { data: state } = await supabaseAdmin
+  const { data: state, error: stateError } = await supabaseAdmin
     .from("managed_venice_platform_state")
     .select("weekly_kill_switch_active, weekly_subsidy_used_micro_usd")
     .eq("id", "global")
     .maybeSingle();
+
+  if (stateError) {
+    throw new SubsidyStateUnavailableError(
+      stateError.message || "managed_venice_platform_state read failed"
+    );
+  }
 
   return {
     launchSubsidyUsedMicroUsd,
@@ -146,11 +168,17 @@ export async function GET() {
     // "relation X does not exist" are safe to keep.
     const errorMessage =
       error instanceof Error ? error.message : String(error);
+    const subsidyUnavailable = error instanceof SubsidyStateUnavailableError;
+    const failureType = subsidyUnavailable
+      ? "managed_venice_summary_subsidy_unavailable"
+      : "managed_venice_summary_failed";
     return apiError(
-      "Failed to load managed Venice summary.",
-      500,
+      subsidyUnavailable
+        ? "Managed Venice usage is temporarily unavailable. Please try again shortly."
+        : "Failed to load managed Venice summary.",
+      subsidyUnavailable ? 503 : 500,
       {
-        failureType: "managed_venice_summary_failed",
+        failureType,
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage,
       },
@@ -160,7 +188,7 @@ export async function GET() {
         route: "/api/billing/managed-venice/summary",
         method: "GET",
         userId: userIdForLog,
-        failureType: "managed_venice_summary_failed",
+        failureType,
         cause: error,
       }
     );

@@ -28,6 +28,8 @@ const MIGRATION = "20260923150000_dual_platform_token_foundation.sql";
 const FOLLOW_UP = "20260923203000_reconcile_token_base_any_allowed_token.sql";
 // One deposit lot per quote in either token.
 const LOT_INDEX = "20260923204000_managed_venice_token_lots_unique_quote_any_token.sql";
+// Hosted computers are paid only: the reset stops granting token_base.
+const NO_TOKEN_BASE = "20261028200000_remove_token_base_tier.sql";
 const HERMESOS = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
 const HIVRA = "0x1111111111111111111111111111111111111111";
 const ACTIVATED_AT = "2026-10-01T00:00:00.000Z";
@@ -344,6 +346,32 @@ async function main() {
     // though the refresh wrote a newer (empty) $HIVRA snapshot after it.
     await snapshot("user_base", HIVRA, false, at(AFTER, 180_000));
     assert.equal(await reset("user_base", at(AFTER, 240_000)), "token_base");
+
+    // ── the Starter tier is removed ────────────────────────────────────
+    // A computer left on token_base moves to Free with the same spec, and the
+    // reset never grants token_base again; paid and Pro paths are unchanged.
+    await db.query(
+      `insert into hermes_instances (user_id, status, resource_tier, cpu_limit, ram_limit)
+       values ('user_starter', 'running', 'token_base', 0.5, 1024),
+              ('user_starter', 'deleted', 'token_base', 0.5, 1024),
+              ('user_paid_box', 'running', 'fleet', 4, 8192)`
+    );
+    await db.exec(read(NO_TOKEN_BASE));
+    await db.exec(read(NO_TOKEN_BASE)); // rerun-safe
+    assert.deepEqual(
+      await all(`select user_id, resource_tier, cpu_limit::float8 cpu, ram_limit ram from hermes_instances
+                  where user_id in ('user_starter', 'user_paid_box') order by user_id, status`),
+      [
+        { user_id: "user_paid_box", resource_tier: "fleet", cpu: 4, ram: 8192 },
+        { user_id: "user_starter", resource_tier: "credit_base", cpu: 0.5, ram: 1024 },
+        { user_id: "user_starter", resource_tier: "credit_base", cpu: 0.5, ram: 1024 },
+      ]
+    );
+    assert.equal((await one(`select count(*)::int n from hermes_instances where resource_tier = 'token_base'`)).n, 0);
+    assert.equal(await reset("user_base", at(AFTER, 300_000)), "credit_base", "a 1-token holding grants nothing");
+    assert.equal(await reset("user_hivra_only", at(AFTER, 300_000)), "credit_base");
+    assert.equal(await reset("user_new", at(AFTER, 300_000)), "operator", "a paid yearly plan still entitles");
+    assert.equal(await reset("user_late_seen", at(AFTER, 300_000)), "operator", "an eligible Pro row still entitles");
 
     // ── grants ─────────────────────────────────────────────────────────
     for (const signature of [

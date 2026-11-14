@@ -2,11 +2,8 @@ import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import { glossify } from "@/components/gloss/glossify";
 import { isExternalHref } from "@/components/public-editorial/ActionLinks";
+import { parseInline } from "@/lib/inline-copy";
 import styles from "../features.module.css";
-
-// Bold, inline code and links are the only inline markup the feature copy uses.
-const TOKEN = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
-const LINK = /^\[([^\]]+)\]\(([^)]+)\)$/;
 
 interface InlineOptions {
   /**
@@ -60,24 +57,18 @@ function renderLink(label: ReactNode, href: string, key: number): ReactNode {
 
 /** A string with inline markup as nodes. */
 export function renderInline(text: string, { gloss = false }: InlineOptions = {}): ReactNode {
-  return text.split(TOKEN).map((part, index): ReactNode => {
-    if (!part) return null;
-    if (part.startsWith("**") && part.endsWith("**")) {
-      const bold = part.slice(2, -2);
-      return <strong key={index}>{gloss ? bold : keepSizesTogether(bold)}</strong>;
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      const code = part.slice(1, -1);
+  return parseInline(text).map((token, index): ReactNode => {
+    if (token.kind === "strong") return <strong key={index}>{gloss ? token.text : keepSizesTogether(token.text)}</strong>;
+    if (token.kind === "code") {
       return (
-        <code key={index} className={staysOnOneLine(code) ? styles.unbroken : undefined}>
-          {code}
+        <code key={index} className={staysOnOneLine(token.text) ? styles.unbroken : undefined}>
+          {token.text}
         </code>
       );
     }
-    const link = LINK.exec(part);
     // A link label may hold inline code, such as a command name.
-    if (link) return renderLink(renderInline(link[1]), link[2], index);
-    return <Fragment key={index}>{gloss ? glossify(part) : keepSizesTogether(part)}</Fragment>;
+    if (token.kind === "link") return renderLink(renderInline(token.label), token.href, index);
+    return <Fragment key={index}>{gloss ? glossify(token.text) : keepSizesTogether(token.text)}</Fragment>;
   });
 }
 

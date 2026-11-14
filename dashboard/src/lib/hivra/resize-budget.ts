@@ -7,7 +7,7 @@ export function resizeBudget(agent: HivraAgent, plan?: PlanInfo | null) {
   const selfManaged = agent.deployment_mode === "self-managed";
   const exempt = isPoolExempt(agent.type);
   const fixedSize = !selfManaged && exempt;
-  const floor = resizeFloor(agent.type, false);
+  const floor = resizeFloor(agent.type, false, agent.computer_profile);
   const contributes = !selfManaged && !exempt && ["running", "stopped", "provisioning"].includes(agent.status);
   const ownCpu = contributes ? agent.cpu : 0;
   const ownRam = contributes ? agent.ram : 0;

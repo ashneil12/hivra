@@ -6,16 +6,11 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-audio-queue | Psalm 96:1 | Verse: O sing unto the Lord a new song.
 const VENICE_AUDIO_QUEUE_URL = "https://api.venice.ai/api/v1/audio/queue";
 const ENDPOINT_LABEL = "/api/v1/audio/queue";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

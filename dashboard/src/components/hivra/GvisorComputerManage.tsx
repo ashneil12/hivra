@@ -17,7 +17,7 @@ type Observation = { state: "running" | "stopped" | "absent"; cpu?: number; memo
   isolationClass?: "application-kernel"; isolationDriver?: "gvisor-runsc"; outerHostBoundary?: "operator-owned-host";
   reservationEqualsMaximum?: true; publicPorts?: never[] };
 
-const box: React.CSSProperties = { border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.035)", padding: 18,
+const box: React.CSSProperties = { border: "1px solid var(--hg-stroke)", borderRadius: 14, background: "var(--hg-glass)", backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", boxShadow: "var(--hg-glass-edge), var(--hg-shadow-sm)", padding: 18,
   display: "grid", gap: 14, marginBottom: 20 };
 const button: React.CSSProperties = { border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)",
   padding: "9px 14px", minHeight: 40, display: "inline-flex", gap: 7, alignItems: "center", fontSize: 11, fontWeight: 700 };
@@ -26,10 +26,10 @@ const control: React.CSSProperties = { width: "100%", boxSizing: "border-box", p
   borderRadius: 0, background: "var(--bg-surface)", color: "var(--ink-black)" };
 // A double tap on Destroy must not also land on the confirm button.
 const CONFIRM_ARM_MS = 600;
-const label: React.CSSProperties = { fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 700,
+const label: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700,
   textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--text-muted)", marginBottom: 10 };
-const errorStyle: React.CSSProperties = { display: "flex", gap: 8, alignItems: "flex-start", border: "1px solid #c0392b",
-  background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 12.5, padding: "9px 13px", fontFamily: "var(--font-mono), monospace",
+const errorStyle: React.CSSProperties = { display: "flex", gap: 8, alignItems: "flex-start", border: "1px solid var(--hg-bad)",
+  background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)", color: "var(--hg-bad)", fontSize: 12.5, padding: "9px 13px", fontFamily: "var(--font-mono)",
   lineHeight: 1.5, overflowWrap: "anywhere" };
 
 type Slot = "header" | "computer" | "terminal" | "resources" | "danger" | "updates";
@@ -224,7 +224,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
         <section style={box}>
           <label style={field}>Command<textarea aria-label="Terminal command" value={command} onChange={event => setCommand(event.target.value)}
             autoCapitalize="none" autoCorrect="off" spellCheck={false}
-            rows={5} maxLength={4096} style={{ ...control, fontFamily: "var(--font-mono), monospace" }} /></label>
+            rows={5} maxLength={4096} style={{ ...control, fontFamily: "var(--font-mono)" }} /></label>
           <small>Python 3.13 and a POSIX shell are available. Commands run as a non-root user in the private persistent /workspace directory, with a 60-second limit and bounded output.</small>
           <button style={button} disabled={Boolean(busy) || observation?.state !== "running" || !command.trim()} onClick={() => void execute()}>
             <TerminalSquare size={14} />Run in /workspace</button>

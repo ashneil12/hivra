@@ -15,6 +15,13 @@ Configuration:
                                 Persistent context identity to bind sessions
                                 to. Defaults to "vex" - match the seeded
                                 identity created by `hermes-browser seed`.
+    HERMES_BROWSER_SIDECAR_AUTH_TOKEN
+                                Bearer token sent on every sidecar request.
+                                Seeded into hermes.env at provisioning with
+                                the same value as the sidecar's own
+                                SIDECAR_AUTH_TOKEN. Optional: absent means
+                                unauthenticated requests (dev/migration only —
+                                current sidecars fail closed without it).
 
 Failure handling:
     - SESSION_EXPIRED → returns {"error": "SESSION_EXPIRED", "blocked": true}
@@ -65,10 +72,16 @@ def _identity() -> str:
     return os.getenv("HERMES_BROWSER_SIDECAR_IDENTITY", _DEFAULT_IDENTITY).strip() or _DEFAULT_IDENTITY
 
 
+def _auth_headers() -> Dict[str, str]:
+    """Bearer header for sidecar calls, when provisioning seeded the token."""
+    token = os.getenv("HERMES_BROWSER_SIDECAR_AUTH_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def _is_sidecar_available() -> bool:
     """check_fn for toolset gating. True when /health returns 200 and tier_ok."""
     try:
-        resp = requests.get(f"{_base_url()}/health", timeout=3)
+        resp = requests.get(f"{_base_url()}/health", headers=_auth_headers(), timeout=3)
         if resp.status_code != 200:
             return False
         data = resp.json()
@@ -89,7 +102,7 @@ def _post(path: str, body: Dict[str, Any], timeout: int = _DEFAULT_TIMEOUT) -> A
     """
     url = f"{_base_url()}{path}"
     try:
-        resp = requests.post(url, json=body, timeout=timeout)
+        resp = requests.post(url, json=body, headers=_auth_headers(), timeout=timeout)
     except requests.RequestException as exc:
         # Transport failure - sidecar is unreachable. Treat as BLOCKED, same
         # as SESSION_EXPIRED. This catches the mid-session tier-downgrade case

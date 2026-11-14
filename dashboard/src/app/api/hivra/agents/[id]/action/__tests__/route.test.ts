@@ -48,6 +48,8 @@ let mockSnapshot: Record<string, unknown>;
 let mockAttachments: Array<{ id: string }> = [];
 let mockLifecycleUpdateError: unknown;
 let mockContinueOperationResult: boolean;
+let mockAgentLookupError: unknown = null;
+let mockRenameError: unknown = null;
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: () => mockAuth(),
@@ -60,9 +62,6 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({
-  isHivraApiAllowed: () => true,
-}));
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveProxmoxTargetConfiguration(...args),
@@ -130,6 +129,8 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     jest.clearAllMocks();
     mockRevokeRemoteDesktopCapability.mockReset().mockResolvedValue({ ok: true, revoked: true });
     mockLifecycleUpdateError = null;
+    mockAgentLookupError = null;
+    mockRenameError = null;
     mockContinueOperationResult = true;
     mockProviderRateLimit.mockReset().mockReturnValue(null);
     mockMutateGvisorComputer.mockReset();
@@ -254,21 +255,22 @@ describe("POST /api/hivra/agents/[id]/action", () => {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         single: jest.fn(async () => ({
-          data: mockAgent,
-          error: null,
+          data: mockAgentLookupError ? null : mockAgent,
+          error: mockAgentLookupError,
         })),
         update: jest.fn((payload: Record<string, unknown>) => {
           const updated = { ...mockAgent, ...payload };
           type UpdateChain = {
             eq: () => UpdateChain;
             select: () => UpdateChain;
-            single: () => Promise<{ data: typeof updated; error: null }>;
+            single: () => Promise<{ data: typeof updated | null; error: unknown }>;
             then: (resolve: (value: { data: typeof updated; error: unknown }) => void) => void;
           };
           const chain: UpdateChain = {
             eq: jest.fn(() => chain),
             select: jest.fn(() => chain),
-            single: jest.fn(async () => ({ data: updated, error: null })),
+            single: jest.fn(async () =>
+              mockRenameError ? { data: null, error: mockRenameError } : { data: updated, error: null }),
             then: (resolve: (value: { data: Record<string, unknown>; error: unknown }) => void) =>
               resolve({
                 data: updated,
@@ -621,6 +623,18 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     }));
   });
 
+  it.each([
+    ["ubuntu-server", { cpu: 0.5, ram: 1 }],
+    ["ubuntu-desktop", { cpu: 2, ram: 4 }],
+  ])("resizes a %s computer against its own profile floor", async (profile, floor) => {
+    mockAgent = { ...mockAgent, type: "linux-desktop", computer_profile: profile };
+    const response = await POST(makeRequest({ action: "resize", cpu: 0.5, ram: 1 }) as never, { params: Promise.resolve({ id: "agent-1" }) });
+    expect(response.status).toBe(200);
+    expect(mockValidateAgentResources).toHaveBeenCalledWith(expect.objectContaining({
+      type: "linux-desktop", mode: "resize", floor, cpu: floor.cpu, ram: floor.ram,
+    }));
+  });
+
   it("resizes free Claude to 0.5 CPU by using one core plus a half-core scheduler cap", async () => {
     const response = await POST(
       makeRequest({ action: "resize", cpu: 0.5, ram: 1 }) as never,
@@ -753,12 +767,13 @@ describe("POST /api/hivra/agents/[id]/action", () => {
   });
 
   it.each([
-    ["start", { action: "start" }],
-    ["restart", { action: "restart" }],
-    ["resize", { action: "resize", cpu: 2, ram: 4 }],
+    // Resize also runs the host's capacity admission helper, so it asks for it.
+    ["start", { action: "start" }, "lifecycle"],
+    ["restart", { action: "restart" }, "lifecycle"],
+    ["resize", { action: "resize", cpu: 2, ram: 4 }, "resize"],
   ])(
     "fails closed before claiming or mutating when the exact managed host cannot prove the current helper for %s",
-    async (_name, body) => {
+    async (_name, body, purpose) => {
       mockCheckManagedHivraHostReadiness.mockResolvedValueOnce({
         ok: false,
         status: 503,
@@ -783,7 +798,7 @@ describe("POST /api/hivra/agents/[id]/action", () => {
           PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
         }),
         channel: "default",
-        purpose: "lifecycle",
+        purpose,
       });
       expect(mockSupabaseRpc).not.toHaveBeenCalled();
       expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
@@ -1222,6 +1237,57 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(restoreAt).toBeGreaterThan(lockAt);
     expect(postRestoreBindingAt).toBeGreaterThan(restoreAt);
     expect(script).toContain(`hivra-bind-${"b".repeat(32)}`);
+  });
+
+  describe("Try again on a computer in error", () => {
+    const start = () => POST(makeRequest({ action: "start" }) as never, { params: Promise.resolve({ id: "agent-1" }) });
+
+    it("starts a computer that kept its machine through the normal start path, after plan admission", async () => {
+      mockAgent = { ...mockAgent, status: "error", provisioned_at: "2026-09-12T08:30:00Z", error: "Desktop never answered" };
+
+      const response = await start();
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { status: "provisioning" } });
+      expect(mockValidateAgentResources).toHaveBeenCalledWith(expect.objectContaining({
+        userId: "user-free", mode: "launch", cpu: 1, ram: 2, floor: { cpu: 1, ram: 2 },
+      }));
+      expect(mockCheckHostWakeCapacity).toHaveBeenCalled();
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("continue_hivra_agent_operation", expect.objectContaining({ p_status: "provisioning" }));
+    });
+
+    it("refuses before any host command when the plan has no free slot or pool for it", async () => {
+      mockAgent = { ...mockAgent, status: "error", provisioned_at: "2026-09-12T08:30:00Z" };
+      mockValidateAgentResources.mockResolvedValue({ ok: false, status: 403, message: "Your Free plan allows 1 active agent." });
+
+      const response = await start();
+
+      expect(response.status).toBe(403);
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("claim_hivra_agent_operation", expect.anything());
+    });
+
+    it.each([
+      ["never finished setting up", { provisioned_at: null }],
+      ["has no computer identity", { provisioned_at: "2026-09-12T08:30:00Z", vmid: null }],
+    ])("sends nothing for an errored launch that %s, and says to launch again", async (_label, patch) => {
+      mockAgent = { ...mockAgent, status: "error", ...patch };
+
+      const response = await start();
+
+      // A row with no machine identity is refused even earlier (400); either way nothing is sent.
+      expect([400, 409]).toContain(response.status);
+      if (response.status === 409) expect(await response.json()).toMatchObject({ error: expect.stringContaining("launch it again") });
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockValidateAgentResources).not.toHaveBeenCalled();
+    });
+
+    it("does not run plan admission for an ordinary stopped computer", async () => {
+      mockAgent = { ...mockAgent, status: "stopped" };
+
+      expect((await start()).status).toBe(200);
+      expect(mockValidateAgentResources).not.toHaveBeenCalled();
+    });
   });
 
   it("targets the STORED ip (not a vmid-derived octet) so a collision-relocated box restarts the right guest", async () => {
@@ -1817,6 +1883,39 @@ read_activity_credential "$1"`,
       expect(response.status).toBe(200);
       expect(mockCollectorUpsert).toHaveBeenCalledTimes(1);
       expect(mockSupabaseRpc).toHaveBeenCalledWith("continue_hivra_agent_operation", expect.anything());
+    });
+  });
+
+  describe("failed database reads and writes are not reported as missing agents or saved renames", () => {
+    function actionRequest(body: Record<string, unknown>) {
+      return new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
+        method: "POST",
+        headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }) as never;
+    }
+
+    it("answers 503 when the agent lookup fails, and 404 for a malformed id", async () => {
+      mockAgentLookupError = { code: "08006", message: "connection failure" };
+      const outage = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(outage.status).toBe(503);
+
+      mockAgentLookupError = { code: "22P02", message: "invalid input syntax for type uuid" };
+      const malformed = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(malformed.status).toBe(404);
+    });
+
+    it("does not report a rename as saved when the write fails", async () => {
+      mockRenameError = { code: "08006", message: "connection failure" };
+      const response = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(response.status).toBe(503);
+      expect(await response.json()).not.toMatchObject({ success: true });
+    });
+
+    it("answers 409 when the agent disappears during a rename", async () => {
+      mockRenameError = { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" };
+      const response = await POST(actionRequest({ action: "rename", name: "Renamed" }), { params: Promise.resolve({ id: "agent-1" }) });
+      expect(response.status).toBe(409);
     });
   });
 });

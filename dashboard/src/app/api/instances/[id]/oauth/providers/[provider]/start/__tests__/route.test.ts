@@ -196,4 +196,75 @@ describe("POST /api/instances/[id]/oauth/providers/[provider]/start", () => {
     expect(response.status).toBe(409);
     expect(json.error).toBe("Instance is still provisioning SSH access. Try again in a moment.");
   });
+
+  it("refuses a Nous Portal verification URL that is not https", async () => {
+    mockedSshExec.mockResolvedValue({
+      ok: true,
+      stdout: JSON.stringify({
+        session_id: "sess-123",
+        flow: "device_code",
+        user_code: "ABCD-EFGH",
+        verification_url: "javascript:alert(1)",
+        poll_interval: 5,
+      }),
+      stderr: "",
+      error: "",
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/providers/nous/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123", provider: "nous" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json.data).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
+  });
+  it("drops a non-https verification URL from the legacy agent runtime response", async () => {
+    // getInstanceBackend types only gateway/webui, so a legacy value is forced here to reach the agent-runtime branch.
+    mockedGetInstanceBackend.mockResolvedValue("legacy" as unknown as Awaited<ReturnType<typeof getInstanceBackend>>);
+    apiClient.post.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_id: "sess-legacy",
+        user_code: "WXYZ-1234",
+        verification_url: "javascript:alert(1)",
+      }),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/providers/nous/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123", provider: "nous" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.session_id).toBe("sess-legacy");
+    expect(json.data.user_code).toBe("WXYZ-1234");
+    expect(json.data.verification_url).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
+  });
+
+  it("keeps an https verification URL from the legacy agent runtime response", async () => {
+    // getInstanceBackend types only gateway/webui, so a legacy value is forced here to reach the agent-runtime branch.
+    mockedGetInstanceBackend.mockResolvedValue("legacy" as unknown as Awaited<ReturnType<typeof getInstanceBackend>>);
+    apiClient.post.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_id: "sess-legacy",
+        user_code: "WXYZ-1234",
+        verification_url: "https://portal.nousresearch.com/device",
+      }),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/providers/nous/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123", provider: "nous" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.verification_url).toBe("https://portal.nousresearch.com/device");
+  });
 });

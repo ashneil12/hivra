@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { ShieldCheck, HardDrive, AlertTriangle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import styles from '../console.module.css';
@@ -86,7 +87,7 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
     }
   };
 
-  if (loading) return <div style={{ display: 'flex', padding: '3rem', justifyContent: 'center' }}><Loader2 className="animate-spin" size={24} style={{ opacity: 0.4 }} /></div>;
+  if (loading) return <div style={{ display: 'flex', padding: '3rem', justifyContent: 'center' }}><ThinkingOrb size={32} state="working" /></div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -94,22 +95,22 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
       {/* Banner */}
       <div className="interrogation-box" style={{ 
         padding: '1.5rem', 
-        border: backupsEnabled ? '1px solid #16a34a' : '1px solid var(--etched-border)',
-        background: backupsEnabled ? 'rgba(22,163,74,0.05)' : 'var(--bg-surface)' 
+        border: backupsEnabled ? '1px solid var(--hg-ok)' : '1px solid var(--etched-border)',
+        background: backupsEnabled ? 'color-mix(in srgb, var(--hg-ok) 5%, transparent)' : 'var(--bg-surface)' 
       }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', gap: 16, flex: '1 1 220px', minWidth: 0 }}>
             <div className={styles.backupsIcon} style={{
               borderRadius: '50%',
-              background: backupsEnabled ? 'rgba(22,163,74,0.1)' : 'rgba(0,0,0,0.05)',
+              background: backupsEnabled ? 'color-mix(in srgb, var(--hg-ok) 10%, transparent)' : 'var(--hg-fill-1)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
             }}>
-              <ShieldCheck size={24} color={backupsEnabled ? '#16a34a' : 'var(--ink-black)'} style={{ opacity: backupsEnabled ? 1 : 0.4 }} />
+              <ShieldCheck size={24} color={backupsEnabled ? 'var(--hg-ok)' : 'var(--ink-black)'} style={{ opacity: backupsEnabled ? 1 : 0.4 }} />
             </div>
             <div style={{ minWidth: 0 }}>
               <h3 className="mono" style={{ fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 8px 0', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
                 Daily Data Backups
-                <span style={{ fontSize: 11, padding: '2px 6px', background: backupsEnabled ? '#16a34a' : '#d1d5db', color: backupsEnabled ? '#fff' : '#374151', borderRadius: 0 }}>
+                <span style={{ fontSize: 11, padding: '2px 6px', background: backupsEnabled ? 'var(--hg-ok)' : 'var(--hg-fill-3)', color: backupsEnabled ? '#fff' : 'var(--hg-text-2)', borderRadius: 0 }}>
                   {backupsEnabled ? 'ACTIVE' : 'INACTIVE'}
                 </span>
               </h3>
@@ -166,13 +167,13 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
         </div>
 
         {backupError && (
-          <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)', padding: '10px', fontSize: 11, color: '#ef4444', marginBottom: 16 }}>
+          <div style={{ background: 'color-mix(in srgb, var(--hg-bad) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--hg-bad) 20%, transparent)', padding: '10px', fontSize: 11, color: 'var(--hg-bad)', marginBottom: 16 }}>
             {backupError}
           </div>
         )}
 
         {backups.length > 0 ? (
-          <div style={{ border: '1px solid var(--etched-border)', background: 'rgba(0,0,0,0.01)' }}>
+          <div style={{ border: '1px solid var(--etched-border)', background: 'var(--hg-fill-1)' }}>
             {backups.map(b => (
                <div key={b.id} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--etched-border)' }}>
                  <div style={{ flex: '1 1 200px', minWidth: 0, overflowWrap: 'anywhere' }}>
@@ -189,7 +190,7 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
                  
                  {restoreConfirmBackupId === b.id ? (
                     <div className={styles.restoreConfirm} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ef4444' }}>
+                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--hg-bad)' }}>
                           <AlertTriangle size={14} />
                           <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Type RESTORE</span>
                        </div>
@@ -218,7 +219,7 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
                            onClick={() => restoreBackup(b.id)} 
                            disabled={restoring || !isRestoreConfirmation(restoreInputText)}
                            className={styles.touchTarget}
-                           style={{ background: '#ef4444', color: '#fff', border: 'none', fontSize: 11, padding: '6px 12px', cursor: (restoring || !isRestoreConfirmation(restoreInputText)) ? 'not-allowed' : 'pointer', opacity: (restoring || !isRestoreConfirmation(restoreInputText)) ? 0.5 : 1, fontWeight: 700, textTransform: 'uppercase' }}
+                           style={{ background: 'var(--hg-bad)', color: '#fff', border: 'none', fontSize: 11, padding: '6px 12px', cursor: (restoring || !isRestoreConfirmation(restoreInputText)) ? 'not-allowed' : 'pointer', opacity: (restoring || !isRestoreConfirmation(restoreInputText)) ? 0.5 : 1, fontWeight: 700, textTransform: 'uppercase' }}
                          >
                            Confirm
                          </button>
@@ -229,7 +230,7 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
                      type="button"
                      onClick={() => { setRestoreConfirmBackupId(b.id); setRestoreInputText(''); }}
                      className={styles.touchTarget}
-                     style={{ background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', padding: '6px 16px', cursor: 'pointer', fontWeight: 700 }}
+                     style={{ background: 'transparent', color: 'var(--hg-bad)', border: '1px solid var(--hg-bad)', fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', padding: '6px 16px', cursor: 'pointer', fontWeight: 700 }}
                    >
                      Request Restore
                    </button>
@@ -238,7 +239,7 @@ export default function BackupsTab({ instanceId }: { instanceId: string }) {
             ))}
           </div>
         ) : (
-          <div style={{ textAlign: 'center', padding: '3rem 1rem', background: 'rgba(0,0,0,0.01)', border: '1px solid var(--etched-border)' }}>
+          <div style={{ textAlign: 'center', padding: '3rem 1rem', background: 'var(--hg-fill-1)', border: '1px solid var(--etched-border)' }}>
              <HardDrive size={24} style={{ opacity: 0.2, marginBottom: 12 }} />
              <p style={{ fontSize: 12, margin: 0, color: 'var(--text-muted)' }}>
                {fetchingBackups ? 'Loading restore points...' : 'No restore points yet — your first daily backup will appear here automatically.'}

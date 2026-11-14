@@ -150,7 +150,7 @@ describe("PwaBottomNavigation", () => {
     fireEvent.click(more);
     expect(more).toHaveAttribute("aria-expanded", "true");
     const sheet = screen.getByRole("dialog", { name: "More" });
-    expect(within(sheet).getByRole("link", { name: "2 agents or computers need attention" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
+    expect(within(sheet).getByRole("link", { name: "2 agents or computers need you" })).toHaveAttribute("href", "/dashboard?runtimes=1&attention=1");
 
     (usePathname as jest.Mock).mockReturnValue("/dashboard/settings");
     view.rerender(<PwaBottomNavigation attentionCount={2} userName="Ash" userEmail="ash@example.com" onOpenSwitcher={onOpenSwitcher} />);
@@ -172,27 +172,12 @@ describe("PwaBottomNavigation", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("treats instance WebUI routes as part of Agents", () => {
+  it("treats an open instance as part of Home", () => {
     (usePathname as jest.Mock).mockReturnValue("/dashboard/instances/inst_123");
 
     render(<PwaBottomNavigation />);
 
-    expect(screen.getByRole("link", { name: /agents/i })).toHaveAttribute("aria-current", "page");
-  });
-
-  it.each([
-    ["computer", "Computers"],
-    ["agent", "Agents"],
-  ] as const)("uses the loaded %s kind on shared detail routes", (resourceKind, active) => {
-    (usePathname as jest.Mock).mockReturnValue("/dashboard/agent/resource_123");
-    render(<PwaBottomNavigation resourceKind={resourceKind} />);
-    expect(screen.getAllByRole("link", { current: "page" })).toEqual([screen.getByRole("link", { name: active })]);
-  });
-
-  it("keeps a shared detail route neutral until its resource kind is known", () => {
-    (usePathname as jest.Mock).mockReturnValue("/dashboard/agent/resource_123");
-    render(<PwaBottomNavigation />);
-    expect(screen.queryByRole("link", { current: "page" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /home/i })).toHaveAttribute("aria-current", "page");
   });
 
   it("leaves Activity out of the mobile rail while the shared navigation still maps its routes", () => {

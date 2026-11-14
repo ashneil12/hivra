@@ -5,6 +5,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings";
 
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/services/tier-change-service", () => ({
@@ -17,7 +23,7 @@ jest.mock("@/lib/billing/token-holdings", () => ({
   refreshVerifiedHermesTokenHoldings: jest.fn(),
 }));
 
-// Base-tier caps (tier-specs is real). fleet = 4 vCPU / 8192 MB; token_base /
+// Base-tier caps (tier-specs is real). fleet = 4 vCPU / 8192 MB;
 // credit_base = 0.5 / 1024; operator = 2 / 4096. Boost adds +1 vCPU / +2048 MB.
 const FLEET_CPU = 4;
 const FLEET_RAM = 8192;
@@ -113,10 +119,41 @@ function mockSupabase(opts: {
   appleError?: string;
   boosts?: string[];
 }) {
-  const instancesBuilder = {
-    select: jest.fn().mockReturnThis(),
-    not: jest.fn().mockResolvedValue({ data: opts.instances, error: null }),
-  };
+  // hermes_instances is read keyset-paged (order by id, gt cursor, limit), the way
+  // PostgREST would cap it at 1000 rows per response. Rows get stable ids here.
+  const instanceRows = opts.instances.map((row, index) => ({
+    id: `inst-${String(index).padStart(6, "0")}`,
+    ...row,
+  }));
+  const instancesBuilder = (() => {
+    let cursor: string | null = null;
+    let limit = Infinity;
+    const builder: Record<string, unknown> = {
+      select: jest.fn(() => {
+        cursor = null;
+        limit = Infinity;
+        return builder;
+      }),
+      not: jest.fn(() => builder),
+      gt: jest.fn((_column: string, value: string) => {
+        cursor = value;
+        return builder;
+      }),
+      order: jest.fn(() => builder),
+      limit: jest.fn((count: number) => {
+        limit = count;
+        return builder;
+      }),
+      then: (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) =>
+        Promise.resolve({
+          data: instanceRows
+            .filter((row) => cursor === null || row.id > cursor)
+            .slice(0, Math.min(limit, 1000)),
+          error: null,
+        }).then(onFulfilled, onRejected),
+    };
+    return builder;
+  })();
   const snapshotsBuilder = {
     select: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
@@ -131,10 +168,12 @@ function mockSupabase(opts: {
     select: jest.fn().mockReturnThis(),
     in: jest.fn().mockResolvedValue({ data: opts.subscriptions, error: null }),
   };
+  // The route filters eligible-or-in-grace rows in the database (.or), so the
+  // fixture lists only the rows that filter would return.
   const qualificationsBuilder = {
     select: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockResolvedValue({ data: opts.qualifications, error: null }),
+    or: jest.fn().mockResolvedValue({ data: opts.qualifications, error: null }),
   };
   const boostsBuilder = {
     select: jest.fn().mockReturnThis(),
@@ -232,10 +271,10 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     expect(maxDuration).toBe(300);
   });
 
-  it("upgrades a Power-qualified token holder from token_base to fleet", async () => {
+  it("upgrades a Power-qualified token holder from credit_base to fleet", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_power", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_power", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -267,15 +306,63 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     expect(body.data.tier_changes).toBe(1);
     expect(body.data.tier_change_details[0]).toEqual({
       userId: "user_power",
-      from: "token_base",
+      from: "credit_base",
       to: "fleet",
     });
   });
 
-  it("upgrades a Pro-qualified token holder from token_base to operator", async () => {
+  it("re-tiers a holder past the 1000-row PostgREST cap instead of silently dropping them", async () => {
+    // Before the fix the instance scan stopped at the first 1000 rows, so user_1004
+    // was never scanned and kept a stale tier, however strong their qualification.
+    const instances = Array.from({ length: 1005 }, (_, i) => ({
+      user_id: `user_${i}`,
+      resource_tier: "credit_base",
+      cpu_limit: BASE_CPU,
+      ram_limit: BASE_RAM,
+    }));
+    mockSupabase({
+      instances,
+      snapshots: [],
+      subscriptions: [],
+      qualifications: [{ user_id: "user_1004", tier: "power", currently_eligible: true }],
+    });
+    (applyTierChange as jest.Mock).mockResolvedValue({});
+
+    const res = await POST(makeRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.users_scanned).toBe(1005);
+    expect(applyTierChange).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user_1004", newTier: "fleet" })
+    );
+  });
+
+  it("fails the run before any tier change when a user-id scan reaches the row cap", async () => {
+    // A truncated qualification read would read paid holders as "no entitlement"
+    // and downgrade them, so the run must stop instead.
+    mockSupabase({
+      instances: [{ user_id: "user_0", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM }],
+      snapshots: [],
+      subscriptions: [],
+      qualifications: Array.from({ length: 1000 }, () => ({
+        user_id: "user_0",
+        tier: "pro" as const,
+        currently_eligible: true,
+      })),
+    });
+    (applyTierChange as jest.Mock).mockResolvedValue({});
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(500);
+    expect(applyTierChange).not.toHaveBeenCalled();
+  });
+
+  it("upgrades a Pro-qualified token holder from credit_base to operator", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_pro", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_pro", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -302,7 +389,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
   it("prefers Power over Pro when a user qualifies for both", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_both", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_both", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -351,7 +438,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     expect(applyTierChange).not.toHaveBeenCalled();
   });
 
-  it("falls back to token_base for users without Pro/Power qualifications but holding base threshold", async () => {
+  it("gives a 1-token holder no compute tier: the Starter tier is gone", async () => {
     const { snapshotsBuilder } = mockSupabase({
       instances: [
         { user_id: "user_base", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
@@ -367,47 +454,81 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       subscriptions: [],
       qualifications: [],
     });
+
+    const res = await POST(makeRequest());
+    expect(res.status).toBe(200);
+    expect(applyTierChange).not.toHaveBeenCalled();
+    // Holdings no longer decide a tier, so the scan reads no snapshots.
+    expect(snapshotsBuilder.select).not.toHaveBeenCalled();
+  });
+
+  it("moves a computer left on token_base to credit_base however much the owner holds", async () => {
+    mockSupabase({
+      instances: [
+        { user_id: "user_starter", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+      ],
+      snapshots: [
+        {
+          user_id: "user_starter",
+          balance_raw: "500000000000000000000",
+          qualifies_base_tier: true,
+          checked_at: new Date().toISOString(),
+        },
+      ],
+      subscriptions: [],
+      qualifications: [],
+    });
     (applyTierChange as jest.Mock).mockResolvedValue({});
 
     const res = await POST(makeRequest());
     expect(res.status).toBe(200);
     expect(applyTierChange).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user_base", newTier: "token_base" })
+      expect.objectContaining({ userId: "user_starter", newTier: "credit_base", veniceBoost: false })
     );
-    // Snapshots are read for the live platform tokens only: $HermesOS while
-    // $HIVRA is dormant.
-    expect(snapshotsBuilder.in).toHaveBeenCalledWith("token_address", [HERMESOS_CONTRACT]);
   });
 
-  // The holdings crons now re-read every account on a cursor, so a holder's
-  // latest snapshot is always recent. The downgrade grace must run from when
-  // the balance was first seen below the base threshold, not from the latest
-  // snapshot, or a below-threshold holder keeps a token tier forever.
-  describe("downgrade grace for holders below the base threshold", () => {
-    const HOUR_MS = 60 * 60 * 1000;
-    const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
-    const snapshot = (user_id: string, balance_raw: string, msAgo: number): SnapshotFixture => ({
-      user_id,
-      balance_raw,
-      qualifies_base_tier: balance_raw !== "0",
-      checked_at: at(msAgo),
+  // The evaluator sets currently_eligible = false at a breach, but the breach
+  // email promises the tier until REQUALIFICATION_GRACE_HOURS have passed, and
+  // the lapse check keeps the computer running that long. The scan keeps the
+  // tier for exactly that window, in the database filter.
+  describe("Pro/Power breach grace", () => {
+    it("reads eligible rows and rows inside their breach grace", async () => {
+      const { qualificationsBuilder } = mockSupabase({
+        instances: [
+          { user_id: "user_dipped", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        ],
+        snapshots: [],
+        subscriptions: [],
+        qualifications: [{ user_id: "user_dipped", tier: "power", currently_eligible: false }],
+      });
+
+      const before = Date.now();
+      const res = await POST(makeRequest());
+      expect(res.status).toBe(200);
+      expect(applyTierChange).not.toHaveBeenCalled();
+
+      const filter = (qualificationsBuilder.or as jest.Mock).mock.calls[0][0] as string;
+      const match = /^currently_eligible\.eq\.true,and\(last_suspend_at\.is\.null,last_breach_at\.gt\.(.+)\)$/.exec(filter);
+      expect(match).not.toBeNull();
+      const graceMs = before - Date.parse(match![1]);
+      expect(graceMs).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 - 1000);
+      expect(graceMs).toBeLessThanOrEqual(24 * 60 * 60 * 1000 + 1000);
     });
 
-    it("drops a holder who has been below the threshold for longer than the grace, however fresh the latest read", async () => {
+    it("drops a holder whose qualification is gone to credit_base, however fresh their holding", async () => {
       mockSupabase({
         instances: [
           { user_id: "user_sold", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
         ],
-        // Newest first, as the route reads them: re-read every 6h since selling 3 days ago.
         snapshots: [
-          snapshot("user_sold", "0", 1 * HOUR_MS),
-          snapshot("user_sold", "0", 7 * HOUR_MS),
-          snapshot("user_sold", "0", 31 * HOUR_MS),
-          snapshot("user_sold", "0", 55 * HOUR_MS),
-          snapshot("user_sold", "5000000000000000000000000", 3 * DAY_MS),
+          {
+            user_id: "user_sold",
+            balance_raw: "5000000000000000000",
+            qualifies_base_tier: true,
+            checked_at: new Date().toISOString(),
+          },
         ],
         subscriptions: [],
-        // Its Power qualification was already breached by refresh-token-holdings.
         qualifications: [],
       });
       (applyTierChange as jest.Mock).mockResolvedValue({});
@@ -416,47 +537,6 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       expect(res.status).toBe(200);
       expect(applyTierChange).toHaveBeenCalledWith(
         expect.objectContaining({ userId: "user_sold", newTier: "credit_base" })
-      );
-    });
-
-    it("keeps the tier while the drop is still inside the grace", async () => {
-      mockSupabase({
-        instances: [
-          { user_id: "user_dipped", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
-        ],
-        snapshots: [
-          snapshot("user_dipped", "0", 1 * HOUR_MS),
-          snapshot("user_dipped", "0", 20 * HOUR_MS),
-          snapshot("user_dipped", "5000000000000000000000000", 26 * HOUR_MS),
-        ],
-        subscriptions: [],
-        qualifications: [],
-      });
-
-      const res = await POST(makeRequest());
-      expect(res.status).toBe(200);
-      expect(applyTierChange).not.toHaveBeenCalled();
-    });
-
-    it("drops an account whose standing lost its verification wallet once the zero read is past the grace", async () => {
-      mockSupabase({
-        instances: [
-          { user_id: "user_unbacked", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
-        ],
-        // The zero-balance snapshot written when no verification wallet was found.
-        snapshots: [
-          snapshot("user_unbacked", "0", 50 * HOUR_MS),
-          snapshot("user_unbacked", "2000000000000000000", 4 * DAY_MS),
-        ],
-        subscriptions: [],
-        qualifications: [],
-      });
-      (applyTierChange as jest.Mock).mockResolvedValue({});
-
-      const res = await POST(makeRequest());
-      expect(res.status).toBe(200);
-      expect(applyTierChange).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: "user_unbacked", newTier: "credit_base" })
       );
     });
   });
@@ -612,23 +692,15 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     );
   });
 
-  it("ignores qualification rows where currently_eligible is false (filtered by query)", async () => {
-    // The query filters for currently_eligible=true at the DB level, so the
-    // mock returns only eligible rows. Ineligible users fall through to the
-    // base/credit decision — token_base here, which matches the stored caps,
-    // so nothing is re-applied.
+  it("ignores qualification rows the database filter drops (not eligible, grace over)", async () => {
+    // The query keeps only eligible or in-grace rows, so the mock returns
+    // none. The user falls through to credit_base, which matches the stored
+    // caps, so nothing is re-applied.
     mockSupabase({
       instances: [
-        { user_id: "user_ineligible", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_ineligible", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
-      snapshots: [
-        {
-          user_id: "user_ineligible",
-          balance_raw: "1000000000000000000",
-          qualifies_base_tier: true,
-          checked_at: new Date().toISOString(),
-        },
-      ],
+      snapshots: [],
       subscriptions: [],
       qualifications: [],
     });
@@ -661,10 +733,10 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       expect(applyTierChange).not.toHaveBeenCalled();
     });
 
-    it("upgrades a yearly Pro subscriber's token_base instances to operator", async () => {
+    it("upgrades a yearly Pro subscriber's credit_base instances to operator", async () => {
       const { yearlyBuilder } = mockSupabase({
         instances: [
-          { user_id: "user_yearly_pro", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+          { user_id: "user_yearly_pro", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
         ],
         snapshots: [],
         subscriptions: [],
@@ -854,7 +926,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     it("upgrades an Apple Power subscriber in billing grace to fleet", async () => {
       const { appleBuilder } = mockSupabase({
         instances: [
-          { user_id: "user_apple_power", resource_tier: "token_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+          { user_id: "user_apple_power", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
         ],
         snapshots: [],
         subscriptions: [],

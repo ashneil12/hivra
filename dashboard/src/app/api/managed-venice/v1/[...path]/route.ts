@@ -16,6 +16,7 @@ import {
 } from "@/lib/venice/media-spend-gate";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-passthrough | John 14:6 | Verse: I am the way, the truth, and the life.
 //
@@ -203,12 +204,6 @@ function matchRule(method: string, segments: string[]): FreeRule | MeteredRule |
     );
   }
   return null;
-}
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
 }
 
 function refused(method: string, segments: string[]) {

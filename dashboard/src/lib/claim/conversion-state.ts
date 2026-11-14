@@ -7,25 +7,31 @@ import {
 } from "@/lib/billing/token-registry";
 
 import {
-  CONVERSION_LINKS,
-  CONVERSION_URL_ALLOWED_HOSTS,
-  TERMS_URL_ALLOWED_HOSTS,
-  type ConversionLinksConfig,
-} from "./conversion-links-config";
+  HIVRA_AIRDROP,
+  SNAPSHOT_URL_ALLOWED_LOCATIONS,
+  type HivraAirdropConfig,
+} from "./hivra-airdrop-config";
+import { NO_CLAIM, readUtcInstant, resolveHivraClaim, type ResolvedHivraClaim } from "./hivra-claim";
+import { normalizeAddress, type AddressCheckState } from "./token-address-check";
 
-const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+// The pasted-address check lives in token-address-check.ts so the client form
+// does not import this file (and, through it, the airdrop config). Re-exported
+// here for the callers that already import it from this file.
+export { checkTokenAddress, normalizeAddress, type AddressCheckState, type TokenAddressCheck } from "./token-address-check";
+
+const ZERO_ADDRESS = /^0x0{40}$/i;
 
 /** $HermesOS exactly as published, for display. */
 export const HERMESOS_CONTRACT_ADDRESS = HERMESOS_TOKEN.publishedAddress;
 
 /**
  * This user's platform-token access (lib/billing/token-access.ts), reduced to
- * what decides whether swapping $HermesOS is safe for their tier:
- * - grandfathered and not yet switched: their tier still counts $HermesOS, so a
- *   swap would drop them below it. They must switch their access first.
- * - switched, or not grandfathered: their tier counts $HIVRA, so a swap is safe.
- * Null means the access engine can't say (surface off, or it failed), and
- * conversion stays closed.
+ * what decides whether moving $HermesOS out of their verified wallet is safe
+ * for their tier:
+ * - grandfathered and not yet switched: their tier still counts $HermesOS, so
+ *   moving it out drops them below it. They can switch their access first.
+ * - switched, or not grandfathered: their tier counts $HIVRA.
+ * Null means the access engine can't say (surface off, or it failed).
  */
 export type ConversionAccessGate = {
   grandfathered: boolean;
@@ -37,46 +43,64 @@ export type ConversionAccessGate = {
 export type ConversionInputs = {
   hivra: PlatformToken | null;
   phase: HivraTokenPhase;
-  links: ConversionLinksConfig;
+  airdrop: HivraAirdropConfig;
   access: ConversionAccessGate;
+  now: Date;
 };
 
 /**
- * - dormant: $HIVRA is not in the token registry. No contract is shown and no conversion is offered.
- * - announced: the registry names $HIVRA, but it is not live yet, the terms or
- *   conversion link are not published, or this user's access can't be read, so
- *   nothing can be converted.
- * - switch-access: everything is in place, but this user's tier still counts
- *   $HermesOS. They must switch their access to $HIVRA before swapping.
- * - open: all of the above are in place and this user's tier counts $HIVRA.
+ * The published snapshot. `takenAt` is the UTC instant it was taken (ISO 8601),
+ * or null when it is not set, invalid, or (with a clock) in the future.
+ */
+export type AirdropSnapshot = { block: number; url: string; takenAt: string | null };
+
+/**
+ * What the page may say about this user's tier:
+ * - unknown: $HIVRA is not live yet, or the access engine can't be read.
+ * - hermesos: grandfathered, not switched, and switching is not offered yet
+ *   because the claim window has not closed. Their $HermesOS access continues.
+ * - switch-available: grandfathered, not switched, and the claim window has
+ *   closed, so they may choose to switch their tier to $HIVRA.
+ * - hivra: their tier counts $HIVRA. graceEndsAt is set for a holder who
+ *   switched: either token keeps the tier until then.
+ */
+export type ConversionAccess =
+  | { kind: "unknown" }
+  | { kind: "hermesos" }
+  | { kind: "switch-available" }
+  | { kind: "hivra"; graceEndsAt: string | null };
+
+/**
+ * - dormant: $HIVRA is not in the token registry. No contract and nothing about
+ *   the airdrop is shown.
+ * - launched: the registry names $HIVRA (scheduled or live). The claim facts
+ *   that are published (Airdrop wallet, snapshot, claim window) are shown; the
+ *   rest stay hidden until a reviewed PR fills them in.
  */
 export type ConversionState =
   | { status: "dormant"; problems: string[] }
-  | { status: "announced"; hivraAddress: string; hivraPublishedAddress: string; problems: string[] }
   | {
-      status: "switch-access";
+      status: "launched";
       hivraAddress: string;
       hivraPublishedAddress: string;
-      termsUrl: string;
-    }
-  | {
-      status: "open";
-      hivraAddress: string;
-      hivraPublishedAddress: string;
-      termsUrl: string;
-      conversionUrl: string;
-      /** Set for a holder who switched: either token keeps their tier until then. */
-      graceEndsAt: string | null;
+      /** The Airdrop wallet (it funds the Sablier campaign) exactly as configured, or null. */
+      senderAddress: string | null;
+      snapshot: AirdropSnapshot | null;
+      /** The Sablier claim: its phase at `now`, and the validated link and window (hivra-claim.ts). */
+      claim: ResolvedHivraClaim;
+      access: ConversionAccess;
+      problems: string[];
     };
 
-export function normalizeAddress(value: string): string | null {
-  const trimmed = value.trim();
-  if (!EVM_ADDRESS.test(trimmed)) return null;
-  return trimmed.toLowerCase();
-}
-
-/** Only https links on exactly an allowed host, with no port or credentials, count; anything else is treated as unset. */
-export function readAllowedUrl(value: string | null, allowed: readonly string[]): string | null {
+/**
+ * Only https links on exactly an allowed host, under that host's path prefix,
+ * with no port or credentials, count; anything else is treated as unset. The
+ * path is checked after URL normalisation, so dot segments can't escape it.
+ */
+export function readAllowedUrl(
+  value: string | null,
+  allowed: readonly { host: string; pathPrefix: string }[],
+): string | null {
   if (!value) return null;
   let url: URL;
   try {
@@ -85,79 +109,136 @@ export function readAllowedUrl(value: string | null, allowed: readonly string[])
     return null;
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
-  if (!allowed.includes(url.hostname)) return null;
+  const location = allowed.find((entry) => entry.host === url.hostname);
+  if (!location || !url.pathname.startsWith(location.pathPrefix)) return null;
   return url.toString();
 }
 
-/** Reads the registry and link config at `now`. The access gate is per user, so the caller supplies it. */
+/** Reads the registry and airdrop config at `now`. The access gate is per user, so the caller supplies it. */
 export function readConversionInputs(access: ConversionAccessGate, now: Date = new Date()): ConversionInputs {
   return {
     hivra: getConfiguredHivraToken(),
     phase: getHivraTokenPhase(now),
-    links: CONVERSION_LINKS,
+    airdrop: HIVRA_AIRDROP,
     access,
+    now,
   };
 }
 
 /**
- * Decides what the convert page may show. Anything missing or invalid keeps the
- * page at the most restrictive state it supports; a set but rejected link goes
- * in `problems` so a bad launch value is visible in review and logs.
+ * Decides what the $HIVRA-for-holders page may show. Anything missing or
+ * invalid is left out; a set but rejected value goes in `problems` so a bad
+ * launch value is visible in review and logs.
  */
-export function resolveConversionState({ hivra, phase, links, access }: ConversionInputs): ConversionState {
-  const problems: string[] = [];
-  if (!hivra || phase === "dormant") return { status: "dormant", problems };
-
-  const termsUrl = readAllowedUrl(links.termsUrl, TERMS_URL_ALLOWED_HOSTS);
-  if (links.termsUrl && !termsUrl) problems.push("termsUrl must be https on an allowed Hivra host");
-  const conversionUrl = readAllowedUrl(links.conversionUrl, CONVERSION_URL_ALLOWED_HOSTS);
-  if (links.conversionUrl && !conversionUrl) problems.push("conversionUrl must be https on an allowed host");
-
-  const announced = {
-    status: "announced" as const,
+export function resolveConversionState({ hivra, phase, airdrop, access, now }: ConversionInputs): ConversionState {
+  if (!hivra || phase === "dormant") return { status: "dormant", problems: [] };
+  const facts = resolveAirdropFacts(airdrop, hivra.address, now);
+  return {
+    status: "launched",
     hivraAddress: hivra.address,
     hivraPublishedAddress: hivra.publishedAddress,
-    problems,
+    senderAddress: facts.senderAddress,
+    snapshot: facts.snapshot,
+    claim: facts.claim ?? NO_CLAIM,
+    // The claim only counts as closed once the snapshot it belongs to is published.
+    access: resolveAccess(phase, access, facts.snapshot !== null && facts.claim?.phase === "closed"),
+    problems: facts.problems,
   };
-  // Terms are published first, $HIVRA must be live, and the user's access must
-  // be readable, or converting could cost them their tier.
-  if (phase !== "active" || !termsUrl || !conversionUrl || !access) return announced;
-  if (access.grandfathered && !access.convertedAt) {
-    return {
-      status: "switch-access",
-      hivraAddress: hivra.address,
-      hivraPublishedAddress: hivra.publishedAddress,
-      termsUrl,
-    };
+}
+
+export type AirdropFacts = {
+  senderAddress: string | null;
+  snapshot: AirdropSnapshot | null;
+  /** The Sablier claim at `now`; null when no clock was given. */
+  claim: ResolvedHivraClaim | null;
+  problems: string[];
+};
+
+/**
+ * What /token shows about the airdrop: the published snapshot and the Airdrop
+ * wallet, and nothing else. /token is a client component, so the server resolves
+ * this and passes it down (getTokenPageAirdropFacts in hivra-airdrop-data.ts);
+ * the page never imports the airdrop config, which also holds the Sablier
+ * campaign link and the claim window, and sends them to every viewer.
+ */
+export type TokenPageAirdropFacts = {
+  snapshot: AirdropSnapshot | null;
+  senderAddress: string | null;
+};
+
+/**
+ * The airdrop facts that may be shown once $HIVRA (`hivraAddress`, lower-cased)
+ * is in the registry. Pass `now: null` to skip everything that depends on the
+ * clock (the claim phase, and the check that snapshotTakenAt is not in the
+ * future): a client render must not depend on the viewer's clock. Invalid
+ * values are left out and reported.
+ */
+export function resolveAirdropFacts(airdrop: HivraAirdropConfig, hivraAddress: string, now: Date | null): AirdropFacts {
+  const problems: string[] = [];
+  let senderAddress: string | null = null;
+  const sender = airdrop.senderAddress?.trim() ?? "";
+  if (sender) {
+    const normalized = normalizeAddress(sender);
+    if (!normalized || ZERO_ADDRESS.test(sender)) {
+      problems.push("senderAddress must be a non-zero 0x-prefixed 20-byte address");
+    } else if (normalized === HERMESOS_TOKEN.address || normalized === hivraAddress.toLowerCase()) {
+      problems.push("senderAddress is a token contract, not the airdrop wallet");
+    } else {
+      senderAddress = sender;
+    }
   }
 
-  return {
-    status: "open",
-    hivraAddress: hivra.address,
-    hivraPublishedAddress: hivra.publishedAddress,
-    termsUrl,
-    conversionUrl,
-    graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null,
-  };
+  let takenAt: string | null = null;
+  const taken = airdrop.snapshotTakenAt?.trim() ?? "";
+  if (taken) {
+    const takenMs = readUtcInstant(taken);
+    if (takenMs === null) problems.push("snapshotTakenAt must be a real UTC instant to the second, e.g. 2026-10-20T16:00:00Z");
+    else if (now && takenMs > now.getTime()) problems.push("snapshotTakenAt is in the future");
+    else takenAt = new Date(takenMs).toISOString();
+  }
+
+  let snapshot: AirdropSnapshot | null = null;
+  const block = airdrop.snapshotBlock;
+  const blockValid = block !== null && Number.isSafeInteger(block) && block > 0;
+  if (block !== null && !blockValid) problems.push("snapshotBlock must be a positive whole block number");
+  const snapshotUrl = readAllowedUrl(airdrop.snapshotUrl, SNAPSHOT_URL_ALLOWED_LOCATIONS);
+  if (airdrop.snapshotUrl && !snapshotUrl) problems.push("snapshotUrl must be https on an allowed Hivra location");
+  if (blockValid && snapshotUrl) snapshot = { block: block as number, url: snapshotUrl, takenAt };
+
+  let claim: ResolvedHivraClaim | null = null;
+  if (now) {
+    const resolved = resolveHivraClaim(airdrop.claim, now);
+    claim = resolved.claim;
+    problems.push(...resolved.problems);
+  }
+
+  return { senderAddress, snapshot, claim, problems };
 }
 
-export type TokenAddressCheck =
-  | { kind: "invalid" }
-  | { kind: "hermesos" }
-  | { kind: "hivra" }
-  | { kind: "hivra-not-launched" }
-  | { kind: "not-official" };
+function resolveAccess(phase: HivraTokenPhase, access: ConversionAccessGate, claimClosed: boolean): ConversionAccess {
+  // The switch (POST /api/billing/token-access) needs $HIVRA live, and the
+  // user's access must be readable, or the page could cost them their tier.
+  if (phase !== "active" || !access) return { kind: "unknown" };
+  if (access.grandfathered && !access.convertedAt) {
+    // Offer the switch only once the claim window has closed (the conservative
+    // gate): after the switch's grace only $HIVRA counts, so switching while
+    // holders can still claim could drop a tier.
+    return claimClosed ? { kind: "switch-available" } : { kind: "hermesos" };
+  }
+  return { kind: "hivra", graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null };
+}
 
 /**
- * Tells a holder whether a pasted address is one of Hivra's tokens. The pasted
- * value is only ever compared against the registry addresses; it is never used
- * as a token, a link target or a swap input.
+ * What the "Check a token address" form is given: the two addresses it compares
+ * with, and nothing else. The form is a client component, so everything passed
+ * to it reaches the browser, including a viewer the token geo-policy blocks and
+ * a viewer before the claim opens. The whole ConversionState would carry the
+ * Sablier campaign link, the claim window, the snapshot link and any config
+ * problems with it; this carries none of them.
+ *
+ * Dormant, the state has no data to leave out, so it is passed as it is.
  */
-export function checkTokenAddress(input: string, state: ConversionState): TokenAddressCheck {
-  const address = normalizeAddress(input);
-  if (!address) return { kind: "invalid" };
-  if (address === HERMESOS_TOKEN.address) return { kind: "hermesos" };
-  if (state.status === "dormant") return { kind: "hivra-not-launched" };
-  if (address === state.hivraAddress) return { kind: "hivra" };
-  return { kind: "not-official" };
+export function addressCheckStateOf(state: ConversionState): AddressCheckState {
+  if (state.status === "dormant") return state;
+  return { status: "launched", hivraAddress: state.hivraAddress, senderAddress: state.senderAddress };
 }

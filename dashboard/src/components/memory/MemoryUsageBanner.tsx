@@ -42,8 +42,8 @@ function copyFor(level: WarnLevel, isPaidTier: boolean, pct: number): { title: s
 }
 
 const STYLES: Record<WarnLevel, { bg: string; border: string; fg: string }> = {
-  warn: { bg: "rgba(217,119,6,0.08)", border: "rgba(217,119,6,0.32)", fg: "#b45309" },
-  critical: { bg: "rgba(220,38,38,0.08)", border: "rgba(220,38,38,0.4)", fg: "#dc2626" },
+  warn: { bg: "color-mix(in srgb, var(--hg-warn) 8%, transparent)", border: "color-mix(in srgb, var(--hg-warn) 32%, transparent)", fg: "var(--hg-warn)" },
+  critical: { bg: "color-mix(in srgb, var(--hg-bad) 8%, transparent)", border: "color-mix(in srgb, var(--hg-bad) 40%, transparent)", fg: "var(--hg-bad)" },
 };
 
 function dismissedRankKey(instanceId: string): string {

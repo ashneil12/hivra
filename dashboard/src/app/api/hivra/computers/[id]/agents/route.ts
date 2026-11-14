@@ -11,12 +11,10 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { attachDependencies, claimAttach, readAttachGate } from "@/lib/agent-computers/attach-routes";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
-const noStore = <T extends Response>(response: T): T => { response.headers.set("Cache-Control", "no-store"); return response; };
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const Body = z.object({ grants: z.object({ workspace: z.boolean() }).strict(), reviewSha256: z.string().regex(/^[0-9a-f]{64}$/),
   requestId: Uuid }).strict();
@@ -24,7 +22,6 @@ const failure = (method: string, failureType: string) => ({ route: "/api/hivra/c
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host")) || !isAgentAttachEnabled()) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra:attach:read", userId, limit: 60, windowMs: 60_000 });
@@ -42,7 +39,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host")) || !isAgentAttachEnabled()) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     if (!isSameOriginMutationRequest(req) || !hasStrictJsonContentType(req)) return noStore(apiError("Forbidden", 403));

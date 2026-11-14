@@ -1,0 +1,55 @@
+[Unit]
+Description=Hivra wake doorbell (watches a sleeping computer's mailbox read-only and asks for its wake)
+After=network-online.target hivra-wake-helper.service
+Wants=network-online.target
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+# Installed by the doorbell install step (HIVRA_WAKE_DOORBELLS) from the checked provisioner bundle.
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/hivra-doorbell/hivra-wake-doorbell.py serve
+Restart=always
+RestartSec=1
+WatchdogSec=20
+User=hivra-doorbell
+Group=hivra-doorbell
+# Only to reach the wake helper's control socket (/run/hivra-ingress is root:hivra-ingress 0750).
+SupplementaryGroups=hivra-ingress
+UMask=0077
+# Its control socket and the armed list (vmids and arm ids only). Credentials live in memory only.
+RuntimeDirectory=hivra-doorbell
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# Unix sockets for its own control socket and the helper; outbound TCP for the mailboxes it watches.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+LimitNOFILE=4096
+LimitCORE=0
+MemoryMax=128M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

@@ -351,7 +351,7 @@ function coverageOf(
 }
 
 /** Both lanes empty — the truthfully-blank payload. */
-export function emptyAgentActivity(days: number, now: Date): AgentActivity {
+function emptyAgentActivity(days: number, now: Date): AgentActivity {
   return aggregateSnapshots([], lastNDayKeys(clampDays(days), now), 0, now);
 }
 
@@ -413,6 +413,7 @@ async function fetchSnapshots(
             .in("instance_id", ids)
             .gte("stat_date", windowStartDay)
             .order("stat_date")
+            .order("instance_id")
             .range(from, to) as unknown as PromiseLike<PageResult<SnapshotRow>>
       ))
     );
@@ -454,8 +455,9 @@ export async function getUserAgentActivity(
 
   // The two lanes are read independently so neither can take the other down:
   // a Hermes query failure degrades only the usage half, and a Hivra failure is
-  // confined to `hivra.degraded` by getUserHivraActivity's own try/catch.
-  const hivra = await getUserHivraActivity(userId, dayKeys, now);
+  // confined to `hivra.degraded` by getUserHivraActivity's own try/catch (it never
+  // rejects, so starting it before the Hermes reads costs nothing if they fail).
+  const hivraRead = getUserHivraActivity(userId, dayKeys, now);
 
   try {
     const instanceIds = await fetchUserInstanceIds(client, userId);
@@ -464,7 +466,7 @@ export async function getUserAgentActivity(
     // skip the Hivra half that actually holds their activity.
     const rows =
       instanceIds.length > 0 ? await fetchSnapshots(client, instanceIds, windowStartDay) : [];
-    return aggregateSnapshots(rows, dayKeys, instanceIds.length, now, hivra);
+    return aggregateSnapshots(rows, dayKeys, instanceIds.length, now, await hivraRead);
   } catch (error) {
     log.error(
       "agent-activity: query failed",
@@ -476,6 +478,7 @@ export async function getUserAgentActivity(
     // half is preserved — this failure is the Hermes lane's alone — and coverage
     // is recomputed against it, or the payload would claim 'none' while still
     // carrying renderable activity.
+    const hivra = await hivraRead;
     const fallback = emptyAgentActivity(days, now);
     return {
       ...fallback,

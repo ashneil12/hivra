@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import {
   useEffect,
   useId,
@@ -550,11 +551,19 @@ export function HetznerCloudCapacityDialog({
     headingRef.current?.focus({ preventScroll: true });
   }, [screenKey, dialogRef]);
 
+  // The quote only matters at its expiry (quoteFresh), so wake the dialog once
+  // then, instead of re-rendering the whole dialog every second.
   useEffect(() => {
     if (phase !== "review" || !quote) return;
-    setQuoteClock(Date.now());
-    const interval = window.setInterval(() => setQuoteClock(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
+    const expiresAt = Date.parse(quote.expiresAt);
+    let timer: number | undefined;
+    const check = () => {
+      const now = Date.now();
+      setQuoteClock(now);
+      if (expiresAt > now) timer = window.setTimeout(check, expiresAt - now);
+    };
+    check();
+    return () => window.clearTimeout(timer);
   }, [phase, quote]);
 
   function changeServerType(value: string) {
@@ -1026,7 +1035,7 @@ function ChooseCapacity({
   if (loading) {
     return (
       <div className={styles.capacityLoading} role="status" aria-live="polite">
-        <Loader2 size={21} className={styles.spin} aria-hidden="true" />
+        <ThinkingOrb state="searching" size={20} />
         <div>
           <strong>Loading live Hetzner choices…</strong>
           <span>Reading available sizes, locations, system images, and provider pricing.</span>

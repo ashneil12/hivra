@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       provisionerVersion: result.summary?.provisionerVersion ?? null,
       receiptSha256: result.summary?.receiptSha256 ?? null,
     });
-    if (!result.ok) return apiError(result.error ?? "Runtime receipt inspection failed", 503);
+    if (!result.ok) return apiError(result.error ?? "Runtime receipt inspection failed", result.status ?? 503);
     return apiSuccess(result);
   } catch (error) {
     log.error("runtime receipt inspection failed", error, { source: SOURCE, agentId });

@@ -515,7 +515,7 @@ function GetStartedPageContent() {
                       {isMostPopular ? (
                         <span className="mono" style={{
                           position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)",
-                          background: "var(--gold-leaf)", color: "var(--ink-black)",
+                          background: "var(--gold-leaf)", color: "var(--hg-on-accent)",
                           fontSize: 8, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em",
                           padding: "2px 7px", whiteSpace: "nowrap",
                         }}>

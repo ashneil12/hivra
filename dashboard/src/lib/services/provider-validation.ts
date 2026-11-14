@@ -97,7 +97,7 @@ function buildRequest(provider: string, apiKey: string): { url: string; options:
     };
   }
 
-  const url = config.url.replace("{API_KEY}", apiKey);
+  const url = config.url.replace("{API_KEY}", encodeURIComponent(apiKey));
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(config.headers)) {
     headers[key] = value.replace("{API_KEY}", apiKey);

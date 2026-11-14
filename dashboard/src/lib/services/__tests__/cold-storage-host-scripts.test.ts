@@ -118,6 +118,78 @@ describe("cold-storage host script self-install", () => {
 });
 
 /**
+ * Guest SSH from these host scripts must be pinned to the host key that QEMU
+ * Guest Agent attests for the VMID, the same protection
+ * buildHermesVmidBoundGuestSshPrelude gives the TypeScript callers. Checks off
+ * (StrictHostKeyChecking=no, UserKnownHostsFile=/dev/null) let a neighbour or a
+ * recycled IP receive the guest's secrets and the archive or restore run
+ * without noticing.
+ */
+describe("host scripts pin guest SSH to an attested host key", () => {
+  const scripts = [
+    "archive-vm-cold.sh",
+    "restore-vm-cold.sh",
+    "backup-vm-restic.sh",
+  ] as const;
+
+  function vmidBoundBlock(script: string): string {
+    const start = script.indexOf("# >>> VMID-bound guest SSH");
+    const end = script.indexOf("# <<< VMID-bound guest SSH <<<");
+    if (start < 0 || end < start) throw new Error("VMID-bound guest SSH block not found");
+    return script.slice(start, end);
+  }
+
+  it.each(scripts)("%s never disables host-key checks", (name) => {
+    const script = readOpsScript(name);
+    expect(script).not.toContain("StrictHostKeyChecking=no");
+    expect(script).not.toContain("UserKnownHostsFile=/dev/null");
+  });
+
+  it("carries one identical VMID-bound block in every script", () => {
+    const [first, ...rest] = scripts.map((name) => vmidBoundBlock(readOpsScript(name)));
+    expect(first).toContain("qm guest exec \"$VMID\" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub");
+    for (const block of rest) expect(block).toBe(first);
+  });
+
+  it.each(scripts)("%s attests the guest before its first guest connection", (name) => {
+    const script = readOpsScript(name);
+    const attest = script.search(/attest_guest_ssh_pin \d+/);
+    const firstGuestUse = script.search(/\$\{SSH_OPTS\[@\]\}|\$SSH_OPTS\b/);
+    expect(attest).toBeGreaterThan(0);
+    expect(firstGuestUse).toBeGreaterThan(attest);
+    expect(script).toContain("StrictHostKeyChecking=yes");
+    expect(script).toContain("HostKeyAlias=");
+  });
+
+  it("refuses before any connection when the guest identity cannot be attested", () => {
+    const archive = readOpsScript("archive-vm-cold.sh");
+    expect(archive).toContain("attest_guest_ssh_pin 36 || { echo");
+    expect(archive).toContain("exit 3; }");
+
+    const restore = readOpsScript("restore-vm-cold.sh");
+    // the clone this run just made is destroyed rather than left running unattested
+    expect(restore).toMatch(/if ! attest_guest_ssh_pin 36; then[\s\S]*qm destroy "\$NEW_VMID"[\s\S]*exit 3/);
+
+    const backup = readOpsScript("backup-vm-restic.sh");
+    expect(backup).toContain("attest_guest_ssh_pin 12 || exit 10");
+  });
+
+  it("gives the restored clone a QEMU Guest Agent channel before it boots", () => {
+    const restore = readOpsScript("restore-vm-cold.sh");
+    expect(restore).toMatch(/--agent enabled=1[\s\S]*qm start "\$NEW_VMID"/);
+  });
+
+  it("removes the pinned known_hosts directory on every archive and restore exit", () => {
+    const archive = readOpsScript("archive-vm-cold.sh");
+    expect(archive).toContain("trap cleanup EXIT HUP INT TERM");
+    expect(archive).toMatch(/cleanup\(\) \{[\s\S]*cleanup_hivra_guest_ssh_identity[\s\S]*\n\}/);
+
+    const restore = readOpsScript("restore-vm-cold.sh");
+    expect(restore).toContain("trap 'rm -rf \"$SCRATCH\"; cleanup_hivra_guest_ssh_identity || true' EXIT");
+  });
+});
+
+/**
  * The restore host-script ceiling MUST stay under every calling route's
  * maxDuration. When it didn't (900s script vs 800s function), Vercel SIGKILLed
  * the handler mid-restore: nothing reverted, the CAS lock stayed held, and the

@@ -31,7 +31,7 @@ export function ActionRow({
     <div
       aria-disabled={comingSoon}
       style={{
-        border: comingSoon ? '1px dashed var(--etched-border)' : '1px solid var(--etched-border)',
+        border: comingSoon ? '1px dashed var(--hg-stroke)' : '1px solid var(--hg-stroke)',
         padding: '1rem 1.25rem',
         opacity: comingSoon ? 0.55 : 1,
         display: 'flex',
@@ -73,8 +73,9 @@ export function WithdrawDestinationCard({
   return (
     <div
       style={{
-        border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: '1rem 1.25rem',
         display: 'flex',
         flexDirection: 'column',
@@ -118,7 +119,8 @@ export function WithdrawDestinationCard({
           className={touchStyles.touchTarget}
           style={{
             padding: '6px 10px',
-            border: '1px solid var(--etched-border)',
+            border: '1px solid var(--hg-stroke)',
+            borderRadius: 7,
             background: 'transparent',
             cursor: 'pointer',
             fontFamily: 'var(--font-mono), monospace',
@@ -217,14 +219,15 @@ export function WithdrawAddressForm({
                 fontFamily: 'var(--font-mono), monospace',
                 fontSize: 13,
                 padding: '10px 12px',
-                border: '1px solid var(--etched-border)',
+                border: '1px solid var(--hg-stroke)',
+                borderRadius: 10,
                 background: 'transparent',
                 color: 'var(--text-primary)',
                 outline: 'none',
               }}
             />
             {address.length > 0 && !isFormatValid && (
-              <span style={{ fontSize: 11, color: '#dc2626' }}>
+              <span style={{ fontSize: 11, color: 'var(--hg-bad)' }}>
                 Must be 0x followed by 40 hexadecimal characters.
               </span>
             )}
@@ -234,8 +237,9 @@ export function WithdrawAddressForm({
             role="alert"
             style={{
               padding: '0.85rem 1rem',
-              border: '1px solid #b3261e',
-              color: '#b3261e',
+              border: '1px solid var(--hg-bad)',
+              borderRadius: 10,
+              color: 'var(--hg-bad)',
               fontSize: 12.5,
               lineHeight: 1.55,
               display: 'flex',
@@ -264,7 +268,7 @@ export function WithdrawAddressForm({
           </label>
 
           {error && (
-            <p style={{ margin: 0, fontSize: 12.5, color: '#dc2626' }}>{error}</p>
+            <p style={{ margin: 0, fontSize: 12.5, color: 'var(--hg-bad)' }}>{error}</p>
           )}
         </div>
       }
@@ -288,6 +292,7 @@ export function WithdrawSection({
   withdrawAvailableAt = null,
   onWithdrew,
   onRequestSetAddress,
+  asset,
 }: {
   tokenSymbol: string;
   balanceDisplay: string;
@@ -296,7 +301,14 @@ export function WithdrawSection({
   withdrawAvailableAt?: string | null;
   onWithdrew: () => void;
   onRequestSetAddress: () => void;
+  /**
+   * "HIVRA": withdraw the lock wallet's $HIVRA instead of its $HERMESOS. The
+   * page passes it only once $HIVRA is live; the server refuses it before.
+   * Omitted: the original $HERMESOS withdraw, unchanged.
+   */
+  asset?: 'HIVRA';
 }) {
+  const hivra = asset === 'HIVRA';
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -309,7 +321,7 @@ export function WithdrawSection({
       const response = await fetch('/api/billing/bankr/wallet/withdraw', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body: hivra ? JSON.stringify({ asset: 'HIVRA' }) : '{}',
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok || !body?.success) {
@@ -331,27 +343,30 @@ export function WithdrawSection({
     } finally {
       setSubmitting(false);
     }
-  }, [balanceDisplay, onWithdrew]);
+  }, [balanceDisplay, hivra, onWithdrew]);
 
   if (success) {
     return (
       <div
         style={{
-          border: '1px solid #16a34a',
+          border: '1px solid var(--hg-ok)',
+          borderRadius: 10,
           padding: '1rem 1.25rem',
-          background: 'var(--bg-surface)',
+          background: 'var(--hg-glass)',
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
         }}
       >
-        <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.16em', fontWeight: 700, color: '#16a34a' }}>
+        <span className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.16em', fontWeight: 700, color: 'var(--hg-ok)' }}>
           Withdraw submitted
         </span>
         <p style={{ fontSize: 13, lineHeight: 1.55, margin: 0 }}>
           {success.amountDisplay} {displayTokenUnit(tokenSymbol)} sent to{' '}
           <code className="mono" style={{ fontSize: 12 }}>{shorten(success.recipientAddress)}</code>.
-          Your tier eligibility stays active for 24 hours from the breach detection. After that, the tier ends and re-qualifying requires depositing at the current standard rate.
+          {hivra
+            ? ' It can take a minute to show in your wallet.'
+            : ' Your tier eligibility stays active for 24 hours from the breach detection. After that, the tier ends and re-qualifying requires depositing at the current standard rate.'}
         </p>
         {success.txHash && (
           <a
@@ -359,7 +374,7 @@ export function WithdrawSection({
             target="_blank"
             rel="noopener noreferrer"
             className="mono"
-            style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--gold-leaf, #ff2c2d)', textDecoration: 'underline', alignSelf: 'flex-start' }}
+            style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--hg-text)', textDecoration: 'underline', alignSelf: 'flex-start' }}
           >
             View transaction →
           </a>
@@ -377,12 +392,14 @@ export function WithdrawSection({
     <>
       <ActionRow
         icon={<ArrowUpFromLine size={14} />}
-        label="Withdraw"
+        label={hivra ? 'Withdraw $HIVRA' : 'Withdraw'}
         description={
           heldUntil
             ? `Your withdraw address was saved recently. For your safety, withdrawals to it open ${heldUntil}.`
             : hasAddress
-            ? 'Withdraw your full $HERMESOS balance to your saved withdraw address. Your tier eligibility runs a 24-hour grace clock from breach detection before ending.'
+            ? hivra
+              ? `This wallet holds ${balanceDisplay} $HIVRA. Withdraw all of it to your saved withdraw address.`
+              : 'Withdraw your full $HERMESOS balance to your saved withdraw address. Your tier eligibility runs a 24-hour grace clock from breach detection before ending.'
             : 'Set a withdraw destination first — withdraws send your tokens there, and you cannot withdraw without one set.'
         }
         action={
@@ -397,7 +414,8 @@ export function WithdrawSection({
               className={touchStyles.touchTarget}
               style={{
                 padding: '8px 14px',
-                border: '1px solid var(--etched-border)',
+                border: '1px solid var(--hg-stroke)',
+                borderRadius: 7,
                 background: 'transparent',
                 cursor: buttonDisabled ? 'not-allowed' : 'pointer',
                 fontFamily: 'var(--font-mono), monospace',
@@ -417,7 +435,8 @@ export function WithdrawSection({
               className={touchStyles.touchTarget}
               style={{
                 padding: '8px 14px',
-                border: '1px solid var(--etched-border)',
+                border: '1px solid var(--hg-stroke)',
+                borderRadius: 7,
                 background: 'transparent',
                 cursor: 'pointer',
                 fontFamily: 'var(--font-mono), monospace',
@@ -434,7 +453,7 @@ export function WithdrawSection({
       />
       {confirmOpen && (
         <ConfirmDialog
-          title="Withdraw all $HERMESOS"
+          title={hivra ? 'Withdraw all $HIVRA' : 'Withdraw all $HERMESOS'}
           body={
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <p style={{ margin: 0, lineHeight: 1.55, fontSize: 14 }}>
@@ -447,7 +466,8 @@ export function WithdrawSection({
                   fontSize: 12.5,
                   padding: '8px 10px',
                   background: 'var(--bg-elevated, var(--bg-surface))',
-                  border: '1px solid var(--etched-border)',
+                  border: '1px solid var(--hg-stroke)',
+                  borderRadius: 7,
                   wordBreak: 'break-all',
                 }}
               >
@@ -457,9 +477,10 @@ export function WithdrawSection({
                 style={{
                   margin: 0,
                   padding: '10px 12px',
-                  border: '1px solid rgba(255, 44, 45,0.45)',
-                  background: 'rgba(255, 44, 45,0.08)',
-                  borderLeft: '3px solid var(--gold-leaf, #ff2c2d)',
+                  border: '1px solid var(--hg-stroke-strong)',
+                  borderRadius: 7,
+                  background: 'var(--hg-fill-1)',
+                  borderLeft: '3px solid var(--hg-text)',
                   fontSize: 12.5,
                   lineHeight: 1.55,
                   color: 'var(--text-primary, var(--ink-black))',
@@ -473,7 +494,7 @@ export function WithdrawSection({
                     fontWeight: 800,
                     textTransform: 'uppercase',
                     letterSpacing: '0.12em',
-                    color: 'var(--gold-leaf, #ff2c2d)',
+                    color: 'var(--hg-text)',
                   }}
                 >
                   Network fee covered
@@ -483,14 +504,21 @@ export function WithdrawSection({
                   the live balance and records the withdrawal before submitting it.
                 </p>
               </div>
-              <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13, color: 'var(--text-secondary)' }}>
-                After the on-chain transfer confirms, your Pro/Power tier eligibility runs a
-                24-hour grace clock. Once grace expires, the tier ends. To regain it, you&apos;ll
-                need to deposit at the <strong>current standard rate</strong> (no longer the
-                launch promo rate).
-              </p>
+              {hivra ? (
+                <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  If this $HIVRA counts toward a Pro or Power tier, the tier&apos;s normal grace period
+                  starts once the transfer confirms.
+                </p>
+              ) : (
+                <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  After the on-chain transfer confirms, your Pro/Power tier eligibility runs a
+                  24-hour grace clock. Once grace expires, the tier ends. To regain it, you&apos;ll
+                  need to deposit at the <strong>current standard rate</strong> (no longer the
+                  launch promo rate).
+                </p>
+              )}
               {error && (
-                <p style={{ margin: 0, fontSize: 12, color: '#dc2626' }}>{error}</p>
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--hg-bad)' }}>{error}</p>
               )}
             </div>
           }
@@ -589,7 +617,7 @@ export function UnlockPromptCard({
   onDismiss: () => void;
 }) {
   const venice = mode === 'venice';
-  const gold = 'rgba(255, 44, 45,1)';
+  const gold = 'var(--hg-text)';
   return (
     <section
       aria-label={venice ? 'Venice compute boost' : 'Unlock a token tier'}
@@ -597,15 +625,16 @@ export function UnlockPromptCard({
       style={{
         position: 'relative',
         overflow: 'hidden',
-        border: `1px solid ${venice ? 'rgba(255, 44, 45,0.6)' : 'var(--ink-black)'}`,
+        border: `1px solid ${venice ? 'var(--hg-stroke-strong)' : 'var(--ink-black)'}`,
+        borderRadius: 10,
         background: venice
-          ? 'linear-gradient(135deg, rgba(255, 44, 45,0.16), rgba(255, 44, 45,0.03))'
+          ? 'var(--hg-glass)'
           : 'var(--bg-surface)',
         padding: 'clamp(1.25rem, 3.5vw, 1.9rem)',
         marginBottom: '1.5rem',
         boxShadow: venice
-          ? '0 0 22px rgba(255, 44, 45,0.18), 6px 6px 0 var(--ink-black)'
-          : '6px 6px 0 var(--ink-black)',
+          ? 'var(--hg-shadow-md)'
+          : 'var(--hg-shadow-md)',
       }}
     >
       {/* Soft accent glow in the corner so the card reads as a highlight. */}
@@ -620,8 +649,8 @@ export function UnlockPromptCard({
           height: 160,
           borderRadius: '50%',
           background: venice
-            ? 'radial-gradient(circle, rgba(255, 44, 45,0.28), transparent 70%)'
-            : 'radial-gradient(circle, rgba(255,255,255,0.05), transparent 70%)',
+            ? 'radial-gradient(circle, var(--hg-fill-2), transparent 70%)'
+            : 'radial-gradient(circle, var(--hg-fill-1), transparent 70%)',
           pointerEvents: 'none',
         }}
       />
@@ -649,8 +678,9 @@ export function UnlockPromptCard({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            border: `1px solid ${venice ? 'rgba(255, 44, 45,0.6)' : 'var(--etched-border)'}`,
-            background: venice ? 'rgba(255, 44, 45,0.14)' : 'transparent',
+            border: `1px solid ${venice ? 'var(--hg-stroke-strong)' : 'var(--hg-stroke)'}`,
+            borderRadius: 10,
+            background: venice ? 'var(--hg-fill-1)' : 'transparent',
           }}
         >
           {venice ? <Zap className="boost-zap" size={19} style={{ color: gold }} /> : <ShieldCheck size={19} />}
@@ -695,7 +725,7 @@ export function UnlockPromptCard({
                 className="boost-shine"
                 style={{
                   position: 'absolute', top: 0, left: 0, width: '40%', height: '100%',
-                  background: 'linear-gradient(100deg, transparent, rgba(255,255,255,0.5), transparent)',
+                  background: 'linear-gradient(100deg, transparent, var(--hg-fill-3), transparent)',
                   pointerEvents: 'none',
                 }}
               />

@@ -83,6 +83,18 @@ describe("POST /api/billing/change-plan", () => {
     }
   });
 
+  it("returns 400 for a malformed JSON body instead of a 500", async () => {
+    const req = {
+      headers: new Headers(),
+      json: jest.fn().mockRejectedValue(new SyntaxError("Unexpected token")),
+    } as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("Invalid JSON body");
+  });
+
   it("refuses to upgrade manual or missing-Stripe paid rows without secure checkout", async () => {
     const selectBuilder = {
       select: jest.fn().mockReturnThis(),
@@ -281,6 +293,90 @@ describe("POST /api/billing/change-plan", () => {
     expect(body.error).toBe("Failed to change plan. Please try again.");
     expect(body.error).not.toContain("change-plan-secret");
     expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("change-plan-secret");
+  });
+
+  describe("local plan write after a successful Stripe update", () => {
+    function setupPaidUpgrade(planWriteResults: Array<{ error: unknown }>) {
+      const selectBuilder = {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({
+          data: {
+            plan: "operator",
+            status: "active",
+            stripe_subscription_id: "sub_123",
+            stripe_customer_id: "cus_live",
+            total_cpu_budget: 2,
+            total_ram_budget: 4096,
+            instance_limit: 999,
+          },
+          error: null,
+        }),
+      };
+      const planWriteBuilders = planWriteResults.map((result) => ({
+        update: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockResolvedValue(result),
+      }));
+      // Hand the builders out in call order; keep planWriteBuilders intact for asserts.
+      const pendingWrites = [...planWriteBuilders];
+
+      (supabaseAdmin!.from as jest.Mock)
+        .mockImplementationOnce(() => selectBuilder)
+        .mockImplementation(() => pendingWrites.shift());
+      (validateOrRecreateStripeCustomer as jest.Mock).mockResolvedValue({
+        customerId: "cus_live",
+        wasRecreated: false,
+      });
+      (getStripe as jest.Mock).mockReturnValue({
+        subscriptions: {
+          retrieve: jest.fn().mockResolvedValue({
+            customer: "cus_live",
+            items: { data: [{ id: "si_123" }] },
+          }),
+          update: jest.fn().mockResolvedValue({ id: "sub_123" }),
+        },
+      });
+
+      return planWriteBuilders;
+    }
+
+    it("retries the local plan write once and reports plain success when the retry lands", async () => {
+      const writes = setupPaidUpgrade([
+        { error: { message: "connection reset", code: "08006" } },
+        { error: null },
+      ]);
+
+      const res = await POST(createRequest({ newPlan: "fleet" }));
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(writes[0].update).toHaveBeenCalledTimes(1);
+      expect(writes[1].update).toHaveBeenCalledTimes(1);
+      expect(body.data.syncPending).toBeUndefined();
+      expect(body.data.warning).toBeUndefined();
+      expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("change_plan_db_sync_failed");
+    });
+
+    it("says the change is pending sync and logs a failure type when the local write keeps failing", async () => {
+      const writes = setupPaidUpgrade([
+        { error: { message: "db down", code: "XX000" } },
+        { error: { message: "db down", code: "XX000" } },
+      ]);
+
+      const res = await POST(createRequest({ newPlan: "fleet" }));
+      const body = await res.json();
+
+      // Stripe already moved the subscription, so the response is still a
+      // success, but it must not claim the account is in sync.
+      expect(res.status).toBe(200);
+      expect(body.data.newPlan).toBe("fleet");
+      expect(body.data.syncPending).toBe(true);
+      expect(body.data.warning).toMatch(/not updated yet/i);
+      expect(writes[0].update).toHaveBeenCalledTimes(1);
+      expect(writes[1].update).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy.mock.calls.flat().join(" ")).toContain("change_plan_db_sync_failed");
+      expect(consoleErrorSpy.mock.calls.flat().join(" ")).toContain("sub_123");
+    });
   });
 
   it("does not leak raw Stripe plan-change errors", async () => {

@@ -7,16 +7,11 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { mediaModelField, mediaPricingFieldError, planMediaRequest } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-image-edit | Jeremiah 18:6 | Verse: As the clay is in the potter's hand, so are ye in mine hand.
 const VENICE_IMAGES_EDIT_URL = "https://api.venice.ai/api/v1/image/edit";
 const ENDPOINT_LABEL = "/api/v1/image/edit";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

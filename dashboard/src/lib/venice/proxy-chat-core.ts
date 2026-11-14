@@ -9,6 +9,7 @@ import {
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
+import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
   UnsupportedVeniceModelError,
   checkVeniceChatPricingCatalogStaleness,
@@ -32,6 +33,7 @@ import {
   type ManagedChatSurchargeEvidence,
   type ManagedChatSurchargePlan,
 } from "@/lib/venice/chat-surcharges";
+import { tryGrantLaunchCredit } from "@/lib/venice/promo/service";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
@@ -118,7 +120,9 @@ export type AuthorizeManagedVeniceChatResult =
   // (and, through the Worker, to the box). OpenAI-compatible bodies preserved.
   | { ok: false; response: Response };
 
-const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let lastWarnedStaleCatalogAt: string | null = null;
+
+const REFERENCE_ID_PATTERN =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function requestsStrippedThinking(body: Record<string, unknown>): boolean {
   const veniceParameters = body.venice_parameters;
@@ -272,7 +276,9 @@ export async function authorizeManagedVeniceChat(params: {
   // 503 the user. But page hard so the operator can refresh the catalog
   // before the drift compounds across many requests.
   const staleness = checkVeniceChatPricingCatalogStaleness();
-  if (staleness.stale) {
+  // Warn once per catalog snapshot per process, not on every request.
+  if (staleness.stale && staleness.updatedAt !== lastWarnedStaleCatalogAt) {
+    lastWarnedStaleCatalogAt = staleness.updatedAt;
     log.warn(
       "Managed Venice pricing catalog is stale; settlements may drift from Venice's live prices",
       {
@@ -319,6 +325,12 @@ export async function authorizeManagedVeniceChat(params: {
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
 
+  // A card-wallet user who redeemed the Venice code before their key was minted
+  // gets the launch credit on their first request (flag-gated, best-effort).
+  if (walletType === "card") {
+    await tryGrantLaunchCredit({ userId: verifiedKey.userId });
+  }
+
   let budgeted: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>;
   try {
     budgeted = await reserveManagedVeniceChatWithinBalance({
@@ -337,7 +349,7 @@ export async function authorizeManagedVeniceChat(params: {
     if (error instanceof ManagedVeniceSpendCapError) {
       // Protective cap, not an empty wallet — the key stays active; the user
       // (or ops) raises the cap or waits for the month to roll over.
-      log.warn("Managed Venice request blocked by monthly spend cap", {
+      log.warn("Managed Venice request blocked by a spend cap", {
         source: "managed-venice-chat",
         route: "/api/managed-venice/v1/chat/completions",
         method: "POST",
@@ -354,9 +366,7 @@ export async function authorizeManagedVeniceChat(params: {
           status: 402,
           code: "managed_venice_spend_cap_reached",
           type: "billing_error",
-          message:
-            `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ` +
-            `${managedVeniceTopUpUrl(walletType)}`,
+          message: managedVeniceSpendCapMessage(error, managedVeniceTopUpUrl(walletType)),
         }),
       };
     }
@@ -547,25 +557,4 @@ export async function settleManagedVeniceChatUsage(params: {
     pauseKey: false,
   });
   return { settled: false, reconciled: true };
-}
-
-/** Shared SSE usage-frame extraction (used by the in-Vercel streamer + Worker). */
-export function readUsageFromSseFrame(frame: string) {
-  const dataLines = frame
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trim());
-
-  for (const data of dataLines) {
-    if (!data || data === "[DONE]") continue;
-    try {
-      const parsed = JSON.parse(data) as Record<string, unknown>;
-      if (parsed?.usage) return parsed.usage;
-    } catch {
-      // non-JSON keep-alive / comment frame
-    }
-  }
-
-  return null;
 }

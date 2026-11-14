@@ -1,4 +1,5 @@
 import {
+  computerHasDesktop,
   desktopTransportForProfile,
   normalizeComputerProfile,
   resolveResourceLanding,
@@ -20,9 +21,10 @@ describe("resource landing", () => {
       [null, "ubuntu-desktop"],
       [undefined, "ubuntu-desktop"],
       ["", "ubuntu-desktop"],
-      // Anything unrecognised fails safe to the general Linux desktop rather
-      // than inventing a transport.
-      ["plan9", "ubuntu-desktop"],
+      ["ubuntu-server", "ubuntu-server"],
+      // Anything unrecognised fails closed: it is never taken for a desktop.
+      ["plan9", "unknown"],
+      ["Ubuntu-Desktop", "unknown"],
     ] as const)("normalizes %s to %s", (input, expected) => {
       expect(normalizeComputerProfile(input)).toBe(expected);
     });
@@ -34,8 +36,75 @@ describe("resource landing", () => {
       ["windows", "windows"],
       ["ubuntu-desktop", "remote"],
       [null, "remote"],
+      ["ubuntu-server", null],
+      ["unknown", null],
     ] as const)("maps %s to the %s transport", (profile, expected) => {
       expect(desktopTransportForProfile(profile)).toBe(expected);
+    });
+  });
+
+  describe("computerHasDesktop", () => {
+    it.each([
+      ["ubuntu-desktop", true],
+      ["omarchy", true],
+      ["windows", true],
+      // The original computer image has no stored profile.
+      [null, true],
+      [undefined, true],
+      ["", true],
+      ["ubuntu-server", false],
+      ["linux-terminal", false],
+      ["plan9", false],
+    ] as const)("%s has a desktop: %s", (profile, expected) => {
+      expect(computerHasDesktop(profile)).toBe(expected);
+    });
+  });
+
+  describe("a running computer with no desktop (headless row)", () => {
+    it.each(["ubuntu-server", "plan9"])("lands on its files and terminal, never a desktop (%s)", (profile) => {
+      const landing = resolveResourceLanding({
+        source: "hivra",
+        type: "linux-desktop",
+        computerProfile: profile,
+        status: "running",
+        chatUrl: "https://box.invalid",
+        surfaceKind: "computer",
+        resourceKind: "computer",
+      });
+
+      expect(landing.landing).toBe("workspace");
+      expect(landing.desktop).toBe(false);
+      expect(landing.desktopTransport).toBeNull();
+      expect(landing.desktopAutoOpen).toBe(false);
+      expect(landing.conversation).toBe(false);
+    });
+
+    it("keeps the ubuntu-desktop landing as it was", () => {
+      const landing = resolveResourceLanding({
+        source: "hivra",
+        type: "linux-desktop",
+        computerProfile: "ubuntu-desktop",
+        status: "running",
+        surfaceKind: "computer",
+        resourceKind: "computer",
+      });
+
+      expect(landing).toMatchObject({ landing: "desktop", desktop: true, desktopTransport: "remote", profile: "ubuntu-desktop" });
+    });
+
+    it("still falls back to the state notice while it is not running", () => {
+      const landing = resolveResourceLanding({
+        source: "hivra",
+        type: "linux-desktop",
+        computerProfile: "ubuntu-server",
+        status: "stopped",
+        surfaceKind: "computer",
+        resourceKind: "computer",
+      });
+
+      expect(landing.landing).toBe("conversation");
+      expect(landing.desktop).toBe(false);
+      expect(landing.profile).toBe("ubuntu-server");
     });
   });
 

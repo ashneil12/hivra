@@ -9,13 +9,11 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { resolveManagedSessionApproval } from "@/lib/hivra/do-managed-sessions";
 import { ManagedSessionApprovalSchema } from "@/lib/hivra/managed-session-contracts";
-import { managedSessionFailure, noStore, readMutationBody, UUID, hivraApiUnavailable } from "../../../route-support";
+import { managedSessionFailure, noStore, readMutationBody, UUID } from "../../../route-support";
 
 const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string; requestId: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id, requestId } = await context.params;

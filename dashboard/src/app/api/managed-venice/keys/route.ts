@@ -11,6 +11,7 @@ import {
   AgentModelKeyInUseError,
   createManagedVeniceProxyKey,
   listManagedVeniceProxyKeys,
+  ManagedVeniceProxyKeyNotFoundError,
   revokeManagedVeniceProxyKey,
 } from "@/lib/venice/proxy-keys";
 
@@ -142,6 +143,11 @@ export async function DELETE(request: NextRequest) {
       const response = apiError(error.message, 409, { failureType: "agent_model_key_in_use" }, { code: "agent_model_key_in_use" });
       response.headers.set("Cache-Control", "no-store");
       return response;
+    }
+    if (error instanceof ManagedVeniceProxyKeyNotFoundError) {
+      return apiError("Managed Venice proxy key not found.", 404, {
+        failureType: "managed_venice_key_not_found",
+      });
     }
     return apiError(
       "Failed to revoke managed Venice proxy key.",

@@ -7,10 +7,16 @@ import {
   MCP_NODE_PROGRAM,
   buildToolMcpSpec,
   buildToolMcpGuestScript,
+  applyToolMcpOnBox,
   buildToolMcpHostScript,
   toolMcpKindForType,
   type ToolMcpServerSpec,
 } from "@/lib/hivra/tool-mcp-seed";
+import {
+  GENUINE_GUEST_HOST_KEY,
+  SPOOFED_GUEST_HOST_KEY,
+  createStubProxmoxGuestHost,
+} from "@/test-utils/stub-proxmox-guest-host";
 
 // Run the EXACT node program the box executes, against a throwaway HOME. This is
 // the load-bearing box mutation — proving it here means the SSH round-trip only
@@ -223,16 +229,52 @@ describe("spec + scripts", () => {
     expect(MCP_NODE_PROGRAM).toContain("readFileSync(0");
   });
 
-  it("host script uses the orchestrator key + streams over ssh, no secret in the clear", () => {
+  const TARGET = {
+    vmid: 1161,
+    ip: "203.0.113.4",
+    bindingTag: "hivra-bind-0123456789abcdef0123456789abcdef",
+    vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator",
+  };
+
+  it("host script streams over VMID-pinned ssh, with no secret in the clear", () => {
     const secret = "sk-SUPERSECRET-abc123";
     const b64 = buildToolMcpSpec("codex", "add", [
       { name: "x", command: "npx", args: [], env: { API_KEY: secret } },
     ]);
-    const host = buildToolMcpHostScript("203.0.113.4", buildToolMcpGuestScript(b64));
-    expect(host).toContain("/etc/hivra/keys/vm-orchestrator");
-    expect(host).toContain("ubuntu@203.0.113.4");
-    expect(host).toContain("base64 -d | sudo bash");
+    const host = buildToolMcpHostScript(TARGET, buildToolMcpGuestScript(b64));
+    expect(host).toContain("VM_KEY='/etc/hivra/keys/vm-orchestrator'");
+    expect(host).toContain("GUEST_IP='203.0.113.4'");
+    // The guest is the one QEMU Guest Agent attests for this VMID, owner tag
+    // and configured IP checked first; host-key checking is never off.
+    expect(host).toContain("EXPECTED_BINDING_TAG='hivra-bind-0123456789abcdef0123456789abcdef'");
+    expect(host).toContain('qm guest exec "$VMID"');
+    expect(host).toContain("StrictHostKeyChecking=yes");
+    expect(host).not.toContain("StrictHostKeyChecking=no");
+    expect(host).not.toContain("UserKnownHostsFile=/dev/null");
+    expect(host).toContain("base64 -d | sudo -n bash");
     expect(host).not.toContain(secret);
+  });
+
+  it("refuses to send credentials to a box it cannot pin to its VMID", async () => {
+    const authority = {
+      env: {},
+      infrastructureBindingTag: TARGET.bindingTag,
+      infrastructureBindingTagEnforced: false,
+      paths: { vmSshKeyPath: TARGET.vmSshKeyPath },
+    };
+    const servers = [{ name: "x", command: "npx", args: [], env: { API_KEY: "k" } }];
+    const unenforced = await applyToolMcpOnBox("codex", "add", { ip: TARGET.ip, vmid: TARGET.vmid }, servers, authority);
+    expect(unenforced.ok).toBe(false);
+    expect(unenforced.error).toContain("no enforced owner binding tag");
+    const noVmid = await applyToolMcpOnBox(
+      "codex",
+      "add",
+      { ip: TARGET.ip, vmid: null },
+      servers,
+      { ...authority, infrastructureBindingTagEnforced: true },
+    );
+    expect(noVmid.ok).toBe(false);
+    expect(noVmid.error).toContain("missing or invalid vmid");
   });
 });
 
@@ -244,5 +286,49 @@ describe("toolMcpKindForType", () => {
     expect(toolMcpKindForType("aeon")).toBeNull();
     expect(toolMcpKindForType(null)).toBeNull();
     expect(toolMcpKindForType(undefined)).toBeNull();
+  });
+});
+
+describe("host script against a stub Proxmox host", () => {
+  const host = createStubProxmoxGuestHost();
+  const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), "tool-mcp-key-"));
+  const vmKey = path.join(keyDir, "vm-orchestrator");
+  fs.writeFileSync(vmKey, "not a real key\n");
+  afterAll(() => {
+    host.cleanup();
+    fs.rmSync(keyDir, { recursive: true, force: true });
+  });
+
+  const tag = "hivra-bind-0123456789abcdef0123456789abcdef";
+  const target = { vmid: 1161, ip: "10.251.20.61", bindingTag: tag, vmSshKeyPath: vmKey };
+  const secret = "sk-SUPERSECRET-abc123";
+  const script = buildToolMcpHostScript(
+    target,
+    buildToolMcpGuestScript(buildToolMcpSpec("codex", "add", [
+      { name: "x", command: "npx", args: [], env: { API_KEY: secret } },
+    ])),
+  );
+  const vm = { vmid: 1161, ip: "10.251.20.61", tags: tag };
+
+  it("delivers to the guest whose host key the guest agent attests", () => {
+    const result = host.run(script, { vms: [vm], serverHostKey: GENUINE_GUEST_HOST_KEY });
+    expect(result.status).toBe(0);
+    expect(result.sshCalls).toHaveLength(1);
+    expect(Buffer.from(result.delivered.trim(), "base64").toString("utf8")).toContain("sudo -u bux");
+  });
+
+  it("sends nothing to a neighbour answering at the same IP with another host key", () => {
+    const result = host.run(script, { vms: [vm], serverHostKey: SPOOFED_GUEST_HOST_KEY });
+    expect(result.status).not.toBe(0);
+    expect(result.delivered).toBe("");
+  });
+
+  it("sends nothing when the VM does not carry the agent's owner binding tag", () => {
+    const result = host.run(script, {
+      vms: [{ ...vm, tags: "hivra-bind-ffffffffffffffffffffffffffffffff" }],
+      serverHostKey: GENUINE_GUEST_HOST_KEY,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.sshArgs).toEqual([]);
   });
 });

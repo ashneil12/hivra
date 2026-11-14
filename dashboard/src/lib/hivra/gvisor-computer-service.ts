@@ -164,7 +164,7 @@ async function executionAuthority(userId: string, targetId: string, binding?: Gv
   if (!hasRuntimeHostAuthority(connection) || (!normalAuthority && !pendingBoundObservation)) {
     throw new GvisorComputerError("not_ready", "The connected host authority changed. Inspect it again.");
   }
-  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost);
+  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost, { userId });
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
     sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
@@ -271,7 +271,7 @@ export async function prepareGvisorHost(userId: string, connectionId: string) {
     throw new GvisorComputerError("not_ready", "Hivra's last look at this server has expired. Inspect it again, then set up Linux Sandbox.");
   }
   if (!hasHostAdministratorAuthority(connection, snapshot)) throw new GvisorComputerError("not_ready", LINUX_SANDBOX_PRIVILEGE_COPY);
-  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost);
+  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost, { userId });
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
     sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,

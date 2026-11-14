@@ -1,5 +1,6 @@
 import "server-only";
 import { chunk } from "@/lib/array-utils";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
@@ -31,6 +32,11 @@ import { FUNNEL_PAID_PLANS, isPaidPlan, utcDayKey, utcWeekStartKey, lastNWeekSta
  * first_usage stamp, activity-digest email, free standing task, gated
  * auto-seed) be proven by watching `used` and `retained` move per cohort.
  *
+ * Instances come from both lanes: hermes_instances and hivra_agents. A Hivra
+ * agent boots at provisioned_at and is used at its own first_usage_at stamp.
+ * hivra_agents has no activity timestamp or standing-task stamp, so a Hivra
+ * agent only counts towards `retained` through the paid-subscription branch.
+ *
  * first_usage_at only began being stamped on 2026-05-30. Cohorts whose deploy
  * week ENDS before that date can never have a `used` value, so they report
  * `usedKnown: false` (rendered as n/a) instead of a misleading 0. Cohorts that
@@ -48,6 +54,7 @@ const WEEKLY_COHORT_WEEKS = 8;
 const DAY_MS = 86_400_000;
 const PAGE_SIZE = 1000;
 const IN_CHUNK_SIZE = 200;
+const CHUNK_CONCURRENCY = 4;
 
 export interface ActivationInstanceRow {
   user_id: string | null;
@@ -57,6 +64,32 @@ export interface ActivationInstanceRow {
   last_activity_at: string | null;
   deleted_at: string | null;
   standing_task_seeded_at: string | null;
+}
+
+/** The hivra_agents columns the activation cohorts read. */
+export interface ActivationHivraAgentRow {
+  user_id: string | null;
+  created_at: string;
+  provisioned_at: string | null;
+  first_usage_at: string | null;
+  status: string | null;
+}
+
+/**
+ * Map a Hivra-lane agent onto the cohort instance shape. hivra_agents marks a
+ * removal with status "deleted" instead of a deleted_at column, so a deleted
+ * agent carries its created_at as a non-null deleted marker.
+ */
+export function hivraAgentToActivationInstance(row: ActivationHivraAgentRow): ActivationInstanceRow {
+  return {
+    user_id: row.user_id,
+    created_at: row.created_at,
+    first_active_at: row.provisioned_at,
+    first_usage_at: row.first_usage_at,
+    last_activity_at: null,
+    deleted_at: row.status === "deleted" ? row.created_at : null,
+    standing_task_seeded_at: null,
+  };
 }
 
 export interface ActivationSubscriptionRow {
@@ -125,19 +158,6 @@ export function utcWeekEndKey(weekStart: string): string {
  */
 export function isUsedKnownForWeek(weekStart: string, instrumentedFrom: string): boolean {
   return utcWeekEndKey(weekStart) >= instrumentedFrom;
-}
-
-export function groupInstancesByUser(
-  instances: ActivationInstanceRow[]
-): Map<string, ActivationInstanceRow[]> {
-  const byUser = new Map<string, ActivationInstanceRow[]>();
-  for (const inst of instances) {
-    if (!inst.user_id) continue;
-    const list = byUser.get(inst.user_id);
-    if (list) list.push(inst);
-    else byUser.set(inst.user_id, [inst]);
-  }
-  return byUser;
 }
 
 /**
@@ -278,59 +298,75 @@ async function fetchAllPages<T>(
 
 type AdminClient = NonNullable<typeof supabaseAdmin>;
 
-function fetchWindowInstances(
+async function fetchWindowInstances(
   client: AdminClient,
   windowStartIso: string
 ): Promise<ActivationInstanceRow[]> {
-  return fetchAllPages<ActivationInstanceRow>("activation cohort instances", (from, to) =>
-    client
-      .from("hermes_instances")
-      .select(
-        "user_id, created_at, first_active_at, first_usage_at, last_activity_at, deleted_at, standing_task_seeded_at"
-      )
-      .gte("created_at", windowStartIso)
-      .order("id")
-      .range(from, to) as unknown as PromiseLike<PageResult<ActivationInstanceRow>>
-  );
+  const [hermes, hivra] = await Promise.all([
+    fetchAllPages<ActivationInstanceRow>("activation cohort instances", (from, to) =>
+      client
+        .from("hermes_instances")
+        .select(
+          "user_id, created_at, first_active_at, first_usage_at, last_activity_at, deleted_at, standing_task_seeded_at"
+        )
+        .gte("created_at", windowStartIso)
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<PageResult<ActivationInstanceRow>>
+    ),
+    fetchAllPages<ActivationHivraAgentRow>("activation cohort hivra agents", (from, to) =>
+      client
+        .from("hivra_agents")
+        .select("user_id, created_at, provisioned_at, first_usage_at, status")
+        .gte("created_at", windowStartIso)
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<PageResult<ActivationHivraAgentRow>>
+    ),
+  ]);
+  return [...hermes, ...hivra.map(hivraAgentToActivationInstance)];
 }
 
 async function fetchSubscriptionsForUsers(
   client: AdminClient,
   userIds: string[]
 ): Promise<ActivationSubscriptionRow[]> {
-  const rows: ActivationSubscriptionRow[] = [];
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    rows.push(
-      ...(await fetchAllPages<ActivationSubscriptionRow>("activation cohort subscriptions", (from, to) =>
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    CHUNK_CONCURRENCY,
+    (ids) =>
+      fetchAllPages<ActivationSubscriptionRow>("activation cohort subscriptions", (from, to) =>
         client
           .from("hermes_subscriptions")
           .select("user_id, plan, status, current_period_end")
           .in("user_id", ids)
           .order("user_id")
           .range(from, to)
-      ))
-    );
-  }
-  return rows;
+      )
+  );
+  return groups.flat();
 }
 
 async function fetchDigestUserIds(
   client: AdminClient,
   userIds: string[]
 ): Promise<Set<string>> {
+  const groups = await mapWithConcurrencyLimit(
+    chunk(userIds, IN_CHUNK_SIZE),
+    CHUNK_CONCURRENCY,
+    (ids) =>
+      fetchAllPages<ActivationDigestRow>("activation digest sends", (from, to) =>
+        client
+          .from("lifecycle_email_sends")
+          .select("user_id")
+          .like("email_key", "activity_digest%")
+          .in("user_id", ids)
+          // A user has one row per digest email, so user_id is not unique here;
+          // the primary key is the tie-breaker that keeps offset pages stable.
+          .order("id")
+          .range(from, to)
+      )
+  );
   const out = new Set<string>();
-  for (const ids of chunk(userIds, IN_CHUNK_SIZE)) {
-    const rows = await fetchAllPages<ActivationDigestRow>("activation digest sends", (from, to) =>
-      client
-        .from("lifecycle_email_sends")
-        .select("user_id")
-        .like("email_key", "activity_digest%")
-        .in("user_id", ids)
-        .order("user_id")
-        .range(from, to)
-    );
-    for (const r of rows) if (r.user_id) out.add(r.user_id);
-  }
+  for (const rows of groups) for (const r of rows) if (r.user_id) out.add(r.user_id);
   return out;
 }
 

@@ -2,7 +2,6 @@
 import { NextRequest } from "next/server";
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: jest.fn() }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: jest.fn() }));
 jest.mock("@/lib/agent-computers/relationship-reader", () => ({ createCanonicalRelationshipReader: jest.fn() }));
 jest.mock("@/lib/api-response", () => ({
@@ -11,7 +10,6 @@ jest.mock("@/lib/api-response", () => ({
 }));
 
 import { auth } from "@clerk/nextjs/server";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { createCanonicalRelationshipReader } from "@/lib/agent-computers/relationship-reader";
 import { GET } from "@/app/api/hivra/computers/[id]/relationships/route";
@@ -26,7 +24,6 @@ const invoke = (computerId = id) => GET(request(), { params: Promise.resolve({ i
 beforeEach(() => {
   jest.resetAllMocks();
   jest.mocked(auth).mockResolvedValue({ userId: "authenticated-owner" } as Awaited<ReturnType<typeof auth>>);
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
   jest.mocked(enforceAuthenticatedRouteRateLimit).mockReturnValue(null);
   jest.mocked(createCanonicalRelationshipReader).mockReturnValue({ read });
 });
@@ -41,11 +38,7 @@ it("uses only the authenticated owner and canonical computer ID, with no caching
   expect(await response.json()).toEqual({ success: true, data: { computerId: id, bindings: [] } });
 });
 
-it("rejects disabled surfaces and unauthenticated requests before storage", async () => {
-  jest.mocked(isHivraApiAllowed).mockReturnValue(false);
-  expect((await invoke()).status).toBe(404);
-  expect(auth).not.toHaveBeenCalled();
-  jest.mocked(isHivraApiAllowed).mockReturnValue(true);
+it("rejects unauthenticated requests before storage", async () => {
   jest.mocked(auth).mockResolvedValue({ userId: null } as Awaited<ReturnType<typeof auth>>);
   const response = await invoke();
   expect(response.status).toBe(401);

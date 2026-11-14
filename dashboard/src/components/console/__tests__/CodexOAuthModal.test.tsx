@@ -306,6 +306,35 @@ describe("CodexOAuthModal", () => {
     );
   });
 
+  it("refuses an authorization URL that is not https and never offers it to open", async () => {
+    for (const url of ["javascript:alert(1)", "http://example.com/device", "not a url"]) {
+      Object.defineProperty(global, "fetch", {
+        configurable: true,
+        writable: true,
+        value: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { url, code: "ABCD-1234" } }),
+        }),
+      });
+
+      const { unmount } = render(<CodexOAuthModal instanceId={`inst-bad-url-${url.length}`} onClose={jest.fn()} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /start codex login/i }));
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/no authorization url was returned/i)
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByRole("button", { name: /open authorization page/i })).not.toBeInTheDocument();
+      expect(screen.queryByText(url)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("shows actionable retry/redeploy guidance (not the dead Vault link) when the runtime cannot host the device flow (503)", async () => {
     Object.defineProperty(global, "fetch", {
       configurable: true,
@@ -487,6 +516,104 @@ describe("CodexOAuthModal", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("logs provider_oauth_completed once when a status poll is still pending at the next tick", async () => {
+    let resolveSlowStatus!: (value: unknown) => void;
+    const slowStatus = new Promise((resolve) => {
+      resolveSlowStatus = resolve;
+    });
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { url: "https://example.com/device", code: "ABCD-1234" } }),
+      })
+      .mockReturnValueOnce(slowStatus)
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { authenticated: true } }),
+      });
+
+    Object.defineProperty(global, "fetch", {
+      configurable: true,
+      writable: true,
+      value: fetchMock,
+    });
+
+    render(<CodexOAuthModal instanceId="inst-overlap" onClose={jest.fn()} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start codex login/i }));
+    });
+
+    // The first status poll starts at 4 s and is still pending when the 8 s tick fires.
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSlowStatus({ ok: true, json: async () => ({ data: { authenticated: true } }) });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+
+    await screen.findByText(/codex connected/i);
+    expect(getOauthCaptures("provider_oauth_completed")).toHaveLength(1);
+
+    await act(async () => {
+      jest.advanceTimersByTime(3_000);
+    });
+  });
+
+  it("does not start the success timer when a poll resolves after the modal unmounted", async () => {
+    const onClose = jest.fn();
+    const onSuccess = jest.fn();
+    let resolveSlowStatus!: (value: unknown) => void;
+    const slowStatus = new Promise((resolve) => {
+      resolveSlowStatus = resolve;
+    });
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { url: "https://example.com/device", code: "ABCD-1234" } }),
+      })
+      .mockReturnValueOnce(slowStatus);
+
+    Object.defineProperty(global, "fetch", {
+      configurable: true,
+      writable: true,
+      value: fetchMock,
+    });
+
+    const { unmount } = render(
+      <CodexOAuthModal instanceId="inst-late" onClose={onClose} onSuccess={onSuccess} />
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start codex login/i }));
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(4_000);
+    });
+
+    unmount();
+
+    await act(async () => {
+      resolveSlowStatus({ ok: true, json: async () => ({ data: { authenticated: true } }) });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(3_000);
+    });
+
+    expect(getOauthCaptures("provider_oauth_completed")).toHaveLength(0);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("starts and polls OAuth against the selected profile and returns the saved Vault key id", async () => {

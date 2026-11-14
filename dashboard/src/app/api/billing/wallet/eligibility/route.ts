@@ -32,6 +32,8 @@ import {
 } from "@/lib/billing/token-holdings";
 import { requirePlatformToken, type PlatformTokenKey } from "@/lib/billing/token-registry";
 import { resolveUserTokenAccess } from "@/lib/billing/token-access";
+import { newHivraTiersAllowed } from "@/lib/billing/hivra-readiness";
+import { hivraNotReadyResponse } from "@/lib/billing/hivra-readiness-response";
 import {
   VENICE_BOOST_CPU,
   VENICE_BOOST_RAM_MB,
@@ -153,6 +155,13 @@ export async function GET() {
     // first token this user may newly qualify in.
     const access = await resolveUserTokenAccess(userId, { recordMembership: false });
     const heldTokenKey = (powerQual ?? proQual)?.token_key;
+    // With no tier held yet, the readout is the amount to hold for a NEW
+    // $HIVRA tier: offered only once $HIVRA is usable. A tier already held
+    // keeps its readout.
+    const newTiersAvailable = await newHivraTiersAllowed(access);
+    if (!(powerQual ?? proQual) && !newTiersAvailable) {
+      return hivraNotReadyResponse({ ...LOG_CONTEXT, userId });
+    }
     const tokenKey: PlatformTokenKey = heldTokenKey
       ? heldTokenKey === "hivra" ? "hivra" : "hermesos"
       : access.qualifyTokens[0];
@@ -276,6 +285,9 @@ export async function GET() {
         paymentToken: access.paymentToken,
         convertedAt: access.convertedAt?.toISOString() ?? null,
         conversionGraceEndsAt: access.conversionGraceEndsAt?.toISOString() ?? null,
+        // False while new $HIVRA tiers are off for this account: the page
+        // shows the held tier but offers no new price lock.
+        newTiersAvailable,
       },
       balance: snapshot
         ? {

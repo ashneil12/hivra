@@ -35,7 +35,7 @@ import {
 
 const USER = "user_observed";
 const KEY_ID = "11111111-1111-4111-8111-111111111111";
-const MODEL = "claude-opus-4-8"; // $6 / $30 per million tokens
+const MODEL = "claude-opus-4-8"; // $5 / $25 per million tokens
 
 let world: ManagedVeniceSpendWorld;
 
@@ -80,10 +80,10 @@ describe("a chat hold records what prices its observed output", () => {
     world.fundCard(USER, 1_000_000);
     await reserve("ref_meta", "card");
 
-    // 300 characters of input: 100 tokens at $6 per million.
+    // 300 characters of input: 100 tokens at $5 per million.
     expect(hold("ref_meta").metadata).toMatchObject({
-      inputEstimateMicroUsd: 600,
-      outputMicroUsdPerMillion: 30_000_000,
+      inputEstimateMicroUsd: 500,
+      outputMicroUsdPerMillion: 25_000_000,
     });
   });
 });
@@ -112,10 +112,10 @@ describe("captureManagedVeniceObservedOutput", () => {
     const first = await observed("ref_obs", 2_000);
     const again = await observed("ref_obs", 2_000);
 
-    expect(first).toEqual({ outcome: "captured", chargedMicroUsd: 600 + 60_000 });
+    expect(first).toEqual({ outcome: "captured", chargedMicroUsd: 500 + 50_000 });
     expect(again).toEqual({ outcome: "already_settled", chargedMicroUsd: 0 });
-    expect(hold("ref_obs")).toMatchObject({ status: "captured", captured_micro_usd: 60_600 });
-    expect(lotValue()).toBe(1_000_000 - 60_600);
+    expect(hold("ref_obs")).toMatchObject({ status: "captured", captured_micro_usd: 50_500 });
+    expect(lotValue()).toBe(1_000_000 - 50_500);
     expect(world.usageEvents()).toHaveLength(1);
   });
 
@@ -126,8 +126,8 @@ describe("captureManagedVeniceObservedOutput", () => {
     world.fundHermesos(USER, 5_000_000);
     await reserve("ref_over", "hermesos", 1_000);
     const held = Number(hold("ref_over").reserved_micro_usd);
-    // 600 input + 50,000 output tokens at $30 per million.
-    const cost = 600 + 1_500_000;
+    // 600 input + 50,000 output tokens at $25 per million.
+    const cost = 500 + 1_250_000;
     expect(cost).toBeGreaterThan(held);
 
     const first = await observed("ref_over", 50_000);
@@ -165,7 +165,7 @@ describe("captureManagedVeniceObservedOutput", () => {
     expect(world.tables.managed_venice_reconciliation_items).toEqual([
       expect.objectContaining({
         reason: "managed_venice_overage_uncovered",
-        metadata: expect.objectContaining({ referenceId: "ref_short", overageMicroUsd: 600 + 1_500_000 - held }),
+        metadata: expect.objectContaining({ referenceId: "ref_short", overageMicroUsd: 500 + 1_250_000 - held }),
       }),
     ]);
     expect(world.tables.managed_venice_proxy_keys[0]).toMatchObject({
@@ -192,8 +192,8 @@ describe("captureManagedVeniceObservedOutput", () => {
     item.created_at = new Date(Date.now() - 60 * 60_000).toISOString();
     await sweepStaleManagedVeniceReservations({}, world.db);
 
-    expect(hold("ref_filed")).toMatchObject({ status: "captured", captured_micro_usd: 60_600 });
-    expect(world.cardBalanceMicroUsd(USER)).toBe(1_000_000 - 60_600);
+    expect(hold("ref_filed")).toMatchObject({ status: "captured", captured_micro_usd: 50_500 });
+    expect(world.cardBalanceMicroUsd(USER)).toBe(1_000_000 - 50_500);
   });
 });
 
@@ -224,7 +224,7 @@ describe("captureManagedVeniceChatUsage on a hold that is already settled", () =
     const second = await settle();
 
     // The wallet paid Venice's cost once: the hold, plus the overage once.
-    const actual = 600 + 300_000;
+    const actual = 500 + 250_000;
     expect(lotValue()).toBe(5_000_000 - actual);
     expect(world.usageEvents()).toHaveLength(1);
     expect(first).toMatchObject({ overageStatus: "captured", overageMicroUsd: actual - held });
@@ -284,7 +284,7 @@ describe("settleManagedVeniceChatUsage (the Worker's settle)", () => {
       });
 
       expect(result).toEqual({ settled: true, reconciled: false });
-      expect(hold("ref_worker")).toMatchObject({ status: "captured", captured_micro_usd: 600 + 30_000 });
+      expect(hold("ref_worker")).toMatchObject({ status: "captured", captured_micro_usd: 500 + 25_000 });
       expect(world.tables.managed_venice_reconciliation_items).toHaveLength(0);
     }
   });

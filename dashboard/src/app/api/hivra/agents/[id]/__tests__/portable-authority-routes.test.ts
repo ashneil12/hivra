@@ -30,7 +30,6 @@ jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { from: (...args: unknown[]) => mockSupabaseFrom(...args) },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   RATE_LIMIT_PRESETS: { settingsWrite: {} },
@@ -149,9 +148,9 @@ describe("portable Hivra guest-operation authority", () => {
     expect(response.status).toBe(200);
     expect(mockResolveExecutionContext).toHaveBeenCalledWith("user-a", agent);
     expect(mockInstallToolsOnBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61", vmid: 1161 }),
       [{ id: "github", env: { GITHUB_TOKEN: "token" } }],
-      portableEnv,
+      expect.objectContaining({ kind: "self-managed", env: portableEnv }),
     );
   });
 
@@ -163,9 +162,9 @@ describe("portable Hivra guest-operation authority", () => {
 
     expect(response.status).toBe(200);
     expect(mockUninstallToolFromBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61", vmid: 1161 }),
       "github",
-      portableEnv,
+      expect.objectContaining({ kind: "self-managed", env: portableEnv }),
     );
   });
 
@@ -179,9 +178,9 @@ describe("portable Hivra guest-operation authority", () => {
 
     expect(response.status).toBe(200);
     expect(mockInstallCuratedSkillsOnBox).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61" }),
+      expect.objectContaining({ id: "agent-1", ip: "10.251.20.61", vmid: 1161 }),
       ["research"],
-      portableEnv,
+      expect.objectContaining({ env: portableEnv }),
     );
   });
 

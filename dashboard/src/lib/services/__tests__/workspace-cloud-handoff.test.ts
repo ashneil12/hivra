@@ -49,6 +49,18 @@ describe("workspace-cloud-handoff exchange", () => {
     expect(res).toMatchObject({ ok: false, status: 400, error: "Invalid or expired code" });
   });
 
+  // REGRESSION: a failed code lookup used to be reported as a wrong code (400).
+  // A database failure is a server error and must not look like a bad code.
+  it("reports a failed code lookup as a server error, not as an invalid code", async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: { message: "db unavailable" } });
+    const eq = jest.fn().mockReturnValue({ maybeSingle });
+    const select = jest.fn().mockReturnValue({ eq });
+    (supabaseAdmin!.from as jest.Mock).mockReturnValue({ select });
+
+    const res = await exchangeWorkspaceCloudHandoffCode({ code: "abcdef0123456789", verifier: VALID_VERIFIER });
+    expect(res).toEqual({ ok: false, status: 500, error: "Failed to exchange handoff code" });
+  });
+
   it("rejects an already-consumed code (single-use)", async () => {
     mockSelectRow({
       id: "row1",

@@ -20,6 +20,9 @@ export function HetznerCloudCleanupDialog({connection,onClose,onComplete,onForgo
   const [error,setError] = useState<string|null>(null);
   const [forgetText,setForgetText] = useState("");
   const runningRef = useRef(false);
+  // Key for the order this dialog session is removing. A retry after a failed
+  // first call must replay the same key, so it is kept until the order changes.
+  const cleanupKey = useRef<{orderId:string;key:string}|null>(null);
   const alive = useRef(true);
   const heading = useRef<HTMLHeadingElement>(null);
   const dialog = useInfrastructureDialog({onClose,closeOnEscape:!running,initialFocusRef:heading});
@@ -46,12 +49,16 @@ export function HetznerCloudCleanupDialog({connection,onClose,onComplete,onForgo
     // Connection identity fixes the scope of this dialog instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[connection.id]);
+  function cleanupKeyFor(orderId:string) {
+    if(cleanupKey.current?.orderId!==orderId) cleanupKey.current={orderId,key:crypto.randomUUID()};
+    return cleanupKey.current.key;
+  }
   async function remove() {
     if(runningRef.current || !current?.eligible || !current.fingerprint || !reviewed
       || typedName !== current.serverName || current.status === "deleted")return;
     runningRef.current=true;setRunning(true);setError(null);
     try {
-      const idempotencyKey = current.cleanup?.idempotencyKey ?? crypto.randomUUID();
+      const idempotencyKey = current.cleanup?.idempotencyKey ?? cleanupKeyFor(current.orderId);
       const request = {orderId:current.orderId,idempotencyKey,fingerprint:current.fingerprint,
         serverName:current.serverName,confirmation:current.resources?.firewall ? HETZNER_FIRST_BOOT_CLEANUP_CONFIRMATION : HETZNER_CLEANUP_CONFIRMATION};
       // Four or five exact resources, plus one observation-only pass.

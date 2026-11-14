@@ -10,6 +10,7 @@ import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-or
 import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
 import { apiError } from "@/lib/api-response";
+import { isHostedInstanceStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import {
   buildAdvancedInstanceConfigPayload,
   getAutoUpdateConfig,
@@ -192,6 +193,10 @@ jest.mock("@/lib/webui/instance", () => ({
 
 jest.mock("@/lib/billing/pro-tier", () => ({
   isProTierUser: jest.fn(),
+}));
+
+jest.mock("@/lib/hivra/lapse-gate", () => ({
+  isHostedInstanceStartBlockedForLapse: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock("@/lib/billing/backup-addon-billing", () => ({
@@ -484,6 +489,57 @@ describe("POST /api/instances/[id]", () => {
           recoveryAction: "open_billing",
         }),
       })
+    );
+  });
+
+  it("refuses Start on a hosted computer whose owner has no paid plan, before any start or restore", async () => {
+    (isHostedInstanceStartBlockedForLapse as jest.Mock).mockResolvedValueOnce(true);
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                neq: jest.fn().mockReturnValue({
+                  single: jest.fn().mockResolvedValue({
+                    data: {
+                      id: "inst-123",
+                      user_id: "user_123",
+                      status: "stopped",
+                      lifecycle_state: "paused",
+                      paused_reason: "no_paid_plan",
+                      entitlement_state: "ok",
+                      provider: "openai",
+                      host_id: null,
+                      api_key_encrypted: "encrypted",
+                      config: {},
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }),
+          update: jest.fn(),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const response = await POST(
+      makeJsonRequest("http://localhost/api/instances/inst-123", { action: "start" }, { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+
+    expect(response.status).toBe(402);
+    expect(isHostedInstanceStartBlockedForLapse).toHaveBeenCalledWith("user_123", "start");
+    expect(startProxmoxInstance).not.toHaveBeenCalled();
+    expect(powerOnServer).not.toHaveBeenCalled();
+    expect(apiError).toHaveBeenCalledWith(
+      expect.stringContaining("needs a paid plan"),
+      402,
+      undefined,
+      { code: "instance_entitlement_suspended" },
     );
   });
 
@@ -2258,6 +2314,87 @@ describe("POST /api/instances/[id]", () => {
   });
 });
 
+describe("PATCH /api/instances/[id] host capacity", () => {
+  it("does not count a soft-deleted sibling against the host's capacity", async () => {
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_123" });
+    const siblingRows = [
+      { id: "inst-old", cpu_limit: 4, ram_limit: 4096, status: "deleted" },
+      { id: "inst-live", cpu_limit: 1, ram_limit: 2048, status: "running" },
+    ];
+    const siblingFilters: unknown[][] = [];
+    const siblingChain: Record<string, unknown> = {};
+    siblingChain.select = jest.fn(() => siblingChain);
+    siblingChain.eq = jest.fn(() => siblingChain);
+    siblingChain.not = jest.fn((...args: unknown[]) => {
+      siblingFilters.push(args);
+      return siblingChain;
+    });
+    // Awaited like the real query: deleted rows are only hidden when the
+    // status filter was applied, exactly as PostgREST would.
+    siblingChain.then = (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => {
+      const hideDeleted = siblingFilters.some(
+        ([column, operator, value]) =>
+          column === "status" && operator === "in" && String(value).includes("deleted"),
+      );
+      const data = hideDeleted ? siblingRows.filter((row) => row.status !== "deleted") : siblingRows;
+      return Promise.resolve({ data, error: null }).then(resolve, reject);
+    };
+
+    const instanceChain: Record<string, jest.Mock> = {};
+    instanceChain.select = jest.fn((columns: string) => (columns === "id, cpu_limit, ram_limit" ? siblingChain : instanceChain));
+    instanceChain.eq = jest.fn(() => instanceChain);
+    instanceChain.neq = jest.fn(() => instanceChain);
+    instanceChain.single = jest.fn().mockResolvedValue({
+      data: {
+        id: "inst-123",
+        user_id: "user_123",
+        provider: "openai",
+        status: "stopped",
+        backend: "gateway",
+        config: {},
+        hetzner_server_id: null,
+        host_id: "host-456",
+        cpu_limit: 1,
+        ram_limit: 2048,
+        api_key_encrypted: "enc:existing",
+        lifecycle_state: "active",
+      },
+      error: null,
+    });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return { ...instanceChain, update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }) };
+      }
+      if (table === "hermes_hosts") {
+        const hostChain: Record<string, jest.Mock> = {};
+        hostChain.select = jest.fn(() => hostChain);
+        hostChain.eq = jest.fn(() => hostChain);
+        hostChain.single = jest.fn().mockResolvedValue({
+          data: { id: "host-456", total_cpu: 4, total_ram: 8192 },
+          error: null,
+        });
+        return hostChain;
+      }
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        neq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+        single: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    });
+
+    const response = await PATCH(
+      makeJsonRequest("http://localhost/api/instances/inst-123", { cpuLimit: 2 }, { method: "PATCH" }),
+      { params: Promise.resolve({ id: "inst-123" }) },
+    );
+    const json = await response.json();
+
+    expect(siblingFilters).toContainEqual(["status", "in", '("deleted")']);
+    expect(json.error ?? "").not.toMatch(/Insufficient Host capacity/);
+  });
+});
+
 describe("isAdvancedCloudAccessEligible", () => {
   it("allows a dedicated Hetzner server", () => {
     expect(isAdvancedCloudAccessEligible({
@@ -3353,10 +3490,12 @@ describe("PATCH /api/instances/[id]", () => {
     let flagServerEq: jest.Mock;
     let flagUserEq: jest.Mock;
     let flagResult: { error: { message: string } | null };
+    let peersResult: { data: unknown; error: { message: string } | null };
 
     beforeEach(() => {
       order = [];
       flagResult = { error: null };
+      peersResult = { data: [{ id: "inst-123" }, { id: "inst-peer" }], error: null };
       instanceRow = { ...instanceRow, backups_enabled: true, hetzner_server_id: 42 };
       (removeBackupAddonBilling as jest.Mock).mockReset().mockImplementation(async () => {
         order.push("stripe");
@@ -3386,7 +3525,7 @@ describe("PATCH /api/instances/[id]", () => {
 
       const peersQuery = {
         eq: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ data: [{ id: "inst-123" }, { id: "inst-peer" }], error: null }),
+          eq: jest.fn(async () => peersResult),
         }),
       };
       (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
@@ -3448,6 +3587,20 @@ describe("PATCH /api/instances/[id]", () => {
       expect(JSON.stringify(json)).not.toContain("sk_live_secret");
       expect(disableServerBackup).not.toHaveBeenCalled();
       expect(flagUpdate).not.toHaveBeenCalled();
+    });
+
+    it("keeps backups on and bills nothing when the sibling lookup fails, instead of removing only this row's add-on", async () => {
+      peersResult = { data: null, error: { message: "peer query timed out" } };
+
+      const response = await patchBackupsOff();
+      const json = await response.json();
+
+      expect(response.status).toBe(502);
+      expect(json.error).toContain("Backups are still on");
+      expect(removeBackupAddonBilling).not.toHaveBeenCalled();
+      expect(disableServerBackup).not.toHaveBeenCalled();
+      expect(flagUpdate).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
     });
 
     it("does not clear the flag when Hetzner refuses, so a retry finishes the job", async () => {
@@ -3592,6 +3745,21 @@ describe("GET /api/instances/[id]", () => {
     expect(json.data.public_ipv4).toBe("203.0.113.10");
   });
 
+  it("never returns an encrypted column to the browser", async () => {
+    instanceRow.honcho_api_key_encrypted = "honcho-secret";
+    instanceRow.llm_api_key_encrypted = "llm-secret";
+    const response = await GET(
+      new NextRequest("http://localhost/api/instances/inst-123?no_sync=true"),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(json.data).filter((key) => key.endsWith("_encrypted"))).toEqual([]);
+    expect(json.data.api_key_preview).toBe("sk-...1234");
+    expect(json.data.has_honcho_api_key).toBe(true);
+  });
+
   it("recovers a stale error status when the live gateway is reachable", async () => {
     instanceRow.status = "error";
     (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
@@ -3627,6 +3795,27 @@ describe("GET /api/instances/[id]", () => {
         lifecycle_state: "active",
         last_lifecycle_transition_at: expect.any(String),
       })
+    );
+  });
+
+  it("keeps the stored status when the Hetzner lookup fails instead of writing 'error'", async () => {
+    instanceRow.host_id = null;
+    instanceRow.hetzner_server_id = 42;
+    (getHetznerInstanceStatus as jest.Mock).mockResolvedValueOnce({
+      status: "error",
+      lookupFailed: true,
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/instances/inst-123"),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.status).toBe("running");
+    expect(instanceUpdateMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "error" })
     );
   });
 
@@ -4034,6 +4223,91 @@ describe("GET /api/instances/[id]", () => {
     expect(instanceUpdateMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ status: "error" })
     );
+  });
+
+  it("does not report a Proxmox promotion that the row failed to persist", async () => {
+    const infrastructure = {
+      provider: "proxmox" as const,
+      node: "fixturenode3",
+      vmid: 215,
+      privateIpv4: "10.250.20.65",
+      gatewayHost: "0d04200498b8983f9310.203-0-113-10.sslip.io",
+    };
+    instanceRow.id = "00000000-0000-4000-8000-000000001043";
+    instanceRow.name = "MY_SECOND_AGENT";
+    instanceRow.subdomain = "0d04200498b8983f9310";
+    instanceRow.status = "provisioning";
+    instanceRow.backend = "webui";
+    instanceRow.host_id = null;
+    instanceRow.hetzner_server_id = null;
+    instanceRow.gateway_url = null;
+    instanceRow.ipv4_address = null;
+    instanceRow.infrastructure_provider = "proxmox";
+    instanceRow.config = { model: "deepseek-v4-pro" };
+    (discoverProxmoxInfrastructureForInstance as jest.Mock).mockResolvedValue(infrastructure);
+    (fetchFirstReachableGatewayResponse as jest.Mock).mockResolvedValue({
+      response: { ok: true, text: jest.fn().mockResolvedValue("ok") },
+      url: "https://0d04200498b8983f9310.203-0-113-10.sslip.io/health",
+    });
+    // The running write is rejected by the database; the metadata writes succeed.
+    instanceUpdateMock.mockImplementation((patch: Record<string, unknown>) => ({
+      eq: jest.fn().mockResolvedValue(
+        patch.status === "running" ? { error: { message: "write failed" } } : { error: null },
+      ),
+    }));
+
+    try {
+      const response = await GET(
+        new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-000000001043"),
+        { params: Promise.resolve({ id: "00000000-0000-4000-8000-000000001043" }) },
+      );
+      const json = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(json.data.status).toBe("provisioning");
+      expect(log.error).toHaveBeenCalledWith(
+        "failed to persist instance lifecycle patch",
+        expect.objectContaining({ message: "write failed" }),
+        expect.objectContaining({ failureType: "instance_proxmox_status_sync_write_failed" }),
+      );
+    } finally {
+      instanceUpdateMock.mockReturnValue({ eq: updateEqMock });
+    }
+  });
+
+  it("does not re-run Proxmox fleet discovery on every poll while a row has no infrastructure", async () => {
+    const nowSpy = jest.spyOn(Date, "now");
+    try {
+      const startedAt = Date.now();
+      nowSpy.mockReturnValue(startedAt);
+      instanceRow.id = "00000000-0000-4000-8000-000000001045";
+      instanceRow.status = "provisioning";
+      instanceRow.backend = "webui";
+      instanceRow.host_id = null;
+      instanceRow.hetzner_server_id = null;
+      instanceRow.gateway_url = null;
+      instanceRow.ipv4_address = null;
+      instanceRow.infrastructure_provider = "proxmox";
+      instanceRow.config = { model: "gpt-test" };
+      instanceRow.created_at = new Date(startedAt - 60 * 1000).toISOString();
+      (discoverProxmoxInfrastructureForInstance as jest.Mock).mockResolvedValue(null);
+      const poll = () =>
+        GET(
+          new NextRequest("http://localhost/api/instances/00000000-0000-4000-8000-000000001045"),
+          { params: Promise.resolve({ id: "00000000-0000-4000-8000-000000001045" }) },
+        );
+
+      await poll();
+      await poll();
+      expect(discoverProxmoxInfrastructureForInstance).toHaveBeenCalledTimes(1);
+
+      // After the miss window, discovery runs again so a late VM is still found.
+      nowSpy.mockReturnValue(startedAt + 61 * 1000);
+      await poll();
+      expect(discoverProxmoxInfrastructureForInstance).toHaveBeenCalledTimes(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("marks a WebUI-backed provisioning instance running when its health endpoint is reachable", async () => {
@@ -4525,6 +4799,313 @@ describe("GET /api/instances/[id]", () => {
   });
 });
 
+describe("DELETE /api/instances/[id] write failures", () => {
+  // One row read; the live-sibling count query is chainable and awaited.
+  function mockSharedHostDelete(options: {
+    softDeleteError?: { message: string } | null;
+    liveCount?: { count: number | null; error: { message: string } | null };
+  }) {
+    const softDeleteUpdate = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: options.softDeleteError ?? null }),
+    });
+    const hostUpdate = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    });
+    // The route runs three awaited counts on this chain: the server-level
+    // sibling count (filters hetzner_server_id) and a host-level sibling count
+    // (filters host_id), both before the delete, then the post-delete host
+    // count (filters host_id again). The pre-delete counts are clean here, so
+    // the delete proceeds; `liveCount` answers only the post-delete host count.
+    let filteredColumns: string[] = [];
+    const instanceChain: Record<string, jest.Mock> = {};
+    instanceChain.select = jest.fn(() => {
+      filteredColumns = [];
+      return instanceChain;
+    });
+    instanceChain.eq = jest.fn((column: string) => {
+      filteredColumns.push(column);
+      return instanceChain;
+    });
+    instanceChain.neq = jest.fn(() => instanceChain);
+    instanceChain.single = jest.fn().mockResolvedValue({
+      data: {
+        id: "inst-123",
+        user_id: "user_123",
+        status: "running",
+        provider: "openai",
+        hetzner_server_id: 42,
+        host_id: "host-456",
+        config: {},
+      },
+      error: null,
+    });
+    let hostCountReads = 0;
+    (instanceChain as unknown as PromiseLike<unknown>).then = (resolve, reject) => {
+      let answer: { count: number | null; error: { message: string } | null } = { count: 0, error: null };
+      if (filteredColumns.includes("host_id")) {
+        hostCountReads += 1;
+        if (hostCountReads > 1) answer = options.liveCount ?? { count: 0, error: null };
+      }
+      return Promise.resolve(answer).then(resolve, reject);
+    };
+
+    (deleteHetznerServer as jest.Mock).mockResolvedValue(undefined);
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return { ...instanceChain, update: softDeleteUpdate };
+      }
+      if (table === "hermes_hosts") {
+        return { update: hostUpdate };
+      }
+      return { update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }) };
+    });
+    return { softDeleteUpdate, hostUpdate };
+  }
+
+  function confirmedDelete() {
+    return DELETE(
+      new NextRequest("http://localhost/api/instances/inst-123", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirmation: "inst-123" }),
+      }),
+      { params: Promise.resolve({ id: "inst-123" }) },
+    );
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_123" });
+  });
+
+  it("does not report deleted when the soft-delete write fails after provider teardown", async () => {
+    const { hostUpdate } = mockSharedHostDelete({
+      softDeleteError: { message: "statement timeout" },
+      liveCount: { count: 0, error: null },
+    });
+
+    const response = await confirmedDelete();
+    const json = await response.json();
+
+    expect(deleteHetznerServer).toHaveBeenCalledWith(42);
+    expect(response.status).toBe(500);
+    expect(json.success).toBe(false);
+    expect(json.data).toBeUndefined();
+    expect(hostUpdate).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      "instance soft-delete write failed after provider teardown",
+      expect.anything(),
+      expect.objectContaining({
+        failureMessage: "The runtime was removed, but its record could not be updated. Retry deletion to finish.",
+        failureOwner: "control-plane",
+      })
+    );
+  });
+
+  it("does not mark a shared host deleted when the live-instance count query fails", async () => {
+    const { hostUpdate } = mockSharedHostDelete({
+      liveCount: { count: null, error: { message: "connection reset" } },
+    });
+
+    const response = await confirmedDelete();
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data).toEqual({ deleted: true });
+    expect(hostUpdate).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      "live-instance count failed; leaving shared host status unchanged",
+      expect.objectContaining({ message: "connection reset" }),
+      expect.objectContaining({ failureType: "instance_delete_host_count_failed", hostId: "host-456" }),
+    );
+  });
+
+  it("still marks the shared host deleted when no live sibling remains", async () => {
+    const { hostUpdate } = mockSharedHostDelete({
+      liveCount: { count: 0, error: null },
+    });
+
+    const response = await confirmedDelete();
+
+    expect(response.status).toBe(200);
+    expect(hostUpdate).toHaveBeenCalledWith({ status: "deleted" });
+  });
+});
+
+// hermes_instances select chain for DELETE tests. It serves the owner-scoped
+// row read (eq, eq, neq, single) and the shared-server sibling count (eq, neq,
+// neq, awaited). `siblingCount` is the number of other live rows on the server.
+function deleteRowSelect(row: Record<string, unknown>, siblingCount = 0) {
+  const chain: Record<string, unknown> = {};
+  chain.eq = jest.fn(() => chain);
+  chain.neq = jest.fn(() => chain);
+  chain.single = jest.fn().mockResolvedValue({ data: row, error: null });
+  chain.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+    Promise.resolve({ count: siblingCount, error: null }).then(resolve, reject);
+  return chain;
+}
+
+describe("DELETE /api/instances/[id] on a Hetzner server shared by several agents (F011)", () => {
+  type InstanceRow = Record<string, unknown> & { id: string };
+
+  // In-memory hermes_instances table. Reads and counts run the same
+  // select/eq/neq chain the route uses and filter these rows, so the sibling
+  // count is what the rows say, not a canned number.
+  function mockInstancesTable(rows: InstanceRow[], options: { countError?: { message: string } } = {}) {
+    const hostUpdate = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_hosts") return { update: hostUpdate };
+      if (table !== "hermes_instances") {
+        return { update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }) };
+      }
+      return {
+        select: jest.fn(() => {
+          const filters: Array<(row: InstanceRow) => boolean> = [];
+          const matching = () => rows.filter((row) => filters.every((keep) => keep(row)));
+          const query: Record<string, unknown> = {};
+          query.eq = jest.fn((column: string, value: unknown) => {
+            filters.push((row) => row[column] === value);
+            return query;
+          });
+          query.neq = jest.fn((column: string, value: unknown) => {
+            filters.push((row) => row[column] !== value);
+            return query;
+          });
+          query.single = jest.fn(async () => {
+            const [row] = matching();
+            return row ? { data: row, error: null } : { data: null, error: { message: "no rows" } };
+          });
+          query.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+            Promise.resolve(
+              options.countError
+                ? { count: null, error: options.countError }
+                : { count: matching().length, error: null },
+            ).then(resolve, reject);
+          return query;
+        }),
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(async (column: string, value: unknown) => {
+            rows.filter((row) => row[column] === value).forEach((row) => Object.assign(row, patch));
+            return { error: null };
+          }),
+        })),
+      };
+    });
+    return { hostUpdate };
+  }
+
+  function agentRow(id: string, overrides: Partial<InstanceRow> = {}): InstanceRow {
+    return {
+      id,
+      user_id: "user_123",
+      status: "running",
+      lifecycle_state: "running",
+      provider: "openai",
+      hetzner_server_id: 42,
+      host_id: "host-456",
+      config: {},
+      ...overrides,
+    };
+  }
+
+  function deleteAgent(id: string) {
+    return DELETE(
+      new NextRequest(`http://localhost/api/instances/${id}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirmation: id }),
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_123" });
+    (deleteHetznerServer as jest.Mock).mockResolvedValue(undefined);
+  });
+
+  it("refuses to delete an agent while another live agent still runs on its server, and changes nothing (F011)", async () => {
+    // Regression: DELETE used to soft-delete the row and remove its DNS record
+    // while agent inst-b (still running on the same server) kept running, so
+    // the agent stayed live but invisible. No per-agent teardown exists, so
+    // the delete is refused before any provider call or row/DNS write.
+    const rows = [agentRow("inst-123"), agentRow("inst-b")];
+    const { hostUpdate } = mockInstancesTable(rows);
+
+    const response = await deleteAgent("inst-123");
+    const json = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(json.success).toBe(false);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(removeInstanceDnsBestEffort).not.toHaveBeenCalled();
+    expect(rows.find((row) => row.id === "inst-123")).toMatchObject({
+      status: "running",
+      lifecycle_state: "running",
+    });
+    expect(rows.find((row) => row.id === "inst-b")?.status).toBe("running");
+    expect(hostUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses both agents when two overlapping deletes target the last two agents on one server (F011)", async () => {
+    // Regression: each delete counted the other as live and then soft-deleted
+    // its own row, so both rows ended deleted with the server still billing.
+    // A refusal writes nothing, so neither row can be soft-deleted while the
+    // other still runs.
+    const rows = [agentRow("inst-123"), agentRow("inst-b")];
+    mockInstancesTable(rows);
+
+    const [first, second] = await Promise.all([deleteAgent("inst-123"), deleteAgent("inst-b")]);
+
+    expect(first.status).toBe(409);
+    expect(second.status).toBe(409);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(rows.map((row) => row.status)).toEqual(["running", "running"]);
+  });
+
+  it("counts a sibling linked to the same host even when it has no server id (F011)", async () => {
+    // Regression: the sibling count looked only at hetzner_server_id, so a
+    // host-linked row without a server id was missed and the server destroyed.
+    const rows = [agentRow("inst-123"), agentRow("inst-b", { hetzner_server_id: null })];
+    mockInstancesTable(rows);
+
+    const response = await deleteAgent("inst-123");
+
+    expect(response.status).toBe(409);
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(rows.find((row) => row.id === "inst-123")?.status).toBe("running");
+  });
+
+  it("deletes the server when the other rows on it are already deleted", async () => {
+    const rows = [agentRow("inst-123"), agentRow("inst-b", { status: "deleted" })];
+    mockInstancesTable(rows);
+
+    const response = await deleteAgent("inst-123");
+
+    expect(response.status).toBe(200);
+    expect(deleteHetznerServer).toHaveBeenCalledWith(42);
+    expect(rows.find((row) => row.id === "inst-123")?.status).toBe("deleted");
+  });
+
+  it("refuses the delete and leaves the server and row alone when the sibling count fails", async () => {
+    // An unknown count is not zero: a failed check must not destroy the server.
+    const rows = [agentRow("inst-123"), agentRow("inst-b")];
+    mockInstancesTable(rows, { countError: { message: "connection reset" } });
+
+    const response = await deleteAgent("inst-123");
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json.success).toBe(false);
+    expect(json.data).toBeUndefined();
+    expect(deleteHetznerServer).not.toHaveBeenCalled();
+    expect(rows.find((row) => row.id === "inst-123")?.status).toBe("running");
+  });
+});
+
 describe("DELETE /api/instances/[id]", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -4533,26 +5114,17 @@ describe("DELETE /api/instances/[id]", () => {
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       if (table === "hermes_instances") {
         return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              eq: jest.fn().mockReturnValue({
-                neq: jest.fn().mockReturnValue({
-                  single: jest.fn().mockResolvedValue({
-                    data: {
-                      id: "inst-123",
-                      user_id: "user_123",
-                      status: "running",
-                      provider: "openai",
-                      hetzner_server_id: 42,
-                      host_id: "host-456",
-                      config: {},
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
+          select: jest.fn(() =>
+            deleteRowSelect({
+              id: "inst-123",
+              user_id: "user_123",
+              status: "running",
+              provider: "openai",
+              hetzner_server_id: 42,
+              host_id: "host-456",
+              config: {},
             }),
-          }),
+          ),
           update: jest.fn().mockReturnValue({
             eq: jest.fn().mockResolvedValue({ error: null }),
           }),
@@ -4598,26 +5170,17 @@ describe("DELETE /api/instances/[id]", () => {
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       if (table === "hermes_instances") {
         return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              eq: jest.fn().mockReturnValue({
-                neq: jest.fn().mockReturnValue({
-                  single: jest.fn().mockResolvedValue({
-                    data: {
-                      id: "inst-123",
-                      user_id: "user_123",
-                      status: "running",
-                      provider: "openai",
-                      hetzner_server_id: 42,
-                      host_id: "host-456",
-                      config: {},
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
+          select: jest.fn(() =>
+            deleteRowSelect({
+              id: "inst-123",
+              user_id: "user_123",
+              status: "running",
+              provider: "openai",
+              hetzner_server_id: 42,
+              host_id: "host-456",
+              config: {},
             }),
-          }),
+          ),
           update: updateSpy,
         };
       }
@@ -4638,6 +5201,7 @@ describe("DELETE /api/instances/[id]", () => {
       "hetzner delete failed; refusing to mark instance deleted (avoid orphan billable VM)",
       expect.any(Error),
       expect.objectContaining({
+        failureMessage: "Hetzner delete failed. Please retry — the instance has not been removed.",
         failureType: "instance_delete_hetzner_failed",
         failureOwner: "provider",
         failurePhase: "delete",
@@ -4709,26 +5273,17 @@ describe("DELETE /api/instances/[id]", () => {
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       if (table === "hermes_instances") {
         return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              eq: jest.fn().mockReturnValue({
-                neq: jest.fn().mockReturnValue({
-                  single: jest.fn().mockResolvedValue({
-                    data: {
-                      id,
-                      user_id: "user_123",
-                      status: "running",
-                      provider: "openai",
-                      hetzner_server_id: 42,
-                      host_id: null,
-                      config: {},
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
+          select: jest.fn(() =>
+            deleteRowSelect({
+              id,
+              user_id: "user_123",
+              status: "running",
+              provider: "openai",
+              hetzner_server_id: 42,
+              host_id: null,
+              config: {},
             }),
-          }),
+          ),
           update: updateSpy,
         };
       }
@@ -4888,6 +5443,87 @@ describe("DELETE /api/instances/[id]", () => {
       "proxmox delete failed; refusing to mark instance deleted",
       expect.any(Error),
       expect.objectContaining({
+        failureMessage: "Proxmox delete failed. Please retry — the instance has not been removed.",
+        failureType: "instance_delete_proxmox_failed",
+        failureOwner: "hypervisor",
+        failurePhase: "delete",
+        recoveryAction: "contact_support",
+      })
+    );
+  });
+
+  it("refuses to mark deleted when the Proxmox delete call throws", async () => {
+    const infrastructure = {
+      provider: "proxmox",
+      vmid: 201,
+      privateIpv4: "10.250.20.51",
+      gatewayHost: "abc123.203-0-113-10.sslip.io",
+    };
+    const updateSpy = jest.fn();
+    (deleteProxmoxInstance as jest.Mock).mockRejectedValue(
+      new Error("ssh: connect to host 10.250.20.1 port 22: Connection refused"),
+    );
+    // The post-failure check runs `getProxmoxInstanceStatus` to see if the VM
+    // is already gone. Without this mock the route hits TypeError reading
+    // .vmMissing on undefined and falls into the outer catch block, which
+    // logs a different message than the assertion below expects.
+    (getProxmoxInstanceStatus as jest.Mock).mockResolvedValue({
+      status: "running",
+      vmMissing: false,
+    });
+
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                neq: jest.fn().mockReturnValue({
+                  single: jest.fn().mockResolvedValue({
+                    data: {
+                      id: "inst-123",
+                      user_id: "user_123",
+                      status: "running",
+                      provider: "openai",
+                      hetzner_server_id: null,
+                      host_id: "host-fixturenode2",
+                      config: { infrastructure: { ...infrastructure, hostSlug: "fixturenode2" } },
+                    },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }),
+          update: updateSpy,
+        };
+      }
+      return {
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      };
+    });
+
+    const response = await DELETE(confirmedDeleteRequest(), {
+      params: Promise.resolve({ id: "inst-123" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(json.error).toBe("Proxmox delete failed. Please retry — the instance has not been removed.");
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(deleteProxmoxInstance).toHaveBeenCalledWith(
+      expect.objectContaining(infrastructure),
+      expect.objectContaining({
+        hostConfig: expect.objectContaining({ hostId: "host-fixturenode2", hostSlug: "fixturenode2" }),
+      })
+    );
+    expect(log.error).toHaveBeenCalledWith(
+      "proxmox delete threw; refusing to mark instance deleted",
+      expect.any(Error),
+      expect.objectContaining({
+        failureMessage: "Proxmox delete failed. Please retry — the instance has not been removed.",
         failureType: "instance_delete_proxmox_failed",
         failureOwner: "hypervisor",
         failurePhase: "delete",
@@ -5338,6 +5974,14 @@ describe("DELETE /api/instances/[id]", () => {
     );
     expect(updateSpy).not.toHaveBeenCalled();
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      "proxmox-backed row missing an authoritative teardown receipt; refusing to mark deleted",
+      expect.any(Error),
+      expect.objectContaining({
+        failureMessage: "This runtime could not be verified as removed. Its record was preserved while routing recovery runs.",
+        failureOwner: "control-plane",
+      })
+    );
   });
 
   it("refuses DB-only deletion for failed/error rows without teardown evidence", async () => {
@@ -5408,28 +6052,19 @@ describe("DELETE /api/instances/[id]", () => {
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       if (table === "hermes_instances") {
         return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              eq: jest.fn().mockReturnValue({
-                neq: jest.fn().mockReturnValue({
-                  single: jest.fn().mockResolvedValue({
-                    data: {
-                      id: "inst-123",
-                      user_id: "user_123",
-                      status: "running",
-                      provider: "openai",
-                      hetzner_server_id: 42,
-                      host_id: null,
-                      subdomain: "abc123",
-                      gateway_url: "https://abc123.hermesos.cloud",
-                      config: {},
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
+          select: jest.fn(() =>
+            deleteRowSelect({
+              id: "inst-123",
+              user_id: "user_123",
+              status: "running",
+              provider: "openai",
+              hetzner_server_id: 42,
+              host_id: null,
+              subdomain: "abc123",
+              gateway_url: "https://abc123.hermesos.cloud",
+              config: {},
             }),
-          }),
+          ),
           update: updateSpy,
         };
       }
@@ -5470,33 +6105,24 @@ describe("DELETE /api/instances/[id]", () => {
       new Error("Hetzner API DELETE /servers/42 → 404: not_found")
     );
 
-    // host_id=null so the secondary host-count query (which uses a
-    // different chain shape than the default mock provides) is skipped.
+    // host_id=null skips the post-delete host-count query. The server-level
+    // sibling count (no other rows on server 42) still runs, via deleteRowSelect.
     // The point of THIS test is the 404 → already-gone codepath, not
     // host bookkeeping.
     (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
       if (table === "hermes_instances") {
         return {
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              eq: jest.fn().mockReturnValue({
-                neq: jest.fn().mockReturnValue({
-                  single: jest.fn().mockResolvedValue({
-                    data: {
-                      id: "inst-123",
-                      user_id: "user_123",
-                      status: "running",
-                      provider: "openai",
-                      hetzner_server_id: 42,
-                      host_id: null,
-                      config: {},
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
+          select: jest.fn(() =>
+            deleteRowSelect({
+              id: "inst-123",
+              user_id: "user_123",
+              status: "running",
+              provider: "openai",
+              hetzner_server_id: 42,
+              host_id: null,
+              config: {},
             }),
-          }),
+          ),
           update: jest.fn().mockReturnValue({
             eq: jest.fn().mockResolvedValue({ error: null }),
           }),

@@ -21,6 +21,12 @@ import { TOKEN_GEO_POLICY } from "@/lib/compliance/token-geo-policy";
 import WalletPage from "../page";
 import { loadAgentWalletsFromApi } from "../agent-wallet-data";
 
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@/lib/compliance/token-geo-list", () => jest.requireActual("@/lib/compliance/token-geo-list"));
 
 const mockReplace = jest.fn();

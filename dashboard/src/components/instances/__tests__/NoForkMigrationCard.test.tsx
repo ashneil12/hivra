@@ -36,7 +36,7 @@ describe("NoForkMigrationCard", () => {
   });
 
   it("offers a plain button, explains what is kept, and asks once before starting", async () => {
-    const fetchMock = mockFetch((url, init) => {
+    const fetchMock = mockFetch((_url, init) => {
       if (init?.method === "POST") return json({ success: true, data: { started: true } });
       return json({ success: true, data: { offer: offerOf(), progress: null } });
     });
@@ -92,7 +92,7 @@ describe("NoForkMigrationCard", () => {
   });
 
   it("reports a failed start honestly", async () => {
-    mockFetch((url, init) =>
+    mockFetch((_url, init) =>
       init?.method === "POST" ? json({ error: "Could not start the update. Nothing was changed." }, false) : json({ success: true, data: { offer: offerOf(), progress: null } })
     );
     await renderCard();

@@ -10,7 +10,13 @@ import {
   ensureBankrDepositWalletForUser,
   getBankrDepositWalletCredentialForUser,
 } from "@/lib/billing/bankr-deposit-wallets";
-import { getLatestHermesTokenHoldingSnapshotForWallet } from "@/lib/billing/token-holdings";
+import {
+  fetchTokenBalance,
+  getLatestHermesTokenHoldingSnapshotForWallet,
+  platformTokenBalanceConfig,
+} from "@/lib/billing/token-holdings";
+import { getActiveHivraToken } from "@/lib/billing/token-registry";
+import { log } from "@/lib/logger";
 import {
   BankrPartnerResponseError,
   getBankrWalletForUser,
@@ -36,22 +42,92 @@ async function activeLegacyHermesLockCredential(
   return snapshot && BigInt(snapshot.balanceRaw) > 0n ? credential : null;
 }
 
+interface TokenLockHivraBalance {
+  tokenSymbol: string;
+  tokenAddress: string;
+  tokenDecimals: number;
+  balanceRaw: string;
+  balanceDisplay: string;
+}
+
+/**
+ * The lock wallet's live $HIVRA balance, once $HIVRA is live. A lock wallet can
+ * end up holding $HIVRA (the holder claim is made on Sablier from a wallet the
+ * holder connects, not pushed to wallets); this is what lets its owner see it
+ * and withdraw it. Null while $HIVRA is dormant (nothing
+ * is read), with no lock wallet, or when the read fails (logged; the page
+ * still loads).
+ */
+async function lockWalletHivraBalance(
+  userId: string,
+  credential: BankrDepositWalletCredential | null
+): Promise<TokenLockHivraBalance | null> {
+  const hivra = getActiveHivraToken();
+  if (!hivra || !credential) return null;
+  try {
+    const balance = await fetchTokenBalance({
+      token: platformTokenBalanceConfig(hivra),
+      walletAddress: credential.normalizedEvmAddress,
+    });
+    return {
+      tokenSymbol: hivra.symbol,
+      tokenAddress: hivra.address,
+      tokenDecimals: hivra.decimals,
+      balanceRaw: balance.balanceRaw,
+      balanceDisplay: balance.balanceDisplay,
+    };
+  } catch (error) {
+    log.warn("lock wallet $HIVRA balance read failed", {
+      ...ROUTE_CONTEXT,
+      userId,
+      failureType: "bankr_lock_wallet_hivra_balance_failed",
+    }, error);
+    return null;
+  }
+}
+
+/**
+ * The lock wallet the page shows, plus its $HIVRA balance once $HIVRA is live.
+ * A lock wallet that holds only $HIVRA still shows, so its owner can withdraw
+ * it, but it is not legacy custody: custody (and every $HermesOS panel) follows
+ * the lock wallet's $HermesOS alone, and `tokenLockHoldsHermes` tells the page
+ * whether to offer the $HermesOS withdraw. While $HIVRA is dormant this is
+ * exactly the $HermesOS-only check and the response gains no field.
+ */
+async function lockWalletState(userId: string, credential: BankrDepositWalletCredential | null) {
+  const [hermesCredential, hivraBalance] = await Promise.all([
+    activeLegacyHermesLockCredential(userId, credential),
+    lockWalletHivraBalance(userId, credential),
+  ]);
+  const holdsHivra = Boolean(hivraBalance && BigInt(hivraBalance.balanceRaw) > 0n);
+  const holdsHermes = Boolean(hermesCredential);
+  return {
+    activeCredential: hermesCredential ?? (holdsHivra ? credential : null),
+    custodyMode: holdsHermes ? ("legacy_custody" as const) : ("self_custody" as const),
+    status: holdsHermes ? ("existing" as const) : ("self_custody_required" as const),
+    hivraFields: getActiveHivraToken()
+      ? { tokenLockHivra: holdsHivra ? hivraBalance : null, tokenLockHoldsHermes: holdsHermes }
+      : {},
+  };
+}
+
 async function loadBankrWalletStatus(userId: string) {
   const [wallet, creditCredential, tokenLockCredential] = await Promise.all([
     getBankrWalletForUser({ userId, purpose: "credit_deposit" }),
     getBankrDepositWalletCredentialForUser({ userId, purpose: "credit_deposit" }),
     getBankrDepositWalletCredentialForUser({ userId, purpose: "hermesos_lock" }),
   ]);
-  const activeTokenLockCredential = await activeLegacyHermesLockCredential(userId, tokenLockCredential);
-  const custodyMode = activeTokenLockCredential ? "legacy_custody" : "self_custody";
+  const lock = await lockWalletState(userId, tokenLockCredential);
+  const activeTokenLockCredential = lock.activeCredential;
 
   return {
-    status: activeTokenLockCredential ? "existing" : "self_custody_required",
-    custodyMode,
+    status: lock.status,
+    custodyMode: lock.custodyMode,
     wallet,
     depositWallet: bankrDepositWalletPublicSummary(creditCredential),
     creditDepositWallet: bankrDepositWalletPublicSummary(creditCredential),
     tokenLockWallet: bankrDepositWalletPublicSummary(activeTokenLockCredential),
+    ...lock.hivraFields,
   };
 }
 
@@ -68,17 +144,18 @@ async function provisionCreditDepositWalletStatus(userId: string) {
     return { status: "not_configured" as const };
   }
 
-  const activeTokenLockCredential = await activeLegacyHermesLockCredential(userId, tokenLockCredential);
-  const custodyMode = activeTokenLockCredential ? "legacy_custody" : "self_custody";
+  const lock = await lockWalletState(userId, tokenLockCredential);
+  const activeTokenLockCredential = lock.activeCredential;
 
   return {
-    status: activeTokenLockCredential ? "existing" : "self_custody_required",
-    custodyMode,
+    status: lock.status,
+    custodyMode: lock.custodyMode,
     wallet: creditResult.wallet,
     bankrWallet: creditResult.bankrWallet,
     depositWallet: bankrDepositWalletPublicSummary(creditResult.credential),
     creditDepositWallet: bankrDepositWalletPublicSummary(creditResult.credential),
     tokenLockWallet: bankrDepositWalletPublicSummary(activeTokenLockCredential),
+    ...lock.hivraFields,
   };
 }
 

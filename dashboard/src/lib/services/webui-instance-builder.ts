@@ -29,6 +29,11 @@ import {
   buildSslipPlaceholderResolutionScript,
 } from "@/lib/services/hetzner-instance-builders";
 import { SIDECAR_SERVER_CODE, WEBUI_HANDOFF_APPENDAGE } from "@/lib/services/sidecar-script";
+import {
+  BROWSER_SIDECAR_SECCOMP_FILE,
+  browserSidecarSeccompProfileJson,
+  browserSidecarSecurityOpts,
+} from "@/lib/browser-sidecar/container-security";
 import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
 import {
   buildWebUISignalDaemonScript,
@@ -175,15 +180,37 @@ const WEBUI_APPROVAL_GATEWAY_TIMEOUT_SECONDS = 3600;
 // free-tier VMs do not incur the ~1GB RAM footprint.
 const BROWSER_SIDECAR_INTERNAL_PORT = 8789;
 const BROWSER_SIDECAR_NOVNC_PORT = 6080;
-// Prod and canary publish separate browser-sidecar packages. Override via
-// HERMES_BROWSER_SIDECAR_IMAGE when a deployment needs an emergency pin.
-const BROWSER_SIDECAR_PROD_IMAGE = "ghcr.io/ashneil12/hermes-browser-sidecar:stable";
-const BROWSER_SIDECAR_CANARY_IMAGE =
-  "ghcr.io/ashneil12/hermes-browser-sidecar-canary:stable";
+// The sidecar image is pinned by digest, never a floating tag: a box changes
+// sidecar only when this line changes (reviewed, and on prod only via Promote),
+// and an update rollback that restores the old compose restores the old image.
+// CI (.github/workflows/browser-sidecar.yml) publishes every canary/main build
+// as an immutable sha- tag of this one package and prints the digest to pin.
+// This build: commit 9a35d3a0, Debian Chromium 156.0.8078.79 with its sandbox
+// on (CVE-2026-118306 floor 156.0.8078.73), non-root; it needs the compose
+// security settings in buildBrowserSidecarServiceBlock. Override via
+// HERMES_BROWSER_SIDECAR_IMAGE only for an emergency pin.
+const BROWSER_SIDECAR_IMAGE =
+  "ghcr.io/ashneil12/hermes-browser-sidecar@sha256:39ef9d7b0439d15b146ea9101106068ea173f656c5ffa85f1b3a060754e55c61";
+const BROWSER_SIDECAR_PROD_IMAGE = BROWSER_SIDECAR_IMAGE;
+const BROWSER_SIDECAR_CANARY_IMAGE = BROWSER_SIDECAR_IMAGE;
 
 function env(key: string, fallback: string): string {
   const v = process.env[key];
   return v && v.trim() ? v : fallback;
+}
+
+// SEC-04: a CR/LF/NUL in a dashboard-provided value (API key, base URL, model,
+// bot name) must never smuggle an extra KEY=value line into a generated .env /
+// hermes.env file.
+function sanitizeEnvValue(val: string): string {
+  return String(val).replace(/[\r\n\0]/g, "");
+}
+
+// YAML double-quoted scalar. Byte-identical to `"${val}"` for ordinary values,
+// but quote/newline-safe when val contains `"` or a line break, so a hostile
+// value cannot break out of the scalar and inject extra config.yaml keys.
+function yamlDoubleQuotedScalar(val: unknown): string {
+  return JSON.stringify(String(val).replace(/[\r\n\0]/g, ""));
 }
 
 function resolveBrowserSidecarDefaultImage(): string {
@@ -522,7 +549,7 @@ export function buildHermesTaggedImageCleanupFunctions(): string {
 }
 
 prune_old_unused_hermes_agent_images() {
-  for repo in 'ghcr.io/ashneil12/vanilla-hermes-agent' 'ghcr.io/ashneil12/vanilla-hermes-agent-canary' 'ghcr.io/ashneil12/hermes-webui' 'ghcr.io/ashneil12/operatoros-box' 'ghcr.io/ashneil12/browser-sidecar'; do
+  for repo in 'ghcr.io/ashneil12/vanilla-hermes-agent' 'ghcr.io/ashneil12/vanilla-hermes-agent-canary' 'ghcr.io/ashneil12/hermes-webui' 'ghcr.io/ashneil12/operatoros-box' 'ghcr.io/ashneil12/browser-sidecar' 'ghcr.io/ashneil12/hermes-browser-sidecar' 'ghcr.io/ashneil12/hermes-browser-sidecar-canary'; do
     prune_old_unused_hermes_repo_images "$repo"
   done
 }
@@ -853,6 +880,10 @@ function buildBrowserSidecarServiceBlock(p: WebUIDeployParams): string {
       - AGENT_CDP_PROXY_PORT=${AGENT_CDP_PROXY_PORT}` : ""}
     volumes:
       - browser-state:/var/lib/hermes-browser
+    # Chromium's own sandbox stays ON (the image never passes --no-sandbox):
+    # the profile file is written next to this compose by the deploy script.
+    security_opt:
+${browserSidecarSecurityOpts(`/opt/hermes/instances/${p.instanceId}`).map((opt) => `      - ${opt}`).join("\n")}
     expose:
       - "${BROWSER_SIDECAR_INTERNAL_PORT}"
       - "${BROWSER_SIDECAR_NOVNC_PORT}"${agentBrowserCdpEnabled() ? `
@@ -2572,7 +2603,9 @@ export function buildWebUIComposeEnv(p: WebUIDeployParams): string {
   if (p.tavilyApiKey) lines.push(`TAVILY_API_KEY=${p.tavilyApiKey}`);
   if (p.firecrawlApiKey) lines.push(`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`);
   if (p.daytonaApiKey) lines.push(`DAYTONA_API_KEY=${p.daytonaApiKey}`);
-  return lines.join("\n") + "\n";
+  // SEC-04: sanitize every emitted line — interpolated values (provider, model,
+  // bot name, keys, base URL) must not be able to inject extra env lines.
+  return lines.map(sanitizeEnvValue).join("\n") + "\n";
 }
 
 // ── hermes-agent .env (lives inside the volume, scoped to the agent run) ─
@@ -2664,7 +2697,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
       ...(p.tavilyApiKey ? [`TAVILY_API_KEY=${p.tavilyApiKey}`] : []),
       ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
       ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
-    ].join("\n") + "\n";
+    ].map(sanitizeEnvValue).join("\n") + "\n";
   }
 
   if (p.inferenceProvider === "openai-codex" || p.inferenceProvider === "xai-oauth") {
@@ -2684,7 +2717,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
       ...(p.tavilyApiKey ? [`TAVILY_API_KEY=${p.tavilyApiKey}`] : []),
       ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
       ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
-    ].join("\n") + "\n";
+    ].map(sanitizeEnvValue).join("\n") + "\n";
   }
 
   // Determine the right env-var name for the API key based on provider.
@@ -2711,7 +2744,10 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
     ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
     ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
   ];
-  return lines.join("\n") + "\n";
+  // SEC-04: sanitize every emitted line — interpolated values (provider, key,
+  // base URL, bankr fields, gateway token) must not be able to inject extra
+  // env lines into /state/.env.
+  return lines.map(sanitizeEnvValue).join("\n") + "\n";
 }
 
 function buildBankrEnvLines(bankr?: InstanceBankrAgentConfig | null): string[] {
@@ -2785,7 +2821,11 @@ export function buildWebUIConfigYaml(
   // into this image via the operatoros-flavor helpers, and the image is the
   // payload source, so flavor and payload can never disagree.
   const isOperatorOsDeploy = isOperatorosAgentImage(resolveWebUIAgentImage(p, mode));
-  const baseUrlLine = p.baseUrl ? `\n  base_url: "${p.baseUrl}"` : "";
+  // SEC-04: every dashboard-provided scalar below goes through
+  // yamlDoubleQuotedScalar (JSON.stringify output == `"..."` for ordinary
+  // strings) so a `"`/newline in baseUrl, model, provider, or the aux
+  // compression fields can't break out of the YAML scalar and inject keys.
+  const baseUrlLine = p.baseUrl ? `\n  base_url: ${yamlDoubleQuotedScalar(p.baseUrl)}` : "";
   // The agent's OpenAI client for a `custom` provider (managed-Venice runs as
   // `custom` + base_url) does NOT fall back to the OPENAI_API_KEY env when
   // model.api_key is absent — it puts an EMPTY credential on the wire and the
@@ -2822,8 +2862,8 @@ export function buildWebUIConfigYaml(
   const modelBlock = p.unconfigured
     ? ""
     : `model:
-  default: "${p.defaultModel}"
-  provider: "${p.inferenceProvider}"${baseUrlLine}${apiKeyLine}
+  default: ${yamlDoubleQuotedScalar(p.defaultModel)}
+  provider: ${yamlDoubleQuotedScalar(p.inferenceProvider)}${baseUrlLine}${apiKeyLine}
 `;
   // Auxiliary compression model — the CHEAP model the agent uses to summarize /
   // compact context (this is what keeps the sliding context engine affordable).
@@ -2842,8 +2882,8 @@ export function buildWebUIConfigYaml(
     const compressionProvider = PROVIDER_ID_MAP[compressionProviderRaw] ?? compressionProviderRaw;
     auxiliaryBlock = `auxiliary:
   compression:
-    provider: "${compressionProvider}"
-    model: "${compressionModel}"
+    provider: ${yamlDoubleQuotedScalar(compressionProvider)}
+    model: ${yamlDoubleQuotedScalar(compressionModel)}
 `;
   }
   // Context engine — "compressor" (default) or "sliding". Orthogonal to provider
@@ -2870,7 +2910,7 @@ export function buildWebUIConfigYaml(
   const contextBlock =
     p.contextEngine === "compressor" || p.contextEngine === "sliding"
       ? `context:
-  engine: "${p.contextEngine}"
+  engine: ${yamlDoubleQuotedScalar(p.contextEngine)}
 ${p.contextEngine === "sliding" ? slidingTuning : ""}`
       : isOperatorOsDeploy
         ? `context:
@@ -3021,7 +3061,7 @@ ${slidingTuning}`
   // agent's install directory. Existing boxes get it from the update-mode repair
   // (buildWebUITerminalCwdRepairCommand). See webui-terminal-cwd.ts.
   const terminalBackend = resolveWebUITerminalBackend(p);
-  const terminalBlock = `terminal:\n  backend: "${terminalBackend}"\n${buildWebUITerminalCwdConfigYaml(terminalBackend)}`;
+  const terminalBlock = `terminal:\n  backend: ${yamlDoubleQuotedScalar(terminalBackend)}\n${buildWebUITerminalCwdConfigYaml(terminalBackend)}`;
   // Keep a web-chat turn running after its tab closes instead of letting the
   // agent's 20 s WS-orphan reap interrupt it, and cap how many parked sessions
   // stay in memory for this computer's RAM tier. Orthogonal to provider config,
@@ -4200,6 +4240,7 @@ ${updateSafetyPrelude}
 ${heredoc("docker-compose.yml", composeYaml)}
 ${heredoc("Caddyfile", artifacts.caddyfile)}
 ${heredoc("sidecar_server.js", artifacts.sidecarServerFile)}
+${p.browserSidecarEnabled ? heredoc(BROWSER_SIDECAR_SECCOMP_FILE, browserSidecarSeccompProfileJson()) : `rm -f ${BROWSER_SIDECAR_SECCOMP_FILE}\n`}
 ${heredoc("signal-daemon.sh", artifacts.signalDaemonFile)}
 ${heredoc(".env", artifacts.envFile)}
 ${heredoc("config.yaml", artifacts.configYaml)}

@@ -1,4 +1,4 @@
-import { lifecycleMutationPrelude, lifecycleVmAuthorityBody, verifiedStopVmBody, verifiedStopVmScript } from "@/lib/hivra/agent-power-scripts";
+import { hibernationDiscardBody, lifecycleMutationPrelude, lifecycleVmAuthorityBody, verifiedStopVmBody, verifiedStopVmScript } from "@/lib/hivra/agent-power-scripts";
 // Hivra agent lifecycle: stop / start / restart / force_stop / force_restart /
 // update_runtime / resize / snapshot / restore / rename.
 // stop: qm shutdown (qm stop if it hasn't shut down after 50 s; the response
@@ -40,7 +40,6 @@ import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { getPersonaSoul } from "@/lib/persona-souls-accessor";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
@@ -85,6 +84,7 @@ import {
 } from "@/lib/hivra/prepared-canary-computers";
 import {
   doSessionActionFor,
+  errorKeepsComputer,
   isForcePowerAction,
   isGvisorAction,
   isPreparedAction,
@@ -99,7 +99,10 @@ import { GvisorComputerError, mutateGvisorComputer } from "@/lib/hivra/gvisor-co
 import { managedSessionAction } from "@/lib/hivra/do-managed-sessions";
 import { managedSessionFailure } from "@/app/api/hivra/managed-sessions/route-support";
 import { isStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
+import { lifecycleBusyResponse, lifecycleFailureResponse } from "@/lib/hivra/lifecycle-failure-reason";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
+import { markAgentAwake, wakeForUserAction, type WakeForActionResult } from "@/lib/hivra/sleep-aware";
+import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
@@ -157,7 +160,10 @@ function stopOutcomeEvent(outcome: StopOutcome | null): { detail?: { forced: tru
 const FORCE_STOPPED_RECEIPT = "HIVRA_FORCE_STOPPED";
 
 function forcedStopVmBody(vmid: number): string {
+  // A napping computer (paused) is switched off by qm stop as it is. A hibernated
+  // one reads as stopped, so its saved memory is discarded first.
   return `VMID=${vmid}
+${hibernationDiscardBody()}
 CURRENT_STATUS="$(qm status "$VMID" | awk '{print $2}')"
 if [ "$CURRENT_STATUS" != "stopped" ]; then
   if ! qm stop "$VMID" --overrule-shutdown 1 --timeout 30; then
@@ -194,7 +200,6 @@ async function probeBoxBrowserEnabled(chatUrl: string | null, token: string | nu
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -203,25 +208,39 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const action = String(body.action || "");
 
-    const { data: agent } = await supabaseAdmin
+    const { data: loadedAgent, error: agentError } = await supabaseAdmin
       .from("hivra_agents")
       .select("*")
       .eq("id", id)
       .eq("user_id", userId)
       .single();
+    let agent = loadedAgent;
+    // .single() reports zero rows as PGRST116 and a malformed id as 22P02: both
+    // mean no such agent. Any other error is a failed read, not a missing agent.
+    if (agentError && !["PGRST116", "22P02"].includes(agentError.code)) {
+      return apiError("Could not load this computer.", 503);
+    }
     if (!agent) return apiError("Agent not found", 404);
 
     // rename is metadata-only — no box required.
     if (action === "rename") {
       const name = String(body.name ?? "").trim();
       if (name.length < 1 || name.length > 60) return apiError("Name must be 1–60 characters", 400);
-      const { data: updated } = await supabaseAdmin
+      const { data: updated, error: renameError } = await supabaseAdmin
         .from("hivra_agents")
         .update({ name })
         .eq("id", agent.id)
         .select()
         .single();
-      return apiSuccess({ name, agent: sanitizeHivraAgentRow(updated || { ...agent, name }) });
+      // Zero rows (PGRST116) means the agent was removed during the request. Never
+      // report a rename that was not saved.
+      if (renameError) {
+        if (renameError.code === "PGRST116") {
+          return apiError("This computer changed while it was being renamed. Refresh and try again.", 409);
+        }
+        return apiError("Could not rename this computer.", 503);
+      }
+      return apiSuccess({ name, agent: sanitizeHivraAgentRow(updated) });
     }
 
     if (action === "onboarding") {
@@ -428,7 +447,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         desiredState,
         operationPayload: null,
       });
-      if (!claimed) return apiError(forced ? FORCE_BUSY : "Another lifecycle operation is already in progress.", 409);
+      if (!claimed) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(forced ? FORCE_BUSY : busy.message, 409, undefined, busy.extra);
+      }
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const result = await runProxmoxHostScript(
         preparedCanaryLifecycleScript(preparedComputer.profile, preparedComputer.slot, action),
@@ -530,6 +552,40 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ...(current.status === "provisioning" && current.operation_id === operation.operationId ? { power_stage: stage } : {}) } }, current.status === "provisioning" ? 202 : 200);
       response.headers.set("Cache-Control", "no-store");
       return response;
+    }
+    // A sleeping computer is woken before any action touches it: its guest
+    // cannot answer while it is napping, and a hibernated one holds a config
+    // lock that refuses qm set and qm destroy. Awake computers pass straight
+    // through. Stop and Force off never wake it first: their scripts switch off
+    // a napping computer and discard a hibernation themselves, so a computer
+    // whose wake is failing, refused or full can still be switched off, and a
+    // plain Stop does not pay for a full memory restore before shutting down.
+    {
+      const stopping = action === "stop" || action === "force_stop";
+      const wake: WakeForActionResult = stopping
+        ? { ok: true, woke: false, cold: false }
+        : await wakeForUserAction(agent);
+      if (!wake.ok) return apiError(wake.message, wake.status, undefined, { code: wake.code });
+      if (wake.woke) {
+        // The wake changed the row (its lease, its sleep state); act on the fresh copy.
+        const { data: reloaded, error: reloadError } = await supabaseAdmin
+          .from("hivra_agents")
+          .select("*")
+          .eq("id", id)
+          .eq("user_id", userId)
+          .single();
+        if (reloadError || !reloaded) return apiError("Could not load this computer.", 503);
+        agent = reloaded;
+      }
+      if (wake.cold && action === "update_runtime") {
+        return apiError("This computer is switched off. Start it before updating its connection service.", 409, undefined, { code: "not_running" });
+      }
+      // A stopped computer holds no saved memory and nothing napping. A stale sleep
+      // record left on one (a stop that could not reset it) goes back to awake here,
+      // best effort, so the sweep never has to heal a stopped row.
+      if (action === "start" && agent.status !== "running" && !isAgentAwake(agent)) {
+        await markAgentAwake(String(agent.id));
+      }
     }
     // The in-place connection-service update is shared with the automatic
     // agent-software sweep; its failures carry a code for Manage's copy.
@@ -642,7 +698,43 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         desiredState,
         operationPayload,
       });
-      return claimed ? operationId : null;
+      if (!claimed) return null;
+      // The row was read before this lease: the sleep sweep may have napped the
+      // computer in between. Stop only needs the computer off, and its script handles a
+      // napping or hibernated one itself. Every other action needs it awake, so give the
+      // lease back untouched and ask the caller to try again once it is up.
+      // A computer that was not running when the row was read (a start of a stopped
+      // one) is not napping; a stale sleep record on it is not a reason to refuse.
+      if (operationKind !== "stop" && agent.status === "running" && supabaseAdmin) {
+        const { data: live, error: liveError } = await supabaseAdmin
+          .from("hivra_agents")
+          .select("sleep_state")
+          .eq("id", agent.id)
+          .eq("user_id", userId)
+          .single();
+        // An unreadable row is not proof of sleep: the wake check above already passed, so go on.
+        if (!liveError && live && !isAgentAwake(live)) {
+          asleepAfterClaim = true;
+          await releaseHivraAgentOperation({
+            userId,
+            agentId: String(agent.id),
+            operationId,
+            error: "The computer fell asleep before this action started.",
+            markError: false,
+          }).catch(() => false);
+          return null;
+        }
+      }
+      return operationId;
+    };
+    // True when the last claim was given back because the computer had fallen asleep.
+    let asleepAfterClaim = false;
+    const claimRefusedResponse = () => {
+      if (asleepAfterClaim) {
+        return apiError("Your computer fell asleep just now. Try again in a few seconds.", 503, undefined, { code: "computer_asleep" });
+      }
+      const busy = lifecycleBusyResponse(agent);
+      return apiError(busy.message, 409, undefined, busy.extra);
     };
 
     const releaseProviderOperation = async (
@@ -845,7 +937,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
 
     if (action === "stop") {
       const operationId = await claimProviderOperation("stop", "stopped");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) {
+        const busy = lifecycleBusyResponse(agent);
+        return apiError(busy.message, 409, undefined, busy.extra);
+      }
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         verifiedStopVmScript(vmid, 50, lifecycleBindingTag),
@@ -853,7 +948,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       );
       if (!r.ok) {
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Stop outcome is unknown"));
-        return apiError("Stop failed", 502);
+        const failure = lifecycleFailureResponse("Stop", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       const completed = await completeHivraAgentOperation({
         userId,
@@ -876,6 +972,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       // Stop asks the computer to shut down and switches it off only if it
       // hasn't in time; say which happened.
       const switchedOff = stopOutcome(r.stdout);
+      // A stopped computer holds no saved memory and nothing napping.
+      await markAgentAwake(String(agent.id));
       await logHivraAgentEvent({
         userId, event: "stopped", agentId: agent.id, agentType: agent.type,
         ...stopOutcomeEvent(switchedOff),
@@ -913,11 +1011,41 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         });
         return apiError("The computer switched off, but a newer change superseded it. Refresh before trying again.", 409);
       }
+      await markAgentAwake(String(agent.id));
       await logHivraAgentEvent({ userId, event: "force_stopped", agentId: agent.id, agentType: agent.type });
       return apiSuccess({ status: "stopped", forced: true });
     }
 
     if (action === "start") {
+      // Try again on a computer in error. It must still have its computer: a
+      // launch that never finished is launched again, not started. Error rows
+      // are not counted in the plan's slots or pool, so bringing one back is
+      // admitted like a new launch of the same size before anything is sent.
+      if (agent.status === "error") {
+        if (!errorKeepsComputer(agent)) {
+          return apiError("This computer never finished setting up, so there is nothing to start. Delete it, then launch it again.", 409);
+        }
+        if (executionContext.kind === "managed") {
+          const agentDef = getAgent(String(agent.type));
+          const cpu = Number(agent.cpu) || 0;
+          const ram = Number(agent.ram) || 0;
+          const gate = await validateAgentResources({
+            userId,
+            type: String(agent.type),
+            cpu,
+            ram,
+            maximumCpu: Math.max(cpu, Number(agent.cpu_max) || cpu),
+            maximumRam: Math.max(ram, Number(agent.ram_max) || ram),
+            browser: false,
+            mode: "launch",
+            poolExempt: Boolean(agentDef?.poolExempt),
+            // The computer already exists at this size; the launch floor must not refuse it.
+            floor: { cpu, ram },
+            agentLabel: agentDef?.name,
+          });
+          if (!gate.ok) return apiError(gate.message, gate.status);
+        }
+      }
       // Wake-admission: don't wake onto a host without headroom (OOM guard).
       const cap = await checkHostWakeCapacity(Number(agent.ram) * 1024, env);
       if (!cap.ok) return apiError("Host is at capacity — try again shortly", 503);
@@ -928,7 +1056,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         );
       }
       const operationId = await claimProviderOperation("start", "running");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) return claimRefusedResponse();
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         `${startLifecyclePrelude}\n${startKickoff(operationId)}`,
@@ -936,7 +1064,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       );
       if (!r.ok) {
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Start outcome is unknown"));
-        return apiError("Start failed", 502);
+        const failure = lifecycleFailureResponse("Start", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
@@ -963,7 +1092,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
 
     if (action === "restart") {
       const operationId = await claimProviderOperation("restart", "running");
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) return claimRefusedResponse();
       if (!await invalidateDesktopBeforePower(operationId)) return desktopInvalidationFailure();
       const r = await runProxmoxHostScript(
         `${lifecyclePrelude}\n${verifiedStopVmBody(vmid, 40)}\nsleep 2\n${startKickoff(operationId)}`,
@@ -971,7 +1100,8 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
       );
       if (!r.ok) {
         await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Restart outcome is unknown"));
-        return apiError("Restart failed", 502);
+        const failure = lifecycleFailureResponse("Restart", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentOperation({
@@ -1050,7 +1180,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
           (agent.chat_url as string | null) ?? null,
           (agent.api_token as string | null) ?? null,
         ));
-      const floor = resizeFloor(String(agent.type), browserOn);
+      const floor = resizeFloor(String(agent.type), browserOn, agent.computer_profile as string | null | undefined);
       const cpu = clampCpu(body.cpu, agent.cpu, floor.cpu, MAX_CPU);
       const ram = clampInt(body.ram, agent.ram, floor.ram, MAX_RAM);
       const maximumCpu = body.maximumCpu === undefined
@@ -1105,7 +1235,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         : { data: null };
       const cpuunits = priorityToCpuUnits((pool as { priority?: number } | null)?.priority);
       const operationId = await claimProviderOperation("resize", "running", { cpu, ram, maximumCpu, maximumRam });
-      if (!operationId) return apiError("Another lifecycle operation is already in progress.", 409);
+      if (!operationId) return claimRefusedResponse();
       const reductionOnly = Number.isFinite(currentRam)
         && ram <= currentRam
         && maximumRam <= currentMaximumRam
@@ -1219,7 +1349,8 @@ ${startKickoff(operationId)}`,
         } else {
           await retainUnknownProviderOperation(operationId, providerFailureDetail(r, "Resize outcome is unknown"));
         }
-        return apiError("Resize failed", 502);
+        const failure = lifecycleFailureResponse("Resize", providerFailureDetail(r, ""));
+        return apiError(failure.message, 502, undefined, failure.extra);
       }
       await recordActivityCredentialIssued(r);
       const continued = await continueHivraAgentResizeOperation({

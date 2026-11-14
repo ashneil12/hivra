@@ -9,7 +9,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { getPlan } from "@/lib/subscription";
-import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, isFreeAccountEntitlement } from "@/lib/billing/hosted-compute";
+import {
+  HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
+  isFreeAccountEntitlement,
+  paysForHostedCompute,
+} from "@/lib/billing/hosted-compute";
 import { BASE_FLOOR, BROWSER_ADD, isPoolExempt } from "@/lib/hivra/agent-catalog";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 
@@ -40,7 +44,7 @@ export interface ComputeUsage {
 // no hivra_agents row and use none of the pool's CPU or memory.
 export async function loadCurrentComputeUsage(
   userId: string,
-  opts?: { excludeHivraAgentId?: string },
+  opts?: { excludeHivraAgentId?: string; excludeInstanceIds?: string[] },
 ): Promise<ComputeUsage> {
   if (!supabaseAdmin) return { usedCpu: 0, usedRamGb: 0, activeCount: 0 };
 
@@ -86,9 +90,14 @@ export async function loadCurrentComputeUsage(
   const hivra = (Array.isArray(hivraAgents) ? hivraAgents : []).filter(
     (row) => isActiveComputeStatus((row as { status?: unknown }).status) && (row as { id?: unknown }).id !== excludeId,
   );
-  const legacy = (Array.isArray(legacyInstances) ? legacyInstances : []).filter((row) =>
+  // A move launch replaces a Hermes instance: its compute and its agent slot
+  // are not counted, so the launch may exceed the plan by exactly that instance.
+  const excludedInstances = new Set(opts?.excludeInstanceIds ?? []);
+  const activeLegacy = (Array.isArray(legacyInstances) ? legacyInstances : []).filter((row) =>
     isActiveComputeStatus((row as { status?: unknown }).status),
   );
+  const legacy = activeLegacy.filter((row) => !excludedInstances.has(String((row as { id?: unknown }).id)));
+  const excludedSlots = activeLegacy.length - legacy.length;
   // Pool-exempt agents (e.g. Aeon) consume a slot but not the CPU/RAM pool, so
   // their reserved compute is excluded from the budget other agents draw from.
   const usedHivraCpu = hivra.reduce((sum, row) => sum + (isPoolExempt(String(row.type)) ? 0 : (Number(row.cpu) || 0)), 0);
@@ -99,7 +108,7 @@ export async function loadCurrentComputeUsage(
   return {
     usedCpu: usedHivraCpu + usedLegacyCpu,
     usedRamGb: usedHivraRamGb + usedLegacyRamGb,
-    activeCount: slotCount as number,
+    activeCount: Math.max(0, (slotCount as number) - excludedSlots),
   };
 }
 
@@ -153,6 +162,11 @@ export interface ValidateResourcesInput {
   mode: "launch" | "resize" | "attach";
   /** Hivra agent id to exclude from pool usage (required for "resize"). */
   excludeAgentId?: string;
+  /**
+   * Hermes instance ids a "launch" replaces: their CPU/memory and agent slot are
+   * left out, so the launch may exceed the plan by exactly those instances.
+   */
+  excludeInstanceIds?: string[];
   /** Slot-only agents (Aeon): skip the pool + per-agent-cap checks. */
   poolExempt?: boolean;
   /** Per-agent launch/resize floor (CPU cores / GB). Defaults to BASE_FLOOR + browser surcharge. */
@@ -176,15 +190,18 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   const plan = getPlan(sub.plan);
   const isFreePlan = sub.plan === "free" || sub.source === "free";
 
-  // A Free account never launches a Hivra-hosted computer. This gate only
-  // runs for hivra-managed launches (self-managed, bring-your-own computers
-  // skip subscription checks), so refusing here keeps the free account free to
-  // use and connect your own box without giving it hosted compute. Resize and
-  // attach keep working for boxes an account already has.
-  if (params.mode === "launch" && isFreeAccountEntitlement(sub)) {
-    log.warn("hivra resource gate: a Free account cannot launch Hivra-hosted compute", {
+  // A Free account never launches a Hivra-hosted computer, and neither does a
+  // trial: hosted compute is paid only. This gate only runs for hivra-managed
+  // launches (self-managed, bring-your-own computers skip subscription
+  // checks), so refusing here keeps the free account free to use and connect
+  // your own box without giving it hosted compute. Resize and attach keep
+  // working for boxes an account already has.
+  if (params.mode === "launch" && !paysForHostedCompute(sub)) {
+    log.warn("hivra resource gate: an account without a paid plan cannot launch Hivra-hosted compute", {
       source: "hivra/resource-gate",
-      failureType: "hivra_agent_free_account_hosted_compute_denied",
+      failureType: isFreeAccountEntitlement(sub)
+        ? "hivra_agent_free_account_hosted_compute_denied"
+        : "hivra_agent_trial_hosted_compute_denied",
       userId: params.userId,
       agentType: params.type,
     });
@@ -192,7 +209,9 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   }
   const usage = await loadCurrentComputeUsage(
     params.userId,
-    params.mode === "resize" ? { excludeHivraAgentId: params.excludeAgentId } : undefined,
+    params.mode === "resize"
+      ? { excludeHivraAgentId: params.excludeAgentId }
+      : params.excludeInstanceIds?.length ? { excludeInstanceIds: params.excludeInstanceIds } : undefined,
   );
   const totalCpu = Number(sub.total_cpu_budget) || plan.totalCpu;
   const totalRamGb = (Number(sub.total_ram_budget) || plan.totalRam) / 1024;

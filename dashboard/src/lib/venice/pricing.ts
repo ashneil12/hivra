@@ -19,20 +19,17 @@ export interface VeniceChatModelPrice {
   privacy: "private" | "anonymized" | "e2ee_private";
 }
 
-export const VENICE_CHAT_PRICING_CATALOG_UPDATED_AT = "2026-06-09";
+export const VENICE_CHAT_PRICING_CATALOG_UPDATED_AT = "2026-11-10";
 
 // Venice ships pricing changes on its own cadence and we don't yet have
 // automated scraping. The drift cron flags the catalog stale after this
 // window so an operator re-checks before users overpay (or we eat the
 // margin).
 //
-// TODO(2026-05-17): the static catalog is a reliability hazard — Venice's
-// /v1/models endpoint exposes live pricing per model (input.usd, output.usd,
-// cache_input.usd) and we're already proxying that endpoint. Move the
-// cost-estimator to read from a 5-minute in-memory cache of the live
-// endpoint with this static catalog as fallback. Until then, every
-// chat/completions request runs checkVeniceChatPricingCatalogStaleness()
-// and logs a warning when the window expires (see chat/completions/route.ts).
+// Live prices come from Venice's /v1/models endpoint via live-pricing.ts (5-minute
+// in-memory cache, this static catalog as the fallback). Every chat request runs
+// checkVeniceChatPricingCatalogStaleness() in proxy-chat-core.ts, which logs a
+// warning once per catalog snapshot when the window expires.
 export const VENICE_CHAT_PRICING_CATALOG_MAX_AGE_DAYS = 30;
 
 export interface VeniceChatPricingCatalogStaleness {
@@ -158,24 +155,34 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     privacy: "private",
   }),
   model({
+    model: "deepseek-v4-1-flash",
+    displayName: "DeepSeek V4.1 Flash",
+    inputUsd: 0.3,
+    outputUsd: 1.2,
+    cacheReadUsd: 0.0075,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 262_144,
+    privacy: "private",
+  }),
+  model({
     model: "deepseek-v4-flash",
     displayName: "DeepSeek V4 Flash",
-    inputUsd: 0.17,
-    outputUsd: 0.35,
+    inputUsd: 0.138,
+    outputUsd: 0.275,
     cacheReadUsd: 0.028,
     contextWindow: 1_000_000,
-    maxOutputTokens: 32_768,
-    privacy: "anonymized",
+    maxOutputTokens: 262_144,
+    privacy: "private",
   }),
   model({
     model: "deepseek-v4-pro",
     displayName: "DeepSeek V4 Pro",
-    inputUsd: 1.73,
-    outputUsd: 3.796,
+    inputUsd: 1.65,
+    outputUsd: 3.301,
     cacheReadUsd: 0.33,
     contextWindow: 1_000_000,
-    maxOutputTokens: 32_768,
-    privacy: "anonymized",
+    maxOutputTokens: 262_144,
+    privacy: "private",
   }),
 
   // Kimi family
@@ -192,9 +199,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "kimi-k2-6",
     displayName: "Kimi K2.6",
-    inputUsd: 0.85,
-    outputUsd: 4.655,
-    cacheReadUsd: 0.22,
+    inputUsd: 0.75,
+    outputUsd: 3.5,
+    cacheReadUsd: 0.16,
     contextWindow: 256_000,
     maxOutputTokens: 65_536,
     privacy: "private",
@@ -204,9 +211,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "zai-org-glm-4.6",
     displayName: "GLM 4.6",
-    inputUsd: 0.85,
-    outputUsd: 2.75,
-    cacheReadUsd: 0.3,
+    inputUsd: 0.43,
+    outputUsd: 1.75,
+    cacheReadUsd: 0.08,
     contextWindow: 198_000,
     maxOutputTokens: 16_384,
     privacy: "private",
@@ -251,8 +258,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "olafangensan-glm-4.7-flash-heretic",
     displayName: "GLM 4.7 Flash Heretic (Uncensored)",
-    inputUsd: 0.14,
-    outputUsd: 0.8,
+    inputUsd: 0.07,
+    outputUsd: 0.4,
+    cacheReadUsd: 0.035,
     contextWindow: 200_000,
     maxOutputTokens: 24_000,
     privacy: "private",
@@ -351,9 +359,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "qwen3-5-35b-a3b",
     displayName: "Qwen 3.5 35B A3B (Beta)",
-    inputUsd: 0.3125,
-    outputUsd: 1.25,
-    cacheReadUsd: 0.15625,
+    inputUsd: 0.15,
+    outputUsd: 1,
+    cacheReadUsd: 0.05,
     contextWindow: 256_000,
     maxOutputTokens: 16_384,
     privacy: "private",
@@ -506,19 +514,21 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "google-gemma-4-26b-a4b-it",
     displayName: "Google Gemma 4 26B A4B Instruct",
-    inputUsd: 0.1625,
-    outputUsd: 0.5,
+    inputUsd: 0.13,
+    outputUsd: 0.4,
+    cacheReadUsd: 0.05,
     contextWindow: 256_000,
-    maxOutputTokens: 8_192,
+    maxOutputTokens: 16_384,
     privacy: "private",
   }),
   model({
     model: "google-gemma-4-31b-it",
     displayName: "Google Gemma 4 31B Instruct",
-    inputUsd: 0.175,
-    outputUsd: 0.5,
+    inputUsd: 0.12,
+    outputUsd: 0.36,
+    cacheReadUsd: 0.09,
     contextWindow: 256_000,
-    maxOutputTokens: 8_192,
+    maxOutputTokens: 16_384,
     privacy: "private",
   }),
   model({
@@ -544,8 +554,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-4o-2024-11-20",
     displayName: "GPT-4o",
-    inputUsd: 3.125,
-    outputUsd: 12.5,
+    inputUsd: 2.5,
+    outputUsd: 10,
+    cacheReadUsd: 1.25,
     contextWindow: 128_000,
     maxOutputTokens: 16_384,
     privacy: "anonymized",
@@ -553,9 +564,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-4o-mini-2024-07-18",
     displayName: "GPT-4o Mini",
-    inputUsd: 0.1875,
-    outputUsd: 0.75,
-    cacheReadUsd: 0.09375,
+    inputUsd: 0.15,
+    outputUsd: 0.6,
+    cacheReadUsd: 0.075,
     contextWindow: 128_000,
     maxOutputTokens: 16_384,
     privacy: "anonymized",
@@ -563,9 +574,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-52",
     displayName: "GPT-5.2",
-    inputUsd: 2.19,
-    outputUsd: 17.5,
-    cacheReadUsd: 0.219,
+    inputUsd: 1.75,
+    outputUsd: 14,
+    cacheReadUsd: 0.175,
     contextWindow: 256_000,
     maxOutputTokens: 65_536,
     privacy: "anonymized",
@@ -583,9 +594,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-53-codex",
     displayName: "GPT-5.3 Codex (Beta)",
-    inputUsd: 2.19,
-    outputUsd: 17.5,
-    cacheReadUsd: 0.219,
+    inputUsd: 1.75,
+    outputUsd: 14,
+    cacheReadUsd: 0.175,
     contextWindow: 400_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -593,9 +604,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-54",
     displayName: "GPT-5.4",
-    inputUsd: 3.13,
-    outputUsd: 18.8,
-    cacheReadUsd: 0.313,
+    inputUsd: 2.5,
+    outputUsd: 15,
+    cacheReadUsd: 0.25,
     contextWindow: 1_000_000,
     maxOutputTokens: 131_072,
     privacy: "anonymized",
@@ -603,9 +614,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-54-mini",
     displayName: "GPT-5.4 Mini (Beta)",
-    inputUsd: 0.9375,
-    outputUsd: 5.625,
-    cacheReadUsd: 0.09375,
+    inputUsd: 0.75,
+    outputUsd: 4.5,
+    cacheReadUsd: 0.075,
     contextWindow: 400_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -613,8 +624,8 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-54-pro",
     displayName: "GPT-5.4 Pro (Beta)",
-    inputUsd: 37.5,
-    outputUsd: 225,
+    inputUsd: 30,
+    outputUsd: 180,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -622,9 +633,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-55",
     displayName: "GPT-5.5 (Beta)",
-    inputUsd: 6.25,
-    outputUsd: 37.5,
-    cacheReadUsd: 0.625,
+    inputUsd: 5,
+    outputUsd: 30,
+    cacheReadUsd: 0.5,
     contextWindow: 1_000_000,
     maxOutputTokens: 131_072,
     privacy: "anonymized",
@@ -632,8 +643,8 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "openai-gpt-55-pro",
     displayName: "GPT-5.5 Pro (Beta)",
-    inputUsd: 37.5,
-    outputUsd: 225,
+    inputUsd: 30,
+    outputUsd: 180,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -672,9 +683,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-opus-4-5",
     displayName: "Claude Opus 4.5",
-    inputUsd: 6,
-    outputUsd: 30,
-    cacheReadUsd: 0.6,
+    inputUsd: 5,
+    outputUsd: 25,
+    cacheReadUsd: 0.5,
     contextWindow: 198_000,
     maxOutputTokens: 32_768,
     privacy: "anonymized",
@@ -682,9 +693,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-opus-4-6",
     displayName: "Claude Opus 4.6 (Beta)",
-    inputUsd: 6,
-    outputUsd: 30,
-    cacheReadUsd: 0.6,
+    inputUsd: 5,
+    outputUsd: 25,
+    cacheReadUsd: 0.5,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -702,9 +713,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-opus-4-7",
     displayName: "Claude Opus 4.7",
-    inputUsd: 6,
-    outputUsd: 30,
-    cacheReadUsd: 0.6,
+    inputUsd: 5,
+    outputUsd: 25,
+    cacheReadUsd: 0.5,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -722,9 +733,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-opus-4-8",
     displayName: "Claude Opus 4.8",
-    inputUsd: 6,
-    outputUsd: 30,
-    cacheReadUsd: 0.6,
+    inputUsd: 5,
+    outputUsd: 25,
+    cacheReadUsd: 0.5,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -732,9 +743,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-opus-4-8-fast",
     displayName: "Claude Opus 4.8 Fast (Beta)",
-    inputUsd: 12,
-    outputUsd: 60,
-    cacheReadUsd: 1.2,
+    inputUsd: 10,
+    outputUsd: 50,
+    cacheReadUsd: 1,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -742,9 +753,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-fable-5",
     displayName: "Claude Fable 5",
-    inputUsd: 12,
-    outputUsd: 60,
-    cacheReadUsd: 1.2,
+    inputUsd: 10,
+    outputUsd: 50,
+    cacheReadUsd: 1,
     contextWindow: 1_000_000,
     maxOutputTokens: 128_000,
     privacy: "anonymized",
@@ -762,9 +773,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "claude-sonnet-4-6",
     displayName: "Claude Sonnet 4.6 (Beta)",
-    inputUsd: 3.6,
-    outputUsd: 18,
-    cacheReadUsd: 0.36,
+    inputUsd: 3,
+    outputUsd: 15,
+    cacheReadUsd: 0.3,
     contextWindow: 1_000_000,
     maxOutputTokens: 64_000,
     privacy: "anonymized",
@@ -858,9 +869,9 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
   model({
     model: "minimax-m25",
     displayName: "MiniMax M2.5",
-    inputUsd: 0.34,
-    outputUsd: 1.19,
-    cacheReadUsd: 0.04,
+    inputUsd: 0.27,
+    outputUsd: 0.95,
+    cacheReadUsd: 0.03,
     contextWindow: 198_000,
     maxOutputTokens: 32_768,
     privacy: "private",
@@ -870,10 +881,10 @@ export const VENICE_CHAT_MODEL_PRICES: readonly VeniceChatModelPrice[] = [
     displayName: "MiniMax M2.7",
     inputUsd: 0.375,
     outputUsd: 1.5,
-    cacheReadUsd: 0.075,
+    cacheReadUsd: 0.06875,
     contextWindow: 198_000,
     maxOutputTokens: 32_768,
-    privacy: "anonymized",
+    privacy: "private",
   }),
   model({
     model: "nvidia-nemotron-cascade-2-30b-a3b",

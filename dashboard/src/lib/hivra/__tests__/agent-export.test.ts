@@ -162,6 +162,35 @@ describe("buildAgentExport", () => {
     expect(out.sessions).toEqual([]);
     expect(out.memory).toEqual({ userMd: null, memoryMd: null });
   });
+
+  it("reads at most four sessions at a time and gives every box read a timeout signal", async () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: "t", updatedAt: i }));
+    let inFlight = 0;
+    let peak = 0;
+    const signals: unknown[] = [];
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      signals.push(init?.signal);
+      if (url.endsWith("/api/sessions")) return jsonResponse({ sessions: many });
+      if (url.includes("/api/sessions/")) {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return jsonResponse({ messages: [] });
+      }
+      return jsonResponse({ content: "" });
+    }) as unknown as typeof fetch;
+
+    const out = await buildAgentExport(agent);
+
+    expect(out.sessions.map((s) => s.id)).toEqual(many.map((s) => s.id).reverse());
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    // One sessions list, ten message reads, two memory files.
+    expect(signals).toHaveLength(13);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+  });
 });
 
 describe("exportFileName", () => {

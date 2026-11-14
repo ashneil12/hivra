@@ -759,8 +759,9 @@ async function storeTokenHoldingSnapshot(params: {
 /**
  * Fold a wallet's staked VVV into its VVV balance check so the Venice boost
  * counts liquid + staked together. No-op for non-VVV tokens or when no staking
- * contract is configured. A staking-read failure is swallowed (counts 0 staked)
- * so a transient staking-RPC error can never strip a user's liquid-VVV boost.
+ * contract is configured. Returns null when the staked balance could not be
+ * read: the liquid-only figure would undercount, so the caller stores no VVV
+ * snapshot this tick and the last good snapshot keeps counting.
  */
 async function withStakedVvv(
   balance: HermesTokenBalanceCheck,
@@ -770,7 +771,7 @@ async function withStakedVvv(
     env?: Record<string, string | undefined>;
     rpcOptions?: RpcCallOptions;
   }
-): Promise<HermesTokenBalanceCheck> {
+): Promise<HermesTokenBalanceCheck | null> {
   if (balance.tokenAddress !== VVV_TOKEN_ADDRESS) return balance;
   if (!getVvvStakingContractAddress(opts.env)) return balance;
 
@@ -784,7 +785,7 @@ async function withStakedVvv(
       rpcOptions: opts.rpcOptions,
     });
   } catch {
-    return balance;
+    return null;
   }
   if (stakedRaw <= 0n) return balance;
 
@@ -841,6 +842,9 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
         rpcOptions: params.rpcOptions,
       }
     );
+    // Staked VVV could not be read: store no VVV snapshot this tick, so the
+    // Venice boost keeps the last good one instead of an undercount.
+    if (!balance) continue;
     snapshots.push(await storeTokenHoldingSnapshot({
       db: admin,
       userId: params.userId,
@@ -861,7 +865,7 @@ export async function refreshPrimaryVerifiedTokenHoldings(params: {
 }
 
 /** Raw balance per platform token among `snapshots` (VVV and others ignored). */
-export function platformTokenBalancesFromSnapshots(
+function platformTokenBalancesFromSnapshots(
   snapshots: ReadonlyArray<Pick<HermesTokenHoldingSnapshot, "tokenAddress" | "balanceRaw">>
 ): Partial<Record<PlatformTokenKey, bigint>> {
   const balances: Partial<Record<PlatformTokenKey, bigint>> = {};
@@ -1109,8 +1113,8 @@ async function reportOverdueStandingRereads(
  * An account the crons are judging has no verification wallet (its primary is
  * missing or is a platform deposit wallet). Its verified holding is zero, so
  * record that for every token whose latest snapshot still shows a balance:
- * refresh-token-tiers honours the latest snapshot for token_base, and the
- * snapshot is the audit trail for the zero-balance eligibility evaluation.
+ * the wallet page shows the latest snapshot, and the snapshot is the audit
+ * trail for the zero-balance eligibility evaluation.
  * Idempotent: once the latest snapshot is zero nothing more is written.
  */
 async function recordUnbackedTokenHoldings(params: {

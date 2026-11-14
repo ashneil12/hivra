@@ -7,7 +7,7 @@ import type { ServedScript } from "./server-enrollment-service";
 
 /** Headers on every /enroll* response: plain text, never cached, never
  * indexed, never sent as a referrer. There are no redirects. */
-export const ENROLL_TEXT_HEADERS: Record<string, string> = {
+const ENROLL_TEXT_HEADERS: Record<string, string> = {
   "Content-Type": "text/plain; charset=utf-8",
   "Cache-Control": "no-store, private",
   "Referrer-Policy": "no-referrer",

@@ -57,6 +57,8 @@ describe("POST /api/instances/[id]/managed-venice", () => {
         id: "inst_123",
         provider: "venice",
         api_key_encrypted: "encrypted",
+        api_server_key_encrypted: "gateway-bearer-ciphertext",
+        honcho_api_key_encrypted: "honcho-ciphertext",
         api_key_preview: "hven_live_new_...",
         config: { managedVenice: { enabled: true } },
       },
@@ -100,6 +102,7 @@ describe("POST /api/instances/[id]/managed-venice", () => {
       },
     });
     expect(payload.data.instance.api_key_encrypted).toBeUndefined();
+    expect(Object.keys(payload.data.instance).filter((key) => key.endsWith("_encrypted"))).toEqual([]);
   });
 
   it("returns the enablement error status without leaking internals", async () => {
@@ -144,6 +147,8 @@ describe("DELETE /api/instances/[id]/managed-venice", () => {
         id: "inst_123",
         provider: "venice",
         api_key_encrypted: "encrypted-byok",
+        api_server_key_encrypted: "gateway-bearer-ciphertext",
+        honcho_api_key_encrypted: "honcho-ciphertext",
         api_key_preview: "vk_live_user_...",
         config: { model: "deepseek-v4-pro" },
       },
@@ -181,6 +186,7 @@ describe("DELETE /api/instances/[id]/managed-venice", () => {
       },
     });
     expect(payload.data.instance.api_key_encrypted).toBeUndefined();
+    expect(Object.keys(payload.data.instance).filter((key) => key.endsWith("_encrypted"))).toEqual([]);
   });
 
   it("rejects an empty apiKey before reaching the lib function", async () => {

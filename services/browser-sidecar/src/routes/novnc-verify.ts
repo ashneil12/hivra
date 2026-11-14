@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type { FastifyInstance } from "fastify";
 import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
@@ -7,15 +9,17 @@ import { NOVNC_TTL_MS } from "../config.js";
 
 // SCRIPTURE_ANCHOR: verify-gate | Psalm 118:20 | Verse: This is the gate of Yahweh; the righteous will enter into it.
 // Caddy's forward_auth target. Returns 200 if the signed URL on
-// X-Original-URI is valid, 401 otherwise. Never 5xx — Caddy treats anything
-// except 2xx as a denial, but we still want to keep this clean.
+// X-Forwarded-Uri (the client's request URI, set by Caddy) is valid, 401
+// otherwise. Never 5xx — Caddy treats anything except 2xx as a denial, but we
+// still want to keep this clean.
 //
 // Scope is derived from the URL path: /browser-sidecar/novnc/<identity>/...
 // or, if a single shared seed scope is used, from the ?scope= query param.
 //
-// Replay protection: every successful verify consumes the URL's nonce in
-// the in-memory NonceStore. A second verify with the same nonce within TTL
-// returns 401 reason="replay_detected".
+// Replay protection: every successful verify consumes the URL's nonce in a
+// NonceStore persisted under PROFILES_DIR (the named volume), so a restart
+// does not make in-flight signed URLs replayable. A second verify with the
+// same nonce within TTL returns 401 reason="replay_detected".
 //
 // Audit logging: every verify (success + failure) is logged with the
 // requesting client IP, scope, and reason. Operators can grep for replay
@@ -24,11 +28,17 @@ export function registerNovncVerifyRoute(
   app: FastifyInstance,
   deps: { config: Config; logger: Logger },
 ): void {
-  const store = new NonceStore(deps.logger);
+  const store = new NonceStore(
+    deps.logger,
+    join(deps.config.PROFILES_DIR, ".sidecar-state"),
+  );
   store.startPruner();
 
   app.get("/internal/verify-novnc-url", async (req, reply) => {
-    const original = (req.headers["x-original-uri"] as string | undefined) ?? "";
+    // X-Forwarded-Uri is what Caddy's forward_auth sets from the real request.
+    // The signature is checked against this URI's own path, so a signature
+    // minted for one path cannot open another.
+    const original = (req.headers["x-forwarded-uri"] as string | undefined) ?? "";
     const peer = req.headers["x-forwarded-for"] || req.ip;
 
     const denyAndLog = (reason: string) => {

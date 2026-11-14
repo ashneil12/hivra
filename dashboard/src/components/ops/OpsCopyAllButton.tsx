@@ -69,7 +69,7 @@ export function OpsCopyAllButton({ incidentCount, text }: OpsCopyAllButtonProps)
         {copied ? 'Copied' : 'Copy All'}
       </button>
       {error && (
-        <p style={{ margin: 0, fontSize: 12, color: '#b91c1c' }}>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--hg-bad)' }}>
           {error}
         </p>
       )}

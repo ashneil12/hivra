@@ -4,8 +4,12 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
+import { UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
+
+// The database refuses a sixth live restore point (begin_hivra_agent_snapshot counts status <> 'deleted' and stops at 5),
+// so this limit only bounds the read. It is also the maximum returned to the client.
+const SNAPSHOT_MAXIMUM = 5;
 
 function publicSnapshot(row: Record<string, unknown>) {
   return {
@@ -27,11 +31,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);
     const { id } = await params;
+    if (!UUID_V1_TO_8.test(id)) return apiError("Agent not found", 404);
 
     const { data: agent, error: agentError } = await supabaseAdmin
       .from("hivra_agents")
@@ -52,13 +56,14 @@ export async function GET(
       .eq("agent_id", id)
       .eq("user_id", userId)
       .neq("status", "deleted")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(SNAPSHOT_MAXIMUM);
     if (error) return apiError("Could not load restore points.", 503);
 
     const response = apiSuccess({
       snapshots: (Array.isArray(data) ? data : []).map((row) => publicSnapshot(row)),
       supported: true,
-      maximum: 5,
+      maximum: SNAPSHOT_MAXIMUM,
     });
     response.headers.set("Cache-Control", "no-store");
     return response;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 
 export interface AgentsDeployedPollState {
@@ -26,6 +26,14 @@ export function useAgentsDeployedPolling({
 }: UseAgentsDeployedPollingOpts = {}) {
   const [stats, setStats] = useState<AgentsDeployedPollState | null>(initial);
   const [bumped, setBumped] = useState(false);
+  const lastTotalRef = useRef<number | null>(initial?.total ?? null);
+  const bumpTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (bumpTimerRef.current !== null) window.clearTimeout(bumpTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,13 +53,17 @@ export function useAgentsDeployedPolling({
         if (!res.ok) return;
         const data = (await res.json()) as AgentsDeployedPollState;
         if (cancelled) return;
-        setStats((prev) => {
-          if (prev && data.total > prev.total) {
-            setBumped(true);
-            window.setTimeout(() => setBumped(false), bumpDurationMs);
-          }
-          return data;
-        });
+        const prevTotal = lastTotalRef.current;
+        lastTotalRef.current = data.total;
+        if (prevTotal !== null && data.total > prevTotal) {
+          setBumped(true);
+          if (bumpTimerRef.current !== null) window.clearTimeout(bumpTimerRef.current);
+          bumpTimerRef.current = window.setTimeout(() => {
+            bumpTimerRef.current = null;
+            setBumped(false);
+          }, bumpDurationMs);
+        }
+        setStats(data);
       } catch {
         // ignore — next poll retries
       }

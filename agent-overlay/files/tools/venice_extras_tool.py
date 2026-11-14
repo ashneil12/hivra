@@ -7,10 +7,13 @@ Venice API (see github.com/veniceai/venice-mcp-server for the spec).
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+import socket
+import urllib.parse
+from typing import Any, Dict, Optional, Tuple
 
 from tools.registry import registry
 
@@ -18,6 +21,108 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_VENICE_BASE_URL = "https://api.venice.ai/api/v1"
 _HTTP_TIMEOUT = 60
+_MAX_FETCH_BYTES = 50 * 1024 * 1024
+_MAX_FETCH_REDIRECTS = 5
+
+# Agent-supplied source URLs are fetched from inside the tenant VM, so they must not reach this
+# VM's own loopback, link-local/metadata addresses, or sibling Hermes services by docker name.
+# Same policy as services/browser-sidecar/src/navigation-guard.ts. RFC1918 stays allowed: a
+# tenant-owned LAN service may be the source.
+_BLOCKED_FETCH_HOSTS = frozenset({
+    "warden",
+    "dashboard-sidecar",
+    "autoheal",
+    "official-dashboard",
+    "browser-sidecar",
+    "webui",
+    "hermes-webui",
+    "hermes-agent",
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata.tencentyun.com",
+    "instance-data",
+})
+
+
+class UnsafeURLError(ValueError):
+    """An agent-supplied URL that may not be fetched from this VM."""
+
+
+def _ip_is_blocked(ip: Any) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or ip.is_unspecified or ip.is_link_local
+
+
+def assert_fetchable_url(url: str) -> None:
+    """Raise UnsafeURLError unless *url* is http(s) and its host is allowed."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise UnsafeURLError("URL is malformed") from exc
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise UnsafeURLError("only http:// and https:// URLs can be fetched")
+    host = (parsed.hostname or "").rstrip(".")
+    if not host:
+        raise UnsafeURLError("URL has no host")
+    if host in _BLOCKED_FETCH_HOSTS or host == "localhost" or host.endswith(".localhost"):
+        raise UnsafeURLError(f"host {host!r} is not allowed")
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _ip_is_blocked(literal):
+            raise UnsafeURLError(f"address {host} is not allowed")
+        return
+    # A public-looking name can still resolve to loopback or link-local, so check the addresses too.
+    try:
+        infos = socket.getaddrinfo(host, port or (443 if scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise UnsafeURLError(f"could not resolve host {host!r}") from exc
+    for info in infos:
+        try:
+            resolved = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        except ValueError:
+            continue
+        if _ip_is_blocked(resolved):
+            raise UnsafeURLError(f"host {host!r} resolves to a blocked address")
+
+
+def fetch_url_bytes(url: str, *, timeout: int = _HTTP_TIMEOUT) -> Tuple[bytes, Optional[str]]:
+    """GET an agent-supplied source file. Returns (body, content-type header or None).
+
+    Every redirect hop is re-checked against assert_fetchable_url, and the body is capped at
+    _MAX_FETCH_BYTES.
+    """
+    import requests
+
+    current = url.strip()
+    for _ in range(_MAX_FETCH_REDIRECTS + 1):
+        assert_fetchable_url(current)
+        resp = requests.get(current, timeout=timeout, allow_redirects=False, stream=True)
+        try:
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("location")
+                if not location:
+                    raise ValueError(f"redirect without a Location header (HTTP {resp.status_code})")
+                current = urllib.parse.urljoin(current, location)
+                continue
+            resp.raise_for_status()
+            declared = resp.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > _MAX_FETCH_BYTES:
+                raise ValueError(f"source file is larger than {_MAX_FETCH_BYTES // (1024 * 1024)} MB")
+            body = bytearray()
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                body.extend(chunk)
+                if len(body) > _MAX_FETCH_BYTES:
+                    raise ValueError(f"source file is larger than {_MAX_FETCH_BYTES // (1024 * 1024)} MB")
+            return bytes(body), resp.headers.get("content-type")
+        finally:
+            resp.close()
+    raise UnsafeURLError("too many redirects")
 
 
 def _creds() -> tuple[str, str]:
@@ -86,11 +191,10 @@ def text_parser_tool(url: str) -> str:
     try:
         import requests
 
-        src = requests.get(url.strip(), timeout=_HTTP_TIMEOUT)
-        src.raise_for_status()
+        src_bytes, src_ctype = fetch_url_bytes(url.strip(), timeout=_HTTP_TIMEOUT)
         filename = url.strip().rstrip("/").split("/")[-1] or "document"
-        ctype = src.headers.get("content-type", "application/octet-stream").split(";")[0]
-        files = {"file": (filename, src.content, ctype)}
+        ctype = (src_ctype or "application/octet-stream").split(";")[0]
+        files = {"file": (filename, src_bytes, ctype)}
         resp = requests.post(f"{base}/augment/text-parser", headers=_headers(), files=files, timeout=_HTTP_TIMEOUT)
         resp.raise_for_status()
         body = resp.json()
@@ -137,10 +241,9 @@ def voice_clone_tool(action: str = "list", sample_url: Optional[str] = None, mod
     try:
         import requests
 
-        src = requests.get(str(sample_url).strip(), timeout=_HTTP_TIMEOUT)
-        src.raise_for_status()
-        ctype = src.headers.get("content-type", "audio/mpeg").split(";")[0]
-        files = {"file": ("sample", src.content, ctype)}
+        src_bytes, src_ctype = fetch_url_bytes(str(sample_url).strip(), timeout=_HTTP_TIMEOUT)
+        ctype = (src_ctype or "audio/mpeg").split(";")[0]
+        files = {"file": ("sample", src_bytes, ctype)}
         data = {"model": model} if (model and str(model).strip()) else {}
         resp = requests.post(f"{base}/audio/voices", headers=_headers(), files=files, data=data, timeout=_HTTP_TIMEOUT)
         resp.raise_for_status()

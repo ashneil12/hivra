@@ -15,15 +15,17 @@ const contactsUpdate = jest.fn();
 const contactsRemove = jest.fn();
 const contactsList = jest.fn();
 const segmentsAdd = jest.fn();
+const segmentsList = jest.fn().mockResolvedValue({ data: { data: [{ id: "seg_1", name: "Hivra customers" }] }, error: null });
+const topicsList = jest.fn().mockResolvedValue({ data: { data: [{ id: "top_1", name: "Product updates", description: "" }] }, error: null });
 
 jest.mock("resend", () => ({
   Resend: jest.fn().mockImplementation(() => ({
     segments: {
-      list: jest.fn().mockResolvedValue({ data: { data: [{ id: "seg_1", name: "Hivra customers" }] }, error: null }),
+      list: segmentsList,
       create: jest.fn().mockResolvedValue({ data: { id: "seg_1" }, error: null }),
     },
     topics: {
-      list: jest.fn().mockResolvedValue({ data: { data: [{ id: "top_1", name: "Product updates", description: "" }] }, error: null }),
+      list: topicsList,
       create: jest.fn().mockResolvedValue({ data: { id: "top_1" }, error: null }),
       update: jest.fn().mockResolvedValue({ data: {}, error: null }),
     },
@@ -143,6 +145,18 @@ describe("syncClerkUsersToAnnouncementAudience time budget", () => {
     expect(contactsRemove).not.toHaveBeenCalled();
   });
 
+  it("bounds the Clerk user-list fetch so a stalled response cannot skip the budget", async () => {
+    const users = makeClerkUsers(1);
+    stubClerkFetch(users);
+
+    const promise = syncClerkUsersToAnnouncementAudience({ timeBudgetMs: 1_000_000, now: () => 0 });
+    await jest.runAllTimersAsync();
+    await promise;
+
+    const init = (global.fetch as unknown as jest.Mock).mock.calls[0][1];
+    expect(init).toEqual(expect.objectContaining({ signal: expect.anything() }));
+  });
+
   it("does not bound the run when no budget is supplied (legacy behavior)", async () => {
     const users = makeClerkUsers(4);
     stubClerkFetch(users);
@@ -153,5 +167,54 @@ describe("syncClerkUsersToAnnouncementAudience time budget", () => {
 
     expect(result.recipientsProcessed).toBe(4);
     expect(result.timedOut).toBe(false);
+  });
+});
+
+describe("single-user syncs reuse the Resend setup", () => {
+  const ORIGINAL = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = { ...ORIGINAL, RESEND_API_KEY: "re_test" };
+    contactsGet.mockResolvedValue({ data: { id: "c_1", email: "x", unsubscribed: false }, error: null });
+    contactsUpdate.mockResolvedValue({ data: {}, error: null });
+    segmentsAdd.mockResolvedValue({ data: {}, error: null });
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL;
+  });
+
+  // A fresh module instance per test so the module-level setup cache starts empty.
+  function loadSync() {
+    let mod: typeof import("../resend-announcement-sync") | undefined;
+    jest.isolateModules(() => {
+      mod = require("../resend-announcement-sync");
+    });
+    if (!mod) throw new Error("module did not load");
+    return mod.syncClerkUserToAnnouncementAudience;
+  }
+
+  it("lists the segment and topic once across consecutive events", async () => {
+    const sync = loadSync();
+    const [first, second] = makeClerkUsers(2);
+
+    await sync(first);
+    await sync(second);
+
+    expect(segmentsList).toHaveBeenCalledTimes(1);
+    expect(topicsList).toHaveBeenCalledTimes(1);
+    expect(contactsUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries the setup on the next event after a failed setup", async () => {
+    const sync = loadSync();
+    const [first, second] = makeClerkUsers(2);
+    segmentsList.mockResolvedValueOnce({ data: null, error: { name: "internal_error", statusCode: 500, message: "boom" } });
+
+    await expect(sync(first)).rejects.toThrow("Failed to list Resend segments: boom");
+    await sync(second);
+
+    expect(segmentsList).toHaveBeenCalledTimes(2);
   });
 });

@@ -25,10 +25,10 @@ describe("tier-specs", () => {
       expect(spec.ramLimitMb).toBe(1024);
     });
 
-    it("$HERMES holder (token_base) matches the base free shape — 0.5 vCPU + 1GB", () => {
-      const spec = resolveTierSpec("token_base");
-      expect(spec.cpuLimit).toBe(0.5);
-      expect(spec.ramLimitMb).toBe(1024);
+    it("the removed Starter tier (token_base) is unknown and falls back to Free", () => {
+      // Hosted computers are paid only. A row the migration has not moved yet
+      // keeps the Free shape it already had (0.5 vCPU + 1GB), never more.
+      expect(resolveTierSpec("token_base")).toEqual(resolveTierSpec("credit_base"));
     });
 
     it("operator/fleet/command tiers mirror the PLANS object — no drift", () => {
@@ -58,6 +58,16 @@ describe("tier-specs", () => {
       const spec = resolveTierSpec("never_heard_of_this_tier");
       expect(spec.cpuLimit).toBe(0.5);
       expect(spec.ramLimitMb).toBe(1024);
+    });
+
+    // REGRESSION: `in` also sees inherited Object members, so a tier named after
+    // one returned that member instead of falling back to the free tier.
+    it("treats inherited Object members as unknown tiers", () => {
+      for (const tier of ["constructor", "toString", "__proto__"]) {
+        const spec = resolveTierSpec(tier);
+        expect(spec.cpuLimit).toBe(0.5);
+        expect(spec.ramLimitMb).toBe(1024);
+      }
     });
   });
 
@@ -110,9 +120,8 @@ describe("tier-specs", () => {
     });
 
     it("resolveEffectiveTierSpec refuses the boost on a non-paid tier even when eligible", () => {
-      // A free/token-base holder who holds VVV still gets no extra compute
-      // until they upgrade — the paid gate lives here.
-      expect(resolveEffectiveTierSpec("token_base", true)).toEqual(resolveTierSpec("token_base"));
+      // A Free holder who holds VVV still gets no extra compute until they
+      // upgrade — the paid gate lives here.
       expect(resolveEffectiveTierSpec("credit_base", true)).toEqual(resolveTierSpec("credit_base"));
     });
 

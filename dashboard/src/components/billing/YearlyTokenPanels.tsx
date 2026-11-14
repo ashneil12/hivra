@@ -16,7 +16,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { clientLog } from '@/lib/client/logger';
 import { hermesosTransferUri } from '@/lib/billing/eip681';
 import type { ManagedVeniceTokenQuotePayload } from '@/lib/billing/managed-venice-client';
-import { YEARLY_TOKEN_USD, displayTokenUnit } from '@/lib/billing/token-plan-prices';
+import { HERMESOS_DISPLAY_UNIT, YEARLY_TOKEN_USD, displayTokenUnit } from '@/lib/billing/token-plan-prices';
 import type { ManagedVeniceWalletType } from '@/lib/venice/managed-credit-topup';
 import {
   type YearlyTokenQuotePayload,
@@ -75,8 +75,11 @@ export function YearlyPaymentProgress({
   onResume,
   onCheckNow,
   checkingNow,
+  tokenUnit: accountTokenUnit = HERMESOS_DISPLAY_UNIT,
 }: {
   tier: "pro" | "power";
+  /** The account's payment token, used when there is no quote to name it. */
+  tokenUnit?: string;
   quote: YearlyTokenQuotePayload | null;
   subscription: YearlyTokenSubscriptionPayload | null;
   onResume: () => void;
@@ -90,6 +93,8 @@ export function YearlyPaymentProgress({
   }, []);
 
   const tierName = tier === "power" ? "Power" : "Pro";
+  // The token this payment is in, from the quote (the registry names it).
+  const tokenUnit = quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : accountTokenUnit;
   const formatted = quote ? quote.tokensRequiredDisplay.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "—";
   const remainingMs = quote ? Math.max(0, Date.parse(quote.expiresAt) - now) : 0;
   const minutes = Math.floor(remainingMs / 60000);
@@ -121,7 +126,7 @@ export function YearlyPaymentProgress({
     {
       key: "quote",
       label: "Quote locked",
-      sub: quote ? `Send ${formatted} ${displayTokenUnit(quote.tokenSymbol)}` : "Sent",
+      sub: quote ? `Send ${formatted} ${tokenUnit}` : "Sent",
       status: quote && !subActive ? "active" : "done",
     },
     {
@@ -170,7 +175,7 @@ export function YearlyPaymentProgress({
                 ? "Quote expired"
                 : subActive
                   ? `Activating ${tierName}`
-                  : `Yearly $HermesOS · ${tierName}`}
+                  : `Yearly ${tokenUnit} · ${tierName}`}
           </span>
           <span className={styles.message}>
             {allDone
@@ -278,6 +283,7 @@ export function ProgressStage({
 }
 export function ManagedVeniceDepositModal({
   tokenPaymentsEnabled = false,
+  tokenUnit = HERMESOS_DISPLAY_UNIT,
   isOpen,
   walletType,
   amountUsd,
@@ -294,6 +300,8 @@ export function ManagedVeniceDepositModal({
 }: {
   isOpen: boolean;
   tokenPaymentsEnabled?: boolean;
+  /** The account's payment token, e.g. "$HIVRA". */
+  tokenUnit?: string;
   walletType: ManagedVeniceWalletType;
   amountUsd: number;
   loading: boolean;
@@ -345,7 +353,13 @@ export function ManagedVeniceDepositModal({
   // With token payments off (billing v2 off, or the token geo-policy blocks
   // this viewer) the dialog is card-only: no $HermesOS start button or bonus
   // copy, whatever a deep link selected.
-  const shownWalletType: ManagedVeniceWalletType = tokenPaymentsEnabled ? walletType : "card";
+  // A token top-up already issued stays visible (and checkable) even when new
+  // token payments are off: it is in flight, and checking it is never refused.
+  const openTokenQuote = Boolean(
+    quote && walletType === "hermesos" && (quote.status === "active" || quote.status === "settled")
+  );
+  const tokenOptionShown = tokenPaymentsEnabled || openTokenQuote;
+  const shownWalletType: ManagedVeniceWalletType = tokenOptionShown ? walletType : "card";
   const quoteActive = Boolean(quote && shownWalletType === "hermesos" && quote.status === "active");
   const quoteSettled = Boolean(quote && shownWalletType === "hermesos" && quote.status === "settled");
 
@@ -355,7 +369,8 @@ export function ManagedVeniceDepositModal({
       description="Venice runs at provider rates with no Hivra markup. Card credits add exactly what you pay."
       // $HermesOS stays reachable only for a flow that already chose it
       // (a deep link into a token top-up) and only while token payments are on.
-      walletOptions={tokenPaymentsEnabled && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
+      walletOptions={tokenOptionShown && walletType === "hermesos" ? ["hermesos", "card"] : ["card"]}
+      tokenUnit={quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : tokenUnit}
       walletType={shownWalletType}
       onWalletTypeChange={onWalletTypeChange}
       calculatorId="managed-venice-billing-top-up"
@@ -394,9 +409,12 @@ export function YearlyTokenPaymentModal({
   quote,
   onClose,
   reviewPending = false,
+  tokenUnit = HERMESOS_DISPLAY_UNIT,
 }: {
   isOpen: boolean;
   tier: "pro" | "power" | null;
+  /** The account's payment token, e.g. "$HIVRA"; a loaded quote's own token wins. */
+  tokenUnit?: string;
   loading: boolean;
   error: string | null;
   /** A payment for this tier is already under manual review. */
@@ -429,6 +447,7 @@ export function YearlyTokenPaymentModal({
   if (!isOpen) return null;
 
   const tierName = tier === "power" ? "Power" : "Pro";
+  const unit = quote ? displayTokenUnit(quote.tokenSymbol, quote.tokenAddress) : tokenUnit;
   const remainingMs = quote ? Math.max(0, Date.parse(quote.expiresAt) - now) : 0;
   const expired = quote ? remainingMs <= 0 : false;
   const minutes = Math.floor(remainingMs / 60000);
@@ -456,8 +475,8 @@ export function YearlyTokenPaymentModal({
 
   return (
     <BillingDialog
-      ariaLabel={`Pay ${tierName} yearly with $HermesOS`}
-      eyebrow="Pay 1 year with $HermesOS"
+      ariaLabel={`Pay ${tierName} yearly with ${unit}`}
+      eyebrow={`Pay 1 year with ${unit}`}
       title={tier ? `${tierName} · $${YEARLY_TOKEN_USD[tier]}/yr` : tierName}
       onClose={onClose}
       footer={
@@ -517,7 +536,7 @@ export function YearlyTokenPaymentModal({
           <TransferAmountField
             label="Step 1 · Send exactly"
             amount={formatted}
-            unit={displayTokenUnit(quote.tokenSymbol)}
+            unit={unit}
             copyValue={quote.tokensRequiredDisplay}
             copyTitle="Copies the amount without separators, ready to paste into a wallet"
           >

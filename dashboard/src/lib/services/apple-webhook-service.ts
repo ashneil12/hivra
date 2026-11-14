@@ -54,7 +54,6 @@ import type {
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
-import { grantSubscriptionCycleCredits } from "@/lib/billing/credits";
 import {
   appleSandboxFallbackEnabled,
   getAppleEnvironment,
@@ -279,13 +278,18 @@ export class AppleWebhookService {
     userId: string
   ): Promise<AppleSubscriptionRow | null> {
     const db = requireDb();
-    const { data } = await db
+    const { data, error } = await db
       .from("apple_iap_subscriptions")
       .select(
         "user_id, apple_original_transaction_id, product_id, plan, status, current_period_start, current_period_end, cancel_at_period_end"
       )
       .eq("user_id", userId)
       .maybeSingle<AppleSubscriptionRow>();
+    // A failed read must not look like "no stored row": the stale-replay guard
+    // would then wave an older period through and overwrite the newer one.
+    if (error) {
+      throw new Error(error.message || "Failed to read apple_iap_subscriptions row");
+    }
     return data ?? null;
   }
 
@@ -420,20 +424,6 @@ export class AppleWebhookService {
       },
       notificationType
     );
-
-    // Cycle credit grant — idempotent on
-    // apple_subscription:<originalTransactionId>:<periodStart>:<periodEnd>,
-    // so redeliveries and reconciler convergence can never double-grant.
-    await grantSubscriptionCycleCredits({
-      userId,
-      planKey,
-      subscriptionId: originalTransactionId,
-      periodStart: transaction.purchaseDate,
-      periodEnd: transaction.expiresDate,
-      source: "apple",
-      actor: "apple_webhook",
-      referencePrefix: "apple_subscription",
-    });
 
     // Same tier machinery as the Stripe activation path. Failures never roll
     // back the subscription write (mirrors stripe-webhook-service).

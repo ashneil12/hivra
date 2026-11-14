@@ -148,10 +148,13 @@ describe("recordInstanceMeteringSample", () => {
 });
 
 describe("getInstanceMeteringRollup", () => {
+  // Lower bound older than every fixture sample, so the window covers them all.
+  const WINDOW_START = new Date("2020-01-01T00:00:00.000Z");
+
   it("returns an empty rollup when there are no samples", async () => {
     const { db } = createFakeDb([]);
 
-    const rollup = await getInstanceMeteringRollup("inst_1", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_1", WINDOW_START, db);
 
     expect(rollup).toEqual({
       sample_count: 0,
@@ -198,7 +201,7 @@ describe("getInstanceMeteringRollup", () => {
 
     const { db, selectArgs } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_1", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_1", WINDOW_START, db);
 
     expect(selectArgs.eq).toEqual({ column: "instance_id", value: "inst_1" });
     expect(selectArgs.order).toEqual({ column: "sampled_at", opts: { ascending: true } });
@@ -243,7 +246,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_null_total", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_null_total", WINDOW_START, db);
 
     expect(rollup.disk_used_bytes_last).toBe(41_000_000_000);
     expect(rollup.disk_total_bytes_last).toBe(0); // latest wins; NULL → 0 → no banner
@@ -276,7 +279,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_disk", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_disk", WINDOW_START, db);
 
     expect(rollup.disk_total_bytes_last).toBe(831_023_177_728);
     expect(rollup.disk_used_is_capacity_fallback_last).toBe(false);
@@ -300,7 +303,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_fallback", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_fallback", WINDOW_START, db);
 
     expect(rollup.disk_total_bytes_last).toBe(42949672960);
     expect(rollup.disk_used_is_capacity_fallback_last).toBe(true);
@@ -320,7 +323,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_bad_meta", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_bad_meta", WINDOW_START, db);
 
     expect(rollup.disk_total_bytes_last).toBe(0);
     expect(rollup.disk_used_is_capacity_fallback_last).toBe(false);
@@ -379,7 +382,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_reset", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_reset", WINDOW_START, db);
 
     // CPU is reset-aware: after a restart the new counter value IS the growth.
     expect(rollup.cpu_seconds_total).toBe(50);
@@ -401,7 +404,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_transition", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_transition", WINDOW_START, db);
 
     expect(rollup.cpu_seconds_total).toBeCloseTo(41, 6);
   });
@@ -435,7 +438,7 @@ describe("getInstanceMeteringRollup", () => {
     ];
     const { db } = createFakeDb(rows);
 
-    const rollup = await getInstanceMeteringRollup("inst_strings", null, db);
+    const rollup = await getInstanceMeteringRollup("inst_strings", WINDOW_START, db);
 
     expect(rollup.cpu_seconds_total).toBe(10);
     expect(rollup.net_out_bytes).toBe(1000);

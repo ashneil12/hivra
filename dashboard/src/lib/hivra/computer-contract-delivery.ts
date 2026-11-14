@@ -41,7 +41,7 @@ import {
   type ComputerContractGuestRequest,
 } from "./computer-contract-seed";
 
-type ProxmoxEnvironment = Parameters<typeof runComputerContractSeed>[2];
+type ProxmoxAuthority = Parameters<typeof runComputerContractSeed>[2];
 type AgentRow = ComputerContractSubject & { id: string; ip?: string | null };
 
 const LOG_SOURCE = "hivra/computer-contract";
@@ -277,23 +277,24 @@ async function advanceSeededComputerContract(
 }
 
 /**
- * Hivra Cloud and My server: the Proxmox host-to-guest seed lane. `env` may be
- * a function: the owner-scoped host environment is then resolved only when a
- * round trip is actually due, not on every page load.
+ * Hivra Cloud and My server: the Proxmox host-to-guest seed lane. `authority`
+ * may be a function: the owner-scoped execution context is then resolved only
+ * when a round trip is actually due, not on every page load.
  */
 export async function advanceProxmoxComputerContract(
   userId: string,
   rawAgent: Record<string, unknown>,
-  env: ProxmoxEnvironment | (() => Promise<ProxmoxEnvironment>),
+  authority: ProxmoxAuthority | (() => Promise<ProxmoxAuthority>),
   mode: ComputerContractMode,
   options: ComputerContractStepOptions = {},
 ): Promise<ComputerContractStatus> {
   const deps = { ...defaults, ...options };
-  const ip = String(rawAgent.ip ?? "");
-  let resolved: Promise<ProxmoxEnvironment> | null = null;
-  const environment = () => (resolved ??= typeof env === "function" ? env() : Promise.resolve(env));
+  const box = { ip: String(rawAgent.ip ?? ""), vmid: (rawAgent.vmid as number | null | undefined) ?? null };
+  let resolved: Promise<ProxmoxAuthority> | null = null;
+  const resolveAuthority = () =>
+    (resolved ??= typeof authority === "function" ? authority() : Promise.resolve(authority));
   return advanceSeededComputerContract(userId, rawAgent, "proxmox-seed",
-    async (guestRequest) => deps.seed(ip, guestRequest, await environment()), mode, deps.now, options.deadline);
+    async (guestRequest) => deps.seed(box, guestRequest, await resolveAuthority()), mode, deps.now, options.deadline);
 }
 
 /** My cloud: the enrolled provider seed lane (provider-guest-seed.ts). */

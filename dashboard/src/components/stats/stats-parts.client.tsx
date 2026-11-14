@@ -122,7 +122,7 @@ export function TokenOdometer({
     // and it re-anchors to fresh checkpoints on each poll.
     const tick = () => setValue(computeTokenDisplay(prevVal, prevAt, currVal, currAt, fallback));
     const first = setTimeout(tick, 0);
-    const every = setInterval(tick, reduceMotion ? 2000 : 1000);
+    const every = setInterval(pollWhenVisible(tick), reduceMotion ? 2000 : 1000);
     return () => {
       clearTimeout(first);
       clearInterval(every);

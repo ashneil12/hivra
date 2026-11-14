@@ -67,7 +67,10 @@ export function YearlyPaymentBanner({
   checkingNow,
   onResume,
   onCheckNow,
+  tokenUnit,
 }: {
+  /** The account's payment token, for a banner with no quote to name it. */
+  tokenUnit?: string;
   activeQuotes: PerTier<YearlyTokenQuotePayload>;
   pendingQuotes: PerTier<YearlyTokenQuotePayload>;
   recentSubs: PerTier<YearlyTokenSubscriptionPayload>;
@@ -87,6 +90,7 @@ export function YearlyPaymentBanner({
         onResume={() => onResume(chosenTier)}
         onCheckNow={onCheckNow}
         checkingNow={checkingNow}
+        tokenUnit={tokenUnit}
       />
     </div>
   );

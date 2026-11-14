@@ -1,5 +1,6 @@
 import {
   loadKnownProxmoxHostSlugs,
+  locateProxmoxInstanceAcrossFleet,
   recoverProxmoxInstanceAcrossFleet,
   runRecoverOrphanProvisioningSweep,
 } from "../recover-orphan-provisioning";
@@ -202,9 +203,15 @@ describe("runRecoverOrphanProvisioningSweep", () => {
       }),
     );
     expect(mockedEncrypt).toHaveBeenCalledWith("f".repeat(64));
-    expect(mockedRunScript.mock.calls.some(([script]) => script.includes("ssh -n -i /etc/hivra/keys/vm-orchestrator"))).toBe(
-      true
-    );
+    // The bearer read is pinned to the VMID-attested guest host key, and its
+    // stdin is /dev/null so nested guest SSH can't swallow the host script.
+    const discovery = mockedRunScript.mock.calls.map(([script]) => script as string)
+      .find((script) => script.includes("GUEST_SSH[@]"));
+    expect(discovery).toBeDefined();
+    expect(discovery).toContain("VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator");
+    expect(discovery).toMatch(/"\$\{GUEST_SSH\[@\]\}" "sudo -n grep[^\n]*<\/dev\/null/);
+    expect(discovery).not.toContain("StrictHostKeyChecking=no");
+    require("node:child_process").execFileSync("bash", ["-n"], { input: discovery });
 
     // Adoption promotes the row to running — an adopted box booted long ago
     // with the agent's factory-default SOUL.md (the in-band seed never
@@ -365,6 +372,56 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     expect(updatePayloads[0]).not.toHaveProperty("lifecycle_state");
     expect(mockedEncrypt).not.toHaveBeenCalled();
     expect(mockedSoulSeedAfterReady).not.toHaveBeenCalled();
+  });
+
+  it("locates a VM for teardown without writing the row (never revives a row being deleted)", async () => {
+    mockedFrom.mockReset();
+    mockedFrom.mockImplementation((table: string) => {
+      if (table !== "proxmox_hosts") throw new Error(`Unexpected table: ${table}`);
+      return {
+        select: jest.fn().mockResolvedValue({ data: [{ id: "fixturenode13" }], error: null }),
+      };
+    });
+    mockedRunScript.mockResolvedValue({
+      ok: true,
+      stdout: buildDiscoveryStdout({
+        vmid: 425,
+        privip: "10.250.20.75",
+        fqdn: "elsewhere.example",
+        bearer: "a".repeat(64),
+      }),
+      stderr: "",
+    });
+
+    const result = await locateProxmoxInstanceAcrossFleet(
+      buildOrphanRow({ status: "scheduled_for_deletion", lifecycle_state: "suspended" }),
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      status: "found",
+      found: expect.objectContaining({ vmid: 425 }),
+    }));
+    // Only the host registry is read: no hermes_instances write at all.
+    expect(mockedFrom.mock.calls.map(([table]) => table)).toEqual(["proxmox_hosts"]);
+    expect(mockedEncrypt).not.toHaveBeenCalled();
+  });
+
+  it("gives no teardown verdict when the host registry is unreadable (a fallback list may be partial)", async () => {
+    mockedFrom.mockReset();
+    mockedFrom.mockImplementation((table: string) => {
+      if (table !== "proxmox_hosts") throw new Error(`Unexpected table: ${table}`);
+      return {
+        select: jest.fn().mockResolvedValue({ data: null, error: { message: "boom" } }),
+      };
+    });
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+    const result = await locateProxmoxInstanceAcrossFleet(
+      buildOrphanRow({ status: "scheduled_for_deletion", lifecycle_state: "suspended" }),
+    );
+
+    expect(result).toEqual({ status: "inconclusive" });
+    expect(mockedRunScript).not.toHaveBeenCalled();
   });
 
   it.each([

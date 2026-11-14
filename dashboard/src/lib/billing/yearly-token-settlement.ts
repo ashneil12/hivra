@@ -41,7 +41,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
 import {
   createBaseChainReader,
+  paymentDustFloor,
   scanErc20TransfersInWindow,
+  tokenDustFloor,
   type BaseChainReader,
   type JsonRpcFetch,
   type ScannedTransfer,
@@ -457,10 +459,18 @@ async function subscriptionIdForQuote(db: YearlySettlementDb, quoteId: string) {
 // upgraded_at is stamped here. Best-effort: never blocks the activation.
 async function stampTokenConversion(db: YearlySettlementDb, userId: string, now: Date) {
   try {
-    await table(db, "hermes_subscriptions")
+    const { error } = await table(db, "hermes_subscriptions")
       .update({ upgraded_at: now.toISOString(), upgrade_source: "token_payment" })
       .eq("user_id", userId)
       .is("upgraded_at", null);
+    if (error) {
+      log.warn("yearly token conversion stamp failed", {
+        source: "yearly-token-settlement",
+        failureType: "yearly_token_conversion_stamp",
+        userId,
+        error: error.message,
+      });
+    }
   } catch {
     // Analytics stamp only — activation already succeeded.
   }
@@ -493,6 +503,7 @@ async function surfaceWrongTokenTransfers(
       fromMs: params.fromMs,
       toMs: params.toMs,
       minConfirmations: params.minConfirmations,
+      minAmount: tokenDustFloor(token.decimals),
     });
     const inRange = scan.transfers.filter(
       (transfer) =>
@@ -568,6 +579,7 @@ export async function reconcileYearlyTokenQuote(params: {
     fromMs: quotedAtMs,
     toMs: rangeEndMs,
     minConfirmations,
+    minAmount: paymentDustFloor(quote.tokensRequiredRaw),
   });
   // Any other live platform token sent into this range is the wrong token:
   // surfaced for operator recovery, never credited. With $HIVRA dormant

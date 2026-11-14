@@ -31,7 +31,6 @@ import {
   type HivraAgentExecutionContext,
 } from "@/lib/hivra/agent-execution-context";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { log } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -131,7 +130,6 @@ async function syncEnv(
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const identity = await resolveWalletRouteIdentity(ctx);
     if (!identity.ok) return identity.response;
     const { id, userId } = identity;
@@ -183,7 +181,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const identity = await resolveWalletRouteIdentity(ctx);
     if (!identity.ok) return identity.response;
     const { id, userId } = identity;

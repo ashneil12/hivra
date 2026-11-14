@@ -42,7 +42,7 @@
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { holdsPaidPlan, isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
-import { PLANS, getWorkspaceCloudPlan } from "@/lib/subscription/plans";
+import { PLANS } from "@/lib/subscription/plans";
 import { APPLE_ACCESS_STATUSES } from "@/lib/billing/apple-products";
 import {
   YEARLY_LIVE_STATUSES,
@@ -450,11 +450,6 @@ interface WorkspaceCloudSubscriptionRow {
  * `workspace_cloud_subscriptions` table so the two products' billing never
  * cross-contaminates. Returns null when the user has no active lane
  * subscription (caller then blocks provisioning with a "subscribe" message).
- *
- * WORKSPACE_CLOUD_BILLING_BYPASS=true synthesises an active lane entitlement —
- * test-only affordance for exercising the lane on canary before the lane's
- * Stripe products/webhook exist (mirrors the existing NODE_ENV dev mock in
- * createInstance). MUST stay unset in production.
  */
 export async function resolveWorkspaceCloudEntitlement(
   userId: string
@@ -478,37 +473,6 @@ export async function resolveWorkspaceCloudEntitlement(
       total_ram_budget: row.total_ram_budget,
       source: "workspace_cloud",
       currentPeriodEnd: row.current_period_end ?? null,
-      canChangePlanInPlace: false,
-    };
-  }
-
-  // Hard runtime guard: the billing bypass synthesises a FREE active
-  // entitlement and must NEVER take effect in production (where it would let
-  // anyone provision a real VM for free). A code comment is not a guard — if
-  // the flag is ever set in a prod deploy, refuse it and log loudly rather than
-  // silently honoring it.
-  if (process.env.WORKSPACE_CLOUD_BILLING_BYPASS === "true") {
-    if (process.env.NODE_ENV === "production") {
-      log.error(
-        "WORKSPACE_CLOUD_BILLING_BYPASS is set in production; ignoring (no free entitlement granted)",
-        new Error("workspace_cloud_billing_bypass_in_production"),
-        {
-          source: "instance-entitlement",
-          failureType: "workspace_cloud_billing_bypass_in_production",
-          userId,
-        }
-      );
-      return null;
-    }
-    const plan = getWorkspaceCloudPlan();
-    return {
-      plan: plan.key,
-      status: "active",
-      instance_limit: plan.maxAgents,
-      total_cpu_budget: plan.totalCpu,
-      total_ram_budget: plan.totalRam,
-      source: "workspace_cloud",
-      currentPeriodEnd: null,
       canChangePlanInPlace: false,
     };
   }

@@ -608,27 +608,39 @@ export async function loadHetznerCloudTokenReplacementScope(
   connectionId: string,
 ): Promise<HetznerCloudTokenReplacementScope> {
   const connection = await loadHetznerCloudConnectionMetadata(userId, connectionId);
-  const { data: rawSecret, error: secretError } = await database()
-    .from("infrastructure_connection_secrets")
-    .select("encrypted_bundle,key_version")
-    .eq("connection_id", connectionId)
-    .eq("user_id", userId)
-    .maybeSingle();
+  // The three reads depend only on user and connection, so they run together.
+  // Error checks below keep the original order (secret, envelope, orders, held
+  // rows, inventory) so the same failure is thrown.
+  const [secretResult, ordersResult, knownResult] = await Promise.all([
+    database()
+      .from("infrastructure_connection_secrets")
+      .select("encrypted_bundle,key_version")
+      .eq("connection_id", connectionId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    database()
+      .from("infrastructure_capacity_orders")
+      .select("id,status,server_name,provider_labels,provider_resource_id,provider_ssh_key_id,updated_at")
+      .eq("user_id", userId)
+      .eq("provider", "hetzner-cloud")
+      .eq("active_connection_id", connectionId)
+      .in("status", DISPATCHED_ORDER_STATUSES)
+      .is("external_cleanup_resolution_id", null)
+      .order("created_at", { ascending: false })
+      .limit(HETZNER_CREATED_SERVERS_MAX + 1),
+    database()
+      .from("infrastructure_capacity_inventory")
+      .select("provider_resource_id")
+      .eq("user_id", userId)
+      .eq("connection_id", connectionId),
+  ]);
+  const { data: rawSecret, error: secretError } = secretResult;
   if (secretError) throw databaseError(secretError);
   const envelope = (rawSecret as { encrypted_bundle?: unknown } | null)?.encrypted_bundle;
   if (typeof envelope !== "string" || envelope.trim() === "") {
     throw new InfrastructureConnectionStoreError("credential_error", connection.revision);
   }
-  const { data: orders, error: ordersError } = await database()
-    .from("infrastructure_capacity_orders")
-    .select("id,status,server_name,provider_labels,provider_resource_id,provider_ssh_key_id,updated_at")
-    .eq("user_id", userId)
-    .eq("provider", "hetzner-cloud")
-    .eq("active_connection_id", connectionId)
-    .in("status", DISPATCHED_ORDER_STATUSES)
-    .is("external_cleanup_resolution_id", null)
-    .order("created_at", { ascending: false })
-    .limit(HETZNER_CREATED_SERVERS_MAX + 1);
+  const { data: orders, error: ordersError } = ordersResult;
   if (ordersError) throw databaseError(ordersError);
   // A cut-off list could hide the one resource that proves the project.
   if ((orders ?? []).length > HETZNER_CREATED_SERVERS_MAX) throw new InfrastructureConnectionStoreError("database_error");
@@ -657,11 +669,7 @@ export async function loadHetznerCloudTokenReplacementScope(
       });
     }
   }
-  const { data: known, error: knownError } = await database()
-    .from("infrastructure_capacity_inventory")
-    .select("provider_resource_id")
-    .eq("user_id", userId)
-    .eq("connection_id", connectionId);
+  const { data: known, error: knownError } = knownResult;
   if (knownError) throw databaseError(knownError);
   const knownServerIds = new Set<string>();
   for (const row of (known ?? []) as Array<{ provider_resource_id?: unknown }>) {

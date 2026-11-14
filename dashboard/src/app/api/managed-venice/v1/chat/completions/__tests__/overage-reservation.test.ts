@@ -71,7 +71,7 @@ import { POST as internalAuthorize } from "@/app/api/managed-venice/internal/aut
 
 const USER_ID = "user_chat_overage_fixture";
 const KEY_ID = "22222222-2222-4222-8222-222222222222";
-// claude-opus-4-8: 1,000,000-token context, 128,000 max output, $6 / $30 per 1M.
+// claude-opus-4-8: 1,000,000-token context, 128,000 max output, $5 / $25 per 1M.
 const PREMIUM = "claude-opus-4-8";
 const USD = 1_000_000;
 
@@ -382,7 +382,7 @@ describe("managed-Venice chat: the hold covers everything the request can spend"
 
     const res = await POST(
       chatReq({
-        model: "deepseek-v4-pro",
+        model: "deepseek-v3.2",
         messages: [
           { role: "system", content: "You are Hermes. ".repeat(1_000) },
           { role: "user", content: "Summarise the plan. ".repeat(700) },
@@ -583,7 +583,7 @@ describe("off-Vercel Worker authorize: only a Worker that applies the patch gets
     expect(payload.bodyPatch).toEqual({});
     const [hold] = mockMemory.reservations();
     // Forwarded unchanged, Venice stops at the model's 128,000-token maximum.
-    expect(Number(hold.reserved_micro_usd)).toBeGreaterThanOrEqual(128_000 * 30);
+    expect(Number(hold.reserved_micro_usd)).toBeGreaterThanOrEqual(128_000 * 25);
   });
 
   it("an older Worker while live pricing is down holds up to the context window, since the catalog maximum is unconfirmed", async () => {
@@ -629,7 +629,7 @@ describe("off-Vercel Worker authorize: only a Worker that applies the patch gets
     const [hold] = mockMemory.reservations();
     expect(Number(hold.reserved_micro_usd)).toBeLessThanOrEqual(1 * USD);
     expect(Number(hold.reserved_micro_usd)).toBeGreaterThanOrEqual(
-      payload.bodyPatch.max_completion_tokens * 30
+      payload.bodyPatch.max_completion_tokens * 25
     );
   });
 });

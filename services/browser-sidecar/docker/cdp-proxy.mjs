@@ -22,7 +22,15 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "playwright";
+// Compiled from src/browser/chromium.ts: the one place that picks the Chromium
+// binary and its launch flags (sandbox ON, never --no-sandbox).
+import {
+  assertCanSandbox,
+  CHROMIUM_COMMON_ARGS,
+  diskCacheArg,
+  resolveChromiumExecutable,
+} from "./dist/browser/chromium.js";
+import { cdpRequestRejection } from "./cdp-request-guard.mjs";
 
 // Two-port contract (matches the dashboard's webui-instance-builder):
 //   AGENT_CDP_PORT       — Chrome's own remote-debugging port (127.0.0.1 only).
@@ -46,7 +54,7 @@ const SCREEN = process.env.CDP_WINDOW_SIZE || "1280,800";
 //      cumulative growth across restarts/redeploys.
 // Persistent profile data (cookies/logins/IndexedDB) is left intact; Chrome
 // rebuilds the caches on demand. See finding_browser_sidecar_bloat_root_cause.
-const DISK_CACHE_BYTES = Number(process.env.CDP_DISK_CACHE_MB || 256) * 1024 * 1024;
+const DISK_CACHE_MB = Number(process.env.CDP_DISK_CACHE_MB || 256);
 // Rebuildable cache directories Chrome writes under the user-data-dir (top
 // level) and under Default/. --disk-cache-size only bounds the first ("Cache").
 const CACHE_SUBDIRS = [
@@ -109,11 +117,12 @@ function pruneProfileCache() {
 }
 
 function launchChrome() {
-  let exe;
-  try {
-    exe = chromium.executablePath();
-  } catch (err) {
-    log("could not resolve chromium executable; retrying in 2s:", String(err));
+  // Sandbox ON: refuse to start as root rather than fall back to --no-sandbox.
+  // A throw here exits the proxy, which the entrypoint reports loudly.
+  assertCanSandbox();
+  const exe = resolveChromiumExecutable();
+  if (!exe) {
+    log("no Chromium binary found (set CHROMIUM_PATH); retrying in 2s");
     setTimeout(launchChrome, 2000);
     return;
   }
@@ -127,13 +136,11 @@ function launchChrome() {
     "--remote-allow-origins=*",
     `--user-data-dir=${USER_DATA_DIR}`,
     // Cap the HTTP disk cache so a long-lived session can't grow the
-    // browser-state volume unbounded. See note at DISK_CACHE_BYTES.
-    `--disk-cache-size=${DISK_CACHE_BYTES}`,
+    // browser-state volume unbounded. See note at DISK_CACHE_MB.
+    diskCacheArg(DISK_CACHE_MB),
     "--no-first-run",
     "--no-default-browser-check",
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-blink-features=AutomationControlled",
+    ...CHROMIUM_COMMON_ARGS,
     `--window-size=${SCREEN}`,
     "--window-position=0,0",
     "about:blank",
@@ -152,6 +159,14 @@ function launchChrome() {
 
 // ── HTTP proxy (with /json host rewrite) ───────────────────────────────────
 const server = http.createServer((creq, cres) => {
+  // Refuse DNS-rebound hosts and foreign page origins (see cdp-request-guard.mjs).
+  const rejection = cdpRequestRejection(creq.headers);
+  if (rejection) {
+    log(`refused ${creq.method} ${creq.url}: ${rejection}`);
+    cres.writeHead(403, { "content-type": "text/plain" });
+    cres.end("forbidden");
+    return;
+  }
   const incomingHost = creq.headers.host || `localhost:${LISTEN_PORT}`;
   const isJson = (creq.url || "").startsWith("/json");
 
@@ -196,6 +211,12 @@ const server = http.createServer((creq, cres) => {
 
 // ── WebSocket upgrade passthrough ──────────────────────────────────────────
 server.on("upgrade", (creq, csock, head) => {
+  const rejection = cdpRequestRejection(creq.headers);
+  if (rejection) {
+    log(`refused upgrade ${creq.url}: ${rejection}`);
+    csock.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    return;
+  }
   const usock = net.connect(CHROME_PORT, CHROME_HOST, () => {
     const headers = { ...creq.headers, host: `${CHROME_HOST}:${CHROME_PORT}` };
     let raw = `${creq.method} ${creq.url} HTTP/1.1\r\n`;
@@ -214,6 +235,10 @@ server.on("upgrade", (creq, csock, head) => {
   });
   usock.on("error", () => csock.destroy());
   csock.on("error", () => usock.destroy());
+  // `close` fires on RST/abort paths where no `end` is emitted — without this
+  // the peer socket to Chrome leaks for the proxy's lifetime.
+  csock.on("close", () => usock.destroy());
+  usock.on("close", () => csock.destroy());
 });
 
 server.listen(LISTEN_PORT, "0.0.0.0", () =>

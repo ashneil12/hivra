@@ -1644,16 +1644,9 @@ function resolveInfrastructureProviderForUser(userId: string): "hetzner" | "prox
   // pinned to whichever infra they were provisioned on, no
   // cross-infra migration).
   //
-  // Two opt-out paths:
-  //   1. HERMES_PROXMOX_DISABLED_USER_IDS — emergency allowlist that
-  //      forces a specific user back onto Hetzner if Proxmox provisioning
-  //      breaks for them. Use this if a customer reports failures and we
-  //      want to keep them unblocked while we fix Proxmox.
-  //   2. HERMES_PROXMOX_ENABLED_USER_IDS still works as a *legacy*
-  //      whitelist when the environment is in transition: if it's set,
-  //      ONLY listed users get Proxmox (matches the old behaviour for
-  //      gradual rollout). Once you're ready for full self-serve, unset
-  //      that env var and the whole pool goes Proxmox.
+  // One opt-out: HERMES_PROXMOX_DISABLED_USER_IDS is an emergency list that
+  // forces a specific user back onto Hetzner if Proxmox provisioning breaks
+  // for them, keeping them unblocked while Proxmox is fixed.
   const proxmoxAvailable =
     process.env.HERMES_INFRA_PROVIDER?.trim().toLowerCase() === "proxmox";
   if (!proxmoxAvailable) {
@@ -1666,13 +1659,6 @@ function resolveInfrastructureProviderForUser(userId: string): "hetzner" | "prox
   );
   if (proxmoxDisabledForUser) {
     return "hetzner";
-  }
-
-  // Transitional: when HERMES_PROXMOX_ENABLED_USER_IDS is set, treat it
-  // as a whitelist (old behaviour). Unset → everyone gets Proxmox.
-  const enabledList = process.env.HERMES_PROXMOX_ENABLED_USER_IDS?.trim();
-  if (enabledList) {
-    return envListIncludes(enabledList, userId) ? "proxmox" : "hetzner";
   }
 
   return "proxmox";
@@ -1694,7 +1680,17 @@ export const CreateInstanceSchema = z.object({
   vaultKeyId: z.string().optional(),
   honchoVaultKeyId: z.string().optional(),
   model: z.string().optional().default(""),
-  migrationPath: z.string().optional(),
+  // Storage object key for a migration archive. Traversal segments and
+  // control bytes are rejected here; ownership against the authenticated
+  // user is enforced in createInstance via isOwnedMigrationStoragePath (the
+  // schema can't see the userId).
+  migrationPath: z
+    .string()
+    .refine((value) => !value.includes("..") && !/[\n\r\0]/.test(value), {
+      message:
+        "migrationPath must not contain traversal segments or control characters",
+    })
+    .optional(),
   hostId: z.string().optional(), // If provided, deploy on existing host
   // Product lane. 'workspace_cloud' pins placement to the dedicated wrk1 lane
   // (separate from Hivra auto-placement) and tags the row so the two
@@ -1766,6 +1762,33 @@ export const CreateInstanceSchema = z.object({
 });
 
 type CreateInstanceParams = z.infer<typeof CreateInstanceSchema>;
+
+// Matches exactly what /api/upload-migration writes:
+//   migrations/<clerk user id>/<16 random bytes as 32 lowercase hex>.zip
+const MIGRATION_STORAGE_PATH_PATTERN =
+  /^migrations\/[^/]+\/[0-9a-f]{32}\.zip$/;
+
+/**
+ * True only when `migrationPath` is a migration archive object key owned by
+ * `userId` — i.e. the exact `migrations/<userId>/<32 hex>.zip` shape the
+ * upload route produces. createInstance signs this key with the service-role
+ * client, so anything broader (or belonging to another user) would hand the
+ * caller a signed download URL for someone else's archive — or any other
+ * object in the bucket.
+ */
+export function isOwnedMigrationStoragePath(
+  migrationPath: string,
+  userId: string
+): boolean {
+  if (!userId) return false;
+  if (migrationPath.includes("..")) return false;
+  for (const char of migrationPath) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  if (!migrationPath.startsWith(`migrations/${userId}/`)) return false;
+  return MIGRATION_STORAGE_PATH_PATTERN.test(migrationPath);
+}
 
 type ServiceResponse<T> =
   | { success: true; data: T }
@@ -2221,6 +2244,22 @@ export class InstanceService {
     userId: string,
     params: CreateInstanceParams
   ): Promise<ServiceResponse<Record<string, unknown>>> {
+    // SEC-01: migrationPath is a client-supplied storage object key that gets
+    // signed with the service-role client below. Without an ownership check a
+    // caller could name another user's archive (or any bucket key) and
+    // receive a working download URL for it. Fail closed before any DB write
+    // or provisioning work.
+    if (
+      params.migrationPath &&
+      !isOwnedMigrationStoragePath(params.migrationPath, userId)
+    ) {
+      return {
+        success: false,
+        status: 403,
+        message: "Invalid or unauthorized migration archive path.",
+      };
+    }
+
     const infraProvider = resolveInfrastructureProviderForUser(userId);
 
     if (infraProvider === "hetzner" && !process.env.HETZNER_API_TOKEN) {
@@ -2509,10 +2548,14 @@ export class InstanceService {
     }
 
     if (resolvedHost) {
+      // Same slot-freeing exclusions as the user budget below: a deleted or
+      // archived instance keeps its host_id and limits, and must not count.
       const { data: siblings } = await supabaseAdmin
         .from("hermes_instances")
         .select("cpu_limit, ram_limit")
-        .eq("host_id", resolvedHost.id);
+        .eq("host_id", resolvedHost.id)
+        .not("status", "in", '("deleted")')
+        .not("lifecycle_state", "in", SLOT_FREEING_LIFECYCLE_IN_LIST);
       const usedCpu = (siblings || []).reduce(
         (acc, row) => acc + (row.cpu_limit || 0),
         0
@@ -3060,6 +3103,16 @@ export class InstanceService {
     // Generate signed URL for Hetzner cloud-init if migration path exists
     let migrationUrl: string | undefined = undefined;
     if (migrationPath) {
+      // Defense in depth: the top-of-function check already rejected unowned
+      // paths; re-validate at the signing site so a future refactor can't
+      // turn this into a sign-anything oracle for other tenants' objects.
+      if (!isOwnedMigrationStoragePath(migrationPath, userId)) {
+        return {
+          success: false,
+          status: 403,
+          message: "Invalid or unauthorized migration archive path.",
+        };
+      }
       const { data: signData, error: signError } = await supabaseAdmin.storage
         .from("hermes-attachments")
         .createSignedUrl(migrationPath, 60 * 60); // 1 hour expiry
@@ -3472,21 +3525,40 @@ export class InstanceService {
     }
     if (infraProvider === "hetzner" && !finalHostId && result.serverId) {
       const specs = getServerSpecs(result.serverType || "cx23");
-      const { data: newHost } = await supabaseAdmin
-        .from("hermes_hosts")
-        .insert({
-          user_id: userId,
-          hetzner_server_id: result.serverId,
-          name: `Host - ${name}`,
-          ipv4_address: result.ipv4,
-          ssh_host_fingerprint_sha256: result.sshHostFingerprint ?? null,
-          total_cpu: specs.cpu,
-          total_ram: specs.ram,
-          status: "provisioning",
-        })
-        .select()
-        .single();
-      if (newHost) finalHostId = newHost.id;
+      const insertHostRow = () =>
+        supabaseAdmin!
+          .from("hermes_hosts")
+          .insert({
+            user_id: userId,
+            hetzner_server_id: result.serverId,
+            name: `Host - ${name}`,
+            ipv4_address: result.ipv4,
+            ssh_host_fingerprint_sha256: result.sshHostFingerprint ?? null,
+            total_cpu: specs.cpu,
+            total_ram: specs.ram,
+            status: "provisioning",
+          })
+          .select()
+          .single();
+      // The server is already billed and is never deleted here. One retry covers
+      // a transient insert failure before the gap is reported with the server id.
+      let hostInsert = await insertHostRow();
+      if (!hostInsert.data) hostInsert = await insertHostRow();
+      const { data: newHost, error: newHostError } = hostInsert;
+      if (newHost) {
+        finalHostId = newHost.id;
+      } else {
+        // The server exists and the instance keeps its hetzner_server_id, so it
+        // stays reachable through the legacy single-node path. Make the missing
+        // host row visible instead of silently continuing without one.
+        log.error("hetzner host row insert failed; instance is saved without a host_id", newHostError ?? new Error("hermes_hosts insert returned no row"), {
+          source: LOG_SOURCE,
+          failureType: "hetzner_host_row_insert_failed",
+          userId,
+          instanceId: instance.id,
+          hetznerServerId: result.serverId,
+        });
+      }
     }
 
     const infrastructure =

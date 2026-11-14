@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clientLog } from "@/lib/client/logger";
 import { useTokenGeoAccess } from "@/hooks/useTokenGeoAccess";
@@ -63,6 +63,16 @@ export function ManagedVeniceDepositModal({
   const [quote, setQuote] = useState<ManagedVeniceTokenQuotePayload | null>(null);
   const [refreshingWallet, setRefreshingWallet] = useState(false);
   const [walletRefreshStatus, setWalletRefreshStatus] = useState<"idle" | "refreshed" | "failed">("idle");
+  // The quote panel's background check depends on its onQuoteSettled prop. A new
+  // arrow on every render would restart the panel's check timers each time this
+  // modal re-rendered, so the handler is stable and reads the latest summary refresh.
+  const refreshSummaryRef = useRef(onRefreshSummary);
+  useEffect(() => {
+    refreshSummaryRef.current = onRefreshSummary;
+  }, [onRefreshSummary]);
+  const handleQuoteSettled = useCallback(() => {
+    void refreshSummaryRef.current?.();
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -195,9 +205,7 @@ export function ManagedVeniceDepositModal({
       notice={notice}
       quote={quote}
       onQuoteUpdate={setQuote}
-      onQuoteSettled={() => {
-        void onRefreshSummary?.();
-      }}
+      onQuoteSettled={handleQuoteSettled}
       quoteInFlight={quoteActive}
       quoteSettled={quoteSettled}
       loading={loading}

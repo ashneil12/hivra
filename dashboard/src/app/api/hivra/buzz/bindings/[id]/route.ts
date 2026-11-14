@@ -8,7 +8,6 @@ import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { createBuzzCoordinator } from "@/lib/hivra/buzz-coordinator";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { buzzFailure, MAX_BUZZ_RUNTIME_BODY_BYTES, noStore, readBuzzMutation } from "../../route-utils";
 
 const Id = z.string().uuid();
@@ -37,7 +36,6 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, context: Context) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const id = Id.safeParse((await context.params).id);
@@ -66,7 +64,6 @@ export async function POST(request: NextRequest, context: Context) {
 
 export async function DELETE(request: NextRequest, context: Context) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const id = Id.safeParse((await context.params).id);

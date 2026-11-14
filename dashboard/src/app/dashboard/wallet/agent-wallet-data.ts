@@ -1,3 +1,8 @@
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
+
+// Balance reads per page load, at most this many agents at a time.
+const WALLET_CARD_CONCURRENCY = 4;
+
 export interface AgentInstanceSummary {
   id: string;
   name: string;
@@ -193,7 +198,12 @@ export async function loadAgentWalletsFromApi(): Promise<AgentWalletsState> {
     ...instances.filter((instance) => instance.status === "running"),
     ...hivraInstances,
   ];
-  const cards = await Promise.all(runningInstances.map(loadWalletCard));
+  // Bounded: an owner with many running agents must not open that many balance reads at once.
+  const cards = await mapWithConcurrencyLimit(
+    runningInstances,
+    WALLET_CARD_CONCURRENCY,
+    (instance) => loadWalletCard(instance),
+  );
 
   return {
     totalAgents: instances.length + hivraInstances.length,

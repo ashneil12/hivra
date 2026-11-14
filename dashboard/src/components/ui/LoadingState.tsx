@@ -1,4 +1,5 @@
 import styles from "./LoadingState.module.css";
+import { ThinkingOrb } from "./ThinkingOrb";
 
 type LoadingStateProps = {
   label?: string;
@@ -14,10 +15,9 @@ export function LoadingState({ label = "Opening Hivra…", detail, compact = fal
     <div role="status" aria-live="polite" aria-atomic="true"
       className={`${styles.surface} ${compact ? styles.compact : ""} ${dark ? styles.dark : ""}`}>
       <div className={styles.content}>
-        <div className={styles.mark} aria-hidden="true"><span>H<span className={styles.dot}>.</span></span></div>
+        <div className={styles.mark} aria-hidden="true"><ThinkingOrb state="working" size={64} theme={dark ? "dark" : "auto"} /></div>
         <p className={styles.label}>{label}</p>
         {detail && <p className={styles.detail}>{detail}</p>}
-        <div className={styles.track} aria-hidden="true"><span /></div>
       </div>
     </div>
   );

@@ -67,7 +67,7 @@ WORDS = "amber-falcon-river"
 # The sudo transport exactly as src/lib/services/proxmox-sudo-transport.ts
 # builds it. A jest test reads this file and checks both are identical.
 SUDO_LOADER = ('printf "HIVRA_SUDO_V1\\n" >&2; IFS= read -r n && [[ $n =~ ^[1-9][0-9]{0,5}$ ]] && '
-               'IFS= read -r -d "" -n "$n" s && [ "${#s}" -eq "$n" ] && eval "$s"')
+               'IFS= read -r -d "" -n "$n" s && [ "${#s}" -eq "$n" ] && ( eval "$s" )')
 SUDO_PREFIX = ("/usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin "
                "LC_ALL=C HOME=/root ")
 SUDO_TRUE_PROBE = "/usr/bin/sudo -n -- /usr/bin/true"

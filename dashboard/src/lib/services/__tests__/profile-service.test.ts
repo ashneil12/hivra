@@ -199,16 +199,20 @@ describe('ProfileService', () => {
       await ProfileService.syncProfiles("inst_123", "user_123");
 
       expect(mockSelect).toHaveBeenCalledTimes(1);
-      expect(mockInsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        name: "native-agent-a",
-        gateway_port: 8651,
-        status: "running",
-      }));
-      expect(mockInsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
-        name: "native-agent-b",
-        gateway_port: 8652,
-        status: "stopped",
-      }));
+      // New profiles are written in one insert; ports are still assigned from the loaded rows.
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+      expect(mockInsert).toHaveBeenCalledWith([
+        expect.objectContaining({
+          name: "native-agent-a",
+          gateway_port: 8651,
+          status: "running",
+        }),
+        expect.objectContaining({
+          name: "native-agent-b",
+          gateway_port: 8652,
+          status: "stopped",
+        }),
+      ]);
     });
 
     it("throws when a host-created profile cannot be assigned a gateway port", async () => {
@@ -265,9 +269,10 @@ describe('ProfileService', () => {
         eq: jest.fn().mockReturnThis(),
         not: jest.fn().mockReturnThis(),
         update: jest.fn().mockReturnThis(),
-        single: jest.fn()
+        single: jest.fn(),
+        maybeSingle: jest.fn()
       }
-      mockChain.single.mockResolvedValueOnce({ data: { id: 'prof_new', gateway_port: 8651 } }); // startProfileGateway
+      mockChain.maybeSingle.mockResolvedValueOnce({ data: { id: 'prof_new', gateway_port: 8651 } }); // startProfileGateway
       mockChain.not.mockResolvedValueOnce({ data: [] }); // updateAgentCaddyRouting profiles
       mockChain.single.mockResolvedValueOnce({ data: { subdomain: "test", config: {} } }); // updateAgentCaddyRouting instances
       
@@ -580,6 +585,123 @@ describe('ProfileService', () => {
       // Falls through to the no-probe branch when input fails validation
       expect(malicious).toContain('Skipping health probe');
       expect(malicious).not.toContain('rm -rf');
+    });
+
+    it('scopes the instance lookup in updateAgentCaddyRouting to the owning user', async () => {
+      jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
+
+      const mockChain: Record<string, jest.Mock> = {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        not: jest.fn().mockResolvedValue({ data: [] }),
+        single: jest.fn().mockResolvedValue({
+          data: {
+            subdomain: 'unused',
+            gateway_url: 'https://203-0-113-11.sslip.io',
+            config: {},
+            backend: LEGACY_BACKEND,
+          },
+        }),
+      };
+
+      (supabaseAdmin!.from as jest.Mock).mockReturnValue(mockChain);
+      (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: 'OK status=200', stderr: '' });
+
+      await ProfileService.updateAgentCaddyRouting('inst_test', 'user_1');
+
+      expect(mockChain.eq).toHaveBeenCalledWith('id', 'inst_test');
+      expect(mockChain.eq).toHaveBeenCalledWith('user_id', 'user_1');
+    });
+
+    describe('generated Caddy reload script, run under sh with stubbed docker/curl/sleep', () => {
+      function runCaddyHostScript(opts: {
+        caddyfile: string;
+        probeFqdn: string | null;
+        probeStatus?: string;
+        previousCaddyfile?: string;
+      }): { status: number | null; stdout: string; caddyfileAfter: string | null } {
+        const root = mkdtempSync(join(tmpdir(), 'caddy-host-script-'));
+        try {
+          const instDir = join(root, 'inst_test');
+          mkdirSync(instDir);
+          if (opts.previousCaddyfile !== undefined) {
+            writeFileSync(join(instDir, 'Caddyfile'), opts.previousCaddyfile);
+          }
+          const bin = join(root, 'bin');
+          mkdirSync(bin);
+          writeFileSync(join(bin, 'docker'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+          writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+          writeFileSync(
+            join(bin, 'curl'),
+            `#!/bin/sh\nprintf '%s' '${opts.probeStatus ?? '200'}'\nexit 0\n`,
+            { mode: 0o700 },
+          );
+
+          const script = profileServiceInternals
+            .buildCaddyReloadWithHealthProbeScript({
+              instanceId: 'inst_test',
+              caddyfile: opts.caddyfile,
+              probeFqdn: opts.probeFqdn,
+            })
+            .replaceAll('/opt/hermes/instances/', `${root}/`);
+          const run = spawnSync('sh', ['-c', script], {
+            encoding: 'utf8',
+            env: { PATH: `${bin}:/usr/bin:/bin` } as unknown as NodeJS.ProcessEnv,
+          });
+          let caddyfileAfter: string | null = null;
+          try {
+            caddyfileAfter = readFileSync(join(instDir, 'Caddyfile'), 'utf8');
+          } catch {
+            caddyfileAfter = null;
+          }
+          return { status: run.status, stdout: run.stdout ?? '', caddyfileAfter };
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      }
+
+      it('writes a Caddyfile containing single quotes verbatim', () => {
+        const caddyfile = ':80 {\n  respond "it\'s fine" 200\n}';
+        const result = runCaddyHostScript({ caddyfile, probeFqdn: null });
+
+        expect(result.status).toBe(0);
+        expect(result.caddyfileAfter).toBe(`${caddyfile}\n`);
+      });
+
+      it('removes the rejected Caddyfile when the health probe fails and there was no previous one', () => {
+        const result = runCaddyHostScript({
+          caddyfile: ':80 {\n  respond 200\n}',
+          probeFqdn: '203-0-113-11.sslip.io',
+          probeStatus: '502',
+        });
+
+        expect(result.status).toBe(1);
+        expect(result.stdout).toContain('HEALTH_PROBE_FAILED');
+        expect(result.caddyfileAfter).toBeNull();
+      });
+
+      it('restores the previous Caddyfile when the health probe fails', () => {
+        const previous = ':80 {\n  respond "old" 200\n}\n';
+        const result = runCaddyHostScript({
+          caddyfile: ':80 {\n  respond "new" 200\n}',
+          probeFqdn: '203-0-113-11.sslip.io',
+          probeStatus: '502',
+          previousCaddyfile: previous,
+        });
+
+        expect(result.status).toBe(1);
+        expect(result.caddyfileAfter).toBe(previous);
+      });
+
+      it('refuses a Caddyfile line that would terminate the quoted heredoc early', () => {
+        expect(() =>
+          profileServiceInternals.buildCaddyReloadWithHealthProbeScript({
+            instanceId: 'inst_test',
+            caddyfile: ':80 {\nCADDYEOF\n}',
+            probeFqdn: null,
+          }),
+        ).toThrow('heredoc terminator');
+      });
     });
 
     it('redacts secrets when caddy reload errors are logged', async () => {

@@ -34,7 +34,7 @@ import {
 import { evaluateAndRecordTokenTierEligibility } from "@/lib/billing/token-tier-eligibility";
 import { resolveTokenGeoBlock } from "@/lib/compliance/token-geo-gate";
 import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
-import { qualifiesForTokenBaseTier, resolveUserTokenAccess } from "@/lib/billing/token-access";
+import { resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { evaluateAndRecordVeniceComputeBoost } from "@/lib/billing/venice-compute-boost";
 import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -151,14 +151,10 @@ export async function POST(req?: NextRequest) {
 
     // ── 4. Resolve effective tier and live-apply compute ───────────────
     const sub = await resolveEffectiveSubscription(userId);
-    let desiredTier: TierKey;
-    if (sub && isPaidTier(sub.plan)) {
-      desiredTier = tierFromPlanKey(sub.plan);
-    } else if (qualifiesForTokenBaseTier(access, balances)) {
-      desiredTier = "token_base";
-    } else {
-      desiredTier = "credit_base";
-    }
+    // Holding a token below the Pro threshold gives no compute tier: hosted
+    // computers are paid only, so anything short of a paid plan is Free.
+    const desiredTier: TierKey =
+      sub && isPaidTier(sub.plan) ? tierFromPlanKey(sub.plan) : "credit_base";
 
     // The effective per-instance caps the user now has (tier + boost). This is
     // the single source of truth applyTierChange writes, so we surface it for

@@ -98,6 +98,11 @@ final class HivraNativeDesktopBridge: NSObject, WKScriptMessageHandlerWithReply 
                 return (nil, launch.transport == "relay"
                     ? "native_relay_unavailable" : "native_launch_request_denied")
             }
+            // The page names the host to stream from. Moonlight starts only after a person
+            // confirms that exact address in a native dialog the page cannot drive.
+            guard confirmStream(to: launch.connectionIPv4, serverId: launch.serverId) else {
+                return (nil, "native_launch_not_confirmed")
+            }
             do {
                 let process = try HivraMoonlightLauncher.launch(
                     profile: profile,
@@ -171,6 +176,18 @@ final class HivraNativeDesktopBridge: NSObject, WKScriptMessageHandlerWithReply 
         } catch {
             return (nil, "native_profile_preparation_failed")
         }
+    }
+
+    private func confirmStream(to address: String, serverId: UUID) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Start a Moonlight stream to \(address)?"
+        alert.informativeText = "The Hivra page asked to stream from the computer at \(address) "
+            + "(server \(serverId.uuidString.lowercased())). Allow only if you expected this."
+        alert.addButton(withTitle: "Stream")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func profileParent() throws -> URL {

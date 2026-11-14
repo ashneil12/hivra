@@ -66,6 +66,8 @@ type MockUser = {
   lastSignInAt: Date | null;
   primaryEmailAddress: { emailAddress: string } | null;
   fullName: string | null;
+  unsafeMetadata?: Record<string, unknown>;
+  externalAccounts?: Array<{ provider: string }>;
 };
 
 type UseUserResult =
@@ -197,6 +199,7 @@ describe("PostHogIdentify identity stitching", () => {
       utm_source: "twitter",
       utm_campaign: "launch",
       landing_page: "/pricing",
+      signup_method: "email",
       signup_created_at: createdAt.toISOString(),
     });
     expect(
@@ -204,7 +207,62 @@ describe("PostHogIdentify identity stitching", () => {
     ).not.toBeNull();
     // Google Analytics gets GA4's sign_up once, with no personal data.
     const gaSignups = mockSendGaEvent.mock.calls.filter(([event]) => event === "sign_up");
-    expect(gaSignups).toEqual([["sign_up", { method: "clerk" }]]);
+    expect(gaSignups).toEqual([["sign_up", { method: "email" }]]);
+  });
+
+  // R8: the /sign-up answer to "How did you hear about Hivra?" lives in the
+  // Clerk user's unsafe metadata, next to the first-touch stash.
+  it("adds the sign-up answer to signup_completed, the PostHog person and GA4's sign_up", () => {
+    const createdAt = new Date(Date.now() - 60 * 1000);
+    const user = makeUser({
+      id: "user_heard_about",
+      createdAt,
+      lastSignInAt: createdAt,
+      externalAccounts: [{ provider: "google" }],
+      unsafeMetadata: {
+        heard_about: "other",
+        heard_about_other: "a Discord server",
+        signup_attribution: { utm_source: "discord", landing_page: "/agents", junk: "dropped" },
+      },
+    });
+    mockUseUser.mockReturnValue({ isLoaded: true, isSignedIn: true, user });
+
+    render(<PostHogIdentify />);
+
+    const signupCalls = mockCapture.mock.calls.filter(([event]) => event === "signup_completed");
+    expect(signupCalls).toHaveLength(1);
+    // No stash in this browser, so the copy saved on the Clerk user is used.
+    expect(signupCalls[0][1]).toEqual({
+      utm_source: "discord",
+      landing_page: "/agents",
+      heard_about: "other",
+      heard_about_other: "a Discord server",
+      signup_method: "google",
+      signup_created_at: createdAt.toISOString(),
+      $set_once: { heard_about: "other", heard_about_other: "a Discord server" },
+    });
+    // GA gets the fixed value only, never the free text.
+    expect(mockSendGaEvent.mock.calls.filter(([event]) => event === "sign_up")).toEqual([
+      ["sign_up", { method: "google", heard_about: "other" }],
+    ]);
+  });
+
+  it("ignores an unknown sign-up answer written straight into unsafe metadata", () => {
+    const createdAt = new Date(Date.now() - 60 * 1000);
+    const user = makeUser({
+      id: "user_heard_about_forged",
+      createdAt,
+      lastSignInAt: createdAt,
+      unsafeMetadata: { heard_about: "<script>", heard_about_other: "x" },
+    });
+    mockUseUser.mockReturnValue({ isLoaded: true, isSignedIn: true, user });
+
+    render(<PostHogIdentify />);
+
+    const [, props] = mockCapture.mock.calls.find(([event]) => event === "signup_completed")!;
+    expect(props).not.toHaveProperty("heard_about");
+    expect(props).not.toHaveProperty("$set_once");
+    expect(mockSendGaEvent).toHaveBeenCalledWith("sign_up", { method: "email" });
   });
 
   it("fires signup_completed when lastSignInAt is still null right after signup", () => {

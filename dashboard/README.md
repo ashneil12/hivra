@@ -72,9 +72,8 @@ These are read directly in the current codebase:
 - Hetzner SSH auth: `HETZNER_SSH_PRIVATE_KEY_B64` or `HETZNER_SSH_KEY_PATH`
 - Cold-storage backups: `HERMES_COLD_STORAGE_HOST` and `HERMES_COLD_STORAGE_USER` name the Storage Box the backup routes write to. They have no default in source. The routes also need `HETZNER_SSH_PRIVATE_KEY_B64` (see [docs/cold-storage.md](docs/cold-storage.md)).
 - Proxmox rollout:
-  - `HERMES_INFRA_PROVIDER=proxmox` makes the Proxmox backend available.
-  - `HERMES_PROXMOX_ENABLED_USER_IDS` is a comma- or space-separated allowlist of Clerk user IDs that should use Proxmox.
-  - Users not listed in `HERMES_PROXMOX_ENABLED_USER_IDS` keep using the regular Hetzner path.
+  - `HERMES_INFRA_PROVIDER=proxmox` sends new Hermes agents to Proxmox.
+  - `HERMES_PROXMOX_DISABLED_USER_IDS` is an emergency comma- or space-separated list of Clerk user IDs to keep on the Hetzner path.
   - Proxmox host settings: `PROXMOX_PUBLIC_IP`, `PROXMOX_SSH_HOST`, `PROXMOX_SSH_KEY_PATH` or `PROXMOX_SSH_PRIVATE_KEY_B64`, `PROXMOX_TEMPLATE_ID`, `PROXMOX_PRIVATE_SUBNET_PREFIX`, `PROXMOX_PRIVATE_GATEWAY`, `PROXMOX_VM_SSH_KEY_PATH`, `PROXMOX_CADDY_SITES_DIR`
   - Proxmox pilot sizing: `PROXMOX_VM_CORES=1`, `PROXMOX_VM_MEMORY_MB=2048`
 - Voice transcription fallback: `VOICE_TRANSCRIPTION_OPENAI_API_KEY`

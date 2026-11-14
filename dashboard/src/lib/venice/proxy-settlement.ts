@@ -11,6 +11,7 @@ import {
 import { supabaseAdmin } from "@/lib/supabase";
 import { appendManagedVeniceFinancialEvent } from "@/lib/billing/managed-venice-financial-events";
 import { assertManagedVeniceWithinSpendCap } from "@/lib/billing/managed-venice-spend-caps";
+import { assertManagedVeniceAgentWithinSpendCap } from "@/lib/billing/managed-venice-agent-spend-caps";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { responsesUsageTokens, VENICE_RESPONSES_ENDPOINT } from "./responses-protocol";
@@ -44,6 +45,7 @@ import {
   resolveVeniceMultimodalMarkup,
   type VeniceMultimodalSkipReason,
 } from "./multimodal-pricing";
+import { requireDb } from "@/lib/billing/db-utils";
 
 type QueryError = { code?: string; message?: string } | null;
 
@@ -74,11 +76,6 @@ const DEFAULT_SUBSIDY_STATE: ManagedVeniceSubsidyState = {
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
-}
-
-function requireDb(db: SupabaseLike | null | undefined): SupabaseLike {
-  if (!db) throw new Error("Database not configured");
-  return db;
 }
 
 function readNumericField(record: Record<string, unknown>, key: string): number | null {
@@ -169,6 +166,12 @@ export async function reserveManagedVeniceChatRequest(
   // caps are disabled or unconfigured, so existing behavior is unchanged.
   await assertManagedVeniceWithinSpendCap(
     { userId: params.userId, addMicroUsd: estimate.estimatedCostMicroUsd },
+    client
+  );
+  // Per-agent daily limit (off by default): the same refusal, scoped to this
+  // agent's own key. No-op when the flag is off or no limit applies.
+  await assertManagedVeniceAgentWithinSpendCap(
+    { userId: params.userId, proxyKeyId: params.proxyKeyId, addMicroUsd: estimate.estimatedCostMicroUsd },
     client
   );
   const subsidyState = params.subsidyState ?? DEFAULT_SUBSIDY_STATE;

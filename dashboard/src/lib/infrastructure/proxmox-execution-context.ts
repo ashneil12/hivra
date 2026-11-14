@@ -233,7 +233,7 @@ export async function resolveSelfManagedProxmoxExecutionContext(
 
   let destination: ValidatedSshDestination;
   try {
-    destination = await deps.resolveDestination(connection.endpoint.sshHost);
+    destination = await deps.resolveDestination(connection.endpoint.sshHost, { userId });
   } catch (error) {
     if (error instanceof InfrastructureNetworkError) {
       throw new ProxmoxExecutionContextError("network_unavailable");

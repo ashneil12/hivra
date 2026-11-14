@@ -11,7 +11,7 @@ import "server-only";
 // connector secret = HMAC(secret, "connector|<id>|<generation>"), ticket key =
 // HMAC(secret, "client-ticket|v1"), admin token = HMAC(secret, "admin|v1").
 
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Duplex } from "node:stream";
 
 import { log } from "@/lib/logger";
@@ -144,6 +144,90 @@ export async function revokeRelayConnector(connectionId: string, minGeneration: 
     log.warn("Host relay refused a connector revocation", { source: LOG_SOURCE, failureType: "host_relay_revoke_failed", status: response.status });
     throw new HostRelayError(response.status === 401 ? "unauthorized" : "unavailable", "Hivra's relay did not confirm the revocation.");
   }
+}
+
+// --- Local bridge (WP-220d): one approved command on the owner's own computer ---
+
+const BRIDGE_TICKET_LIFETIME_SECONDS = 60;
+
+/**
+ * A fresh random 32-byte key (64 hex) for one bridge. It is NOT derived from the
+ * relay secret, so the relay (which holds that secret) cannot mint tickets. The
+ * control plane stores it encrypted; the owner gets it once in the bridge config.
+ */
+export function generateBridgeKey(): string {
+  return randomBytes(32).toString("hex");
+}
+
+/** sha256 over the UTF-8 argv items joined by NUL, as hivra_bridge.py computes it. */
+export function bridgeArgvHash(argv: string[]): string {
+  return createHash("sha256").update(argv.join("\0"), "utf8").digest("hex");
+}
+
+export type BridgeTicketClaims = { ownerId: string; agentId: string; computerId: string; argv: string[]; cwd: string | null; timeoutSeconds: number; maxOutputBytes: number };
+
+/** A single-use ticket for exactly this owner, agent, computer and command. Mint it only after the owner approved. */
+export function mintBridgeTicket(bridgeKeyHex: string, claims: BridgeTicketClaims, nowMs: number = Date.now()): string {
+  if (!/^[0-9a-f]{64}$/.test(bridgeKeyHex)) throw new HostRelayError("invalid_request", "The bridge key is not valid.");
+  const iat = Math.floor(nowMs / 1000);
+  const body = Buffer.from(JSON.stringify({
+    v: 1,
+    aud: claims.computerId,
+    owner: claims.ownerId,
+    agent: claims.agentId,
+    computer: claims.computerId,
+    argv: bridgeArgvHash(claims.argv),
+    cwd: claims.cwd ?? "",
+    timeoutSeconds: claims.timeoutSeconds,
+    maxOutputBytes: claims.maxOutputBytes,
+    jti: randomBytes(18).toString("base64url"),
+    iat,
+    exp: iat + BRIDGE_TICKET_LIFETIME_SECONDS,
+  })).toString("base64url");
+  const signature = createHmac("sha256", bridgeKeyHex).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+/** What `hivra_bridge.py` reads (the owner adds allowedFolders on their own computer). */
+export function issueBridgeConfig(computerId: string, generation: number, ownerId: string, bridgeKeyHex: string) {
+  const base = issueConnectorConfig(computerId, generation);
+  return { ...base, bridgeKey: bridgeKeyHex, ownerId, computerId };
+}
+
+export type BridgeExecRequest = { argv: string[]; cwd?: string; timeoutSeconds: number; maxOutputBytes: number };
+export type BridgeExecReply =
+  | { ok: true; stdout: string; stderr: string; exitCode: number | null; truncated: boolean; durationMs: number }
+  | { ok: false; error: string; message?: string };
+
+/** Hand one ticketed command to the owner's bridge through the relay and wait for its answer. */
+export async function execViaRelay(connectionId: string, ticket: string, request: BridgeExecRequest): Promise<BridgeExecReply> {
+  requireConnectionId(connectionId);
+  const config = requireConfig();
+  let response: Response;
+  try {
+    response = await fetch(`${config.httpBase}/v1/hosts/${connectionId}/exec`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${adminToken(config.secret)}` },
+      body: JSON.stringify({ ticket, request }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(request.timeoutSeconds * 1000 + 20_000),
+    });
+  } catch {
+    throw new HostRelayError("unavailable", "Hivra's relay could not be reached.");
+  }
+  if (response.status === 503) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new HostRelayError("host_offline", "The bridge on your computer is off.");
+  }
+  if (response.status === 401) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new HostRelayError("unauthorized", "Hivra's relay refused the request.");
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new HostRelayError("unavailable", "Your computer's bridge did not answer.");
+  }
+  return (await response.json()) as BridgeExecReply;
 }
 
 /** A WebSocket as the byte stream ssh2 expects for `sock`. */

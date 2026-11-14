@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { decryptApiKey } from "@/lib/crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { normalizeUsageRows } from "./usage-normalization";
@@ -150,17 +151,19 @@ export async function POST(request: NextRequest) {
       }
 
       const rollupDates = Array.from(new Set(days.map((day) => day.stat_date))).sort();
-      let rollupOk = true;
-      for (const statDate of rollupDates) {
+      // A 90-day payload used to wait on 90 rollup round trips in series; run a few at a time.
+      const rollupClient = supabaseAdmin;
+      const rollupResults = await mapWithConcurrencyLimit(rollupDates, 4, async (statDate) => {
         try {
-          const { error: rollupError } = await supabaseAdmin.rpc("compute_platform_stats_snapshot", {
+          const { error: rollupError } = await rollupClient.rpc("compute_platform_stats_snapshot", {
             p_date: statDate,
           });
-          if (rollupError) rollupOk = false;
+          return !rollupError;
         } catch {
-          rollupOk = false;
+          return false;
         }
-      }
+      });
+      const rollupOk = rollupResults.every(Boolean);
 
       return apiSuccess({
         ingested: rows.length,
@@ -184,13 +187,25 @@ export async function POST(request: NextRequest) {
         active: boolean | null;
       }>();
 
-    if (operatorError || !operatorSource?.api_key_sha256) {
-      return apiError("Agent not found", 404, undefined, undefined, {
+    if (operatorError) {
+      return apiError("Failed to load agent", 500, undefined, undefined, {
+        route: ROUTE,
+        method: "POST",
+        source: OPERATOR_SOURCE,
+        failureType: "operator_source_lookup_failed",
+        instanceId: parsed.data.instanceId,
+      });
+    }
+    // An unknown or keyless source gets the same 401 as a wrong bearer, so the
+    // response cannot tell which agent ids exist.
+    if (!operatorSource?.api_key_sha256) {
+      return apiError("Unauthorized", 401, undefined, undefined, {
         route: ROUTE,
         method: "POST",
         source: OPERATOR_SOURCE,
         failureType: "source_not_found",
         instanceId: parsed.data.instanceId,
+        logLevel: "warn",
       });
     }
 

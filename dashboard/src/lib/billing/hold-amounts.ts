@@ -4,6 +4,7 @@
  * user's pricing epoch and founders status, so the billing page shows these
  * numbers instead of hardcoding any. Client-safe: no server imports.
  */
+import { displayTokenUnit } from "./token-plan-prices";
 
 export interface HoldTier {
   /** Whole-token amount to hold, as the server formatted it (e.g. "134,476,535"). */
@@ -16,7 +17,9 @@ export interface HoldTier {
 export interface HoldAmounts {
   pro: HoldTier;
   power: HoldTier;
-  /** The user's verified $HermesOS balance, or null when no wallet is verified. */
+  /** The token the amounts and balance are in, e.g. "$HermesOS" or "$HIVRA". */
+  tokenUnit: string;
+  /** The user's verified balance in that token, or null when no wallet is verified. */
   balanceDisplay: string | null;
   priceFetchedAt: string | null;
   vvvBoost: {
@@ -77,6 +80,7 @@ export function readHoldAmounts(data: unknown): HoldAmounts | null {
   return {
     pro,
     power,
+    tokenUnit: displayTokenUnit(text(root.tokenSymbol), text(root.tokenAddress)),
     balanceDisplay: text(balance?.balanceDisplay),
     priceFetchedAt: text(thresholds.priceFetchedAt),
     vvvBoost:

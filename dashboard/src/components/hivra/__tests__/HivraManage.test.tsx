@@ -270,6 +270,20 @@ describe("HivraManage lifecycle guidance", () => {
     expect(alert).toHaveTextContent("This computer isn’t ready");
     expect(alert).toHaveTextContent("Choose Restart in Manage to try again.");
   });
+  it("offers Try again, which starts the computer, when an errored computer kept its machine", async () => {
+    const onChanged = jest.fn();
+    render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", vmid: 1113, status: "error", provisioned_at: "2026-09-12T08:30:00Z", error: "Desktop never answered" } as HivraAgent}
+      plan={plan} onChanged={onChanged} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mockStartAgent).toHaveBeenCalledWith("test-agent"));
+  });
+  it("disables Try again and says to launch again when the computer was never set up", () => {
+    render(<HivraManage agent={{ ...agent, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "proxmox-kvm", vmid: 1113, status: "error", provisioned_at: null, error: "Setup failed" } as HivraAgent}
+      plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
+    expect(screen.getAllByText(/launch it again/).length).toBeGreaterThan(0);
+  });
   it("shows no error callout once the computer is running again", () => {
     render(<HivraManage agent={{ ...agent, status: "running", error: "stale" }} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
     expect(screen.queryByText("This computer isn’t ready")).not.toBeInTheDocument();
@@ -563,6 +577,24 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByText(/Permanently deletes this computer and everything on it/)).toBeInTheDocument();
     expect(screen.queryByText(/Permanently deletes the agent and everything on it/)).not.toBeInTheDocument();
   });
+  it("lets a Linux computer shrink to its light floor and never mentions a desktop", () => {
+    const server = { ...agent, type: "linux-desktop", computer_profile: "ubuntu-server", computer_substrate: "proxmox-kvm", cpu: 1, ram: 2 } as HivraAgent;
+    const { unmount } = render(<HivraManage agent={server} def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    openSection("Resources");
+    // 0.5 CPU / 1 GB is the floor, so it is offered.
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toBeEnabled();
+    expect(within(screen.getByLabelText("Reserved memory")).getByRole("button", { name: "1 GB" })).toBeEnabled();
+    openSection("Updates");
+    const updates = screen.getByText(/without restarting the computer/);
+    expect(updates).toHaveTextContent("files and local logins stay as they are");
+    expect(updates).not.toHaveTextContent(/desktop/i);
+    expect(screen.queryByRole("link", { name: "Open Desktop" })).not.toBeInTheDocument();
+    unmount();
+    // A desktop is still held to 2 CPU / 4 GB, so 0.5 CPU is not selectable.
+    render(<HivraManage agent={{ ...server, computer_profile: "ubuntu-desktop", cpu: 2, ram: 4 } as HivraAgent} def={getAgent("linux-desktop")} plan={plan} onChanged={jest.fn()} onDestroyed={jest.fn()} browserOn={false} />);
+    openSection("Resources");
+    expect(within(screen.getByLabelText("Reserved CPU")).getByRole("button", { name: "0.5 CPU" })).toBeDisabled();
+  });
   it.each([
     { profile: "windows" as const, name: "Windows" },
     { profile: "omarchy" as const, name: "Omarchy" },
@@ -581,7 +613,7 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Agents", "Resources", "Updates", "Advanced"]);
     openSection("Resources");
-    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent(`This ${name} preview has a fixed size of 2 CPU / 4 GB. Hivra can't resize prepared computers yet.`);
+    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("This computer has a fixed size (2 CPU, 4 GB). For a different size, launch a new one.");
     expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update connection service" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create restore point" })).not.toBeInTheDocument();
@@ -744,6 +776,22 @@ describe("HivraManage lifecycle guidance", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
   });
 
+  it("drops an MCP list that answers after the box URL changed", async () => {
+    const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
+    let answerOld: (value: unknown) => void = () => undefined;
+    mockListBoxMcp
+      .mockImplementationOnce(() => new Promise((resolve) => { answerOld = resolve; }))
+      .mockResolvedValueOnce({ servers: [{ name: "new-box-server", command: "npx", args: [] }], error: null });
+    const props = { def: getAgent("codex"), plan, browserOn: false, onChanged: jest.fn(), onDestroyed: jest.fn() };
+    const { rerender } = render(<HivraManage {...props} agent={chatAgent} />);
+    rerender(<HivraManage {...props} agent={{ ...chatAgent, chat_url: "https://new-box.example.com" }} />);
+    openSection("Model & tools");
+    expect(await screen.findByRole("button", { name: "Remove new-box-server" })).toBeInTheDocument();
+    await act(async () => answerOld({ servers: [{ name: "old-box-server", command: "npx", args: [] }], error: null }));
+    expect(screen.queryByRole("button", { name: "Remove old-box-server" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove new-box-server" })).toBeInTheDocument();
+  });
+
   describe("touch safety", () => {
     const chatAgent = { ...agent, chat_url: "https://box.example.com", api_token: "test-token" };
 
@@ -902,6 +950,35 @@ describe("HivraManage lifecycle guidance", () => {
       fireEvent.keyDown(name, { key: "Enter" });
       expect(screen.getByRole("textbox", { name: "MCP server command" })).toHaveFocus();
       expect(mockAddBoxMcp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("connection address link safety (SEC-07)", () => {
+    const renderAdvanced = (chat_url: string) => {
+      render(<HivraManage agent={{ ...agent, chat_url }} def={getAgent("codex")} plan={plan} browserOn={false} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+      openSection("Advanced");
+    };
+
+    it.each([
+      "javascript:alert(1)",
+      "data:text/html,<h1>pwned</h1>",
+      "vbscript:msgbox(1)",
+      "file:///etc/passwd",
+      "box.example.com",
+      " https://box.example.com ",
+      "https://box.example.com/?x=1",
+      "https://user:pass@box.example.com",
+    ])("does not render the external link for %s", (chat_url) => {
+      renderAdvanced(chat_url);
+      // The raw value still displays as text — only the href is withheld.
+      expect(screen.getByText("Connection address")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Open endpoint" })).not.toBeInTheDocument();
+    });
+
+    it("renders the external link for a plain https box address", () => {
+      renderAdvanced("https://box.example.com");
+      expect(screen.getByRole("link", { name: "Open endpoint" }))
+        .toHaveAttribute("href", "https://box.example.com");
     });
   });
 });

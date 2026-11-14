@@ -174,7 +174,7 @@ const LARGER = planSizeParts("larger");
 
 /** The paragraphs under the headline. */
 export const PRICING_INTRO = [
-  "Use Hivra's open-source platform on your own server, or pay us to run the computer for you. No requirement to buy a token.",
+  "Sign up free and connect your own server, or use Hivra's open-source platform yourself. Or pay us to run the computer for you. No requirement to buy a token.",
   HOSTED_COMPUTE_NEEDS_PLAN,
   "Prices are per month, in US dollars. Your AI provider's charges are separate, whether you sign in with your own account (where the agent supports it, subject to the provider's terms) or use an API key.",
 ] as const;
@@ -215,7 +215,7 @@ export const PRICING_OPTIONS = {
     ],
   },
   ownServer: {
-    title: "Already rent a server?",
+    title: "Start free: connect your own server",
     body: "You can also connect infrastructure you pay for to Hivra, where supported. A free account is enough for that. Hivra does not run a computer for you on a free account, and your server bill stays with your own provider.",
   },
 } as const;

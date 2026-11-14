@@ -1,4 +1,5 @@
 import type { AgentWalletBalance, AgentWalletCardData } from "@/app/dashboard/wallet/agent-wallet-data";
+import { getActiveHivraToken } from "@/lib/billing/token-registry";
 
 /**
  * Pure formatters, validators and payload readers for the wallet dashboard.
@@ -43,6 +44,8 @@ export interface EligibilityPayload {
     epoch?: "launch" | "standard";
   };
   tiers: { pro: EligibilityTierState; power: EligibilityTierState };
+  /** The account's token access. newTiersAvailable is false while new $HIVRA tiers are off. */
+  tokenAccess?: { newTiersAvailable?: boolean };
   /**
    * Venice compute boost: hold ≥ thresholdUsd of VVV to add cpuBonus vCPU /
    * ramBonusMb RAM per instance on top of a PAID tier. Optional so older API
@@ -271,4 +274,31 @@ export function formatCountdown(msRemaining: number): string {
 }
 export function tierLabel(tier: 'pro' | 'power'): string {
   return tier === 'pro' ? 'Pro' : 'Power';
+}
+
+/**
+ * $HIVRA is shown in a wallet only when this build knows $HIVRA as live and
+ * the reported balance is for that exact contract. While $HIVRA is dormant
+ * this is always false, whatever a response carries.
+ */
+export function isLiveHivraTokenAddress(
+  tokenAddress: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  const hivra = getActiveHivraToken(now);
+  return Boolean(hivra && tokenAddress && tokenAddress.trim().toLowerCase() === hivra.address);
+}
+
+/** The lock wallet's $HIVRA balance to offer for withdrawal, or null. */
+export function lockWalletHivraToShow<T extends { tokenAddress: string; balanceDisplay: string }>(
+  value: T | null | undefined,
+  now: Date = new Date()
+): T | null {
+  if (!value || !isLiveHivraTokenAddress(value.tokenAddress, now)) return null;
+  return isNonZeroAmountDisplay(value.balanceDisplay) ? value : null;
+}
+
+/** An agent wallet's live $HIVRA balance, for the card headline, or null. */
+export function agentHivraBalance(card: AgentWalletCardData, now: Date = new Date()): AgentWalletBalance | null {
+  return card.balances.find((balance) => isLiveHivraTokenAddress(balance.tokenAddress, now)) ?? null;
 }

@@ -73,8 +73,18 @@ async function main() {
       }`
     );
   } catch (e) {
+    // Only a Clerk 404 (owner gone) falls back to {}. Any other failure would
+    // launch the update with the owner's global settings silently blanked.
+    if ((e as { status?: number }).status !== 404) {
+      console.error(
+        `[trigger-update] couldn't fetch clerk publicMetadata, not updating: ${
+          (e as Error).message
+        }`
+      );
+      process.exit(1);
+    }
     console.warn(
-      `[trigger-update] couldn't fetch clerk publicMetadata, defaulting to {}: ${
+      `[trigger-update] Clerk user not found, defaulting to {}: ${
         (e as Error).message
       }`
     );

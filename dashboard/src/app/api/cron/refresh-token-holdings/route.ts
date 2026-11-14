@@ -23,6 +23,7 @@ import {
   evaluateAndRecordVeniceComputeBoost,
   type VeniceBoostTransition,
 } from "@/lib/billing/venice-compute-boost";
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
 import { sendTierEligibilityNotification } from "@/lib/email/tier-eligibility-notifications";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -46,6 +47,9 @@ const REFRESH_TIME_BUDGET_MS = 180_000;
 // each page is evaluated in bounded-concurrency batches. Sequential processing
 // had email sends (~200-500ms each via Resend) dominating wall time.
 const BATCH_SIZE = 10;
+// Tier-eligibility emails sent at once per page, so a page with many
+// transitions does not open that many Resend calls together.
+const EMAIL_CONCURRENCY = 4;
 
 function parseLimit(req: NextRequest) {
   const raw = new URL(req.url).searchParams.get("limit");
@@ -141,7 +145,7 @@ function createHoldingsJudge() {
     const accessByUser = await resolveTokenAccessForUsers(evaluatedUserIds);
 
     const eligibilityJudged = new Set<string>();
-    const emailPromises: Promise<unknown>[] = [];
+    const emailSends: Array<() => Promise<unknown>> = [];
     for (let i = 0; i < evaluatedUserIds.length; i += BATCH_SIZE) {
       const batch = evaluatedUserIds.slice(i, i + BATCH_SIZE);
       const evalResults = await Promise.allSettled(
@@ -185,11 +189,11 @@ function createHoldingsJudge() {
         const userTransitions = summariseEligibility(userId, evaluation);
         eligibility.transitions.push(...userTransitions);
 
-        // Fire emails as background promises and await them all at the end of
-        // the page with allSettled. Errors are logged per email so one Resend
-        // hiccup doesn't block the cron.
+        // Queue the emails. They are sent once the page is evaluated, through a
+        // bounded pool (EMAIL_CONCURRENCY). Errors are logged per email so one
+        // Resend hiccup doesn't block the cron.
         for (const t of userTransitions) {
-          emailPromises.push(
+          emailSends.push(() =>
             sendTierEligibilityNotification({
               userId: t.userId,
               tier: t.tier,
@@ -212,7 +216,7 @@ function createHoldingsJudge() {
         }
       }
     }
-    await Promise.allSettled(emailPromises);
+    await mapWithConcurrencyLimit(emailSends, EMAIL_CONCURRENCY, (send) => send());
 
     // Venice compute boost: value each account's VVV holding against the $199
     // threshold and persist eligibility.

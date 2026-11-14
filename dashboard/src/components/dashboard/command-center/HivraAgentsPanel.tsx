@@ -7,17 +7,18 @@ import {
   ArrowUpRight,
   Bot,
   ChevronDown,
-  Loader2,
   Monitor,
   RefreshCw,
   Search,
   ServerCog,
   Wrench,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import {
+  isRunningState,
   unifiedStateLabel,
   unifyAll,
   type UnifiedAgent,
@@ -49,6 +50,8 @@ export function matchesInventoryFilter(
   if (filter === "all") return true;
   if (filter === "starting")
     return state === "provisioning" || state === "updating";
+  // An agent asleep or waking up is still a running agent.
+  if (filter === "running") return isRunningState(state);
   return state === filter;
 }
 
@@ -92,6 +95,13 @@ export function HivraAgentsPanel({
     [],
   );
 
+  // Read through a ref so an inline onCounts callback from a parent does not
+  // change refresh's identity and refetch the inventory on every parent render.
+  const onCountsRef = useRef(onCounts);
+  useEffect(() => {
+    onCountsRef.current = onCounts;
+  }, [onCounts]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     const result = await listAgentsResult();
@@ -102,7 +112,7 @@ export function HivraAgentsPanel({
           catalogAgent(agent.type)?.resourceKind !== "computer",
       );
       setAgents(resources);
-      onCounts?.({
+      onCountsRef.current?.({
         running: resources.filter((agent) => agent.status === "running").length,
         total: resources.length,
       });
@@ -110,7 +120,7 @@ export function HivraAgentsPanel({
     setLoadError(result.error);
     setLoaded(true);
     setRefreshing(false);
-  }, [onCounts]);
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Owns the initial async inventory request and visibility-aware refresh interval.
@@ -227,7 +237,7 @@ export function HivraAgentsPanel({
       ) : null}
       {loading ? (
         <div className={styles.loading} role="status">
-          <Loader2 size={16} className={styles.spin} aria-hidden />
+          <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="searching" size={20} /></span>
           Loading agents…
         </div>
       ) : null}
@@ -252,7 +262,7 @@ export function HivraAgentsPanel({
             }
             onTools={
               agent.kind === "hivra" &&
-              agent.state === "running" &&
+              isRunningState(agent.state) &&
               TOOL_CAPABLE_TYPES.has(agent.agentType || "")
                 ? () =>
                     go(

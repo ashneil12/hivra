@@ -40,6 +40,30 @@ export interface PlatformToken {
   activatesAt: Date | null;
   /** Quotes fail closed while the pricing pool holds less than this in USD. */
   minPriceLiquidityUsd: number;
+  /**
+   * Quotes also fail closed while the pool's ETH side (native ETH or WETH)
+   * holds less than this in USD. Null = no ETH-side floor (only the total).
+   */
+  minQuoteLiquidityUsd: number | null;
+}
+
+/**
+ * Native ETH as a Uniswap v4 currency (currency0 = address(0)). DEXScreener and
+ * GeckoTerminal both report a native-ETH v4 pool's quote token at this address
+ * with the symbol ETH.
+ */
+export const NATIVE_ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
+/** Wrapped ETH on Base. */
+export const BASE_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
+
+/**
+ * A platform token is priced only against ETH: the pool's quote token must be
+ * native ETH or WETH (one ETH either way), so the spot and the median are
+ * compared in the same unit and the USD rate is ETH's.
+ */
+export function isEthQuoteAddress(address: string | null | undefined): boolean {
+  const normalized = address?.trim().toLowerCase();
+  return normalized === NATIVE_ETH_ADDRESS || normalized === BASE_WETH_ADDRESS;
 }
 
 /** Canonical Uniswap v4 pool id that prices $HermesOS. */
@@ -58,6 +82,18 @@ export const HERMESOS_PUBLISHED_ADDRESS = "0x95ccfD2B81A9667b0Cc979992632F98fc85
  */
 export const HERMESOS_MIN_PRICE_LIQUIDITY_USD = 10_000;
 export const HIVRA_MIN_PRICE_LIQUIDITY_USD = 25_000;
+
+/**
+ * Minimum USD value of the ETH side of the $HIVRA pricing pool. $HIVRA launches
+ * into a Doppler Multicurve pool that starts with $HIVRA and almost no ETH, and
+ * DEXScreener's "liquidity" counts both sides at the pool's own price: a fresh
+ * Doppler pool reports a large total while holding next to no ETH (a live
+ * Doppler pool on Base showed $8,526 of "liquidity" over 0.0000000000000025
+ * WETH). Moving the price takes ETH, so the ETH side is what a pump has to
+ * fight. Half the total floor: what a balanced $25,000 pool would hold in ETH.
+ * Ash decides the final value at activation (docs/token/HIVRA-ACTIVATION.md).
+ */
+export const HIVRA_MIN_QUOTE_LIQUIDITY_USD = 12_500;
 
 /**
  * Conversion grace: after a grandfathered $HermesOS user chooses to switch,
@@ -81,6 +117,9 @@ export const HERMESOS_TOKEN: PlatformToken = Object.freeze({
   poolId: HERMESOS_POOL_ID,
   activatesAt: null,
   minPriceLiquidityUsd: HERMESOS_MIN_PRICE_LIQUIDITY_USD,
+  // Unchanged from before the ETH-side floor existed: $HermesOS is priced as it
+  // always has been.
+  minQuoteLiquidityUsd: null,
 });
 
 export const HIVRA_SYMBOL = "HIVRA";
@@ -146,6 +185,7 @@ export function validateHivraLaunchConfig(
       poolId: poolId.toLowerCase(),
       activatesAt: new Date(activatesAtMs),
       minPriceLiquidityUsd: HIVRA_MIN_PRICE_LIQUIDITY_USD,
+      minQuoteLiquidityUsd: HIVRA_MIN_QUOTE_LIQUIDITY_USD,
     }),
   };
 }

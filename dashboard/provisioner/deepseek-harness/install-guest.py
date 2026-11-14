@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Private DeepSeek guest composition, called under the shared installer lock.
 
-No CLI, allocation, lease release, key delivery or public-readiness claim. Only
-a fresh base may run the shared bootstrap. Replays verify and reuse immutable
-assets without re-running a root installer from the agent-writable bux tree.
+No CLI, allocation, lease release or public-readiness claim. Only a fresh base
+may run the shared bootstrap. Replays verify and reuse immutable assets without
+re-running a root installer from the agent-writable bux tree.
+
+The one key delivery is the launch-time model seed: on a fresh install only, a
+child running as the agent account writes the runtime's settings and credential
+files into its private home, with the secret on that child's stdin alone.
 """
 import importlib.util
 import grp
@@ -13,6 +17,7 @@ from pathlib import Path
 import pwd
 import shutil
 import stat
+import subprocess
 import tempfile
 import time
 import urllib.error
@@ -37,6 +42,98 @@ BASE_PATHS = tuple(Path(path) for path in ("/etc/bux", "/etc/sudoers.d/bux", "/e
     "/etc/at.allow", "/etc/ssh/sshd_config.d/00-bux.conf", "/etc/sudoers.d/bux-dev",
     "/usr/local/bin/browser-harness-js", "/usr/local/bin/bux-agent-shell", "/usr/local/bin/tg-schedule",
     "/usr/local/bin/tg-schedule-fire", "/usr/local/bin/tg-run-task", "/usr/local/bin/new-topic", "/usr/local/bin/schedule"))
+# Launch-time model seed. The upstream web UI refuses settings writes from a
+# remote browser, so Hivra writes the model route once, at install time, into
+# the runtime's private home (see runtime-process.cjs). The runtime hot-reads
+# settings.yaml and resolves the key by reference from .credentials.yaml; its
+# environment deliberately carries no API keys.
+AGENT_ACCOUNT = "bux"
+PYTHON = "/usr/bin/python3"
+SEED_TIMEOUT_SECONDS = 30
+MODEL_ROUTE = "hivra-venice"
+MODEL_KEY_REFERENCE = "HIVRA_MODEL_KEY"
+# Declared capacity for the models Hivra offers. Any other model keeps the
+# runtime's own defaults rather than inheriting limits that are not its own.
+MODEL_LIMITS = {"deepseek-v4-1-flash": {"contextWindow": 1000000, "maxTokens": 262144}}
+# Runs as the agent account, never as root: the tree it writes is agent-owned
+# and agent-writable. argv[1] is the home directory; stdin is the only carrier
+# of the secret. Directories are opened without following links and used by
+# descriptor, files are created exclusively, and nothing is ever replaced.
+SEED_WRITER = r"""
+import json, os, stat, sys
+EXIT = {"home": 10, "directory": 11, "exists": 12, "input": 14}
+def refuse(reason):
+    sys.stderr.write("model seed refused: " + reason + "\n")
+    raise SystemExit(EXIT[reason])
+uid = os.geteuid()
+DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+def open_directory(parent, name, reason):
+    try:
+        descriptor = os.open(name, DIRECTORY, dir_fd=parent)
+    except OSError:
+        refuse(reason)
+    info = os.fstat(descriptor)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
+        refuse(reason)
+    return descriptor, info
+def make_directory(parent, name):
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent)
+    except FileExistsError:
+        pass
+    except OSError:
+        refuse("directory")
+def private_directory(parent, name):
+    make_directory(parent, name)
+    descriptor, info = open_directory(parent, name, "directory")
+    if info.st_mode & 0o077:
+        refuse("directory")
+    return descriptor
+try:
+    payload = json.loads(sys.stdin.buffer.read(65537))
+    files = [(".credentials.yaml", payload["credentials"].encode("ascii")), ("settings.yaml", payload["settings"].encode("ascii"))]
+    if len(sys.argv) != 2 or set(payload) != {"credentials", "settings"} or any(len(data) > 65536 for _, data in files):
+        raise ValueError()
+except (ValueError, KeyError, TypeError, AttributeError, UnicodeError):
+    refuse("input")
+try:
+    home = os.open(sys.argv[1], DIRECTORY)
+except OSError:
+    refuse("home")
+if os.fstat(home).st_uid != uid:
+    refuse("home")
+# The hidden state directory normally exists already (the shared base creates
+# it). An existing one is never changed, only required to be owner-writable
+# alone. The two below it are this seed's and must be private.
+make_directory(home, ".hivra")
+state, info = open_directory(home, ".hivra", "directory")
+if info.st_mode & 0o022:
+    refuse("directory")
+dsh = private_directory(private_directory(state, "deepseek"), ".dsh")
+created = []
+try:
+    for name, data in files:
+        try:
+            descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dsh)
+        except FileExistsError:
+            refuse("exists")
+        created.append(name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(descriptor, view):]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+except BaseException:
+    for name in created:
+        try:
+            os.unlink(name, dir_fd=dsh)
+        except OSError:
+            pass
+    raise
+"""
 ASSETS = {
     **{name: "hivra-chat/" + name for name in ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js")},
     **{"deepseek-harness/" + name: "deepseek-harness/" + name
@@ -174,6 +271,60 @@ def base_exists():
     return False
 
 
+def model_settings(launch):
+    """The launch's model key, base URL and model, or None when it carries none.
+
+    parse_launch owns the typed validation; this only refuses a partial set so a
+    caller composing the launch differently can never seed half a route.
+    """
+    values = [launch.get(name, "") for name in ("modelKey", "modelBaseUrl", "model")]
+    if not any(values):
+        return None
+    if not all(isinstance(value, str) and value for value in values):
+        reject("incomplete model settings")
+    return values
+
+
+def render_model_files(key, base_url, model):
+    """The runtime's two seed documents as ASCII text.
+
+    Scalars are JSON-escaped double-quoted strings, which are valid YAML, so no
+    value can add a key, a line or a document. The key appears only in the
+    credentials document, which the runtime refuses unless it is owner-only.
+    """
+    quote = json.dumps
+    entry = ["        - id: " + quote(model), "          name: " + quote(model)]
+    entry += ["          %s: %d" % item for item in MODEL_LIMITS.get(model, {}).items()]
+    settings = "\n".join([
+        "llm-pi-ai:", "  providers:", "    " + MODEL_ROUTE + ":", "      displayName: Venice",
+        "      api: openai-completions", "      baseURL: " + quote(base_url),
+        "      apiKeyEnv: " + MODEL_KEY_REFERENCE, "      models:", *entry,
+        "agent-default-model:", "  provider: " + MODEL_ROUTE, "  model: " + quote(model), ""])
+    credentials = "\n".join(["version: 1", "refs:", "  " + MODEL_KEY_REFERENCE + ": " + quote(key), ""])
+    return settings, credentials
+
+
+def seed_model(settings):
+    """Write the launch model into the agent's private home, as the agent.
+
+    Fresh installs only. The key reaches the writer on stdin and nowhere else:
+    not argv, not the environment, not a log line, and not any exception text.
+    """
+    key, base_url, model = settings
+    texts = render_model_files(key, base_url, model)
+    payload = json.dumps({"credentials": texts[1], "settings": texts[0]}).encode("ascii")
+    drop = {"user": AGENT_ACCOUNT, "group": AGENT_ACCOUNT, "extra_groups": []} if AGENT_ACCOUNT else {}
+    try:
+        subprocess.run([PYTHON, "-I", "-B", "-c", SEED_WRITER, str(HOME)], input=payload, check=True,
+                       timeout=SEED_TIMEOUT_SECONDS, cwd="/", umask=0o077, stdout=subprocess.DEVNULL,
+                       env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(HOME)}, **drop)
+    except subprocess.CalledProcessError as error:
+        reject("model settings could not be seeded (code %d)" % error.returncode)
+    except (subprocess.SubprocessError, OSError, KeyError, ValueError):
+        # An absent account raises KeyError before any child exists.
+        reject("model settings could not be seeded")
+
+
 def wait_ready(timeout=95):
     # Internal readiness only. Public native rendering and real model replies
     # are separate acceptance checks. Disable proxies from operator settings.
@@ -204,6 +355,7 @@ def install(launch, source, bootstrap):
     # another external launch parser and must never be exposed as a CLI.
     config = (json.dumps({"version": 1, "publicOrigin": launch["publicOrigin"]}, separators=(",", ":")) + "\n").encode()
     intent = files.canonical({"version": 1, "computerSubstrate": launch["computerSubstrate"], "browserEnabled": launch["wantBrowser"] is True})
+    model = model_settings(launch)
     files.ancestors(Path(__file__).parent)
     template = files.read_regular(owner.TEMPLATE, 8192)
     state = owner.definition(allow_missing=True)
@@ -226,6 +378,10 @@ def install(launch, source, bootstrap):
         bootstrap()
     # The shared base must not have started or installed a different gateway.
     owner.stop_owned()
+    if not reused and model is not None:
+        # bux and its home exist now, and the service has never started. A
+        # replay or restart never reaches this: owner edits must survive it.
+        seed_model(model)
     package = files.install_package(source / "deepseek-harness")
     publish_gateway(assets)
     publish_file(CONFIG, config)

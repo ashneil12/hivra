@@ -33,6 +33,7 @@ import {
   type HermesPriceQuote,
 } from "./price-feed";
 import { assertNoActiveCryptoPaymentSession } from "./crypto-payment-sessions";
+import { assertHivraReadyFor } from "./hivra-readiness";
 import { YEARLY_TOKEN_USD } from "./token-plan-prices";
 
 const YEARLY_QUOTE_LIFETIME_MS = 20 * 60 * 1000; // 20 minutes
@@ -213,6 +214,10 @@ export async function createYearlyTokenQuote(
     }
     return existingActive;
   }
+
+  // A NEW $HIVRA quote needs $HIVRA usable (live and passing the price gate).
+  // The locked quote above is already issued, so it is still handed back.
+  await assertHivraReadyFor(access, tokenKey, { now });
 
   await assertNoActiveCryptoPaymentSession({
     userId: params.userId,

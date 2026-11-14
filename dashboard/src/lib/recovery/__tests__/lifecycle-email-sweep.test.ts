@@ -48,7 +48,9 @@ import {
   activityDigestKey,
   earliestInstance,
   fetchActivityDigestSummary,
+  fetchClerkUser,
   isoYearWeek,
+  resolveClerkRecipient,
   runLifecycleEmailSweep,
   selectDueLifecycleEmails,
   stalledInstance,
@@ -1002,6 +1004,117 @@ describe("runLifecycleEmailSweep", () => {
       expect(fetcher).not.toHaveBeenCalled();
       expect(sendMock).toHaveBeenCalledTimes(1);
       expect(sendMock.mock.calls[0][0]).toBe("stalled_5d");
+    });
+  });
+});
+
+describe("fetchClerkUser", () => {
+  const realFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it("requests a normal Clerk user id unchanged", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "user_2abc" }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const user = await fetchClerkUser("sk_test", "user_2abc");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.clerk.com/v1/users/user_2abc");
+    expect(user).toEqual({ id: "user_2abc" });
+  });
+
+  it("encodes the user id so it cannot change the Clerk request path", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "x" }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await fetchClerkUser("sk_test", "user_a/../../other?x=1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.clerk.com/v1/users/user_a%2F..%2F..%2Fother%3Fx%3D1"
+    );
+  });
+
+  it("returns null for a 404 and throws on other failures", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch;
+
+    await expect(fetchClerkUser("sk_test", "user_gone")).resolves.toBeNull();
+    await expect(fetchClerkUser("sk_test", "user_broken")).rejects.toThrow(
+      "Clerk user fetch failed for user_broken: 500"
+    );
+  });
+});
+
+describe("resolveClerkRecipient — only Clerk-verified addresses (F106)", () => {
+  const originalFetch = global.fetch;
+
+  function mockClerkUser(user: Record<string, unknown>) {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => user,
+    }) as unknown as typeof fetch;
+  }
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("returns null when the only address was typed in and never verified", async () => {
+    mockClerkUser({
+      id: "user_u",
+      first_name: "Sam",
+      primary_email_address_id: "addr_u",
+      email_addresses: [
+        { id: "addr_u", email_address: "victim@example.com", verification: { status: "unverified" } },
+      ],
+    });
+
+    await expect(resolveClerkRecipient("clerk-secret", "user_u")).resolves.toBeNull();
+  });
+
+  it("uses the verified secondary address when the primary is unverified", async () => {
+    mockClerkUser({
+      id: "user_mixed",
+      first_name: "Sam",
+      primary_email_address_id: "addr_typed",
+      email_addresses: [
+        { id: "addr_typed", email_address: "typed-not-proven@example.com", verification: { status: "unverified" } },
+        { id: "addr_proven", email_address: "proven@example.com", verification: { status: "verified" } },
+      ],
+    });
+
+    await expect(resolveClerkRecipient("clerk-secret", "user_mixed")).resolves.toEqual({
+      email: "proven@example.com",
+      firstName: "Sam",
+    });
+  });
+
+  it("uses a verified primary address (control)", async () => {
+    mockClerkUser({
+      id: "user_ok",
+      first_name: "Sam",
+      primary_email_address_id: "addr_ok",
+      email_addresses: [
+        { id: "addr_ok", email_address: "sam@example.com", verification: { status: "verified" } },
+      ],
+    });
+
+    await expect(resolveClerkRecipient("clerk-secret", "user_ok")).resolves.toEqual({
+      email: "sam@example.com",
+      firstName: "Sam",
     });
   });
 });

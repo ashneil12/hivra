@@ -634,7 +634,6 @@ export function buildEnvironment(supabase, operator, previous = {}) {
     HIVRA_OPERATOR_NAME: operator.name,
     HIVRA_OPERATOR_PASSWORD_HASH: operator.passwordHash,
     NEXT_PUBLIC_APP_URL: previous.NEXT_PUBLIC_APP_URL || DEFAULT_APP_URL,
-    NEXT_PUBLIC_HIVRA_AGENTS: "1",
     NEXT_PUBLIC_POSTHOG_KEY: "",
     NEXT_PUBLIC_SITE_URL: previous.NEXT_PUBLIC_SITE_URL || DEFAULT_APP_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: supabase.ANON_KEY,
@@ -647,11 +646,8 @@ export function buildEnvironment(supabase, operator, previous = {}) {
 export function withRequiredSelfHostedDefaults(values) {
   return {
     ...values,
-    // Existing installations predate the public Hivra feature flag. Keep the
-    // local control plane on the same product surface as a fresh install when
-    // it is rebuilt from a newer checkout.
+    // Keep a rebuilt installation on the same settings as a fresh install.
     HIVRA_AUTH_MODE: "local",
-    NEXT_PUBLIC_HIVRA_AGENTS: "1",
     NEXT_PUBLIC_POSTHOG_KEY: "",
     POSTHOG_DISABLED: "1",
   };
@@ -670,7 +666,6 @@ async function atomicPrivateWrite(target, contents, { exclusive = false } = {}) 
 function safeChildEnvironment(privateValues) {
   const allowedPublic = new Set([
     "NEXT_PUBLIC_APP_URL",
-    "NEXT_PUBLIC_HIVRA_AGENTS",
     "NEXT_PUBLIC_SITE_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
     "NEXT_PUBLIC_SUPABASE_URL",

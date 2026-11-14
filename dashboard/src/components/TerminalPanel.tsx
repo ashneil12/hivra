@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import styles from './TerminalPanel.module.css';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { clientLog } from '@/lib/client/logger';
+import { matchesMedia } from '@/lib/client/media-query';
 import { getHermesTuiTheme, resolveHermesTuiColorMode, type HermesTuiColorMode } from '@/lib/tui-theme';
 interface TerminalPanelProps {
     instanceId: string; isActive: boolean; sessionMode?: 'shell' | 'tui'; colorMode?: HermesTuiColorMode; surfaceKey?: string;
@@ -57,11 +58,6 @@ function applyCtrlModifier(data: string) {
     if (code >= 0x40 && code <= 0x5f) return String.fromCharCode(code & 0x1f);
     return data;
 }
-function matchesMedia(query: string) {
-    return typeof window !== 'undefined'
-        && typeof window.matchMedia === 'function'
-        && window.matchMedia(query).matches;
-}
 function isPhoneViewport() {
     return matchesMedia('(max-width: 767px)');
 }
@@ -107,6 +103,8 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
     const terminalRttSequenceRef = useRef(0);
     const pendingTerminalRttSamplesRef = useRef(new Map<string, PendingTerminalRttSample>());
     const pendingTerminalRttKeysByCharRef = useRef(new Map<string, string[]>());
+    // SSE-mode input POSTs run one after another so keystrokes apply in typed order.
+    const fallbackInputQueueRef = useRef<Promise<void>>(Promise.resolve());
     const [connState, setConnState] = useState<ConnState>('init');
     const [errMsg, setErrMsg] = useState<string | null>(null);
     // Sticky Ctrl from the touch key strip: the next typed character is sent as
@@ -292,19 +290,22 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
             return;
         }
         for (const chunk of chunkTerminalInput(data)) {
-            void fetch(apiBase, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'input',
-                    data: chunk,
-                    mode: sessionMode,
-                    sessionKey,
-                    sessionToken,
-                }),
-            }).catch((err) => {
-                logTerminalWarning('Terminal input request failed', 'terminal_input_request_failed', err);
-            });
+            fallbackInputQueueRef.current = fallbackInputQueueRef.current
+                .then(() => fetch(apiBase, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'input',
+                        data: chunk,
+                        mode: sessionMode,
+                        sessionKey,
+                        sessionToken,
+                    }),
+                }))
+                .then(() => undefined)
+                .catch((err) => {
+                    logTerminalWarning('Terminal input request failed', 'terminal_input_request_failed', err);
+                });
         }
     }, [apiBase, logTerminalWarning, sessionMode]);
     const sendResize = useCallback((cols: number, rows: number) => {
@@ -896,17 +897,17 @@ export function TerminalPanel({ instanceId, isActive, sessionMode = 'shell', col
     ];
     const chromeVars = {
         '--terminal-panel-bg': isLight ? '#f7f2ea' : '#050711',
-        '--terminal-header-bg': isLight ? 'rgba(255, 251, 244, 0.86)' : 'rgba(9, 12, 22, 0.92)',
-        '--terminal-border': isLight ? 'rgba(58, 45, 31, 0.12)' : 'rgba(150, 166, 190, 0.12)',
+        '--terminal-header-bg': 'var(--hg-glass)',
+        '--terminal-border': 'var(--hg-stroke-subtle)',
         '--terminal-header-text': tuiTheme.terminal.headerText,
         '--terminal-muted-text': tuiTheme.terminal.headerMutedText,
-        '--terminal-accent-border': isLight ? 'rgba(15, 118, 110, 0.2)' : 'rgba(45, 212, 191, 0.2)',
-        '--terminal-accent-bg': isLight ? 'rgba(15, 118, 110, 0.08)' : 'rgba(45, 212, 191, 0.08)',
+        '--terminal-accent-border': 'var(--hg-stroke)',
+        '--terminal-accent-bg': 'var(--hg-fill-2)',
         '--terminal-status-color': statusColor[connState],
-        '--terminal-status-border': statusIsError ? 'rgba(248, 113, 113, 0.28)' : isLight ? 'rgba(15, 118, 110, 0.18)' : 'rgba(45, 212, 191, 0.18)',
-        '--terminal-status-bg': statusIsError ? 'rgba(248, 113, 113, 0.08)' : isLight ? 'rgba(15, 118, 110, 0.08)' : 'rgba(45, 212, 191, 0.08)',
-        '--terminal-button-border': isLight ? 'rgba(58, 45, 31, 0.12)' : 'rgba(148, 163, 184, 0.12)',
-        '--terminal-button-bg': isLight ? 'rgba(255, 251, 244, 0.72)' : 'rgba(148, 163, 184, 0.06)',
+        '--terminal-status-border': statusIsError ? 'color-mix(in srgb, var(--hg-bad) 40%, transparent)' : 'var(--hg-stroke)',
+        '--terminal-status-bg': statusIsError ? 'color-mix(in srgb, var(--hg-bad) 8%, transparent)' : 'var(--hg-fill-1)',
+        '--terminal-button-border': 'var(--hg-stroke)',
+        '--terminal-button-bg': 'var(--hg-fill-1)',
         '--terminal-reconnect-bg': tuiTheme.terminal.reconnectBackground,
         '--terminal-reconnect-hover': tuiTheme.terminal.reconnectBackgroundHover,
         '--terminal-reconnect-border': tuiTheme.terminal.reconnectBorder,

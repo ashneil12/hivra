@@ -171,7 +171,7 @@ export function UpdateAvailableBanner({ instanceId, onUpdate, busy = false, refr
     Date.now() - requested.at < REQUEST_WINDOW_MS &&
     (status?.currentDigest ?? null) === requested.from;
   const working = busy || posting;
-  const accent = warning ? '#92400e' : '#1d4ed8';
+  const accent = warning ? 'var(--hg-warn)' : 'var(--hg-fg)';
   const Icon = warning ? AlertTriangle : DownloadCloud;
 
   const onPrimary = () => {
@@ -187,8 +187,8 @@ export function UpdateAvailableBanner({ instanceId, onUpdate, busy = false, refr
       style={{
         margin: '0.5rem 0 1rem',
         padding: '14px 16px',
-        border: `1px solid ${warning ? 'rgba(217, 119, 6, 0.32)' : 'rgba(59, 130, 246, 0.28)'}`,
-        background: warning ? 'rgba(217, 119, 6, 0.08)' : 'rgba(59, 130, 246, 0.07)',
+        border: `1px solid ${warning ? 'color-mix(in srgb, var(--hg-warn) 32%, transparent)' : 'var(--hg-stroke-strong)'}`,
+        background: warning ? 'color-mix(in srgb, var(--hg-warn) 8%, transparent)' : 'var(--hg-fill-2)',
         color: 'var(--ink-black)',
       }}
     >
@@ -269,9 +269,9 @@ function ResultLine({ result, inline = false }: { result: { tone: 'success' | 'e
       style={{
         margin: inline ? '12px 0 0' : '0.5rem 0 1rem',
         padding: inline ? 0 : '12px 16px',
-        border: inline ? 'none' : `1px solid ${error ? '#b91c1c' : 'var(--ink-black)'}`,
-        background: inline ? 'transparent' : error ? '#fef2f2' : 'var(--vellum-bg)',
-        color: error ? '#991b1b' : 'var(--ink-black)',
+        border: inline ? 'none' : `1px solid ${error ? 'var(--hg-bad)' : 'var(--ink-black)'}`,
+        background: inline ? 'transparent' : error ? 'color-mix(in srgb, var(--hg-bad) 8%, transparent)' : 'var(--vellum-bg)',
+        color: error ? 'var(--hg-bad)' : 'var(--ink-black)',
         fontFamily: 'var(--font-mono), monospace',
         fontSize: 11,
         letterSpacing: '0.03em',

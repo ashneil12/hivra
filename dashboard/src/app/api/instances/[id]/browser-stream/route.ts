@@ -101,10 +101,15 @@ export async function GET(
       // can't import rfb.js cross-origin from the instance domain — the
       // dashboard CSP blocks it ("Failed to load browser viewer"). noVNC's own
       // vnc.html auto-connects with the per-instance VNC password.
+      //
+      // The settings go in the URL fragment, not the query string. noVNC reads
+      // both (WebUtil.getConfigVar, fragment first), but a fragment is never
+      // sent to a server, so the long-lived VNC password stays out of the VM's
+      // Caddy access logs, any proxy in between and Referer headers.
       const gatewayBase = detectedPublicBase.replace(/^http:\/\//, "https://");
       const vncPassword = deriveBrowserVncPassword(rawKey);
       const viewerUrl =
-        `${gatewayBase}/vnc/vnc.html?path=vnc/websockify&autoconnect=true` +
+        `${gatewayBase}/vnc/vnc.html#path=vnc/websockify&autoconnect=true` +
         `&resize=scale&reconnect=true&password=${encodeURIComponent(vncPassword)}`;
       return NextResponse.redirect(viewerUrl, 302);
     }

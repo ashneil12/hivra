@@ -120,13 +120,30 @@ class Particle {
   }
 }
 
-const DEFAULT_ACCENT_RGB = '255, 44, 45'; // vellum/gold
+// Monochrome: the dots and links are the page ink at very low alpha (the
+// canvas itself is drawn at 0.22 opacity). `accentRgb` is accepted for API
+// compatibility but no longer tints the network.
+const DEFAULT_ACCENT_RGB = '128, 128, 128';
+const CANVAS_OPACITY = 0.22;
+function inkRgb(): string {
+  try {
+    return document.documentElement.classList.contains('dark') ? '236, 236, 236' : '36, 36, 36';
+  } catch {
+    return DEFAULT_ACCENT_RGB;
+  }
+}
+// Link lines fade from LINK_MAX_ALPHA (touching) to 0 (110 px apart). They are
+// drawn in this many opacity steps; 16 steps keep every line within ~0.006 alpha
+// of its exact opacity.
+const LINK_ALPHA_BUCKETS = 16;
+const LINK_MAX_ALPHA = 0.2;
 
 function InteractiveBackground({
   densityMultiplier = 1,
   maxParticles,
-  accentRgb = DEFAULT_ACCENT_RGB,
+  accentRgb: _accentRgb = DEFAULT_ACCENT_RGB,
 }: InteractiveBackgroundProps) {
+  void _accentRgb;
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -138,9 +155,11 @@ function InteractiveBackground({
     const ctx = getCanvasRenderingContext(canvas);
     if (!ctx) return;
 
+    let accentRgb = inkRgb();
     let particlesArray: Particle[] = [];
     let animationFrameId = 0;
     let isAnimating = false;
+    const linkBuckets: number[][] = Array.from({ length: LINK_ALPHA_BUCKETS }, () => []);
 
     const prefersReducedMotion = readMediaQueryMatch("(prefers-reduced-motion: reduce)");
     const coarsePointer = readMediaQueryMatch("(pointer: coarse)");
@@ -231,23 +250,36 @@ function InteractiveBackground({
 
     function connect() {
       if (!ctx) return;
+      for (const bucket of linkBuckets) bucket.length = 0;
       for (let a = 0; a < particlesArray.length; a++) {
         for (let b = a + 1; b < particlesArray.length; b++) { // Optimized inner loop start
           const dx = particlesArray[a].x - particlesArray[b].x;
           const dy = particlesArray[a].y - particlesArray[b].y;
           const distSq = dx * dx + dy * dy;
-          
+
           if (distSq < 12100) { // 110^2
             const distance = Math.sqrt(distSq);
             const opacityValue = 1 - distance / 110;
-            ctx.strokeStyle = `rgba(${accentRgb}, ${opacityValue * 0.2})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(particlesArray[a].x, particlesArray[a].y);
-            ctx.lineTo(particlesArray[b].x, particlesArray[b].y);
-            ctx.stroke();
+            const bucket = Math.min(LINK_ALPHA_BUCKETS - 1, Math.floor(opacityValue * LINK_ALPHA_BUCKETS));
+            linkBuckets[bucket].push(a, b);
           }
         }
+      }
+      ctx.lineWidth = 1;
+      // One stroke per opacity bucket instead of one per near pair.
+      for (let bucket = 0; bucket < LINK_ALPHA_BUCKETS; bucket++) {
+        const pairs = linkBuckets[bucket];
+        if (pairs.length === 0) continue;
+        const alpha = ((bucket + 0.5) / LINK_ALPHA_BUCKETS) * LINK_MAX_ALPHA;
+        ctx.strokeStyle = `rgba(${accentRgb}, ${alpha})`;
+        ctx.beginPath();
+        for (let i = 0; i < pairs.length; i += 2) {
+          const from = particlesArray[pairs[i]];
+          const to = particlesArray[pairs[i + 1]];
+          ctx.moveTo(from.x, from.y);
+          ctx.lineTo(to.x, to.y);
+        }
+        ctx.stroke();
       }
     }
 
@@ -258,6 +290,7 @@ function InteractiveBackground({
         return;
       }
 
+      accentRgb = inkRgb();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < particlesArray.length; i++) {
         particlesArray[i].draw(ctx, accentRgb);
@@ -295,13 +328,13 @@ function InteractiveBackground({
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [densityMultiplier, maxParticles, accentRgb]);
+  }, [densityMultiplier, maxParticles]);
 
   return (
     <motion.canvas
       ref={canvasRef}
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      animate={{ opacity: CANVAS_OPACITY }}
       transition={{ duration: 1.5, ease: "easeInOut" }}
       style={{
         position: 'fixed',

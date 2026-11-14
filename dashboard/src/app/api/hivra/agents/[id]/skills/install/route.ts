@@ -13,7 +13,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
 import { installCuratedSkillsOnBox, listInstallableSkillMeta } from "@/lib/hivra/skill-install";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
@@ -28,7 +27,6 @@ import {
 // dashboard, and the heavy SKILL.md bodies never reach the client bundle.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -52,7 +50,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -95,9 +92,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (skillIds.length === 0) return apiError("skillIds must be a non-empty array", 400);
     if (skillIds.length > 50) return apiError("Too many skills in one install", 400);
 
-    let env: Record<string, string | undefined>;
+    let authority: Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>>;
     try {
-      env = (await resolveHivraAgentExecutionContext(userId, agent)).env;
+      authority = await resolveHivraAgentExecutionContext(userId, agent);
     } catch (contextError) {
       const safeError = describeHivraAgentExecutionContextError(contextError);
       if (safeError) return apiError(safeError.message, safeError.status);
@@ -109,9 +106,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         id: String(agent.id),
         type: (agent.type as string | null) ?? null,
         ip: (agent.ip as string | null) ?? null,
+        vmid: (agent.vmid as number | null) ?? null,
       },
       skillIds,
-      env,
+      authority,
     );
 
     if (!result.ok) {

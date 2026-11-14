@@ -39,6 +39,15 @@ describe("DeferredGTM", () => {
     expect(screen.queryByTestId("ga4-tag")).not.toBeInTheDocument();
   });
 
+  it("cancels the idle-load timer when it unmounts before firing", () => {
+    const clearTimer = jest.spyOn(window, "clearTimeout");
+    const { unmount } = render(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" />);
+    expect(clearTimer).not.toHaveBeenCalled();
+    unmount();
+    expect(clearTimer).toHaveBeenCalledTimes(1);
+    clearTimer.mockRestore();
+  });
+
   it("defers Google tags until idle for a visitor who already accepted", () => {
     writeStoredConsent("accepted");
     render(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" />);

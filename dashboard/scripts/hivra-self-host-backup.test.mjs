@@ -123,7 +123,7 @@ test("prepares a full replacement restore for exactly the dumped local schemas",
     ].join("\n"), { mode: 0o600 });
     assert.equal(
       await databaseRestorePreamble(sql),
-      'SET session_replication_role = replica;\nTRUNCATE TABLE "auth"."users", "public"."proxmox_hosts" RESTART IDENTITY CASCADE;\n',
+      'SET session_replication_role = replica;\nTRUNCATE TABLE "auth"."users", "public"."proxmox_hosts" RESTART IDENTITY;\n',
     );
     writeFileSync(sql, 'COPY "private"."secrets" ("id") FROM stdin;\n', { mode: 0o600 });
     await assert.rejects(databaseRestorePreamble(sql), /unsupported COPY target/i);

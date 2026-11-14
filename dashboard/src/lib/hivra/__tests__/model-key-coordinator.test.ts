@@ -4,7 +4,7 @@ import { modelKeyBinding, type ModelKeyAgent, type ModelKeyOperation, type Model
 import { expectedGuestLlmReceipt, type GuestLlmApplication, type GuestLlmDelivery } from "../guest-llm-transport";
 import { ensureManagedVeniceWalletAccount } from "@/lib/billing/managed-venice-wallets";
 import { generateManagedVenicePlaintextKey, hashManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
-import { log } from "@/lib/logger";
+
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
@@ -133,7 +133,7 @@ it.each([{}, [], undefined, { ...byok, apiKey: "tiny" }, { ...byok, apiKey: "a b
 it("normalizes model defaults and whitespace without changing the selected wallet", async () => {
   const f = fixture();
   await f.coordinator.start(owner, f.a.id, f.op, { ...managed, model: "  " });
-  expect(f.store.admit.mock.calls[0][4].config).toMatchObject({ model: "deepseek-v4-pro", walletType: "card" });
+  expect(f.store.admit.mock.calls[0][4].config).toMatchObject({ model: "deepseek-v4-1-flash", walletType: "card" });
 });
 
 it.each([{ type: "hermes" }, { status: "provisioning" }, { desired_state: "deleted" }, { operation_id: randomUUID() },

@@ -17,7 +17,6 @@ import { z } from "zod";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { computerContractPlanFor } from "@/lib/agent-computers/computer-contract-input";
 import {
@@ -31,34 +30,35 @@ import {
   describeHivraAgentExecutionContextError,
   resolveHivraAgentExecutionContext,
 } from "@/lib/hivra/agent-execution-context";
-import { managedSessionFailure, readMutationBody } from "@/app/api/hivra/managed-sessions/route-support";
+import { noStore, managedSessionFailure, readMutationBody } from "@/app/api/hivra/managed-sessions/route-support";
 
 const ActionSchema = z.object({ action: z.enum(["deliver", "check", "restore", "send"]) }).strict();
 
-function noStore(response: Response): Response {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
-
-async function loadOwnedAgent(id: string, userId: string): Promise<Record<string, unknown> | null> {
-  const { data } = await supabaseAdmin!
+// Returns the owner's agent, or an error only for a failed read. A malformed id
+// (22P02) is no such agent, so it is not an error.
+async function loadOwnedAgent(
+  id: string,
+  userId: string,
+): Promise<{ agent: Record<string, unknown> | null; error: boolean }> {
+  const { data, error } = await supabaseAdmin!
     .from("hivra_agents")
     .select("*")
     .eq("id", id)
     .eq("user_id", userId)
     .neq("status", "deleted")
     .maybeSingle();
-  return (data as Record<string, unknown> | null) ?? null;
+  if (error && error.code !== "22P02") return { agent: null, error: true };
+  return { agent: (data as Record<string, unknown> | null) ?? null, error: false };
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     if (!supabaseAdmin) return noStore(apiError("Database not configured", 500));
-    const agent = await loadOwnedAgent(id, userId);
+    const { agent, error: loadError } = await loadOwnedAgent(id, userId);
+    if (loadError) return noStore(apiError("Could not load this computer.", 503));
     if (!agent) return noStore(apiError("Agent not found", 404));
     // Store the revision for the agent's current facts so Manage can show its
     // exact text and number before it is delivered, and offer "Send update"
@@ -77,7 +77,6 @@ const STEP_DEADLINE_MS = 55_000;
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const deadline = Date.now() + STEP_DEADLINE_MS;
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
@@ -91,7 +90,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!parsed.success) return noStore(apiError("Unknown action.", 400));
     const { action } = parsed.data;
 
-    const agent = await loadOwnedAgent(id, userId);
+    const { agent, error: loadError } = await loadOwnedAgent(id, userId);
+    if (loadError) return noStore(apiError("Could not load this computer.", 503));
     if (!agent) return noStore(apiError("Agent not found", 404));
     const plan = computerContractPlanFor(agent as unknown as Parameters<typeof computerContractPlanFor>[0]);
     if (plan.status !== "deliverable") {
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (safeError) return noStore(apiError(safeError.message, safeError.status));
       throw contextError;
     }
-    const contract = await advanceProxmoxComputerContract(userId, agent, context.env, action, { deadline });
+    const contract = await advanceProxmoxComputerContract(userId, agent, context, action, { deadline });
     return noStore(apiSuccess({ contract }));
   } catch (error) {
     return noStore(handleApiError(error));

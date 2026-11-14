@@ -133,8 +133,10 @@ describe("issueServerEnrollment (T1, T4, T5, T25)", () => {
     const reachable = jest.fn().mockResolvedValue(true);
     const issued = await issueServerEnrollment(USER, {}, { reachable, body: async () => BODY, now: () => NOW });
 
-    const code = /Bearer (hse1_[a-z2-7]{32})'/.exec(issued.command)?.[1];
+    const code = issued.code;
     expect(code).toMatch(SERVER_ENROLLMENT_CODE_PATTERN);
+    // The command prompts for the code; it never carries it.
+    expect(issued.command).not.toContain(code);
     expect(issued.accountCode).toBe(accountCode(USER));
     expect(issued.finalLine).toContain(`'${code}'`);
     expect(issued.finalLine).toContain(`'${accountCode(USER)}' HIVRA_END_V1; }`);
@@ -195,7 +197,7 @@ describe("confirmServerEnrollment (T2, T15, T22, T30)", () => {
 
   it("runs an owner-entered address through the SSRF resolver", async () => {
     await confirmServerEnrollment(USER, ENROLLMENT_ID, { sshHost: "web-1.example" }, NOW);
-    expect(mockResolve).toHaveBeenCalledWith("web-1.example");
+    expect(mockResolve).toHaveBeenCalledWith("web-1.example", { userId: USER });
     expect(store.confirmServerEnrollmentRecord).toHaveBeenCalledWith(expect.objectContaining({ sshHost: "web-1.example" }));
     mockResolve.mockRejectedValue(new InfrastructureNetworkError("ssh_host_forbidden", "no"));
     store.confirmServerEnrollmentRecord.mockClear();
@@ -236,7 +238,7 @@ describe("replaceServerEnrollmentAccess (T30, T46)", () => {
 
   it("signs in with the pinned key, user hivra and the new key through sudo before changing anything", async () => {
     await replaceServerEnrollmentAccess(USER, ENROLLMENT_ID, request, deps());
-    expect(mockResolve).toHaveBeenCalledWith("web-1.example");
+    expect(mockResolve).toHaveBeenCalledWith("web-1.example", { userId: USER });
     const [script, env] = run.mock.calls[0];
     expect(script).toContain(REPLACEMENT_PROBE_MARKER);
     expect(env).toMatchObject({
@@ -275,6 +277,15 @@ describe("replaceServerEnrollmentAccess (T30, T46)", () => {
       .rejects.toEqual(new ServerEnrollmentError("verification_failed", "connection_failed"));
     expect(run).not.toHaveBeenCalled();
     expectNothingChanged("connection_failed");
+  });
+
+  it("still reports verification_failed when recording the failed check itself throws", async () => {
+    run.mockResolvedValue({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: ECONNRESET" });
+    store.failServerEnrollmentReplacement.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(replaceServerEnrollmentAccess(USER, ENROLLMENT_ID, request, deps()))
+      .rejects.toEqual(new ServerEnrollmentError("verification_failed", "connection_failed"));
+    expect(store.failServerEnrollmentReplacement).toHaveBeenCalledWith(expect.objectContaining({ failure: "connection_failed" }));
+    expect(store.completeServerEnrollmentReplacement).not.toHaveBeenCalled();
   });
 
   it.each([

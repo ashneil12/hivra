@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
-import React, { useState } from "react";
+import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import { TabPanel, Tabs, tabDomId, tabPanelDomId } from "../Tabs";

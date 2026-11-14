@@ -27,6 +27,8 @@
 // seo-urls.ts applies CUTOVER_LAST_MODIFIED as a floor to the pages the cutover
 // rewrote; everything else keeps the date below.
 
+import { isAgentToolsEnabled } from "@/lib/tools/agent-tools-flag";
+
 export const PAGE_LAST_MODIFIED = {
   // New hero, sections, FAQ and identity markup in the copy overhaul, 2026-10-20
   // (before: 2026-09-30).
@@ -47,7 +49,8 @@ export const PAGE_LAST_MODIFIED = {
   // The /tools hub lists every tool; it and each tool page were rewritten in the
   // copy overhaul, 2026-10-20 (before: 2026-09-30). Each tool page has its own
   // date in TOOL_PAGE_LAST_MODIFIED below.
-  tools: "2026-10-20",
+  // The hub lists the agent tools only while their flag is on, which changes the page on 2026-11-12.
+  tools: isAgentToolsEnabled() ? "2026-11-12" : "2026-10-20",
   // Phase-aware token copy and official accounts, 2026-09-24.
   token: "2026-09-24",
   // The founder note was rewritten in the copy overhaul, 2026-10-20 (before:
@@ -83,6 +86,8 @@ export const PAGE_LAST_MODIFIED = {
   // Rewritten in the copy overhaul, 2026-10-20 (before: 2026-03-01, the date of
   // the old text; 2026-09-24 only added its own title and canonical).
   terms: "2026-10-20",
+  // New page, 2026-11-10: the Venice landing page.
+  venice: "2026-11-10",
 } as const;
 
 export type PageLastModifiedKey = keyof typeof PAGE_LAST_MODIFIED;
@@ -93,6 +98,18 @@ export type PageLastModifiedKey = keyof typeof PAGE_LAST_MODIFIED;
  * The /tools hub follows PAGE_LAST_MODIFIED.tools. Adding a tool means adding its
  * slug here: seo-urls.test.ts fails on a missing or stale slug.
  */
+// The agent tools, added 2026-11-12 behind NEXT_PUBLIC_HIVRA_AGENT_TOOLS_ENABLED. They get a date
+// only while that flag is on, because every date needs a catalog entry (seo-urls test).
+const AGENT_TOOL_PAGE_LAST_MODIFIED: Record<string, string> = {
+  "hermes-vs-openclaw": "2026-11-12",
+  "ai-agent-running-cost-calculator": "2026-11-12",
+  "best-free-models-for-ai-agents": "2026-11-12",
+  "ai-agent-use-cases": "2026-11-12",
+  "telegram-discord-bot-setup": "2026-11-12",
+  "ai-agent-security-checklist": "2026-11-12",
+  "soul-md-generator": "2026-11-12",
+};
+
 export const TOOL_PAGE_LAST_MODIFIED: Record<string, string> = {
   // All six tool pages were rewritten in the copy overhaul, 2026-10-20. Before:
   // the plan calculator 2026-09-30 (new copy, a method section with linked
@@ -105,6 +122,7 @@ export const TOOL_PAGE_LAST_MODIFIED: Record<string, string> = {
   "claude-code-limit-reset-calculator": "2026-10-20",
   "keep-mac-awake": "2026-10-20",
   "tmux-cheat-sheet": "2026-10-20",
+  ...(isAgentToolsEnabled() ? AGENT_TOOL_PAGE_LAST_MODIFIED : {}),
 };
 
 /** An ISO day as a Date at 00:00 UTC, for the sitemap. */

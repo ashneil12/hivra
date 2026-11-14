@@ -111,7 +111,7 @@ Resilience is therefore the design standard, not prevention. The question Hivra 
 
 **Launch an agent.** Claude Code, Codex, Hermes and Agent Zero, with DeepSeek in preview. The operator selects an agent, connects the account or key it uses, and it runs on a machine of its own. Terminal agents remain terminal. Agents shipping their own interface retain it.
 
-**Launch a computer.** Ubuntu, with Omarchy and Windows in private preview (Windows currently runs on capacity you own, with your own licensed image). A full desktop, usable without any agent attached. Install software, browse, write code, run services. macOS and custom images come later (section 7), gated on Apple hardware and licensing.
+**Launch a computer.** Ubuntu, Omarchy (prepared computer), or Windows on your own server with your licensed image. A full desktop, usable without any agent attached. Install software, browse, write code, run services. macOS and custom images come later (section 7), gated on Apple hardware and licensing.
 
 Both paths follow the same steps: choose the workload, choose where it runs, see the cost and the boundary, then open the result. Codex and every computer already launch through one flow. Bringing every agent onto it is Next.
 
@@ -254,7 +254,7 @@ Agent Computers give the work a place to happen. The products below address what
 
 **Available now.** Managed agent paths (Claude Code, Codex, Hermes, Agent Zero), persistent workspaces, lifecycle controls, one virtual machine per agent on Hivra-operated servers, live billing. Ubuntu computer launch. Apache 2.0 source and a self-host preview.
 
-**Preview.** Omarchy and Windows computers, DeepSeek, and running on infrastructure you already own.
+**Preview.** DeepSeek, and running on infrastructure you already own.
 
 **Next.** Hivra Orchestrator. One launch flow for every agent and every place a computer can run. Full self-host packaging. Gate, Exchange, Arena, Signal.
 
@@ -306,7 +306,7 @@ If operators keep the local default even when a separate computer is as easy to 
 | Agent-layer bounty funding is scarce relative to model-layer | Asserted | Based on published programme scopes; not a measured figure |
 | Managed agent hosting with isolation | Available | Production |
 | Ubuntu computer launch | Available | Canary; production at cutover |
-| Omarchy and Windows computers | Preview | Private preview; Windows on your own capacity |
+| Omarchy and Windows computers | Available, with conditions | Omarchy as a prepared computer; Windows on your own server with your licensed image |
 | Self-hosting | Preview | Source install available; full packaging Next |
 | Apache 2.0 open source | Available | github.com/ashneil12/hivra, published 21 September 2026 |
 | Observability chain at stated depth | Building | Foundations shipped, full depth in progress |

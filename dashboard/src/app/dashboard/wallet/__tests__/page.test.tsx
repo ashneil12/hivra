@@ -448,6 +448,80 @@ describe("WalletPage custody migration", () => {
     expect(screen.getByText(/2.5 USDC withdrawal/i)).toBeInTheDocument();
   });
 
+  it("does not reload the wallet 60 s after a withdrawal once the page has unmounted", async () => {
+    const primaryDestination = "0x1111111111111111111111111111111111111111";
+    (loadAgentWalletsFromApi as jest.Mock).mockResolvedValueOnce({
+      totalAgents: 1,
+      cards: [{
+        instance: { id: "inst_withdraw", name: "Withdrawal Agent", status: "running", provider: "openai" },
+        wallet: {
+          evmAddress: "0x000000000000000000000000000000000000ba5e",
+          bankrWalletId: "wlt_instance",
+          status: "active",
+          withdrawalDestinationEvm: primaryDestination,
+          apiKeyStatus: "active",
+        },
+        balance: { tokenSymbol: "ETH", balanceDisplay: "0.010000" },
+        balances: [
+          { tokenSymbol: "ETH", balanceDisplay: "0.010000", chain: "Base", tokenAddress: null, tokenDecimals: 18 },
+        ],
+        withdrawalRecipients: [{
+          id: "recipient_1",
+          address: primaryDestination,
+          normalizedAddress: primaryDestination,
+          label: null,
+          isPrimary: true,
+          useCount: 1,
+          lastUsedAt: "2026-05-19T07:30:00.000Z",
+        }],
+        balanceFailed: false,
+      }],
+    });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = requestMethod(input, init);
+      if (url === "/api/billing/bankr/wallet" && method === "GET") return json(selfCustodyWallet);
+      if (url === "/api/billing/wallet/eligibility" && method === "GET") return json(eligibility);
+      if (url === "/api/billing/wallet/quote" && method === "GET") {
+        return json({ success: true, data: { pro: null, power: null } });
+      }
+      if (url === "/api/instances/inst_withdraw/bankr-wallet/withdraw" && method === "POST") {
+        return json({
+          success: true,
+          data: {
+            status: "submitted",
+            txHash: "0xwithdraw",
+            asset: "ETH",
+            amountDisplay: "0.01",
+            recipientAddress: primaryDestination,
+          },
+        });
+      }
+      return json({ success: true, data: {} });
+    });
+
+    const { unmount } = render(<WalletPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /withdraw on base/i }));
+    const dialog = await screen.findByRole("dialog");
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: /yes, withdraw/i }));
+      await Promise.resolve();
+    });
+    expect(await screen.findByText(/withdraw submitted/i)).toBeInTheDocument();
+
+    const eligibilityReads = () => fetchMock.mock.calls.filter(([input, init]) =>
+      requestUrl(input) === "/api/billing/wallet/eligibility" && requestMethod(input, init) === "GET"
+    ).length;
+    unmount();
+    const readsAtUnmount = eligibilityReads();
+    await act(async () => {
+      jest.advanceTimersByTime(60_000);
+      await Promise.resolve();
+    });
+
+    expect(eligibilityReads()).toBe(readsAtUnmount);
+  });
+
   it("renders self-custody wallet details in Chinese when the locale is Chinese", async () => {
     render(
       <LocaleProvider initialLocale="zh-CN">

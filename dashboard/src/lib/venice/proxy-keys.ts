@@ -1,5 +1,7 @@
 import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
 
+import { tryGrantLaunchCredit, type PromoDb } from "@/lib/venice/promo/service";
+import { tryGrantStarterCredit, type StarterCreditDb } from "@/lib/billing/starter-credit";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import {
@@ -7,6 +9,7 @@ import {
   getManagedVeniceWalletSummary,
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
+import { requireDb } from "@/lib/billing/db-utils";
 
 export type ManagedVeniceProxyKeyStatus = "active" | "revoked" | "paused";
 
@@ -29,8 +32,10 @@ type DbInsertChain = {
 
 type DbUpdateFilter = {
   eq: (...args: unknown[]) => DbUpdateFilter;
+  neq: (...args: unknown[]) => DbUpdateFilter;
   select: (...args: unknown[]) => {
     single: () => Promise<{ data: unknown; error: QueryError }>;
+    maybeSingle: () => Promise<{ data: unknown; error: QueryError }>;
   };
   then: Promise<{ error: QueryError }>["then"];
 };
@@ -64,11 +69,6 @@ interface ProxyKeyRow {
 const SELECT_COLUMNS =
   "id, account_id, user_id, name, key_hash, key_prefix, status, paused_reason, " +
   "last_used_at, revoked_at, created_at, updated_at, metadata";
-
-function requireDb(db: SupabaseLike | null | undefined): SupabaseLike {
-  if (!db) throw new Error("Database not configured");
-  return db;
-}
 
 function table(db: SupabaseLike, name: string): DbTable {
   return db.from(name) as DbTable;
@@ -246,6 +246,14 @@ export async function createManagedVeniceProxyKey(
   // endpoint (chat, embeddings, images, audio, video, augment, anthropic). It
   // is read back out of `metadata.defaultWalletType` on every request, so it
   // must be right at mint time — there is no cross-wallet fallback downstream.
+  // Launching an agent in credits mode is when the Venice launch credit lands
+  // (flag-gated, best-effort, never throws): grant it before the wallet is
+  // resolved so a card wallet it funds is seen as funded.
+  if (requestedWalletType === "card" || params.autoSelectFundedWallet) {
+    await tryGrantLaunchCredit({ userId: params.userId }, client as unknown as PromoDb);
+    // One-time starter credit for a paid plan (best-effort, never throws).
+    await tryGrantStarterCredit({ userId: params.userId }, client as unknown as StarterCreditDb);
+  }
   const defaultWalletType = params.autoSelectFundedWallet
     ? await resolveFundedWalletType(
         { userId: params.userId, requested: requestedWalletType },
@@ -346,6 +354,12 @@ export class AgentModelKeyInUseError extends Error {
   }
 }
 
+export class ManagedVeniceProxyKeyNotFoundError extends Error {
+  constructor() {
+    super("Managed Venice proxy key not found");
+  }
+}
+
 export async function revokeManagedVeniceProxyKey(
   params: { userId: string; keyId: string },
   db: SupabaseLike | null | undefined = supabaseAdmin
@@ -364,12 +378,29 @@ export async function revokeManagedVeniceProxyKey(
     })
     .eq("id", params.keyId)
     .eq("user_id", params.userId)
+    // A repeat revoke matches no row, so the first revoked_at is kept.
+    .neq("status", "revoked" satisfies ManagedVeniceProxyKeyStatus)
     .select(SELECT_COLUMNS)
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
-    if (error?.code === "55000") throw new AgentModelKeyInUseError();
-    throw new Error(error?.message || "Failed to revoke managed Venice proxy key");
+  if (error) {
+    if (error.code === "55000") throw new AgentModelKeyInUseError();
+    throw new Error(error.message || "Failed to revoke managed Venice proxy key");
+  }
+
+  if (!data) {
+    // Nothing was updated: the key is already revoked (a no-op, as before),
+    // or it is missing or not this user's key (not found).
+    const { data: existing, error: lookupError } = await table(client, "managed_venice_proxy_keys")
+      .select(SELECT_COLUMNS)
+      .eq("id", params.keyId)
+      .eq("user_id", params.userId)
+      .maybeSingle();
+    if (lookupError) {
+      throw new Error(lookupError.message || "Failed to revoke managed Venice proxy key");
+    }
+    if (!existing) throw new ManagedVeniceProxyKeyNotFoundError();
+    return { revoked: true, key: asPublicKey(existing as ProxyKeyRow) };
   }
 
   return { revoked: true, key: asPublicKey(data as ProxyKeyRow) };

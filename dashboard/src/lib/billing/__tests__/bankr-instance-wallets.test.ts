@@ -23,6 +23,12 @@ import {
 } from "@/lib/billing/bankr-instance-wallets";
 
 const mockNotifyDestinationChange = jest.fn();
+// Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
+// change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("@/lib/email/withdraw-destination-changed", () => ({
   sendWithdrawDestinationChangedEmail: (...args: unknown[]) => mockNotifyDestinationChange(...args),
 }));

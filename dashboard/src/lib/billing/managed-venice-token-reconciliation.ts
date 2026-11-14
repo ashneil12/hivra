@@ -30,6 +30,10 @@ import {
 import {
   ERC20_TRANSFER_TOPIC,
   encodeErc20TransferToTopic,
+  blockTimestampsFor,
+  findBlockForTimestamp,
+  paymentDustFloor,
+  tokenDustFloor,
 } from "@/lib/billing/base-transfer-scan";
 import {
   computeBackoffDelayMs,
@@ -76,6 +80,7 @@ type JsonRpcFetch = (
     method: "POST";
     headers: { "Content-Type": "application/json" };
     body: string;
+    signal?: AbortSignal;
   }
 ) => Promise<{
   ok: boolean;
@@ -126,13 +131,14 @@ const TRANSFER_SURFACING_LIMIT = 25;
 // RPC budget per cron tick (50 open + 25 surface-only quotes = 75 scans; a
 // claimed open quote is recovered without a scan). One head (eth_blockNumber)
 // and its timestamp per batch, then per scanned quote:
-//   - 2 timestamp->block searches, each <= MAX_BLOCK_SEARCH_PROBES (40)
+//   - 2 timestamp->block searches, each <= 40 probes (findBlockForTimestamp);
 //     eth_getBlockByNumber probes; the 2 s/block estimate is verified, so
 //     typically 1-3 probes each, and every block timestamp is cached per batch;
 //   - ceil(span / 2,000) eth_getLogs: a window + grace is ~4,200 blocks, so 3;
 //     hard cap MAX_SCAN_SPAN_BLOCKS (50,000) / 2,000 = 25;
-//   - <= MAX_TRANSFER_TIMESTAMP_LOOKUPS (200) block timestamps for logs that
-//     carry no blockTimestamp (usually a handful of transfers, often 0);
+//   - <= 200 block timestamps for logs that carry no blockTimestamp (usually
+//     a handful of transfers, often 0; above 200 blocks, one read and Base's
+//     fixed block time, see blockTimestampsFor);
 //   - 1 confirmed-head block timestamp (the same block for every quote).
 // Worst case, every bound hit and nothing cached:
 //   2 + 75 x (80 + 25 + 200 + 1) = 22,952 calls,
@@ -171,7 +177,7 @@ const SURFACING_SCAN_BUDGET_MS = 240_000;
 //     session. If the later session does not account for it (the yearly flow
 //     detects payment by wallet balance and records no tx), it is neither
 //     credited nor surfaced here. The yearly follow-up owns that attribution.
-export const LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
+const LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
 // Base produces a block every 2 s; used to estimate a block from a timestamp.
 // Every estimate is verified against eth_getBlockByNumber before it is used.
 const BASE_BLOCK_TIME_SEC = 2;
@@ -186,17 +192,12 @@ const BASE_BLOCK_TIME_SEC = 2;
 // FINALITY_MARGIN_MS. Settling a transfer that was actually seen is unchanged.
 const FINALITY_MARGIN_BLOCKS = 30;
 const FINALITY_MARGIN_MS = FINALITY_MARGIN_BLOCKS * BASE_BLOCK_TIME_SEC * 1000;
-// A timestamp->block answer may land this many seconds on the SAFE side of the
-// target (earlier for a range start, later for a range end); the extra blocks
-// are filtered out by their timestamps.
-const BLOCK_SEARCH_TOLERANCE_SEC = 60;
-const MAX_BLOCK_SEARCH_PROBES = 40;
-// Estimate-and-correct probes before falling back to plain bisection.
-const INTERPOLATION_PROBES = 4;
+// Each Base RPC request gives up after this long and is retried by the shared
+// retry layer, so one stalled read cannot hold the reconcile tick.
+const DEFAULT_RPC_REQUEST_TIMEOUT_MS = 10_000;
 // Bound per-quote RPC work: a window + grace is ~4,200 blocks and has a
 // handful of transfers; anything far above that is refused, not scanned.
 const MAX_SCAN_SPAN_BLOCKS = 50_000;
-const MAX_TRANSFER_TIMESTAMP_LOOKUPS = 200;
 
 // Base RPC resilience (retry/backoff/jitter on 429/5xx/network) now lives in
 // the shared @/lib/billing/base-rpc-retry module. This file keeps a short
@@ -316,16 +317,29 @@ async function rpcCallOnce<T>(
   params: unknown[],
   fetchImpl: JsonRpcFetch
 ): Promise<T> {
-  const response = await fetchImpl(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-  });
+  let response: Awaited<ReturnType<JsonRpcFetch>>;
+  try {
+    response = await fetchImpl(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+      }),
+      // A provider that accepts the connection and then stalls must not hold
+      // the cron tick (or the holdings run budget): time out, and retry below.
+      signal: AbortSignal.timeout(DEFAULT_RPC_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const name = (error as { name?: unknown } | null)?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      // A network-level failure, like fetch's own TypeError: retryable.
+      throw new TypeError(`Base RPC ${method} timed out after ${DEFAULT_RPC_REQUEST_TIMEOUT_MS} ms`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     // Typed error so the retry layer can decide whether this status (429 /
@@ -412,51 +426,6 @@ function createBaseChainReader(params: {
       return cached;
     },
   };
-}
-
-// Map a unix timestamp to a block. 'floor' returns a block at or before the
-// target (a safe range start); 'ceil' returns a block at or after it (a safe
-// range end), or null when the chain has not reached the target yet. The
-// first probe is estimated from the head at 2 s/block; each probe is checked
-// against the real block timestamp and corrected, falling back to bisection
-// between the tightest known bounds, so a wrong estimate costs probes, never
-// correctness.
-async function findBlockForTimestamp(
-  chain: BaseChainReader,
-  params: { targetSec: number; side: "floor" | "ceil"; latest: number; latestSec: number }
-): Promise<number | null> {
-  const { targetSec, side, latest, latestSec } = params;
-  if (side === "floor" && targetSec >= latestSec) return latest;
-  if (side === "ceil" && targetSec > latestSec) return null;
-
-  // "Past" is monotone in block number; the head is past the target here.
-  const isPast = (timestampSec: number) =>
-    side === "floor" ? timestampSec > targetSec : timestampSec >= targetSec;
-  let lo = -1; // greatest block known NOT past the target
-  let hi = latest; // least block known past the target
-  const blocksBack = (latestSec - targetSec) / BASE_BLOCK_TIME_SEC;
-  let guess = side === "floor" ? latest - Math.ceil(blocksBack) : latest - Math.floor(blocksBack);
-
-  for (let probe = 0; probe < MAX_BLOCK_SEARCH_PROBES && hi - lo > 1; probe += 1) {
-    guess = Math.min(hi - 1, Math.max(lo + 1, guess));
-    const timestampSec = await chain.blockTimestamp(guess);
-    const interpolate = probe < INTERPOLATION_PROBES;
-    if (isPast(timestampSec)) {
-      hi = guess;
-      if (side === "ceil" && timestampSec - targetSec <= BLOCK_SEARCH_TOLERANCE_SEC) return guess;
-      guess = interpolate
-        ? guess - Math.max(1, Math.ceil((timestampSec - targetSec) / BASE_BLOCK_TIME_SEC))
-        : Math.floor((lo + hi) / 2);
-    } else {
-      lo = guess;
-      if (side === "floor" && targetSec - timestampSec <= BLOCK_SEARCH_TOLERANCE_SEC) return guess;
-      guess = interpolate
-        ? guess + Math.max(1, Math.floor((targetSec - timestampSec) / BASE_BLOCK_TIME_SEC))
-        : Math.floor((lo + hi) / 2);
-    }
-  }
-
-  return side === "floor" ? Math.max(0, lo) : hi;
 }
 
 // ── Deposit Transfer logs ─────────────────────────────────────────────────
@@ -639,6 +608,12 @@ async function scanQuoteTransfers(params: {
   minConfirmations: number;
   /** Token whose Transfer logs to read. Default: the quote's own token. */
   tokenAddress?: string;
+  /**
+   * Dust floor in base units. A tx whose every log is below it is skipped
+   * before any timestamp lookup, so a spray of tiny transfers cannot stall
+   * the quote. A tx with one real log keeps all its logs.
+   */
+  minAmount?: bigint;
 }) {
   const tokenAddress = (params.tokenAddress ?? params.quote.tokenAddress).toLowerCase();
   const { chain } = params;
@@ -684,17 +659,37 @@ async function scanQuoteTransfers(params: {
     });
   }
 
+  const minAmount = params.minAmount ?? 0n;
+  if (minAmount > 0n) {
+    const realTxs = new Set(
+      [...parsed.values()].filter((entry) => entry.amount >= minAmount).map((entry) => entry.transactionHash)
+    );
+    let dustSkipped = 0;
+    for (const [key, entry] of parsed) {
+      if (realTxs.has(entry.transactionHash)) continue;
+      parsed.delete(key);
+      dustSkipped += 1;
+    }
+    if (dustSkipped > 0) {
+      log.info("managed venice quote scan skipped dust transfers", {
+        source: "managed-venice-token-reconciliation",
+        quoteId: params.quote.id,
+        dustSkipped,
+      });
+    }
+  }
+
   const blocksToFetch = new Set(
     [...parsed.values()]
       .filter((entry) => entry.logTimestampSec === null)
       .map((entry) => entry.blockNumber)
   );
-  if (blocksToFetch.size > MAX_TRANSFER_TIMESTAMP_LOOKUPS) {
-    throw new Error(
-      `Managed Venice quote scan found transfers in ${blocksToFetch.size} blocks; ` +
-        `refusing to look up more than ${MAX_TRANSFER_TIMESTAMP_LOOKUPS}`
-    );
-  }
+  const blockTimes = await blockTimestampsFor(
+    chain,
+    blocksToFetch,
+    { block: latest, timestampSec: latestSec },
+    "Managed Venice quote scan"
+  );
   // A tx's logs share one block, so they are always scanned (and in range,
   // and confirmed) together.
   const logsByTx = new Map<string, Array<{ logIndex: number; amount: bigint }>>();
@@ -706,7 +701,7 @@ async function scanQuoteTransfers(params: {
   }
   const transfers: ScannedTransfer[] = [];
   for (const { logTimestampSec, ...transfer } of parsed.values()) {
-    const timestampSec = logTimestampSec ?? (await chain.blockTimestamp(transfer.blockNumber));
+    const timestampSec = logTimestampSec ?? blockTimes.get(transfer.blockNumber)!;
     const txLogs = logsByTx.get(transfer.transactionHash) ?? [{ logIndex: transfer.logIndex, amount: transfer.amount }];
     const firstLogIndex = Math.min(...txLogs.map((log) => log.logIndex));
     transfers.push({
@@ -899,6 +894,7 @@ async function scanAttributableTransfers(params: {
     quotedAtMs,
     graceEndMs,
     minConfirmations: params.minConfirmations,
+    minAmount: paymentDustFloor(BigInt(quote.tokenAmountRaw)),
   });
   const boundaryMs = await loadAttributionBoundaryMs(db, quote);
   const inRange = scan.transfers.filter(
@@ -924,6 +920,7 @@ async function scanAttributableTransfers(params: {
       graceEndMs,
       minConfirmations: params.minConfirmations,
       tokenAddress: other.address,
+      minAmount: tokenDustFloor(other.decimals),
     });
     const confirmedOther = otherScan.transfers.filter(
       (transfer) => inAttributionRange(transfer) && transfer.confirmations >= params.minConfirmations

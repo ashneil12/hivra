@@ -7,10 +7,12 @@
 // agent's next command; nothing is installed on the computer itself.
 
 import { useCallback, useEffect, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { Bot, Link2, Loader2, Monitor, RefreshCw, Trash2 } from "lucide-react";
 
-import { addLink, fetchLinks, removeLink, resendKit, type KitState, type LinksLoad } from "@/lib/agent-links/client";
+import { addLink, fetchLinks, removeLink, resendKit, type KitState, type LinksLoad, type LinksViewData } from "@/lib/agent-links/client";
 import { formatContractTime } from "@/components/hivra/ComputerContractPanel";
+import { agentSleepView } from "@/lib/hivra/agent-sleep-ui";
 
 import styles from "./ComputerAgentsPanel.module.css";
 
@@ -25,6 +27,27 @@ const KIT_LINE: Record<KitState, string> = {
   not_needed: "",
   not_supported: "",
 };
+
+type Candidate = LinksViewData["candidates"][number];
+
+const STATUS_WORD: Record<string, string> = { running: "running", stopped: "stopped", provisioning: "starting", error: "needs attention" };
+
+/** A running choice that is not awake says so (behind the sleep switch): "asleep", or "waking up". */
+function statusWord(candidate: Candidate): string | null {
+  if (!candidate.status) return null;
+  const sleep = agentSleepView({ status: candidate.status, sleep_state: candidate.sleepState });
+  if (sleep === "asleep") return "asleep";
+  if (sleep === "waking") return "waking up";
+  return STATUS_WORD[candidate.status] ?? candidate.status;
+}
+
+/** Two choices with one name also show whether each is running and the start of its id. */
+export function optionLabel(candidate: Candidate, choices: Candidate[]): string {
+  const shared = choices.filter((choice) => choice.name === candidate.name).length > 1;
+  if (!shared) return `${candidate.name} (${candidate.kind})`;
+  const status = statusWord(candidate);
+  return `${candidate.name} (${[candidate.kind, status, candidate.id.slice(0, 8)].filter(Boolean).join(", ")})`;
+}
 
 export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string; subjectName: string }) {
   const [load, setLoad] = useState<LinksLoad | { state: "loading" }>({ state: "loading" });
@@ -42,15 +65,25 @@ export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string;
 
   const view = load.state === "ready" ? load.view : null;
   const kitPending = view?.kit?.state === "pending";
+  // One read at a time, and none while the tab is hidden.
   useEffect(() => {
     if (!kitPending) return;
-    const timer = window.setInterval(() => { void refresh(); }, LINKS_POLL_MS);
-    return () => window.clearInterval(timer);
+    let alive = true;
+    let timer: number | undefined;
+    const tick = async () => {
+      try {
+        if (!document.hidden) await refresh();
+      } finally {
+        if (alive) timer = window.setTimeout(tick, LINKS_POLL_MS);
+      }
+    };
+    timer = window.setTimeout(tick, LINKS_POLL_MS);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [kitPending, refresh]);
 
   if (load.state === "not_offered") return null;
   if (load.state === "loading") {
-    return <section className={styles.section} aria-busy="true"><p className={styles.note}><Loader2 size={13} className={styles.spinner} aria-hidden /> Loading links…</p></section>;
+    return <section className={styles.section} aria-busy="true"><p className={styles.note}><ThinkingOrb size={20} state="searching" /> Loading links…</p></section>;
   }
   if (load.state === "unavailable") {
     return <section className={styles.section}><p className={styles.note} role="status">{load.message}</p>
@@ -101,7 +134,7 @@ export function AgentLinksPanel({ subjectId, subjectName }: { subjectId: string;
         {open.length > 0 ? <div className={styles.actions}>
           <select value={selected} disabled={busy} onChange={(event) => setChoice(event.target.value)}
             aria-label={onAgent ? "Computer to link" : "Agent to link"} className={styles.button}>
-            {open.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} ({candidate.kind})</option>)}
+            {open.map((candidate) => <option key={candidate.id} value={candidate.id}>{optionLabel(candidate, open)}</option>)}
           </select>
           <button type="button" className={styles.primary} disabled={busy || !selected} onClick={() => void link(selected)}>
             {busy ? <Loader2 size={13} className={styles.spinner} aria-hidden /> : <Link2 size={13} aria-hidden />} Link</button>

@@ -48,6 +48,16 @@ A real Google Chrome runs locally on this box, supervised by the `bux-local-brow
 - `/home/<user>/system-prompt.md` — this file (also reachable as `~/CLAUDE.md` and `~/AGENTS.md`).
 - `~/.claude/projects/.../memory/` — the CLI's auto-memory (`*_profile.md`, `feedback_*.md`). User-specific facts go here; read them before acting.
 
+## Looking after this computer
+
+The person you work for may not be technical. When they ask you to update yourself, fix something, or free up space, use the supported controls and explain them in plain words:
+
+- **Updates:** this agent's software is updated from the **Manage** tab, under **Updates**. Don't upgrade the agent CLI, its services or Node yourself with npm or apt; tell the person where the button is.
+- **Restarting:** if chat, the terminal or the browser stops responding, they can use **Restart** (or **Force restart**) in **Manage**. Don't edit or restart the Hivra connection services (`bux-*`, `hivra-*`, `cloudflared`) yourself; doing so can cut off their access to this computer.
+- **Restore points:** **Manage** also has **Restore points** for going back to an earlier state of this computer.
+- **Disk space:** check with `df -h ~` and `du -sh ~/* 2>/dev/null | sort -h | tail`. Offer to clear caches you created (for example `~/.cache`, `~/.npm/_cacache`, old build output), list what you plan to delete, and ask before deleting anything of theirs.
+- If none of that helps, say exactly what failed and what they can try next. Never guess or claim it is fixed before you have checked.
+
 ## Don't
 
 - The box browser IS local Chrome (Google Chrome via `bux-local-browser`); drive it with `browser-harness-js` + `$BU_CDP_WS` / `{ profileDir }`. Don't spin up a competing browser stack (`playwright install`, `apt install chromium`).

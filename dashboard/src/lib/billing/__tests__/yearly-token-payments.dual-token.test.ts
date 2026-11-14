@@ -21,6 +21,12 @@ jest.mock("@/lib/ops-events", () => ({
   ...jest.requireActual("@/lib/ops-events"),
   reportOpsEvent: (...args: unknown[]) => mockReportOpsEvent(...args),
 }));
+// $HIVRA readiness (hivra-readiness.ts): the gated price passes unless a test says otherwise.
+const mockGatedPrice = jest.fn();
+jest.mock("@/lib/billing/live-thresholds", () => ({
+  ...jest.requireActual("@/lib/billing/live-thresholds"),
+  getGatedPlatformTokenPrice: (...args: unknown[]) => mockGatedPrice(...args),
+}));
 let mockSupabaseAdmin: unknown = null;
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
@@ -36,6 +42,7 @@ import {
   type YearlyQuoteRow,
 } from "@/lib/billing/yearly-token-quotes";
 import { computeUserTokenAccess, TokenNotAllowedError } from "@/lib/billing/token-access";
+import { HivraNotReadyError, _resetHivraReadinessForTests } from "@/lib/billing/hivra-readiness";
 import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
 import { TEST_DEPOSIT_ADDRESS, txHash, yearlyQuoteRow } from "@/test-utils/yearly-token-memory-db";
 import { createYearlyTokenWorld, HOUR_MS, MINUTE_MS, type YearlyTokenWorld } from "@/test-utils/yearly-token-world";
@@ -86,6 +93,9 @@ function reconcile(world: YearlyTokenWorld, now = new Date(world.nowMs)) {
 beforeEach(() => {
   mockReportOpsEvent.mockReset();
   mockSupabaseAdmin = null;
+  mockGatedPrice.mockReset();
+  mockGatedPrice.mockResolvedValue({ price: PRICE, fetchedAt: new Date() });
+  _resetHivraReadinessForTests();
 });
 
 describe("yearly quotes after $HIVRA activation", () => {
@@ -128,6 +138,51 @@ describe("yearly quotes after $HIVRA activation", () => {
       priceQuote: PRICE,
     });
     expect(quote).toMatchObject({ tokenKey: "hermesos", tokenAddress: HERMESOS_TOKEN_ADDRESS, usdTargetCents: 9900 });
+  });
+});
+
+describe("yearly quotes while $HIVRA is not usable (pool fails the price gate)", () => {
+  beforeEach(() => {
+    mockGatedPrice.mockRejectedValue(new Error("pool below the ETH-side floor"));
+  });
+
+  it("refuse a new user's new $HIVRA quote with 'not available yet', writing nothing", async () => {
+    const world = createYearlyTokenWorld();
+    mockSupabaseAdmin = world.memory.db;
+    const attempt = createYearlyTokenQuote({
+      userId: "new_user",
+      tier: "pro",
+      depositAddress: TEST_DEPOSIT_ADDRESS,
+      access: newUser,
+      priceQuote: PRICE,
+    });
+    await expect(attempt).rejects.toBeInstanceOf(HivraNotReadyError);
+    await expect(attempt).rejects.toThrow("Token payments aren't available yet.");
+    expect(world.memory.tables.yearly_token_quotes ?? []).toHaveLength(0);
+  });
+
+  it("still hand back a $HIVRA quote that was issued before (in flight)", async () => {
+    const world = createYearlyTokenWorld();
+    mockSupabaseAdmin = world.memory.db;
+    mockGatedPrice.mockResolvedValueOnce({ price: PRICE, fetchedAt: new Date() });
+    const params = { userId: "new_user", tier: "pro" as const, depositAddress: TEST_DEPOSIT_ADDRESS, access: newUser, priceQuote: PRICE };
+    const issued = await createYearlyTokenQuote(params);
+    _resetHivraReadinessForTests();
+    expect((await createYearlyTokenQuote(params)).id).toBe(issued.id);
+  });
+
+  it("leave a grandfathered user's $HermesOS quote unchanged", async () => {
+    const world = createYearlyTokenWorld();
+    mockSupabaseAdmin = world.memory.db;
+    const quote = await createYearlyTokenQuote({
+      userId: "user_1",
+      tier: "pro",
+      depositAddress: TEST_DEPOSIT_ADDRESS,
+      access: grandfathered,
+      priceQuote: PRICE,
+    });
+    expect(quote.tokenKey).toBe("hermesos");
+    expect(mockGatedPrice).not.toHaveBeenCalled();
   });
 });
 

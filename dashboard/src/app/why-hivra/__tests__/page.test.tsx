@@ -13,6 +13,12 @@ import WhyHivraEvolutionPage from "../evolution/page";
 import { FOUNDER_NOTE, NOTE_SOURCES, allParagraphs, paragraphText } from "../founder-note";
 import WhyHivraPage, { metadata as whyHivraMetadata } from "../page";
 
+// The proposal-labelling contract below is the dormant evolution copy, so pin a dormant launch block
+// (the committed one is filled in). The launched lines are covered in src/lib/__tests__/token-phase-pages.test.tsx.
+jest.mock("@/lib/billing/hivra-token-launch", () => ({
+  HIVRA_TOKEN_LAUNCH: { contractAddress: "", decimals: 18, poolId: "", activatesAt: "" },
+}));
+
 jest.mock("next/link", () => {
   const MockLink = ({
     href,
@@ -259,7 +265,7 @@ describe("/why-hivra page", () => {
     );
   });
 
-  it("describes the token migration as grandfathered $HermesOS plus a proposed $HIVRA, with no same-token claim", () => {
+  it("describes the token migration as grandfathered $HermesOS plus a proposed $HIVRA, with no same-token claim, while $HIVRA is dormant", () => {
     const { container } = render(<WhyHivraEvolutionPage />);
 
     // The old copy said the token would never change, which contradicts the proposed migration.
@@ -283,8 +289,9 @@ describe("/why-hivra page", () => {
   it("lists agents by their agent catalog availability", () => {
     render(<WhyHivraEvolutionPage />);
     const availableCard = screen.getByRole("heading", { level: 3, name: "Available now" }).closest("div")!;
-    const previewCard = screen.getByRole("heading", { level: 3, name: "In preview" }).closest("div")!;
-    for (const [id, label] of [
+    // The preview card is shown only while some agent is still a preview.
+    const previewCard = screen.queryByRole("heading", { level: 3, name: "In preview" })?.closest("div") ?? null;
+    const lineup = [
       ["hermes", "Hermes Agent"],
       ["claude-code", "Claude Code"],
       ["codex", "Codex"],
@@ -292,7 +299,9 @@ describe("/why-hivra page", () => {
       ["openclaw", "OpenClaw"],
       ["aeon", "Aeon"],
       ["deepseek-harness", "DeepSeek"],
-    ] as const) {
+    ] as const;
+    expect(previewCard !== null).toBe(lineup.some(([id]) => getAgent(id)?.available !== true));
+    for (const [id, label] of lineup) {
       const card = getAgent(id)?.available ? availableCard : previewCard;
       expect(within(card as HTMLElement).getByText(label)).toBeInTheDocument();
     }

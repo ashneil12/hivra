@@ -130,10 +130,13 @@ export async function GET(
       if (currentStatus !== "running" && supabaseAdmin) {
         const now = new Date().toISOString();
         try {
-          await supabaseAdmin
+          // Supabase reports a failed write in the result, not by throwing. Only a
+          // persisted promote may change the status we report or schedule the seed.
+          const { error: promoteError } = await supabaseAdmin
             .from("hermes_instances")
             .update(buildInstanceLifecyclePatch("running", { now }))
             .eq("id", instance.id);
+          if (promoteError) throw promoteError;
           currentStatus = "running";
         } catch (err) {
           log.warn("health probe failed to promote instance to running", {
@@ -229,6 +232,18 @@ export async function GET(
                controller.close();
                isClosed = true;
                return;
+            }
+
+            // A stopped, errored or paused row is not probed and cannot turn ready by waiting.
+            // Say so once and close, rather than holding the stream until the deadline.
+            if (!PROBEABLE_STATUSES.has(probeResult.status)) {
+              controller.enqueue(encoder.encode(
+                `event: unavailable\ndata: ${JSON.stringify({ isReady: false, status: probeResult.status })}\n\n`
+              ));
+              controller.close();
+              isClosed = true;
+              clearTimeout(timeoutId);
+              return;
             }
 
             // Bounded poll loop: don't re-arm past the wall-clock deadline.

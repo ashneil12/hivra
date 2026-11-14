@@ -48,7 +48,7 @@ export async function loadReleases(db: SupabaseClient, imageRepo?: string): Prom
   return (data ?? []) as unknown as HermesRelease[];
 }
 
-async function loadRelease(db: SupabaseClient, id: string): Promise<HermesRelease> {
+export async function loadRelease(db: SupabaseClient, id: string): Promise<HermesRelease> {
   const { data, error } = await db
     .from("hermes_releases")
     .select(RELEASE_COLUMNS)

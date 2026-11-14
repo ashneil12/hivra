@@ -7,6 +7,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.doUnmock("imapflow");
   vi.doUnmock("../src/config.js");
+  vi.doUnmock("mailparser");
   delete process.env.IMAP_MAX_POLL_MS;
 });
 
@@ -136,5 +137,77 @@ describe("fetchVerificationCode — code extraction", () => {
     const logger = silentLogger() as unknown as Logger;
     const code = await fetchVerificationCode(config, logger, {});
     expect(code).toBe("123456");
+  });
+});
+
+describe("fetchVerificationCode — newest code and body fetch", () => {
+  it("returns the newest matching code when two codes are inside the window", async () => {
+    vi.doMock("imapflow", () => {
+      class FakeImapFlow {
+        async connect() {}
+        async logout() {}
+        async getMailboxLock() {
+          return { release: () => undefined };
+        }
+        async *fetch() {
+          // IMAP yields ascending UIDs: the older, already-used code comes first.
+          yield { envelope: { subject: "Your verification code is 111111" }, uid: 1 };
+          yield { envelope: { subject: "Your verification code is 222222" }, uid: 2 };
+        }
+      }
+      return { ImapFlow: FakeImapFlow };
+    });
+    const { fetchVerificationCode } = await import("../src/imap/client.js");
+    const config = fakeConfig({
+      IMAP_HOST: "imap.example.com",
+      IMAP_USER: "u",
+      IMAP_PASS: "p",
+    }) as Config;
+    const logger = silentLogger() as unknown as Logger;
+    const code = await fetchVerificationCode(config, logger, {});
+    expect(code).toBe("222222");
+  });
+
+  it("downloads a body only for a subject match, one message at a time", async () => {
+    const fetchQueries: Array<Record<string, unknown>> = [];
+    const fetchOneCalls: Array<{ uid: number; query: unknown; options: unknown }> = [];
+    vi.doMock("mailparser", () => ({
+      simpleParser: async (source: unknown) => ({ text: String(source) }),
+    }));
+    vi.doMock("imapflow", () => {
+      class FakeImapFlow {
+        async connect() {}
+        async logout() {}
+        async getMailboxLock() {
+          return { release: () => undefined };
+        }
+        async *fetch(_range: unknown, query: Record<string, unknown>) {
+          fetchQueries.push(query);
+          yield { envelope: { subject: "Weekly newsletter" }, uid: 1 };
+          yield { envelope: { subject: "Your login code" }, uid: 2 };
+        }
+        async fetchOne(uid: number, query: unknown, options: unknown) {
+          fetchOneCalls.push({ uid, query, options });
+          return { uid, source: "Your code is 654321" };
+        }
+      }
+      return { ImapFlow: FakeImapFlow };
+    });
+    const { fetchVerificationCode } = await import("../src/imap/client.js");
+    const config = fakeConfig({
+      IMAP_HOST: "imap.example.com",
+      IMAP_USER: "u",
+      IMAP_PASS: "p",
+    }) as Config;
+    const logger = silentLogger() as unknown as Logger;
+    const code = await fetchVerificationCode(config, logger, {});
+    expect(code).toBe("654321");
+    // The listing asks for envelopes only, never for sources.
+    expect(fetchQueries[0]).toMatchObject({ envelope: true, uid: true });
+    expect(fetchQueries[0]).not.toHaveProperty("source");
+    // The one body download is for the matching message (uid 2), not the newsletter.
+    expect(fetchOneCalls.map((c) => c.uid)).toEqual([2]);
+    expect(fetchOneCalls[0].query).toEqual({ source: true });
+    expect(fetchOneCalls[0].options).toEqual({ uid: true });
   });
 });

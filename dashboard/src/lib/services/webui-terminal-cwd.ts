@@ -1,3 +1,5 @@
+import { shellSingleQuote } from "@/lib/tools/tmux-sheet";
+
 /**
  * The directory a Hermes box's dashboard file tree and agent terminal open in.
  *
@@ -213,11 +215,6 @@ if __name__ == "__main__":
         print(LABEL + " " + str(error) + "; no further config changes applied", file=sys.stderr)
         sys.exit(1)
 `;
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 /**
  * Update-mode step for buildWebUIBootstrapScript: set terminal.cwd in the
  * persisted /state/config.yaml (and the instance-dir copy) with the agent

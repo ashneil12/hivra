@@ -20,7 +20,20 @@ describe("fetchWithInsecureTLS", () => {
     else process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalNodeTls;
   });
 
-  it("uses a request-scoped insecure dispatcher for managed sslip.io gateways", async () => {
+  it("verifies TLS for managed sslip.io gateways by default — no silent MITM bypass", async () => {
+    global.fetch = jest.fn().mockResolvedValue(new Response("ok", { status: 200 })) as typeof fetch;
+
+    await fetchWithInsecureTLS("https://203-0-113-11.sslip.io/v1/models");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://203-0-113-11.sslip.io/v1/models",
+      expect.not.objectContaining({ dispatcher: insecureAgent })
+    );
+    expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
+  });
+
+  it("allows an explicit break-glass override for sslip gateways that cannot issue certs", async () => {
+    process.env.ALLOW_INSECURE_GATEWAY_TLS = "true";
     global.fetch = jest.fn().mockResolvedValue(new Response("ok", { status: 200 })) as typeof fetch;
 
     await fetchWithInsecureTLS("https://203-0-113-11.sslip.io/v1/models");
@@ -28,18 +41,6 @@ describe("fetchWithInsecureTLS", () => {
     expect(global.fetch).toHaveBeenCalledWith(
       "https://203-0-113-11.sslip.io/v1/models",
       expect.objectContaining({ dispatcher: insecureAgent })
-    );
-    expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
-  });
-
-  it("keeps TLS verification enabled for arbitrary sslip.io subdomains that do not match managed gateway hosts", async () => {
-    global.fetch = jest.fn().mockResolvedValue(new Response("ok", { status: 200 })) as typeof fetch;
-
-    await fetchWithInsecureTLS("https://agent.sslip.io/v1/models");
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      "https://agent.sslip.io/v1/models",
-      expect.not.objectContaining({ dispatcher: insecureAgent })
     );
     expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
   });

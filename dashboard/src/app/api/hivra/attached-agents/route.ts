@@ -14,12 +14,11 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
-import { isAgentAttachEnabled } from "@/lib/agent-computers/attach-flag";
 import { createAttachmentLifecycleStore } from "@/lib/agent-computers/attachment-lifecycle-store";
 import { attachSupported } from "@/lib/agent-computers/attach-plan";
 import { attachDependencies, readAttachChoices, type AttachChoice } from "@/lib/agent-computers/attach-routes";
 import { supabaseAdmin } from "@/lib/supabase";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 /** The owner's computers the first pair supports; an unreadable list offers none. */
 async function supportedComputers(userId: string): Promise<Array<{ id: string; deploymentMode: string | null; chatUrl: string | null }>> {
@@ -43,14 +42,10 @@ async function supportedComputers(userId: string): Promise<Array<{ id: string; d
 
 const UNCHECKED = "Hivra couldn't check this computer right now. Open it to try again.";
 
-const noStore = <T extends Response>(response: T): T => { response.headers.set("Cache-Control", "no-store"); return response; };
-
 export async function GET(req: NextRequest) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
-    if (!isAgentAttachEnabled()) return noStore(apiSuccess({ enabled: false, agents: [], eligibleComputerIds: [], computerReasons: {} }));
     const limited = enforceAuthenticatedRouteRateLimit(req, { routeKey: "hivra:attached-agents:read", userId, limit: 60, windowMs: 60_000 });
     if (limited) return noStore(limited);
     const store = createAttachmentLifecycleStore();

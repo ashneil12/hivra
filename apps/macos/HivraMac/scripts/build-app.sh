@@ -31,7 +31,7 @@ fi
 cp "${scratch_root}/swift/release/HivraMac" "${app_bundle}/Contents/MacOS/HivraMac"
 chmod 755 "${app_bundle}/Contents/MacOS/HivraMac"
 
-codesign --force --deep --sign "${codesign_identity}" "${app_bundle}"
+codesign --force --deep --options runtime --sign "${codesign_identity}" "${app_bundle}"
 ditto -c -k --sequesterRsrc --keepParent "${app_bundle}" "${zip_path}"
 
 print "Built ${app_bundle}"

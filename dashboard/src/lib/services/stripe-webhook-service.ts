@@ -11,9 +11,9 @@ import { log } from "@/lib/logger";
 import { posthogClient } from "@/lib/posthog";
 import {
   grantStripeTopUpCredits,
-  grantSubscriptionCycleCredits,
   isTopUpPackageCredits,
 } from "@/lib/billing/credits";
+import { tryGrantTopupBonus } from "@/lib/venice/promo/service";
 import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-wallets";
 import { tryReactivateManagedVeniceKeysAfterTopUp } from "@/lib/billing/managed-venice-auto-recover";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
@@ -35,20 +35,6 @@ type InvoiceBoundSubscriptionRow = {
   grace_period_ends_at: string | null;
   stripe_subscription_id: string | null;
 };
-
-// Reversibility switch for the suspend-not-delete billing change. When a
-// payment fails or a subscription is canceled we now SUSPEND instances (route
-// them into the stale-suspended ladder: warning emails + plan-aware grace,
-// paying customers excluded) instead of arming a 48h deletion fuse directly —
-// the path that destroyed paying customers' data on a transient card decline
-// (2026-05-22 incident). Set HERMES_BILLING_LEGACY_HARD_DELETE=true to revert
-// to the old immediate-schedule behavior if ever needed. Read at call time so
-// the kill-switch can be flipped (and tested) without a module reload.
-function isBillingLegacyHardDelete(): boolean {
-  return (
-    process.env.HERMES_BILLING_LEGACY_HARD_DELETE?.trim().toLowerCase() === "true"
-  );
-}
 
 type ManagedHostStatus = "running" | "stopped";
 type CheckoutConversionSource = "stripe_webhook" | "confirm_checkout";
@@ -178,6 +164,7 @@ export class StripeWebhookService {
     transitionServer,
     serverActionLabel,
     instanceActionLabel,
+    onlyWhileStatus,
   }: {
     instances: Array<{
       id: string;
@@ -198,6 +185,12 @@ export class StripeWebhookService {
     transitionServer: (serverId: string) => Promise<unknown>;
     serverActionLabel: string;
     instanceActionLabel: string;
+    /**
+     * Write only while the row still has this status and no deleted_at. The
+     * purge cron claims a row by stamping deleted_at, so a restore that loses
+     * that race leaves the row alone instead of reviving one being destroyed.
+     */
+    onlyWhileStatus?: string;
   }) {
     const admin = supabaseAdmin;
     if (!admin || instances.length === 0) return;
@@ -278,12 +271,12 @@ export class StripeWebhookService {
         }
 
         try {
-          await runLifecycleStatusWriteWithRetry(() =>
-            admin
-              .from("hermes_instances")
-              .update(update)
-              .eq("id", instance.id)
-          );
+          await runLifecycleStatusWriteWithRetry(() => {
+            const write = admin.from("hermes_instances").update(update).eq("id", instance.id);
+            return onlyWhileStatus
+              ? write.eq("status", onlyWhileStatus).is("deleted_at", null)
+              : write;
+          });
         } catch (error) {
           log.error(`failed to ${instanceActionLabel} instance lifecycle row`, error, {
             source: LOG_SOURCE,
@@ -460,6 +453,11 @@ export class StripeWebhookService {
       },
     });
 
+    // Existing subscriber's first card top-up in a promo campaign earns a
+    // bonus. Flag-gated, idempotent, and it never throws, so a replay of this
+    // webhook re-runs it harmlessly.
+    await tryGrantTopupBonus({ userId, sessionId: session.id, amountMicroUsd: creditMicroUsd });
+
     // Now that the wallet is funded, auto-reactivate any proxy key that was
     // paused for an uncovered overage (flag-gated, off by default; no-op when
     // disabled). Best-effort — a recovery miss must not fail the top-up that
@@ -512,12 +510,25 @@ export class StripeWebhookService {
       return;
     }
 
-    const { data: instance } = await supabaseAdmin
+    const { data: instance, error: instanceErr } = await supabaseAdmin
       .from("hermes_instances")
       .select("id, name, hetzner_server_id, disk_size_gb, disk_upgraded, status")
       .eq("id", instanceId)
       .eq("user_id", userId)
-      .single();
+      .maybeSingle();
+
+    if (instanceErr) {
+      log.error("failed to load instance for storage addon", instanceErr, {
+        source: LOG_SOURCE,
+        failureType: "storage_addon_instance_lookup_failed",
+        instanceId,
+        userId,
+        errorCode: instanceErr.code,
+      });
+      // A DB error is not a missing instance. Throw so the webhook returns
+      // non-2xx and Stripe redelivers the paid add-on instead of acking it.
+      throw instanceErr;
+    }
 
     if (!instance) {
       log.error(
@@ -1051,18 +1062,13 @@ export class StripeWebhookService {
         subscriptionId: subscription.id,
         subscriptionStatus: subscription.status,
         userId,
-        legacyHardDelete: isBillingLegacyHardDelete(),
       });
-      if (isBillingLegacyHardDelete()) {
-        await this.scheduleInstancesForDeletion(userId);
-      } else {
-        await this.suspendInstancesForBilling(
-          userId,
-          subscription.status === "canceled"
-            ? "subscription_canceled"
-            : "subscription_past_due"
-        );
-      }
+      await this.suspendInstancesForBilling(
+        userId,
+        subscription.status === "canceled"
+          ? "subscription_canceled"
+          : "subscription_past_due"
+      );
     }
 
     const nextStatus =
@@ -1160,14 +1166,6 @@ export class StripeWebhookService {
     });
 
     if (subscription.status === "active" || subscription.status === "trialing") {
-      await grantSubscriptionCycleCredits({
-        userId,
-        planKey,
-        subscriptionId: subscription.id,
-        periodStart,
-        periodEnd,
-      });
-
       // Bump every running instance to the new tier (DB tier_key + live VM
       // resize for Proxmox VMs). Webhook continues even if any individual
       // resize fails — the DB write is the source of truth, and warden's
@@ -1237,11 +1235,34 @@ export class StripeWebhookService {
       return;
     }
 
-    await supabaseAdmin.from("hermes_subscriptions").update({
-      status: "canceled",
-      instance_limit: 0,
-      updated_at: new Date().toISOString(),
-    }).eq("user_id", userId);
+    // Conditional on the id this event names: a checkout that rebinds the row
+    // after the read above must not be cancelled by its predecessor's deletion.
+    const { data: cancelled, error: cancelError } = await supabaseAdmin
+      .from("hermes_subscriptions")
+      .update({
+        status: "canceled",
+        instance_limit: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("stripe_subscription_id", subscription.id)
+      .select("user_id");
+
+    if (cancelError) {
+      // Throw so the webhook answers 500 and Stripe redelivers the deletion.
+      throw new Error(cancelError.message || "failed to cancel hermes_subscriptions for subscription.deleted");
+    }
+    if (currentSub && (cancelled?.length ?? 0) === 0) {
+      // The row was rebound between the read and this write. Whatever wrote it
+      // owns it now: nothing is cancelled, suspended or downgraded here.
+      log.warn("subscription.deleted row changed between read and write; not cancelling", {
+        source: LOG_SOURCE,
+        failureType: "subscription_deleted_row_changed",
+        subscriptionId: subscription.id,
+        userId,
+      });
+      return;
+    }
 
     // Still paid through another lane: move the instances onto that lane's
     // tier and leave them running. Nothing is suspended or scheduled.
@@ -1293,29 +1314,25 @@ export class StripeWebhookService {
     // Cancellation preserves data: suspend (laddered + archivable + win-back
     // recoverable) instead of arming a 48h hard-delete fuse. A user who paid
     // through period end and might re-subscribe keeps their chats + workspace.
-    if (isBillingLegacyHardDelete()) {
-      await this.scheduleInstancesForDeletion(userId);
-    } else {
-      await this.suspendInstancesForBilling(userId, "subscription_canceled");
+    await this.suspendInstancesForBilling(userId, "subscription_canceled");
 
-      // The suspend above only flips database flags; power the cancelled
-      // owner's running computers off now rather than days later at purge.
-      // Dry run unless DUNNING_GRACE_ENFORCE_LIVE=true; never breaks the webhook.
-      // A failed stop is logged here and retried by sweepBillingSuspendedCompute
-      // on the reconcile-subscription-grace cron.
-      try {
-        const { enforceGraceExpiredComputeStop } = await import(
-          "@/lib/recovery/dunning-grace-enforce"
-        );
-        await enforceGraceExpiredComputeStop(userId);
-      } catch (err) {
-        log.error("failed to power off computers after subscription deletion", err, {
-          source: LOG_SOURCE,
-          failureType: "subscription_deletion_compute_stop_failed",
-          userId,
-          subscriptionId: subscription.id,
-        });
-      }
+    // The suspend above only flips database flags; power the cancelled
+    // owner's running computers off now rather than days later at purge.
+    // Dry run unless DUNNING_GRACE_ENFORCE_LIVE=true; never breaks the webhook.
+    // A failed stop is logged here and retried by sweepBillingSuspendedCompute
+    // on the reconcile-subscription-grace cron.
+    try {
+      const { enforceGraceExpiredComputeStop } = await import(
+        "@/lib/recovery/dunning-grace-enforce"
+      );
+      await enforceGraceExpiredComputeStop(userId);
+    } catch (err) {
+      log.error("failed to power off computers after subscription deletion", err, {
+        source: LOG_SOURCE,
+        failureType: "subscription_deletion_compute_stop_failed",
+        userId,
+        subscriptionId: subscription.id,
+      });
     }
   }
 
@@ -1363,40 +1380,6 @@ export class StripeWebhookService {
     return other;
   }
 
-  static async scheduleInstancesForDeletion(userId: string) {
-    if (!supabaseAdmin) return;
-    const { shutdownServer } = await import("@/lib/hetzner/client");
-
-    const scheduledDeletionAt = new Date(
-      Date.now() + PAYMENT_GRACE_HOURS * 60 * 60 * 1000
-    ).toISOString();
-    const updatedAt = new Date().toISOString();
-
-    const { data: instances } = await supabaseAdmin
-      .from("hermes_instances")
-      .select("id, host_id, hetzner_server_id, status, scheduled_deletion_at")
-      .eq("user_id", userId)
-      .not("status", "in", '("deleted","scheduled_for_deletion")');
-
-    if (!instances || instances.length === 0) return;
-
-    await this.updateInstancesConcurrently({
-      instances,
-      update: {
-        status: "scheduled_for_deletion",
-        scheduled_deletion_at: scheduledDeletionAt,
-        updated_at: updatedAt,
-      },
-      hostUpdate: {
-        status: "stopped",
-        updated_at: updatedAt,
-      },
-      transitionServer: (serverId) => shutdownServer(serverId as unknown as number),
-      serverActionLabel: "shutdown",
-      instanceActionLabel: "soft-delete instance",
-    });
-  }
-
   static async restoreScheduledDeletions(userId: string) {
     if (!supabaseAdmin) return;
     const { powerOnServer } = await import("@/lib/hetzner/client");
@@ -1406,7 +1389,10 @@ export class StripeWebhookService {
       .from("hermes_instances")
       .select("id, name, host_id, hetzner_server_id, status, scheduled_deletion_at")
       .eq("user_id", userId)
-      .eq("status", "scheduled_for_deletion");
+      .eq("status", "scheduled_for_deletion")
+      // A computer kept only as the undo for a Hermes move stays scheduled.
+      .is("config->movedTo", null)
+      .is("deleted_at", null);
 
     if (!pendingInstances || pendingInstances.length === 0) return;
 
@@ -1424,6 +1410,7 @@ export class StripeWebhookService {
       transitionServer: (serverId) => powerOnServer(serverId as unknown as number),
       serverActionLabel: "power on",
       instanceActionLabel: "restore",
+      onlyWhileStatus: "scheduled_for_deletion",
     });
   }
 
@@ -1515,7 +1502,7 @@ export class StripeWebhookService {
 
     // Snapshot the rows (with infra) BEFORE the update flips their reason, so we
     // can power the VMs the enforcer stopped back on.
-    const { data: toPowerOn } = await supabaseAdmin
+    const { data: toPowerOn, error: snapshotErr } = await supabaseAdmin
       .from("hermes_instances")
       .select(
         "id, config, proxmox_node, proxmox_vmid, host_id, infrastructure_provider"
@@ -1524,6 +1511,18 @@ export class StripeWebhookService {
       .eq("lifecycle_state", "suspended")
       .in("entitlement_reason", BILLING_SUSPEND_REASONS)
       .is("deleted_at", null);
+
+    if (snapshotErr) {
+      log.error("failed to snapshot billing-suspended instances before resume", snapshotErr, {
+        source: LOG_SOURCE,
+        failureType: "billing_resume_snapshot_failed",
+        userId,
+        errorCode: snapshotErr.code,
+      });
+      // Still resume the rows: yearly and Apple activations call this without a
+      // retry, so throwing would leave a paid user suspended. The VMs the
+      // enforcer stopped may stay off; this error is the signal to power them on.
+    }
 
     const { data: resumed, error } = await supabaseAdmin
       .from("hermes_instances")
@@ -1823,19 +1822,6 @@ export class StripeWebhookService {
         await this.resumeBillingSuspendedInstances(userId);
       }
     }
-
-    // Cycle credits follow the paid Hivra subscription itself (idempotent per
-    // subscription + period), not the row: a paid cycle whose binding lands
-    // later via checkout/subscription events is still credited exactly once.
-    if (subscriptionPlan) {
-      await grantSubscriptionCycleCredits({
-        userId,
-        planKey: subscriptionPlan,
-        subscriptionId,
-        periodStart,
-        periodEnd,
-      });
-    }
   }
 
   static async handlePaymentFailed(invoice: Stripe.Invoice) {
@@ -1918,11 +1904,7 @@ export class StripeWebhookService {
     // subscription truly terminates and the laddered sweep takes over. A user
     // still paid through another lane is not suspended at all.
     if (!(await this.findOtherLaneEntitlement(userId, "invoice_payment_failed"))) {
-      if (isBillingLegacyHardDelete()) {
-        await this.scheduleInstancesForDeletion(userId);
-      } else {
-        await this.suspendInstancesForBilling(userId, "subscription_past_due");
-      }
+      await this.suspendInstancesForBilling(userId, "subscription_past_due");
     }
 
     // Dunning recovery email (flag-gated, at most once per invoice — see

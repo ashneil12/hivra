@@ -64,15 +64,15 @@ export function OpsDeleteAllButton({ eventIds }: OpsDeleteAllButtonProps) {
           letterSpacing: '0.1em',
           opacity: disabled ? 0.55 : 1,
           cursor: disabled ? 'not-allowed' : 'pointer',
-          background: '#7f1d1d',
+          background: 'var(--hg-bad)',
           color: 'var(--vellum-bg)',
-          borderColor: '#7f1d1d',
+          borderColor: 'var(--hg-bad)',
         }}
       >
         {isPending ? 'Deleting…' : `Delete All (${eventIds.length})`}
       </button>
       {error && (
-        <p style={{ margin: 0, fontSize: 12, color: '#b91c1c', maxWidth: 320 }}>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--hg-bad)', maxWidth: 320 }}>
           {error}
         </p>
       )}

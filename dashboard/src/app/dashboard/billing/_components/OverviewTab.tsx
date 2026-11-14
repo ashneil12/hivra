@@ -108,6 +108,7 @@ export function OverviewTab({
             planKey: plan.key,
             source: plan.source,
             currentPeriodEnd: plan.currentPeriodEnd,
+            tokenUnit: c.tokenPayments.displayUnit,
           })}
           specLabels={copy.plate}
           // A free account that still holds a Hivra-run computer: Hivra Cloud

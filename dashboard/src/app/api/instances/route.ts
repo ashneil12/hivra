@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 // the warden-mvp branch).
 export const maxDuration = 300;
 
+import { withoutEncryptedColumns } from "@/lib/instance-record";
 import { NextRequest } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -47,7 +48,7 @@ import {
   buildInstanceLifecyclePatch,
   getLifecycleStateForStatus,
 } from "@/lib/instance-lifecycle";
-import { isWebfreeBackend } from "@/lib/types/instance";
+import { buildReadinessProbeOptions, isWebfreeBackend } from "@/lib/types/instance";
 import { scheduleSoulSeedReconcileAfterResponse } from "@/lib/recovery/soul-seed-reconcile";
 import { scheduleAgentReadyPushAfterResponse } from "@/lib/push/agent-ready-push";
 import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
@@ -81,49 +82,6 @@ interface InstanceRow {
   entitlement_grace_started_at?: string | null;
   entitlement_grace_ends_at?: string | null;
   entitlement_suspended_at?: string | null;
-}
-
-function buildReadinessProbeOptions(params: {
-  backend?: string | null;
-  apiServerKey?: string | null;
-}) {
-  // Modern webfree box (backend='gateway'): probe the CHAT lane, not the
-  // dashboard shell. The box Caddyfile routes '/health' to the
-  // official-dashboard web server only, which comes up seconds (idle canary)
-  // to minutes (loaded prod host) BEFORE the gateway api_server that actually
-  // answers chat — measured on a fresh canary box 2026-07-10 (audit run
-  // fixturecase04): '/health' 200'd and the row flipped 'running' 8s before the
-  // box accepted its first WS upgrade; prod run fixturecase05 showed the same gap
-  // stretched past 190s, so a new user's workspace painted while their first
-  // message died. '/api/sessions' with the instance bearer traverses
-  // caddy → dashboard-sidecar → official-dashboard → gateway and flips 200
-  // in the same probe window as the WS upgrade, so 'running' (and the
-  // workspace it unlocks) means "you can chat". Keyless rows keep the legacy
-  // '/health' probe rather than never promoting (fail-open; the apiServerKey
-  // self-heal backfills the key). Legacy backend='webui' boxes don't serve
-  // the sessions route and keep '/health' too.
-  if (params.backend === "gateway" && params.apiServerKey) {
-    return {
-      pathname: "/api/sessions",
-      headers: {
-        Authorization: `Bearer ${params.apiServerKey}`,
-      } as Record<string, string>,
-    };
-  }
-
-  if (isWebfreeBackend(params.backend)) {
-    return {
-      pathname: "/health",
-      headers: {} as Record<string, string>,
-    };
-  }
-
-  return {
-    pathname: "/v1/models",
-    headers: params.apiServerKey
-      ? { Authorization: `Bearer ${params.apiServerKey}` }
-      : ({} as Record<string, string>),
-  };
 }
 
 export async function GET(request: NextRequest) {
@@ -162,7 +120,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const rows = instances || [];
+    // An old computer kept for a week after its agent moved to the official
+    // Hermes is no longer an agent of its own: the new computer is listed.
+    const rows = (instances || []).filter(
+      (inst) => !(inst.status === "scheduled_for_deletion" && (inst.config as { movedTo?: unknown } | null)?.movedTo),
+    );
 
     // Sync status for instances that are actively provisioning/redeploying,
     // OR if we're doing a full fetch (summary=false) and they are running.
@@ -377,10 +339,22 @@ export async function GET(request: NextRequest) {
             // metadataPatch (the vmMissing release) must win over the status
             // patch so the released proxmox_vmid/config are persisted.
             const patch = { ...statusPatch, ...metadataPatch };
-            await supabaseAdmin!
+            const { error: proxmoxSyncError } = await supabaseAdmin!
               .from("hermes_instances")
               .update(patch)
               .eq("id", inst.id);
+            if (proxmoxSyncError) {
+              // Report the stored state, not a transition the row does not hold.
+              log.error("failed to persist proxmox status sync (list)", proxmoxSyncError, {
+                source: "instances",
+                route: "/api/instances",
+                method: "GET",
+                instanceId: inst.id,
+                userId,
+                failureType: "instance_list_status_sync_write_failed",
+              });
+              return inst;
+            }
             // Post-ready SOUL.md seed: this list-sync promotion may be the
             // FIRST observation of readiness (user sitting on the dashboard
             // instead of the welcome poll). The in-band provision seed races
@@ -413,6 +387,10 @@ export async function GET(request: NextRequest) {
           }
         } else if (needsSync) {
           const hs = await getHetznerInstanceStatus(inst.hetzner_server_id as number);
+          // A failed Hetzner lookup says nothing about the server. Keep the
+          // stored status for this poll instead of writing 'error' over a
+          // running agent (the Proxmox branch above does the same).
+          if (hs.lookupFailed) return inst;
           let nextStatus = hs.status;
 
           if (
@@ -461,10 +439,22 @@ export async function GET(request: NextRequest) {
               inst.lifecycle_state !== expectedLifecycleState
             ) {
               const patch = buildInstanceLifecyclePatch(nextStatus);
-              await supabaseAdmin!
+              const { error: hetznerSyncError } = await supabaseAdmin!
                 .from("hermes_instances")
                 .update(patch)
                 .eq("id", inst.id);
+              if (hetznerSyncError) {
+                // Report the stored state, not a transition the row does not hold.
+                log.error("failed to persist hetzner status sync (list)", hetznerSyncError, {
+                  source: "instances",
+                  route: "/api/instances",
+                  method: "GET",
+                  instanceId: inst.id,
+                  userId,
+                  failureType: "instance_list_status_sync_write_failed",
+                });
+                return inst;
+              }
               // Post-ready SOUL.md seed on the Hetzner promotion path — same
               // race, same fix as the Proxmox branch above.
               if (
@@ -501,10 +491,21 @@ export async function GET(request: NextRequest) {
           // this, the row stays 'provisioning' forever and the boot UI
           // spins. Mirror the per-instance GET handler in [id]/route.ts.
           const patch = buildInstanceLifecyclePatch("error");
-          await supabaseAdmin!
+          const { error: orphanFlipError } = await supabaseAdmin!
             .from("hermes_instances")
             .update(patch)
             .eq("id", inst.id);
+          if (orphanFlipError) {
+            log.error("failed to flip orphan provisioning row to error (list)", orphanFlipError, {
+              source: "instances",
+              route: "/api/instances",
+              method: "GET",
+              instanceId: inst.id,
+              userId,
+              failureType: "instance_list_orphan_flip_write_failed",
+            });
+            return inst;
+          }
           return { ...inst, ...patch };
         }
         return inst;
@@ -562,16 +563,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Full mode. `select("*")` pulls every column into the row, including
-    // `api_server_key_encrypted` — the per-instance gateway bearer, encrypted
-    // at rest. It's a server-only secret and must never reach the client, so
-    // the `...inst` spread is overridden to drop it (JSON serialization omits
-    // `undefined` keys). The single-instance GET handler ([id]/route.ts)
-    // already redacts it the same way; this keeps the list response consistent.
+    // Full mode. `select("*")` pulls every column into the row, including the
+    // encrypted provider key and gateway bearer. Those are server-only secrets
+    // and must never reach the client, so every `*_encrypted` column is
+    // dropped, the same way the single-instance GET ([id]/route.ts) does.
     return apiSuccess(
       synced.map((inst) => ({
-        ...inst,
-        api_server_key_encrypted: undefined,
+        ...withoutEncryptedColumns(inst),
         config: getPublicInstanceConfig(inst.config),
         updateAlert: updateAlerts[inst.id] ?? null,
         failureAlert: failureAlerts[inst.id] ?? null,

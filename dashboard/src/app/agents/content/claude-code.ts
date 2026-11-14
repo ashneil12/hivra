@@ -1,6 +1,6 @@
 // /agents/claude-code. Wording from Ash's batch 02 file 04-claude-code.md, with the edits listed
 // in the lane ledger. Run-level keep-going claims name tmux (and Telegram), as lib/blog/runtime-facts.ts
-// requires; Claude Code takes its own sign-in only, so the AI usage note about Hivra credits is not used here.
+// requires. The page covers Claude Code's own sign-in; Hivra credits are named in the launch's model access choices.
 
 import { fill } from "./shared";
 import type { AgentPageContent } from "./types";
@@ -85,9 +85,10 @@ export const CLAUDE_CODE_CONTENT: AgentPageContent = {
               ],
             },
             {
-              title: "Sign in with Anthropic",
+              title: "Sign in with Anthropic, or use Hivra credits",
               paragraphs: [
                 "Use your own Anthropic account on the computer, as you would locally, subject to the provider's terms. Hivra hosting does **not** include or replace your Anthropic subscription or model usage entitlement.",
+                "Or choose Hivra credits when you launch. Claude Code then runs on Claude models through Venice, and its model usage is paid from your credits.",
               ],
             },
             {

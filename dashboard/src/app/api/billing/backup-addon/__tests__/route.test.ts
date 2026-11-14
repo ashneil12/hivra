@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getStripe } from "@/lib/stripe";
 import { enableServerBackup } from "@/lib/hetzner/client";
 import { BACKUP_ADDON } from "@/lib/subscription";
+import { reportOpsEvent } from "@/lib/ops-events";
 import { makeJsonRequest } from "@/test-utils/request";
 
 // Mock external dependencies
@@ -35,6 +36,7 @@ describe("POST /api/billing/backup-addon", () => {
 
   let mockSupabaseQuery: Record<string, jest.Mock>;
   let mockStripeItemsCreate: jest.Mock;
+  let mockStripeItemsList: jest.Mock;
   let consoleErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -56,14 +58,28 @@ describe("POST /api/billing/backup-addon", () => {
     (supabaseAdmin!.from as jest.Mock).mockReturnValue(mockSupabaseQuery);
 
     // Setup Stripe mock
-    mockStripeItemsCreate = jest.fn().mockResolvedValue({});
+    mockStripeItemsCreate = jest.fn().mockResolvedValue({ id: "si_new" });
+    mockStripeItemsList = jest.fn().mockResolvedValue({ data: [] });
     (getStripe as jest.Mock).mockReturnValue({
       subscriptionItems: {
         create: mockStripeItemsCreate,
+        list: mockStripeItemsList,
       },
     });
 
     (enableServerBackup as jest.Mock).mockResolvedValue({});
+  });
+
+  it("returns 400 for a malformed JSON body instead of a 500", async () => {
+    const req = {
+      headers: new Headers(),
+      json: jest.fn().mockRejectedValue(new SyntaxError("Unexpected token")),
+    } as unknown as Parameters<typeof POST>[0];
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("Invalid JSON body");
   });
 
   afterEach(() => {
@@ -140,6 +156,28 @@ describe("POST /api/billing/backup-addon", () => {
     expect(body.error).toContain("Active subscription required");
   });
 
+  it("refuses a manual grant before enabling Hetzner backups, since nothing would bill them", async () => {
+    mockSupabaseQuery.maybeSingle
+      .mockResolvedValueOnce({
+        data: { id: mockInstanceId, name: "Test Instance", hetzner_server_id: mockServerId, backups_enabled: false },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { stripe_subscription_id: "manual_grant_123", status: "active" },
+        error: null,
+      });
+
+    const res = await POST(createRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toContain("not attached to a live Stripe subscription");
+    expect(enableServerBackup).not.toHaveBeenCalled();
+    expect(mockStripeItemsList).not.toHaveBeenCalled();
+    expect(mockStripeItemsCreate).not.toHaveBeenCalled();
+    expect(mockSupabaseQuery.update).not.toHaveBeenCalled();
+  });
+
   it("should successfully enable backups and charge via Stripe", async () => {
     mockSupabaseQuery.maybeSingle
       // First call - instance
@@ -158,12 +196,15 @@ describe("POST /api/billing/backup-addon", () => {
     const res = await POST(createRequest());
     expect(res.status).toBe(200);
 
-    // Verify Stripe called
-    expect(mockStripeItemsCreate).toHaveBeenCalledWith(expect.objectContaining({
-      subscription: mockSubscriptionId,
-      price: "price_backup_test",
-      quantity: 1,
-    }));
+    // Verify Stripe called, with an idempotency key tied to the instance
+    expect(mockStripeItemsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscription: mockSubscriptionId,
+        price: "price_backup_test",
+        quantity: 1,
+      }),
+      { idempotencyKey: expect.stringMatching(new RegExp(`^backup-addon:${mockInstanceId}:\\d+$`)) },
+    );
 
     // Verify Hetzner API called
     expect(enableServerBackup).toHaveBeenCalledWith(mockServerId);
@@ -231,5 +272,57 @@ describe("POST /api/billing/backup-addon", () => {
     expect(body.error).toBe("Unable to update Stripe billing for backups. Please try again.");
     expect(body.error).not.toContain("stripe-secret-leak");
     expect(consoleErrorSpy.mock.calls.flat().join(" ")).not.toContain("stripe-secret-leak");
+  });
+
+  it("reuses the add-on item a previous attempt already billed instead of billing a second one", async () => {
+    mockSupabaseQuery.maybeSingle
+      .mockResolvedValueOnce({
+        data: { id: mockInstanceId, name: "Test Instance", hetzner_server_id: mockServerId, backups_enabled: false },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { stripe_subscription_id: mockSubscriptionId, status: "active" },
+        error: null,
+      });
+    mockStripeItemsList.mockResolvedValueOnce({
+      data: [
+        { id: "si_other", metadata: { type: "other" } },
+        { id: "si_existing", metadata: { type: "backup_addon", instance_id: mockInstanceId } },
+      ],
+    });
+
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(200);
+    expect(mockStripeItemsCreate).not.toHaveBeenCalled();
+    expect(mockSupabaseQuery.update).toHaveBeenCalledWith({ backups_enabled: true });
+  });
+
+  it("does not report success when the backups flag write fails after billing, and records the item id", async () => {
+    mockSupabaseQuery.maybeSingle
+      .mockResolvedValueOnce({
+        data: { id: mockInstanceId, name: "Test Instance", hetzner_server_id: mockServerId, backups_enabled: false },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { stripe_subscription_id: mockSubscriptionId, status: "active" },
+        error: null,
+      });
+    mockSupabaseQuery.update.mockReturnValueOnce({
+      eq: jest.fn().mockResolvedValueOnce({ error: { message: "db write failed" } }),
+    });
+
+    const res = await POST(createRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.success).not.toBe(true);
+    expect(body.error).toContain("could not be switched on");
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceId: mockInstanceId,
+        metadata: expect.objectContaining({ stripeSubscriptionItemId: "si_new" }),
+      }),
+    );
   });
 });

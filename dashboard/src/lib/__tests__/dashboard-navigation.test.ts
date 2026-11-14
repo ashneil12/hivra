@@ -19,24 +19,23 @@ describe("dashboard navigation", () => {
     const previous = process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
     process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "local";
     try {
-      expect(filterDashboardNavigation(DASHBOARD_MOBILE_MORE_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
-      expect(filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION, true).some(item => item.id === "billing")).toBe(false);
+      expect(filterDashboardNavigation(DASHBOARD_MOBILE_MORE_NAVIGATION).some(item => item.id === "billing")).toBe(false);
+      expect(filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION).some(item => item.id === "billing")).toBe(false);
     } finally {
       if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE;
       else process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = previous;
     }
   });
   it("keeps daily work, launch, and management in explicit groups", () => {
-    // Capacity (where agents and computers run) is a primary destination.
+    // Servers (where your own agents and computers can run) is a Manage item.
     expect(DASHBOARD_PRIMARY_NAVIGATION.map((item) => item.id)).toEqual([
       "home",
-      "computers",
       "agents",
-      "infrastructure",
+      "computers",
       "activity",
     ]);
-    expect(DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "infrastructure")).toMatchObject({
-      label: "Capacity",
+    expect(DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "infrastructure")).toMatchObject({
+      label: "Servers",
       href: "/dashboard/infrastructure",
     });
     // No "chat" item: the interaction area IS home now, and a separate item
@@ -48,6 +47,7 @@ describe("dashboard navigation", () => {
     expect(DASHBOARD_SECONDARY_NAVIGATION.map((item) => item.id)).toEqual([
       "settings",
       "billing",
+      "infrastructure",
     ]);
     expect(DASHBOARD_LAUNCH_NAVIGATION).toMatchObject({
       id: "launch",
@@ -56,20 +56,16 @@ describe("dashboard navigation", () => {
   });
 
   it("is active on the landing page that now holds the workspace", () => {
-    // "/dashboard" is the landing route, and the workspace view renders there
-    // when the shell flag is on — so Home is the active item, not a separate
+    // "/dashboard" is the landing route, and the workspace view renders there,
+    // so Home is the active item, not a separate
     // Chat entry pointing somewhere else.
     const home = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "home");
     expect(home).toMatchObject({ href: "/dashboard", exactPaths: ["/dashboard"] });
     expect(home && isDashboardNavigationItemActive(home, "/dashboard")).toBe(true);
 
-    // The nav no longer gates anything on the shell flag.
     expect(
-      filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION, false).map((item) => item.id),
-    ).toEqual(["home", "computers", "agents", "infrastructure", "activity"]);
-    expect(
-      filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION, true).map((item) => item.id),
-    ).toEqual(["home", "computers", "agents", "infrastructure", "activity"]);
+      filterDashboardNavigation(DASHBOARD_PRIMARY_NAVIGATION).map((item) => item.id),
+    ).toEqual(["home", "agents", "computers", "activity"]);
   });
 
   it("builds the phone bar from the shared configuration with Launch centered between the inventories", () => {
@@ -81,17 +77,17 @@ describe("dashboard navigation", () => {
     ]);
     expect(DASHBOARD_MOBILE_NAVIGATION[2]).toBe(DASHBOARD_LAUNCH_NAVIGATION);
     expect(
-      filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION, false).map((item) => item.id),
+      filterDashboardNavigation(DASHBOARD_MOBILE_NAVIGATION).map((item) => item.id),
     ).toEqual(["home", "agents", "launch", "computers"]);
   });
 
   it("puts every destination that is not on the phone bar in exactly one More group", () => {
     expect(DASHBOARD_MOBILE_MORE_GROUPS.map((group) => [group.id, group.items.map((item) => item.id)])).toEqual([
-      ["manage", ["infrastructure", "activity", "settings", "billing"]],
+      ["manage", ["activity", "settings", "billing", "infrastructure"]],
       ["help", ["applications", "help"]],
     ]);
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => item.id)).toEqual([
-      "infrastructure", "activity", "settings", "billing", "applications", "help",
+      "activity", "settings", "billing", "infrastructure", "applications", "help",
     ]);
     // The same item objects as the sidebar, so a destination cannot drift.
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION).toContain(DASHBOARD_SECONDARY_NAVIGATION[0]);
@@ -124,7 +120,7 @@ describe("dashboard navigation", () => {
       },
     };
     expect(DASHBOARD_MOBILE_MORE_NAVIGATION.map((item) => labelForNavigationItem(item, localized)))
-      .toEqual(["容量", "动态", "设置", "账单", "应用", "帮助"]);
+      .toEqual(["动态", "设置", "账单", "服务器", "应用", "帮助"]);
     expect(mobileNavigationCopy(localized)).toMatchObject({ more: "更多", signOut: "退出登录", manage: "管理", account: "Account" });
   });
 
@@ -154,7 +150,8 @@ describe("dashboard navigation", () => {
     expect(activity).toBeDefined();
     expect(settings).toBeDefined();
     expect(billing).toBeDefined();
-    expect(isDashboardNavigationItemActive(agents!, "/dashboard/instances/inst_123/tui")).toBe(true);
+    // A runtime route belongs to Home, the place it is opened from.
+    expect(isDashboardNavigationItemActive(agents!, "/dashboard/instances/inst_123/tui")).toBe(false);
     expect(isDashboardNavigationItemActive(agents!, "/dashboard/agents-not-real")).toBe(false);
     expect(isDashboardNavigationItemActive(activity!, "/dashboard/usage")).toBe(true);
     expect(isDashboardNavigationItemActive(settings!, "/dashboard/vault")).toBe(true);
@@ -189,9 +186,9 @@ describe("dashboard navigation", () => {
       ...DASHBOARD_SECONDARY_NAVIGATION,
       ...DASHBOARD_UTILITY_NAVIGATION,
     ];
-    const activeIds = (pathname: string, workspaceShellEnabled: boolean) =>
+    const activeIds = (pathname: string) =>
       everyItem
-        .filter((item) => isDashboardNavigationItemActive(item, pathname, null, workspaceShellEnabled))
+        .filter((item) => isDashboardNavigationItemActive(item, pathname))
         .map((item) => item.id);
 
     it.each([
@@ -205,14 +202,13 @@ describe("dashboard navigation", () => {
       ["/dashboard/billing", "billing"],
       ["/dashboard/billing/activity", "billing"],
     ])("%s highlights only %s", (pathname, expected) => {
-      expect(activeIds(pathname, false)).toEqual([expected]);
-      expect(activeIds(pathname, true)).toEqual([expected]);
+      expect(activeIds(pathname)).toEqual([expected]);
     });
 
     it("keeps Settings active on a settings route that merely starts like Help", () => {
       const settings = DASHBOARD_SECONDARY_NAVIGATION.find((item) => item.id === "settings")!;
       expect(isDashboardNavigationItemActive(settings, "/dashboard/settings/helpers")).toBe(true);
-      expect(activeIds("/dashboard/settings/helpers", false)).toEqual(["settings"]);
+      expect(activeIds("/dashboard/settings/helpers")).toEqual(["settings"]);
     });
 
     describe("self-hosted (local auth), where Billing is filtered out", () => {
@@ -226,9 +222,9 @@ describe("dashboard navigation", () => {
       });
 
       // Only what the self-host sidebar actually renders.
-      const renderedActiveIds = (pathname: string, workspaceShellEnabled: boolean) =>
-        filterDashboardNavigation(everyItem, workspaceShellEnabled)
-          .filter((item) => isDashboardNavigationItemActive(item, pathname, null, workspaceShellEnabled))
+      const renderedActiveIds = (pathname: string) =>
+        filterDashboardNavigation(everyItem)
+          .filter((item) => isDashboardNavigationItemActive(item, pathname))
           .map((item) => item.id);
 
       it.each([
@@ -240,13 +236,12 @@ describe("dashboard navigation", () => {
         ["/dashboard/settings/help", "help"],
         ["/dashboard/settings/applications", "applications"],
       ])("%s highlights only %s", (pathname, expected) => {
-        expect(filterDashboardNavigation(everyItem, false).some((item) => item.id === "billing")).toBe(false);
-        expect(renderedActiveIds(pathname, false)).toEqual([expected]);
-        expect(renderedActiveIds(pathname, true)).toEqual([expected]);
+        expect(filterDashboardNavigation(everyItem).some((item) => item.id === "billing")).toBe(false);
+        expect(renderedActiveIds(pathname)).toEqual([expected]);
       });
 
       it("does not let Settings claim a path that merely starts like the wallet", () => {
-        expect(renderedActiveIds("/dashboard/wallet-not-real", false)).toEqual([]);
+        expect(renderedActiveIds("/dashboard/wallet-not-real")).toEqual([]);
       });
     });
 
@@ -256,51 +251,33 @@ describe("dashboard navigation", () => {
     });
   });
 
-  it.each(["agent", "computer", null] as const)("classifies shared detail routes using the resolved %s kind", (kind) => {
-    const agents = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "agents")!;
-    const computers = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "computers")!;
-    expect(isDashboardNavigationItemActive(agents, "/dashboard/agent/shared", kind)).toBe(kind === "agent");
-    expect(isDashboardNavigationItemActive(computers, "/dashboard/agent/shared", kind)).toBe(kind === "computer");
-    expect(isDashboardNavigationItemActive(agents, "/dashboard/agents", kind)).toBe(true);
-    expect(isDashboardNavigationItemActive(computers, "/dashboard/computers", kind)).toBe(true);
-  });
-
-  describe("workspace shell (Home is the runtime home)", () => {
+  describe("Home is the runtime home", () => {
     const home = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "home")!;
     const agents = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "agents")!;
     const computers = DASHBOARD_PRIMARY_NAVIGATION.find((item) => item.id === "computers")!;
-    const shell = true;
 
     // The complaint this fixes: opening a runtime from Home highlighted Agents,
     // so the item naming the place you came from lost to the one naming its kind.
-    it.each(["agent", "computer", null] as const)(
-      "keeps Home active inside a runtime, whatever kind resolves (%s)",
-      (kind) => {
-        expect(isDashboardNavigationItemActive(home, "/dashboard/agent/shared", kind, shell)).toBe(true);
-        expect(isDashboardNavigationItemActive(home, "/dashboard/instances/inst_1", kind, shell)).toBe(true);
-        expect(isDashboardNavigationItemActive(agents, "/dashboard/agent/shared", kind, shell)).toBe(false);
-        expect(isDashboardNavigationItemActive(computers, "/dashboard/agent/shared", kind, shell)).toBe(false);
-      },
-    );
+    it("keeps Home active inside a runtime", () => {
+      expect(isDashboardNavigationItemActive(home, "/dashboard/agent/shared")).toBe(true);
+      expect(isDashboardNavigationItemActive(home, "/dashboard/instances/inst_1")).toBe(true);
+      expect(isDashboardNavigationItemActive(agents, "/dashboard/agent/shared")).toBe(false);
+      expect(isDashboardNavigationItemActive(computers, "/dashboard/agent/shared")).toBe(false);
+    });
 
     it("leaves the inventory routes to Agents and Computers", () => {
-      expect(isDashboardNavigationItemActive(agents, "/dashboard/agents", "agent", shell)).toBe(true);
-      expect(isDashboardNavigationItemActive(computers, "/dashboard/computers", "computer", shell)).toBe(true);
-      expect(isDashboardNavigationItemActive(home, "/dashboard/agents", null, shell)).toBe(false);
-      expect(isDashboardNavigationItemActive(home, "/dashboard/computers", null, shell)).toBe(false);
+      expect(isDashboardNavigationItemActive(agents, "/dashboard/agents")).toBe(true);
+      expect(isDashboardNavigationItemActive(computers, "/dashboard/computers")).toBe(true);
+      expect(isDashboardNavigationItemActive(home, "/dashboard/agents")).toBe(false);
+      expect(isDashboardNavigationItemActive(home, "/dashboard/computers")).toBe(false);
       // An inventory path that merely starts with a claimed prefix is not one.
-      expect(isDashboardNavigationItemActive(agents, "/dashboard/agents-not-real", null, shell)).toBe(false);
+      expect(isDashboardNavigationItemActive(agents, "/dashboard/agents-not-real")).toBe(false);
     });
 
     it("keeps Home's other destinations working", () => {
       for (const path of ["/dashboard", "/dashboard/command", "/dashboard/ops", "/dashboard/insights"]) {
-        expect(isDashboardNavigationItemActive(home, path, null, shell)).toBe(true);
+        expect(isDashboardNavigationItemActive(home, path)).toBe(true);
       }
-    });
-
-    it("does not change the legacy shell, where Agents still owns the detail route", () => {
-      expect(isDashboardNavigationItemActive(home, "/dashboard/agent/shared", "agent", false)).toBe(false);
-      expect(isDashboardNavigationItemActive(agents, "/dashboard/agent/shared", "agent", false)).toBe(true);
     });
   });
 });

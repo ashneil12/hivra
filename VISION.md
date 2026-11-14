@@ -167,8 +167,9 @@ is the approved web/Canary implementation sequence:
 These slices may overlap where their dependencies permit, but the first
 portable-agent reference acceptance below remains unchanged. A managed web path,
 Ubuntu desktop, mock, or contract test cannot substitute for it or close a
-public-release gate. Omarchy and macOS guests remain separately gated target
-work; macOS requires legitimate Apple hardware and a compliant design.
+public-release gate. Omarchy built per customer (it is offered today as a
+prepared computer, see [`docs/STATUS.md`](docs/STATUS.md)) and macOS guests
+remain separately gated target work; macOS requires legitimate Apple hardware and a compliant design.
 
 ## What this document outranks
 

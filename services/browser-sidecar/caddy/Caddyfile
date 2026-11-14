@@ -3,20 +3,57 @@
 # Static assets are public so noVNC's CSS/JS loads work; the entry HTML and
 # the websocket are gated on a signed URL (HMAC, 10-min TTL).
 #
-# This Caddyfile is only loaded when the container starts in SEED_MODE=true.
-# In normal operation, Node serves /health and the tool API directly on :8789
-# and Caddy is not running.
+# This Caddyfile is only loaded when the container starts with
+# SEED_MODE_INNER_CADDY=true (see docker/entrypoint.sh). In normal operation,
+# Node serves /health and the tool API directly on :8789 and Caddy is not
+# running.
+
+(novnc_gate) {
+	forward_auth localhost:8789 {
+		uri /internal/verify-novnc-url
+	}
+	reverse_proxy localhost:6080
+}
 
 # SCRIPTURE_ANCHOR: caddy-wall | Nehemiah 4:6 | Verse: So we built the wall; and all the wall was joined together to half its height.
 :8080 {
-	@gated path /browser-sidecar/novnc/vnc.html /browser-sidecar/novnc/websockify
+	# Caddy path matchers are exact unless the pattern ends in *, so the
+	# trailing-slash forms are covered with the wildcard. websockify accepts a
+	# websocket upgrade on any path, so every upgrade under the prefix is gated.
+	@gated path /browser-sidecar/novnc/vnc.html* /browser-sidecar/novnc/websockify*
+	# Caddy's header matcher compares values case-sensitively, but upgrade
+	# headers are case-insensitive (Caddy's own reverse_proxy checks them that
+	# way), so these use header_regexp with (?i).
+	@wsupgrade {
+		path /browser-sidecar/novnc/*
+		header_regexp Connection "(?i)upgrade"
+	}
+	@upgradehdr {
+		path /browser-sidecar/novnc/*
+		header_regexp Upgrade "(?i).+"
+	}
+	# An extended CONNECT (HTTP/2, RFC 8441) carries no Connection or Upgrade
+	# header, so the matchers above cannot see it. Nothing under the prefix
+	# needs CONNECT, so it is refused before any gate or proxy handle.
+	@connect {
+		path /browser-sidecar/novnc/*
+		method CONNECT
+	}
+
+	handle @connect {
+		respond 405
+	}
 
 	handle @gated {
-		forward_auth localhost:8789 {
-			uri /internal/verify-novnc-url
-			copy_headers X-Original-URI
-		}
-		reverse_proxy localhost:6080
+		import novnc_gate
+	}
+
+	handle @wsupgrade {
+		import novnc_gate
+	}
+
+	handle @upgradehdr {
+		import novnc_gate
 	}
 
 	# Static assets fall through — noVNC needs them to load without auth or

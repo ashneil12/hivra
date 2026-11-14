@@ -1,5 +1,5 @@
 import { hasTokenTierInGrace, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
-import { isFreeAccountEntitlement } from "@/lib/billing/hosted-compute";
+import { paysForHostedCompute } from "@/lib/billing/hosted-compute";
 import { isHivraLapseEnforceLive } from "@/lib/hivra/lapse-flags";
 import { log } from "@/lib/logger";
 
@@ -30,15 +30,16 @@ export function isHivraCloudComputer(row: ComputerRow): boolean {
 }
 
 /**
- * True only when the owner has no entitlement at all, or only the Free
- * account, and no token tier still inside its 24 hour grace. Any error is
- * "don't know", which is false: never act on doubt.
+ * True only when the owner has no entitlement at all, only the Free account,
+ * or only a trial (Hivra has no trials: see paysForHostedCompute), and no
+ * token tier still inside its 24 hour grace. Any error is "don't know", which
+ * is false: never act on doubt.
  */
 export async function ownerHasNoPaidPlan(userId: string): Promise<boolean> {
   try {
     // throwOnQueryError: a failed read must mean "don't know", never "no plan".
     const entitlement = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
-    if (entitlement !== null && !isFreeAccountEntitlement(entitlement)) return false;
+    if (paysForHostedCompute(entitlement)) return false;
     return !(await hasTokenTierInGrace(userId));
   } catch (error) {
     log.warn("could not check the owner's plan; treating the owner as paid", {
@@ -59,4 +60,15 @@ export async function isStartBlockedForLapse(
   if (!POWER_ON_ACTIONS.includes(action)) return false;
   if (!isHivraCloudComputer(agent) || typeof agent.user_id !== "string") return false;
   return ownerHasNoPaidPlan(agent.user_id);
+}
+
+/**
+ * The same refusal for the older lane (hermes_instances): every row there is a
+ * hosted computer. Only "start" brings a stopped one up (cold restore included);
+ * a reboot or gateway restart needs it running, and the sweep stops those.
+ */
+export async function isHostedInstanceStartBlockedForLapse(userId: string, action: string): Promise<boolean> {
+  if (!isHivraLapseEnforceLive()) return false;
+  if (action !== "start") return false;
+  return ownerHasNoPaidPlan(userId);
 }

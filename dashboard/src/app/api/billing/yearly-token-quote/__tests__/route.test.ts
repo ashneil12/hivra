@@ -58,6 +58,18 @@ jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
 }));
 
+const mockSubsLimit = jest.fn();
+const mockFrom = jest.fn((..._args: unknown[]) => ({
+  select: () => ({
+    eq: () => ({
+      order: () => ({ limit: (...args: unknown[]) => mockSubsLimit(...args) }),
+    }),
+  }),
+}));
+jest.mock("@/lib/supabase", () => ({
+  supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) },
+}));
+
 const mockReportPriceGateRefusal = jest.fn<Promise<unknown>, unknown[]>(async () => ({
   refusal: { assetKey: "hivra", asset: "$HIVRA", reason: "median_deviation", gate: "deviation", observed: {} },
   logged: true,
@@ -69,6 +81,7 @@ jest.mock("@/lib/billing/price-gate-alerts", () => ({
 
 import { auth } from "@clerk/nextjs/server";
 import { PlatformTokenPriceGateError } from "@/lib/billing/price-feed";
+import { HivraNotReadyError } from "@/lib/billing/hivra-readiness";
 import { GET, POST } from "../route";
 
 function makeReq(url: string, body?: unknown): NextRequest {
@@ -103,6 +116,7 @@ describe("/api/billing/yearly-token-quote", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockBillingEnabled.mockReturnValue(true);
+    mockSubsLimit.mockResolvedValue({ data: [], error: null });
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: "user_a" });
     mockGetPendingYearlyQuotes.mockResolvedValue([]);
     mockResolveEffectiveSubscription.mockResolvedValue(null);
@@ -166,6 +180,18 @@ describe("/api/billing/yearly-token-quote", () => {
       expect(body.data.quote.id).toBe("yq_1");
       expect(mockGetActiveYearlyQuote).toHaveBeenCalledWith({ userId: "user_a", tier: "pro" });
       expect(mockGetActiveYearlyQuotes).not.toHaveBeenCalled();
+    });
+
+    it("answers 500, not a 200 with no subscription, when the subscription read fails", async () => {
+      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      mockGetActiveYearlyQuotes.mockResolvedValueOnce([]);
+      mockSubsLimit.mockResolvedValueOnce({ data: null, error: { message: "connection reset" } });
+      const response = await GET(makeReq("http://localhost/api/billing/yearly-token-quote"));
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe("Failed to load yearly token quotes.");
+      expect(body.data).toBeUndefined();
+      consoleErrorSpy.mockRestore();
     });
 
     it("serialises tokensRequiredRaw as a string (BigInt is not JSON-safe)", async () => {
@@ -310,6 +336,18 @@ describe("/api/billing/yearly-token-quote", () => {
       expect(response.status).toBe(503);
       const body = await response.json();
       expect(body.error).toMatch(/try again later/i);
+    });
+
+    it("answers 'not available yet' (not a price-gate error) while $HIVRA is not usable", async () => {
+      mockCreateYearlyQuote.mockRejectedValueOnce(new HivraNotReadyError());
+      const response = await POST(
+        makeReq("http://localhost/api/billing/yearly-token-quote", { tier: "pro" })
+      );
+      const body = await response.json();
+      expect(response.status).toBe(503);
+      expect(body.error).toBe("Token payments aren't available yet.");
+      expect(body.reason).toBe("hivra_not_ready");
+      expect(mockReportPriceGateRefusal).not.toHaveBeenCalled();
     });
 
     it("reports a refused price gate once and answers 503 without an error-level log", async () => {

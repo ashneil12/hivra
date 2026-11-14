@@ -49,16 +49,26 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--skip-messages") args.skipMessages = true;
     if (arg === "--skip-jobs") args.skipJobs = true;
     if (arg === "--batch-size") {
-      args.batchSize = Math.max(1, Number(argv[index + 1] || args.batchSize));
+      args.batchSize = positiveIntegerFlag(arg, argv[index + 1], args.batchSize);
       index += 1;
     }
     if (arg === "--limit") {
-      args.limit = Math.max(1, Number(argv[index + 1] || args.limit));
+      args.limit = positiveIntegerFlag(arg, argv[index + 1], args.limit);
       index += 1;
     }
   }
 
   return args;
+}
+
+// A NaN range would page the wrong rows silently, so a non-numeric flag stops the run.
+function positiveIntegerFlag(flag: string, value: string | undefined, fallback: number): number {
+  if (value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`${flag} must be a positive number, got "${value}"`);
+  }
+  return Math.floor(parsed);
 }
 
 function jsonBytes(value: unknown): number {
@@ -98,6 +108,7 @@ async function pruneMessages(
       .from("hermes_messages")
       .select("id,attachments")
       .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(offset, offset + batchLimit - 1);
 
     if (error) {
@@ -162,6 +173,7 @@ async function pruneFinalizedJobs(
       .select("id,stream_request,fallback_request")
       .in("status", ["completed", "failed", "stopped"])
       .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(offset, offset + batchLimit - 1);
 
     if (error) {

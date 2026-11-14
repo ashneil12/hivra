@@ -20,7 +20,6 @@ const mockMatchPrepared = jest.fn();
 let mockRow: Record<string, unknown>;
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: () => ({

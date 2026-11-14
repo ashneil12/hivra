@@ -1,0 +1,46 @@
+[Unit]
+Description=Hivra wake helper (root half of the host wake proxy: routes, nap markers and QMP resume)
+After=local-fs.target systemd-tmpfiles-setup.service pve-cluster.service
+Before=hivra-wake-proxy.service
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+# Installed by the wake-proxy install step from the checked provisioner bundle.
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/hivra-ingress/hivra-wake-proxy.py helper
+Restart=always
+RestartSec=1
+WatchdogSec=20
+User=root
+UMask=0077
+# Root for the route files, nap markers, per-VM locks and QEMU sockets; no other privilege.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=-/run/hivra-ingress -/run/hivra-ingress-state -/run/lock -/run/qemu-server -/run/hivra-ingress-fwd
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# Unix sockets only: the control socket, the forwarder's socket, QMP and the guest agent.
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

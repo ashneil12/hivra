@@ -1,5 +1,7 @@
 import "server-only";
 
+import { mapWithConcurrencyLimit } from "@/lib/concurrency";
+
 // Wave 4.2 — one-click data export for a Hivra agent.
 //
 // Reads an agent's chat history (sessions + messages) and its memory files
@@ -25,6 +27,13 @@ import "server-only";
  *  bounded. Newest-first; older sessions are dropped and `truncated` is set.
  *  (Follow-up: paginate the full archive — see PR notes.) */
 export const EXPORT_SESSION_CAP = 50;
+
+/** Longest one box read may take before it counts as unreachable. */
+const BOX_READ_TIMEOUT_MS = 15_000;
+/** Whole export budget: box reads still running when it ends come back empty. */
+const EXPORT_BUDGET_MS = 60_000;
+/** Session message reads in flight at once against one box. */
+const SESSION_READ_CONCURRENCY = 4;
 
 const USER_MD_PATH = "/home/bux/USER.md";
 const MEMORY_MD_PATH = "/home/bux/MEMORY.md";
@@ -91,11 +100,17 @@ interface RawSession {
 
 // ---- box reads (best-effort; never throw) -----------------------------------
 
-async function fetchSessions(boxUrl: string, token?: string | null): Promise<RawSession[]> {
+/** One box read: stops at its own timeout or when the export budget ends. */
+function boxReadSignal(budget: AbortSignal): AbortSignal {
+  return AbortSignal.any([budget, AbortSignal.timeout(BOX_READ_TIMEOUT_MS)]);
+}
+
+async function fetchSessions(boxUrl: string, token: string | null | undefined, budget: AbortSignal): Promise<RawSession[]> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/sessions`, {
       cache: "no-store",
       headers: boxHeaders(token),
+      signal: boxReadSignal(budget),
     });
     if (!r.ok) return [];
     const sessions = ((await r.json()) as { sessions?: RawSession[] }).sessions;
@@ -108,12 +123,14 @@ async function fetchSessions(boxUrl: string, token?: string | null): Promise<Raw
 async function fetchSessionMessages(
   boxUrl: string,
   id: string,
-  token?: string | null,
+  token: string | null | undefined,
+  budget: AbortSignal,
 ): Promise<ExportMessage[]> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/sessions/${encodeURIComponent(id)}`, {
       cache: "no-store",
       headers: boxHeaders(token),
+      signal: boxReadSignal(budget),
     });
     if (!r.ok) return [];
     const messages = ((await r.json()) as { messages?: ExportMessage[] }).messages;
@@ -126,12 +143,14 @@ async function fetchSessionMessages(
 async function fetchFile(
   boxUrl: string,
   path: string,
-  token?: string | null,
+  token: string | null | undefined,
+  budget: AbortSignal,
 ): Promise<string | null> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/file?path=${encodeURIComponent(path)}`, {
       cache: "no-store",
       headers: boxHeaders(token),
+      signal: boxReadSignal(budget),
     });
     if (!r.ok) return null;
     const content = ((await r.json()) as { content?: string }).content;
@@ -171,26 +190,25 @@ export async function buildAgentExport(agent: ExportableAgent): Promise<AgentExp
     };
   }
 
-  const allSessions = await fetchSessions(boxUrl, token);
+  const budget = AbortSignal.timeout(EXPORT_BUDGET_MS);
+  const allSessions = await fetchSessions(boxUrl, token, budget);
   // Newest first, then cap so the file size is bounded.
   const ordered = [...allSessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   const truncated = ordered.length > EXPORT_SESSION_CAP;
   const capped = ordered.slice(0, EXPORT_SESSION_CAP);
 
-  // Read each session's messages (best-effort per session). Done in parallel —
-  // these are independent box reads and the cap bounds the fan-out.
-  const sessions: ExportSession[] = await Promise.all(
-    capped.map(async (s) => ({
-      id: s.id,
-      title: s.title,
-      updatedAt: s.updatedAt,
-      messages: await fetchSessionMessages(boxUrl, s.id, token),
-    })),
-  );
+  // Read each session's messages (best-effort per session), a few at a time so
+  // one box is not hit with every request at once.
+  const sessions: ExportSession[] = await mapWithConcurrencyLimit(capped, SESSION_READ_CONCURRENCY, async (s) => ({
+    id: s.id,
+    title: s.title,
+    updatedAt: s.updatedAt,
+    messages: await fetchSessionMessages(boxUrl, s.id, token, budget),
+  }));
 
   const [userMd, memoryMd] = await Promise.all([
-    fetchFile(boxUrl, USER_MD_PATH, token),
-    fetchFile(boxUrl, MEMORY_MD_PATH, token),
+    fetchFile(boxUrl, USER_MD_PATH, token, budget),
+    fetchFile(boxUrl, MEMORY_MD_PATH, token, budget),
   ]);
 
   return {

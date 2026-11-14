@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@testable import HivraMac
 @testable import HivraMacCore
 
 @Suite("Local Hivra installation")
@@ -15,7 +16,8 @@ struct HivraLocalInstallationTests {
 
         let request = try HivraLocalAuthentication.loginRequest(
             dashboardURL: dashboard,
-            credentials: credentials
+            credentials: credentials,
+            runtimeIsVerified: { true }
         )
 
         #expect(request.httpMethod == "POST")
@@ -50,6 +52,77 @@ struct HivraLocalInstallationTests {
         #expect(!HivraLocalAuthentication.supportsAutomaticSignIn(
             to: URL(string: "http://127.0.0.1:3001/dashboard")!
         ))
+    }
+
+    @Test("never builds a login request for a port the launched runtime does not own")
+    func refusesUnverifiedRuntime() {
+        let credentials = HivraLocalOperatorCredentials(
+            email: "ash@example.com",
+            password: "correct horse battery staple"
+        )
+        let dashboard = URL(string: "http://127.0.0.1:3000/dashboard")!
+
+        #expect(throws: HivraLocalAuthentication.RequestError.runtimeNotVerified) {
+            try HivraLocalAuthentication.loginRequest(
+                dashboardURL: dashboard,
+                credentials: credentials,
+                runtimeIsVerified: { false }
+            )
+        }
+    }
+
+    @Test("accepts a port listener only when it descends from the launched runtime")
+    func requiresRuntimeAncestry() {
+        // 100 is the launched runtime; 200 is its npm child; 300 is the dashboard under it.
+        let parents: [Int32: Int32] = [300: 200, 200: 100, 100: 1, 500: 1]
+
+        #expect(HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [300], rootPID: 100, parentOf: parents))
+        #expect(HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [100], rootPID: 100, parentOf: parents))
+        #expect(!HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [500], rootPID: 100, parentOf: parents))
+        #expect(!HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [300, 500], rootPID: 100, parentOf: parents))
+        #expect(!HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [], rootPID: 100, parentOf: parents))
+        #expect(!HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [999], rootPID: 100, parentOf: parents))
+        #expect(!HivraLocalAuthentication.isOwnedByRuntime(listenerPIDs: [700], rootPID: 100, parentOf: [700: 800, 800: 700]))
+    }
+
+    @Test("runs only a launcher at the expected path that the user owns and nobody else can write")
+    func trustsOnlyTheExpectedLauncher() throws {
+        let root = try makeCheckout()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installation = HivraLocalInstallation(checkoutURL: root)
+        #expect(HivraLocalLauncherTrust.isTrusted(installation))
+
+        let launcher = installation.launcherURL
+        let scripts = launcher.deletingLastPathComponent()
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o666], ofItemAtPath: launcher.path)
+        #expect(!HivraLocalLauncherTrust.isTrusted(installation))
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: launcher.path)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: scripts.path)
+        #expect(!HivraLocalLauncherTrust.isTrusted(installation))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scripts.path)
+
+        // A launcher that is a symlink to code elsewhere is not the expected file.
+        let elsewhere = root.appending(path: "elsewhere.mjs")
+        try Data().write(to: elsewhere)
+        try FileManager.default.removeItem(at: launcher)
+        try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: elsewhere)
+        #expect(!HivraLocalLauncherTrust.isTrusted(installation))
+    }
+
+    private func makeCheckout() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "hivra-launcher-trust-\(UUID().uuidString)")
+        let scripts = root.appending(path: "dashboard/scripts")
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        let launcher = scripts.appending(path: "hivra-self-host.mjs")
+        try Data().write(to: launcher)
+        for path in [root.path, root.appending(path: "dashboard").path, scripts.path] {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: launcher.path)
+        return root
     }
 
     @Test("rejects a login response from a redirected URL")

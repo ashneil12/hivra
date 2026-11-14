@@ -240,7 +240,8 @@ export async function loadProviderResizeAuthority(
     const { data: rawAgent, error: agentError } = await db.from("hivra_agents")
       .select(AGENT_SELECT).eq("user_id", owner.userId).eq("id", owner.agentId)
       .eq("computer_substrate", "provider-vm").maybeSingle();
-    if (agentError || !rawAgent) throw new ProviderAgentResizeStoreError("not_found");
+    if (agentError) throw new ProviderAgentResizeStoreError("unavailable");
+    if (!rawAgent) throw new ProviderAgentResizeStoreError("not_found");
     const installing = InstallingAgentRow.safeParse(rawAgent);
     if (installing.success && installing.data.id === owner.agentId && installing.data.user_id === owner.userId) {
       throw new ProviderAgentResizeStoreError("computer_busy");
@@ -251,14 +252,16 @@ export async function loadProviderResizeAuthority(
       .eq("connection_id", agent.infrastructure_connection_id).eq("active_connection_id", agent.infrastructure_connection_id)
       .eq("connection_revision", agent.infrastructure_connection_revision).eq("provider_resource_id", agent.provider_server_id)
       .maybeSingle();
-    if (orderError || !rawOrder) throw new ProviderAgentResizeStoreError("conflict");
+    if (orderError) throw new ProviderAgentResizeStoreError("unavailable");
+    if (!rawOrder) throw new ProviderAgentResizeStoreError("conflict");
     const order = CapacityOrderRow.parse(rawOrder);
     const { data: rawTarget, error: targetError } = await db.from("deployment_targets")
       .select(TARGET_SELECT).eq("id", agent.deployment_target_id).eq("user_id", owner.userId)
       .eq("connection_id", agent.infrastructure_connection_id).eq("evidence_connection_revision", agent.infrastructure_connection_revision)
       .eq("provider_capacity_order_id", agent.provider_capacity_order_id).eq("external_id", agent.provider_server_id)
       .maybeSingle();
-    if (targetError || !rawTarget) throw new ProviderAgentResizeStoreError("conflict");
+    if (targetError) throw new ProviderAgentResizeStoreError("unavailable");
+    if (!rawTarget) throw new ProviderAgentResizeStoreError("conflict");
     const target = TargetRow.parse(rawTarget);
     const caps = target.capabilities;
     const provisioner = caps.provisioner && typeof caps.provisioner === "object" && !Array.isArray(caps.provisioner)
@@ -418,7 +421,8 @@ export async function loadProviderResizeOperation(raw: ProviderResizeOperationIn
     const { data, error } = await database().from("hivra_provider_resize_operations")
       .select(JOURNAL_SELECT).eq("operation_id", input.operationId).eq("agent_id", input.agentId)
       .eq("user_id", input.userId).maybeSingle();
-    if (error || !data) throw new ProviderAgentResizeStoreError("not_found");
+    if (error) throw new ProviderAgentResizeStoreError("unavailable");
+    if (!data) throw new ProviderAgentResizeStoreError("not_found");
     return parseOperation(data, input, authority);
   } catch (error) {
     if (error instanceof ProviderAgentResizeStoreError) throw error;
@@ -431,7 +435,8 @@ export async function findActiveProviderResizeOperation(userId: string, agentId:
     const owner = z.object({ userId: z.string().trim().min(1).max(256), agentId: Uuid }).parse({ userId, agentId });
     const { data, error } = await database().from("hivra_agents").select("operation_id,operation_kind")
       .eq("id", owner.agentId).eq("user_id", owner.userId).eq("computer_substrate", "provider-vm").maybeSingle();
-    if (error || !data) return null;
+    if (error) throw new ProviderAgentResizeStoreError("unavailable");
+    if (!data) return null;
     return data.operation_kind === "resize" ? Uuid.parse(data.operation_id) : null;
   } catch { throw new ProviderAgentResizeStoreError("unavailable"); }
 }

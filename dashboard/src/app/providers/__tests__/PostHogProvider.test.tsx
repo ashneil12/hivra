@@ -99,5 +99,29 @@ describe("PostHogProvider bootstrap", () => {
       })
     );
   });
+
+  it("keeps the automatic capture streams off on the production host", async () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        ...originalLocation,
+        hostname: "hivra.cloud",
+        origin: "https://hivra.cloud",
+        href: "https://hivra.cloud/pricing",
+      },
+    });
+
+    await import("../PostHogProvider");
+
+    expect(mockInit).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        autocapture: false,
+        capture_dead_clicks: false,
+        capture_heatmaps: false,
+        capture_performance: false,
+      })
+    );
+  });
 });
 

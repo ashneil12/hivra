@@ -16,7 +16,7 @@
 // outlives a closed tab depends on the computer's runtime version, so the copy
 // says neither that it stops nor that it keeps going.
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
@@ -339,6 +339,13 @@ export default function AgentSurvivalCheckTool() {
   const [minutesToRestore, setMinutesToRestore] = useState<number>(DEFAULTS.minutesToRestore);
   const [hourlyRate, setHourlyRate] = useState<number>(DEFAULTS.hourlyRateUsd);
   const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
 
   const modes = buildFailureModes({ runsOn, multiplexer, sleep, ssh, autoRestart, reboots, ram, network, checkin });
 
@@ -361,7 +368,8 @@ export default function AgentSurvivalCheckTool() {
     try {
       await navigator.clipboard.writeText(shareText);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard blocked; the text is visible below and can be selected.
     }

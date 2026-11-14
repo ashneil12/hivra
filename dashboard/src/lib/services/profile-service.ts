@@ -50,6 +50,14 @@ export class InstanceAccessError extends Error {
   }
 }
 
+/** The named profile does not exist on this instance for this user (a normal 0-row lookup). */
+export class ProfileNotFoundError extends Error {
+  constructor() {
+    super("Profile not found");
+    this.name = "ProfileNotFoundError";
+  }
+}
+
 export function sanitizeDockerName(name: string): string {
   if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid identifier format. Only alphanumeric characters, dashes, and underscores are allowed. Got: ${name}`);
@@ -281,7 +289,12 @@ CONTAINEREOF
   static async getGuestSshForInstance(
     instanceId: string,
     userId: string
-  ): Promise<{ ip: string; guestTarget: ProxmoxSshHostConfig | null }> {
+  ): Promise<{
+    ip: string;
+    guestTarget: ProxmoxSshHostConfig | null;
+    /** The instance row already read here, so callers can reuse its config instead of re-reading it. */
+    instance?: { config: Record<string, unknown> | null };
+  }> {
     sanitizeDockerName(instanceId);
     const { data: instance, error } = await supabaseAdmin!
       .from("hermes_instances")
@@ -306,7 +319,7 @@ CONTAINEREOF
     }
     const guestTarget = getHermesGuestSshTarget(instance);
     const ip = await ProfileService.resolveInstanceHostIp(instance);
-    return { ip, guestTarget };
+    return { ip, guestTarget, instance: { config: instance.config } };
   }
 
   private static async resolveInstanceHostIp(instance: {
@@ -358,17 +371,31 @@ CONTAINEREOF
     return hs.ipv4;
   }
 
-  static async getHermesHomeForInstance(instanceId: string, userId: string): Promise<string> {
+  /**
+   * Pass `instance` (from getGuestSshForInstance) to reuse the row already read
+   * for this request instead of querying hermes_instances again.
+   */
+  static async getHermesHomeForInstance(
+    instanceId: string,
+    userId: string,
+    instance?: { config: Record<string, unknown> | null }
+  ): Promise<string> {
     sanitizeDockerName(instanceId);
-    const { data: instance, error } = await supabaseAdmin!
-      .from("hermes_instances")
-      .select("config")
-      .eq("id", instanceId)
-      .eq("user_id", userId)
-      .single();
+    if (!instance) {
+      const { data, error } = await supabaseAdmin!
+        .from("hermes_instances")
+        .select("config")
+        .eq("id", instanceId)
+        .eq("user_id", userId)
+        .maybeSingle<{ config: Record<string, unknown> | null }>();
 
-    if (error || !instance) {
-      throw new Error("Instance not found or unauthorized");
+      if (error) {
+        throw new Error("Instance lookup failed");
+      }
+      if (!data) {
+        throw new InstanceAccessError();
+      }
+      instance = data;
     }
 
     return resolveHermesHomeDirFromConfig(instance.config as Record<string, unknown> | undefined);
@@ -409,12 +436,52 @@ CONTAINEREOF
   }
 
   /**
-   * Generates a shell command chunk that uses python to patch the .env file cleanly.
+   * Generates a shell command chunk that uses python to patch an env file cleanly.
    * It base64 encodes the payload to avoid bash string escaping nightmares.
+   *
+   * `reader` names what reads the file. "shell" is a file the gateway supervisor
+   * sources (`set -a; . .env`): each value is single-quoted and anything the shell
+   * cannot carry is refused. "compose" is a Docker Compose env_file: each value is
+   * written unquoted, the form Compose parses, and only a line break is refused,
+   * because it would start a new variable.
    */
-  static buildEnvPatchCommand(envPath: string, updates: Record<string, string>): string {
+  static buildEnvPatchCommand(
+    envPath: string,
+    updates: Record<string, string>,
+    reader: "shell" | "compose" = "shell",
+  ): string {
+    const shellSourced = reader === "shell";
+    // The python below writes str(value). For an array or object that is a Python
+    // repr with its own quotes, which would break out of the shell-quoted line.
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== null && value !== undefined && typeof value !== "string") {
+        throw new Error(`Refusing to write ${key}: env values must be strings`);
+      }
+    }
+    for (const [key, value] of Object.entries(updates)) {
+      if (/[\r\n\0]/.test(String(value ?? ""))) {
+        throw new Error(`Refusing to write ${key}: line breaks are not supported in env values`);
+      }
+    }
+    if (shellSourced) {
+      // Each value is single-quoted below. An apostrophe would end that quote early,
+      // and it has no escape that both the shell and the dotenv readers agree on.
+      for (const [key, value] of Object.entries(updates)) {
+        if (String(value ?? "").includes("'")) {
+          throw new Error(`Refusing to write ${key}: apostrophes are not supported in env values`);
+        }
+      }
+      // Kept from before for shell-sourced files: a value that ends in a backslash
+      // is refused rather than relied on to round-trip through the single-quoted form.
+      for (const [key, value] of Object.entries(updates)) {
+        if (String(value ?? "").endsWith("\\")) {
+          throw new Error(`Refusing to write ${key}: a value that ends in a backslash leaves its closing quote escaped`);
+        }
+      }
+    }
+    const assignment = shellSourced ? `k + "='" + str(v) + "'"` : `k + "=" + str(v)`;
     const updatesB64 = Buffer.from(JSON.stringify(updates)).toString("base64");
-    
+
     const pythonScript = `
 import json, re, sys, base64
 try:
@@ -427,10 +494,11 @@ for k, v in updates.items():
     if v == '' or v is None:
         content = re.sub(r'^' + k + r'=.*\\n?', '', content, flags=re.MULTILINE)
     else:
+        line = ${assignment}
         if re.search(r'^' + k + r'=', content, flags=re.MULTILINE):
-            content = re.sub(r'^' + k + r'=.*', k + '=' + str(v), content, flags=re.MULTILINE)
+            content = re.sub(r'^' + k + r'=.*', lambda m: line, content, flags=re.MULTILINE)
         else:
-            content += '\\n' + k + '=' + str(v) + '\\n'
+            content += '\\n' + line + '\\n'
 
 content = re.sub(r'\\n{2,}', '\\n', content)
 
@@ -509,8 +577,8 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
    * List all profiles on the container via SSH and sync with the database.
    */
   static async syncProfiles(instanceId: string, userId: string) {
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
 
     // Read the directories inside the canonical Hermes profile home to discover them quickly
@@ -586,19 +654,26 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
         .filter((port): port is number => typeof port === "number" && Number.isFinite(port))
     );
 
+    // Decide every change first, then write each kind in one request: a status
+    // update per target status, one insert for new rows, one delete for stale rows.
+    const statusUpdates = new Map<string, { ids: string[]; names: string[] }>();
+    const newProfileRows: Array<{
+      instance_id: string;
+      user_id: string;
+      name: string;
+      gateway_port: number;
+      status: string;
+    }> = [];
+
     for (const p of profiles) {
       const expectedStatus = p.running ? "running" : "stopped";
       if (dbMap.has(p.name)) {
         const dbp = dbMap.get(p.name)!;
         if (dbp.status !== expectedStatus && dbp.status !== "creating") {
-          const { error: updateError } = await supabaseAdmin!
-            .from("profiles")
-            .update({ status: expectedStatus })
-            .eq("id", dbp.id);
-
-          if (updateError) {
-            throw new Error(`Failed to update synced profile ${p.name}`);
-          }
+          const group = statusUpdates.get(expectedStatus) ?? { ids: [], names: [] };
+          group.ids.push(dbp.id);
+          group.names.push(p.name);
+          statusUpdates.set(expectedStatus, group);
         }
         dbMap.delete(p.name);
       } else {
@@ -606,26 +681,48 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
         // re-querying the same profile table for every discovered profile.
         const newPort = this.pickAvailablePort(usedPorts);
         usedPorts.add(newPort);
-        const { error: insertError } = await supabaseAdmin!.from("profiles").insert({
+        newProfileRows.push({
           instance_id: instanceId,
           user_id: userId,
           name: p.name,
           gateway_port: newPort,
           status: expectedStatus,
         });
-
-        if (insertError) {
-          throw new Error(`Failed to track synced profile ${p.name}`);
-        }
       }
     }
 
-    // Any remaining in dbMap are deleted from disk
-    for (const dbp of dbMap.values()) {
-      if (dbp.status === "creating") continue; // Prevent race conditions with createProfile
-      const { error: deleteError } = await supabaseAdmin!.from("profiles").delete().eq("id", dbp.id);
+    for (const [status, group] of statusUpdates) {
+      const { error: updateError } = await supabaseAdmin!
+        .from("profiles")
+        .update({ status })
+        .in("id", group.ids);
+
+      if (updateError) {
+        throw new Error(`Failed to update synced profile ${group.names.join(", ")}`);
+      }
+    }
+
+    if (newProfileRows.length > 0) {
+      const { error: insertError } = await supabaseAdmin!.from("profiles").insert(newProfileRows);
+
+      if (insertError) {
+        throw new Error(`Failed to track synced profile ${newProfileRows.map((row) => row.name).join(", ")}`);
+      }
+    }
+
+    // Profile rows with no matching profile on the box are removed from the profiles table.
+    const staleProfiles = Array.from(dbMap.values()).filter(
+      (dbp) => dbp.status !== "creating" // Prevent race conditions with createProfile
+    );
+    if (staleProfiles.length > 0) {
+      const { error: deleteError } = await supabaseAdmin!
+        .from("profiles")
+        .delete()
+        .in("id", staleProfiles.map((dbp) => dbp.id));
       if (deleteError) {
-        throw new Error(`Failed to delete stale synced profile ${dbp.name}`);
+        throw new Error(
+          `Failed to delete stale synced profile ${staleProfiles.map((dbp) => dbp.name).join(", ")}`
+        );
       }
     }
   }
@@ -642,6 +739,9 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
     honchoSettings?: HonchoSettings;
   }) {
     const normalizedModel = normalizeModelValue(params.model || "", params.provider);
+    // Validate BEFORE the insert: an invalid profile name must throw here, not
+    // after a "creating" row is already committed to the profiles table.
+    const safeName = sanitizeDockerName(params.name);
     // 1. Insert into DB (creating status)
     const { data: profile, error } = await supabaseAdmin!
        .from("profiles")
@@ -660,10 +760,9 @@ print(f"removed_webui_user_pin={str(removed).lower()}")
     if (error || !profile) throw new Error("Could not create profile record");
 
     try {
-      const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-      const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+      const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+      const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
       const containerName = this.buildContainerName(instanceId);
-      const safeName = sanitizeDockerName(params.name);
 
       let cloneFlag = "";
       if (params.cloneFrom && params.cloneFrom !== "default" && params.cloneFrom !== "none") {
@@ -767,7 +866,7 @@ if completed.returncode != 0:
         }
         
         // Instead of messy quoting, use the helper to build a safe base64 pipeline
-        injectScript += ProfileService.buildEnvPatchCommand(`${hermesHome}/profiles/${safeName}/.env`, patchDict);
+        injectScript += ProfileService.buildEnvPatchCommand(`${hermesHome}/profiles/${safeName}/.env`, patchDict, "shell");
       }
 
 
@@ -785,15 +884,19 @@ if completed.returncode != 0:
           ? (PROVIDER_ID_MAP[params.provider] ?? params.provider)
           : 'openrouter';
         const modelName = normalizedModel || '';
+        // SEC-04: JSON.stringify keeps `default: "..."` byte-identical for
+        // ordinary values while escaping `"`/newlines that would otherwise
+        // break out of the YAML scalar and inject extra config keys.
+        const yamlQuoted = (v: string) => JSON.stringify(String(v).replace(/[\r\n\0]/g, ""));
         const configLines: string[] = ['model:'];
-        if (modelName) configLines.push(`  default: "${modelName}"`);
-        configLines.push(`  provider: "${hermesProvider}"`);
+        if (modelName) configLines.push(`  default: ${yamlQuoted(modelName)}`);
+        configLines.push(`  provider: ${yamlQuoted(hermesProvider)}`);
 
         // Resolve base_url for providers that need one (e.g. crof, openai, gemini).
         // Without this, "custom" provider doesn't know which API endpoint to hit.
         const resolvedBaseUrl = resolveProviderBaseUrl(dashProvider, params.agentSettings?.customLlmBaseUrl);
         if (resolvedBaseUrl) {
-          configLines.push(`  base_url: "${resolvedBaseUrl}"`);
+          configLines.push(`  base_url: ${yamlQuoted(resolvedBaseUrl)}`);
         }
 
         const configContent = configLines.join('\\n');
@@ -803,7 +906,7 @@ if completed.returncode != 0:
       // Append delegation key to config.yaml if an overriding subagent key exists
       if (params.agentSettings?.subagentApiKey) {
          injectScript += `\ncat << 'EOF' >> "$profile_dir/config.yaml"\ndelegation:
-  api_key: ${params.agentSettings.subagentApiKey}
+  api_key: ${JSON.stringify(String(params.agentSettings.subagentApiKey).replace(/[\r\n\0]/g, ""))}
 EOF\n`;
       }
 
@@ -857,8 +960,8 @@ EOF\n`;
 
   static async deleteProfile(instanceId: string, userId: string, name: string) {
     const safeName = sanitizeDockerName(name);
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
     
@@ -903,28 +1006,47 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
     });
   }
 
-  static async startProfileGateway(instanceId: string, userId: string, name: string) {
-    const safeName = sanitizeDockerName(name);
+  /**
+   * Resolves the profile row a gateway start/stop acts on. A missing row is a
+   * ProfileNotFoundError; a DB failure is reported as such, not as a missing port.
+   */
+  private static async loadGatewayProfile(
+    instanceId: string,
+    userId: string,
+    safeName: string
+  ): Promise<{ id: string; gateway_port: number }> {
     // Scope by user_id so a profile lookup never returns a row from another
     // tenant's instance even if instanceId is ever guessable. Ownership is
     // also re-checked by getHostIpForInstance below; this is defense-in-depth.
-    const { data: profile } = await supabaseAdmin!
+    const { data: profile, error } = await supabaseAdmin!
        .from("profiles")
        .select("id, gateway_port")
        .eq("instance_id", instanceId)
        .eq("user_id", userId)
        .eq("name", safeName)
-       .single();
+       .maybeSingle<{ id: string; gateway_port: number | null }>();
 
-    if (!profile?.gateway_port) {
+    if (error) {
+      throw new Error("Failed to resolve profile gateway");
+    }
+    if (!profile) {
+      throw new ProfileNotFoundError();
+    }
+    if (!profile.gateway_port) {
       throw new Error("Profile has no allocated gateway port");
     }
+    return { id: profile.id, gateway_port: profile.gateway_port };
+  }
+
+  static async startProfileGateway(instanceId: string, userId: string, name: string) {
+    const safeName = sanitizeDockerName(name);
+    const profile = await this.loadGatewayProfile(instanceId, userId, safeName);
 
     // Note: Gateway key shouldn't be overridden unless needed.
     // The dashboard proxy authenticates with the instance's main key.
 
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
 
@@ -966,23 +1088,13 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
     // SSH'd in, ran the stop script against a directory that doesn't exist, and
     // then rebuilt the instance's Caddyfile. That last step is the one that
     // took boxes down; see the fail-closed guard in updateAgentCaddyRouting.
-    const { data: profile } = await supabaseAdmin!
-       .from("profiles")
-       .select("id, gateway_port")
-       .eq("instance_id", instanceId)
-       .eq("user_id", userId)
-       .eq("name", safeName)
-       .single();
+    await this.loadGatewayProfile(instanceId, userId, safeName);
 
-    if (!profile?.gateway_port) {
-      throw new Error("Profile has no allocated gateway port");
-    }
-
-    const { ip, guestTarget } = await this.getGuestSshForInstance(instanceId, userId);
-    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId);
+    const { ip, guestTarget, instance } = await this.getGuestSshForInstance(instanceId, userId);
+    const hermesHome = await this.getHermesHomeForInstance(instanceId, userId, instance);
     const containerName = this.buildContainerName(instanceId);
     const profileDir = this.buildProfileDir(hermesHome, safeName);
-    
+
     // Stop using hermes cli to ensure graceful shutdown and lock release, fallback to kill if manually spawned
     const script = this.buildGatewayStopScript(containerName, profileDir, safeName, {
       removePidFile: true,
@@ -1036,6 +1148,7 @@ docker exec ${containerName}-browser sh -c "rm -rf /workspace/profiles/${safeNam
        .from("hermes_instances")
        .select("subdomain, gateway_url, config, backend")
        .eq("id", instanceId)
+       .eq("user_id", userId)
        .single();
 
     if (!instance) throw new Error("Instance not found");
@@ -1209,7 +1322,12 @@ function buildCaddyReloadWithHealthProbeScript(input: {
    *  only for direct/dev use. */
   probeFqdn: string | null;
 }): string {
-  const escapedCaddyfile = input.caddyfile.replace(/'/g, "'\\''");
+  // The Caddyfile is written verbatim inside a QUOTED heredoc ('CADDYEOF'), which
+  // performs no unescaping, so it must not be shell-escaped here. Fail closed if
+  // a line would terminate the heredoc early.
+  if (input.caddyfile.split("\n").some((line) => line === "CADDYEOF")) {
+    throw new Error("Caddyfile contains the heredoc terminator line");
+  }
   // The fqdn flows into shell variable assignment + curl flags, so be
   // strict about what we accept. Allow only the characters that show up
   // in real per-instance hostnames: alphanumerics, dot, hyphen.
@@ -1243,6 +1361,8 @@ if [ "$HEALTH_OK" != "1" ]; then
   if [ -f "$INST_DIR/Caddyfile.before-reload" ]; then
     mv "$INST_DIR/Caddyfile.before-reload" "$INST_DIR/Caddyfile"
     docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+  else
+    rm -f "$INST_DIR/Caddyfile"
   fi
   exit 1
 fi
@@ -1265,7 +1385,7 @@ if [ -f Caddyfile ]; then
 fi
 
 cat > Caddyfile.new << 'CADDYEOF'
-${escapedCaddyfile}
+${input.caddyfile}
 CADDYEOF
 mv Caddyfile.new Caddyfile
 

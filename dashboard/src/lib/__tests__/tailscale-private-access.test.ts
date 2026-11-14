@@ -97,10 +97,7 @@ describe("tailscale private access helpers", () => {
   });
 
   it("only includes explicitly changed tailscale settings", () => {
-    expect(
-      buildTailscaleSetCommand({
-        enableSsh: true,
-      })
-    ).toBe("tailscale set --ssh");
+    expect(() => buildTailscaleSetCommand({ enableSsh: true })).toThrow("Tailscale SSH is not available");
+    expect(buildTailscaleSetCommand({ enableSsh: false })).toBe("tailscale set --ssh=false");
   });
 });

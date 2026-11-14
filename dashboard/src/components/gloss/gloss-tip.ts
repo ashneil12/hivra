@@ -11,7 +11,7 @@ import styles from "./gloss.module.css";
  * The litepaper page has the same behaviour in docs/litepaper/litepaper.js,
  * because that page is static and cannot import this module. Keep them alike.
  */
-export const GLOSS_TIP_ID = "gloss-tip";
+const GLOSS_TIP_ID = "gloss-tip";
 
 const TERM = "[data-gloss]";
 const GAP = 10;

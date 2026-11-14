@@ -25,7 +25,6 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
   useSearchParams: () => ({ get: (key: string) => mockParams[key] ?? null }),
 }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraEnabled: () => true }));
 jest.mock("@/lib/hivra/chat-readiness", () => ({ inspectChatReadiness: async () => "native_connected" }));
 jest.mock("@/lib/hivra/agent-api", () => ({
   getAgent: () => mockAgentLoad(),
@@ -102,6 +101,9 @@ beforeEach(() => {
   mockUnavailable.clear();
   mockAgentLoad = async () => mockAgent;
   window.localStorage.clear();
+  // A page with no Hivra chat starts with the sidebar hidden; these tests reach surfaces through its rows.
+  window.localStorage.setItem("hivra:agent-sidebar-collapsed:no-chat", "false");
+  window.localStorage.setItem("hivra:agent-pill-intro-seen", "1");
   global.fetch = jest.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ agentKind: "codex", surfaceAuth: "post-cookie-v1" }),
@@ -204,7 +206,7 @@ describe("a part of the page whose code can't download", () => {
 
     expect(await screen.findByText(NOTICE)).toBeVisible();
     expect(screen.queryByText(/Dashboard error page/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Manage/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
     expect(await screen.findByText("Manage panel")).toBeVisible();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });

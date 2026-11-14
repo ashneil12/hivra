@@ -96,13 +96,11 @@ test("adopts only a live owned dashboard process", () => {
 test("existing self-hosted installations rebuild on the Hivra product surface", () => {
   assert.deepEqual(withRequiredSelfHostedDefaults({
     HIVRA_AUTH_MODE: "legacy",
-    NEXT_PUBLIC_HIVRA_AGENTS: "0",
     NEXT_PUBLIC_POSTHOG_KEY: "stale-key",
     POSTHOG_DISABLED: "0",
     PRESERVED_VALUE: "yes",
   }), {
     HIVRA_AUTH_MODE: "local",
-    NEXT_PUBLIC_HIVRA_AGENTS: "1",
     NEXT_PUBLIC_POSTHOG_KEY: "",
     POSTHOG_DISABLED: "1",
     PRESERVED_VALUE: "yes",

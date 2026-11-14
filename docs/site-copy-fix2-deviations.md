@@ -1,5 +1,7 @@
 # Site copy fix pass 2: deviations and open decisions
 
+> **Dated record.** This describes one moment and is kept for history. It is not current status: see [what Hivra offers today](STATUS.md).
+
 Branch: claude/site-copy-overhaul. Date: 21 October 2026. This work is local only. Nothing has been pushed or published.
 
 The Terms and Privacy edits are written up, before and after, in docs/legal-copy-changes.md. They need solicitor review before anyone publishes them.

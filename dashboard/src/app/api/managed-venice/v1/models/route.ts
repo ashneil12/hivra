@@ -4,12 +4,7 @@ import { apiError } from "@/lib/api-response";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 export async function GET(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

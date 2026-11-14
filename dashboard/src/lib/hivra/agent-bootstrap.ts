@@ -21,6 +21,11 @@
 // ever reaches a shell. Idempotent: safe to re-run (re-seed on identity change
 // just replaces the marked block).
 
+import {
+  buildPinnedGuestHostScript,
+  resolvePinnedGuestTarget,
+  type PinnedGuestAuthority,
+} from "@/lib/hivra/pinned-guest-seed";
 import { runProxmoxHostScript, type HostScriptResult } from "@/lib/services/proxmox-instance-service";
 import { getGoal, deriveIdentity, type Identity, type GoalDef } from "./agent-identity";
 import { getAgent } from "./agent-catalog";
@@ -44,6 +49,7 @@ export interface BootstrapAgent {
   name?: string | null;
   type?: string | null;
   ip?: string | null;
+  vmid?: number | null;
   goal?: string | null;
   context?: string | null;
   personality?: string | null;
@@ -329,19 +335,10 @@ ${identitySection}${llmSection}${promptSection}echo HIVRA_SEED_OK
 `;
 }
 
-// The script that runs ON the selected Proxmox host (as root). SSHes into the
-// guest with the same host->guest key the provisioner uses and feeds it the
-// (base64-wrapped) guest script over stdin.
-function buildHostScript(ip: string, guestScript: string): string {
-  const outer = b64(guestScript);
-  return `#!/usr/bin/env bash
-set -euo pipefail
-KEY=/etc/hivra/keys/vm-orchestrator
-[ -f "$KEY" ] || { echo "vm key $KEY missing" >&2; exit 1; }
-OUTER='${outer}'
-ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes "ubuntu@${ip}" "echo '$OUTER' | base64 -d | sudo bash"
-`;
-}
+/** The agent's resolved execution context, as far as the identity seed reads it. */
+export type BootstrapSeedAuthority = PinnedGuestAuthority & {
+  env: Parameters<typeof runProxmoxHostScript>[1];
+};
 
 export interface SeedResult {
   ok: boolean;
@@ -353,17 +350,27 @@ export interface SeedResult {
 // poll if this returns ok:false.
 export async function seedAgentBox(
   agent: BootstrapAgent,
-  env: Parameters<typeof runProxmoxHostScript>[1],
+  authority: BootstrapSeedAuthority,
 ): Promise<SeedResult> {
   const ip = (agent.ip || "").trim();
   if (!/^[0-9.]+$/.test(ip)) return { ok: false, error: "missing or invalid box ip" };
+  // The seed can carry the agent's LLM key, so it only travels over the
+  // VMID-bound path (pinned-guest-seed.ts). A box that can't be pinned gets
+  // nothing, and the next poll tries again.
+  const pinned = resolvePinnedGuestTarget({ ip, vmid: agent.vmid ?? null }, authority);
+  if (!pinned.ok) {
+    return { ok: false, error: `this box's identity can't be verified (${pinned.reason}), so nothing was sent to it` };
+  }
   const content = buildBootstrapContent(agent);
-  const script = buildHostScript(ip, buildGuestScript(content, agent.llm, { identity: agentReadsHivraIdentity(agent.type) }));
+  const script = buildPinnedGuestHostScript(
+    pinned.target,
+    buildGuestScript(content, agent.llm, { identity: agentReadsHivraIdentity(agent.type) }),
+  );
   let res: HostScriptResult;
   try {
     // Cap well under the poll route's 60s maxDuration — the SSH connect is 15s
     // and the write is instant, so a hang can't starve the request budget.
-    res = await runProxmoxHostScript(script, env, 25_000);
+    res = await runProxmoxHostScript(script, authority.env, 25_000);
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

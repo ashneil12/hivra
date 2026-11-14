@@ -2,7 +2,6 @@ import { gzipSync } from "zlib";
 
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 import { buildReleaseClientShell } from "@/lib/services/box-release-shell";
-import { WEBUI_PERSISTENT_INSTALL_ENV_LINES } from "@/lib/services/webui-runtime-env";
 
 /**
  * One-click move of a RUNNING box from the Hivra Hermes fork image onto stock
@@ -754,9 +753,6 @@ export function buildNoForkMigrationScript(params: {
     .replace(/@ALIAS@/g, NOFORK_UPSTREAM_ALIAS);
   return body;
 }
-
-/** Unused-line guard: the managed lines the update stack rewrites must stay a subset of the box env. */
-export const NOFORK_MANAGED_ENV_LINE_COUNT = WEBUI_PERSISTENT_INSTALL_ENV_LINES.length;
 
 /** Wrap the script so one SSH command installs it and starts it detached (survives the SSH session). */
 export function buildNoForkMigrationLauncher(

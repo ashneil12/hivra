@@ -8,14 +8,13 @@ import {
   deriveReservedCreditBalance,
   getCachedCreditBalance,
   getCreditSummary,
-  getPlanMonthlyCreditGrant,
   grantStripeTopUpCredits,
-  grantSubscriptionCycleCredits,
   isTopUpPackageCredits,
   recordComputeUsageDebit,
   recordLlmUsageEvent,
   releaseCreditReservation,
 } from "@/lib/billing/credits";
+import * as creditsModule from "@/lib/billing/credits";
 
 interface LedgerEntry {
   user_id: string;
@@ -46,6 +45,12 @@ function createMemoryDb() {
 
   function creditAccountsTable() {
     return {
+      select: () => ({
+        eq: async (_column: string, userId: string) => {
+          const existing = accounts.get(userId);
+          return { data: existing ? [existing] : [], error: null };
+        },
+      }),
       upsert: (row: { user_id: string }) => ({
         select: () => ({
           single: async () => {
@@ -236,17 +241,13 @@ function createMemoryDb() {
 }
 
 describe("credits billing domain", () => {
-  it("uses integer credits and plan packaging grants", () => {
+  it("uses integer credits and grants no monthly plan credits", () => {
     expect(CREDIT_UNIT_LABEL).toBe("100 credits = $1");
     expect(creditsToUsd(500)).toBe(5);
-    // Plan monthly credit grant scales by plan price × tier multiplier:
-    //   operator (Pro):   $9.99 × 1.10  = 1099 credits
-    //   fleet    (Power): $19.99 × 1.20 = 2399 credits (rounded)
-    //   command:          $49.00 × 1.30 = 6370 credits (unchanged)
-    expect(getPlanMonthlyCreditGrant("operator")).toBe(1099);
-    expect(getPlanMonthlyCreditGrant("fleet")).toBe(2399);
-    expect(getPlanMonthlyCreditGrant("command")).toBe(6370);
-    expect(getPlanMonthlyCreditGrant("unknown")).toBe(0);
+    // Plans no longer grant monthly credits: nothing spends them, so the
+    // grant (and its helpers) were removed rather than shown as a balance.
+    expect(Object.keys(creditsModule)).not.toEqual(expect.arrayContaining(["grantSubscriptionCycleCredits"]));
+    expect(Object.keys(creditsModule)).not.toEqual(expect.arrayContaining(["getPlanMonthlyCreditGrant"]));
   });
 
   it("validates allowed top-up packages", () => {
@@ -430,103 +431,8 @@ describe("credits billing domain", () => {
     ).rejects.toThrow(/reference ID is required/);
   });
 
-  it("grants subscription-cycle credits idempotently per billing period", async () => {
-    const { db, ledger } = createMemoryDb();
-
-    await grantSubscriptionCycleCredits(
-      {
-        userId: "user_1",
-        planKey: "fleet",
-        subscriptionId: "sub_1",
-        periodStart: 100,
-        periodEnd: 200,
-      },
-      db
-    );
-    const duplicate = await grantSubscriptionCycleCredits(
-      {
-        userId: "user_1",
-        planKey: "fleet",
-        subscriptionId: "sub_1",
-        periodStart: 100,
-        periodEnd: 200,
-      },
-      db
-    );
-
-    expect(duplicate.inserted).toBe(false);
-    // Fleet (Power) credit grant after launch-pricing drop = 2399.
-    expect(duplicate.balance).toBe(2399);
-    expect(ledger).toHaveLength(1);
-  });
-
   // Characterization: with NO provenance params the grant writes exactly what
   // the pre-parameterization code hardcoded — Stripe callers see zero change.
-  it("keeps the default subscription-grant provenance byte-identical (stripe)", async () => {
-    const { db, ledger } = createMemoryDb();
-
-    await grantSubscriptionCycleCredits(
-      {
-        userId: "user_default",
-        planKey: "operator",
-        subscriptionId: "sub_default",
-        periodStart: 100,
-        periodEnd: 200,
-      },
-      db
-    );
-
-    expect(ledger).toHaveLength(1);
-    const entry = ledger[0] as LedgerEntry & { actor: string };
-    expect(entry.source).toBe("stripe");
-    expect(entry.actor).toBe("stripe_webhook");
-    expect(entry.reason).toBe("subscription_grant");
-    expect(entry.reference_id).toBe("stripe_subscription:sub_default:100:200");
-    expect(entry.amount_credits).toBe(1099);
-  });
-
-  it("grants Apple-lane subscription credits with apple provenance and the apple idempotency ref", async () => {
-    const { db, ledger } = createMemoryDb();
-
-    await grantSubscriptionCycleCredits(
-      {
-        userId: "user_apple",
-        planKey: "operator",
-        subscriptionId: "2000000123456789", // originalTransactionId
-        periodStart: 1_752_600_000_000,
-        periodEnd: 1_755_278_400_000,
-        source: "apple",
-        actor: "apple_webhook",
-        referencePrefix: "apple_subscription",
-      },
-      db
-    );
-    // Redelivery / reconciler convergence for the same period dedupes.
-    const duplicate = await grantSubscriptionCycleCredits(
-      {
-        userId: "user_apple",
-        planKey: "operator",
-        subscriptionId: "2000000123456789",
-        periodStart: 1_752_600_000_000,
-        periodEnd: 1_755_278_400_000,
-        source: "apple",
-        actor: "apple_webhook",
-        referencePrefix: "apple_subscription",
-      },
-      db
-    );
-
-    expect(duplicate.inserted).toBe(false);
-    expect(ledger).toHaveLength(1);
-    const entry = ledger[0] as LedgerEntry & { actor: string };
-    expect(entry.source).toBe("apple");
-    expect(entry.actor).toBe("apple_webhook");
-    expect(entry.reference_id).toBe(
-      "apple_subscription:2000000123456789:1752600000000:1755278400000"
-    );
-    expect(entry.amount_credits).toBe(1099);
-  });
-
   it("tracks active credit reservations separately from ledger balance", async () => {
     const { db, reservations } = createMemoryDb();
 
@@ -759,8 +665,6 @@ describe("credits billing domain", () => {
 
     await expect(getCreditSummary("user_1", "operator", db)).resolves.toEqual({
       balance: 500,
-      // Operator (Pro) grant = $9.99 × 1.10 = 1099.
-      monthlyGrant: 1099,
       unit: "100 credits = $1",
     });
   });
@@ -787,14 +691,12 @@ describe("credits billing domain", () => {
       from: (name: string) => {
         if (name === "credit_accounts") {
           return {
-            upsert: () => ({
-              select: () => ({
-                single: async () => ({
-                  data: accounts.get("user_cached"),
-                  error: null,
-                }),
-              }),
+            select: () => ({
+              eq: async () => ({ data: [accounts.get("user_cached")], error: null }),
             }),
+            upsert: () => {
+              throw new Error("BUG: the cached read should not upsert credit_accounts");
+            },
           };
         }
         if (name === "credit_ledger_entries") {
@@ -834,14 +736,12 @@ describe("credits billing domain", () => {
       from: (name: string) => {
         if (name === "credit_accounts") {
           return {
-            upsert: () => ({
-              select: () => ({
-                single: async () => ({
-                  data: accounts.get("user_legacy"),
-                  error: null,
-                }),
-              }),
+            select: () => ({
+              eq: async () => ({ data: [accounts.get("user_legacy")], error: null }),
             }),
+            upsert: () => {
+              throw new Error("BUG: the cached read should not upsert credit_accounts");
+            },
             update: (patch: { balance_cached_credits?: number }) => ({
               eq: async () => {
                 if (typeof patch.balance_cached_credits === "number") {
@@ -873,6 +773,48 @@ describe("credits billing domain", () => {
     expect(balance).toBe(250);
     // Critical: the cache was actually written so the next read is cheap.
     expect(updateWritten).toBe(250);
+  });
+
+  it("getCachedCreditBalance backfills through the SQL recompute RPC, not a ledger sum in app code", async () => {
+    // Null cache on an existing account: the backfill must ask the database to
+    // sum the ledger. The ledger table throws on access, so an app-side sum
+    // would fail this test.
+    const account = {
+      id: "acct_rpc",
+      user_id: "user_rpc",
+      balance_cached_credits: null,
+      stripe_customer_id: null,
+    };
+    const rpc = jest.fn(async () => ({ data: 175, error: null }));
+    const db = {
+      from: (name: string) => {
+        if (name === "credit_accounts") {
+          return {
+            select: () => ({
+              eq: async () => ({ data: [account], error: null }),
+            }),
+            upsert: () => {
+              throw new Error("BUG: the cached read should not upsert credit_accounts");
+            },
+          };
+        }
+        if (name === "credit_ledger_entries") {
+          throw new Error("BUG: backfill should not sum credit_ledger_entries in app code");
+        }
+        throw new Error(`Unexpected table: ${name}`);
+      },
+      rpc,
+    };
+
+    const balance = await getCachedCreditBalance(
+      "user_rpc",
+      db as unknown as Parameters<typeof getCachedCreditBalance>[1]
+    );
+
+    expect(balance).toBe(175);
+    expect(rpc).toHaveBeenCalledWith("refresh_credit_account_cached_balance", {
+      p_account_id: "acct_rpc",
+    });
   });
 
   it("admits the Wave 6.1 marketplace/transfer ledger reasons (and keeps existing ones)", () => {

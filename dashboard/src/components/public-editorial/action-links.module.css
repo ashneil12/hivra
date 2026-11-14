@@ -15,11 +15,12 @@
   justify-content: space-between;
   gap: 32px;
   padding: 15px 20px;
-  background: var(--gold-leaf);
-  color: var(--public-accent-ink, #ffffff) !important;
+  background: var(--hg-accent);
+  color: var(--hg-on-accent) !important;
   text-decoration: none !important;
-  font: 13px/1.4 var(--public-mono, monospace);
-  transition: filter 0.2s, transform 0.2s;
+  font: 13px/1.4 var(--font-sans);
+  border-radius: var(--hg-radius-sm);
+  transition: filter var(--hg-medium) var(--hg-ease), transform var(--hg-medium) var(--hg-ease);
 }
 
 .primary:hover {

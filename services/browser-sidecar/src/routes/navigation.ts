@@ -2,7 +2,11 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { SessionManager } from "../playwright/session-manager.js";
 import { parseBody } from "./_validate.js";
-import { isBlockedNavigationHost } from "../navigation-guard.js";
+import {
+  BlockedNavigationError,
+  gotoWithNavigationGuard,
+  isBlockedNavigationHost,
+} from "../navigation-guard.js";
 
 // SCRIPTURE_ANCHOR: nav-path | Proverbs 3:6 | Verse: In all your ways acknowledge him, and he will make your paths straight.
 const GotoSchema = z.object({
@@ -36,9 +40,12 @@ export function registerNavigationRoutes(
     }
 
     try {
-      await session.page.goto(body.url);
+      await gotoWithNavigationGuard(session.page, body.url);
       return { ok: true, current_url: session.page.url(), title: await session.page.title() };
     } catch (err) {
+      if (err instanceof BlockedNavigationError) {
+        return reply.code(403).send({ ok: false, error: err.code });
+      }
       return reply.code(500).send({ ok: false, error: "NAVIGATION_FAILED", message: (err as Error).message });
     }
   });

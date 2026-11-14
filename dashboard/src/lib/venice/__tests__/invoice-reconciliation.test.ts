@@ -9,6 +9,7 @@ type Row = Record<string, unknown>;
 function createMemoryDb(rows: Row[]) {
   function buildChain() {
     let filtered = [...rows];
+    let ranged = false;
     const chain = {
       select: () => chain,
       gte: (column: string, value: unknown) => {
@@ -26,11 +27,21 @@ function createMemoryDb(rows: Row[]) {
       in: () => chain,
       order: () => chain,
       limit: () => chain,
+      range: (from: number, to: number) => {
+        // Mirrors PostgREST: an inclusive window over the matching rows.
+        filtered = filtered.slice(from, to + 1);
+        ranged = true;
+        return chain;
+      },
       then: (
         resolve: (value: { data: Row[]; error: null }) => unknown,
         reject?: (reason: unknown) => unknown
       ) =>
-        Promise.resolve({ data: filtered, error: null }).then(resolve, reject),
+        // Without .range PostgREST still caps a select at 1000 rows.
+        Promise.resolve({
+          data: ranged ? filtered : filtered.slice(0, 1000),
+          error: null,
+        }).then(resolve, reject),
     };
     return chain;
   }
@@ -116,5 +127,30 @@ describe("Managed Venice invoice reconciliation summary", () => {
       requestCount: 1,
       veniceCostMicroUsd: 10_950,
     });
+  });
+
+  it("reads past PostgREST's 1000-row cap so the totals are not under-counted", async () => {
+    // Regression: the usage query had no range, so a busy window was silently
+    // capped at 1000 rows and the invoice cross-check under-counted.
+    const rows: Row[] = Array.from({ length: 1250 }, (_, i) => ({
+      created_at: new Date(Date.UTC(2026, 4, 16, 0, 0, 0) + i * 1000).toISOString(),
+      model: "venice-uncensored-1-2",
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      actual_cost_micro_usd: 2,
+      charged_micro_usd: 2,
+      upstream_status: 200,
+    }));
+
+    const summary = await getManagedVeniceUsageSummary(
+      {
+        from: new Date("2026-05-16T00:00:00Z"),
+        to: new Date("2026-05-17T00:00:00Z"),
+      },
+      createMemoryDb(rows)
+    );
+
+    expect(summary.totals.requestCount).toBe(1250);
+    expect(summary.totals.veniceCostMicroUsd).toBe(2500);
   });
 });

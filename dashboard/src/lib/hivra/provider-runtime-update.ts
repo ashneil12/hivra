@@ -19,6 +19,9 @@ import { gzipSync } from "node:zlib";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { loadPortableProvisionerBundle, type PortableProvisionerBundleAsset } from "@/lib/infrastructure/connection-preparation";
+import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
+import { AGENT_CLI_LINE, agentSoftwareSubject, HERMES_UPDATE_TARGET, isLatestTargetApp, parseAgentAppReport, parseAgentCliReport } from "./agent-cli-status";
+import { readAgentSoftwareRecord, recordOwnerAgentSoftwareRequest, requestResultOf } from "./agent-cli-store";
 import { PROVIDER_RUNTIME_UPDATE_TYPES } from "./lifecycle-support";
 import { PROVIDER_RUNTIME_UPDATE_FAILED, PROVIDER_RUNTIME_UPDATE_LOST, PROVIDER_RUNTIME_UPDATE_NOT_STARTED,
   type ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
@@ -33,7 +36,7 @@ export type ProviderRuntimeUpdateOperation = z.infer<typeof Operation>;
 const GATEWAY_ASSETS = ["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "chat-runs.cjs", "index.html", "app.js"] as const;
 const TERMINAL_ASSETS = ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
   "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service",
-  "claude-desktop-pin.json"] as const;
+  "claude-desktop-pin.json", "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json"] as const;
 const GUEST_HALF = "hivra-guest-runtime-update.sh";
 
 /** Nothing landed in the guest this long after the claim: the dispatch never ran. */
@@ -66,11 +69,16 @@ async function loadOperationRow(raw: ProviderRuntimeUpdateOperation) {
   return { operation, row: OpRow.parse(data) };
 }
 
-/** The lane's loader for a computer this update holds: same pin and scope as a seed. */
-function operationContextLoader(operation: ProviderRuntimeUpdateOperation) {
+/** The lane's loader for a computer this update holds: same pin and scope as a seed.
+ * `known` is a row the caller has just read; the first load reuses it. Later
+ * loads (the guest seed's reload before it writes) always read again. */
+function operationContextLoader(operation: ProviderRuntimeUpdateOperation,
+  known?: Awaited<ReturnType<typeof loadOperationRow>>["row"]) {
+  let pending = known;
   return async (ref: ProviderGuestSeedRef) => {
     if (ref.agentId !== operation.agentId || ref.userId !== operation.userId) throw new ProviderRuntimeUpdateError();
-    const { row } = await loadOperationRow(operation);
+    const row = pending ?? (await loadOperationRow(operation)).row;
+    pending = undefined;
     return providerAgentGuestContext(ref, row);
   };
 }
@@ -164,6 +172,8 @@ export function buildProviderRuntimeUpdateStatusScript(operationId: string): str
     "  committed=0; grep -Fxq HIVRA_GUEST_RUNTIME_UPDATED \"$DIR/result\" 2>/dev/null && committed=1",
     "  printf 'HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished %s %s\\n' \"${code:-255}\" \"$committed\"",
     "  grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
+    // An app agent (Aeon, OpenClaw, Agent Zero, Hermes, OpenBot) reports its app line instead.
+    "  grep -m1 -xE 'HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=[^ ]{1,80} target=[^ ]{1,80} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
     "  exit 0",
     "fi",
     `state="$(systemctl show -p ActiveState --value ${unitName(operationId)}.service 2>/dev/null || true)"`,
@@ -175,7 +185,7 @@ export function buildProviderRuntimeUpdateStatusScript(operationId: string): str
 
 export type ProviderRuntimeUpdateGuestState =
   | { state: "absent" } | { state: "running" } | { state: "lost" }
-  | { state: "finished"; exitCode: number; committed: boolean; agentCli: string | null };
+  | { state: "finished"; exitCode: number; committed: boolean; agentCli: string | null; agentApp: string | null };
 
 export function parseProviderRuntimeUpdateStatus(output: string): ProviderRuntimeUpdateGuestState {
   const lines = output.split("\n").filter(Boolean);
@@ -186,11 +196,12 @@ export function parseProviderRuntimeUpdateStatus(output: string): ProviderRuntim
     return { state: head[1] as "absent" | "running" | "lost" };
   }
   if (head[2] === undefined) throw new ProviderRuntimeUpdateError();
-  const cli = lines[1] ?? null;
-  if (cli !== null && !/^HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6} state=(current|scheduled|running|failed)$/.test(cli)) {
-    throw new ProviderRuntimeUpdateError();
-  }
-  return { state: "finished", exitCode: Number(head[2]), committed: head[3] === "1", agentCli: cli };
+  const report = lines[1] ?? null;
+  // One report line at most: a CLI agent's or an app agent's, each strictly parsed.
+  const cli = report !== null && AGENT_CLI_LINE.test(report) ? report : null;
+  const app = report !== null && cli === null && parseAgentAppReport(report) ? report : null;
+  if (report !== null && cli === null && app === null) throw new ProviderRuntimeUpdateError();
+  return { state: "finished", exitCode: Number(head[2]), committed: head[3] === "1", agentCli: cli, agentApp: app };
 }
 
 type Dependencies = {
@@ -245,13 +256,13 @@ export type { ProviderRuntimeUpdateStage };
  * the operation until it can, or until the update's own time limit passes.
  */
 export async function observeProviderRuntimeUpdate(raw: ProviderRuntimeUpdateOperation,
-  dependencies: Partial<Dependencies> = {}): Promise<{ stage: ProviderRuntimeUpdateStage; agentCli: string | null }> {
+  dependencies: Partial<Dependencies> = {}): Promise<{ stage: ProviderRuntimeUpdateStage; agentCli: string | null; agentApp: string | null }> {
   const deps = { ...defaults, ...dependencies };
   const operation = Operation.parse(raw);
   const { row } = await loadOperationRow(operation);
   const age = deps.now() - Date.parse(row.operation_started_at);
   const result = await deps.run({ userId: operation.userId, agentId: operation.agentId },
-    buildProviderRuntimeUpdateStatusScript(operation.operationId), { load: operationContextLoader(operation) });
+    buildProviderRuntimeUpdateStatusScript(operation.operationId), { load: operationContextLoader(operation, row) });
   let guest: ProviderRuntimeUpdateGuestState | null = null;
   if (result.ok) {
     try { guest = parseProviderRuntimeUpdateStatus(result.stdout); } catch { guest = null; }
@@ -262,18 +273,43 @@ export async function observeProviderRuntimeUpdate(raw: ProviderRuntimeUpdateOpe
   if (guest?.state === "finished") {
     if (guest.exitCode === 0 && guest.committed) {
       await settle("succeeded", null);
-      return { stage: "updated", agentCli: guest.agentCli };
+      return { stage: "updated", agentCli: guest.agentCli, agentApp: guest.agentApp };
     }
     await settle("failed", PROVIDER_RUNTIME_UPDATE_FAILED);
-    return { stage: "failed", agentCli: null };
+    return { stage: "failed", agentCli: null, agentApp: null };
   }
   if (guest?.state === "absent" && age >= PROVIDER_RUNTIME_UPDATE_DISPATCH_MS) {
     await settle("failed", PROVIDER_RUNTIME_UPDATE_NOT_STARTED);
-    return { stage: "failed", agentCli: null };
+    return { stage: "failed", agentCli: null, agentApp: null };
   }
   if ((guest?.state === "lost" && age >= PROVIDER_RUNTIME_UPDATE_DISPATCH_MS) || age >= PROVIDER_RUNTIME_UPDATE_MAX_MS) {
     await settle("failed", PROVIDER_RUNTIME_UPDATE_LOST);
-    return { stage: "failed", agentCli: null };
+    return { stage: "failed", agentCli: null, agentApp: null };
   }
-  return { stage: guest ? "updating" : "verification_unavailable", agentCli: null };
+  return { stage: guest ? "updating" : "verification_unavailable", agentCli: null, agentApp: null };
+}
+
+/**
+ * Records the software move a finished My cloud update scheduled, the way an
+ * owner's Proxmox update is recorded, so Manage > Updates and the agent's
+ * "Update available" tag follow it. Best effort: the update itself is already
+ * settled, and an unrecorded request only means the next live read decides.
+ */
+export async function recordProviderSoftwareUpdate(
+  agent: { id: unknown; user_id: unknown; type: unknown; computer_profile?: unknown; computer_substrate?: unknown },
+  observed: { agentCli: string | null; agentApp: string | null },
+): Promise<void> {
+  const subject = agentSoftwareSubject(agent);
+  if (!subject || typeof agent.id !== "string" || typeof agent.user_id !== "string") return;
+  const line = subject.cli ? observed.agentCli : observed.agentApp;
+  const report = line ? (subject.cli ? parseAgentCliReport(line) : parseAgentAppReport(line)) : null;
+  const matching = report && report.name === subject.software ? report : null;
+  const tested = subject.cli ? AGENT_CLI_VERSIONS[subject.cli]
+    : isLatestTargetApp(subject.app) ? HERMES_UPDATE_TARGET : AGENT_APP_VERSIONS[subject.app!].version;
+  const ref = { id: agent.id, user_id: agent.user_id, type: subject.type };
+  await recordOwnerAgentSoftwareRequest({
+    agent: ref, subject, target: matching?.target ?? tested, requestedAt: new Date(),
+    result: requestResultOf({ ok: true, report: matching }), report: matching,
+    previous: await readAgentSoftwareRecord(ref.id, ref.user_id),
+  });
 }

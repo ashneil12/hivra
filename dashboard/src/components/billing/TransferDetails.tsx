@@ -23,7 +23,7 @@ import styles from './touch.module.css';
 
 export { styles as touchStyles };
 
-export const COMPACT_PAYMENT_QUERY = '(max-width: 767px), (pointer: coarse)';
+const COMPACT_PAYMENT_QUERY = '(max-width: 767px), (pointer: coarse)';
 
 /**
  * Finality disclosure for every $HermesOS payment surface (the yearly plan
@@ -54,7 +54,7 @@ function compactSnapshot() {
 }
 
 /** True on phone-width screens and touch devices. False during SSR. */
-export function useCompactPaymentLayout(): boolean {
+function useCompactPaymentLayout(): boolean {
   return useSyncExternalStore(subscribeCompact, compactSnapshot, () => false);
 }
 

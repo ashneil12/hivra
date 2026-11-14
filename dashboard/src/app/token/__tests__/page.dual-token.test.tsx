@@ -106,16 +106,17 @@ describe("/token page once $HIVRA is live", () => {
   it("lists $HIVRA first with its contract, and $HermesOS as the legacy token", () => {
     render(<TokenVerificationPage />);
     const main = within(screen.getByRole("main"));
-    const entries = screen.getAllByText(/0x[0-9a-fA-F]{40}/).map((node) => node.textContent);
-    expect(entries).toEqual([
+    const entries = screen.getAllByText(/^0x[0-9a-fA-F]{40}$/).map((node) => node.textContent);
+    expect(entries.slice(0, 2)).toEqual([
       "0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf",
       "0x95ccfD2B81A9667b0Cc979992632F98fc853EBa3",
     ]);
-    expect(main.getByRole("link", { name: "View the $HIVRA contract on BaseScan" })).toHaveAttribute(
+    expect(main.getByRole("heading", { name: "$HIVRA · New ecosystem token" })).toBeInTheDocument();
+    expect(main.getByRole("heading", { name: "$HermesOS · Legacy token" })).toBeInTheDocument();
+    expect(main.getAllByRole("link", { name: "View on BaseScan" })[0]).toHaveAttribute(
       "href",
       "https://basescan.org/token/0xacfE6019Ed1A7Dc6f7B508C02d1b04ec88cC21bf"
     );
-    expect(main.getByText(/The legacy \$HermesOS contract/)).toBeInTheDocument();
     expect(main.queryByText(/Not launched yet/)).not.toBeInTheDocument();
   });
 });

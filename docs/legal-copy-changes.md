@@ -6,7 +6,7 @@
 
 1. A UK solicitor has reviewed every edit below, and Ash has approved the final wording.
 2. Set both "Last Updated" dates on the approved day: Terms (`LAST_UPDATED` in `dashboard/src/app/terms/page.tsx`, now "May 2, 2026") and Privacy (`LAST_UPDATED` in `dashboard/src/app/privacy/page.tsx`, now "September 24, 2026"), and update the date assertions in both page tests. The Privacy Policy promises that material changes are reflected by that date, so publishing with the old dates would be misleading. They are deliberately unchanged now because a legal date is set by whoever approves the text.
-3. Confirm `HERMES_BILLING_LEGACY_HARD_DELETE` is unset on production. The Terms (the Hermes Agents item, T10) say a suspended Hermes agent is deleted only after a warning period with emails; the old 48-hour delete fuse is still in the code behind that flag.
+3. Done: the old 48-hour delete fuse and its `HERMES_BILLING_LEGACY_HARD_DELETE` switch were removed from the code, so a suspended Hermes agent is deleted only after the warning period the Terms (the Hermes Agents item, T10) describe.
 4. Confirm migration `20260923190000_hivra_activity_retention` is applied on production (it is a Promote prerequisite). The Privacy activity row says a computer's records are deleted with it.
 5. Confirm PostHog's session-replay and event retention settings match "up to 30 days" and "up to 12 months", and decide how "typically up to 7 years" for billing records sits beside the operator deletion script (flag F4). Both are left as the draft has them because no code or document in the repository proves or disproves them.
 6. Decide the held provider lines under "Add at launch" below: each goes in when its feature is public.

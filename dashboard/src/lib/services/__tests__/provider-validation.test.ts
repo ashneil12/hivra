@@ -163,6 +163,41 @@ describe("validateProviderApiKey", () => {
     expect(result.error).not.toContain("AIzaSyBadSecret");
   });
 
+  it("URL-encodes Gemini API keys so &/#/% cannot inject query params or truncate the URL (SEC-05)", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+    });
+
+    const result = await validateProviderApiKey("gemini", "key&admin=1#frag%25");
+
+    expect(result).toEqual({ valid: true });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/models?key=key%26admin%3D1%23frag%2525",
+      expect.objectContaining({
+        method: "GET",
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it("leaves header-carried keys unencoded — Bearer auth needs the verbatim key", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+    });
+
+    const result = await validateProviderApiKey("openrouter", "sk-or &%=");
+
+    expect(result).toEqual({ valid: true });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/auth/key",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer sk-or &%=",
+        }),
+      })
+    );
+  });
+
   it("redacts secret-bearing request URLs from transport failures", async () => {
     (global.fetch as jest.Mock).mockRejectedValue(
       new Error("request to https://generativelanguage.googleapis.com/v1beta/models?key=super-secret failed")

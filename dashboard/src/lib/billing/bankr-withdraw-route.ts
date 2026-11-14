@@ -25,6 +25,7 @@ import type {
   InstanceBankrWithdrawAsset,
   InstanceBankrWithdrawResult,
 } from "@/lib/billing/bankr-instance-withdraw";
+import { getActiveHivraToken } from "@/lib/billing/token-registry";
 import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -39,21 +40,29 @@ const baseTokenSchema = z.object({
 // A withdrawal never changes the saved destination: older clients may still
 // send `setPrimaryRecipient`, and it is ignored (zod strips unknown keys).
 // `recipientAddress` must equal the saved destination.
-const bodySchema = z.object({
-  expectedRecipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
-  recipientAddress: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
-  amount: z.string().trim().min(1).max(80),
-  asset: z.enum(["HERMESOS", "ETH"]).optional().default("HERMESOS"),
-  token: baseTokenSchema.optional(),
-}).superRefine((body, ctx) => {
-  if (body.token && !body.recipientAddress) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["recipientAddress"],
-      message: "Recipient address is required for Base token withdrawals.",
-    });
-  }
-});
+//
+// The asset selector accepts HIVRA only once $HIVRA is live in the token
+// registry. While it is dormant the schema is exactly the original
+// HERMESOS | ETH one, so a HIVRA request fails validation as before.
+function bodySchemaFor(hivraLive: boolean) {
+  return z.object({
+    expectedRecipient: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+    recipientAddress: z.string().trim().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+    amount: z.string().trim().min(1).max(80),
+    asset: (hivraLive ? z.enum(["HERMESOS", "ETH", "HIVRA"]) : z.enum(["HERMESOS", "ETH"]))
+      .optional()
+      .default("HERMESOS"),
+    token: baseTokenSchema.optional(),
+  }).superRefine((body, ctx) => {
+    if (body.token && !body.recipientAddress) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["recipientAddress"],
+        message: "Recipient address is required for Base token withdrawals.",
+      });
+    }
+  });
+}
 
 export interface BankrWithdrawBody {
   expectedRecipient?: string;
@@ -66,10 +75,12 @@ export interface BankrWithdrawBody {
 function assetLabel(asset: string) {
   if (asset === "ETH") return "Base ETH";
   if (asset === "HERMESOS") return "$HERMESOS";
+  if (asset === "HIVRA" && getActiveHivraToken()) return "$HIVRA";
   return `Base ${asset}`;
 }
 
 async function readBody(req: NextRequest): Promise<BankrWithdrawBody> {
+  const bodySchema = bodySchemaFor(getActiveHivraToken() !== null);
   try {
     const body = bodySchema.parse(await req.json());
     return {

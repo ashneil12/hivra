@@ -19,17 +19,10 @@ import {
   prepareOmarchyNativeGuardian,
   type OmarchyNativePreparationRequest,
 } from "@/lib/remote-computers/omarchy-native-preparation-host";
+import { REMOTE_DESKTOP_AGENT_FIELDS } from "@/lib/remote-computers/agent-row";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const AGENT_FIELDS = [
-  "id", "user_id", "type", "computer_profile", "status", "desired_state", "operation_id", "operation_kind",
-  "vmid", "ip", "chat_url", "computer_substrate", "provider_capacity_order_id",
-  "provider_enrollment_attempt_id", "provider_server_id", "deployment_mode", "proxmox_host",
-  "infrastructure_connection_id", "deployment_target_id", "infrastructure_connection_revision",
-  "infrastructure_binding_token_hash", "infrastructure_binding_token_enforced", "managed_provisioner_channel",
-].join(",");
 
 type Dependencies = {
   loadAgent: (agentId: string) => Promise<RemoteDesktopAgentRow | null>;
@@ -56,7 +49,7 @@ export type OmarchyNativePreparationResult = {
 
 async function loadAgent(agentId: string): Promise<RemoteDesktopAgentRow | null> {
   if (!supabaseAdmin) throw new Error("Omarchy preparation database is unavailable.");
-  const { data, error } = await supabaseAdmin.from("hivra_agents").select(AGENT_FIELDS)
+  const { data, error } = await supabaseAdmin.from("hivra_agents").select(REMOTE_DESKTOP_AGENT_FIELDS)
     .eq("id", agentId).maybeSingle();
   if (error) throw new Error("Omarchy preparation lookup failed.");
   return (data as RemoteDesktopAgentRow | null) ?? null;

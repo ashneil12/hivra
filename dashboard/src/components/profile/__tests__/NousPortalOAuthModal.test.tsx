@@ -161,4 +161,93 @@ describe("NousPortalOAuthModal", () => {
     );
     expect(providerError?.[1]).not.toHaveProperty("error_message");
   });
+
+  it("arms no poll or expiry timer when the modal closes while its start request is in flight", async () => {
+    let resolveStart: (value: unknown) => void = () => {};
+    const startResponse = new Promise(resolve => {
+      resolveStart = resolve;
+    });
+    const fetchMock = jest.fn().mockReturnValueOnce(startResponse);
+    Object.defineProperty(global, "fetch", {
+      configurable: true,
+      writable: true,
+      value: fetchMock,
+    });
+    const setIntervalSpy = jest.spyOn(window, "setInterval");
+    const setTimeoutSpy = jest.spyOn(window, "setTimeout");
+
+    const { unmount } = render(
+      <NousPortalOAuthModal instanceId="inst-nous-unmounted" onClose={jest.fn()} />
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /connect nous portal/i }));
+    });
+    unmount();
+    const setIntervalAfterUnmount = setIntervalSpy.mock.calls.length;
+    const setTimeoutAfterUnmount = setTimeoutSpy.mock.calls.length;
+
+    await act(async () => {
+      resolveStart({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            session_id: "sess_late",
+            user_code: "NOUS-1234",
+            verification_url: "https://portal.nousresearch.com/device?code=NOUS",
+            poll_interval: 5,
+            expires_in: 900,
+          },
+        }),
+      });
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+
+    const lateIntervals = setIntervalSpy.mock.calls.slice(setIntervalAfterUnmount);
+    const lateTimeouts = setTimeoutSpy.mock.calls.slice(setTimeoutAfterUnmount);
+    setIntervalSpy.mockRestore();
+    setTimeoutSpy.mockRestore();
+    expect(lateIntervals).not.toContainEqual([expect.any(Function), 5000]);
+    expect(lateTimeouts).not.toContainEqual([expect.any(Function), 900_000]);
+    await act(async () => {
+      jest.advanceTimersByTime(900_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      getOauthCaptures("provider_oauth_failed").find(
+        ([, props]) => props.failure_reason === "session_expired"
+      )
+    ).toBeUndefined();
+  });
+
+  it("refuses a verification address that is not https and never offers or opens it", async () => {
+    Object.defineProperty(global, "fetch", {
+      configurable: true,
+      writable: true,
+      value: jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            session_id: "sess_bad",
+            user_code: "NOUS-0000",
+            verification_url: "javascript:alert(1)",
+            poll_interval: 5,
+            expires_in: 900,
+          },
+        }),
+      }),
+    });
+    const openSpy = jest.fn();
+    Object.defineProperty(window, "open", { configurable: true, writable: true, value: openSpy });
+
+    render(<NousPortalOAuthModal instanceId="inst-nous-bad-url" onClose={jest.fn()} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /connect nous portal/i }));
+    });
+
+    expect(screen.queryByRole("button", { name: /open nous portal/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("javascript:alert(1)")).not.toBeInTheDocument();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
 });

@@ -129,12 +129,18 @@ async function main(): Promise<void> {
           detail: `shared host has ${count} other live instance(s)`,
         };
       }
-      const { data: host } = await supabase
+      const { data: host, error: hostError } = await supabase
         .from("hermes_hosts")
         .select("hetzner_server_id")
         .eq("id", row.host_id)
-        .single<{ hetzner_server_id: number | null }>();
-      if (!host?.hetzner_server_id) {
+        .maybeSingle<{ hetzner_server_id: number | null }>();
+      if (hostError) {
+        return { ok: false, detail: `host lookup failed: ${hostError.message}` };
+      }
+      if (!host) {
+        return { ok: false, detail: "host row missing" };
+      }
+      if (!host.hetzner_server_id) {
         return { ok: false, detail: "no hetzner_server_id on host" };
       }
       try {

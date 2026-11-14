@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import posthog from 'posthog-js';
-import { X, Terminal, Loader2, ExternalLink, Copy, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ThinkingOrb } from '@/components/ui/ThinkingOrb';
+import { X, Terminal, ExternalLink, Copy, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { readCodexAuthenticatedFlag } from '@/lib/codex-oauth';
+import { readHttpsAuthorizationUrl } from '@/lib/safe-http-url';
 import { copyTextToClipboard } from '@/lib/client/clipboard';
 import { normalizeSshWarmupMessage } from '@/lib/ssh-warmup';
 import { SafePortal } from '@/components/ui/SafePortal';
@@ -102,6 +104,12 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
   // error step. Reset on any successful poll. Definite errors (persistenceError,
   // 4xx) still fail immediately.
   const transientPollFailuresRef = useRef(0);
+  // One status request at a time: a poll slower than the 4 s interval must not
+  // let the next tick read the same authenticated result and log it twice.
+  const pollInFlightRef = useRef(false);
+  // False once the modal has unmounted. A request still in flight then must not
+  // start the success timer (it calls onSuccess and onClose) or log events.
+  const mountedRef = useRef(true);
   // A backdrop press closes only when it also started on the backdrop, so a
   // drag-select out of the URL or code mid-sign-in does not.
   const backdropPressRef = useRef(false);
@@ -116,7 +124,9 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
   const tapScale = reduceMotion ? undefined : { scale: 0.97 };
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (codexPollRef.current) clearInterval(codexPollRef.current);
       startAbortRef.current?.abort();
       if (successTimerRef.current) clearTimeout(successTimerRef.current);
@@ -270,7 +280,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           )
         );
       }
-      const startUrl = typeof data?.data?.url === 'string' ? data.data.url : '';
+      const startUrl = readHttpsAuthorizationUrl(data?.data?.url);
       if (!startUrl) {
         throw new Error('Codex login started but no authorization URL was returned. Please try again.');
       }
@@ -302,6 +312,8 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           });
           return;
         }
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
         let pollHttpStatus: number | null = null;
         try {
           setCodexPollCount((count) => count + 1);
@@ -327,6 +339,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
           if (readCodexAuthenticatedFlag(sd)) {
             clearInterval(codexPollRef.current!);
             codexPollRef.current = null;
+            if (!mountedRef.current) return;
             setCodexStep('success');
             captureOauthEvent('provider_oauth_completed', {
               ...codexOauthBaseProperties(instanceId),
@@ -360,6 +373,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
               return;
             }
           }
+          if (!mountedRef.current) return;
           transientPollFailuresRef.current = 0;
           if (codexPollRef.current) {
             clearInterval(codexPollRef.current);
@@ -378,6 +392,8 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
             http_status: pollHttpStatus,
             error_message: sanitizeOauthErrorMessage(message),
           });
+        } finally {
+          pollInFlightRef.current = false;
         }
       }, 4000);
     } catch (err: unknown) {
@@ -440,7 +456,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
       role="dialog"
       aria-modal="true"
       aria-labelledby="codex-oauth-title"
-      style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', overflowY: 'auto', background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', overflowY: 'auto', background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', padding: 'max(12px, env(safe-area-inset-top, 0px)) 12px max(12px, env(safe-area-inset-bottom, 0px))' }}
     >
       <motion.div
         initial="hidden"
@@ -448,7 +464,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
         exit="exit"
         variants={modalVariants}
         onClick={(event) => event.stopPropagation()}
-        style={{ width: '100%', maxWidth: 520, maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))', margin: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--ink-black)', borderRadius: 0, boxShadow: '8px 8px 0px var(--ink-black)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+        style={{ width: '100%', maxWidth: 520, maxHeight: 'calc(var(--workspace-viewport-height, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))', margin: 'auto', background: 'var(--hg-glass-strong)', backdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)', WebkitBackdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)', border: '1px solid var(--hg-stroke)', borderRadius: 20, boxShadow: 'var(--hg-shadow-lg)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
       >
 
         {/* Header */}
@@ -480,7 +496,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
               <motion.button
                 onClick={handleCodexStart}
                 type="button"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, padding: '10px 18px', background: 'var(--ink-black)', border: 'none', borderRadius: 0, color: 'var(--bg-surface)', fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%' }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, padding: '10px 18px', background: 'var(--hg-accent)', border: 'none', borderRadius: 10, color: 'var(--hg-on-accent)', fontSize: 13, fontWeight: 600, cursor: 'pointer', width: '100%' }}
                 whileTap={tapScale}
                 transition={buttonSpring}
               >
@@ -491,7 +507,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
 
           {codexStep === 'starting' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '24px 0' }}>
-              <Loader2 size={28} style={{ animation: 'spin 1s linear infinite', color: 'var(--ink-black)' }} />
+              <ThinkingOrb size={32} state="connecting" />
               <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, textAlign: 'center' }}>Starting sign-in on your agent…</p>
             </div>
           )}
@@ -551,7 +567,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
                   </motion.button>
                 </div>
                 {openFallbackVisible && (
-                  <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.22)', color: '#1d4ed8', fontSize: 12, lineHeight: 1.5 }}>
+                  <div style={{ marginBottom: 10, padding: '8px 10px', background: 'var(--hg-fill-1)', border: '1px solid var(--hg-stroke)', borderRadius: 10, color: 'var(--hg-text-2)', fontSize: 12, lineHeight: 1.5 }}>
                     If the authorization page did not open, use <strong>Copy URL</strong> and paste it into a new tab.
                   </div>
                 )}
@@ -559,8 +575,8 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
                   {codexUrl}
                 </code>
               </div>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--etched-border)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                <Loader2 size={13} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', background: 'var(--hg-fill-1)', border: '1px solid var(--hg-stroke)', borderRadius: 10, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                <ThinkingOrb size={20} state="working" />
                 <div style={{ display: 'grid', gap: 2 }}>
                   <span>Waiting for authorization. Hermes checks automatically every 4 seconds.</span>
                   <span>After you approve, saving the session and applying it to the agent can take about 30-60 seconds. Keep this window open.</span>
@@ -582,7 +598,7 @@ export function CodexOAuthModal({ instanceId, profileName, autoStart = false, on
 
           {codexStep === 'error' && (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--red)', fontSize: 13 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'color-mix(in srgb, var(--hg-bad) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--hg-bad) 30%, transparent)', borderRadius: 10, color: 'var(--hg-bad)', fontSize: 13 }}>
                 <AlertTriangle size={14} style={{ flexShrink: 0 }} /><span>{codexError}</span>
               </div>
               <motion.button

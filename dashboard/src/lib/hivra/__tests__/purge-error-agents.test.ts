@@ -1,4 +1,9 @@
+import { spawnSync } from "child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
+  buildDestroyScript,
   ERROR_PURGE_PROVIDER_MUTATION_ENABLED,
   runPurgeErrorHivraAgentsSweep,
 } from "../purge-error-agents";
@@ -53,5 +58,49 @@ describe("runPurgeErrorHivraAgentsSweep", () => {
     expect(mockedFrom).not.toHaveBeenCalled();
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
     expect(deleteBoxTunnel).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildDestroyScript ownership gate", () => {
+  const ALLOCATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+  // Runs the generated script under bash with a stub `qm` on PATH. The stub
+  // reports the given provider tags and records every qm call it receives.
+  function runAgainstStubQm(providerTags: string) {
+    const dir = mkdtempSync(join(tmpdir(), "purge-gate-"));
+    const callLog = join(dir, "qm-calls.log");
+    writeFileSync(
+      join(dir, "qm"),
+      `#!/bin/sh
+echo "$1" >> "${callLog}"
+case "$1" in
+  status) exit 0 ;;
+  config) echo "tags: ${providerTags}" ;;
+esac
+exit 0
+`,
+    );
+    chmodSync(join(dir, "qm"), 0o755);
+    const result = spawnSync("bash", ["-c", buildDestroyScript(4242, ALLOCATION_ID)], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
+      encoding: "utf8",
+    });
+    const calls = existsSync(callLog) ? readFileSync(callLog, "utf8").trim().split("\n") : [];
+    return { status: result.status, stderr: result.stderr, calls };
+  }
+
+  it("refuses to stop or destroy a VM whose tags carry a different ownership tag", () => {
+    const result = runAgainstStubQm("hivra-op-ffffffffffffffffffffffffffffffff;other");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("refusing to destroy");
+    expect(result.calls).toEqual(["status", "config"]);
+  });
+
+  it("refuses when the VM carries no tags at all", () => {
+    const result = runAgainstStubQm("");
+
+    expect(result.status).not.toBe(0);
+    expect(result.calls).toEqual(["status", "config"]);
   });
 });

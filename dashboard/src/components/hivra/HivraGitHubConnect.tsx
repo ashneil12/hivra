@@ -26,14 +26,13 @@ function captureChannelEvent(event: string, properties: Record<string, unknown>)
 }
 
 const primaryBtn: React.CSSProperties = {
-  border: "1px solid var(--ink-black)",
-  background: "var(--ink-black)",
-  color: "var(--bg-surface)",
-  fontFamily: "var(--font-mono), monospace",
-  fontSize: 10,
-  textTransform: "uppercase",
-  letterSpacing: "0.1em",
-  fontWeight: 800,
+  border: "1px solid var(--hg-accent)",
+  background: "var(--hg-accent)",
+  color: "var(--hg-on-accent)",
+  borderRadius: "var(--hg-radius-sm)",
+  fontFamily: "var(--font-sans)",
+  fontSize: 13,
+  fontWeight: 600,
   padding: "11px 18px",
   cursor: "pointer",
   display: "inline-flex",
@@ -67,6 +66,7 @@ export function HivraGitHubConnect({
   token,
   boxId,
   defaultManagedCredits = false,
+  reconnect = false,
 }: {
   boxUrl: string;
   onDone: () => void;
@@ -83,6 +83,12 @@ export function HivraGitHubConnect({
   /** Seeds the managed-credits toggle from the launch-time deploy-card choice.
    *  OFF unless the user opted in at deploy (hivra_agents.managed_venice). */
   defaultManagedCredits?: boolean;
+  /**
+   * Changing the token from Manage while GitHub still looks connected (the old
+   * token expired or was revoked). It keeps the billing choice made earlier
+   * and doesn't offer a second key.
+   */
+  reconnect?: boolean;
 }) {
   const product = productName || "Aeon";
   const who = (displayName || "").trim() || product;
@@ -90,7 +96,7 @@ export function HivraGitHubConnect({
   const [pat, setPat] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [useManagedCredits, setUseManagedCredits] = useState(defaultManagedCredits);
+  const [useManagedCredits, setUseManagedCredits] = useState(reconnect ? false : defaultManagedCredits);
   const patRef = useRef<HTMLInputElement>(null);
 
   // Focus the token field for keyboard users only: on touch the raised
@@ -171,15 +177,17 @@ export function HivraGitHubConnect({
         {emoji ? <span aria-hidden>{emoji}</span> : <span className="serif" style={{ color: "var(--gold-leaf)", fontSize: 22 }}>{who.charAt(0).toUpperCase()}</span>}
       </div>
       <h2 className="serif" style={{ fontSize: "clamp(1.7rem, 5vw, 2.3rem)", fontWeight: 400, color: "var(--ink-black)", margin: "0 0 10px", lineHeight: 1.12 }}>
-        Connect {who} to GitHub.
+        {reconnect ? `Change ${who}'s GitHub token.` : `Connect ${who} to GitHub.`}
       </h2>
       <p style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.65, margin: "0 0 26px", maxWidth: 470 }}>
         {product} runs on <strong style={{ color: "var(--ink-black)" }}>your own GitHub</strong> — its tasks execute on your Actions and its state lives in your repo.
-        Paste a personal access token once; the box uses it to sign in and start the dashboard. Hivra never stores it.
+        {reconnect
+          ? "Use this if your old token expired, was deleted, or stopped working. Paste a new one and the computer signs in with it. Your skills and workflows stay in your fork. Hivra never stores the token."
+          : "Paste a personal access token once; the box uses it to sign in and start the dashboard. Hivra never stores it."}
       </p>
 
       {error ? (
-        <div style={{ border: "1px solid #c0392b", background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 13, padding: "10px 14px", marginBottom: 18 }}>{error}</div>
+        <div style={{ border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)", color: "var(--hg-bad)", borderRadius: "var(--hg-radius-md)", fontSize: 13, padding: "10px 14px", marginBottom: 18 }}>{error}</div>
       ) : null}
 
       <div style={{ display: "grid", gap: 12, marginBottom: 22 }}>
@@ -190,13 +198,14 @@ export function HivraGitHubConnect({
         <Step n={3}>{who} signs in, boots its dashboard, and is ready to configure.</Step>
       </div>
 
-      <label
+      {reconnect ? null : <label
         style={{
           display: "flex",
           gap: 10,
           alignItems: "flex-start",
-          border: "1px solid var(--etched-border)",
-          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--hg-stroke)",
+          background: "var(--hg-fill-1)",
+          borderRadius: "var(--hg-radius-md)",
           padding: "11px 13px",
           marginBottom: 14,
           cursor: "pointer",
@@ -216,7 +225,7 @@ export function HivraGitHubConnect({
           Hivra sets a billing key on your fork so {product} runs without you supplying an AI
           provider key — usage is billed from your Hivra credit wallet at provider rates.
         </span>
-      </label>
+      </label>}
 
       <div style={{ display: "flex", gap: 8 }}>
         <input
@@ -234,7 +243,7 @@ export function HivraGitHubConnect({
           autoCorrect="off"
           spellCheck={false}
           enterKeyHint="go"
-          style={{ flex: 1, minWidth: 0, padding: "11px 12px", border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.04)", color: "var(--ink-black)", fontSize: 13, fontFamily: "var(--font-mono), monospace", outline: "none" }}
+          style={{ flex: 1, minWidth: 0, padding: "11px 12px", border: "1px solid var(--hg-stroke)", background: "var(--hg-fill-1)", borderRadius: "var(--hg-radius-md)", color: "var(--ink-black)", fontSize: 13, fontFamily: "var(--font-mono), monospace", outline: "none" }}
         />
         <button type="button" onClick={() => void connect()} disabled={busy || !pat.trim()} style={{ ...primaryBtn, padding: "0 16px", opacity: busy || !pat.trim() ? 0.5 : 1, cursor: busy || !pat.trim() ? "default" : "pointer" }}>
           {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={14} />} Connect

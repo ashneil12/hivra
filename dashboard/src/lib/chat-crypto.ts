@@ -23,18 +23,6 @@ export type ChatKeySource =
   | "secret-legacy"
   | "plaintext";
 
-type ConversationLike = {
-  title?: string | null;
-};
-
-type MessageLike = {
-  content?: string | null;
-  tool_calls?: unknown;
-  attachments?: unknown;
-  artifacts?: unknown;
-  metadata?: unknown;
-};
-
 type ConfiguredChatKey = {
   key: Buffer;
   keyHex: string;
@@ -253,35 +241,5 @@ export function reencryptStoredChatJson<T>(value: T): {
     },
     changed: true,
     keySource: decrypted.keySource,
-  };
-}
-
-export function decryptStoredConversation<T extends ConversationLike>(conversation: T): T {
-  return {
-    ...conversation,
-    ...(conversation.title !== undefined
-      ? { title: decryptStoredChatText(conversation.title) }
-      : {}),
-  };
-}
-
-export function decryptStoredMessage<T extends MessageLike>(message: T): T {
-  return {
-    ...message,
-    ...(message.content !== undefined
-      ? { content: decryptStoredChatText(message.content) }
-      : {}),
-    ...(message.tool_calls !== undefined
-      ? { tool_calls: decryptStoredChatJson(message.tool_calls) }
-      : {}),
-    ...(message.attachments !== undefined
-      ? { attachments: decryptStoredChatJson(message.attachments) }
-      : {}),
-    ...(message.artifacts !== undefined
-      ? { artifacts: decryptStoredChatJson(message.artifacts) }
-      : {}),
-    ...(message.metadata !== undefined
-      ? { metadata: decryptStoredChatJson(message.metadata) }
-      : {}),
   };
 }

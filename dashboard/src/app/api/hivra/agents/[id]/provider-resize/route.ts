@@ -16,7 +16,6 @@ import {
 } from "@/app/api/infrastructure/connections/request-security";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   ProviderResizeMutationRequestSchema,
 } from "@/lib/hivra/provider-agent-resize-contract";
@@ -28,6 +27,7 @@ import {
   type ProviderResizeErrorCode,
 } from "@/lib/hivra/provider-agent-resize";
 import { ProviderAgentResizeStoreError } from "@/lib/hivra/provider-agent-resize-store";
+import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 const BODY_LIMIT = 2_048;
 const AgentId = z.string().uuid();
@@ -46,11 +46,6 @@ const problems: Record<ProviderResizeErrorCode, { status: number; message: strin
   operation_unverified: { status: 503, message: "The original resize is saved but its result is not verified. Check this operation instead of starting another resize." },
 };
 
-function noStore<T extends Response>(response: T): T {
-  response.headers.set("Cache-Control", "no-store");
-  return response;
-}
-
 function failure(cause: unknown): Response {
   const code: ProviderResizeErrorCode = cause instanceof ProviderAgentResizeError
     ? cause.code
@@ -67,7 +62,6 @@ function failure(cause: unknown): Response {
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const { id: rawId } = await params;
@@ -85,7 +79,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     if (request.nextUrl.search || !isSameOriginMutationRequest(request)) {

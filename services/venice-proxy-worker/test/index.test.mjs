@@ -199,6 +199,33 @@ for (const streaming of [false, true]) {
   });
 }
 
+// Perf (services-apps-7): the upstream error reply waited for the release
+// call and its retries before it was sent. The reply now goes out at once and
+// the release finishes under waitUntil, with the same release payload.
+for (const streaming of [false, true]) {
+  test(`upstream error answers the box before the release lands (${streaming ? 'stream' : 'JSON'})`, async (t) => {
+    const requestBody = { ...body, stream: streaming };
+    const handle = chatUpstream(() => json({ error: 'unavailable' }, 503), requestBody);
+    let releaseLanded = false;
+    const harness = await create(t, async (call) => {
+      if (call.url !== settle) return handle(call);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      releaseLanded = true;
+      return handle(call);
+    });
+    const response = await chat(harness.mf, requestBody);
+    assert.equal(response.status, 503);
+    assert.equal(releaseLanded, false, 'the reply must not wait for the release');
+    assert.deepEqual(await response.json(), { error: 'unavailable' });
+    const release = await harness.waitForCall((call) => call.url === settle);
+    assert.deepEqual(JSON.parse(release.body), {
+      outcome: 'release', userId: auth.userId, proxyKeyId: auth.proxyKeyId, referenceId: auth.referenceId,
+      cause: 'upstream_non_2xx', upstreamStatus: 503,
+    });
+    assert.equal(harness.calls.filter((call) => call.url === settle).length, 1);
+  });
+}
+
 for (const streaming of [false, true]) {
   test(`forwards the output cap authorize lowered to the wallet, and nothing else from the patch (${streaming ? 'stream' : 'JSON'})`, async (t) => {
     const requestBody = { ...body, stream: streaming, max_tokens: 64000 };

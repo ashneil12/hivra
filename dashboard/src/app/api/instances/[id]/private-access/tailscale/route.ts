@@ -11,6 +11,13 @@ import {
   getPublicTailscaleConfig,
 } from "@/lib/private-access/tailscale";
 import {
+  buildOutboundBlockInstallScript,
+  buildTailscaleVersionFloorScript,
+  extractPrivateAccessFailureCode,
+  HIVRA_TAILNET_TAG,
+  privateAccessFailureMessage,
+} from "@/lib/hivra/private-network";
+import {
   getHermesGuestSshTarget,
   getProxmoxHostRoutingConfigFromInfrastructure,
   getProxmoxInfrastructure,
@@ -25,17 +32,24 @@ import {
   parseTailscaleStatusJson,
 } from "@/lib/services/tailscale-private-access";
 
+// Hardening: Tailscale SSH is never turned on from here, and the only tag
+// Hivra accepts is tag:hivra. (Funnel, exit nodes and subnet routes are not
+// reachable from this route at all.)
+const NO_TAILSCALE_SSH = "Tailscale SSH isn't available. Use normal SSH over your private network.";
+const ONLY_HIVRA_TAG = `Only the ${HIVRA_TAILNET_TAG} tag is allowed.`;
+const noSsh = z.boolean().optional().refine((value) => value !== true, NO_TAILSCALE_SSH);
+
 const TailscaleSetupSchema = z.object({
   authKey: z.string().min(1),
   machineName: z.string().trim().min(1).optional(),
-  tags: z.array(z.string().trim().min(1)).optional(),
-  enableSsh: z.boolean().optional(),
+  tags: z.array(z.string().trim().refine((value) => value === HIVRA_TAILNET_TAG, ONLY_HIVRA_TAG)).optional(),
+  enableSsh: noSsh,
 });
 
 const TailscaleUpdateSchema = z
   .object({
     machineName: z.string().trim().min(1).optional(),
-    enableSsh: z.boolean().optional(),
+    enableSsh: noSsh,
   })
   .refine((value) => value.machineName !== undefined || value.enableSsh !== undefined, {
     message: "No Tailscale settings were provided.",
@@ -125,9 +139,11 @@ function tailscaleFailureOptions(params: {
 async function sshExecForInstance(
   ip: string,
   command: string,
-  sshOptions?: InstanceSshOptions
+  sshOptions?: InstanceSshOptions,
+  stdin?: string,
 ): Promise<SshResult> {
-  return sshOptions ? sshExec(ip, command, sshOptions) : sshExec(ip, command);
+  const options = { ...(sshOptions ?? {}), ...(stdin !== undefined ? { stdin } : {}) };
+  return Object.keys(options).length > 0 ? sshExec(ip, command, options) : sshExec(ip, command);
 }
 
 const PREFLIGHT_TOKEN = "hermes-tailscale-preflight-ok";
@@ -246,22 +262,34 @@ export async function POST(
       }
     }
 
+    // The key arrives on stdin and goes to a private file for `tailscale up`: it is
+    // never part of a command line. The version floor and the outbound block come
+    // before the join, exactly as on the Hivra computers path.
     const installAndEnrollScript = [
-      `export TAILSCALE_AUTH_KEY='${authKey.replace(/'/g, `'\"'\"'`)}'`,
+      "umask 077",
+      'TAILSCALE_AUTH_FILE="$(mktemp /run/hivra-tailscale-auth.XXXXXXXX)"',
+      "trap 'rm -f -- \"$TAILSCALE_AUTH_FILE\"' EXIT",
+      "IFS= read -r TAILSCALE_AUTH_KEY",
+      '[ -n "$TAILSCALE_AUTH_KEY" ] || exit 1',
+      'printf \'%s\' "$TAILSCALE_AUTH_KEY" > "$TAILSCALE_AUTH_FILE"',
+      "unset TAILSCALE_AUTH_KEY",
       buildTailscaleInstallScript(),
+      buildTailscaleVersionFloorScript(),
+      buildOutboundBlockInstallScript(),
       buildTailscaleEnrollCommand({
-        authKeyEnvVar: "TAILSCALE_AUTH_KEY",
+        authKeyFileVar: "TAILSCALE_AUTH_FILE",
         machineName,
         tags,
         enableSsh,
       }),
-      "unset TAILSCALE_AUTH_KEY",
     ].join("\n");
 
-    const installResult = await sshExecForInstance(ipv4, installAndEnrollScript, sshOptions);
+    const installResult = await sshExecForInstance(ipv4, installAndEnrollScript, sshOptions, `${authKey}\n`);
     if (!installResult.ok) {
+      const printed = extractPrivateAccessFailureCode(`${installResult.stdout ?? ""}\n${installResult.stderr ?? ""}`);
       return apiError(
-        formatTailscaleCommandError(installResult, "Failed to configure Tailscale", authKey),
+        privateAccessFailureMessage(printed)
+          ?? formatTailscaleCommandError(installResult, "Failed to configure Tailscale", authKey),
         500,
         installResult,
         undefined,
@@ -304,7 +332,8 @@ export async function POST(
       ipv4: snapshot.ipv4,
       ipv6: snapshot.ipv6,
       sshEnabled: snapshot.sshEnabled ?? enableSsh ?? false,
-      tags,
+      // Only what the node reports (its Self.Tags); never what the request asked for.
+      tags: snapshot.tags,
       connectedAt: new Date().toISOString(),
       lastError: null,
     });

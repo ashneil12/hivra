@@ -60,6 +60,22 @@ describe("applyManagedSessionEvent", () => {
     expect(transcript.runs[0].text).toBe("once");
   });
 
+  it("keeps the first 256 KiB of an answer and the last 256 KiB of its reasoning as the deltas stream in", () => {
+    const cap = 256 * 1024;
+    // Each delta is at most 16 KiB (the sanitizer's per-event bound), so 20 of them overrun the cap.
+    const deltas = (text: string, isReasoning: boolean) => Array.from({ length: 20 }, () =>
+      event("run.token_delta", { text: text.repeat(16 * 1024), is_reasoning: isReasoning }));
+    const transcript = fold([
+      event("run.started", {}),
+      ...deltas("A", false),
+      event("run.token_delta", { text: "BBBBB" }),
+      ...deltas("R", true),
+      event("run.token_delta", { text: "SSSSS", is_reasoning: true }),
+    ]);
+    expect(transcript.runs[0].text).toBe("A".repeat(cap));
+    expect(transcript.runs[0].reasoning).toBe("R".repeat(cap - 5) + "SSSSS");
+  });
+
   it("tracks a tool call from start to failure", () => {
     const transcript = fold([
       event("run.tool_call_started", { tool_call_id: "t1", name: "bash", input: { cmd: "npm test" } }),

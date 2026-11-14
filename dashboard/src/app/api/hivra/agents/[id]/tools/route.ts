@@ -14,7 +14,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { toolMcpKindForType } from "@/lib/hivra/tool-mcp-seed";
 import { catalogToolsUnavailableReason } from "@/lib/hivra/catalog-tool-availability";
 import { installToolsOnBox, listInstallableToolMeta, type ToolInstallRequest } from "@/lib/hivra/tool-install";
@@ -30,7 +29,6 @@ import {
 // dashboard.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -61,7 +59,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -121,9 +118,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (requests.length === 0) return apiError("tools must contain at least one valid id", 400);
 
-    let env: Record<string, string | undefined>;
+    let authority: Awaited<ReturnType<typeof resolveHivraAgentExecutionContext>>;
     try {
-      env = (await resolveHivraAgentExecutionContext(userId, agent)).env;
+      authority = await resolveHivraAgentExecutionContext(userId, agent);
     } catch (contextError) {
       const safeError = describeHivraAgentExecutionContextError(contextError);
       if (safeError) return apiError(safeError.message, safeError.status);
@@ -135,9 +132,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         id: String(agent.id),
         type: (agent.type as string | null) ?? null,
         ip: (agent.ip as string | null) ?? null,
+        vmid: (agent.vmid as number | null) ?? null,
       },
       requests,
-      env,
+      authority,
     );
 
     if (!result.ok) {

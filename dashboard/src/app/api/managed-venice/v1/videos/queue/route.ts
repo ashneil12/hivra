@@ -6,6 +6,7 @@ import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { mediaPricingFieldError } from "@/lib/venice/media-request-fields";
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { readBearerKey } from "@/lib/venice/proxy-bearer";
 
 // SCRIPTURE_ANCHOR: venice-video | Habakkuk 2:2 | Verse: Write the vision, and make it plain upon tables, that he may run that readeth it.
 const VENICE_VIDEOS_QUEUE_URL = "https://api.venice.ai/api/v1/video/queue";
@@ -14,12 +15,6 @@ const VENICE_VIDEOS_QUEUE_URL = "https://api.venice.ai/api/v1/video/queue";
 // Video pricing is duration- and resolution-dependent; reconciliation
 // cron applies actual cost from Venice's invoice.
 const ENDPOINT_LABEL = "/api/v1/video/queue";
-
-function readBearerKey(req: NextRequest) {
-  const header = req.headers.get("authorization")?.trim() || "";
-  if (!header.toLowerCase().startsWith("bearer ")) return null;
-  return header.slice(7).trim() || null;
-}
 
 export async function POST(req: NextRequest) {
   const plaintextKey = readBearerKey(req);

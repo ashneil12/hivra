@@ -39,5 +39,8 @@ describe("agent link eligibility", () => {
     expect(linkLabel("   ")).toBe("Computer");
     expect(linkLabel("x".repeat(100))).toHaveLength(60);
     expect(computerKindLabel({ id: "o", computer_profile: "omarchy" })).toBe("Omarchy desktop");
+    // A Linux computer has the desktop agent type but no desktop, so it is not "Ubuntu desktop".
+    expect(computerKindLabel({ id: "s", type: "linux-desktop", computer_profile: "ubuntu-server" })).toBe("Linux computer");
+    expect(computerKindLabel({ id: "u", type: "linux-desktop", computer_profile: "ubuntu-desktop" })).toBe("Ubuntu desktop");
   });
 });

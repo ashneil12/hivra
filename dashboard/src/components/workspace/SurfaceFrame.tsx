@@ -89,7 +89,7 @@ export function SurfaceFrame({
   return (
     <section
       aria-label={title}
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--bg-surface)]"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-transparent"
       data-testid="surface-frame"
     >
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">

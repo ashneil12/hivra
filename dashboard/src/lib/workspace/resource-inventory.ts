@@ -27,6 +27,8 @@
  * showing anything, so one account's list is never shown to another after a
  * switch.
  */
+import { asRecord } from "@/lib/workspace/release-capability-matrix";
+
 
 export type InventorySource = "hermes" | "hivra" | "attached";
 
@@ -115,12 +117,6 @@ const INITIAL_SNAPSHOT: InventorySnapshot = Object.freeze({
   hivra: INITIAL_SOURCE,
   attached: INITIAL_SOURCE,
 });
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 /** The envelope each route promises; row-level checks stay with each reader. */
 export function isInventoryEnvelope(source: InventorySource, body: unknown): boolean {

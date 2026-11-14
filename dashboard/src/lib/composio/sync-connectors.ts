@@ -176,8 +176,10 @@ export async function syncComposioToInstance(params: {
   const force = params.force === true;
   const restartOnChange = (params.restart ?? "on-change") !== "never";
 
-  const key = await getUserComposioKey(userId);
-  const ip = await resolveInstanceIpv4(instance);
+  const [key, ip] = await Promise.all([
+    getUserComposioKey(userId),
+    resolveInstanceIpv4(instance),
+  ]);
   if (!ip) return { applied: false, reason: "no_public_ipv4" };
   const guestTarget = getHermesGuestSshTarget(instance);
 

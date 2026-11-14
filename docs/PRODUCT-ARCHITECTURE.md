@@ -6,6 +6,10 @@
 
 **Product direction updated:** 2026-09-04
 
+**What is available today:** [`STATUS.md`](STATUS.md) is the single source of
+truth. This document is the target architecture and a dated current-state map;
+where it and that file disagree about availability, that file wins.
+
 **Approved target experience:** Agent and Computer are sibling entry choices in
 one resumable Launch journey. Web/Canary is the authorized implementation and
 acceptance surface for this reset. Code implementation, Canary deployment, and
@@ -31,7 +35,8 @@ DeepSeek has a pinned private runtime/gateway and provider installer with real
 native UI, BYOK model inference, PTY, restart, revocation and cleanup evidence;
 its guest identity is now attested before secret delivery instead of trusting
 an unauthenticated bootstrap SSH connection. ACP and public launch authority
-remain closed. Omarchy has a pinned, non-launchable profile
+remain closed. Omarchy has a pinned profile, offered as a
+prepared computer since the owner's 2026-09-30 decision (see STATUS.md),
 whose exact KVM install, owner desktop, reboot, Sunshine guest preparation and
 claim-bound teardown passed on fixturenodea. The deployment catalog links to all three with those exact states;
 neither a preview card nor installed code is release acceptance. Desktop
@@ -574,6 +579,23 @@ passes a live check on a disposable computer (Agent Zero after v2.2 also needs t
 gateway's native editor adapter, which targets v2.2's exact files). Existing
 computers get the updater with their next connection-service update once their
 host holds release 2026.10.20.2.
+
+**Claude app clipboard switch, Code tab backup and agent browser sandbox (built
+2026-11-03 in release 2026.11.03.1; not yet on any existing computer).** On an
+Ubuntu Desktop computer that offers the Claude app, the Desktop strip gains a
+clipboard switch, off by default. Selkies' own clipboard stays off; with the
+switch on, Paste in puts the owner's clipboard text on the desktop's clipboard
+and Copy out brings the desktop's back, one request per press, through
+`hivra-claude-app` (`provisioner/README.md`). The app now starts in `~/Hivra`,
+and Claude Code's data from its Code tab is backed up beside the app's own so
+sessions survive a desktop restart. The agent's own Chrome
+(`local-browser-keeper.py`) runs with Chromium's sandbox on. Not built: a
+seamless clipboard (it needs the desktop container recreated with Selkies'
+clipboard on, which the provider ownership proof does not allow today), and
+Chromium's sandbox for the Claude app inside the contained desktop. Existing
+computers get the helper and gateway changes with their next connection-service
+update once their host holds release 2026.11.03.1; the keeper change reaches
+computers provisioned from it.
 
 Updates says how every kind of computer is kept up to date (2026-10-19). Where
 Hivra's connection service runs, it offers Update connection service. Where it

@@ -13,7 +13,7 @@ import {
 import { providerVmTarget } from "@/lib/infrastructure/__tests__/provider-vm-target.fixtures";
 
 function targetWithRuntimeEvidence(
-  supportedCatalogRuntimeIds: Array<"claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "deepseek-harness" | "linux-desktop">,
+  supportedCatalogRuntimeIds: Array<"claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "deepseek-harness" | "linux-desktop" | "linux-server">,
 ): ProxmoxDeploymentTargetDto {
   const now = "2026-08-26T12:00:00.000Z";
   return {
@@ -137,6 +137,35 @@ describe("self-managed runtime placement", () => {
       .toBe(true);
     expect(targetSupportsCatalogRuntime(targetWithRuntimeEvidence(["linux-desktop"]), "linux-desktop"))
       .toBe(true);
+  });
+
+  it("keeps the Linux server off hosts on 2026.11.10.3 while those hosts still take the Linux desktop", () => {
+    const host = (version: string, ids: Array<"linux-desktop" | "linux-server">) => {
+      const target = targetWithRuntimeEvidence(ids);
+      target.capabilities.provisioner!.version = version;
+      target.capabilities.runtimeCompatibility!.provisionerVersion = version;
+      return target;
+    };
+    // Even evidence that names the new runtime is refused on the older release.
+    const older = host("2026.11.10.3", ["linux-desktop", "linux-server"]);
+    expect(targetSupportsCatalogRuntime(older, "linux-server")).toBe(false);
+    expect(targetSupportsCatalogRuntime(older, "linux-desktop")).toBe(true);
+    // A host that advertises only what .3 shipped does not take it either.
+    expect(targetSupportsCatalogRuntime(host("2026.11.10.3", ["linux-desktop"]), "linux-server")).toBe(false);
+    const current = host(PORTABLE_HIVRA_PROVISIONER_VERSION, ["linux-desktop", "linux-server"]);
+    expect(targetSupportsCatalogRuntime(current, "linux-server")).toBe(true);
+    expect(targetSupportsCatalogRuntime(current, "linux-desktop")).toBe(true);
+    expect(targetSupportsCatalogRuntime(host(PORTABLE_HIVRA_PROVISIONER_VERSION, ["linux-desktop"]), "linux-server")).toBe(false);
+  });
+
+  it("does not offer the Linux server on a provider VM", () => {
+    const provider = providerVmTarget();
+    provider.status = "ready";
+    provider.lastErrorCode = null;
+    provider.capabilities.launchReady = true;
+    provider.capabilities.provisioner.ready = true;
+    provider.capabilities.provisioner.version = PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION;
+    expect(targetSupportsCatalogRuntime(provider, "linux-server")).toBe(false);
   });
 
   it("does not let old Proxmox or provider-VM bundles inherit Linux desktop support", () => {

@@ -3,8 +3,14 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { buildColdStorageInstallScript } from "@/lib/cold-storage-ssh";
+import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
+import {
+  buildHermesVmidBoundGuestSshPrelude,
+  buildPinnedGuestSshReadinessWait,
+  isHermesInstanceId,
+} from "@/lib/proxmox/hermes-guest-ssh";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
   resolveProxmoxHostEnv,
@@ -62,8 +68,10 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+// Host output goes through the shared redactor, so the same token shapes are masked here as in
+// ops_events and the push gate. A PEM-only copy here let provider keys, bot tokens and AWS keys through.
 function redactHostOutput(value: string, max = 4000): string {
-  return value.replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, "[REDACTED_KEY]").slice(0, max);
+  return redactSensitiveCommandOutput(value, max);
 }
 
 function buildInstallDailyBackupScript(): string {
@@ -198,6 +206,13 @@ rsync --list-only -e ssh "cold:daily/paid/$INSTANCE_ID/" 2>&1 || true
 }
 
 function buildRestoreSmokeScript(row: BackupCandidate): string {
+  const restoreGuestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
+    sshUser: "hermes",
+    agentAttempts: 30,
+    connectTimeoutSeconds: 5,
+    quiet: true,
+    ...(isHermesInstanceId(row.id) ? { expectedInstanceId: row.id } : {}),
+  });
   const restoreScript = `#!/usr/bin/env bash
 set -euo pipefail
 INSTANCE_ID="$1"
@@ -249,20 +264,23 @@ echo "RESTORE_TARGET vmid=$NEW_VMID ip=$GUEST_IP"
 qmrestore "$ARCHIVE" "$NEW_VMID" --storage local-lvm --unique 1
 qm set "$NEW_VMID" --name "hermes-restore-smoke-$INSTANCE_ID" --ipconfig0 "ip=$GUEST_IP/24,gw=10.250.20.1" --onboot 0 >/dev/null
 qm start "$NEW_VMID" >/dev/null
-SSH_OPTS=(-i /etc/hivra/keys/vm-orchestrator -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
-for _ in $(seq 1 60); do
-  if ssh "\${SSH_OPTS[@]}" "hermes@$GUEST_IP" true 2>/dev/null; then break; fi
-  sleep 5
-done
-ssh "\${SSH_OPTS[@]}" "hermes@$GUEST_IP" true 2>/dev/null || { echo "guest ssh failed"; exit 14; }
+# The restored VM is reached only over the VMID-bound path: the host checks it
+# is the running smoke VM with the smoke IP and this instance's name, then pins
+# SSH to the guest host key QEMU Guest Agent attests. The next run's VMID sweep
+# above cleans up a smoke VM left behind by a refusal.
+VMID="$NEW_VMID"
+PRIVATE_IP="$GUEST_IP"
+VM_SSH_KEY_PATH=/etc/hivra/keys/vm-orchestrator
+${restoreGuestSshPrelude}
+${buildPinnedGuestSshReadinessWait({ attempts: 30, sleepSeconds: 5 })}
 echo "RESTORE_GUEST_SSH_OK"
 
-ssh "\${SSH_OPTS[@]}" "hermes@$GUEST_IP" "sudo test -d /opt/hermes/instances/$INSTANCE_ID && sudo docker volume inspect agent-$INSTANCE_ID'_webui-state' >/dev/null && sudo docker volume inspect agent-$INSTANCE_ID'_agent-source' >/dev/null && sudo docker volume inspect agent-$INSTANCE_ID'_webui-workspace' >/dev/null"
+"\${GUEST_SSH[@]}" "sudo test -d /opt/hermes/instances/$INSTANCE_ID && sudo docker volume inspect agent-$INSTANCE_ID'_webui-state' >/dev/null && sudo docker volume inspect agent-$INSTANCE_ID'_agent-source' >/dev/null && sudo docker volume inspect agent-$INSTANCE_ID'_webui-workspace' >/dev/null"
 echo "RESTORE_STATE_OK instance_dir_and_volumes_present"
 
-ssh "\${SSH_OPTS[@]}" "hermes@$GUEST_IP" "sudo docker ps --format '{{.Names}} {{.Status}}' | head -20" | sed 's/^/RESTORE_DOCKER /'
-ssh "\${SSH_OPTS[@]}" "hermes@$GUEST_IP" "sudo find /var/lib/docker/volumes/agent-$INSTANCE_ID'_webui-state'/_data -maxdepth 4 -type f | head -20" | sed 's/^/RESTORE_WEBUI_STATE_FILE /'
-ssh "\${SSH_OPTS[@]}" "hermes@$GUEST_IP" "test -d /opt/hermes/instances/$INSTANCE_ID && echo RESTORE_QUESTION 'Can you see the restored Hermes instance state?' ANSWER yes_instance_state_present"
+"\${GUEST_SSH[@]}" "sudo docker ps --format '{{.Names}} {{.Status}}' | head -20" | sed 's/^/RESTORE_DOCKER /'
+"\${GUEST_SSH[@]}" "sudo find /var/lib/docker/volumes/agent-$INSTANCE_ID'_webui-state'/_data -maxdepth 4 -type f | head -20" | sed 's/^/RESTORE_WEBUI_STATE_FILE /'
+"\${GUEST_SSH[@]}" "test -d /opt/hermes/instances/$INSTANCE_ID && echo RESTORE_QUESTION 'Can you see the restored Hermes instance state?' ANSWER yes_instance_state_present"
 
 echo "RESTORE_SMOKE_OK vmid=$NEW_VMID ip=$GUEST_IP"
 qm shutdown "$NEW_VMID" --timeout 60 >/dev/null 2>&1 || qm stop "$NEW_VMID" >/dev/null 2>&1 || true
@@ -381,7 +399,7 @@ async function handle(req: NextRequest) {
         message: result.error ?? result.stderr ?? "unknown error",
       });
       return apiError(
-        result.error ?? result.stderr ?? "host preflight failed",
+        redactHostOutput(result.error ?? result.stderr ?? "host preflight failed"),
         500,
         undefined,
         {
@@ -447,7 +465,7 @@ async function handle(req: NextRequest) {
     };
     if (!result.ok) {
       return apiError(
-        result.error ?? result.stderr ?? "memory headroom repair failed",
+        redactHostOutput(result.error ?? result.stderr ?? "memory headroom repair failed"),
         500,
         undefined,
         payload,
@@ -486,7 +504,7 @@ async function handle(req: NextRequest) {
         stderr: redactHostOutput(result.stderr, 12000),
       };
       return apiError(
-        result.error ?? result.stderr ?? `${manualAction} failed`,
+        redactHostOutput(result.error ?? result.stderr ?? `${manualAction} failed`),
         500,
         undefined,
         payload,
@@ -592,7 +610,7 @@ async function handle(req: NextRequest) {
           ok: false,
           host: row.proxmox_node ?? null,
           reason: "host_script_failed",
-          message: result.error ?? result.stderr ?? "unknown error",
+          message: redactHostOutput(result.error ?? result.stderr ?? "unknown error"),
         });
         log.warn("daily VM backup failed", {
           source: LOG_SOURCE,

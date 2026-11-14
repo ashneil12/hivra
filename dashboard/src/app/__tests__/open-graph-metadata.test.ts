@@ -12,7 +12,8 @@ import { buildBlogArticleMetadata } from '@/lib/blog/metadata';
 import { generateMetadata as generateFeatureMetadata } from '../features/[slug]/page';
 import { generateMetadata as generateCompareMetadata } from '../compare/[slug]/page';
 
-// Both token pages generate their metadata from the $HIVRA phase; dormant here.
+// Both token pages generate their metadata from the $HIVRA phase: launched (the committed launch block) here.
+// The dormant titles are covered in token-phase-pages.test.tsx and token-phase-copy.test.ts.
 let tokenomicsMetadata: Metadata;
 let tokenMetadata: Metadata;
 beforeAll(async () => {
@@ -59,9 +60,10 @@ describe('route Open Graph metadata', () => {
     expect(getTwitterValue(homeMetadata.twitter, 'title')).toBe(title);
   });
 
-  it('labels the /tokenomics title as proposed and sets its own description', () => {
-    expect(tokenomicsMetadata.title).toBe('Proposed $HIVRA tokenomics');
-    expect(String(tokenomicsMetadata.description)).toMatch(/proposed migration/);
+  it('gives /tokenomics the launched title and its own description', () => {
+    expect(tokenomicsMetadata.title).toBe('$HIVRA tokenomics: access, migration and future uses');
+    expect(String(tokenomicsMetadata.description)).toMatch(/eligible \$HermesOS holders claim \$HIVRA/);
+    expect(String(tokenomicsMetadata.description)).not.toMatch(/proposed migration/);
   });
 
   it('gives /download its own title and description, not the site defaults', () => {

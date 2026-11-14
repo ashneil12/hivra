@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +45,38 @@ describe("buildReconcileMirrorsScript", () => {
   it("honours a HERMES_RESTIC_MIRROR_ROOT override with a safe default", () => {
     const s = buildReconcileMirrorsScript([A]);
     expect(s).toContain('MIRROR_ROOT="${HERMES_RESTIC_MIRROR_ROOT:-/var/lib/hermes-restic-src}"');
+  });
+
+  // REGRESSION: under `set -o pipefail` a failing `du` (unreadable or vanishing
+  // files) used to abort the whole reconcile at the size lookup, so the
+  // ${kb:-0} fallback and RECONCILE_DONE never ran and later orphans were skipped.
+  it("keeps reconciling when du fails on an orphan mirror", () => {
+    const dir = mkdtempSync(join(tmpdir(), "reconcile-du-"));
+    try {
+      const mirrorRoot = join(dir, "mirrors");
+      const orphan = join(mirrorRoot, B);
+      mkdirSync(orphan, { recursive: true });
+      writeFileSync(join(orphan, "data"), "x");
+      const fakeBin = join(dir, "bin");
+      mkdirSync(fakeBin);
+      // du exits non-zero the way it does when part of the tree cannot be read.
+      writeFileSync(join(fakeBin, "du"), "#!/bin/sh\necho 'du: cannot read' >&2\nexit 1\n", { mode: 0o700 });
+      const file = join(dir, "reconcile.sh");
+      writeFileSync(file, "#!/usr/bin/env bash\n" + buildReconcileMirrorsScript([A]));
+
+      // execFileSync throws on a non-zero exit, so the pre-fix abort fails here.
+      const out = execFileSync("bash", [file], {
+        encoding: "utf8",
+        env: { PATH: `${fakeBin}:/usr/bin:/bin`, HERMES_RESTIC_MIRROR_ROOT: mirrorRoot } as unknown as NodeJS.ProcessEnv,
+        stdio: "pipe",
+      });
+
+      expect(out).toContain(`RECONCILE_REMOVED id=${B} kb=0`);
+      expect(out).toContain("RECONCILE_DONE");
+      expect(existsSync(orphan)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // The script is a TS template literal with hand-escaped bash ${...}; a bad

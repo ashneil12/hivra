@@ -5,6 +5,7 @@
 // DigitalOcean's checksum verified; nothing here writes to the workspace.
 
 import { useCallback, useEffect, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { AlertTriangle, Download, File, Folder, FolderDown, Link2, Loader2, Play, RefreshCw } from "lucide-react";
 
 import {
@@ -171,7 +172,7 @@ export function ManagedSessionFiles({
             })}
           </div>
         ) : loading ? (
-          <div className={styles.empty} role="status"><Loader2 size={16} className={chatStyles.spin} aria-hidden /> Reading /workspace…</div>
+          <div className={styles.empty} role="status"><ThinkingOrb size={20} state="searching" /> Reading /workspace…</div>
         ) : null}
 
         {listing?.truncated ? (

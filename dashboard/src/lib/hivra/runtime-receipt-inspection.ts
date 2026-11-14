@@ -79,6 +79,8 @@ export type RuntimeReceiptInspectionResult = {
   vmid: number | null;
   summary?: RuntimeReceiptSummary;
   error?: string;
+  /** HTTP status for a failed inspection; the route answers 503 when absent. */
+  status?: 400 | 404 | 409 | 503;
 };
 
 type InspectionDependencies = {
@@ -278,11 +280,11 @@ export async function inspectHivraRuntimeReceipt(
   dependencies: Partial<InspectionDependencies> = {},
 ): Promise<RuntimeReceiptInspectionResult> {
   if (!UUID.test(agentId)) {
-    return { ok: false, agentId, targetId: null, vmid: null, error: "Agent id is invalid." };
+    return { ok: false, agentId, targetId: null, vmid: null, error: "Agent id is invalid.", status: 400 };
   }
   const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
   const agent = await deps.loadAgent(agentId);
-  if (!agent) return { ok: false, agentId, targetId: null, vmid: null, error: "Agent not found." };
+  if (!agent) return { ok: false, agentId, targetId: null, vmid: null, error: "Agent not found.", status: 404 };
   const vmid = Number(agent.vmid);
   const ip = typeof agent.ip === "string" ? agent.ip.trim() : "";
   if (
@@ -291,7 +293,7 @@ export async function inspectHivraRuntimeReceipt(
     !Number.isSafeInteger(vmid) || vmid < 100 || !validIpv4(ip) ||
     agent.infrastructure_binding_token_enforced !== true
   ) {
-    return { ok: false, agentId, targetId: null, vmid: Number.isSafeInteger(vmid) ? vmid : null, error: "Agent is not in a stable, identity-bound running state." };
+    return { ok: false, agentId, targetId: null, vmid: Number.isSafeInteger(vmid) ? vmid : null, error: "Agent is not in a stable, identity-bound running state.", status: 409 };
   }
   const context = await deps.resolveContext(agent.user_id, agent);
   if (!context.paths.vmSshKeyPath || !context.infrastructureBindingTagEnforced) {

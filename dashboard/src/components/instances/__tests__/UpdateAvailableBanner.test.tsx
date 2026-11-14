@@ -332,7 +332,7 @@ describe("UpdateAvailableBanner", () => {
 
     it("shows a network error inline", async () => {
       const fetchMock = mockFetch({});
-      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "POST") throw new TypeError("Load failed");
         return json({ success: true, data: status() }) as never;
       });

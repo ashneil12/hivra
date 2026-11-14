@@ -15,8 +15,11 @@
  *        - live yearly $HermesOS Power / Pro subscription → "fleet" / "operator"
  *        - currently_eligible token Power qualification → "fleet"
  *        - currently_eligible token Pro qualification   → "operator"
- *        - balance >= 1 token of a platform token the user may hold → "token_base"
- *        - balance < 1 token                            → "credit_base" (after grace)
+ *        - anything else                                → "credit_base"
+ *      Holding a token below the Pro threshold gives no compute tier: the
+ *      1-token Starter tier (token_base) was removed, hosted computers are
+ *      paid only. A Pro/Power qualification keeps its tier through its
+ *      breach grace (REQUALIFICATION_GRACE_HOURS), as the lapse check does.
  *   3. Calls applyTierChange() to push the new tier through the same path
  *      Stripe webhooks use (DB write + live Proxmox resize).
  *
@@ -40,12 +43,9 @@ import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings";
-import {
-  qualifiesForTokenBaseTier,
-  resolveTokenAccessForUsers,
-  tierRowTokenCounts,
-} from "@/lib/billing/token-access";
-import { livePlatformTokens, platformTokenByAddress, type PlatformTokenKey } from "@/lib/billing/token-registry";
+import { resolveTokenAccessForUsers, tierRowTokenCounts } from "@/lib/billing/token-access";
+import type { PlatformTokenKey } from "@/lib/billing/token-registry";
+import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import {
   resolveTierSpec,
@@ -64,12 +64,6 @@ import {
 } from "@/lib/billing/yearly-entitlement";
 
 // SCRIPTURE_ANCHOR: cron-season | Ecclesiastes 3:1 | Verse: For everything there is a season, and a time for every purpose under heaven.
-// Grace period: a user whose balance dropped below the threshold doesn't get
-// downgraded immediately — give them N hours to top up before the downgrade
-// to credit_base takes effect. Mirrors the dashboard's "Grace Period (token
-// users): 24-72h" design rule.
-const TOKEN_DOWNGRADE_GRACE_HOURS = 48;
-
 // The refresh stops starting reads after its budget, leaving the rest of
 // maxDuration for the tier scan and any live resizes below.
 export const maxDuration = 300;
@@ -103,6 +97,59 @@ async function handle(request: NextRequest) {
   }
 }
 
+// PostgREST caps one response at ~1000 rows and silently truncates past it. A
+// truncated read here would drop users from the sweep, or read a missing
+// entitlement as "none" and downgrade a paid user. So every scan pages by id
+// or runs in user-id chunks (short URLs too), and a chunk that reaches the cap
+// fails the run before any tier changes.
+const POSTGREST_ROW_CAP = 1000;
+const USER_ID_CHUNK = 100;
+
+type ScanResult<T> = { rows: T[]; error: string | null };
+
+/** Every live instance, keyset-paged by id (one row per instance). */
+async function listLiveInstanceOwners(
+  db: NonNullable<typeof supabaseAdmin>,
+): Promise<ScanResult<{ user_id: string; resource_tier: string | null; cpu_limit: number | null; ram_limit: number | null }>> {
+  const rows: Array<{ id: string; user_id: string; resource_tier: string | null; cpu_limit: number | null; ram_limit: number | null }> = [];
+  let cursor: string | null = null;
+  for (;;) {
+    let query = db
+      .from("hermes_instances")
+      .select("id, user_id, resource_tier, cpu_limit, ram_limit")
+      .not("status", "in", '("deleted","scheduled_for_deletion")');
+    if (cursor) {
+      query = query.gt("id", cursor);
+    }
+    query = query.order("id", { ascending: true }).limit(POSTGREST_ROW_CAP);
+    const { data, error } = await query;
+    if (error) return { rows, error: error.message };
+    const page = (data || []) as typeof rows;
+    rows.push(...page);
+    if (page.length < POSTGREST_ROW_CAP) break;
+    cursor = page[page.length - 1].id;
+  }
+  return { rows, error: null };
+}
+
+/** Runs one user-id-filtered read per chunk of userIds and joins the rows. */
+async function scanByUserIds<T>(
+  userIds: string[],
+  scan: (chunk: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<ScanResult<T>> {
+  const rows: T[] = [];
+  for (let i = 0; i < userIds.length; i += USER_ID_CHUNK) {
+    const { data, error } = await scan(userIds.slice(i, i + USER_ID_CHUNK));
+    if (error) return { rows, error: error.message };
+    const page = (data || []) as T[];
+    if (page.length >= POSTGREST_ROW_CAP) {
+      return { rows, error: `a user-id chunk returned ${POSTGREST_ROW_CAP}+ rows (row cap reached)` };
+    }
+    rows.push(...page);
+  }
+  return { rows, error: null };
+}
+
 async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   // 1. Refresh balances on this cron's lane (writes to token_holding_snapshots):
   //    every account with standing, then plain verified wallets with the
@@ -115,12 +162,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     timeBudgetMs: REFRESH_TIME_BUDGET_MS,
   });
 
-  // 2. For each user with a Stripe subscription that's NOT active+paid, AND
-  //    a recent snapshot, decide the new tier:
-  //      - subscription active+paid → operator/fleet/command (Stripe is
-  //        authoritative; skip token-based tier decisions)
-  //      - else, snapshot.balance >= threshold → token_base
-  //      - else (or no snapshot)              → credit_base (after grace)
+  // 2. For each user, decide the new tier from the strongest entitlement
+  //    (see the header); with none, credit_base.
   //
   // The previous query joined hermes_instances → token_holding_snapshots
   // (inner) → hermes_subscriptions with no `.limit()`. Snapshots accumulate
@@ -131,14 +174,11 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   //
   // New shape: 3 small bounded queries.
   //   (a) distinct (user_id, resource_tier) from hermes_instances
-  //   (b) latest snapshot per user — ordered, bounded by recency
+  //   (b) token access per user
   //   (c) subscriptions for the same user set
   // Then build the decision in JS. No joins, no cartesian.
-  const { data: instanceRows, error: instErr } = await db
-    .from("hermes_instances")
-    .select("user_id, resource_tier, cpu_limit, ram_limit")
-    .not("status", "in", '("deleted","scheduled_for_deletion")');
-  if (instErr) return apiError(`User scan failed: ${instErr.message}`, 500);
+  const instScan = await listLiveInstanceOwners(db);
+  if (instScan.error) return apiError(`User scan failed: ${instScan.error}`, 500);
 
   // De-dup users; keep the first-seen resource_tier + caps per user (rows in
   // hermes_instances usually agree since `applyTierChange` updates all of a
@@ -148,124 +188,64 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   const userIds: string[] = [];
   const tierByUser = new Map<string, string>();
   const specByUser = new Map<string, { cpu: number | null; ram: number | null }>();
-  for (const r of (instanceRows ?? []) as Array<{
-    user_id: string;
-    resource_tier: string | null;
-    cpu_limit: number | null;
-    ram_limit: number | null;
-  }>) {
+  for (const r of instScan.rows) {
     if (tierByUser.has(r.user_id)) continue;
     tierByUser.set(r.user_id, r.resource_tier || "credit_base");
     specByUser.set(r.user_id, { cpu: r.cpu_limit, ram: r.ram_limit });
     userIds.push(r.user_id);
   }
 
-  // (b) Latest snapshot per user. Bound by a recency window so the row
-  //     count is independent of how long the snapshot table has been
-  //     accumulating. 30 days is comfortably wider than the
-  //     TOKEN_DOWNGRADE_GRACE_HOURS window so we never exclude a snapshot
-  //     that the grace logic would still consider valid.
-  // Token access per user: before $HIVRA is active everyone is $HermesOS-only
-  // and this reads nothing. After, it decides which tokens' holdings count.
+  // (b) Token access per user: before $HIVRA is active everyone is
+  //     $HermesOS-only and this reads nothing. After, it decides which tokens'
+  //     tier rows count.
   const accessByUser = await resolveTokenAccessForUsers(userIds, { db });
-  const liveTokenAddresses = livePlatformTokens().map((token) => token.address);
-
-  const snapshotsByUser = new Map<
-    string,
-    {
-      balances: Partial<Record<PlatformTokenKey, bigint>>;
-      display: Partial<Record<PlatformTokenKey, string>>;
-      checked_at: string;
-      // Earliest read of the current below-threshold run: the oldest snapshot
-      // newer than the latest one that met the base tier. The downgrade grace
-      // runs from here.
-      belowSince?: string;
-      // A read that met the base tier has been seen; older rows are ignored.
-      sawQualifying?: boolean;
-    }
-  >();
-  if (userIds.length > 0) {
-    const recencyCutoff = new Date(
-      Date.now() - 30 * 24 * 60 * 60 * 1000
-    ).toISOString();
-    const { data: snapRows, error: snapErr } = await db
-      .from("token_holding_snapshots")
-      .select("user_id, token_address, balance_raw::text, qualifies_base_tier, checked_at")
-      .in("user_id", userIds)
-      .in("token_address", liveTokenAddresses)
-      .gte("checked_at", recencyCutoff)
-      .order("checked_at", { ascending: false });
-    if (snapErr) return apiError(`Snapshot scan failed: ${snapErr.message}`, 500);
-    for (const s of (snapRows ?? []) as Array<{
-      user_id: string;
-      token_address: string;
-      balance_raw: string;
-      qualifies_base_tier: boolean;
-      checked_at: string;
-    }>) {
-      const token = platformTokenByAddress(s.token_address);
-      if (!token) continue;
-      const entry = snapshotsByUser.get(s.user_id) ?? { balances: {}, display: {}, checked_at: s.checked_at };
-      const balance = BigInt(s.balance_raw);
-      // First write per token wins because we ordered DESC by checked_at.
-      if (entry.balances[token.key] === undefined) {
-        entry.balances[token.key] = balance;
-        entry.display[token.key] = s.balance_raw;
-      }
-      if (!entry.sawQualifying) {
-        const access = accessByUser.get(s.user_id);
-        if (access && qualifiesForTokenBaseTier(access, { [token.key]: balance })) {
-          entry.sawQualifying = true;
-        } else {
-          entry.belowSince = s.checked_at;
-        }
-      }
-      snapshotsByUser.set(s.user_id, entry);
-    }
-  }
 
   // (c) Subscriptions for the same user set.
   const subByUser = new Map<string, { status: string; plan: string }>();
-  if (userIds.length > 0) {
-    const { data: subRows, error: subErr } = await db
-      .from("hermes_subscriptions")
-      .select("user_id, status, plan")
-      .in("user_id", userIds);
-    if (subErr) return apiError(`Subscription scan failed: ${subErr.message}`, 500);
-    for (const s of (subRows ?? []) as Array<{ user_id: string; status: string; plan: string }>) {
-      subByUser.set(s.user_id, { status: s.status, plan: s.plan });
-    }
+  const subScan = await scanByUserIds<{ user_id: string; status: string; plan: string }>(userIds, (chunk) =>
+    db.from("hermes_subscriptions").select("user_id, status, plan").in("user_id", chunk),
+  );
+  if (subScan.error) return apiError(`Subscription scan failed: ${subScan.error}`, 500);
+  for (const s of subScan.rows) {
+    subByUser.set(s.user_id, { status: s.status, plan: s.plan });
   }
 
   // (d) Pro/Power token-tier qualifications. A user holding enough $HERMES
   //     to qualify for the Pro or Power token tier is entitled to operator
   //     or fleet compute respectively — same as if they paid for it on
   //     Stripe (see resolveEffectiveSubscription). Without this, the cron
-  //     below downgrades them to token_base every run, silently capping
+  //     below downgrades them to credit_base every run, silently capping
   //     paid-equivalent users at 0.5 vCPU / 1 GB.
+  //     A row still inside its requalification grace counts too: the
+  //     evaluator sets currently_eligible = false at the breach, but the
+  //     breach email promises the tier until the grace ends, and the lapse
+  //     check (hasTokenTierInGrace) keeps the computer running that long.
   const qualByUser = new Map<string, "operator" | "fleet">();
-  if (userIds.length > 0) {
-    const { data: qualRows, error: qualErr } = await db
+  const graceStart = new Date(
+    Date.now() - REQUALIFICATION_GRACE_HOURS * 60 * 60 * 1000
+  ).toISOString();
+  const qualScan = await scanByUserIds<{
+    user_id: string;
+    tier: "pro" | "power";
+    token_key: PlatformTokenKey | null;
+    currently_eligible: boolean;
+  }>(userIds, (chunk) =>
+    db
       .from("token_tier_qualifications")
       .select("user_id, tier, token_key, currently_eligible")
-      .in("user_id", userIds)
-      .eq("currently_eligible", true);
-    if (qualErr) return apiError(`Qualification scan failed: ${qualErr.message}`, 500);
-    for (const q of (qualRows ?? []) as Array<{
-      user_id: string;
-      tier: "pro" | "power";
-      token_key: PlatformTokenKey | null;
-      currently_eligible: boolean;
-    }>) {
-      // A tier row counts only in a token that still counts for the user.
-      const access = accessByUser.get(q.user_id);
-      if (access && !tierRowTokenCounts(access, q.token_key ?? "hermesos")) continue;
-      const mapped: "operator" | "fleet" = q.tier === "power" ? "fleet" : "operator";
-      const existing = qualByUser.get(q.user_id);
-      // Power outranks Pro when both are present.
-      if (existing === "fleet") continue;
-      qualByUser.set(q.user_id, mapped);
-    }
+      .in("user_id", chunk)
+      .or(`currently_eligible.eq.true,and(last_suspend_at.is.null,last_breach_at.gt.${graceStart})`),
+  );
+  if (qualScan.error) return apiError(`Qualification scan failed: ${qualScan.error}`, 500);
+  for (const q of qualScan.rows) {
+    // A tier row counts only in a token that still counts for the user.
+    const access = accessByUser.get(q.user_id);
+    if (access && !tierRowTokenCounts(access, q.token_key ?? "hermesos")) continue;
+    const mapped: "operator" | "fleet" = q.tier === "power" ? "fleet" : "operator";
+    const existing = qualByUser.get(q.user_id);
+    // Power outranks Pro when both are present.
+    if (existing === "fleet") continue;
+    qualByUser.set(q.user_id, mapped);
   }
 
   // (e) Apple IAP subscriptions. The App Store lane keeps its own table and
@@ -275,18 +255,18 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   //     Only access-granting statuses count, as in resolveEffectiveSubscription;
   //     'past_due' (retry with no grace), 'expired' and 'revoked' fall through.
   const applePlanByUser = new Map<string, string>();
-  if (userIds.length > 0) {
-    const { data: appleRows, error: appleErr } = await db
+  const appleScan = await scanByUserIds<{ user_id: string; plan: string }>(userIds, (chunk) =>
+    db
       .from("apple_iap_subscriptions")
       .select("user_id, plan")
-      .in("user_id", userIds)
-      .in("status", [...APPLE_ACCESS_STATUSES]);
-    if (appleErr) {
-      return apiError(`Apple subscription scan failed: ${appleErr.message}`, 500);
-    }
-    for (const row of (appleRows ?? []) as Array<{ user_id: string; plan: string }>) {
-      if (isPaidTier(row.plan)) applePlanByUser.set(row.user_id, row.plan);
-    }
+      .in("user_id", chunk)
+      .in("status", [...APPLE_ACCESS_STATUSES]),
+  );
+  if (appleScan.error) {
+    return apiError(`Apple subscription scan failed: ${appleScan.error}`, 500);
+  }
+  for (const row of appleScan.rows) {
+    if (isPaidTier(row.plan)) applePlanByUser.set(row.user_id, row.plan);
   }
 
   // (f) Live yearly $HermesOS subscriptions. A yearly payment is swept out of
@@ -296,25 +276,25 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   //     down to credit_base on every tick, while createInstance (via
   //     resolveEffectiveSubscription) kept provisioning them at the paid tier.
   const yearlyByUser = new Map<string, YearlyEntitlementRow>();
-  if (userIds.length > 0) {
-    const { data: yearlyRows, error: yearlyErr } = await db
+  const yearlyScan = await scanByUserIds<YearlyEntitlementRow & { user_id: string }>(userIds, (chunk) =>
+    db
       .from("yearly_token_subscriptions")
       .select("user_id, tier, expires_at, paid_at")
-      .in("user_id", userIds)
-      .in("status", [...YEARLY_LIVE_STATUSES]);
-    if (yearlyErr) {
-      return apiError(`Yearly subscription scan failed: ${yearlyErr.message}`, 500);
-    }
-    const rowsByUser = new Map<string, YearlyEntitlementRow[]>();
-    for (const row of (yearlyRows ?? []) as Array<YearlyEntitlementRow & { user_id: string }>) {
-      const rows = rowsByUser.get(row.user_id) ?? [];
-      rows.push(row);
-      rowsByUser.set(row.user_id, rows);
-    }
-    for (const [userId, rows] of rowsByUser) {
-      const entitled = pickEntitledYearlySubscription(rows);
-      if (entitled) yearlyByUser.set(userId, entitled);
-    }
+      .in("user_id", chunk)
+      .in("status", [...YEARLY_LIVE_STATUSES]),
+  );
+  if (yearlyScan.error) {
+    return apiError(`Yearly subscription scan failed: ${yearlyScan.error}`, 500);
+  }
+  const rowsByUser = new Map<string, YearlyEntitlementRow[]>();
+  for (const row of yearlyScan.rows) {
+    const rows = rowsByUser.get(row.user_id) ?? [];
+    rows.push(row);
+    rowsByUser.set(row.user_id, rows);
+  }
+  for (const [userId, rows] of rowsByUser) {
+    const entitled = pickEntitledYearlySubscription(rows);
+    if (entitled) yearlyByUser.set(userId, entitled);
   }
 
   // (g) Venice compute-boost eligibility (holds ≥ $199 VVV). Drives the
@@ -331,7 +311,6 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
 
   for (const userId of userIds) {
     const sub = subByUser.get(userId);
-    const snapshot = snapshotsByUser.get(userId);
     const currentTier = tierByUser.get(userId) ?? "credit_base";
     const currentSpec = specByUser.get(userId);
     const qual = qualByUser.get(userId);
@@ -358,8 +337,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
 
     // Pro/Power token qualification is the strongest token signal — it means
     // the user holds enough $HERMES to be entitled to a paid-tier compute
-    // pool. token_tier_qualifications is already grace-aware, so a `true`
-    // here needs no extra grace handling.
+    // pool. qualByUser already includes a row inside its breach grace, so
+    // nothing here needs extra grace handling.
     let desiredTier: TierKey;
     let reason: string;
 
@@ -378,35 +357,9 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     } else if (qual) {
       desiredTier = qual;
       reason = `cron: token-tier qualification ${qual === "fleet" ? "power" : "pro"}`;
-    } else if (
-      snapshot &&
-      qualifiesForTokenBaseTier(accessByUser.get(userId)!, snapshot.balances)
-    ) {
-      desiredTier = "token_base";
-      reason = `cron: balance ${JSON.stringify(snapshot.display)} qualifies`;
     } else {
-      // Below threshold (or no snapshot). Apply grace: hold the current
-      // token-derived tier while the balance has been below the threshold for
-      // less than the grace window; otherwise drop to credit_base. The clock
-      // starts at the first below-threshold read, not the latest snapshot:
-      // the holdings crons re-read every account on a cursor, so the latest
-      // snapshot is always recent and would hold the tier forever.
-      const onTokenTier =
-        currentTier === "token_base" ||
-        currentTier === "operator" ||
-        currentTier === "fleet";
-      const inGrace =
-        onTokenTier &&
-        !!snapshot?.belowSince &&
-        Date.now() - new Date(snapshot.belowSince).getTime() <
-          TOKEN_DOWNGRADE_GRACE_HOURS * 3600 * 1000;
-      if (inGrace) {
-        desiredTier = currentTier as TierKey;
-        reason = "cron: holding tier during downgrade grace";
-      } else {
-        desiredTier = "credit_base";
-        reason = `cron: balance ${JSON.stringify(snapshot?.display ?? {})} below threshold`;
-      }
+      desiredTier = "credit_base";
+      reason = "cron: no paid plan or token-tier qualification";
     }
 
     // Boost only stacks on paid tiers.

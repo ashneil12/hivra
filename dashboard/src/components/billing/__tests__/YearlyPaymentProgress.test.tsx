@@ -232,3 +232,33 @@ describe("YearlyTokenPaymentModal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+describe("token labels follow the payment's token", () => {
+  const hivraQuote = (): YearlyTokenQuotePayload => ({ ...quote(), tokenSymbol: "HIVRA" });
+
+  it("names $HIVRA, not $HermesOS, on a $HIVRA payment in progress", () => {
+    renderProgress({ quote: hivraQuote(), subscription: null });
+    expect(screen.getByText("Yearly $HIVRA · Pro")).toBeInTheDocument();
+    expect(screen.getByText("Send 19,600,000 $HIVRA")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("$HermesOS");
+  });
+
+  it("keeps $HermesOS on a $HermesOS payment", () => {
+    renderProgress({ quote: quote(), subscription: null });
+    expect(screen.getByText("Yearly $HermesOS · Pro")).toBeInTheDocument();
+  });
+
+  it("titles the payment dialog with the quote's token", () => {
+    render(<YearlyTokenPaymentModal isOpen tier="pro" loading={false} error={null} quote={hivraQuote()} onClose={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Pay Pro yearly with $HIVRA" })).toBeInTheDocument();
+    expect(screen.getByText("Pay 1 year with $HIVRA")).toBeInTheDocument();
+    expect(screen.queryByText(/\$HermesOS/)).not.toBeInTheDocument();
+  });
+
+  it("titles the dialog with the account's token while the quote is still loading", () => {
+    render(
+      <YearlyTokenPaymentModal isOpen tier="power" loading error={null} quote={null} onClose={() => {}} tokenUnit="$HIVRA" />
+    );
+    expect(screen.getByRole("dialog", { name: "Pay Power yearly with $HIVRA" })).toBeInTheDocument();
+  });
+});

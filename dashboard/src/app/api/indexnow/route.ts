@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-response";
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { getSiteUrls, SITE_URL } from "@/lib/seo-urls";
 import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
@@ -18,18 +19,43 @@ export async function POST(request: Request) {
   const { userId } = await auth();
 
   const { searchParams } = new URL(request.url);
-  const triggerSecret = searchParams.get("secret");
   const configuredTriggerSecret = process.env.INDEXNOW_TRIGGER_SECRET;
 
-  if (!userId) {
-    if (
-      !configuredTriggerSecret ||
-      typeof triggerSecret !== "string" ||
-      !timingSafeStringEqual(triggerSecret, configuredTriggerSecret)
-    ) {
+  // The trigger secret belongs in a header: a query-param secret lands in
+  // access logs, browser history and Referer headers. Authorization: Bearer
+  // wins, then x-indexnow-secret; the ?secret= param stays for backwards
+  // compatibility with the existing cron caller.
+  const bearerSecret = request.headers
+    .get("authorization")
+    ?.match(/^Bearer\s+(.+)$/i)?.[1]
+    ?.trim();
+  const headerSecret = request.headers.get("x-indexnow-secret")?.trim();
+  const triggerSecret = bearerSecret || headerSecret || searchParams.get("secret");
+
+  // Every caller needs either the trigger secret or an ops admin session. A
+  // signed-in user who is not an ops admin must not be able to push the whole
+  // sitemap to IndexNow.
+  const secretAccepted =
+    !!configuredTriggerSecret &&
+    typeof triggerSecret === "string" &&
+    timingSafeStringEqual(triggerSecret, configuredTriggerSecret);
+
+  if (!secretAccepted) {
+    if (!userId) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
+      );
+    }
+    const user = await currentUser();
+    const isOpsAdmin = isOpsAdminUser({
+      userId,
+      email: verifiedPrimaryEmailOf(user),
+    });
+    if (!isOpsAdmin) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 }
       );
     }
   }

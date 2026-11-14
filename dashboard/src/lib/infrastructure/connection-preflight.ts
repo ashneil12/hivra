@@ -628,7 +628,7 @@ export async function preflightInfrastructureConnection(
     );
     if (!leaseClaimed) return supersededFailure(connectionId, checkedAt);
 
-    const destination = await deps.resolveDestination(connection.endpoint.sshHost);
+    const destination = await deps.resolveDestination(connection.endpoint.sshHost, { userId });
     const input = preflightInput(connection);
     const env = buildUserProxmoxEnvironment(
       {

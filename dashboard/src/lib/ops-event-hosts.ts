@@ -28,6 +28,18 @@ function readIpv4Candidate(value: unknown): string | null {
   return isIpv4Literal(trimmed) ? trimmed : null;
 }
 
+// The ops feed can reference up to 2000 instances, and every id rides in the
+// request URL of an `in` filter, so look them up a few hundred at a time.
+const HOST_LOOKUP_CHUNK_SIZE = 200;
+
+function chunkIds(ids: string[]): string[][] {
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += HOST_LOOKUP_CHUNK_SIZE) {
+    chunks.push(ids.slice(index, index + HOST_LOOKUP_CHUNK_SIZE));
+  }
+  return chunks;
+}
+
 function readHostDetails(details: unknown): string | null {
   if (!details || typeof details !== 'object' || Array.isArray(details)) {
     return null;
@@ -71,29 +83,38 @@ export async function resolveOpsEventHostIpMap(instanceIds: string[]): Promise<M
 
   if (uniqueInstanceIds.length === 0) return resolved;
 
-  const { data: instances, error: instanceError } = await supabaseAdmin
-    .from('hermes_instances')
-    .select('id, host_id, ipv4_address')
-    .in('id', uniqueInstanceIds);
+  const instanceResults = await Promise.all(
+    chunkIds(uniqueInstanceIds).map((ids) => supabaseAdmin!
+      .from('hermes_instances')
+      .select('id, host_id, ipv4_address')
+      .in('id', ids)
+    )
+  );
 
-  if (instanceError || !instances) {
-    return resolved;
+  const typedInstances: OpsInstanceHostRow[] = [];
+  for (const { data: instances, error: instanceError } of instanceResults) {
+    if (instanceError || !instances) {
+      return resolved;
+    }
+    typedInstances.push(...(instances as OpsInstanceHostRow[]));
   }
 
-  const typedInstances = instances as OpsInstanceHostRow[];
   const uniqueHostIds = Array.from(new Set(
     typedInstances
       .map((instance) => instance.host_id?.trim() || '')
       .filter((id) => id.length > 0)
   ));
 
-  const hostIpById = new Map<string, string>();
-  if (uniqueHostIds.length > 0) {
-    const { data: hosts } = await supabaseAdmin
+  const hostResults = await Promise.all(
+    chunkIds(uniqueHostIds).map((ids) => supabaseAdmin!
       .from('hermes_hosts')
       .select('id, ipv4_address')
-      .in('id', uniqueHostIds);
+      .in('id', ids)
+    )
+  );
 
+  const hostIpById = new Map<string, string>();
+  for (const { data: hosts } of hostResults) {
     for (const host of (hosts || []) as OpsHostRow[]) {
       const hostIp = readIpv4Candidate(host.ipv4_address);
       if (hostIp) {

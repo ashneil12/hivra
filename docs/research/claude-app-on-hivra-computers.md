@@ -59,7 +59,9 @@ Re-checked on 2026-10-07 against Anthropic's documents and the npm registry.
 1. **Default: the Claude app on an Ubuntu Desktop computer, full screen** (Path B),
    with the desktop one switch away. It is the real app, so Code tab, diff, worktrees,
    terminal, editor and preview are the real ones. Whether the Code tab works as
-   a signed-in, local session on Linux is **not yet verified**.
+   a signed-in, local session on Linux is **not yet verified**. Since release
+   2026.11.03.1 the app starts in `~/Hivra` and the Code tab's own data
+   (`~/.claude`) is backed up with the app's, so both survive a desktop restart.
 2. **Opt-in, never automatic.** The owner adds the app, sees what it downloads and from
    whom, and signs in themselves.
 3. **Path A stays the lighter alternative** for a Claude Code box, once someone with a
@@ -68,11 +70,16 @@ Re-checked on 2026-10-07 against Anthropic's documents and the npm registry.
 ## What is missing compared with the real desktop app
 
 - Computer use and dictation (Anthropic's Linux beta lacks both).
-- Sound, the clipboard and file transfer: Hivra's stream disables all three.
+- Sound and file transfer: Hivra's stream disables both. The stream's own clipboard is
+  off too; since release 2026.11.03.1 the owner can turn on a clipboard switch on the
+  Desktop strip and move text with Paste in and Copy out.
 - A keyring. The app's sign-in is stored without one. Whether it signs in and stays
   signed in this way is **unverified**.
 - Cowork needs KVM inside the computer: not checked.
-- Typing the sign-in inside the stream, because the clipboard is off.
+- Typing the sign-in inside the stream, unless the owner turns the clipboard switch on.
+- Chromium's sandbox inside the app: it runs with `--no-sandbox` because the contained
+  desktop has Docker's default seccomp profile and no-new-privileges. The VM and the
+  locked-down container are the walls.
 
 ## For the owner to decide with Anthropic before any marketing
 
