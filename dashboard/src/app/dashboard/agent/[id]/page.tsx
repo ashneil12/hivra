@@ -490,8 +490,8 @@ function AuthenticatedSurface({
               <>
                 <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>
                   {connectName === "Agent Zero"
-                    ? "In the Agent Zero app choose “Add remote Instance” and enter:"
-                    : `In the ${connectName} app’s remote instance settings, enter:`}
+                    ? "In the Agent Zero app choose “Add remote” and enter:"
+                    : `In the ${connectName} app’s remote settings, enter:`}
                 </p>
                 {([
                   ["URL", connectPair.url],
