@@ -558,6 +558,13 @@ update them yet.
   latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
+- **Connect links for external apps (`2026.11.14.1`).** A computer's Manage/surface
+  "Connect app" action mints a connect grant on the box (`POST /connect/grant`, bearer only;
+  the box keeps the `sha256("user:pass")` digest in `~/.hivra/connect-grants.json`). The pair
+  signs in through `GET /connect/<user>:<pass>` or Agent Zero's own `POST /login`, so a
+  remote-instance client (the Agent Zero desktop app) attaches as it would to a self-hosted
+  install; `DELETE /connect/grant` revokes all links. Existing computers get it from the
+  connection service update.
 - **Host wake proxy (shipped, not installed).** From `2026.11.13.1` the bundle carries
   `hivra-wake-proxy.py` with its units `hivra-wake-helper.service` (root: route files,
   nap markers, per-VM lock and QMP `cont`, unix sockets only) and

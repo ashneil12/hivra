@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 80310,
-      "sha256": "40d6496af54c6fde53b5ba3c5383fa348cf1406f090efb4406bff7ed74696c79"
+      "bytes": 81289,
+      "sha256": "f54a09bef422d9af3c4306e930d0b02c0edfefa98835ecf7a83a7bce36093c30"
     },
     {
       "path": "README.md",
-      "bytes": 47638,
-      "sha256": "b4df215e59d23a6f0ecf5e6e3cc62e3f5e071f9b3e40a836b4bceefa618bf60e"
+      "bytes": 48207,
+      "sha256": "e80595e57c879193dad52605c3528a935f4e529873786af4f0191557bef4a5a0"
     },
     {
       "path": "VERSION",

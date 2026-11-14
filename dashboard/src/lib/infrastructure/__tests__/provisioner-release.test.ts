@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import release from "../../../../provisioner-releases/2026.11.13.6.json";
+import release from "../../../../provisioner-releases/2026.11.14.1.json";
+import wakeHardeningRelease from "../../../../provisioner-releases/2026.11.13.6.json";
 import discordRelease from "../../../../provisioner-releases/2026.11.13.5.json";
 import doorbellRelease from "../../../../provisioner-releases/2026.11.13.4.json";
 import hostCredentialRelease from "../../../../provisioner-releases/2026.11.13.3.json";
@@ -255,9 +256,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql", "20261114120000_provider_release_admission_2026_11_14_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -840,17 +841,17 @@ it("teaches the host wake doorbell Discord in 2026.11.13.5, changing only the do
 });
 
 it("hardens the host wake proxy, the doorbell and their units in 2026.11.13.6, keeping 2026.11.13.5 admitted, the file count and every guest asset unchanged", () => {
-  expect(release.version).toBe("2026.11.13.6");
+  expect(wakeHardeningRelease.version).toBe("2026.11.13.6");
   // No file added: the bundle stays at the provider worker's file cap (the pins unit is written by the install step).
-  expect(release.files.map(file => file.path)).toEqual(discordRelease.files.map(file => file.path));
-  const changed = release.files.filter(file => file.sha256 !== discordRelease.files.find(entry => entry.path === file.path)!.sha256)
+  expect(wakeHardeningRelease.files.map(file => file.path)).toEqual(discordRelease.files.map(file => file.path));
+  const changed = wakeHardeningRelease.files.filter(file => file.sha256 !== discordRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   expect(changed).toEqual([
     "PROVENANCE.md", "README.md", "VERSION", "hivra-cf-template.service", "hivra-provider-worker.py",
     "hivra-wake-doorbell.py", "hivra-wake-doorbell.service", "hivra-wake-helper.service", "hivra-wake-proxy.py", "hivra-wake-proxy.service",
   ]);
   for (const name of ["test_hivra_wake_proxy.py", "test_hivra_wake_doorbell.py", "test_hivra_wake_doorbell_discord.py"]) {
-    expect(release.files.map(file => file.path)).not.toContain(name);
+    expect(wakeHardeningRelease.files.map(file => file.path)).not.toContain(name);
   }
   // Every daemon keeps restarting: none is ever left failed by systemd's start limit.
   for (const unit of ["hivra-wake-proxy.service", "hivra-wake-helper.service", "hivra-wake-doorbell.service", "hivra-cf-template.service"]) {
@@ -883,10 +884,33 @@ it("hardens the host wake proxy, the doorbell and their units in 2026.11.13.6, k
   }
 });
 
+it("ships external-app connect grants in 2026.11.14.1, keeping 2026.11.13.6 admitted and no new asset", () => {
+  expect(release.version).toBe("2026.11.14.1");
+  expect(release.files.map(file => file.path)).toEqual(wakeHardeningRelease.files.map(file => file.path));
+  const changed = release.files.filter(file => file.sha256 !== wakeHardeningRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Only the box gateway, the worker's release labels and the release documents change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-chat/server.js", "hivra-provider-worker.py"]);
+  const gateway = readFileSync("provisioner/hivra-chat/server.js", "utf8");
+  // Grant minting is management-bearer only; redemption hands out the ordinary surface cookie.
+  expect(gateway).toContain('"/connect/grant"');
+  expect(gateway).toContain("connect-grants.json");
+  for (const version of ["2026.11.13.6", "2026.11.14.1"]) {
+    expect(provisionerSupportsHostCredential(version)).toBe(true);
+    expect(provisionerSupportsWakeProxy(version)).toBe(true);
+    expect(provisionerSupportsWakeDoorbell(version)).toBe(true);
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(version, "nuphos")).toBe(true);
+  }
+});
+
 it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
   // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
-  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
 });
 
 it("keeps the current bundle inside the file count the provider worker accepts in a manifest", () => {
