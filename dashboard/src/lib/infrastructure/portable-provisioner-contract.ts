@@ -8,7 +8,7 @@
 import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
 import agentAppVersions from "../../../provisioner/agent-app-versions.json";
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.14.1";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.15.1";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -598,6 +598,7 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "hivra-chat/llm-application.js",
   "hivra-chat/guarded-files.cjs",
   "hivra-chat/agent-zero-editor.cjs",
+  "hivra-chat/import-state.cjs",
   "hivra-chat/chat-runs.cjs",
   "hivra-chat/server.js",
   "hivra-chat/workspace-access-policy.cjs",
