@@ -633,8 +633,10 @@ describe("Hivra guest surface authentication runtime", () => {
     await close(a0);
   });
 
-  it("rejects the Agent Zero document when neither entry path satisfies the contract", async () => {
-    const a0 = http.createServer((_req, res) => {
+  it("rejects the Agent Zero document when no entry path satisfies the contract", async () => {
+    const seen: string[] = [];
+    const a0 = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end("<!doctype html><html><body>unrecognized</body></html>");
     });
@@ -648,10 +650,87 @@ describe("Hivra guest surface authentication runtime", () => {
     const port = (a0Gateway.address() as AddressInfo).port;
     const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
     const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    // Every canonical path is tried before the contract failure is answered.
     const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
     expect(result.status).toBe(502);
     expect(result.body).toBe("native entry document unavailable");
+    for (const candidate of ["GET /", "GET /index.html", "GET /ui/index"]) {
+      expect(seen).toContain(candidate);
+    }
+    // A document fetch with a browser Accept header gets a retrying page
+    // instead: the app may be healthy under an unrecognised layout.
+    const page = await request("/agent-zero/", { port, headers: { Cookie: cookie, Accept: "text/html" } });
+    expect(page.status).toBe(503);
+    expect(page.body).toContain("does not recognise");
     await close(a0);
+  });
+
+  it("serves the pinned Agent Zero document from the third entry candidate", async () => {
+    const seen: string[] = [];
+    const a0 = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (req.method === "GET" && req.url === "/ui/index") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(A0_APP_DOC);
+      }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(A0_SPLASH_DOC);
+    });
+    trackSockets(a0);
+    const a0Port = await listen(a0);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(a0Port),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('src="/index.js"');
+    expect(result.body).toContain('src="/js/initFw.js"');
+    expect(result.body).not.toContain("APP_DOCUMENT_PATH");
+    for (const candidate of ["GET /", "GET /index.html", "GET /ui/index"]) {
+      expect(seen).toContain(candidate);
+    }
+    await close(a0);
+  });
+
+  it("answers an agent-app upstream failure as updating, not a dead 502", async () => {
+    // No upstream at all: the port is closed, as during an app's own
+    // self-update restart (which never writes the managed updater's lock).
+    const closed = http.createServer((_req, res) => res.end());
+    const deadPort = await listen(closed);
+    await close(closed);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(deadPort),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie, Accept: "text/html" } });
+    expect(result.status).toBe(503);
+    expect(result.body).toContain("being updated");
+    expect(result.headers["retry-after"]).toBe("15");
+    const plain = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(plain.status).toBe(503);
+    expect(plain.body).toContain("being updated");
+    // The same hold covers every agent-app mount, not just Agent Zero: an
+    // Aeon surface whose dashboard port is down answers the same way.
+    const aeonGateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "aeon",
+      AEON_DASHBOARD_PORT: String(deadPort),
+    });
+    extraGateways.push(aeonGateway);
+    const aeonPort = (aeonGateway.address() as AddressInfo).port;
+    const aeonSignin = await bootstrap("/aeon/", FIXTURE_TOKEN, aeonPort);
+    const aeonCookie = aeonSignin.headers["set-cookie"]![0].split(";")[0];
+    const aeon = await request("/aeon/", { port: aeonPort, headers: { Cookie: aeonCookie, Accept: "text/html" } });
+    expect(aeon.status).toBe(503);
+    expect(aeon.body).toContain("Aeon is being updated");
   });
 
   it("redirects a direct hit on the newer bootstrap document path back to the mount root", async () => {

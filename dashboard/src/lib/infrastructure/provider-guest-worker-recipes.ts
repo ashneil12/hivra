@@ -485,6 +485,11 @@ const recipes = Object.freeze({
     workerSha256: "3554ebbcc4a6e92eac4b5850937ba1179c590db300e4071156922d52aa6a6fbb",
     workerSize: 45216,
   }),
+  "2026.11.15.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release holds agent-app surfaces as updating when their own self-updater or a crash window drops the port. The worker only advances its release labels.
+    workerSha256: "15f088a03b0101a20d1bf283f6eecf77076267c9da9af7a7e44fc6ad0075039d",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;
