@@ -241,7 +241,7 @@ for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent
          agent-app-versions.json hivra-agent-app-update.sh \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
-         hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
+         hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/import-state.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
   [ -f "$SRC_DIR/$f" ] || die "missing artifact next to script: $f"
 done
 if [ "$AGENT_KIND" = "linux-desktop" ]; then
@@ -714,7 +714,7 @@ say "5/7  Hivra authenticated access gateway (${AGENT_KIND})"
 # ===========================================================================
 if [ "$AGENT_KIND" != "deepseek-harness" ]; then
 install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 "${BUX_DIR}/hivra-chat"
-for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do
+for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js; do
   install -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0644 \
     "$SRC_DIR/hivra-chat/$f" "${BUX_DIR}/hivra-chat/$f"
 done
@@ -726,7 +726,7 @@ if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" = 1 ]; then
   done
   chown root:root "${BUX_DIR}" "${BUX_DIR}/hivra-chat"
   chmod 0755 "${BUX_DIR}" "${BUX_DIR}/hivra-chat"
-  for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do
+  for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js; do
     chown root:root "${BUX_DIR}/hivra-chat/$f"
   done
 fi

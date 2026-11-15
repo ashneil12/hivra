@@ -260,6 +260,7 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
         "/opt/bux/hivra-chat/llm-application.js",
         "/opt/bux/hivra-chat/guarded-files.cjs",
         "/opt/bux/hivra-chat/agent-zero-editor.cjs",
+        "/opt/bux/hivra-chat/import-state.cjs",
         "/opt/bux/hivra-chat/server.js",
         "/usr/local/bin/hivra-agent-shell",
         "/usr/share/doc/hivra-caddy/LICENSE",

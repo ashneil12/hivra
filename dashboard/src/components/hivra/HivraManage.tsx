@@ -38,6 +38,7 @@ import { HivraGitHubConnect } from "./HivraGitHubConnect";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
+import { HivraImportPanel } from "./manage/HivraImportPanel";
 import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import {
   ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
@@ -1887,6 +1888,16 @@ function HivraManageContent({
                 ? <div><a href={`/api/hivra/agents/${encodeURIComponent(agent.id)}/export`} style={{ ...btnGhost, textDecoration: "none" }}>Export data</a></div>
                 : <CapReasonLine cap={manage.export} />}
             </div>
+          ) : null}
+
+          {manage?.agentImport && agent.chat_url ? (
+            <HivraImportPanel
+              cap={manage.agentImport}
+              boxUrl={agent.chat_url}
+              token={agent.api_token ?? null}
+              agentType={String(agent.type ?? "")}
+              agentName={def?.name ?? agent.name}
+            />
           ) : null}
 
           <ManageNotAvailable items={manage?.notAvailable ?? []} />

@@ -11,6 +11,7 @@
 // permissions, tools and CLI version) is still detected by the page.
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { IMPORTABLE_TYPES } from "@/lib/hivra/agent-import";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { getComputerTemplate } from "@/lib/hivra/computer-catalog";
 import {
@@ -453,6 +454,13 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     contract: kind === "agent",
     export: kind === "agent" && variant !== "digitalocean"
       ? row.status === "running" ? available : blocked("not_running", "Start this agent to export its data.")
+      : null,
+    // Moving the owner's existing agent onto the box needs a running box and a
+    // kind whose runtime knows what to restore (claude/codex/openclaw dotdirs,
+    // Agent Zero's /a0/usr). The box itself reports "unsupported" on older
+    // runtimes, which the panel passes through.
+    agentImport: kind === "agent" && variant !== "digitalocean" && IMPORTABLE_TYPES.has(String(row.type))
+      ? row.status === "running" ? available : blocked("not_running", "Start this agent to move data onto it.")
       : null,
     // Deleting is always possible, including while a computer is being set up.
     destroy: { cap: available, extraWarning: row.computer_substrate === "provider-vm" ? "provider-resources" : null },
