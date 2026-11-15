@@ -544,6 +544,19 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.15.1` builds on `2026.11.14.1` and lets the owner move an existing local
+agent onto a running computer: the box gateway gains `POST /api/import/token` (single-use,
+15-minute `hit_` transfer tokens stored only as sha256 digests, valid for `/api/import`
+alone), `POST /api/import` (a streamed tar.gz state bundle, at most 256 MiB, staged and
+validated before it merges into per-kind state roots — Claude `~/.claude`/`~/.claude.json`,
+Codex `~/.codex`/`~/.agents`, OpenClaw state, Agent Zero `/opt/a0/usr` around a container
+stop/start) and `GET /api/import/status`. Extraction refuses absolute and traversal member
+names, drops links escaping the staging tree and non-regular members, and never restores
+`~/.hivra`, `~/.ssh` or other protected roots; `work/` members land at the agent's home.
+Changed: `hivra-chat/server.js`, new `hivra-chat/import-state.cjs`, plus the documents, the
+version and the provider worker's release labels.
+This source release does not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.14.1` builds on `2026.11.13.6` and lets the owner sign an external app into a
 computer's dashboard surface: the dashboard's Connect app action asks the box for a connect
 grant (`POST /connect/grant`, management bearer only), which keeps only the

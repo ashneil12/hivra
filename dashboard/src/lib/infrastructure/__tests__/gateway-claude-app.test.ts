@@ -103,7 +103,7 @@ describe("gateway Claude app routes", () => {
         if (name === "http") return fakeHttp;
         if (name === "fs") return fakeFs;
         if (name === "child_process") return childProcess;
-        if (["path", "crypto", "net", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
+        if (["path", "crypto", "net", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
       process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: kind }, once: () => undefined, getuid: () => os.userInfo().uid },

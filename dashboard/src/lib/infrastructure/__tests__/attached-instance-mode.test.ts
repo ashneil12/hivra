@@ -57,6 +57,7 @@ describe("attached hivra-chat instance", () => {
         if (name === "fs") return fsShim;
         if (name === "child_process") return { spawn: () => { throw new Error("no process"); }, execFile: () => { throw new Error("no process"); } };
         if (name === "./chat-runs.cjs") return chatRuns;
+        if (name === "./import-state.cjs") return realRequire(name);
         if (["path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },

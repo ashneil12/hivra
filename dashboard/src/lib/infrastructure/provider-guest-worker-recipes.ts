@@ -475,6 +475,11 @@ const recipes = Object.freeze({
     workerSha256: "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a",
     workerSize: 45216,
   }),
+  "2026.11.15.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the box state-import routes (import-state.cjs) and raises the manifest cap one file for it.
+    workerSha256: "562875a1456e837bd27fc110669acfcdbc4e6b7e7f3f7fa3ee2ede1035f2f827",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

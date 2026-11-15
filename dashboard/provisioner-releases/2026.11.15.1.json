@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 81289,
-      "sha256": "f54a09bef422d9af3c4306e930d0b02c0edfefa98835ecf7a83a7bce36093c30"
+      "bytes": 82336,
+      "sha256": "4ef7bc17bd2cfee611a164634d3443b0b21ded4de19359a1437225cb0525fd76"
     },
     {
       "path": "README.md",
-      "bytes": 48207,
-      "sha256": "e80595e57c879193dad52605c3528a935f4e529873786af4f0191557bef4a5a0"
+      "bytes": 48789,
+      "sha256": "b2239b4a16b7285601bc394f1f2d6347ce303387bce0a2062a6af5073e9f9638"
     },
     {
       "path": "VERSION",
@@ -160,7 +160,7 @@
     {
       "path": "hivra-provider-worker.py",
       "bytes": 45216,
-      "sha256": "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a"
+      "sha256": "562875a1456e837bd27fc110669acfcdbc4e6b7e7f3f7fa3ee2ede1035f2f827"
     },
     {
       "path": "hivra-copy-desktop-image.py",

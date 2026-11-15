@@ -89,7 +89,8 @@ describe("Hivra guest surface authentication runtime", () => {
           case "./guarded-files.cjs":
           case "./agent-zero-editor.cjs":
           // Loaded for chat runtimes; it touches the disk only when a run starts.
-          case "./chat-runs.cjs": return createRequire(serverPath)(name);
+          case "./chat-runs.cjs":
+          case "./import-state.cjs": return createRequire(serverPath)(name);
           default: throw new Error(`Unexpected guest dependency: ${name}`);
         }
       },
