@@ -260,7 +260,7 @@ describe("Agent Zero mounted module graph", () => {
         if (name === "path") return path;
         if (name === "net") return net;
         if (name === "crypto") return crypto;
-        if (["./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs"].includes(name)) return realRequire(name);
+        if (["./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "agent-zero",

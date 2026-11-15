@@ -32,7 +32,7 @@ DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
 # session slot and leave those sessions alone when ttyd restarts.
 AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf
 BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service
-ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
+ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js)
 
 # A DeepSeek computer runs its own gateway generation and pinned package under
 # its own service checks, so its owned updater replaces those instead of the
@@ -172,6 +172,7 @@ node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null
 node --check "$WORK/guarded-files.cjs" >/dev/null
 node --check "$WORK/agent-zero-editor.cjs" >/dev/null
+node --check "$WORK/import-state.cjs" >/dev/null
 node --check "$WORK/chat-runs.cjs" >/dev/null
 bash -n "$WORK/hivra-agent-shell"
 bash -n "$WORK/hivra-agent-cli-update.sh"

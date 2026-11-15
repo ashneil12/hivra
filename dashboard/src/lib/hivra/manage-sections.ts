@@ -115,6 +115,8 @@ export interface ManageCapabilities {
   /** What the agent is told about its computer (Computer Contract). */
   contract: boolean;
   export: ManageCap | null;
+  /** Move an existing agent's state onto this box (Advanced, next to export). */
+  agentImport: ManageCap | null;
   destroy: { cap: ManageCap; extraWarning: "provider-resources" | null };
   /** Read-only, public facts for Advanced. Never host names or private addresses. */
   details: ManageDetail[];
@@ -147,7 +149,7 @@ export function manageAwaitsOperation(map: ManageCapabilities | null | undefined
   const caps: Array<ManageCap | null | undefined> = [
     map.power.start, map.power.stop, map.power.restart, map.power.forceStop, map.power.forceRestart,
     map.resize.cap, map.restorePoints,
-    map.folderRecovery, map.privateNetwork, map.connectionServiceUpdate, map.export, map.destroy.cap,
+    map.folderRecovery, map.privateNetwork, map.connectionServiceUpdate, map.export, map.agentImport, map.destroy.cap,
   ];
   return caps.some((cap) => cap?.state === "blocked" && cap.code === "operation_in_progress");
 }

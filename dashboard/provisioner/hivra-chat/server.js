@@ -14,6 +14,7 @@ const crypto = require("crypto");
 const { PROTOCOL: LLM_APPLICATION_PROTOCOL, createLlmApplicationStore, LlmApplicationError } = require("./llm-application.js");
 const { createGuardedFiles } = require("./guarded-files.cjs");
 const { SOURCES: A0_EDITOR_SOURCES, rewriteNativeEditorAsset } = require("./agent-zero-editor.cjs");
+const IMPORTER = require("./import-state.cjs");
 
 const PORT = process.env.HIVRA_CHAT_PORT || 8080;
 const HOME = process.env.HOME || "/home/bux";
@@ -1617,6 +1618,86 @@ function handleUpload(req, res) {
   });
 }
 
+// ---- Move-an-agent imports --------------------------------------------------
+// The owner pushes a .tar.gz state bundle to /api/import, either with the box
+// token (dashboard upload) or with a single-use transfer token minted by
+// POST /api/import/token — that token goes inside the copy-paste prompt the
+// owner's LOCAL agent follows to pack and send itself. The restore runs in
+// the background; GET /api/import/status reports each phase.
+const IMPORT_TOKENS = new Map(); // sha256(raw token) -> expiry ms
+const IMPORT_TOKEN_TTL_MS = 15 * 60 * 1000;
+const IMPORT_MAX = 256 * 1024 * 1024; // compressed bytes
+const IMPORT_SPEC = IMPORTER.specFor(AGENT_KIND, HOME, process.env);
+const importStatus = { state: "idle", detail: "", restored: [], skipped: [], files: 0, error: null, updatedAt: Date.now(), finishedAt: null };
+const IMPORT_BUSY = new Set(["unpacking", "restoring", "restarting"]);
+
+function importTokenDigest(raw) { return crypto.createHash("sha256").update(raw).digest("hex"); }
+function mintImportToken() {
+  const raw = "hit_" + crypto.randomBytes(24).toString("hex");
+  const now = Date.now();
+  for (const [h, exp] of IMPORT_TOKENS) if (exp <= now) IMPORT_TOKENS.delete(h);
+  IMPORT_TOKENS.set(importTokenDigest(raw), now + IMPORT_TOKEN_TTL_MS);
+  return raw;
+}
+// A transfer token is Bearer hit_<48 hex>, good for one upload before it
+// expires. It unlocks /api/import only — never the rest of the gateway.
+function importTokenOk(req) {
+  const m = String(req.headers["authorization"] || "").match(/^Bearer\s+(hit_[a-f0-9]{48})$/i);
+  if (!m) return false;
+  const h = importTokenDigest(m[1]);
+  const exp = IMPORT_TOKENS.get(h);
+  if (!exp || exp <= Date.now()) return false;
+  IMPORT_TOKENS.delete(h);
+  return true;
+}
+function handleImportTokenMint(res) {
+  if (!IMPORT_SPEC) return jsonRes(res, 409, { error: "This agent has no movable state to import." });
+  jsonRes(res, 200, { token: mintImportToken(), expiresAt: new Date(Date.now() + IMPORT_TOKEN_TTL_MS).toISOString() });
+}
+function handleImportStatus(res) {
+  jsonRes(res, 200, { supported: IMPORT_SPEC !== null, ...importStatus });
+}
+function handleImportUpload(req, res) {
+  if (!IMPORT_SPEC) return jsonRes(res, 409, { error: "This agent has no movable state to import." });
+  if (IMPORT_BUSY.has(importStatus.state)) return jsonRes(res, 409, { error: "An import is already running." });
+  const archive = path.join(HOME, ".hivra", "import-" + crypto.randomBytes(6).toString("hex") + ".tar.gz");
+  fs.mkdirSync(path.dirname(archive), { recursive: true });
+  const out = fs.createWriteStream(archive);
+  let size = 0, over = false, failed = false;
+  const fail = (status, error) => { if (!failed) { failed = true; out.destroy(); fs.rmSync(archive, { force: true }); jsonRes(res, status, { error }); } };
+  req.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > IMPORT_MAX && !over) { over = true; fail(413, "bundle too large (>256MB)"); req.destroy(); }
+  });
+  req.on("aborted", () => fail(400, "upload aborted"));
+  req.on("error", () => fail(400, "upload failed"));
+  out.on("error", () => fail(500, "could not store the bundle"));
+  out.on("finish", () => {
+    if (failed) return;
+    jsonRes(res, 202, { ok: true, received: size });
+    Object.assign(importStatus, { state: "unpacking", detail: "Checking the bundle", restored: [], skipped: [], files: 0, error: null, finishedAt: null, updatedAt: Date.now() });
+    setImmediate(async () => {
+      try {
+        const result = await IMPORTER.runImport({
+          archive,
+          spec: IMPORT_SPEC,
+          stagingParent: path.join(HOME, ".hivra"),
+          onPhase: (name, detail) => Object.assign(importStatus, { state: name, detail, updatedAt: Date.now() }),
+        });
+        Object.assign(importStatus, {
+          state: "done", detail: "", restored: result.restored, skipped: result.skipped,
+          files: result.files, removedUnsafe: result.removedUnsafe, error: null,
+          finishedAt: Date.now(), updatedAt: Date.now(),
+        });
+      } catch (e) {
+        Object.assign(importStatus, { state: "error", detail: "", error: String((e && e.message) || e), finishedAt: Date.now(), updatedAt: Date.now() });
+        console.error("hivra-chat: import failed: " + ((e && e.stack) || e));
+      }
+    });
+  });
+  req.pipe(out);
+}
+
 // ---- MCP server management ----------------------------------------------------
 // claude: drive the official `claude mcp` CLI (user scope) and read the result
 // back from ~/.claude.json. codex: prefer `codex mcp`; fall back to editing
@@ -2464,6 +2545,14 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
   if (!authed(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
+  // Newer Agent Zero serves a splash bootstrap at / that installs the real
+  // document fetched from /ui/index. This gateway serves the pinned app
+  // document itself at the mount root; a direct hit on the bootstrap path
+  // would resolve the document's relative assets under /ui/, so send it back.
+  if ((req.method === "GET" || req.method === "HEAD") && ["/ui/index", "/ui/index.html"].includes(apath.split("?")[0])) {
+    res.writeHead(302, { Location: "/agent-zero/", "Cache-Control": "no-store" });
+    return res.end();
+  }
   const editorPath = apath.split("?")[0];
   const editorAsset = (req.method === "GET" || req.method === "HEAD") && Object.hasOwn(A0_EDITOR_SOURCES, editorPath);
   const editor = editorContext || (editorAsset ? { done: false, cancel: null, timer: null } : null);
@@ -2526,6 +2615,13 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     const headers = Object.assign({}, req.headers, { host: "127.0.0.1:" + AGENT_ZERO_PORT });
     const requestSessionRevision = _a0SessionRevision;
     const entryDocument = (req.method === "GET" || req.method === "HEAD") && ["/", "/index.html"].includes(apath.split("?")[0]);
+    // Newer Agent Zero serves a splash bootstrap at / and the pinned app
+    // document at /index.html (and /ui/index). Older serves the document at /
+    // directly. Try the requested path first, then the canonical document
+    // path; only documents satisfying the pinned entry transform are served.
+    const entryFallback = apath.split("?")[0] === "/"
+      ? "/index.html" + (apath.includes("?") ? apath.slice(apath.indexOf("?")) : "")
+      : null;
     if (entryDocument || editorAsset || csrfResponse) {
       headers["accept-encoding"] = "identity";
       // The transformed representation has different validators/length. Always
@@ -2540,7 +2636,8 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (nativeCookie) headers.cookie = nativeCookie; else delete headers.cookie;
     // HEAD still validates the exact upstream body before describing the
     // transformed representation. Neither path may bypass source pinning.
-    const p = http.request({ host: "127.0.0.1", port: AGENT_ZERO_PORT, method: editorAsset ? "GET" : req.method, path: apath, headers }, (pr) => {
+    const issue = (upstreamPath) => {
+    const p = http.request({ host: "127.0.0.1", port: AGENT_ZERO_PORT, method: editorAsset ? "GET" : req.method, path: upstreamPath, headers }, (pr) => {
       if (editor && editor.done) { pr.destroy(); return; }
       if (csrf && csrf.done) { pr.destroy(); return; }
       if (csrfResponse) pr.once("error", () => rejectCsrf("upstream-error"));
@@ -2668,7 +2765,15 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
         pr.once("end", () => {
           if (done) return;
           const html = a0CanonicalEntryHtml(Buffer.concat(chunks).toString("utf8"));
-          if (html === null) return fail("entry-contract");
+          if (html === null) {
+            // The splash bootstrap is not the app document; retry once against
+            // the canonical document path newer versions expose.
+            if (entryFallback && upstreamPath !== entryFallback) {
+              done = true; clearTimeout(timer); pr.destroy();
+              return issue(entryFallback);
+            }
+            return fail("entry-contract");
+          }
           done = true; clearTimeout(timer);
           h["content-length"] = Buffer.byteLength(html);
           res.writeHead(200, h); res.end(html);
@@ -2688,6 +2793,8 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (csrf) csrf.cancel = () => p.destroy();
     if (editor) editor.cancel = () => p.destroy();
     if (req.method === "GET" || req.method === "HEAD") p.end(); else req.pipe(p);
+    };
+    issue(apath);
   };
   if (_a0Cookie) doProxy(); else loginThen(doProxy);
 }
@@ -4400,6 +4507,12 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/git/checkout") return authed(req) ? readBody(req, (b) => handleGitCheckout(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Uploads (chat attachments).
   if (req.method === "POST" && u === "/api/upload") return authed(req) ? handleUpload(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  // Moving an existing agent here: mint a one-time transfer token (the prompt
+  // the owner's local agent follows), accept the state bundle, and report the
+  // restore's progress. /api/import also honors single-use hit_ tokens.
+  if (req.method === "POST" && u === "/api/import/token") return authed(req) ? handleImportTokenMint(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/import/status") return authed(req) ? handleImportStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/import") return (authed(req) || importTokenOk(req)) ? handleImportUpload(req, res) : jsonRes(res, 401, { error: "unauthorized" });
   // MCP server management (Manage tab).
   if (req.method === "GET" && u === "/api/mcp") return authed(req) ? handleMcpList(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/mcp") return authed(req) ? readBody(req, (b) => handleMcpAdd(res, b)) : jsonRes(res, 401, { error: "unauthorized" });

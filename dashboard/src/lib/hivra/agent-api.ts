@@ -1075,6 +1075,46 @@ export async function writeBoxFile(boxUrl: string, file: string, content: string
     return { ok: true, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
+// ---- Moving an existing agent onto this box --------------------------------
+// The Manage "Move an agent from your device" flow: mint a single-use transfer
+// token for the prompt the owner pastes into their local agent, track the
+// restore, or push a bundle the owner already has. Everything goes
+// browser-to-box direct — the bundle never passes through Vercel.
+export interface BoxImportStatus {
+  supported: boolean;
+  state: "idle" | "unpacking" | "restoring" | "restarting" | "done" | "error";
+  detail?: string;
+  restored?: string[];
+  skipped?: string[];
+  files?: number;
+  error?: string | null;
+  finishedAt?: number;
+}
+export async function boxImportToken(boxUrl: string, token?: string | null): Promise<{ token: string; expiresAt: string }> {
+  const r = await fetch(`${boxBase(boxUrl)}/api/import/token`, { method: "POST", headers: boxHeaders(token) });
+  const j = (await r.json().catch(() => ({}))) as { token?: string; expiresAt?: string; error?: string };
+  if (!r.ok || !j.token || !j.expiresAt) throw new Error(j.error || `HTTP ${r.status}`);
+  return { token: j.token, expiresAt: j.expiresAt };
+}
+export async function boxImportStatus(boxUrl: string, token?: string | null): Promise<BoxImportStatus | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/import/status`, { cache: "no-store", headers: boxHeaders(token) });
+    if (!r.ok) return null;
+    return (await r.json()) as BoxImportStatus;
+  } catch { return null; }
+}
+export async function boxImportPush(boxUrl: string, data: Blob, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", ...boxHeaders(token) },
+      body: data,
+    });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
 export async function listBoxSkills(boxUrl: string, token?: string | null): Promise<BoxSkill[]> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/skills`, { cache: "no-store", headers: boxHeaders(token) });

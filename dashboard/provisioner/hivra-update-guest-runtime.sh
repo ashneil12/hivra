@@ -120,7 +120,7 @@ release_lifecycle_lock() {
 [ "$(qm status "$VMID" 2>/dev/null | awk '{print $2}')" = "running" ] \
   || { echo "VMID $VMID must be running before its runtime can be updated" >&2; exit 1; }
 
-ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
+ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js)
 for asset in "${ASSETS[@]}"; do
   source="$PROVISIONER_DIR/hivra-chat/$asset"
   [ -f "$source" ] && [ ! -L "$source" ] \

@@ -544,6 +544,31 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+
+Release `2026.11.15.2` builds on `2026.11.15.1` and lets the owner move an existing local
+agent onto a running computer: the box gateway gains `POST /api/import/token` (single-use,
+15-minute `hit_` transfer tokens stored only as sha256 digests, valid for `/api/import`
+alone), `POST /api/import` (a streamed tar.gz state bundle, at most 256 MiB, staged and
+validated before it merges into per-kind state roots — Claude `~/.claude`/`~/.claude.json`,
+Codex `~/.codex`/`~/.agents`, OpenClaw state, Agent Zero `/opt/a0/usr` around a container
+stop/start) and `GET /api/import/status`. Extraction refuses absolute and traversal member
+names, drops links escaping the staging tree and non-regular members, and never restores
+`~/.hivra`, `~/.ssh` or other protected roots; `work/` members land at the agent's home.
+Changed: `hivra-chat/server.js`, new `hivra-chat/import-state.cjs`, plus the documents, the
+version and the provider worker's release labels.
+This source release does not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.15.1` builds on `2026.11.14.1` and keeps the Agent Zero surface working when
+the container self-updates: upstream `v2.15`+ serves a splash bootstrap at `/` that installs the
+real document from `/ui/index`, so the box gateway (`a0Proxy`) now falls back from `/` to the
+canonical `/index.html` document and still serves only documents that satisfy the pinned
+index.js/initFw.js entry transform — never the splash, whose root-scope service worker would
+control the whole box origin. A direct hit on `/agent-zero/ui/index` redirects to the mount root
+because the document's relative assets would resolve under `/ui/`. Changed:
+`hivra-chat/server.js`, plus the documents, the version and the provider worker's release
+labels; no file is added. This source release does not deploy, install, enable or start anything
+on a host or computer.
+
 Release `2026.11.14.1` builds on `2026.11.13.6` and lets the owner sign an external app into a
 computer's dashboard surface: the dashboard's Connect app action asks the box for a connect
 grant (`POST /connect/grant`, management bearer only), which keeps only the

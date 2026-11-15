@@ -452,6 +452,15 @@ describe("manageCapabilitiesFor", () => {
     expect(map("digitalocean").export).toBeNull();
   });
 
+  it("offers Move an agent for importable agent kinds only, once running", () => {
+    expect(map("codex").agentImport).toEqual({ state: "available" });
+    expect(map("claude").agentImport).toEqual({ state: "available" });
+    expect(manageCapabilitiesFor({ ...rows.codex, status: "stopped" }, { preparedMatch: true }).agentImport).toMatchObject({ state: "blocked" });
+    expect(map("aeon").agentImport).toBeNull();
+    expect(map("ubuntu").agentImport).toBeNull();
+    expect(map("digitalocean").agentImport).toBeNull();
+  });
+
   it("keeps folder recovery to enrolled Ubuntu desktops", () => {
     expect(map("ubuntu").folderRecovery).toEqual({ state: "available" });
     expect(map("ubuntuUnbound").folderRecovery).toMatchObject({ state: "unavailable", code: "not_bound" });

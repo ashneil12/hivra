@@ -121,7 +121,7 @@ describe("gateway agent CLI report", () => {
             },
           };
         }
-        if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
+        if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
       process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", CLAUDE_BIN: bin, CODEX_BIN: bin, HIVRA_AGENT_CLI_LOCK: lock, HIVRA_AGENT_CLI_STATUS: status }, once: () => undefined },
