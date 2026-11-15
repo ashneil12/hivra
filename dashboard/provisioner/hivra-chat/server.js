@@ -4545,9 +4545,11 @@ const server = http.createServer((req, res) => {
     // Agent Zero's component loader creates blob modules. Their static imports
     // intentionally arrive without Referer; only these explicit static asset
     // namespaces and their exact shared /index.js entry may use that route,
-    // never arbitrary root files, management APIs or writes.
+    // never arbitrary root files, management APIs or writes. Plugin web UIs
+    // (e.g. tailscale_manager) import their modules from the persisted
+    // /usr/plugins/<plugin>/webui/ tree the same way.
     const nativeStatic = (req.method === "GET" || req.method === "HEAD")
-      && (u === "/index.js" || /^\/(components|plugins|vendor|js|extensions\/webui)\//.test(u));
+      && (u === "/index.js" || /^\/(components|plugins|vendor|js|usr\/plugins|extensions\/webui)\//.test(u));
     if (nativeStatic) {
       // Native component/blob loaders resolve imports against location.origin.
       // Keep their URL identity at root, matching the two HTML entry scripts.
