@@ -544,6 +544,17 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+Release `2026.11.15.1` builds on `2026.11.14.1` and keeps the Agent Zero surface working when
+the container self-updates: upstream `v2.15`+ serves a splash bootstrap at `/` that installs the
+real document from `/ui/index`, so the box gateway (`a0Proxy`) now falls back from `/` to the
+canonical `/index.html` document and still serves only documents that satisfy the pinned
+index.js/initFw.js entry transform — never the splash, whose root-scope service worker would
+control the whole box origin. A direct hit on `/agent-zero/ui/index` redirects to the mount root
+because the document's relative assets would resolve under `/ui/`. Changed:
+`hivra-chat/server.js`, plus the documents, the version and the provider worker's release
+labels; no file is added. This source release does not deploy, install, enable or start anything
+on a host or computer.
+
 Release `2026.11.14.1` builds on `2026.11.13.6` and lets the owner sign an external app into a
 computer's dashboard surface: the dashboard's Connect app action asks the box for a connect
 grant (`POST /connect/grant`, management bearer only), which keeps only the

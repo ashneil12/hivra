@@ -475,6 +475,11 @@ const recipes = Object.freeze({
     workerSha256: "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a",
     workerSize: 45216,
   }),
+  "2026.11.15.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Agent Zero's pinned app document through the newer splash layout. The worker only advances its release labels.
+    workerSha256: "48b7c4637d228f9bff6e909dfa996f0822172e560194e78bf79be21d9f6fd635",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;
