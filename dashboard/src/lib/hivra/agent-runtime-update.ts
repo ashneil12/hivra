@@ -28,6 +28,8 @@ import {
   releaseHivraAgentOperation,
 } from "./agent-operation-store";
 import { isPreparedProfile, runtimeUpdateRefusal } from "./lifecycle-support";
+import { isAgentAwake } from "./agent-sleep-store";
+import { wakeForUserAction } from "./sleep-aware";
 import {
   lifecycleActivityCredential,
   providerFailureDetail,
@@ -72,7 +74,8 @@ export type HivraAgentRuntimeUpdateFailureCode =
   | "not_running"
   | "busy"
   | "unverified"
-  | "superseded";
+  | "superseded"
+  | "asleep";
 
 export type HivraAgentRuntimeUpdateOutcome =
   | { ok: true; agentCli: AgentCliUpdateReport | null; agentApp: AgentAppUpdateReport | null }
@@ -140,6 +143,16 @@ async function updateInPlace(input: RuntimeUpdateInput): Promise<HivraAgentRunti
     || agent.computer_substrate === "provider-vm"
     || (agent.type === "deepseek-harness" && trigger === "auto")) {
     return failure("unsupported", 409, "This computer can't update its connection service here. Nothing was changed.");
+  }
+
+  // A sleeping computer cannot take the update. The owner's own request wakes it;
+  // the automatic sweep never does (it only selects awake computers), so one that
+  // fell asleep since is left for its next run.
+  if (!isAgentAwake(agent)) {
+    if (trigger === "auto") return failure("asleep", 409, "This computer is asleep, so it was not updated.");
+    const wake = await wakeForUserAction(agent);
+    if (!wake.ok) return failure("asleep", wake.status === 402 ? 402 : 503, wake.message);
+    if (wake.cold) return failure("not_running", 409, "Start this computer before updating its connection service.");
   }
 
   const prepared = await resolveHivraLifecycleTarget({ userId, agent, action: "update_runtime", source });

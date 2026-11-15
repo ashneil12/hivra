@@ -9,6 +9,7 @@
 #   hivra-agent-app-update.sh agent-zero sha256:<64 hex>
 #   hivra-agent-app-update.sh hermes latest
 #   hivra-agent-app-update.sh openbot latest
+#   hivra-agent-app-update.sh nuphos latest
 #
 # Hermes is the exception: it has no Hivra pin and is never rebuilt or
 # rolled back by Hivra. "hermes latest" waits for the same idle moment, holds
@@ -21,6 +22,13 @@
 # image, and only if it is a new one waits for the same idle moment, copies
 # OpenBot's database aside, restarts on the new image and checks it answers
 # with the new release; on failure the previous image and database go back.
+#
+# Nuphos works the same way: "nuphos latest" pulls the latest Claude Code
+# runtime image Nuphos publishes, and only if it is a new one waits until no
+# Nuphos conversation has been active, copies the runtime's home volume (its
+# console password, team connections and the agent's sign-in) aside, restarts
+# on the new image and checks the console answers with the new release; on
+# failure the previous image and home go back.
 #
 # hivra-update-guest-runtime.sh starts it as a transient systemd unit, so a slow
 # download or build never holds the dashboard's update request. It first
@@ -45,7 +53,8 @@ case "$NAME" in
   agent-zero) [[ "$TARGET" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid Agent Zero image digest" >&2; exit 64; } ;;
   hermes) [ "$TARGET" = latest ] || { echo "Hermes updates to latest only" >&2; exit 64; } ;;
   openbot) [ "$TARGET" = latest ] || { echo "OpenBot updates to latest only" >&2; exit 64; } ;;
-  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION | hermes|openbot latest" >&2; exit 64 ;;
+  nuphos) [ "$TARGET" = latest ] || { echo "Nuphos updates to latest only" >&2; exit 64; } ;;
+  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION | hermes|openbot|nuphos latest" >&2; exit 64 ;;
 esac
 
 # Fixed guest paths; the overrides exist only for the offline test fixture.
@@ -119,6 +128,16 @@ case "$NAME" in
     OB_KEY_FILE="$AGENT_HOME/.hivra/openbot-intelligence-key"
     OB_VOLUME_DIR="${HIVRA_OPENBOT_VOLUME_DIR:-/var/lib/docker/volumes/hivra-openbot-data/_data}"
     OB_DATA_BACKUP="$OB_ROOT/data.hivra-update-backup"
+    NEED_FREE_MB=4096
+    ;;
+  nuphos)
+    UNIT=hivra-nuphos.service
+    IMAGE_REPO=ghcr.io/nuphos/runtime
+    NU_TAG=latest-claude-code
+    NU_ROOT="${HIVRA_NUPHOS_ROOT:-/opt/nuphos}"
+    NU_PORT="${HIVRA_NUPHOS_PORT:-3102}"
+    NU_VOLUME_DIR="${HIVRA_NUPHOS_VOLUME_DIR:-/var/lib/docker/volumes/hivra-nuphos-home/_data}"
+    NU_HOME_BACKUP="$NU_ROOT/home.hivra-update-backup"
     NEED_FREE_MB=4096
     ;;
 esac
@@ -211,6 +230,9 @@ installed_version() {
     openbot)
       openbot_image_version "$(head -n 1 "$OB_ROOT/image" 2>/dev/null || true)"
       ;;
+    nuphos)
+      nuphos_image_version "$(head -n 1 "$NU_ROOT/image" 2>/dev/null || true)"
+      ;;
     agent-zero)
       local ref
       ref="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)"
@@ -238,6 +260,14 @@ openbot_image_version() {
   [[ "$image" =~ ^ghcr\.io/copilotkit/openbot@sha256:[0-9a-f]{64}$ ]] || return 1
   docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" 2>/dev/null \
     | sed -n 's/^OPENBOT_BUILD_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1
+}
+
+# The x.y.z release a Nuphos runtime image names (its OPENAB_RUNTIME_VERSION).
+nuphos_image_version() {
+  local image="$1"
+  [[ "$image" =~ ^ghcr\.io/nuphos/runtime@sha256:[0-9a-f]{64}$ ]] || return 1
+  docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" 2>/dev/null \
+    | sed -n 's/^OPENAB_RUNTIME_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1
 }
 
 # ── per app: is anything using it? ──────────────────────────────────────────
@@ -307,6 +337,12 @@ app_working() {
     openbot)
       # OpenBot keeps its work in its database; use through Hivra is the signal.
       return 1
+      ;;
+    nuphos)
+      # People chat from the Nuphos apps, not through Hivra: a conversation
+      # writes to its own home under the runtime's volume while a turn runs.
+      [ -d "$NU_VOLUME_DIR/.nuphos/session-homes" ] || return 1
+      python3 -I -c "$CHANGED_SINCE_PY" "$NU_VOLUME_DIR/.nuphos/session-homes" '*' "$since"
       ;;
     agent-zero)
       # A scheduled task marked running, or a chat that saved a step recently.
@@ -760,8 +796,90 @@ run_openbot() {
   exit 1
 }
 
+# Nuphos: pull the latest Claude Code runtime; nothing to do when it is the
+# image running. Otherwise wait until no conversation is active, hold the
+# surface, copy the runtime's home aside, restart on the new image and check
+# the console answers with the new release; on failure put both back.
+nuphos_write_image() {
+  printf '%s\n' "$1" > "$NU_ROOT/image.next"
+  chmod 0600 "$NU_ROOT/image.next"
+  mv -f -- "$NU_ROOT/image.next" "$NU_ROOT/image"
+}
+nuphos_healthy() {
+  local version="$1" deadline=$(( $(date +%s) + HEALTH_SECONDS ))
+  while :; do
+    if systemctl is-active --quiet "$UNIT" && [ "$(http_code "http://127.0.0.1:$NU_PORT/")" = 200 ]; then
+      sleep "$HEALTH_POLL_SECONDS"
+      if systemctl is-active --quiet "$UNIT" && [ "$(installed_version || true)" = "$version" ]; then return 0; fi
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep "$HEALTH_POLL_SECONDS"
+  done
+}
+run_nuphos() {
+  local old_image new_image new_version
+  [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
+  old_image="$(head -n 1 "$NU_ROOT/image" 2>/dev/null || true)"
+  FROM="$(installed_version || true)"
+  if [ "$(free_mb "$NU_ROOT")" -lt "$NEED_FREE_MB" ]; then write_status failed no_space; exit 1; fi
+  write_status downloading
+  if ! bounded 3600 docker pull "$IMAGE_REPO:$NU_TAG" >/dev/null 2>&1 </dev/null; then
+    write_status failed download_failed; exit 1
+  fi
+  new_image="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_REPO:$NU_TAG" 2>/dev/null \
+    | grep -m1 -E "^$IMAGE_REPO@sha256:[0-9a-f]{64}$" || true)"
+  new_version="$(nuphos_image_version "$new_image" || true)"
+  if [ -z "$new_image" ] || [ -z "$new_version" ]; then write_status failed download_failed; exit 1; fi
+  if [ "$new_image" = "$old_image" ]; then
+    write_record "$FROM"
+    write_status done
+    exit 0
+  fi
+  write_status waiting
+  wait_until_idle
+  write_status installing
+  systemctl stop "$UNIT" || true
+  rm -rf -- "$NU_HOME_BACKUP"
+  if [ -d "$NU_VOLUME_DIR" ] && ! cp -a -- "$NU_VOLUME_DIR" "$NU_HOME_BACKUP"; then
+    rm -rf -- "$NU_HOME_BACKUP"
+    systemctl start "$UNIT" || true
+    release_lock
+    write_status failed no_space
+    exit 1
+  fi
+  nuphos_write_image "$new_image"
+  systemctl start "$UNIT" || true
+  if nuphos_healthy "$new_version"; then
+    release_lock
+    rm -rf -- "$NU_HOME_BACKUP"
+    if [ -n "$old_image" ] && [ "$old_image" != "$new_image" ]; then docker image rm "$old_image" >/dev/null 2>&1 || true; fi
+    write_record "$new_version"
+    write_status done
+    exit 0
+  fi
+  # The new release did not come up: the previous image on its own home.
+  systemctl stop "$UNIT" || true
+  if [ -d "$NU_HOME_BACKUP" ]; then
+    rm -rf -- "$NU_VOLUME_DIR.hivra-replaced"
+    if [ -d "$NU_VOLUME_DIR" ]; then mv -- "$NU_VOLUME_DIR" "$NU_VOLUME_DIR.hivra-replaced"; fi
+    mv -- "$NU_HOME_BACKUP" "$NU_VOLUME_DIR"
+  fi
+  [ -z "$old_image" ] || nuphos_write_image "$old_image"
+  systemctl start "$UNIT" || true
+  release_lock
+  if [ -n "$FROM" ] && nuphos_healthy "$FROM"; then
+    write_record "$FROM"
+    write_status rolled_back install_failed
+  else
+    write_record "$(installed_version || true)"
+    write_status failed install_failed
+  fi
+  exit 1
+}
+
 [ "$NAME" != hermes ] || run_hermes
 [ "$NAME" != openbot ] || run_openbot
+[ "$NAME" != nuphos ] || run_nuphos
 
 # A swap cut short (a reboot) left its journal behind. If the new version is
 # the one running and it answers, the swap finished in all but name: keep it.

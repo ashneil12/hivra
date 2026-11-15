@@ -472,7 +472,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, reco
 
         <div style={{ ...manageMuted, fontSize: 11.5 }}>
           {unpinned && !hermes
-            ? `OpenBot is the official release from CopilotKit. Hivra doesn't change it or pin a version; Update installs the newest release.`
+            ? app === "nuphos"
+              ? `Nuphos is the official agent from its makers. Hivra doesn't change it or pin a version; Update installs the newest release.`
+              : `OpenBot is the official release from CopilotKit. Hivra doesn't change it or pin a version; Update installs the newest release.`
             : hermes
             ? <>Hermes is the official Hermes Agent, installed and updated by Hermes&apos;s own installer and updater. Hivra doesn&apos;t change it or pin a version. To update it yourself, run <code>{HERMES_TERMINAL_UPDATE}</code> in Terminal.</>
             : app

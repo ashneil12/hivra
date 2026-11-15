@@ -15,7 +15,8 @@ import { matchesMedia, useMediaQuery } from "@/lib/client/media-query";
 import posthog from "posthog-js";
 import { PanelLeft, Plus, RotateCcw } from "lucide-react";
 
-import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
+import { agentSleepUiEnabled } from "@/lib/hivra/agent-sleep-ui";
+import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, wakeAgent, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
 import { getGoal } from "@/lib/hivra/agent-identity";
 import { firstMessageStarters } from "@/lib/hivra/first-message-starters";
 import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
@@ -1031,6 +1032,18 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  async (sessionId: string, runId: string, turn: TurnHandle, post: (signal: AbortSignal) => Promise<Response>, onAccepted?: () => void): Promise<TurnEnd> => {
  let resp: Response;
  let updatingDetail: { error?: unknown } | null = null;
+ // A computer that was asleep when the message went out answers nothing (or
+ // 503). Wake it and send again, once. Only where sleep is switched on.
+ const wakeId = agentSleepUiEnabled() ? (computerId || instanceId || "") : "";
+ let wakeTried = false;
+ const wakeThenRetry = async (): Promise<boolean> => {
+ wakeTried = true;
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, pending: "Waking up your agent. Your message will send in a moment." }));
+ const woke = await wakeAgent(wakeId);
+ const retry = woke.state === "awake" && turn.isCurrent() && !turn.controller.signal.aborted;
+ if (!retry) updateRunMessage(sessionId, runId, (m) => (m.pending ? { ...m, pending: undefined } : m));
+ return retry;
+ };
  for (let attempt = 0; ; attempt += 1) {
  try {
  resp = await post(turn.controller.signal);
@@ -1039,6 +1052,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // User stops invalidate the turn before aborting. Any current failure
  // here is an unexpected transport error.
  if ((e as Error).name === "AbortError") return { kind: "aborted" };
+ if (wakeId && !wakeTried && await wakeThenRetry()) continue;
+ if (!turn.isCurrent()) return { kind: "superseded" };
  // The request may have reached the box before the connection failed.
  const recovered = await followRun(sessionId, runId, turn.isCurrent, turn.controller.signal, 2);
  if (recovered.kind === "superseded") return recovered;
@@ -1051,6 +1066,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // The computer is moving its agent CLI to a new version: the message waits
  // (the same runId, so a retry can never start it twice) and goes out again.
  const detail = (await resp.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
+ if (!turn.isCurrent()) return { kind: "superseded" };
+ if (detail?.code !== "agent_updating" && wakeId && !wakeTried && await wakeThenRetry()) continue;
  if (!turn.isCurrent()) return { kind: "superseded" };
  if (detail?.code !== "agent_updating" || attempt >= AGENT_UPDATING_RETRY_MS.length) { updatingDetail = detail; break; }
  const cli = agentKind === "codex" ? "Codex" : "Claude Code";
@@ -1081,7 +1098,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
  return { kind: "settled" };
  },
- [agentKind, finalizeRun, followRun, readRunStream, updateRunMessage],
+ [agentKind, computerId, finalizeRun, followRun, instanceId, readRunStream, updateRunMessage],
  );
 
  // `from` names a queued message going out: it goes to its own conversation with

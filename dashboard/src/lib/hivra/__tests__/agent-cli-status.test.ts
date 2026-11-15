@@ -100,7 +100,7 @@ describe("agentSoftwareSubject", () => {
 });
 
 describe("agentSoftwareSubject on My cloud", () => {
-  it.each(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot"])("covers a My cloud %s agent", (type) => {
+  it.each(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos"])("covers a My cloud %s agent", (type) => {
     expect(agentSoftwareSubject({ type, computer_substrate: "provider-vm" })).toMatchObject({ type });
   });
 
@@ -358,6 +358,34 @@ describe("OpenBot (updated to upstream's latest release, never pinned by Hivra)"
     expect(parseAgentAppReport("HIVRA_AGENT_APP name=openbot version=1.0.2 target=latest state=scheduled"))
       .toEqual({ name: "openbot", version: "1.0.2", target: "latest", state: "scheduled" });
     expect(parseAgentAppReport("HIVRA_AGENT_APP name=openbot version=1.0.2 target=1.0.3 state=scheduled")).toBeNull();
+  });
+
+  it("shows the installed version with nothing to be behind", () => {
+    expect(view(base)).toEqual({ kind: "current", installed: "1.0.2" });
+    expect(view(base, "stopped")).toEqual({ kind: "not_running" });
+    expect(view(null)).toEqual({ kind: "checking" });
+    expect(agentSoftwareBadge(view(base))).toBeNull();
+  });
+});
+
+describe("Nuphos (updated to the newest runtime release, never pinned by Hivra)", () => {
+  const nuphos = agentSoftwareSubject({ type: "nuphos", computer_substrate: "proxmox-kvm" }) as AgentSoftwareSubject;
+  const view = (record: AgentSoftwareRecord | null, status = "running") =>
+    deriveAgentSoftware({ subject: nuphos, status, tested: null, record, now: NOW });
+  const base = { observation: "reported", installed_version: "1.0.2", observed_at: ago(MIN) } as const;
+
+  it("is a covered app agent that reports on its own gateway kind", () => {
+    expect(nuphos).toEqual({ type: "nuphos", cli: null, app: "nuphos", software: "nuphos", gatewayKind: "nuphos" });
+  });
+
+  it("reports an x.y.z version and only `latest` as its update target", () => {
+    expect(isAgentSoftwareVersion("nuphos", "1.0.2")).toBe(true);
+    expect(isAgentSoftwareVersion("nuphos", "latest")).toBe(false);
+    expect(isAgentSoftwareTarget("nuphos", "latest")).toBe(true);
+    expect(isAgentSoftwareTarget("nuphos", "1.0.3")).toBe(false);
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=nuphos version=1.0.2 target=latest state=scheduled"))
+      .toEqual({ name: "nuphos", version: "1.0.2", target: "latest", state: "scheduled" });
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=nuphos version=1.0.2 target=1.0.3 state=scheduled")).toBeNull();
   });
 
   it("shows the installed version with nothing to be behind", () => {

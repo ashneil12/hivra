@@ -47,7 +47,8 @@ export function nativeCliAgentRequest(input: {
   };
 }
 
-/** OpenClaw, Agent Zero, OpenBot, Aeon, DeepSeek Harness and Hermes (as a Hivra
+/** OpenClaw, Agent Zero, OpenBot, Nuphos (no Hivra model: it signs in to the
+ * owner's own Claude account inside Nuphos), Aeon, DeepSeek Harness and Hermes (as a Hivra
  * computer). Hivra credits set `managedVenice`; OpenClaw
  * and Agent Zero have no connect step, so their credit key is minted at launch
  * from a managed Venice selection. Aeon sets its credits up when GitHub is
@@ -55,7 +56,7 @@ export function nativeCliAgentRequest(input: {
  * the `llm` block they are given (credits or the owner's Venice key); Hermes
  * set up inside itself sends none. */
 export function dashboardAgentRequest(input: {
-  type: "openclaw" | "agent-zero" | "openbot" | "aeon" | "deepseek-harness" | "hermes";
+  type: "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | "hermes";
   name: string;
   cpu: number;
   ram: number;
@@ -77,7 +78,8 @@ export function dashboardAgentRequest(input: {
     cpu: input.cpu,
     ram: input.ram,
     browser: input.browser,
-    managedVenice: Boolean(input.credits),
+    // Nuphos never uses Hivra models: it signs in to the owner's own Claude account.
+    managedVenice: input.type !== "nuphos" && Boolean(input.credits),
     ...(llm ? { llm } : {}),
     deployment: input.deployment,
   };

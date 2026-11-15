@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { LocalBridgePanel } from "@/components/hivra/LocalBridgePanel";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -56,6 +57,7 @@ function computerState(computer: HivraAgent): ComputerState {
 
 function statusTone(state: ComputerState): string {
   if (state === "running") return styles.running;
+  if (state === "asleep" || state === "waking") return styles.asleep;
   if (state === "error") return styles.error;
   if (state === "provisioning" || state === "updating") return styles.working;
   return styles.stopped;
@@ -353,6 +355,11 @@ export function ComputerCatalogPage(
           ) : null}
         </div>
       </section>
+
+      {/* Your own computer (the local bridge). Renders nothing while the flag is off. */}
+      <div id="your-own-computer">
+        <LocalBridgePanel />
+      </div>
 
       <details
         className={styles.osSection}

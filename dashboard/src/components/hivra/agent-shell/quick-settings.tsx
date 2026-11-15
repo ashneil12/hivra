@@ -52,7 +52,7 @@ function updateLine(view: AgentSoftwareView | null | undefined, name: string): {
 
 /**
  * What the Update row says beside its label. `unpinned` is an agent Hivra pins
- * no version for (Hermes, OpenBot): it shows the version it has, never "available".
+ * no version for (Hermes, OpenBot, Nuphos): it shows the version it has, never "available".
  */
 function updateNote(view: AgentSoftwareView | null | undefined, unpinned: boolean): string {
   if (unpinned) {
@@ -202,7 +202,7 @@ export function AgentQuickSettings({
           id: "update",
           icon,
           label: action.label,
-          value: softwareBusy ? "Updating…" : updateNote(softwareView, agent.type === "hermes" || agent.type === "openbot") || undefined,
+          value: softwareBusy ? "Updating…" : updateNote(softwareView, agent.type === "hermes" || agent.type === "openbot" || agent.type === "nuphos") || undefined,
           onLeave: () => { if (!updating) { setUpdateMessage(null); setFollowed(false); } },
           render: (ctx) => (
             <>

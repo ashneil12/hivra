@@ -21,6 +21,7 @@ const mockBrowserStatus = jest.fn();
 const mockBrowserToggle = jest.fn();
 const mockFetchPlan = jest.fn();
 const mockTelegramStatus = jest.fn();
+const mockWakeAgent = jest.fn();
 const mockClientWarn = jest.fn();
 let mockAgentId = "agent_123";
 
@@ -48,6 +49,7 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   browserToggle: (...args: unknown[]) => mockBrowserToggle(...args),
   fetchPlanStrict: (...args: unknown[]) => mockFetchPlan(...args),
   telegramStatus: (...args: unknown[]) => mockTelegramStatus(...args),
+  wakeAgent: (...args: unknown[]) => mockWakeAgent(...args),
   // The command panel beside a dashboard agent reads the computer's history.
   getAgentEvents: async () => [],
 }));
@@ -2760,4 +2762,104 @@ describe("AgentPage", () => {
     });
   });
 
+
+  // Sleep (behind NEXT_PUBLIC_HIVRA_AGENT_SLEEP): a running agent that is not
+  // awake shows a short wait instead of its surfaces, and wakes once.
+  describe("a sleeping agent", () => {
+    const awakeRow = {
+      id: "agent_123", type: "claude-code", name: "CLAUDE_CODE_AGENT", status: "running", cpu: 2, ram: 4,
+      chat_url: "https://box.example.com", api_token: "box-token", sleep_state: "awake", sleep_generation: 6,
+    };
+    const napping = { ...awakeRow, sleep_state: "napping", sleep_generation: 4 };
+    const previousFlag = process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+
+    beforeEach(() => {
+      process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = "1";
+      mockWakeAgent.mockResolvedValue({ state: "waking" });
+    });
+    afterEach(() => {
+      if (previousFlag === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+      else process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = previousFlag;
+    });
+
+    it("shows the wake panel, wakes it once, and holds every call to the computer", async () => {
+      mockGetAgent.mockResolvedValue(napping);
+      render(<AgentPage />);
+      expect(await screen.findByText("Waking up your agent")).toBeVisible();
+      await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
+      expect(mockWakeAgent).toHaveBeenCalledWith("agent_123");
+      expect(screen.queryByText("Chat panel")).not.toBeInTheDocument();
+      expect(mockChatReadiness).not.toHaveBeenCalled();
+      expect(mockBrowserStatus).not.toHaveBeenCalled();
+      expect(mockTelegramStatus).not.toHaveBeenCalled();
+    });
+
+    it("does not ask again when the row moves from asleep to waking", async () => {
+      mockGetAgent.mockResolvedValueOnce(napping).mockResolvedValue({ ...napping, sleep_state: "waking", sleep_generation: 5 });
+      render(<AgentPage />);
+      await screen.findByText("Waking up your agent");
+      await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
+      mockWakeAgent.mockClear();
+      fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(mockGetAgent.mock.calls.length).toBeGreaterThan(1));
+      await screen.findByText("Waking up your agent");
+      expect(mockWakeAgent).not.toHaveBeenCalled();
+    });
+
+    it("opens the surfaces and says how long the wake took once it is awake", async () => {
+      mockWakeAgent.mockResolvedValue({ state: "awake", wakeMs: 1400 });
+      mockGetAgent.mockResolvedValueOnce(napping).mockResolvedValue(awakeRow);
+      render(<AgentPage />);
+      expect(await screen.findByText("Woke up in 1.4 s")).toBeVisible();
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
+      expect(mockChatReadiness).toHaveBeenCalled();
+      expect(mockWakeAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it("says plainly when the wake did not work, and tries again on request", async () => {
+      mockWakeAgent.mockResolvedValueOnce({ state: "failed", message: "Your agent could not be woken up. Try again in a moment." });
+      mockGetAgent.mockResolvedValue({ ...napping, sleep_state: "wake_failed" });
+      render(<AgentPage />);
+      expect(await screen.findByText("Your agent could not wake up")).toBeVisible();
+      expect(screen.getByRole("alert")).toHaveTextContent("Try again in a moment");
+      mockWakeAgent.mockResolvedValue({ state: "waking" });
+      // The new request claims the wake, so the next read says so.
+      mockGetAgent.mockResolvedValue({ ...napping, sleep_state: "waking", sleep_generation: 5 });
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(2));
+      fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(screen.queryByText("Your agent could not wake up")).not.toBeInTheDocument());
+    });
+
+    it("does not wake an agent that napped while the page sat open until its owner comes back", async () => {
+      mockGetAgent.mockResolvedValueOnce(awakeRow).mockResolvedValue(napping);
+      render(<AgentPage />);
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      // The page's next read finds the agent napping.
+      fireEvent(document, new Event("visibilitychange"));
+      expect(await screen.findByText("Your agent is napping")).toBeVisible();
+      expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
+      expect(mockWakeAgent).not.toHaveBeenCalled();
+      // The owner is back: it wakes once.
+      fireEvent.pointerDown(window);
+      await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText("Waking up your agent")).toBeVisible();
+    });
+
+    it("leaves an agent that reads awake alone, and ignores sleep entirely with the switch off", async () => {
+      mockGetAgent.mockResolvedValue(awakeRow);
+      const view = render(<AgentPage />);
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      expect(mockWakeAgent).not.toHaveBeenCalled();
+      view.unmount();
+
+      delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+      mockGetAgent.mockResolvedValue(napping);
+      render(<AgentPage />);
+      expect(await screen.findByText("Chat panel")).toBeInTheDocument();
+      expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
+      expect(mockWakeAgent).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -89,7 +89,8 @@ it("ships dark: with the switch unset or off it reads nothing", async () => {
 it("selects only running Claude Code / Codex agents on Proxmox with no operation in progress", async () => {
   await run("preview");
   const candidates = queries.find((query) => query.table === "hivra_agents")!;
-  expect(candidates.eq).toEqual([["status", "running"]]);
+  // A sleeping computer is never read or updated by this sweep.
+  expect(candidates.eq).toEqual([["status", "running"], ["sleep_state", "awake"]]);
   expect(candidates.in).toEqual([["type", ["claude-code", "codex"]]]);
   expect(candidates.is).toEqual([["computer_profile", null], ["operation_id", null]]);
   expect(candidates.not).toEqual([["chat_url", "is", null]]);

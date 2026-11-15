@@ -6,6 +6,8 @@ import {
   creditsWallet,
   effectiveModel,
   formatCredits,
+  hasModelAccess,
+  modelAccessModes,
   modelAccessOptions,
   modelAccessProblem,
   modelAccessSummary,
@@ -37,6 +39,12 @@ const byMode = (profileId: LaunchProfileId, context: ModelAccessContext = CONTEX
   Object.fromEntries(modelAccessOptions(profileId, context).map(option => [option.mode, option]));
 
 describe("the model access choices", () => {
+  it("offers Nuphos no Hivra model access: it signs in to the owner's own Claude account inside Nuphos", () => {
+    expect(modelAccessModes("nuphos")).toEqual([]);
+    expect(hasModelAccess("nuphos")).toBe(false);
+    expect(modelAccessOptions("nuphos", CONTEXT)).toEqual([]);
+  });
+
   it("shows every agent the same three choices, and says why one can't be used", () => {
     for (const profileId of ["claude-code", "codex", "hermes", "openclaw", "agent-zero", "openbot", "aeon"] as const) {
       expect(modelAccessOptions(profileId, CONTEXT).map(option => option.mode)).toEqual(["native", "api-key", "credits"]);

@@ -587,7 +587,14 @@ printf 'HIVRA_DEEPSEEK_ACCESS_B64 %s\n' "$(printf '%s' "$token" | base64 -w 0)"
 `;
 }
 
-export function buildDeepSeekRestartScript(ledger: DeepSeekCanaryLedger): string {
+// The guest unit that proves the agent is reachable after the reboot. An agent
+// moved to host ingress has no guest tunnel; its host-only listener is checked
+// instead. The default is the original check, byte for byte.
+export type DeepSeekRestartAccess = "guest-tunnel" | "host-ingress";
+
+export function buildDeepSeekRestartScript(ledger: DeepSeekCanaryLedger, access: DeepSeekRestartAccess = "guest-tunnel"): string {
+  if (access !== "guest-tunnel" && access !== "host-ingress") throw new Error("Invalid restart access check.");
+  const accessUnit = access === "host-ingress" ? "hivra-ingress.socket" : "hivra-cf-tunnel.service";
   return `#!/usr/bin/env bash
 set -euo pipefail
 ${ownershipPrelude(ledger)}
@@ -620,7 +627,7 @@ for _ in $(seq 1 120); do
   if [[ "$boot_after" =~ ^[a-f0-9-]{36}$ ]] && [ "$boot_after" != "$boot_before" ] \
      && "\${GSSH[@]}" "ubuntu@$EXPECTED_IP" \
        'systemctl is-active --quiet bux-hivra-chat.service \
-          && systemctl is-active --quiet hivra-cf-tunnel.service \
+          && systemctl is-active --quiet ${accessUnit} \
           && [ "$(curl -fsS http://127.0.0.1:8080/healthz)" = ok ]' \
        >/dev/null 2>&1; then
     printf 'HIVRA_DEEPSEEK_RESTARTED {"vmid":%s,"ip":"%s","bootChanged":true,"nativeReady":true}\n' "$VMID" "$EXPECTED_IP"

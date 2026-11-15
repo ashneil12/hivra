@@ -1,0 +1,51 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`guest forwarder program, run for real against a fixture root installs the two units, enables the socket and checks it is listening: service unit 1`] = `
+"# Managed by Hivra (hivra-ingress v1). Edits are refused: the next install will not overwrite a changed file.
+[Unit]
+Description=Hivra host ingress forwarder
+Requires=hivra-ingress.socket
+After=hivra-ingress.socket
+
+[Service]
+ExecStart=DIR/lib-systemd/systemd-socket-proxyd --exit-idle-time=60s 127.0.0.1:8080
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+IPAddressDeny=any
+IPAddressAllow=localhost
+TasksMax=300
+MemoryMax=128M
+"
+`;
+
+exports[`guest forwarder program, run for real against a fixture root installs the two units, enables the socket and checks it is listening: socket unit 1`] = `
+"# Managed by Hivra (hivra-ingress v1). Edits are refused: the next install will not overwrite a changed file.
+[Unit]
+Description=Hivra host ingress listener
+
+[Socket]
+ListenStream=0.0.0.0:PORT
+Backlog=128
+NoDelay=yes
+IPAddressDeny=any
+IPAddressAllow=192.0.2.1/32
+
+[Install]
+WantedBy=sockets.target
+"
+`;

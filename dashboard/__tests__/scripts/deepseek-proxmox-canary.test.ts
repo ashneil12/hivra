@@ -719,6 +719,11 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     expect(restart).toContain("systemctl is-active --quiet bux-hivra-chat.service");
     expect(restart).toContain("systemctl is-active --quiet hivra-cf-tunnel.service");
     expect(restart).not.toContain("cloudflared.service");
+    const ingressRestart = buildDeepSeekRestartScript(ledger, "host-ingress");
+    expect(ingressRestart).toContain("systemctl is-active --quiet hivra-ingress.socket");
+    expect(ingressRestart).not.toContain("hivra-cf-tunnel.service");
+    expect(ingressRestart.replace("hivra-ingress.socket", "hivra-cf-tunnel.service")).toBe(restart);
+    expect(buildDeepSeekRestartScript(ledger, "guest-tunnel")).toBe(restart);
     expect(restart).toContain("http://127.0.0.1:8080/healthz");
     expect(restart).not.toContain('qm status "$VMID" | awk');
     expect(teardown).toContain("qm destroy");

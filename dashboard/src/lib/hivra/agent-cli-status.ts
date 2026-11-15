@@ -18,7 +18,7 @@
 
 export const AGENT_CLI_NAMES = ["claude-code", "codex"] as const;
 export type AgentCliName = (typeof AGENT_CLI_NAMES)[number];
-export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes", "openbot"] as const;
+export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
 export type AgentAppName = (typeof AGENT_APP_NAMES)[number];
 /** What Hivra updates on the agent: its CLI or its hosted app. */
 export type AgentSoftwareName = AgentCliName | AgentAppName;
@@ -39,6 +39,8 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   hermes: CLI_VERSION,
   // OpenBot's release (x.y.z).
   openbot: CLI_VERSION,
+  // Nuphos runtime release (x.y.z).
+  nuphos: CLI_VERSION,
 };
 
 /**
@@ -49,8 +51,8 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
 export const HERMES_UPDATE_TARGET = "latest";
 
 /** Apps Hivra pins no version for: their owners update to the upstream's latest release. */
-export function isLatestTargetApp(name: AgentSoftwareName | null | undefined): name is "hermes" | "openbot" {
-  return name === "hermes" || name === "openbot";
+export function isLatestTargetApp(name: AgentSoftwareName | null | undefined): name is "hermes" | "openbot" | "nuphos" {
+  return name === "hermes" || name === "openbot" || name === "nuphos";
 }
 
 /** A version in this software's own form; for Hermes only the literal update target `latest`, since Hivra pins no Hermes version. */
@@ -128,7 +130,7 @@ export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null
   return null;
 }
 
-export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
+export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
 
 /** The runtime updater's host-validated agent app line, each version in its app's own form. */
 export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null {
@@ -210,7 +212,7 @@ export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): 
  * update is refused), computers and every other kind of computer are not
  * covered.
  */
-export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot"] as const;
+export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
 export type AgentSoftwareType = (typeof AGENT_SOFTWARE_TYPES)[number];
 
 /** The agentKind each covered agent's connection service reports on /api/meta. */
@@ -222,6 +224,7 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
   "agent-zero": "agent-zero",
   hermes: "hermes",
   openbot: "openbot",
+  nuphos: "nuphos",
 };
 
 /**
@@ -258,7 +261,7 @@ export function agentSoftwareSubject(row: {
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
   const cli = type === "claude-code" || type === "codex" ? type : null;
-  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" || type === "openbot" ? type : null;
+  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" || type === "openbot" || type === "nuphos" ? type : null;
   return {
     type,
     cli,

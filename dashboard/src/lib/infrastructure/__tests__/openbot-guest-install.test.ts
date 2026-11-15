@@ -18,9 +18,9 @@ const runner = block.slice(block.indexOf("<<'RUNNER'\n") + "<<'RUNNER'\n".length
 describe("OpenBot guest install", () => {
   it("is an accepted agent kind with its own block and never the box browser stack", () => {
     expect(start).toBeGreaterThan(0);
-    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|linux-desktop|linux-server) ;;");
+    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server) ;;");
     expect(script).toContain('[ "$AGENT_KIND" = "openbot" ] && WANT_BROWSER=0');
-    expect(script).toContain('[ "$AGENT_KIND" != "openbot" ] && ! is_linux_computer; then');
+    expect(script).toContain('[ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && ! is_linux_computer; then');
   });
 
   it("pulls upstream's latest image, runs it by digest on loopback, single-user, and records its release", () => {

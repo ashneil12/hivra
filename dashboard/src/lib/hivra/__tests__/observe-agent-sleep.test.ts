@@ -108,6 +108,56 @@ describe("runObserveAgentSleepSweep", () => {
     expect(a3).toMatchObject({ verdict: "ineligible", reasons: ["always_on"] });
   });
 
+  it("records an agent that is not awake as ineligible because it is asleep, and reads nothing about it", async () => {
+    const { db, calls } = fakeDb({
+      hivra_agents: [{ data: [
+        agent("a1"), agent("a2", { sleep_state: "napping" }), agent("a3", { sleep_state: "hibernated" }),
+        agent("a4", { sleep_state: "awake" }), agent("a5", { sleep_state: "something_new" }),
+      ] }],
+      hivra_agent_events: [{ data: [] }],
+      hivra_remote_desktop_sessions: [{ data: [] }],
+      hivra_agent_activity: [{ data: [] }],
+      hivra_agent_sleep_observations: [{ data: [] }],
+    });
+    mockDb.value = db;
+    const summary = await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+
+    expect(summary).toMatchObject({ scanned: 5, inserted: 5, errors: 0 });
+    const rows = inserted(calls);
+    const byId = Object.fromEntries(rows.map((r) => [r.agent_id, r]));
+    for (const id of ["a2", "a3", "a5"]) {
+      expect(byId[id]).toMatchObject({ verdict: "ineligible", reasons: ["asleep"], idle_seconds: null, mode: "observe" });
+    }
+    for (const id of ["a1", "a4"]) expect(byId[id].reasons).not.toContain("asleep");
+    // The sleeping agents are left out of the reads that would only say unreachable.
+    const readIds = calls.filter((c) => c.table === "hivra_agent_events")[0].ops.find(([op]) => op === "in")![1][1] as string[];
+    expect(readIds).toEqual(["a1", "a4"]);
+    expect(summary.verdicts.ineligible).toBeGreaterThanOrEqual(3);
+  });
+
+  it("asks for the sleep state with each agent", async () => {
+    const { db, calls } = fakeDb({ hivra_agents: [{ data: [] }] });
+    mockDb.value = db;
+    await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+    const select = calls[0].ops.find(([op]) => op === "select")![1][0] as string;
+    expect(select).toContain("sleep_state");
+  });
+
+  it("keeps paging when a whole page is asleep", async () => {
+    const full = Array.from({ length: OBSERVE_PAGE_SIZE }, (_, i) => agent(`s${String(i).padStart(4, "0")}`, { sleep_state: "napping" }));
+    const { db, calls } = fakeDb({
+      hivra_agents: [{ data: full }, { data: [agent("z1")] }],
+      hivra_agent_events: [{ data: [] }],
+      hivra_remote_desktop_sessions: [{ data: [] }],
+      hivra_agent_sleep_observations: [{ data: [] }],
+    });
+    mockDb.value = db;
+    const summary = await runObserveAgentSleepSweep({ env: { HIVRA_SLEEP_MODE: "observe" }, now: NOW });
+    expect(calls.filter((c) => c.table === "hivra_agents")).toHaveLength(2);
+    expect(summary.scanned).toBe(OBSERVE_PAGE_SIZE + 1);
+    expect(summary.inserted).toBe(OBSERVE_PAGE_SIZE + 1);
+  });
+
   it("treats a lifecycle operation and an attached desktop as busy", async () => {
     const { db, calls } = fakeDb({
       hivra_agents: [{ data: [agent("a1", { operation_id: "op" }), agent("a2", { type: "linux-desktop" })] }],

@@ -32,7 +32,7 @@ describe("launch navigation", () => {
 
   it("sends ready capacity to Launch for every runtime, never to the retired welcome forms", () => {
     const target = "33333333-3333-4333-8333-333333333333";
-    for (const resource of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "linux-desktop", "linux-terminal", "windows"] as const) {
+    for (const resource of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "linux-desktop", "linux-terminal", "windows"] as const) {
       expect(buildLaunchSetupHref(resource, target)).toMatch(/^\/dashboard\/launch\?/);
     }
     // A new launch from Capacity; the launch Capacity was opened from continues.

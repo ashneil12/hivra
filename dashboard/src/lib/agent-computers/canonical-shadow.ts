@@ -307,6 +307,7 @@ const KNOWN_HIVRA_CLI_RUNTIMES = new Set([
   "openclaw",
   "agent-zero",
   "openbot",
+  "nuphos",
   "deepseek-harness",
 ]);
 const KNOWN_HIVRA_DASHBOARD_RUNTIMES = new Set(["aeon"]);

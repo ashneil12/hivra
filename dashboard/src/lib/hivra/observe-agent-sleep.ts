@@ -1,5 +1,6 @@
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isAgentAwake } from "./agent-sleep-store";
 import {
   decideSleep,
   parseSleepMode,
@@ -116,6 +117,7 @@ interface AgentRow {
   created_at: string | null;
   always_on: boolean | null;
   sleep_policy: string | null;
+  sleep_state?: string | null;
 }
 
 export interface ObserveAgentSleepSummary {
@@ -183,7 +185,7 @@ export async function runObserveAgentSleepSweep(
   while (summary.scanned < OBSERVE_MAX_AGENTS) {
     let query = db
       .from("hivra_agents")
-      .select("id, type, operation_id, created_at, always_on, sleep_policy")
+      .select("id, type, operation_id, created_at, always_on, sleep_policy, sleep_state")
       .eq("status", "running")
       .eq("deployment_mode", "hivra-managed")
       .is("deployment_target_id", null)
@@ -195,10 +197,36 @@ export async function runObserveAgentSleepSweep(
       fail("failed to load agents for sleep observation", error, "observe_agents_query_failed");
       return summary;
     }
-    const agents = (data ?? []) as AgentRow[];
-    if (agents.length === 0) break;
-    cursor = agents[agents.length - 1].id;
-    summary.scanned += agents.length;
+    const page = (data ?? []) as AgentRow[];
+    if (page.length === 0) break;
+    cursor = page[page.length - 1].id;
+    summary.scanned += page.length;
+
+    // An agent that is not awake is not read: its computer cannot answer, so a
+    // reading would only say "unreachable". It is recorded as ineligible and the
+    // rest of the page is observed as before.
+    const agents = page.filter((agent) => isAgentAwake(agent));
+    const asleepRows = page
+      .filter((agent) => !isAgentAwake(agent))
+      .map((agent) => ({
+        agent_id: agent.id,
+        observed_at: nowIso,
+        mode,
+        verdict: "ineligible" as const,
+        reasons: ["asleep"],
+        idle_seconds: null,
+        agent_type: agent.type,
+      }));
+    if (asleepRows.length > 0) {
+      summary.verdicts.ineligible += asleepRows.length;
+      const { error: asleepError } = await db.from("hivra_agent_sleep_observations").insert(asleepRows);
+      if (asleepError) fail("failed to record sleep observations", asleepError, "observe_insert_failed");
+      else summary.inserted += asleepRows.length;
+    }
+    if (agents.length === 0) {
+      if (page.length < OBSERVE_PAGE_SIZE) break;
+      continue;
+    }
 
     const ids = agents.map((agent) => agent.id);
     const lastEventAt = new Map<string, number>();
@@ -336,7 +364,7 @@ export async function runObserveAgentSleepSweep(
     if (insertError) fail("failed to record sleep observations", insertError, "observe_insert_failed");
     else summary.inserted += rows.length;
 
-    if (agents.length < OBSERVE_PAGE_SIZE) break;
+    if (page.length < OBSERVE_PAGE_SIZE) break;
   }
 
   summary.truncated = summary.truncated || summary.scanned >= OBSERVE_MAX_AGENTS;

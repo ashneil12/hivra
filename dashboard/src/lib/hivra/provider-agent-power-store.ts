@@ -24,7 +24,7 @@ const Row = z.object({
   status: z.literal("provisioning"), desired_state: z.enum(["running", "stopped", "deleted"]),
   computer_substrate: z.literal("provider-vm"), deployment_mode: z.literal("self-managed"), vmid: z.null(),
   proxmox_host: z.literal(SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL),
-  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "hermes", "linux-desktop"]),
+  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "linux-desktop"]),
   computer_profile: z.unknown().optional(), provider_install_desktop_access: z.unknown().optional(),
   infrastructure_connection_id: Uuid, infrastructure_connection_revision: z.number().int().positive().safe(),
   deployment_target_id: Uuid, provider_capacity_order_id: Uuid, provider_enrollment_attempt_id: Uuid,

@@ -334,9 +334,9 @@
     },
     "tailscale-connect": {
       "script": {
-        "bytes": 11837,
+        "bytes": 12090,
         "limit": "host-script-with-stdin.script",
-        "percent": 12
+        "percent": 12.3
       },
       "guestLoginCommand": {
         "bytes": 8980,

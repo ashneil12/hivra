@@ -180,6 +180,8 @@ async function measureShippedPayloads(): Promise<Measured> {
         startLogPrefix: "hivra-start-", storage: "local-lvm", vmSshKeyPath: "/etc/hivra/keys/vm-orchestrator" } }),
     runHostScript: jest.fn().mockResolvedValue({ ok: true, stdout: 'HIVRA_TAILSCALE_STATUS {"BackendState":"NeedsLogin"}\n', stderr: "" }),
     runHostScriptWithStdin: withStdin,
+    // The computer is awake in this fixture; the wake step is not what is measured.
+    wake: jest.fn().mockResolvedValue({ ok: true }),
   } as never).catch(() => undefined);
   const tailscale = String(withStdin.mock.calls[0]?.[0] ?? "");
   expect(tailscale).toContain(Buffer.from(buildHivraTailscaleConnectProgram(DEFAULT_TAILSCALE_LOGIN_SERVER)).toString("base64"));

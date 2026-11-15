@@ -34,6 +34,7 @@ a free account works with a server the person connects.
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
 | DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.5 or later |
 | OpenBot (CopilotKit) | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.4 or later |
+| Nuphos | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.5 or later |
 
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
@@ -71,6 +72,16 @@ puts the previous image and database back if the new one does not start. It
 needs at least 1 CPU and 3 GB. It is not in the Launch list unless the
 deployment sets `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT=1`. The other app named
 OpenBot (Nightly Labs) is not offered: its licence does not allow a paid host.
+
+Nuphos on a Hivra computer is Nuphos's official runtime image (Apache-2.0,
+Claude Code variant), unmodified: Hivra pulls the latest release and serves the
+runtime's own console at the root of the computer's address behind the Hivra
+sign-in (the agent page opens `/nuphos/`). The owner sets the console password,
+presses Connect to Nuphos and then chats from the Nuphos apps with their own
+Nuphos account and their own Claude sign-in; Hivra provides the computer, not the
+model. Nuphos's servers reach the runtime at `/acp`, which the runtime guards
+with each connected team's key. Owners update with the Update button. It is not
+in the Launch list unless the deployment sets `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT=1`.
 
 The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 

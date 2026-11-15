@@ -63,6 +63,12 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     recommended: pinned(2, 4),
     candidates: [pinned(2, 4), pinned(1, 3)],
   },
+  nuphos: {
+    // The catalog floor stays one click away; Medium is proposed.
+    floor: resizeFloor("nuphos", false),
+    recommended: pinned(2, 4),
+    candidates: [pinned(2, 4), pinned(1, 3)],
+  },
   "deepseek-harness": {
     // The catalog floor; the recommendation is the 2 CPU / 4 GB its live
     // acceptance ran at, and it keeps that size as its hard limit.

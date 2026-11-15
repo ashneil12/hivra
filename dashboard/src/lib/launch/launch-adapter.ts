@@ -111,7 +111,7 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
   return profileId === "claude-code" || profileId === "hermes" || profileId === "hermes-computer" || profileId === "openclaw"
-    || profileId === "agent-zero" || profileId === "openbot" || profileId === "aeon" || profileId === "deepseek-harness"
+    || profileId === "agent-zero" || profileId === "openbot" || profileId === "nuphos" || profileId === "aeon" || profileId === "deepseek-harness"
     ? "observe"
     : "resend";
 }
@@ -682,7 +682,7 @@ export async function submitLaunchDraft(
         : null,
     }), draft), draft, options);
   }
-  // OpenClaw, Agent Zero, OpenBot and Aeon, as their setup form launched them.
+  // OpenClaw, Agent Zero, OpenBot, Nuphos and Aeon, as their setup form launched them.
   const access = accessOf(draft);
   const credits = access.mode === "credits"
     ? { walletType: creditsWallet(access, options.balance ?? { state: "unknown" }) }

@@ -73,6 +73,8 @@ import {
 } from "@/lib/hivra/manage-sections";
 import type { ChatReadiness } from "@/lib/hivra/chat-readiness";
 import { hasSafeHttpAccessUrl } from "@/lib/safe-http-url";
+import { agentSleepUiEnabled, agentSleepView } from "@/lib/hivra/agent-sleep-ui";
+import { ManageSleepSettings } from "./manage/ManageSleepSettings";
 
 // The server's resource-gate denial for browser-on-free (403 from launch/resize)
 // and the client-side pre-check below both funnel into the same paywall modal.
@@ -929,7 +931,12 @@ function HivraManageContent({
   );
 
   const productName = computerTemplate?.name || def?.name || "the agent";
-  const statusLabel = lifecyclePending ? agentActivityPresentation(agent, productName).label : agent.status;
+  // A running agent that is not awake reads "Asleep" (or "Waking up"), with a calm dot.
+  const sleepView = agentSleepView(agent);
+  const statusKey = lifecyclePending || sleepView === "awake" ? agent.status : sleepView;
+  const statusLabel = lifecyclePending
+    ? agentActivityPresentation(agent, productName).label
+    : sleepView === "asleep" ? "Asleep" : sleepView === "waking" ? "Waking up" : agent.status;
   const subtitle = isComputerOnly
     ? `${computerTemplate?.name ?? def?.name ?? "Computer"} · ${placementLabel}`
     : `${def?.name ?? agent.type} · ${agentComputerPairLabel(agent)}`;
@@ -974,7 +981,7 @@ function HivraManageContent({
         <ManageHeader
           eyebrow={isComputerOnly ? "Computer settings" : "Agent settings"}
           name={agent.name}
-          status={agent.status}
+          status={statusKey}
           statusLabel={statusLabel}
           subtitle={subtitle}
           renaming={acting === "rename"}
@@ -1105,6 +1112,11 @@ function HivraManageContent({
               >{providerPowerMessage(agent.power_stage)}</p> : null}
             </div>
           </div>}
+
+          {/* When this agent may sleep. Dark unless the sleep screens are switched on. */}
+          {agentSleepUiEnabled() && !isComputerOnly && agent.status === "running" && agent.deployment_mode !== "self-managed"
+            && (!agent.computer_substrate || agent.computer_substrate === "proxmox-kvm")
+            ? <ManageSleepSettings agent={agent} onChanged={onChanged} /> : null}
 
           {/* The agent and its computer as one pair (ATT-11), and what the agent
               knows about it. A computer's agents live in its Agents section. */}

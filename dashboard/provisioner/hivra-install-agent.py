@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 
-KINDS = {"claude", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot"}
+KINDS = {"claude", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"}
 FIELDS = {"version", "agentKind", "computerSubstrate", "wantBrowser", "modelKey",
           "modelBaseUrl", "model", "tunnelToken", "accessHostname"}
 LINUX_DESKTOP_FIELDS = FIELDS | {"publicOrigin", "computerId", "controlOrigin"}

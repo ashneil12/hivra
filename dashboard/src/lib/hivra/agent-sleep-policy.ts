@@ -45,12 +45,40 @@ export const THRASH_WINDOW_SECONDS = 30 * 60;
 export const THRASH_WAKE_THRESHOLD = 3;
 export const THRASH_MAX_IDLE_SECONDS = 2 * 60 * 60;
 
+/**
+ * A sleep or wake lease older than this has outlived any legitimate hold (a hibernate
+ * script is allowed 280 s, plus its probe) and is settled from the host.
+ */
+export const STALE_SLEEP_LEASE_MS = 6 * 60_000;
+
 /** Kinds that run their own loops, so "idle" cannot be read from outside. */
 export const AUTONOMOUS_KINDS: readonly string[] = ["aeon"];
 /** Kinds with a live display: a paused guest would freeze it, so hibernate only. */
 export const DESKTOP_KINDS: readonly string[] = ["linux-desktop"];
 /** Channels held open by a live socket, which a sleeping guest would drop. */
 export const SOCKET_CHANNELS: readonly string[] = ["discord", "whatsapp", "slack"];
+
+/**
+ * The idle probe's live channel tags as plain channel names, for
+ * `SleepSignals.socketChannels`: "hermes:discord" and "hermes:discord:down"
+ * both become "discord", "openclaw:slack" becomes "slack", and the Hivra
+ * Telegram bridge ("telegram:bux-tg") becomes "telegram", and the chat safety
+ * net's "unknown:slack" becomes "slack". Undefined in, undefined
+ * out: a missing probe stays unknown and never reads as "no channels".
+ */
+export function socketChannelsFromProbe(liveChannels: readonly string[] | null | undefined): string[] | undefined {
+  if (!Array.isArray(liveChannels)) return undefined;
+  const names = new Set<string>();
+  for (const tag of liveChannels) {
+    if (typeof tag !== "string") continue;
+    const parts = tag.split(":");
+    // "<agent>:<platform>[:down]" (any agent's profile tag, and the safety net's "unknown:<platform>"),
+    // except the Hivra bridge, whose tag starts with its platform.
+    const name = parts.length >= 2 && parts[0] !== "telegram" ? parts[1] : parts[0];
+    if (name) names.add(name.toLowerCase());
+  }
+  return [...names].sort();
+}
 
 /**
  * Everything known about one agent. Every field may be undefined, meaning

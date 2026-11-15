@@ -128,7 +128,7 @@ const emittedBoxCreatedAgentIds = new Set<string>();
 // Catalog agent ids this route can provision as a Hivra box. claude-code/codex
 // run the bux image; aeon + openclaw host a web dashboard/Control UI. The box
 // selects its runtime from agentKind. Hermes is a separate lane (/api/instances).
-const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "hermes", "deepseek-harness", "linux-desktop"]);
+const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop"]);
 
 // Printed by phase 1 only after it wrote the reporter credential into the
 // handoff file for a host bundle that consumes it (the start path uses the
@@ -1049,7 +1049,7 @@ export async function launchHivraAgentForUser(
     // The runtime the box provisions: the chat CLI for claude-code/codex, or the
     // dashboard host kind for aeon/openclaw (no cliKind). Passed to the host script.
     const agentKind = headless ? "linux-server" : def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
-      : type === "agent-zero" ? "agent-zero" : type === "openbot" ? "openbot" : type === "hermes" ? "hermes" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
+      : type === "agent-zero" ? "agent-zero" : type === "openbot" ? "openbot" : type === "nuphos" ? "nuphos" : type === "hermes" ? "hermes" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
     // A Linux computer without a desktop is a new provisioner kind and placement
     // key, so a host bundle that predates it cannot run it by accident.
     const compatibilityRuntimeId = headless ? "linux-server" : type;

@@ -168,7 +168,9 @@ export async function sweepAskHookUpdates(now = new Date()): Promise<{ tried: nu
     .select("*")
     .in("id", stale.map((row) => row.agent_id))
     .eq("type", ASK_TYPE)
-    .eq("status", "running");
+    .eq("status", "running")
+    // A sleeping computer cannot take the hook, and a try on one would count as a failed attempt.
+    .eq("sleep_state", "awake");
   if (agentError) throw new Error(`could not list Claude Code computers: ${agentError.message}`);
   const due = ((agents ?? []) as AgentRow[]).filter((agent) => {
     const row = stale.find((r) => r.agent_id === agent.id);

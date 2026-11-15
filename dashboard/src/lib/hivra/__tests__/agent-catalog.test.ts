@@ -1,4 +1,5 @@
 import { AGENTS, BASE_FLOOR, canLaunchAgent, getAgent, hostingDisclaimer, isPoolExempt, resizeFloor } from "../agent-catalog";
+import { isNuphosAgentEnabled } from "../nuphos-flag";
 import { isOpenBotAgentEnabled } from "../openbot-flag";
 import { WELCOME_AGENT_TYPES } from "@/lib/welcome-agent-catalog";
 
@@ -189,6 +190,43 @@ describe("Hivra agent catalog", () => {
   it("keeps OpenBot out of the launch picker while its flag is off", () => {
     expect(getAgent("openbot")).toBeDefined();
     if (!isOpenBotAgentEnabled()) expect(canLaunchAgent(getAgent("openbot")!, "pro")).toEqual({ ok: false, reason: "Coming soon" });
+  });
+
+  it("defines Nuphos as a dashboard agent with no Hivra model, launchable only behind its flag", () => {
+    const nuphos = getAgent("nuphos");
+
+    expect(nuphos).toMatchObject({
+      id: "nuphos",
+      name: "Nuphos",
+      vendor: "Nuphos",
+      tagline: "Claude Code your team chats with from the Nuphos app",
+      surface: "dashboard",
+      browser: false,
+      minPlan: "pro",
+      weight: 2,
+      badge: "Coworkers",
+      accent: "#0ea5e9",
+      dashboardPort: 3102,
+      available: isNuphosAgentEnabled(),
+    });
+    expect(nuphos!.managedVenice).toBeFalsy();
+    expect(nuphos!.llm).toBeUndefined();
+    expect(nuphos!.cliKind).toBeUndefined();
+    expect(isPoolExempt("nuphos")).toBe(false);
+    expect(resizeFloor("nuphos", false)).toEqual({ cpu: 1, ram: 3 });
+    expect(AGENTS.some((agent) => agent.id === "nuphos")).toBe(isNuphosAgentEnabled());
+    const copy = hostingDisclaimer(nuphos);
+    expect(copy).toContain("official runtime image");
+    expect(copy).toContain("separate product by its makers");
+    expect(copy).toContain("your own Claude subscription");
+    expect(copy).toContain("Hivra administrators retain infrastructure access");
+    expect(copy).not.toMatch(/[\u2013\u2014]/);
+    expect(hostingDisclaimer(nuphos, "self-managed")).toContain("Hivra does not become the host operator");
+  });
+
+  it("keeps Nuphos out of the launch picker while its flag is off", () => {
+    expect(getAgent("nuphos")).toBeDefined();
+    if (!isNuphosAgentEnabled()) expect(canLaunchAgent(getAgent("nuphos")!, "pro")).toEqual({ ok: false, reason: "Coming soon" });
   });
 
   it("lists DeepSeek Harness as a launchable dashboard agent that keeps its floor", () => {

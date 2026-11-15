@@ -60,6 +60,15 @@ const HERMES_WEBAPP_PORT = Number(process.env.HERMES_WEBAPP_PORT) || 9120;
 // the entry the agent page opens: a one-time setup page for the CopilotKit
 // Intelligence key OpenBot needs before it starts, then a redirect to /.
 const OPENBOT_PORT = Number(process.env.OPENBOT_PORT) || 3101;
+// Nuphos's official runtime, unmodified, on loopback NUPHOS_PORT. Its own
+// console (password setup, "Connect to Nuphos", provider sign-in) is served at
+// the ROOT of this origin behind the token gate, with this origin's own Host so
+// the runtime tells Nuphos the right public address. People then chat from the
+// Nuphos apps: Nuphos's servers open /acp, a WebSocket the runtime guards with
+// each connected team's key, so that one upgrade passes through without the
+// Hivra gate (and never carries Hivra's credentials). /nuphos/ is the entry the
+// agent page opens.
+const NUPHOS_PORT = Number(process.env.NUPHOS_PORT) || 3102;
 // Attached mode (design 5.4): the same gateway code runs as an attached agent's
 // own sandboxed instance on a computer its owner already has. Its root-written
 // unit sets these; nothing in the agent's writable HOME can change them.
@@ -96,6 +105,7 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
   : _agentKindRaw === "hermes" ? "hermes"
   : _agentKindRaw === "openbot" ? "openbot"
+  : _agentKindRaw === "nuphos" ? "nuphos"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -213,16 +223,17 @@ const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: 
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
   : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] }
-  : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] } : null;
+  : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] }
+  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
-// What an update status may name as its target. Hermes and OpenBot have no
+const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+// What an update status may name as its target. Hermes, OpenBot and Nuphos have no
 // Hivra pin: their update is always to whatever upstream publishes as latest.
-const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/ };
+const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/, nuphos: /^latest$/ };
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -657,6 +668,198 @@ function handleAuthBootstrap(req, res) {
     // Opening Hermes goes through the Webapp's own sign-in (hermesSignIn).
     res.writeHead(303, { Location: hermesEntry(destination) ? HERMES_SIGN_IN : destination });
     res.end();
+  });
+}
+
+// ---- Connect links ----
+// POST /connect/grant (management bearer only, minted by the dashboard's
+// "Connect app" action) registers a username+password pair whose
+// sha256("user:pass") digest is kept, with its expiry and the surface it opens,
+// in ~/.hivra/connect-grants.json: owner-only 0600, replaced atomically, bound
+// to this computer's API token like the session store (a token rotation
+// revokes every link). Neither half of a pair reaches disk, the map is pruned
+// and bounded, and entries outliving the maximum lifetime make the file
+// untrusted rather than quietly eternal.
+// A grant redeems two ways, both minting the same ordinary surface cookie:
+//   GET  /connect/<user>:<pass>          — a link an external client can open
+//   POST /login  {username,password,next} — Agent Zero's own sign-in form, so a
+//        remote-Instance client (the A0 desktop app) authenticates exactly as
+//        it would against a self-hosted Agent Zero.
+// The link/credentials are themselves the credential until their expiry:
+// DELETE /connect/grant wipes them all.
+const CONNECT_GRANT_FILE = path.join(HOME, ".hivra", "connect-grants.json");
+const CONNECT_GRANT_VERSION = 1;
+const CONNECT_GRANT_MAX = 16;
+const CONNECT_GRANT_MAX_BYTES = 16 * 1024;
+const CONNECT_GRANT_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CONNECT_GRANT_MIN_TTL_MS = 60 * 1000;
+const CONNECT_GRANT_PASSWORD = /^[a-f0-9]{64}$/;
+const CONNECT_GRANT_USERNAME = /^[A-Za-z0-9_-]{1,64}$/;
+// sha256("user:pass") -> {e: expiry ms, d: destination}. Only digests persist.
+const CONNECT_GRANTS = new Map();
+function connectGrantDigest(username, password) {
+  return crypto.createHash("sha256").update(String(username) + ":" + String(password)).digest("hex");
+}
+function readConnectGrants(now) {
+  if (!authStoreDirectoryTrusted()) return null;
+  let fd = null;
+  try {
+    fd = fs.openSync(CONNECT_GRANT_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > CONNECT_GRANT_MAX_BYTES) {
+      authStoreWarn("connect links: the saved file is not a private regular file of this user, or is too large");
+      return null;
+    }
+    const raw = fs.readFileSync(fd);
+    if (raw.length > CONNECT_GRANT_MAX_BYTES) throw new Error("connect grant file too large");
+    const doc = JSON.parse(raw.toString("utf8"));
+    if (!doc || typeof doc !== "object" || doc.v !== CONNECT_GRANT_VERSION
+      || !Array.isArray(doc.grants) || doc.grants.length > CONNECT_GRANT_MAX) {
+      throw new Error("unrecognised connect grant store");
+    }
+    // Written for another API token: every link in it is revoked.
+    if (typeof doc.binding !== "string" || !safeEq(doc.binding, AUTH_STORE_BINDING)) {
+      authStoreWarn("connect links: the API token changed, so every saved link is revoked");
+      return null;
+    }
+    const grants = new Map();
+    for (const entry of doc.grants) {
+      const digest = entry && entry.h, expiresAt = entry && entry.e, destination = entry && entry.d;
+      if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest) || grants.has(digest)
+        || !Number.isSafeInteger(expiresAt) || expiresAt > now + CONNECT_GRANT_MAX_TTL_MS + 5 * 60 * 1000
+        || !safeBootstrapDestination(destination)) {
+        throw new Error("invalid connect grant entry");
+      }
+      if (expiresAt > now) grants.set(digest, { e: expiresAt, d: destination });
+    }
+    return grants;
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") authStoreWarn("connect links: " + ((error && (error.code || error.message)) || "unreadable"));
+    return null;
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+function writeConnectGrants() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(CONNECT_GRANT_FILE);
+  const temp = path.join(directory, ".connect-grants." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    const grants = [];
+    for (const [h, g] of CONNECT_GRANTS) grants.push({ h, e: g.e, d: g.d });
+    const body = JSON.stringify({ v: CONNECT_GRANT_VERSION, binding: AUTH_STORE_BINDING, grants });
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, CONNECT_GRANT_FILE);
+    return true;
+  } catch (error) {
+    authStoreWarn("connect links: cannot save: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+(function loadConnectGrants() {
+  const loaded = readConnectGrants(Date.now());
+  if (loaded) for (const [digest, g] of loaded) CONNECT_GRANTS.set(digest, g);
+  if (loaded && loaded.size) writeConnectGrants();
+})();
+function pruneConnectGrants(now) {
+  for (const [digest, g] of CONNECT_GRANTS) if (g.e <= now) CONNECT_GRANTS.delete(digest);
+}
+function createConnectGrant(username, password, ttlMs, destination) {
+  const now = Date.now();
+  pruneConnectGrants(now);
+  while (CONNECT_GRANTS.size >= CONNECT_GRANT_MAX) {
+    let oldest = null;
+    for (const [digest, g] of CONNECT_GRANTS) {
+      if (oldest === null || g.e < CONNECT_GRANTS.get(oldest).e) oldest = digest;
+    }
+    CONNECT_GRANTS.delete(oldest);
+  }
+  const expiresAt = now + ttlMs;
+  CONNECT_GRANTS.set(connectGrantDigest(username, password), { e: expiresAt, d: destination });
+  writeConnectGrants();
+  return expiresAt;
+}
+// The redeeming value is a valid surface cookie for the stored destination, or
+// null. Both redemption paths run through this, so expiry and the token binding
+// apply identically to a shared link and to a sign-in form.
+function redeemConnectGrant(username, password) {
+  if (!CONNECT_GRANT_USERNAME.test(username) || !CONNECT_GRANT_PASSWORD.test(password)) return null;
+  const grant = CONNECT_GRANTS.get(connectGrantDigest(username, password));
+  if (!grant || grant.e <= Date.now()) return null;
+  return grant.d;
+}
+function answerConnectSession(res, destination) {
+  const session = createAuthSession();
+  res.setHeader("Set-Cookie", AUTH_COOKIE + "=" + session + "; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=" + Math.floor(AUTH_SESSION_TTL_MS / 1000));
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  res.writeHead(303, { Location: destination });
+  res.end();
+}
+function handleConnectGrantCreate(req, res) {
+  readBody(req, (body) => {
+    let parsed = null;
+    try { parsed = JSON.parse(body); } catch {}
+    const username = parsed && typeof parsed.username === "string" ? parsed.username : "";
+    const password = parsed && typeof parsed.password === "string" ? parsed.password : "";
+    if (!CONNECT_GRANT_USERNAME.test(username) || !CONNECT_GRANT_PASSWORD.test(password)) {
+      return jsonRes(res, 400, { error: "username must be 1-64 [A-Za-z0-9_-] and password 64 lowercase hex" });
+    }
+    const destination = safeBootstrapDestination(parsed && parsed.destination);
+    if (!destination) return jsonRes(res, 400, { error: "unsafe destination" });
+    const requested = parsed && Number(parsed.ttlMs);
+    const ttlMs = Number.isSafeInteger(requested)
+      ? Math.min(Math.max(requested, CONNECT_GRANT_MIN_TTL_MS), CONNECT_GRANT_MAX_TTL_MS)
+      : CONNECT_GRANT_MAX_TTL_MS;
+    const expiresAt = createConnectGrant(username, password, ttlMs, destination);
+    return jsonRes(res, 200, { ok: true, expiresAt });
+  });
+}
+function handleConnectGrantRevoke(res) {
+  CONNECT_GRANTS.clear();
+  writeConnectGrants();
+  return jsonRes(res, 200, { ok: true });
+}
+// GET /connect/<user>:<pass> — the shareable form of a grant. The URL itself is
+// the credential, so treat one like a password until it expires or is revoked.
+function handleConnectRedeem(req, res, rawCode) {
+  let code = "";
+  try { code = decodeURIComponent(rawCode); } catch { return denyHtml(res); }
+  const separator = code.indexOf(":");
+  const destination = separator > 0 ? redeemConnectGrant(code.slice(0, separator), code.slice(separator + 1)) : null;
+  if (!destination) return denyHtml(res);
+  return answerConnectSession(res, destination);
+}
+// POST /login — Agent Zero's own sign-in form. A remote-Instance client (the
+// A0 desktop app) POSTs {username, password, next} exactly as it would to a
+// self-hosted Agent Zero; here the pair is checked against this box's connect
+// grants instead of Agent Zero's own login, which the /agent-zero proxy logs
+// into upstream already.
+function handleConnectLogin(req, res) {
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 16 * 1024) { tooBig = true; req.destroy(); }
+  });
+  req.on("end", () => {
+    if (tooBig) return;
+    const form = new URLSearchParams(body);
+    const granted = redeemConnectGrant(String(form.get("username") || "").trim(), String(form.get("password") || ""));
+    if (!granted) return denyHtml(res);
+    // Agent Zero's own semantics: honour the form's `next` when it points at a
+    // real path on this box; its default "/" (what a self-hosted A0 root would
+    // be) means the surface the grant was minted for.
+    const next = safeBootstrapDestination(form.get("next"));
+    return answerConnectSession(res, next && next !== "/" ? next : granted);
   });
 }
 
@@ -1885,8 +2088,8 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") {
-    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot are hosted dashboards, not chat-CLI agents — no
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") {
+    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot + Nuphos are hosted dashboards, not chat-CLI agents — no
     // /api/chat surface; the user works in the agent's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
@@ -2638,13 +2841,13 @@ function openbotAnswers(done) {
   probe.on("error", () => finish(false));
   probe.end();
 }
-function openbotPage(res, status, title, body, refreshSeconds) {
+function openbotPage(res, status, title, body, refreshSeconds, entry = OPENBOT_ENTRY) {
   // same-origin, not no-referrer: a form post under no-referrer carries
   // Origin: null, which the gate (rightly) refuses as a cookie mutation.
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "same-origin",
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'" });
   res.end("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    + (refreshSeconds ? "<meta http-equiv=\"refresh\" content=\"" + refreshSeconds + ";url=" + OPENBOT_ENTRY + "/\">" : "")
+    + (refreshSeconds ? "<meta http-equiv=\"refresh\" content=\"" + refreshSeconds + ";url=" + entry + "/\">" : "")
     + "<title>" + title + "</title><style>"
     + ":root{color-scheme:light dark;--bg:#fafafa;--fg:#161616;--muted:#6b6b6b;--line:#e2e2e2;--accent:#6e56cf}"
     + "@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#ededed;--muted:#9a9a9a;--line:#2a2a2a;--accent:#9e8cfc}}"
@@ -2712,6 +2915,54 @@ function openbotProxy(req, res) {
   }
   if (agentAppHold(req, res)) return;
   return proxyHttp(req, res, OPENBOT_PORT, null, false, openbotHeaders(req));
+}
+
+// ---- Nuphos runtime console at the box root --------------------------------
+const NUPHOS_ENTRY = "/nuphos";
+const NUPHOS_ACP = "/acp";
+// Paths this gateway answers itself on a Nuphos computer; every other path is
+// the runtime's (its console lives under / and /_openab/, its ACP at /acp).
+const NUPHOS_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY).concat([NUPHOS_ENTRY]);
+function nuphosGatewayPath(u) {
+  return NUPHOS_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+// The runtime builds the address it gives Nuphos, its same-origin check and
+// its Secure console cookie from the host and X-Forwarded-Proto it sees:
+// present this origin as HTTPS (cloudflared terminates TLS in front of us),
+// name the Host the browser used (proxyHttp addresses the loopback port) and
+// drop any other forwarding claim the client sent.
+const NUPHOS_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forwarded-host": null, "x-forwarded-port": null,
+  "x-real-ip": null, "x-forwarded-proto": "https" };
+function nuphosHeaders(req) {
+  const host = String(req.headers.host || "").trim();
+  return { ...NUPHOS_SET_HEADERS, "x-forwarded-host": /^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$/.test(host) ? host : null };
+}
+function nuphosAnswers(done) {
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({ host: "127.0.0.1", port: NUPHOS_PORT, method: "GET", path: "/",
+    headers: { host: "127.0.0.1:" + NUPHOS_PORT, accept: "text/html" }, timeout: 3000 }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+// GET /nuphos/: the runtime's console at / once it answers, a short wait before.
+function nuphosEntry(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  nuphosAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(res, 200, "Starting Nuphos", "<h1>Starting Nuphos…</h1><p>The Nuphos runtime is starting. This page opens its console when it is ready.</p>",
+      5, NUPHOS_ENTRY);
+  });
+}
+function nuphosProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, NUPHOS_PORT, null, false, nuphosHeaders(req));
 }
 
 // ---- terminals on owner-only unix sockets -----------------------------------
@@ -2894,7 +3145,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -4039,10 +4290,21 @@ const server = http.createServer((req, res) => {
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
   }
   if (req.method === "POST" && u === "/auth/bootstrap") return handleAuthBootstrap(req, res);
+  // Connect links: minted/revoked with the bearer only (the dashboard's
+  // "Connect app" action); redeemed without one — the pair in the URL or the
+  // sign-in form is the credential until its expiry.
+  if (req.method === "POST" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantCreate(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "DELETE" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantRevoke(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u.startsWith("/connect/")) return handleConnectRedeem(req, res, u.slice("/connect/".length));
+  if (req.method === "POST" && u === "/login") return handleConnectLogin(req, res);
   if (AGENT_KIND === "openbot" && !ATTACHED) {
     if (req.method === "POST" && u === OPENBOT_SETUP) return openbotSaveKey(req, res);
     if (u === OPENBOT_ENTRY || u.startsWith(OPENBOT_ENTRY + "/")) return openbotEntry(req, res, u);
     if (!openbotGatewayPath(u)) return openbotProxy(req, res);
+  }
+  if (AGENT_KIND === "nuphos" && !ATTACHED) {
+    if (u === NUPHOS_ENTRY || u.startsWith(NUPHOS_ENTRY + "/")) return nuphosEntry(req, res);
+    if (!nuphosGatewayPath(u)) return nuphosProxy(req, res);
   }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
@@ -4227,13 +4489,18 @@ server.on("upgrade", (req, socket, head) => {
     if (!DEEPSEEK_POLICY.surfaceOriginAllowed(req, DEEPSEEK_CONFIG.publicOrigin)) { socket.destroy(); return; }
   }
   const u = req.url.split("?")[0];
+  // Nuphos's servers connect to the runtime's /acp with a team key the runtime
+  // checks itself (it refuses every upgrade before the owner sets it up). It is
+  // the one WebSocket that passes without the Hivra gate, and it never counts
+  // as use of the app through Hivra.
+  const nuphosAcp = AGENT_KIND === "nuphos" && u === NUPHOS_ACP;
   const remoteDesktopUpgrade = u.startsWith("/desktop/");
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
   // /desktop has a separate short-lived session cookie and must never accept
   // the management bearer/cookie as equivalent authority.
-  if (!remoteDesktopUpgrade && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
+  if (!remoteDesktopUpgrade && !nuphosAcp && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
   let port = null, strip = null;
   if (remoteDesktopUpgrade) port = REMOTE_DESKTOP_BROKER_PORT;
   else if (u.startsWith("/terminal")) port = 7681;
@@ -4245,9 +4512,10 @@ server.on("upgrade", (req, socket, head) => {
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
+  else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
-  if (isAgentAppPort(port)) {
+  if (isAgentAppPort(port) && !nuphosAcp) {
     agentAppLastUsedAt = Date.now();
     if (agentAppUpdating()) {
       try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 15\r\n\r\n"); } catch (e) {}
@@ -4277,6 +4545,7 @@ server.on("upgrade", (req, socket, head) => {
   // OpenBot's live sockets present its own loopback Host and (from this origin) Origin.
   const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
   const openbotSet = openbotWs ? openbotHeaders(req) : null;
+  const nuphosWs = AGENT_KIND === "nuphos" && port === NUPHOS_PORT;
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4293,6 +4562,7 @@ server.on("upgrade", (req, socket, head) => {
       if (a0Ws && key === "cookie") continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
+      if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;
@@ -4311,6 +4581,9 @@ server.on("upgrade", (req, socket, head) => {
     if (openbotWs) {
       hdr += "host: 127.0.0.1:" + port + "\r\n";
       for (const [name, value] of Object.entries(openbotSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
+    }
+    if (nuphosWs) {
+      for (const [name, value] of Object.entries(NUPHOS_SET_HEADERS)) if (value !== null) hdr += name + ": " + value + "\r\n";
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";

@@ -173,7 +173,7 @@ export function buildProviderRuntimeUpdateStatusScript(operationId: string): str
     "  printf 'HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished %s %s\\n' \"${code:-255}\" \"$committed\"",
     "  grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
     // An app agent (Aeon, OpenClaw, Agent Zero, Hermes, OpenBot) reports its app line instead.
-    "  grep -m1 -xE 'HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot) version=[^ ]{1,80} target=[^ ]{1,80} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
+    "  grep -m1 -xE 'HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=[^ ]{1,80} target=[^ ]{1,80} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
     "  exit 0",
     "fi",
     `state="$(systemctl show -p ActiveState --value ${unitName(operationId)}.service 2>/dev/null || true)"`,

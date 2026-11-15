@@ -324,6 +324,7 @@ function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): Manage
   if (row.type === "hermes") return { name: "hermes", vetted: null };
   // OpenBot likewise follows upstream's latest release.
   if (row.type === "openbot") return { name: "openbot", vetted: null };
+  if (row.type === "nuphos") return { name: "nuphos", vetted: null };
   return null;
 }
 

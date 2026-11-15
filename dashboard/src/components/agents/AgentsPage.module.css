@@ -274,6 +274,10 @@
 .agentStatus[data-state="running"] > span {
   background: var(--hg-ok);
 }
+.agentStatus[data-state="asleep"] > span,
+.agentStatus[data-state="waking"] > span {
+  background: #7c8fc7;
+}
 .agentStatus[data-state="error"] > span {
   background: var(--hg-bad);
 }

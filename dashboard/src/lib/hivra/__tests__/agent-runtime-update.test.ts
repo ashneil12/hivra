@@ -38,6 +38,8 @@ jest.mock("../agent-cli-store", () => ({
   recordOwnerAgentSoftwareRequest: (...args: unknown[]) => mockRecordOwner(...args),
   recordAutomaticAgentSoftwareResult: (...args: unknown[]) => mockRecordAuto(...args),
 }));
+const mockWake = jest.fn();
+jest.mock("../sleep-aware", () => ({ wakeForUserAction: (...args: unknown[]) => mockWake(...args) }));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
@@ -64,6 +66,7 @@ beforeEach(() => {
   mockRecordFailure.mockResolvedValue(true);
   mockRelease.mockResolvedValue(true);
   mockReadRecord.mockResolvedValue(null);
+  mockWake.mockResolvedValue({ ok: true, woke: true, cold: false });
 });
 
 it("runs the same in-place update for the sweep and says so only in its event", async () => {
@@ -171,4 +174,54 @@ it("records an app update whose app step can't be confirmed as unverified", asyn
   mockRunHostScript.mockResolvedValue({ ok: true, stdout: `${RECEIPT}\n`, stderr: "" });
   expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, type: "aeon" }, trigger: "owner" })).toEqual({ ok: true, agentCli: null, agentApp: null });
   expect(mockRecordOwner).toHaveBeenCalledWith(expect.objectContaining({ target: AGENT_APP_VERSIONS.aeon.version, result: "unverified", report: null }));
+});
+
+describe("a sleeping computer", () => {
+  const sleeping = { ...agent, sleep_state: "napping" };
+  const okScript = { ok: true, stdout: `${RECEIPT}\n`, stderr: "" };
+
+  it("is woken for the owner's update, before anything is resolved or leased", async () => {
+    mockRunHostScript.mockResolvedValue(okScript);
+    const outcome = await runHivraAgentRuntimeUpdate({ userId: "owner", agent: sleeping, trigger: "owner" });
+    expect(outcome.ok).toBe(true);
+    expect(mockWake).toHaveBeenCalledWith(sleeping);
+    expect(mockWake.mock.invocationCallOrder[0]).toBeLessThan(mockResolveTarget.mock.invocationCallOrder[0]);
+    expect(mockWake.mock.invocationCallOrder[0]).toBeLessThan(mockClaim.mock.invocationCallOrder[0]);
+  });
+
+  it("answers that it is still waking, and changes nothing, when the wake has not finished", async () => {
+    mockWake.mockResolvedValue({ ok: false, reason: "waking", status: 503, code: "computer_asleep", message: "Your computer is still waking up. Try again in a few seconds." });
+    const outcome = await runHivraAgentRuntimeUpdate({ userId: "owner", agent: sleeping, trigger: "owner" });
+    expect(outcome).toEqual({ ok: false, code: "asleep", status: 503, message: "Your computer is still waking up. Try again in a few seconds." });
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunHostScript).not.toHaveBeenCalled();
+    // Not recorded as a request that reached the computer.
+    expect(mockRecordOwner).not.toHaveBeenCalled();
+  });
+
+  it("keeps a lapsed owner's 402", async () => {
+    mockWake.mockResolvedValue({ ok: false, reason: "lapsed", status: 402, code: "instance_entitlement_suspended", message: "asleep" });
+    expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: sleeping, trigger: "owner" })).toMatchObject({ ok: false, code: "asleep", status: 402 });
+  });
+
+  it("asks to start the computer when it was off with nothing saved", async () => {
+    mockWake.mockResolvedValue({ ok: true, woke: true, cold: true });
+    expect(await runHivraAgentRuntimeUpdate({ userId: "owner", agent: sleeping, trigger: "owner" })).toMatchObject({ ok: false, code: "not_running", status: 409 });
+    expect(mockClaim).not.toHaveBeenCalled();
+  });
+
+  it("is never woken by the automatic sweep", async () => {
+    const outcome = await runHivraAgentRuntimeUpdate({ userId: "owner", agent: sleeping, trigger: "auto" });
+    expect(outcome).toMatchObject({ ok: false, code: "asleep", status: 409 });
+    expect(mockWake).not.toHaveBeenCalled();
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunHostScript).not.toHaveBeenCalled();
+  });
+
+  it("does no wake work for a computer that is awake", async () => {
+    mockRunHostScript.mockResolvedValue(okScript);
+    await runHivraAgentRuntimeUpdate({ userId: "owner", agent: { ...agent, sleep_state: "awake" }, trigger: "owner" });
+    await runHivraAgentRuntimeUpdate({ userId: "owner", agent, trigger: "owner" });
+    expect(mockWake).not.toHaveBeenCalled();
+  });
 });

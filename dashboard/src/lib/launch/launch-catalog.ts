@@ -194,6 +194,27 @@ export const LAUNCH_CATALOG: Record<LaunchProfileId, CatalogEntry> = {
     ],
     cover: null,
   },
+  nuphos: {
+    jobs: ["coding", "assistant"],
+    keywords: ["nuphos", "team", "chat", "claude", "mobile", "app", "acp"],
+    talk: "From the Nuphos app, after you connect the computer to your Nuphos team.",
+    sourceUrl: null,
+    firstTasks: [
+      {
+        title: "Fix a bug",
+        prompt: "Look at <repository or folder> and fix <the bug>. Tell me what you changed.",
+      },
+      {
+        title: "Explain a codebase",
+        prompt: "Read <repository or folder> and explain how it fits together in a few paragraphs.",
+      },
+      {
+        title: "Work through a list",
+        prompt: "Here is a list of <things>. Go through them one by one and report back on each.",
+      },
+    ],
+    cover: null,
+  },
   aeon: {
     jobs: ["automation"],
     keywords: ["github", "actions", "schedule", "framework", "cron", "skills"],

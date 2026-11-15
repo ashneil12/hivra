@@ -22,7 +22,10 @@ import {
   forceStopAgent,
   getComputerUsage,
   restartAgent,
+  saveAgentSleepSettings,
+  sleepAgentNow,
   stopAgent,
+  wakeAgent,
 } from "../agent-api";
 import { boxLoginStartRaw, getBoxChatMeta } from "../agent-api";
 
@@ -844,5 +847,54 @@ describe("getBoxChatMeta", () => {
     await expect(getBoxChatMeta("https://box.example.test", "token")).resolves.toBeNull();
     global.fetch = jest.fn().mockRejectedValue(new Error("offline")) as unknown as typeof fetch;
     await expect(getBoxChatMeta("https://box.example.test", "token")).resolves.toBeNull();
+  });
+});
+
+describe("agent sleep calls", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
+  const answer = (status: number, body: unknown) =>
+    jest.fn().mockResolvedValue({ ok: status >= 200 && status < 300, status, json: async () => body }) as unknown as typeof fetch;
+
+  it("wakes an agent: 200 is awake with how long it took, 202 is still waking", async () => {
+    global.fetch = answer(200, { success: true, data: { state: "awake", wakeMs: 1400 } });
+    await expect(wakeAgent("a/1")).resolves.toEqual({ state: "awake", wakeMs: 1400 });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("/api/hivra/agents/a%2F1/wake");
+    expect((init as RequestInit).method).toBe("POST");
+    global.fetch = answer(200, { success: true, data: { state: "awake" } });
+    await expect(wakeAgent("a1")).resolves.toEqual({ state: "awake", wakeMs: null });
+    global.fetch = answer(202, { success: true, data: { state: "waking" } });
+    await expect(wakeAgent("a1")).resolves.toEqual({ state: "waking" });
+  });
+
+  it("never throws from a wake: an error answer or a dead network is a plain failure", async () => {
+    global.fetch = answer(503, { success: false, error: "Your agent could not be woken up. Try again in a moment." });
+    await expect(wakeAgent("a1")).resolves.toEqual({ state: "failed", message: "Your agent could not be woken up. Try again in a moment." });
+    global.fetch = answer(500, null);
+    await expect(wakeAgent("a1")).resolves.toMatchObject({ state: "failed" });
+    global.fetch = jest.fn().mockRejectedValue(new TypeError("Failed to fetch")) as unknown as typeof fetch;
+    await expect(wakeAgent("a1")).resolves.toMatchObject({ state: "failed", message: expect.stringContaining("Check your connection") });
+  });
+
+  it("puts an agent to sleep by hand and reports how it ended", async () => {
+    global.fetch = answer(200, { success: true, data: { outcome: "slept", state: "napping" } });
+    await expect(sleepAgentNow("a1", "nap")).resolves.toEqual({ outcome: "slept", reason: null });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("/api/hivra/agents/a1/sleep");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ tier: "nap" });
+    global.fetch = answer(502, { success: false, error: "Your agent could not be put to sleep. It was left as it was." });
+    await expect(sleepAgentNow("a1", "hibernate")).rejects.toThrow("left as it was");
+  });
+
+  it("saves the two sleep settings", async () => {
+    global.fetch = answer(200, { success: true, data: { always_on: true, sleep_policy: "full" } });
+    await expect(saveAgentSleepSettings("a1", { always_on: true })).resolves.toEqual({ always_on: true, sleep_policy: "full" });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("/api/hivra/agents/a1/sleep-settings");
+    expect((init as RequestInit).method).toBe("PATCH");
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ always_on: true });
+    global.fetch = answer(400, { success: false, error: "Keep awake must be on or off." });
+    await expect(saveAgentSleepSettings("a1", { sleep_policy: "off" })).rejects.toThrow("Keep awake must be on or off.");
   });
 });

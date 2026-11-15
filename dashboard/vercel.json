@@ -295,6 +295,10 @@
     {
       "path": "/api/cron/observe-agent-sleep",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/sleep-idle-agents",
+      "schedule": "* * * * *"
     }
   ]
 }

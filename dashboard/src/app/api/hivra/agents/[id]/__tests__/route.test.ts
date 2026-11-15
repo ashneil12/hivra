@@ -1813,6 +1813,48 @@ describe("GET /api/hivra/agents/[id]", () => {
     });
   });
 
+  // A sleeping computer cannot take a guest write, and this poll never wakes
+  // one (a GET with side effects would keep an open tab awake forever). The
+  // seeds, the contract and the link kit wait; the poll just reports the row.
+  describe("a sleeping computer", () => {
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    beforeEach(() => {
+      mockAfterResponse.mockReset();
+      mockAdvanceComputerContract.mockReset().mockResolvedValue({ kind: "tracked" });
+      mockAgentRow = {
+        ...mockAgentRow, type: "codex", status: "running", ip: "10.253.0.90", computer_substrate: "proxmox-kvm",
+        bootstrapped_at: null, bankr_skills_seeded_at: null, infrastructure_binding_token_enforced: true,
+        operation_id: null, operation_kind: null,
+      };
+    });
+
+    it.each(["napping", "hibernated", "waking", "draining", "hibernating", "wake_failed"])(
+      "runs no seed, contract step or link sync while it is %s, and answers 200 with its state", async (sleepState) => {
+        mockAgentRow = { ...mockAgentRow, sleep_state: sleepState, bootstrapped_at: "2026-09-24T00:00:00.000Z" };
+        const response = await GET(makeGetRequest() as never, params);
+        expect(response.status).toBe(200);
+        expect((await response.json()).data.agent.sleep_state).toBe(sleepState);
+        expect(mockSeedAgentBox).not.toHaveBeenCalled();
+        expect(mockAfterResponse).not.toHaveBeenCalled();
+        await runAfterResponseTasks();
+        expect(mockAdvanceComputerContract).not.toHaveBeenCalled();
+        expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      });
+
+    it("does not throw the poll when a seed would have failed, because none is tried", async () => {
+      mockAgentRow = { ...mockAgentRow, sleep_state: "napping" };
+      mockSeedAgentBox.mockRejectedValue(new Error("guest unreachable"));
+      expect((await GET(makeGetRequest() as never, params)).status).toBe(200);
+      expect(mockSeedAgentBox).not.toHaveBeenCalled();
+    });
+
+    it("seeds the same agent as soon as it is awake", async () => {
+      mockAgentRow = { ...mockAgentRow, sleep_state: "awake" };
+      expect((await GET(makeGetRequest() as never, params)).status).toBe(200);
+      expect(mockSeedAgentBox).toHaveBeenCalled();
+    });
+  });
+
   it("does not run agent bootstrap for an already-running Ubuntu Desktop", async () => {
     mockAgentRow = {
       ...mockAgentRow,
