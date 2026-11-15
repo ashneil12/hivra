@@ -219,6 +219,14 @@ the hold page with `Retry-After` instead of a dead 502. Any agent-app kind
 registered in the gateway's `AGENT_APP` table (by name and loopback port)
 inherits this automatically; new kinds only need to join that table.
 
+A separate lock rule keeps host-side mutations alive: the start and
+provision scripts take `/run/lock/hivra-allocation.lock` on a dedicated fd
+so allocation and config steps serialize against each other, but `qm start`
+must never inherit that fd. The script calls it with the lock fd closed
+(`qm start "$VMID" 8>&-`), otherwise the kvm child holds the advisory lock
+for the VM's whole lifetime and every later host operation against that
+computer deadlocks on it.
+
 ## The one manual step
 
 Login is the user's own native OAuth — **not** baked into the image:
@@ -565,6 +573,21 @@ update them yet.
   latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
+
+- **Surface watchdog, browser-keeper cleanup and real-path readiness (`2026.11.15.6`).** A new
+  `hivra-surface-watchdog` service on each computer checks every registered agent
+  surface through the real gateway path (for Agent Zero, the same
+  `/agent-zero/api/csrf_token` call the dashboard makes), reports receipts at
+  `GET /api/surface-watchdog`, and restarts a wedged app unit only after a sustained
+  failure window — bounded by cooldown and a restart cap, and honouring the managed
+  update lock so a self-update shows as updating, not down. Non-browser boxes also
+  disable the legacy `bux-browser-keeper.service` unit at provision and runtime update
+  instead of leaving it crash-looping. New computers get it at provision; existing
+  computers get it from the connection service update.
+
+- **Lock fd isolation (`2026.11.15.5`).** Closes fd 8 on `qm start "$VMID" 8>&-` in
+  `hivra-start-on-host.sh` and `hivra-provision-on-host.sh` so the forked `kvm` child does
+  not inherit `/run/lock/hivra-allocation.lock`.
 
 - **Agent-app update resilience (`2026.11.15.3`).** An agent app's own self-updater or a
   crash/restart window never writes the managed updater's lock, so the surface used to

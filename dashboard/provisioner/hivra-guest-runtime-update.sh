@@ -32,6 +32,11 @@ DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
 # session slot and leave those sessions alone when ttyd restarts.
 AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf
 BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service
+# The box-side watchdog ships through the same update channel as the rest of
+# the runtime, so boxes provisioned before it existed get it on their next
+# managed update instead of waiting for a rebuild.
+WATCHDOG_PY=/var/lib/hivra/hivra-surface-watchdog.py
+WATCHDOG_UNIT=/etc/systemd/system/hivra-surface-watchdog.service
 ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js)
 
 # A DeepSeek computer runs its own gateway generation and pinned package under
@@ -128,7 +133,7 @@ for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.jso
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
-for asset in local-browser-keeper.py; do
+for asset in local-browser-keeper.py hivra-surface-watchdog.py hivra-surface-watchdog.service; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
@@ -147,6 +152,10 @@ if [ -f "$AGENT_TTYD_CONF" ] && [ ! -L "$AGENT_TTYD_CONF" ]; then install -o roo
 else : > "$BACKUP/bux-ttyd-base-path.conf.absent"; fi
 if [ -f "$BOX_TTYD_UNIT" ] && [ ! -L "$BOX_TTYD_UNIT" ]; then install -o root -g root -m 0600 "$BOX_TTYD_UNIT" "$BACKUP/bux-box-ttyd.service"
 else : > "$BACKUP/bux-box-ttyd.service.absent"; fi
+if [ -f "$WATCHDOG_PY" ] && [ ! -L "$WATCHDOG_PY" ]; then install -o root -g root -m 0600 "$WATCHDOG_PY" "$BACKUP/hivra-surface-watchdog.py"
+else : > "$BACKUP/hivra-surface-watchdog.py.absent"; fi
+if [ -f "$WATCHDOG_UNIT" ] && [ ! -L "$WATCHDOG_UNIT" ]; then install -o root -g root -m 0600 "$WATCHDOG_UNIT" "$BACKUP/hivra-surface-watchdog.service"
+else : > "$BACKUP/hivra-surface-watchdog.service.absent"; fi
 # A ttyd restart ends every plain shell it serves, so restart a terminal only
 # when nobody is connected to it; otherwise its new settings apply on its next
 # start. Decide before the gateway restart below drops proxied connections.
@@ -181,6 +190,7 @@ bash -n "$WORK/hivra-tg-apply"
 python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-claude-app.py"
 python3 -I -B -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$WORK/claude-desktop-pin.json"
 python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/local-browser-keeper.py"
+python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-surface-watchdog.py"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -213,6 +223,11 @@ rollback() {
   elif [ -f "$BACKUP/bux-ttyd-base-path.conf.absent" ]; then rm -f -- "$AGENT_TTYD_CONF"; fi
   if [ -f "$BACKUP/bux-box-ttyd.service" ]; then install -o root -g root -m 0644 "$BACKUP/bux-box-ttyd.service" "$BOX_TTYD_UNIT"
   elif [ -f "$BACKUP/bux-box-ttyd.service.absent" ]; then rm -f -- "$BOX_TTYD_UNIT"; fi
+  rm -f -- "$WATCHDOG_PY.next" "$WATCHDOG_UNIT.next"
+  if [ -f "$BACKUP/hivra-surface-watchdog.py" ]; then install -o root -g root -m 0755 "$BACKUP/hivra-surface-watchdog.py" "$WATCHDOG_PY"
+  elif [ -f "$BACKUP/hivra-surface-watchdog.py.absent" ]; then rm -f -- "$WATCHDOG_PY"; fi
+  if [ -f "$BACKUP/hivra-surface-watchdog.service" ]; then install -o root -g root -m 0644 "$BACKUP/hivra-surface-watchdog.service" "$WATCHDOG_UNIT"
+  elif [ -f "$BACKUP/hivra-surface-watchdog.service.absent" ]; then rm -f -- "$WATCHDOG_UNIT"; systemctl disable --now hivra-surface-watchdog.service >/dev/null 2>&1 || true; fi
   systemctl daemon-reload >/dev/null 2>&1 || true
   if [ "$TTYD_RESTARTED" = 1 ]; then systemctl try-restart bux-ttyd.service bux-box-ttyd.service >/dev/null 2>&1 || true; fi
   systemctl restart bux-hivra-chat.service >/dev/null 2>&1 || true
@@ -254,9 +269,22 @@ esac
 install -d -o root -g root -m 0755 "$(dirname "$AGENT_TTYD_CONF")"
 install -o root -g root -m 0644 "$WORK/bux-ttyd-base-path.conf" "$AGENT_TTYD_CONF.next"
 install -o root -g root -m 0644 "$WORK/bux-box-ttyd.service" "$BOX_TTYD_UNIT.next"
+install -d -o root -g root -m 0700 /var/lib/hivra/surface-watchdog
+install -o root -g root -m 0755 "$WORK/hivra-surface-watchdog.py" "$WATCHDOG_PY.next"
+install -o root -g root -m 0644 "$WORK/hivra-surface-watchdog.service" "$WATCHDOG_UNIT.next"
 mv -f -- "$AGENT_TTYD_CONF.next" "$AGENT_TTYD_CONF"
 mv -f -- "$BOX_TTYD_UNIT.next" "$BOX_TTYD_UNIT"
+mv -f -- "$WATCHDOG_PY.next" "$WATCHDOG_PY"
+mv -f -- "$WATCHDOG_UNIT.next" "$WATCHDOG_UNIT"
 if ! systemctl daemon-reload; then rollback; exit 1; fi
+# The watchdog is additive: a box that cannot start it keeps its runtime
+# update, and the receipt line says so instead of hiding it.
+WATCHDOG_STATE=failed
+if systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 \
+  && systemctl is-active --quiet hivra-surface-watchdog.service; then
+  WATCHDOG_STATE=active
+fi
+printf 'HIVRA_SURFACE_WATCHDOG state=%s\n' "$WATCHDOG_STATE"
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
 READY=0
@@ -717,4 +745,8 @@ agent_browser_refresh() {
   printf 'HIVRA_AGENT_BROWSER state=%s\n' "$state"
 }
 agent_browser_refresh || true
+if [ "${KIND_BEFORE:-}" != claude ] && { systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' || [ -e /etc/systemd/system/bux-browser-keeper.service ]; }; then
+  systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bux-browser-keeper.service
+fi
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'

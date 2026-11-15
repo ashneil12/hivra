@@ -337,6 +337,8 @@ function AuthenticatedSurface({
   permissions,
   onManage,
   surfaceId,
+  surface = "computer-surface",
+  expected = true,
   active = true,
   onAccessReady,
   connectName,
@@ -349,6 +351,10 @@ function AuthenticatedSurface({
   onManage: () => void;
   /** Slot this surface publishes under, and whether it is the visible one. */
   surfaceId?: string;
+  /** Which surface this is, for the metadata check's diagnostics. */
+  surface?: string;
+  /** False when this agent may legitimately not ship this surface. */
+  expected?: boolean;
   active?: boolean;
   /** Called once the runtime is verified and the surface is being opened. */
   onAccessReady?: () => void;
@@ -374,7 +380,7 @@ function AuthenticatedSurface({
     destination,
     formRef,
     retry,
-  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache });
+  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache, surface, expected });
   const missingToken = !token;
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
@@ -624,7 +630,7 @@ function AuthenticatedSurface({
 }
 
 function TerminalView({ url, token, label, onManage, surfaceId, active = true, onAccessReady }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; onAccessReady?: () => void }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} onAccessReady={onAccessReady} />;
+  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} surface="terminal" active={active} onAccessReady={onAccessReady} />;
 }
 
 // Each terminal tab is one persistent session on the computer: the tab's slot
@@ -762,7 +768,7 @@ function RetainedTerminal({ active, surfaceId, label, sessionName, ...surface }:
 // port; the box's token-gated proxy fronts it under /aeon. Rendered in an iframe
 // just like the terminal/browser surfaces.
 function DashboardView({ url, token, label, onManage, surfaceId, active = true, connectName }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; connectName?: string }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} active={active} connectName={connectName} />;
+  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} surface="agent-runtime" active={active} connectName={connectName} />;
 }
 
 // Live browser — the agent's real Chrome (headful on the box's Xvfb), streamed
@@ -771,7 +777,7 @@ function DashboardView({ url, token, label, onManage, surfaceId, active = true, 
 // agent has paused or that conflict-free takeover is available. The title bar
 // says "View only" beside the status.
 function BrowserView({ url, token, onManage, surfaceId, active = true }: { url: string; token: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label="Live browser" background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+  return <AuthenticatedSurface url={url} token={token} label="Live browser" background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} surface="browser" active={active} />;
 }
 
 function BrowserDisabledView({
