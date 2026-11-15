@@ -609,6 +609,8 @@ export const PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES = [
   "hivra-install-agent.py",
   "hivra-provider-worker.py",
   "hivra-copy-desktop-image.py",
+  "hivra-surface-watchdog.py",
+  "hivra-surface-watchdog.service",
   "hivra-browser-apply",
   "hivra-claude-app.py",
   "hivra-claude-app.service",

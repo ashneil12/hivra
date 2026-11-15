@@ -225,14 +225,20 @@ export function createSurfaceMetadataCache(): SurfaceMetadataCache {
 // Surfaces retry on their own, so a stuck one must leave a trail (DevTools and
 // ops events): one line when the check starts failing or its reason changes,
 // not one per retry. Origin and reason only; the probe never carries the token.
-function reportProbe(probe: RuntimeProbe, origin: string, lastFailure: { current: string | null }) {
+// `surface` names what is being probed — the agent's own runtime UI, its
+// terminal, its browser — because a flat "computer-surface" reads as remote
+// desktop infrastructure on every box, including agents that ship none.
+// `expected` is false for a surface this agent kind may legitimately not
+// have: a failed check then stays client-side instead of paging ops about an
+// expected-absent thing.
+function reportProbe(probe: RuntimeProbe, origin: string, surface: string, expected: boolean, lastFailure: { current: string | null }) {
   if (probe.failure === lastFailure.current) return;
   lastFailure.current = probe.failure;
-  if (!probe.failure) return;
+  if (!probe.failure || !expected) return;
   clientLog.warn("computer surface check failed", {
     // An allow-listed client source, so the ops event is accepted for everyone.
     source: "client.diagnostic",
-    surface: "computer-surface",
+    surface,
     failureType: "hivra_surface_metadata_unavailable",
     origin,
     reason: probe.failure,
@@ -333,7 +339,7 @@ export function nativeStartCopy(agentKind: string | null) {
   };
 }
 
-export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, metadataCache = null }: {
+export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, metadataCache = null, surface = "computer-surface", expected = true }: {
   url: string;
   token: string | null;
   active?: boolean;
@@ -341,6 +347,10 @@ export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, me
   recheck?: number;
   /** The page's shared first check of this computer (see SurfaceMetadataCache). */
   metadataCache?: SurfaceMetadataCache | null;
+  /** Which surface this is, for diagnostics (the ops event's `surface` field). */
+  surface?: string;
+  /** False when this agent kind may legitimately not ship this surface: a failed check never becomes an ops event. */
+  expected?: boolean;
 }) {
   const endpoints = surfaceEndpoints(url);
   const origin = endpoints?.origin ?? "";
@@ -370,11 +380,11 @@ export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, me
       if (controller.signal.aborted) return;
       const probe = classifyMetadata(result, pathname);
       lastProbeAt.current = result.fetchedAt;
-      reportProbe(probe, origin, lastFailure);
+      reportProbe(probe, origin, surface, expected, lastFailure);
       setAccess(firstAccess(probeKey, token, probe, Date.now()));
     });
     return () => controller.abort();
-  }, [metadataCache, metadataUrl, origin, pathname, probeKey, probeVersion, token]);
+  }, [expected, metadataCache, metadataUrl, origin, pathname, probeKey, probeVersion, surface, token]);
 
   // Each generation signs its own, newly mounted frame in (hosts key the
   // iframe on it). The bearer only ever travels in this POST body.
@@ -405,7 +415,7 @@ export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, me
         if (disposed) return;
         const now = Date.now();
         lastProbeAt.current = now;
-        reportProbe(result, origin, lastFailure);
+        reportProbe(result, origin, surface, expected, lastFailure);
         setAccess((previous) => previous && previous.key === probeKey && previous.token === token
           ? advance(previous, result, now) : previous);
         // A failed probe on a loaded frame is often a gateway mid-restart:
@@ -451,7 +461,7 @@ export function useSurfaceBootstrap({ url, token, active = true, recheck = 0, me
       inFlight?.abort();
     };
     // recheck is a trigger: re-running this effect probes at once (above).
-  }, [active, metadataUrl, origin, pathname, probeKey, recheck, status, token]);
+  }, [active, expected, metadataUrl, origin, pathname, probeKey, recheck, status, surface, token]);
 
   const copy = nativeStartCopy(current?.agentKind ?? null);
   return {

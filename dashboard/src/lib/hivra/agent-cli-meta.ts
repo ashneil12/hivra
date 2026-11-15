@@ -219,6 +219,122 @@ export async function readAgentIdleEvidence(target: Omit<AgentSoftwareBoxTarget,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Surface watchdog receipts (GET /api/surface-watchdog)
+
+const WATCHDOG_EVENT_TYPES = new Set([
+  "gateway_down", "gateway_recovered", "unit_restart", "recovered",
+  "recovery_exhausted", "unit_failing", "watchdog_error",
+]);
+
+export interface SurfaceWatchdogEvent {
+  id: string;
+  at: string | null;
+  type: string;
+  unit?: string;
+  kind?: string;
+  reason?: string;
+  ok?: boolean;
+  downForS?: number;
+  nRestarts?: number;
+  attempt?: number;
+  restarts?: number;
+}
+
+export interface SurfaceWatchdogReport {
+  agentKind: string | null;
+  updatedAt: string | null;
+  surface: { status: string | null; reason: string | null; restarts: number };
+  events: SurfaceWatchdogEvent[];
+}
+
+export type SurfaceWatchdogReading =
+  | { observation: "reported"; report: SurfaceWatchdogReport }
+  | { observation: "not_installed" }
+  | { observation: "unreachable" };
+
+function watchdogEvent(value: unknown): SurfaceWatchdogEvent | null {
+  const event = objectOf(value);
+  if (!event || typeof event.id !== "string" || !/^e\d+-\d{1,12}$/.test(event.id)) return null;
+  if (typeof event.type !== "string" || !WATCHDOG_EVENT_TYPES.has(event.type)) return null;
+  const out: SurfaceWatchdogEvent = {
+    id: event.id,
+    at: typeof event.at === "string" ? event.at : null,
+    type: event.type,
+  };
+  for (const key of ["unit", "kind", "reason"] as const) {
+    if (typeof event[key] === "string") out[key] = event[key] as string;
+  }
+  for (const key of ["downForS", "nRestarts", "attempt", "restarts"] as const) {
+    if (Number.isInteger(event[key])) out[key] = event[key] as number;
+  }
+  if (typeof event.ok === "boolean") out.ok = event.ok;
+  return out;
+}
+
+/**
+ * The box-side watchdog's receipts: what it probed through the real user path,
+ * which units it restarted and which keep failing. Never throws — a gateway
+ * that cannot answer (it is the gateway being probed) reads as unreachable,
+ * and a gateway that predates the endpoint reads as not_installed. The bearer
+ * goes only to a reply that proved a current Hivra connection service, exactly
+ * as for the other private reads here.
+ */
+export async function readSurfaceWatchdogFromBox(
+  target: Omit<AgentSoftwareBoxTarget, "subject">,
+  fetcher: Fetcher = ssrfSafeFetch,
+): Promise<SurfaceWatchdogReading> {
+  const origin = originOf(target);
+  const apiToken = typeof target.apiToken === "string" && API_TOKEN.test(target.apiToken) ? target.apiToken : null;
+  if (!origin || !apiToken) return { observation: "unreachable" };
+  const box = client(origin, apiToken, fetcher);
+  try {
+    const publicMeta = objectOf(await box.get("/api/meta", false));
+    if (!publicMeta || typeof publicMeta.agentKind !== "string"
+      || publicMeta.surfaceAuth !== "post-cookie-v1"
+      || typeof publicMeta.bootId !== "string" || !BOOT_ID.test(publicMeta.bootId)) {
+      return { observation: "unreachable" };
+    }
+    let body: unknown;
+    try {
+      body = await box.get("/api/surface-watchdog", true);
+    } catch (error) {
+      if (error instanceof ReadFailed && /^status 404$/.test(error.message)) {
+        return { observation: "not_installed" };
+      }
+      return { observation: "unreachable" };
+    }
+    const report = objectOf(body);
+    const surface = objectOf(report?.surface);
+    if (!report || report.ok !== true || !surface || !Array.isArray(report.events)) {
+      return { observation: "unreachable" };
+    }
+    const events: SurfaceWatchdogEvent[] = [];
+    for (const entry of report.events) {
+      const event = watchdogEvent(entry);
+      if (!event) return { observation: "unreachable" };
+      events.push(event);
+    }
+    return {
+      observation: "reported",
+      report: {
+        agentKind: typeof report.agentKind === "string" ? report.agentKind : null,
+        updatedAt: typeof report.updatedAt === "string" ? report.updatedAt : null,
+        surface: {
+          status: typeof surface.status === "string" ? surface.status : null,
+          reason: typeof surface.reason === "string" ? surface.reason : null,
+          restarts: Number.isInteger(surface.restarts) ? surface.restarts as number : 0,
+        },
+        events,
+      },
+    };
+  } catch {
+    return { observation: "unreachable" };
+  } finally {
+    box.close();
+  }
+}
+
 export interface AgentActivityReading {
   /** The connection service's own start, as an opaque id. A new id means its counters began again. */
   bootId: string;
