@@ -1,16 +1,20 @@
--- Admit the reviewed 2026.11.15.1 provider bundle (box state import: the gateway
--- gains /api/import routes that restore a user's existing local agent state from a
--- tar.gz bundle into per-kind state roots behind an allowlist, plus
--- hivra-chat/import-state.cjs; no other guest asset changes) without invalidating
--- existing computers. The TypeScript identities and manifest ship with the release;
--- this keeps SQL admission and the identity gates in step. The bundle digest is the
--- manifest digest of provisioner-releases/2026.11.15.1.json, and the 2026.11.14.1
--- digest it anchors on is the one recorded in provider-desktop-worker.ts and
+-- Admit the reviewed 2026.11.15.1 provider bundle (Agent Zero self-update
+-- layout: upstream v2.15+ serves a splash bootstrap at / that installs the
+-- real document from /ui/index, so the box gateway falls back from / to the
+-- canonical /index.html document and still serves only documents that satisfy
+-- the pinned entry transform; /agent-zero/ui/index redirects to the mount
+-- root; no guest asset changes beyond the gateway) without invalidating
+-- existing computers. The TypeScript identities and manifest ship with the
+-- release; this keeps SQL admission and the identity gates in step. The
+-- bundle digest is the manifest digest of
+-- provisioner-releases/2026.11.15.1.json, and the 2026.11.14.1 digest it
+-- anchors on is the one recorded in provider-desktop-worker.ts and
 -- provider-native-worker.ts.
 --
--- Anchors on the 2026.11.14.1 entry, which appears exactly once in each function (the
--- 2026.11.14.1 admission is the latest one applied, so it must be applied first).
--- Idempotent: a function that already admits 2026.11.15.1 is left as it is.
+-- Anchors on the 2026.11.14.1 entry, which appears exactly once in each
+-- function (the 2026.11.14.1 admission is the latest one applied, so it must
+-- be applied first). Idempotent: a function that already admits 2026.11.15.1
+-- is left as it is.
 do $migration$
 declare signature text; definition text; anchor text; addition text;
 begin
@@ -20,10 +24,10 @@ begin
      '''2026.11.14.1'',''2026.11.15.1'''),
     ('public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)',
      '(p_identity->''bundle''->>''bundleSha256''=''03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.14.1'')',
-     '(p_identity->''bundle''->>''bundleSha256''=''03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.14.1'') or (p_identity->''bundle''->>''bundleSha256''=''7297d6a3a1a7029209999e33138ff95907d027ab2f4d72d8fd03f67456a16176'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.1'')')),
+     '(p_identity->''bundle''->>''bundleSha256''=''03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.14.1'') or (p_identity->''bundle''->>''bundleSha256''=''4729a8faca0ab45d854ad48423ee6d87bfb94e818ce27599817998fdf2ababd8'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.1'')'),
     ('public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)',
      '(p_identity->''bundle''->>''bundleSha256''=''03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.14.1'')',
-     '(p_identity->''bundle''->>''bundleSha256''=''03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.14.1'') or (p_identity->''bundle''->>''bundleSha256''=''7297d6a3a1a7029209999e33138ff95907d027ab2f4d72d8fd03f67456a16176'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.1'')'))
+     '(p_identity->''bundle''->>''bundleSha256''=''03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.14.1'') or (p_identity->''bundle''->>''bundleSha256''=''4729a8faca0ab45d854ad48423ee6d87bfb94e818ce27599817998fdf2ababd8'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.1'')')
   ) as patches(signature, anchor, addition)
   loop
     definition := pg_get_functiondef(signature::regprocedure);

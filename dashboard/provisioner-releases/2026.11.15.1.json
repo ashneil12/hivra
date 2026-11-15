@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 82336,
-      "sha256": "4ef7bc17bd2cfee611a164634d3443b0b21ded4de19359a1437225cb0525fd76"
+      "bytes": 82142,
+      "sha256": "e4d6cc963f1b45772392d26a1c9a9a79f69cd42303616ff8ab7ef7f4aa0e6cee"
     },
     {
       "path": "README.md",
-      "bytes": 48789,
-      "sha256": "b2239b4a16b7285601bc394f1f2d6347ce303387bce0a2062a6af5073e9f9638"
+      "bytes": 48705,
+      "sha256": "ce60fbc0794419b5d5216e94331005673f87fe25332a5e4e36075000bc272847"
     },
     {
       "path": "VERSION",
@@ -160,7 +160,7 @@
     {
       "path": "hivra-provider-worker.py",
       "bytes": 45216,
-      "sha256": "562875a1456e837bd27fc110669acfcdbc4e6b7e7f3f7fa3ee2ede1035f2f827"
+      "sha256": "48b7c4637d228f9bff6e909dfa996f0822172e560194e78bf79be21d9f6fd635"
     },
     {
       "path": "hivra-copy-desktop-image.py",
@@ -189,8 +189,8 @@
     },
     {
       "path": "hivra-runtime-receipt.py",
-      "bytes": 35600,
-      "sha256": "5dda8d047553a3a2043a017e2f88b78c5eddf49ef697d7c31a1b0980e517b81f"
+      "bytes": 35552,
+      "sha256": "570a77ff1eb3e2ddd858dcda8b04b1318c601bc13d9368e6d5b3db370f82788d"
     },
     {
       "path": "hivra-chat/app.js",
@@ -218,19 +218,14 @@
       "sha256": "9fc4c52c42d937ceff8e0aaae0bdfef68d16b4b81b1457d9a0efa0c4fd9f40a3"
     },
     {
-      "path": "hivra-chat/import-state.cjs",
-      "bytes": 10992,
-      "sha256": "6aef4591874ec768aac0f3e89a484f95eaa5b8f819caf0729baa6445fd2ef3d7"
-    },
-    {
       "path": "hivra-chat/chat-runs.cjs",
       "bytes": 21498,
       "sha256": "f18754af493b3922244da93b8312637710d966047b1fb910cf4b4eb942ca8ad7"
     },
     {
       "path": "hivra-chat/server.js",
-      "bytes": 273679,
-      "sha256": "c990d74dd138b60ce75edf6f27fb6f3055e88249a80456afb2fcb3499fcca917"
+      "bytes": 270026,
+      "sha256": "7c2215920d176814c154f26a02345cad634e66a6ce1ea2780320e200f0a11082"
     },
     {
       "path": "hivra-chat/workspace-access-policy.cjs",
@@ -269,13 +264,13 @@
     },
     {
       "path": "hivra-update-guest-runtime.sh",
-      "bytes": 14719,
-      "sha256": "17e296a7f01b44e45205159e09cef9ca35b6039f1e46a74363220cf5dfeca998"
+      "bytes": 14702,
+      "sha256": "f4362f55aeccb4e8ed5ce26b7a3047285d83a595bdd4a7a7245df9376f3873f5"
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 39898,
-      "sha256": "a1748d5ce22adaf70654fde28dc55800a940ed14459fd9ce54b323f1550a6801"
+      "bytes": 39832,
+      "sha256": "fa829dc2904573b96a01a215d26d95668ba44be69be4677806094174f54646fa"
     },
     {
       "path": "hivra-tg-apply",
@@ -329,8 +324,8 @@
     },
     {
       "path": "provision-claude-code-box.sh",
-      "bytes": 118079,
-      "sha256": "4b56730d7aa86eba439e933f4621f593d560567459da415c133211a198f9c4ff"
+      "bytes": 118017,
+      "sha256": "186d2028d7a6c9a53e69ad2f99d118625e6a0c76aef1b361f15e7e632586fc1d"
     },
     {
       "path": "remote-desktop/broker.cjs",

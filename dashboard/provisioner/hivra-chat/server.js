@@ -2545,6 +2545,14 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
   if (!authed(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
+  // Newer Agent Zero serves a splash bootstrap at / that installs the real
+  // document fetched from /ui/index. This gateway serves the pinned app
+  // document itself at the mount root; a direct hit on the bootstrap path
+  // would resolve the document's relative assets under /ui/, so send it back.
+  if ((req.method === "GET" || req.method === "HEAD") && ["/ui/index", "/ui/index.html"].includes(apath.split("?")[0])) {
+    res.writeHead(302, { Location: "/agent-zero/", "Cache-Control": "no-store" });
+    return res.end();
+  }
   const editorPath = apath.split("?")[0];
   const editorAsset = (req.method === "GET" || req.method === "HEAD") && Object.hasOwn(A0_EDITOR_SOURCES, editorPath);
   const editor = editorContext || (editorAsset ? { done: false, cancel: null, timer: null } : null);
@@ -2607,6 +2615,13 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     const headers = Object.assign({}, req.headers, { host: "127.0.0.1:" + AGENT_ZERO_PORT });
     const requestSessionRevision = _a0SessionRevision;
     const entryDocument = (req.method === "GET" || req.method === "HEAD") && ["/", "/index.html"].includes(apath.split("?")[0]);
+    // Newer Agent Zero serves a splash bootstrap at / and the pinned app
+    // document at /index.html (and /ui/index). Older serves the document at /
+    // directly. Try the requested path first, then the canonical document
+    // path; only documents satisfying the pinned entry transform are served.
+    const entryFallback = apath.split("?")[0] === "/"
+      ? "/index.html" + (apath.includes("?") ? apath.slice(apath.indexOf("?")) : "")
+      : null;
     if (entryDocument || editorAsset || csrfResponse) {
       headers["accept-encoding"] = "identity";
       // The transformed representation has different validators/length. Always
@@ -2621,7 +2636,8 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (nativeCookie) headers.cookie = nativeCookie; else delete headers.cookie;
     // HEAD still validates the exact upstream body before describing the
     // transformed representation. Neither path may bypass source pinning.
-    const p = http.request({ host: "127.0.0.1", port: AGENT_ZERO_PORT, method: editorAsset ? "GET" : req.method, path: apath, headers }, (pr) => {
+    const issue = (upstreamPath) => {
+    const p = http.request({ host: "127.0.0.1", port: AGENT_ZERO_PORT, method: editorAsset ? "GET" : req.method, path: upstreamPath, headers }, (pr) => {
       if (editor && editor.done) { pr.destroy(); return; }
       if (csrf && csrf.done) { pr.destroy(); return; }
       if (csrfResponse) pr.once("error", () => rejectCsrf("upstream-error"));
@@ -2749,7 +2765,15 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
         pr.once("end", () => {
           if (done) return;
           const html = a0CanonicalEntryHtml(Buffer.concat(chunks).toString("utf8"));
-          if (html === null) return fail("entry-contract");
+          if (html === null) {
+            // The splash bootstrap is not the app document; retry once against
+            // the canonical document path newer versions expose.
+            if (entryFallback && upstreamPath !== entryFallback) {
+              done = true; clearTimeout(timer); pr.destroy();
+              return issue(entryFallback);
+            }
+            return fail("entry-contract");
+          }
           done = true; clearTimeout(timer);
           h["content-length"] = Buffer.byteLength(html);
           res.writeHead(200, h); res.end(html);
@@ -2769,6 +2793,8 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (csrf) csrf.cancel = () => p.destroy();
     if (editor) editor.cancel = () => p.destroy();
     if (req.method === "GET" || req.method === "HEAD") p.end(); else req.pipe(p);
+    };
+    issue(apath);
   };
   if (_a0Cookie) doProxy(); else loginThen(doProxy);
 }

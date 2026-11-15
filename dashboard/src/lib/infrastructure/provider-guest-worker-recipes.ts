@@ -476,8 +476,13 @@ const recipes = Object.freeze({
     workerSize: 45216,
   }),
   "2026.11.15.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Agent Zero's pinned app document through the newer splash layout. The worker only advances its release labels.
+    workerSha256: "48b7c4637d228f9bff6e909dfa996f0822172e560194e78bf79be21d9f6fd635",
+    workerSize: 45216,
+  }),
+  "2026.11.15.2": Object.freeze({
     protocol: "v1" as const, // Same worker protocol; the release adds the box state-import routes (import-state.cjs) and raises the manifest cap one file for it.
-    workerSha256: "562875a1456e837bd27fc110669acfcdbc4e6b7e7f3f7fa3ee2ede1035f2f827",
+    workerSha256: "3554ebbcc4a6e92eac4b5850937ba1179c590db300e4071156922d52aa6a6fbb",
     workerSize: 45216,
   }),
 });

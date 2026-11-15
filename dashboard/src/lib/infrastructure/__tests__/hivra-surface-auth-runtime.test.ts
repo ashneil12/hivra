@@ -57,7 +57,7 @@ describe("Hivra guest surface authentication runtime", () => {
   // ~/.hivra), so sign-ins live in each evaluation only: the fallback a real
   // gateway uses when its store cannot be saved. Restarts with a saved store
   // run real processes in hivra-surface-session-store.test.ts.
-  async function evaluateGuest(): Promise<http.Server> {
+  async function evaluateGuest(env: Record<string, string> = {}): Promise<http.Server> {
     const serverPath = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
     const source = readFileSync(serverPath, "utf8");
     const fixtureFs = {
@@ -99,6 +99,7 @@ describe("Hivra guest surface authentication runtime", () => {
           HIVRA_CHAT_PORT: "0",
           HIVRA_AGENT_KIND: "generic",
           AEON_DASHBOARD_PORT: String(upstreamPort),
+          ...env,
         },
       },
       __dirname: path.dirname(serverPath),
@@ -556,5 +557,111 @@ describe("Hivra guest surface authentication runtime", () => {
     const before = upstreamUpgradeCount;
     await expect(upgrade("/socket.io/?EIO=4&transport=websocket", headers)).rejects.toMatchObject({ code: "ECONNRESET" });
     expect(upstreamUpgradeCount).toBe(before);
+  });
+
+  // Agent Zero changed its / document from the app shell (v2.2) to a splash
+  // bootstrap that installs the real document from /ui/index (v2.15+). The
+  // gateway must keep serving the pinned app document on both layouts.
+  const A0_APP_DOC = [
+    "<!doctype html><html><body>",
+    '<script type="module" src="index.js"></script>',
+    '<script type="module" src="js/initFw.js"></script>',
+    "</body></html>",
+  ].join("");
+  const A0_SPLASH_DOC =
+    '<!doctype html><html><body><script>const APP_DOCUMENT_PATH = "/ui/index"</script></body></html>';
+
+  function a0Upstream(layout: "splash" | "direct", seen: string[]) {
+    return http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && req.url === "/login") {
+        res.writeHead(303, { "Set-Cookie": "session=a0-session", Location: "/" });
+        return res.end();
+      }
+      if (req.method === "GET" && (req.url === "/index.html" || (layout === "direct" && req.url === "/"))) {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(A0_APP_DOC);
+      }
+      if (req.method === "GET" && req.url === "/") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(A0_SPLASH_DOC);
+      }
+      res.writeHead(404);
+      res.end();
+    });
+  }
+
+  async function agentZeroGateway(layout: "splash" | "direct", seen: string[]) {
+    const a0 = a0Upstream(layout, seen);
+    trackSockets(a0);
+    const a0Port = await listen(a0);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(a0Port),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    expect(signin.status).toBe(303);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    return { a0, port, cookie };
+  }
+
+  it("serves the pinned Agent Zero document through the newer splash layout", async () => {
+    const seen: string[] = [];
+    const { a0, port, cookie } = await agentZeroGateway("splash", seen);
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('src="/index.js"');
+    expect(result.body).toContain('src="/js/initFw.js"');
+    expect(result.body).not.toContain("APP_DOCUMENT_PATH");
+    // The splash at / failed the pinned contract, so the canonical document
+    // path was fetched instead.
+    expect(seen).toContain("GET /index.html");
+    await close(a0);
+  });
+
+  it("still serves the pinned Agent Zero document directly on the older layout", async () => {
+    const seen: string[] = [];
+    const { a0, port, cookie } = await agentZeroGateway("direct", seen);
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('src="/index.js"');
+    expect(result.body).toContain('src="/js/initFw.js"');
+    // The document at / satisfied the contract; no fallback fetch happened.
+    expect(seen).not.toContain("GET /index.html");
+    await close(a0);
+  });
+
+  it("rejects the Agent Zero document when neither entry path satisfies the contract", async () => {
+    const a0 = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><html><body>unrecognized</body></html>");
+    });
+    trackSockets(a0);
+    const a0Port = await listen(a0);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(a0Port),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(502);
+    expect(result.body).toBe("native entry document unavailable");
+    await close(a0);
+  });
+
+  it("redirects a direct hit on the newer bootstrap document path back to the mount root", async () => {
+    const seen: string[] = [];
+    const { a0, port, cookie } = await agentZeroGateway("splash", seen);
+    const result = await request("/agent-zero/ui/index", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(302);
+    expect(result.headers.location).toBe("/agent-zero/");
+    // Nothing was forwarded upstream for the redirected request.
+    expect(seen.filter((entry) => entry === "GET /ui/index")).toHaveLength(0);
+    await close(a0);
   });
 });
