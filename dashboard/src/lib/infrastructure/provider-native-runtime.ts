@@ -2,8 +2,10 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.15.1.json";
+import currentRelease from "../../../provisioner-releases/2026.11.15.2.json";
+import stateImportRelease from "../../../provisioner-releases/2026.11.15.1.json";
 import a0EntryFallbackRelease from "../../../provisioner-releases/2026.11.14.1.json";
+
 import connectGrantsRelease from "../../../provisioner-releases/2026.11.13.6.json";
 import discordDoorbellRelease from "../../../provisioner-releases/2026.11.13.5.json";
 import doorbellRelease from "../../../provisioner-releases/2026.11.13.4.json";
@@ -111,8 +113,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.15.1"
+  const release = identity.bundle.provisionerVersion === "2026.11.15.2"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.1"
+      ? stateImportRelease
     : identity.bundle.provisionerVersion === "2026.11.14.1"
       ? a0EntryFallbackRelease
     : identity.bundle.provisionerVersion === "2026.11.13.6"

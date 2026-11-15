@@ -216,7 +216,7 @@ describe("portable provisioner source contract", () => {
   it("ships the guest model-setting dependency in the verified bundle and installer", () => {
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-chat/llm-application.js");
     expect(source("provision-claude-code-box.sh")).toContain("hivra-chat/llm-application.js");
-    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do");
+    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js; do");
     expect(source("hivra-chat/server.js")).toContain('require("./llm-application.js")');
   });
   it("derives runtime compatibility from every runtime the vendored bundle accepts", () => {
@@ -414,7 +414,7 @@ describe("portable provisioner source contract", () => {
   it("ships a bounded guest runtime updater that preserves identity and rolls back failed gateway assets", () => {
     const updater = updaterSource();
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-update-guest-runtime.sh");
-    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)");
+    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js)");
     expect(updater).toContain('ARCHIVE_SHA256="$(sha256sum "$ARCHIVE"');
     expect(updater).toContain('install -o root -g root -m 0600 "$ARCHIVE" "$ROOT_ARCHIVE"');
     expect(updater).toContain('sha256sum "$ROOT_ARCHIVE"');
@@ -953,7 +953,7 @@ describe("deepseek-harness provisioner minimum", () => {
   });
 
   it("skips an older managed host in placement and leaves other runtimes' lists alone", () => {
-    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("claude-code")).toEqual(compatibleProxmoxVersionsForRuntime(null));
     expect(compatibleProxmoxVersionsForRuntime("codex")).toEqual(compatibleProxmoxVersionsForRuntime(null));
   });
@@ -984,7 +984,7 @@ describe("linux-server provisioner minimum", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
       .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
-    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
     // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));

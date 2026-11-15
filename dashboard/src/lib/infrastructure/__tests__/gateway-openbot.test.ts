@@ -113,7 +113,7 @@ describe("gateway OpenBot at the box root", () => {
       require: (name: string) => {
         if (name === "http") return fakeHttp;
         if (name === "child_process") return childProcess;
-        if (["fs", "path", "crypto", "net", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
+        if (["fs", "path", "crypto", "net", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
       process: {

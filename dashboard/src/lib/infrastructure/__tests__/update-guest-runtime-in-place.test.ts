@@ -23,7 +23,7 @@ const CREDENTIAL = {
   expiresAt: "2026-09-29T12:00:00.000Z",
 };
 const CREDENTIAL_JSON = JSON.stringify(CREDENTIAL);
-const RUNTIME_ASSETS = ["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "chat-runs.cjs", "index.html", "app.js"];
+const RUNTIME_ASSETS = ["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "import-state.cjs", "chat-runs.cjs", "index.html", "app.js"];
 
 function block(source: string, pattern: RegExp): string {
   const match = source.match(pattern);
