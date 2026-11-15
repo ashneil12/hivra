@@ -681,10 +681,6 @@ chrome_upgrade() {
 }
 agent_browser_refresh() {
   local port out changed=0 legacy=0 state=current i active=0 upgrade=0 pin installed want="" want_sha=""
-  if [ "$KIND_BEFORE" != claude ] && { systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' || [ -e /etc/systemd/system/bux-browser-keeper.service ]; }; then
-    systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/bux-browser-keeper.service
-  fi
   [ -f "$BROWSER_UNIT" ] && [ ! -L "$BROWSER_UNIT" ] && [ -f "$BROWSER_KEEPER" ] && [ ! -L "$BROWSER_KEEPER" ] || return 0
   dpkg-query -W -f='${Status}' google-chrome-stable 2>/dev/null | grep -Fq 'install ok installed' || return 0
   port="$(sed -n 's/^Environment=BUX_LOCAL_CDP_PORT=\([0-9]\{1,5\}\)$/\1/p' "$BROWSER_UNIT" | head -n 1)"
@@ -749,4 +745,8 @@ agent_browser_refresh() {
   printf 'HIVRA_AGENT_BROWSER state=%s\n' "$state"
 }
 agent_browser_refresh || true
+if [ "${KIND_BEFORE:-}" != claude ] && { systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' || [ -e /etc/systemd/system/bux-browser-keeper.service ]; }; then
+  systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bux-browser-keeper.service
+fi
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'

@@ -284,8 +284,8 @@
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 42470,
-      "sha256": "8541e265d9998d56dd98b725bc5c05369953ca60efe756027a53f02006f1974d"
+      "bytes": 42466,
+      "sha256": "61ce7fb85ccc2fbe81d6a6c5a5e34cd45556dfd989f086d24d050f6dccdbd18e"
     },
     {
       "path": "hivra-tg-apply",

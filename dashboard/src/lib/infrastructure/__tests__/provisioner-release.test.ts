@@ -989,7 +989,7 @@ it("ships the surface watchdog, browserless keeper cleanup and real-path readine
   const installer = readFileSync("provisioner/provision-claude-code-box.sh", "utf8");
   expect(installer.indexOf("bux-browser-keeper.service")).toBeLessThan(installer.indexOf('if [ "$WANT_BROWSER" = 1 ]; then\n\n  # Drop in the local keeper'));
   const guestUpdater = readFileSync("provisioner/hivra-guest-runtime-update.sh", "utf8");
-  expect(guestUpdater).toContain('if [ "$KIND_BEFORE" != claude ]');
+  expect(guestUpdater).toContain('if [ "${KIND_BEFORE:-}" != claude ]');
   expect(guestUpdater).toContain("bux-browser-keeper.service");
   for (const version of ["2026.11.15.5", "2026.11.15.6"]) {
     expect(provisionerSupportsHostCredential(version)).toBe(true);
