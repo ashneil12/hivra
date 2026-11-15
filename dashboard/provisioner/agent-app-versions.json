@@ -10,8 +10,13 @@
     "previous": []
   },
   "agent-zero": {
-    "version": "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",
-    "label": "v2.2",
-    "previous": []
+    "version": "sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8",
+    "label": "v2.15",
+    "previous": [
+      {
+        "version": "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",
+        "label": "v2.2"
+      }
+    ]
   }
 }

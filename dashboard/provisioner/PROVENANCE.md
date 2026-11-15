@@ -244,7 +244,8 @@ inferring them from a live host.
 - OpenAI Codex CLI npm package: `@openai/codex@0.149.1`
 - OpenClaw npm package: `openclaw@2026.6.10`
 - Agent Zero OCI image:
-  `agent0ai/agent-zero@sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0`
+  `agent0ai/agent-zero@sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8` (`v2.15`)
+  - previous reviewed image: `agent0ai/agent-zero@sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0` (`v2.2`)
 - Selkies X11 desktop OCI image:
   `ghcr.io/selkies-project/selkies-egl-desktop@sha256:6ee5ddc3aa50ec9b3f22d2090ee1b0d2161e7be5acd9f385717e7c3603f6b3aa`
   - observed source commit: `dbc97872dbeae49e7f1e4491c3dee54f437f364d`
@@ -544,6 +545,19 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+
+Release `2026.11.15.7` builds on `2026.11.15.6` and lets Agent Zero plugin web
+interfaces load: the gateway's no-Referer static-import allowlist now also covers
+module imports under `/usr/plugins/<plugin>/webui/` (for example the Tailscale
+manager's dynamic imports), which previously answered 404 and surfaced as
+"Failed to fetch dynamically imported module". The release also moves the pinned
+Agent Zero image to `agent0ai/agent-zero@sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8`
+(`v2.15`), keeping the reviewed `v2.2` image in the pin's `previous` list; new
+computers install `v2.15` and existing computers move to it through the managed
+runtime/app update, which keeps the previous image for rollback.
+Changed: `hivra-chat/server.js`, `agent-app-versions.json`, plus the documents,
+the version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
 
 Release `2026.11.15.6` builds on `2026.11.15.5` and protects agent surfaces that go
 wedged without failing: a root `hivra-surface-watchdog` service polls each registered
