@@ -20,7 +20,6 @@ export default function PrelaunchSections() {
         <h2 id="start-title">Hivra is free to start</h2>
         <p>
           Sign up free, then connect your own cloud or server. Self-hosting is free, and Hivra Cloud computers are on a paid plan.
-          The token is optional and nothing on this page is needed to use Hivra.
         </p>
         <p>
           <Link href={s.start.signUpUrl}>Sign up free</Link> · <Link href={s.start.pricingUrl}>See pricing</Link>
@@ -44,8 +43,7 @@ export default function PrelaunchSections() {
         <h2 id="what-title">What $HIVRA is</h2>
         <p>
           $HIVRA is planned as the successor to $HermesOS, on {s.venue.chain}, launched through {s.venue.protocol}. It is meant to
-          support optional token payments and service access across Hivra. Hivra Cloud also takes ordinary payment methods, and
-          self-hosting needs no token.
+          support token payments and service access across Hivra. These planned uses depend on implementation and published terms.
         </p>
         <p>
           <strong>No founder allocation of new $HIVRA is planned.</strong> The founder is paid through a disclosed share of trading
