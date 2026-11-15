@@ -385,7 +385,7 @@ describe("RuntimeSurfaceFrame diagnostics", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith("computer surface check failed", expect.objectContaining({
       source: "client.diagnostic",
-      surface: "computer-surface",
+      surface: "agent-runtime",
       origin: "https://box.example.com",
       reason: "request failed: Failed to fetch",
     }));
@@ -405,5 +405,15 @@ describe("RuntimeSurfaceFrame diagnostics", () => {
     expect(warn).toHaveBeenCalledTimes(3);
 
     expect(JSON.stringify(warn.mock.calls)).not.toContain(TOKEN);
+  });
+
+  it("never warns for a surface the agent kind may legitimately not ship", async () => {
+    answer = "down";
+    render(
+      <RuntimeSurfaceFrame url="https://box.example.com/surface/" token={TOKEN} label="Optional" expected={false} />,
+    );
+    await settle(1_000 + 2_000 + 4_000);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

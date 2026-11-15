@@ -332,6 +332,50 @@ function agentAppReport() {
   }
   return report;
 }
+// The surface watchdog's receipts, served at GET /api/surface-watchdog for the
+// dashboard sweep. It answers what the box-side watchdog probed through the
+// real user path, which service it restarted and which units keep failing —
+// allow-listed fields only, never log lines or command output.
+const SURFACE_WATCHDOG_DIR = process.env.HIVRA_SURFACE_WATCHDOG_DIR || "/var/lib/hivra/surface-watchdog";
+function surfaceWatchdogReport() {
+  const state = readSmallJson(path.join(SURFACE_WATCHDOG_DIR, "state.json"));
+  if (!state || typeof state !== "object") return null;
+  const events = [];
+  try {
+    const fd = fs.openSync(path.join(SURFACE_WATCHDOG_DIR, "events.jsonl"), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const buffer = Buffer.alloc(65536);
+      const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      for (const line of buffer.subarray(0, size).toString("utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line);
+          if (e && typeof e === "object" && typeof e.id === "string" && /^e\d+-\d{1,12}$/.test(e.id)
+            && typeof e.type === "string" && /^[a-z_]{1,40}$/.test(e.type)) {
+            events.push({ id: e.id, at: typeof e.at === "string" ? e.at.slice(0, 40) : null, type: e.type,
+              ...(typeof e.unit === "string" ? { unit: e.unit.slice(0, 128) } : {}),
+              ...(typeof e.kind === "string" ? { kind: e.kind.slice(0, 40) } : {}),
+              ...(typeof e.reason === "string" ? { reason: e.reason.slice(0, 200) } : {}),
+              ...(typeof e.ok === "boolean" ? { ok: e.ok } : {}),
+              ...(Number.isInteger(e.downForS) ? { downForS: e.downForS } : {}),
+              ...(Number.isInteger(e.nRestarts) ? { nRestarts: e.nRestarts } : {}),
+              ...(Number.isInteger(e.attempt) ? { attempt: e.attempt } : {}),
+              ...(Number.isInteger(e.restarts) ? { restarts: e.restarts } : {}) });
+          }
+        } catch {}
+        if (events.length >= 50) break;
+      }
+    } finally { fs.closeSync(fd); }
+  } catch {}
+  const surface = state.surface && typeof state.surface === "object" ? state.surface : {};
+  return { ok: true, agentKind: typeof state.agentKind === "string" ? state.agentKind : null,
+    updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : null,
+    surface: { status: typeof surface.status === "string" ? surface.status.slice(0, 32) : null,
+      reason: typeof surface.reason === "string" ? surface.reason.slice(0, 200) : null,
+      restarts: Number.isInteger(surface.restarts) ? surface.restarts : 0 },
+    events };
+}
+
 // While hivra-agent-app-update swaps the app it holds the app's surface (a
 // request mid-swap would reach a stopped or half-started app). A lock left by
 // a crashed updater stops counting after 30 minutes.
@@ -4529,6 +4573,14 @@ const server = http.createServer((req, res) => {
     // gateway, never a copy cached from before a restart.
     res.setHeader("Cache-Control", "no-store");
     return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...((levels) => levels ? { chatEffort: levels } : {})(chatEffortAdvertised()), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}), ...(authed(req) ? ((app) => app ? { agentApp: app } : {})(agentAppReport()) : {}) });
+  }
+  if (req.method === "GET" && u === "/api/surface-watchdog") {
+    // Bearer only: the dashboard sweep reads this server to server. 404 is the
+    // honest answer on a box whose watchdog is not installed yet.
+    if (!bearerAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+    res.setHeader("Cache-Control", "no-store");
+    const watchdog = surfaceWatchdogReport();
+    return watchdog ? jsonRes(res, 200, watchdog) : jsonRes(res, 404, { error: "not_installed" });
   }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? (AGENT_KIND === "hermes" ? handleHermesModelGet(res) : handleModelGet(res)) : jsonRes(res, 401, { error: "unauthorized" });

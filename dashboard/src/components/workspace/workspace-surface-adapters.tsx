@@ -361,6 +361,7 @@ function resolveHivraSurface(
             token={token}
             label={`${computer.name} · terminal`}
             description="Shell on this computer"
+            surface="terminal"
           />
         );
       }
@@ -375,6 +376,7 @@ function resolveHivraSurface(
             token={token}
             label={`${computer.name} · browser`}
             description="Browser on this computer"
+            surface="browser"
           />
         );
       }

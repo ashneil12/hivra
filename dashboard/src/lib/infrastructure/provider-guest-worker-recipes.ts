@@ -495,6 +495,11 @@ const recipes = Object.freeze({
     workerSha256: "b33ef4105e8f50a52f74f490e59484e22d006d2acd7aab7c6b05ff8fdde46196",
     workerSize: 45216,
   }),
+  "2026.11.15.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the box-side surface watchdog (and disables legacy bux-browser-keeper on browserless kinds) and raises the manifest cap two files for it and the service unit. The worker only advances its release labels.
+    workerSha256: "977d88f7fdcd9d03c9814c5facaf13511e0bc43f0e81642990d4d0d5fb86a2eb",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

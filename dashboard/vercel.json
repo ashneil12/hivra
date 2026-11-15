@@ -125,6 +125,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/hivra-surface-watchdog",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/probe-instance-egress",
       "schedule": "*/5 * * * *"
     },
