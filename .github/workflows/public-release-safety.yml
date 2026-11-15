@@ -81,6 +81,9 @@ jobs:
       - name: Guard the host wake doorbell's Discord watch (fake Discord REST and gateway, fake wake helper)
         run: python3 -I -B dashboard/provisioner/test_hivra_wake_doorbell_discord.py
 
+      - name: Guard the box state-import unpack (traversal, deny roots, merge)
+        run: node --test dashboard/provisioner/hivra-chat/import-state.test.cjs
+
       - name: Preserve exact portable release bytes including bundled documentation
         run: node --test scripts/release/portable-bundle-immutability.test.mjs
 
