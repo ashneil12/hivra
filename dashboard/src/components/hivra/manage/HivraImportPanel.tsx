@@ -93,7 +93,7 @@ export function HivraImportPanel({
       <div className="serif" style={{ fontSize: 16, color: "var(--ink-black)" }}>Move an agent from your device</div>
       <div style={manageMuted}>
         Already running {agentName} on your own machine? It can pack up its memory, settings and logins
-        and send them straight to this box — nothing passes through Hivra&apos;s servers.
+        and send them straight to this computer — nothing passes through Hivra&apos;s servers.
       </div>
 
       {guide ? (
@@ -111,7 +111,7 @@ export function HivraImportPanel({
 
       {!capAvailable(cap) ? <div style={manageMuted}>{capReason(cap)}</div> : null}
       {capAvailable(cap) && probe === "missing" ? (
-        <div style={manageMuted}>This box can&apos;t receive a transfer yet — update its runtime in Updates, then come back.</div>
+        <div style={manageMuted}>This computer can&apos;t receive a transfer yet — update it in Updates, then come back.</div>
       ) : null}
 
       {usable ? (
