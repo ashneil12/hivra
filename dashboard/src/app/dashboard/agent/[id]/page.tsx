@@ -441,9 +441,19 @@ function AuthenticatedSurface({
     }
   }, [surfaceOrigin, token]);
   const copyConnect = useCallback(async (field: string, value: string) => {
-    try { await navigator.clipboard.writeText(value); setConnectCopied(field); } catch { setConnectCopied(null); }
+    try {
+      await navigator.clipboard.writeText(value);
+      setConnectCopied(field);
+      window.setTimeout(() => setConnectCopied((now) => (now === field ? null : now)), 2000);
+    } catch { setConnectCopied(null); }
   }, []);
   const connectLink = connectPair ? `${surfaceOrigin}/connect/${encodeURIComponent(connectPair.username)}:${encodeURIComponent(connectPair.password)}` : null;
+  useEffect(() => {
+    if (!connectOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setConnectOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [connectOpen]);
 
   // "Open in new tab" is the everyday action of this surface, so it belongs in
   // the title bar with the rest of the chrome. The button below still drives
@@ -483,49 +493,69 @@ function AuthenticatedSurface({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
       {connectName && connectOpen ? (
-        <div role="dialog" aria-label="Connect app" style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(12,12,12,0.45)", padding: 20 }}>
-          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", maxWidth: 500, width: "100%", padding: "20px 22px", color: "var(--ink-black)" }}>
-            <div className="serif" style={{ fontSize: 20, marginBottom: 10 }}>Connect the {connectName} app</div>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Connect app"
+          onClick={(event) => { if (event.target === event.currentTarget) setConnectOpen(false); }}
+          style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(12,12,12,0.5)", padding: 20 }}
+        >
+          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", boxShadow: "0 18px 50px rgba(0,0,0,0.35)", maxWidth: 520, width: "100%", padding: "22px 24px", color: "var(--ink-black)" }}>
+            <div className="serif" style={{ fontSize: 20, marginBottom: 4 }}>Connect the {connectName} app</div>
             {connectPair ? (
               <>
-                <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>
-                  {connectName === "Agent Zero"
-                    ? "In the Agent Zero app choose “Add remote” and enter:"
-                    : `In the ${connectName} app’s remote settings, enter:`}
-                </p>
+                <ol className="mono" style={{ fontSize: 12, lineHeight: 1.7, margin: "8px 0 14px", paddingLeft: 18, color: "var(--ink-soft)" }}>
+                  <li>Open the {connectName} app on your computer.</li>
+                  <li>{connectName === "Agent Zero" ? "Choose “Add remote”." : "Open its remote settings."}</li>
+                  <li>Paste these:</li>
+                </ol>
                 {([
                   ["URL", connectPair.url],
                   ["Username", connectPair.username],
                   ["Password", connectPair.password],
                 ] as const).map(([field, value]) => (
                   <div key={field} className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
-                    <span style={{ width: 72, color: "var(--ink-soft)" }}>{field}</span>
+                    <span style={{ width: 76, color: "var(--ink-soft)" }}>{field}</span>
                     <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "var(--bg-page)", padding: "6px 8px", border: "1px solid var(--etched-border)" }}>{value}</code>
-                    <button type="button" className="mono" onClick={() => void copyConnect(field, value)} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
-                      {connectCopied === field ? "Copied" : "Copy"}
+                    <button type="button" className="mono" onClick={() => void copyConnect(field, value)} style={{ minWidth: 68, border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
+                      {connectCopied === field ? "Copied ✓" : "Copy"}
                     </button>
                   </div>
                 ))}
-                <p style={{ fontSize: 12, lineHeight: 1.6, margin: "10px 0 0", color: "var(--ink-soft)" }}>
-                  {connectLink ? <>Or paste this connect link into any browser: <button type="button" className="mono" onClick={() => void copyConnect("link", connectLink)} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "4px 8px", cursor: "pointer" }}>{connectCopied === "link" ? "Copied" : "Copy link"}</button></> : null}
-                  {" "}Anyone with the password or the link can open your dashboard — keep them private. They stop working after 30 days or when you Disconnect.
+                {connectLink ? (
+                  <>
+                    <p className="mono" style={{ fontSize: 12, margin: "14px 0 8px", color: "var(--ink-soft)" }}>
+                      Or open it straight in a browser — this link signs you in:
+                    </p>
+                    <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "var(--bg-page)", padding: "6px 8px", border: "1px solid var(--etched-border)" }}>{connectLink}</code>
+                      <button type="button" className="mono" onClick={() => void copyConnect("link", connectLink)} style={{ minWidth: 68, border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
+                        {connectCopied === "link" ? "Copied ✓" : "Copy"}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+                <p style={{ fontSize: 12, lineHeight: 1.6, margin: "14px 0 0", color: "var(--ink-soft)" }}>
+                  Anyone with the password or the link can open your dashboard — keep them private. They stop working after 30 days or when you Disconnect.
                 </p>
               </>
             ) : connectError ? (
-              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>{connectError}</p>
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>{connectError}</p>
             ) : (
-              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 14px" }}>{connectBusy === "revoke" ? "Disconnecting…" : "Creating your sign-in…"}</p>
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>{connectBusy === "revoke" ? "Disconnecting…" : "Creating your sign-in…"}</p>
             )}
-            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
               {connectPair ? (
                 <button type="button" className="mono" onClick={() => void mintConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
                   New link
                 </button>
               ) : null}
-              <button type="button" className="mono" onClick={() => void revokeConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
-                Disconnect
-              </button>
-              <button type="button" className="mono" onClick={() => setConnectOpen(false)} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+              {connectPair ? (
+                <button type="button" className="mono" onClick={() => void revokeConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  Disconnect
+                </button>
+              ) : null}
+              <button type="button" className="mono" onClick={() => setConnectOpen(false)} style={{ marginLeft: "auto", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
                 Close
               </button>
             </div>
