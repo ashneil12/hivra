@@ -558,6 +558,12 @@ update them yet.
   latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
+- **Agent Zero self-update layout (`2026.11.15.1`).** Newer Agent Zero (`v2.15`+) serves a
+  splash bootstrap at `/` that installs the real document from `/ui/index`; the box gateway
+  serves the pinned app document itself — `/`, then `/index.html` if the first document fails
+  the exact entry transform — so an in-container self-update no longer 502s the dashboard
+  surface. `/agent-zero/ui/index` redirects to the mount root. Existing computers get it from
+  the connection service update.
 - **Connect links for external apps (`2026.11.14.1`).** A computer's Manage/surface
   "Connect app" action mints a connect grant on the box (`POST /connect/grant`, bearer only;
   the box keeps the `sha256("user:pass")` digest in `~/.hivra/connect-grants.json`). The pair
