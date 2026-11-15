@@ -545,6 +545,21 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.15.5` builds on `2026.11.15.3` and stops `qm start` from
+leaking the shared allocation/lifecycle lock file descriptor into the KVM
+child it forks. Both start paths held `/run/lock/hivra-allocation.lock` on
+fd 8 across `qm start`, so the VM's kvm process inherited the fd and pinned
+the advisory lock open for the VM's whole lifetime — every host-side
+mutation against that box (resize, shutdown, delete, bundle sync) then
+timed out taking the lock. Closing fd 8 in the `qm` invocation keeps the
+serialization the lock provides while leaving the child lock-free.
+Changed: `hivra-start-on-host.sh`, `hivra-provision-on-host.sh`, plus the
+documents, the version and the provider worker's release labels; no file is
+added. This source release does not deploy, install, enable or start
+anything on a host or computer. (`2026.11.15.4` is cut by a parallel branch
+and does not exist on this line.)
+
+
 Release `2026.11.15.3` builds on `2026.11.15.2` and keeps every agent-app surface reachable
 while the app updates itself outside the managed updater: a proxied agent-app port that
 refuses a connection — a self-update restart, a crash window, a slow boot — now answers

@@ -490,6 +490,11 @@ const recipes = Object.freeze({
     workerSha256: "15f088a03b0101a20d1bf283f6eecf77076267c9da9af7a7e44fc6ad0075039d",
     workerSize: 45216,
   }),
+  "2026.11.15.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release stops qm start inheriting the allocation and lifecycle lock fds into the kvm child. The worker only advances its release labels.
+    workerSha256: "b33ef4105e8f50a52f74f490e59484e22d006d2acd7aab7c6b05ff8fdde46196",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

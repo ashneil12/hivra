@@ -162,7 +162,9 @@ if [ "$CURRENT_STATUS" != "running" ]; then
   bash "${PROVISIONER_DIR}/hivra-host-capacity-admission" "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \
     "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0
 fi
-if [ "$CURRENT_STATUS" != "running" ]; then qm start "$VMID" >/dev/null; fi
+# qm forks a long-lived kvm child; without 8>&- it would inherit the
+# lifecycle-lock fd and pin the lock open for the whole VM lifetime.
+if [ "$CURRENT_STATUS" != "running" ]; then qm start "$VMID" 8>&- >/dev/null; fi
 release_lifecycle_lock
 trap - EXIT
 

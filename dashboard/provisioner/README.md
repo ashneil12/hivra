@@ -219,6 +219,14 @@ the hold page with `Retry-After` instead of a dead 502. Any agent-app kind
 registered in the gateway's `AGENT_APP` table (by name and loopback port)
 inherits this automatically; new kinds only need to join that table.
 
+A separate lock rule keeps host-side mutations alive: the start and
+provision scripts take `/run/lock/hivra-allocation.lock` on a dedicated fd
+so allocation and config steps serialize against each other, but `qm start`
+must never inherit that fd. The script calls it with the lock fd closed
+(`qm start "$VMID" 8>&-`), otherwise the kvm child holds the advisory lock
+for the VM's whole lifetime and every later host operation against that
+computer deadlocks on it.
+
 ## The one manual step
 
 Login is the user's own native OAuth — **not** baked into the image:
