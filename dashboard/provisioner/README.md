@@ -212,6 +212,13 @@ target version. A swap cut short leaves a journal in
 to `/var/lib/hivra/agent-app-update.json`; the gateway reports it with the
 installed version as `agentApp`.
 
+The same "being updated" answer also covers updates the managed updater never
+sees: when a proxied agent-app port refuses a connection — the app's own
+self-updater restarting it, a crash window, a slow boot — the gateway serves
+the hold page with `Retry-After` instead of a dead 502. Any agent-app kind
+registered in the gateway's `AGENT_APP` table (by name and loopback port)
+inherits this automatically; new kinds only need to join that table.
+
 ## The one manual step
 
 Login is the user's own native OAuth — **not** baked into the image:
@@ -558,6 +565,15 @@ update them yet.
   latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
+
+- **Agent-app update resilience (`2026.11.15.3`).** An agent app's own self-updater or a
+  crash/restart window never writes the managed updater's lock, so the surface used to
+  502 until the app came back. Now any proxied port in the gateway's `AGENT_APP` table
+  that refuses a connection answers the same "being updated" page with `Retry-After`
+  instead — every agent kind, and any future kind registered in that table. Agent Zero's
+  entry fallback also tries `/ui/index`, and a fully unrecognised layout answers a
+  retrying 503 page for browsers instead of a bare 502. Existing computers get it from
+  the connection service update.
 
 - **Move an existing agent's state in (`2026.11.15.2`).** Manage's "Move an agent
   from your device" mints a one-time transfer token on the box and hands the owner a prompt

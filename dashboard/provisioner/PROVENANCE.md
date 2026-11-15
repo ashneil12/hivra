@@ -545,6 +545,19 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.15.3` builds on `2026.11.15.2` and keeps every agent-app surface reachable
+while the app updates itself outside the managed updater: a proxied agent-app port that
+refuses a connection — a self-update restart, a crash window, a slow boot — now answers
+the same "being updated" hold page with `Retry-After` that the managed update lock serves,
+instead of a dead 502. The behaviour keys off the gateway's `AGENT_APP` table, so present
+and future agent kinds registered there inherit it. Agent Zero's entry-document fallback
+also gains `/ui/index` as a canonical candidate, and when no candidate satisfies the
+pinned index.js/initFw.js transform a browser fetch gets a retrying 503 page explaining
+the connection layer does not recognise the updated layout rather than a bare 502.
+Changed: `hivra-chat/server.js`, plus the documents, the version and the provider
+worker's release labels; no file is added. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
 Release `2026.11.15.2` builds on `2026.11.15.1` and lets the owner move an existing local
 agent onto a running computer: the box gateway gains `POST /api/import/token` (single-use,
 15-minute `hit_` transfer tokens stored only as sha256 digests, valid for `/api/import`

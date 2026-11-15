@@ -341,18 +341,21 @@ function agentAppUpdating() {
 function isAgentAppPort(port) {
   return Boolean(AGENT_APP && AGENT_APP.ports.includes(port));
 }
-// Counts an authenticated request to the app as use (a refused one too: the
-// updater then backs off) and answers it while the app is being swapped.
-// Returns true when it answered.
-function agentAppHold(req, res) {
-  agentAppLastUsedAt = Date.now();
-  if (!agentAppUpdating()) return false;
+function agentAppHoldPage(req, res) {
   const accept = String(req.headers.accept || "");
   res.writeHead(503, { "Content-Type": accept.includes("text/html") ? "text/html; charset=utf-8" : "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "15" });
   const message = AGENT_APP.label + " is being updated. It will be back in a minute.";
   res.end(accept.includes("text/html")
     ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"15\"><title>Updating</title><p style=\"font:15px system-ui;margin:2em\">" + message + "</p>"
     : message);
+}
+// Counts an authenticated request to the app as use (a refused one too: the
+// updater then backs off) and answers it while the app is being swapped.
+// Returns true when it answered.
+function agentAppHold(req, res) {
+  agentAppLastUsedAt = Date.now();
+  if (!agentAppUpdating()) return false;
+  agentAppHoldPage(req, res);
   return true;
 }
 
@@ -2456,7 +2459,14 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders 
     res.writeHead(pr.statusCode || 502, h);
     pr.pipe(res);
   });
-  p.on("error", () => { try { res.writeHead(502); res.end("backend unavailable"); } catch (e) {} });
+  p.on("error", () => { try {
+    // An agent app's own update mechanism (a built-in self-updater, a crash
+    // restart) never writes the managed updater's lock, so it does not trip
+    // agentAppHold. Its restart window still answers as "being updated"
+    // rather than a dead 502 — the page keeps retrying until the app is back.
+    if (isAgentAppPort(target.port) && !res.destroyed && !res.writableEnded) return agentAppHoldPage(req, res);
+    res.writeHead(502); res.end("backend unavailable");
+  } catch (e) {} });
   req.pipe(p);
 }
 
@@ -2617,11 +2627,29 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     const entryDocument = (req.method === "GET" || req.method === "HEAD") && ["/", "/index.html"].includes(apath.split("?")[0]);
     // Newer Agent Zero serves a splash bootstrap at / and the pinned app
     // document at /index.html (and /ui/index). Older serves the document at /
-    // directly. Try the requested path first, then the canonical document
-    // path; only documents satisfying the pinned entry transform are served.
-    const entryFallback = apath.split("?")[0] === "/"
-      ? "/index.html" + (apath.includes("?") ? apath.slice(apath.indexOf("?")) : "")
-      : null;
+    // directly. Try the requested path first, then each remaining canonical
+    // document path newer versions expose; only documents satisfying the
+    // pinned entry transform are served — a splash or unknown layout never is.
+    const entryQuery = apath.includes("?") ? apath.slice(apath.indexOf("?")) : "";
+    const entryCandidates = entryDocument
+      ? [apath].concat(["/index.html", "/ui/index"].filter((p) => p !== apath.split("?")[0]).map((p) => p + entryQuery))
+      : [apath];
+    let entryCandidateIndex = 0;
+    // Every canonical path failed the pinned contract: the app updated to an
+    // entry layout this gateway does not recognise (or serves something
+    // entirely different). The app itself may be healthy, so a document fetch
+    // gets a retrying page — an unpinned document is never served.
+    const entryUnavailable = () => {
+      if (req.method === "GET" && String(req.headers.accept || "").includes("text/html")) {
+        res.writeHead(503, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "30" });
+        return res.end("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"30\"><title>Updating</title>"
+          + "<p style=\"font:15px system-ui;margin:2em\">" + (AGENT_APP ? AGENT_APP.label : "The agent app")
+          + " has updated to a version this box's connection layer does not recognise yet."
+          + " Run Update connection service from the box's Manage tab if this keeps showing.</p>");
+      }
+      res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+      res.end("native entry document unavailable");
+    };
     if (entryDocument || editorAsset || csrfResponse) {
       headers["accept-encoding"] = "identity";
       // The transformed representation has different validators/length. Always
@@ -2746,6 +2774,7 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
           if (done) return;
           done = true; clearTimeout(timer); pr.destroy();
           console.warn("Agent Zero native entry document rejected:", reason);
+          if (reason === "entry-contract") return entryUnavailable();
           res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
           res.end("native entry document unavailable");
         };
@@ -2766,11 +2795,11 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
           if (done) return;
           const html = a0CanonicalEntryHtml(Buffer.concat(chunks).toString("utf8"));
           if (html === null) {
-            // The splash bootstrap is not the app document; retry once against
-            // the canonical document path newer versions expose.
-            if (entryFallback && upstreamPath !== entryFallback) {
+            // The splash bootstrap is not the app document; try each remaining
+            // canonical document path newer versions expose.
+            if (++entryCandidateIndex < entryCandidates.length) {
               done = true; clearTimeout(timer); pr.destroy();
-              return issue(entryFallback);
+              return issue(entryCandidates[entryCandidateIndex]);
             }
             return fail("entry-contract");
           }
@@ -2780,12 +2809,26 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
         });
         return;
       }
+      if (entryDocument && entryCandidateIndex > 0) {
+        // A fallback candidate that answers non-HTML or non-200 can never
+        // satisfy the pinned transform; try the next canonical path rather
+        // than proxying it through.
+        if (++entryCandidateIndex < entryCandidates.length) {
+          pr.resume();
+          return issue(entryCandidates[entryCandidateIndex]);
+        }
+        console.warn("Agent Zero native entry document rejected:", "entry-contract");
+        return entryUnavailable();
+      }
       res.writeHead(pr.statusCode || 502, h);
       pr.pipe(res);
     });
     p.on("error", () => { try {
       if (editor) return editor.settle("upstream-error");
       if (csrfResponse) return rejectCsrf("upstream-error");
+      // Agent Zero's built-in self-updater restarts the container without the
+      // managed updater's lock; the restart window answers as updating.
+      if (isAgentAppPort(AGENT_ZERO_PORT) && !res.destroyed && !res.writableEnded) return agentAppHoldPage(req, res);
       if (!res.destroyed && !res.writableEnded) {
         res.writeHead(502, { "Cache-Control": "no-store" }); res.end("backend unavailable");
       }
