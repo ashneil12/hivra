@@ -212,6 +212,10 @@ export function sanitizeHivraAgentRow<T extends Record<string, unknown>>(row: T)
   delete rest.provider_install_outcome;
   delete rest.proxmox_host;
   delete rest.ip;
+  // A recovered agent can carry failure text from an earlier operation (a
+  // restart or update that converged it to running without touching `error`).
+  // Error text on a running row is always stale, so it never reaches clients.
+  if (rest.status === "running") rest.error = null;
   return {
     ...rest,
     activity: publicHivraAgentActivity(row),

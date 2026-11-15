@@ -239,6 +239,7 @@ say "agent kind: ${c_bold}${AGENT_KIND}${c_reset} (browser overlay: $([ "$WANT_B
 # Chat + prompt artifacts are always required; browser artifacts only for claude.
 for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent-cli-versions.json hivra-codex-config-pin.py \
          agent-app-versions.json hivra-agent-app-update.sh \
+         hivra-surface-watchdog.py hivra-surface-watchdog.service \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
          hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/import-state.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
@@ -619,18 +620,22 @@ fi
 # ===========================================================================
 say "4/7  self-hosted browser overlay (replaces the BU Cloud keeper) — browser-enabled boxes"
 # ===========================================================================
+# Disable + remove the cloud keeper unit the base image enabled regardless of
+# WANT_BROWSER: browser-enabled boxes use bux-local-browser.service instead, and
+# browserless kinds (agent-zero, codex, aeon, openclaw, hermes, ...) must not
+# leave the cloud keeper crash-looping in the background. On a fresh box it is a
+# SYMLINK at /etc/systemd/system/bux-browser-keeper.service ->
+# /opt/bux/agent/bux-browser-keeper.service; disabling drops the symlink.
+if systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' \
+   || [ -e /etc/systemd/system/bux-browser-keeper.service ]; then
+  systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bux-browser-keeper.service
+  ok "cloud keeper (bux-browser-keeper.service) disabled + unit link removed"
+else
+  ok "cloud keeper already absent"
+fi
+
 if [ "$WANT_BROWSER" = 1 ]; then
-  # Disable + remove the cloud keeper unit the installer enabled. On a fresh box
-  # it is a SYMLINK at /etc/systemd/system/bux-browser-keeper.service ->
-  # /opt/bux/agent/bux-browser-keeper.service; disabling drops the symlink.
-  if systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' \
-     || [ -e /etc/systemd/system/bux-browser-keeper.service ]; then
-    systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/bux-browser-keeper.service
-    ok "cloud keeper (bux-browser-keeper.service) disabled + unit link removed"
-  else
-    ok "cloud keeper already absent"
-  fi
 
   # Drop in the local keeper script (current working copy from box 1099).
   install -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 \
@@ -856,6 +861,16 @@ case "$AGENT_KIND" in
     fi
     ;;
 esac
+
+# The surface watchdog probes each agent app's real user path through the
+# gateway (for Agent Zero: login -> entry -> CSRF contract), restarts the
+# owning service when the surface stays down past a bounded window, and records
+# crash-looping units. It honours the same managed-update lock the gateway's
+# hold page uses, so it never fights a legitimate app update.
+install -d -o root -g root -m 0700 /var/lib/hivra/surface-watchdog
+install -o root -g root -m 0755 "$SRC_DIR/hivra-surface-watchdog.py" /var/lib/hivra/hivra-surface-watchdog.py
+install -o root -g root -m 0644 "$SRC_DIR/hivra-surface-watchdog.service" /etc/systemd/system/hivra-surface-watchdog.service
+ok "surface watchdog installed (probes the real user path, restarts wedged app units)"
 
 # Narrow root helper so the chat server (runs as ${AGENT_USER}, no general sudo)
 # can (de)activate the bux Telegram bot via a SCOPED NOPASSWD sudoers rule.
@@ -1866,6 +1881,10 @@ if [ "$AGENT_KIND" != "deepseek-harness" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY"
   systemctl enable --now bux-hivra-chat.service
   ok "bux-hivra-chat enabled and started"
 fi
+if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
+  systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 \
+    || warn "surface watchdog did not start; surfaces keep their own retries but box-side autoheal is off"
+fi
 if [ "$AGENT_KIND" = "aeon" ]; then
   systemctl enable --now bux-aeon.service >/dev/null 2>&1 \
     || die "Aeon service did not start"
@@ -1975,6 +1994,31 @@ sys.exit(0 if t.get("terminal") == "socket" and t.get("boxTerminal") == "socket"
   rm -f -- "$header"
   return 1
 }
+# The real user path to Agent Zero runs through the gateway: bearer auth, the
+# app's own sign-in, the pinned entry document and the native CSRF contract.
+# /healthz alone says nothing about it — a container that has stopped serving
+# still leaves healthz green. Gate readiness on the same request the owner
+# makes, not on the app's bare port.
+wait_for_agent_zero_gateway() {
+  local header
+  header="$(mktemp /run/hivra-agent-zero-check.XXXXXX)"
+  chmod 0600 "$header"
+  printf 'Authorization: Bearer %s\n' "$(cat "${AGENT_HOME}/.hivra/api-token")" > "$header"
+  local tries="${1:-75}"
+  for _ in $(seq 1 "$tries"); do
+    curl -fsS --max-time 5 -H @"$header" "http://127.0.0.1:${HIVRA_CHAT_PORT}/agent-zero/api/csrf_token" 2>/dev/null \
+      | python3 -I -c 'import json, sys
+try:
+  d = json.load(sys.stdin)
+except Exception:
+  sys.exit(1)
+sys.exit(0 if d.get("ok") is True and len(str(d.get("token") or "")) == 43 and len(str(d.get("runtime_id") or "")) == 16 else 1)' \
+      && { rm -f -- "$header"; return 0; }
+    sleep 4
+  done
+  rm -f -- "$header"
+  return 1
+}
 wait_for_browser_ready() {
   local env_file="$1" cdp_port="$2" cdp_code novnc_code unit units_ready
   for _ in $(seq 1 60); do
@@ -2060,7 +2104,11 @@ elif [ "$AGENT_KIND" = "agent-zero" ]; then
   wait_for_http "http://127.0.0.1:${A0_PORT}/" 150 || die "Agent Zero dashboard did not become ready within 5 minutes"
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
-  ok "Agent Zero passed runtime-specific readiness"
+  if ! wait_for_agent_zero_gateway 75; then
+    journalctl -u bux-hivra-chat.service -u hivra-agent-zero.service -n 50 --no-pager >&2 2>/dev/null || true
+    die "Agent Zero did not pass its gateway path (login + entry + CSRF) within 5 minutes"
+  fi
+  ok "Agent Zero passed runtime-specific readiness (real path through the gateway)"
 elif [ "$AGENT_KIND" = "openbot" ]; then
   systemctl is-active --quiet hivra-openbot.service || die "OpenBot service is not active"
   # OpenBot starts only once the owner gives its Intelligence key, so before

@@ -136,6 +136,16 @@ describe("llmBaseUrl + buildBoxLlmPayload", () => {
 });
 
 describe("sanitizeHivraAgentRow", () => {
+  it("does not surface stale error text on a running row (recovered agents keep no old failure)", () => {
+    // The incident: a row converged to running through a path that never
+    // cleared `error`, and provisioning-day failure text displayed for days.
+    const out = sanitizeHivraAgentRow({ id: "a1", status: "running", error: "ssh handshake timed out" });
+    expect(out.error).toBeNull();
+    // Non-running statuses still show their error.
+    expect(sanitizeHivraAgentRow({ id: "a1", status: "error", error: "ssh handshake timed out" }).error).toBe("ssh handshake timed out");
+    expect(sanitizeHivraAgentRow({ id: "a1", status: "provisioning", error: "ssh handshake timed out" }).error).toBe("ssh handshake timed out");
+  });
+
   it("keeps the server-selected managed provisioner channel private", () => {
     const out = sanitizeHivraAgentRow({
       id: "agent",

@@ -34,6 +34,10 @@ export interface RuntimeSurfaceFrameProps {
   background?: string;
   /** Optional Manage affordance shown on the failure states. */
   onManage?: () => void;
+  /** Which surface this frame is, for the metadata check's diagnostics. */
+  surface?: string;
+  /** False when this agent may legitimately not ship this surface: a failed check stays client-side. */
+  expected?: boolean;
 }
 
 export function RuntimeSurfaceFrame({
@@ -43,6 +47,8 @@ export function RuntimeSurfaceFrame({
   description,
   background = "var(--bg-surface)",
   onManage,
+  surface = "agent-runtime",
+  expected,
 }: RuntimeSurfaceFrameProps) {
   const frameName = `hivra-runtime-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const newTabFormRef = useRef<HTMLFormElement>(null);
@@ -55,7 +61,7 @@ export function RuntimeSurfaceFrame({
     destination,
     formRef,
     retry,
-  } = useSurfaceBootstrap({ url, token });
+  } = useSurfaceBootstrap({ url, token, surface, expected });
 
   const openInNewTab = () => {
     const form = newTabFormRef.current;
