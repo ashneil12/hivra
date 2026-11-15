@@ -5,6 +5,7 @@ import path from "node:path";
 import release from "../../../../provisioner-releases/2026.11.15.1.json";
 import stateImportRelease from "../../../../provisioner-releases/2026.11.15.2.json";
 import resilienceRelease from "../../../../provisioner-releases/2026.11.15.3.json";
+import lockFdRelease from "../../../../provisioner-releases/2026.11.15.5.json";
 import connectGrantsRelease from "../../../../provisioner-releases/2026.11.14.1.json";
 import wakeHardeningRelease from "../../../../provisioner-releases/2026.11.13.6.json";
 import discordRelease from "../../../../provisioner-releases/2026.11.13.5.json";
@@ -59,10 +60,10 @@ import {
 } from "../portable-provisioner-contract";
 
 it("binds every reviewed portable provisioner asset to the immutable current release", () => {
-  expect(resilienceRelease.schema).toBe(1);
-  expect(resilienceRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
-  expect(resilienceRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
-  for (const file of resilienceRelease.files) {
+  expect(lockFdRelease.schema).toBe(1);
+  expect(lockFdRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  expect(lockFdRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
+  for (const file of lockFdRelease.files) {
     const content = readFileSync(path.join(process.cwd(), "provisioner", file.path));
     expect({ path: file.path, bytes: content.length, sha256: createHash("sha256").update(content).digest("hex") })
       .toEqual(file);
@@ -259,7 +260,7 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260924220000_provider_release_admission_2026_09_24_2.sql", "20260925100100_provider_release_admission_2026_09_24_3.sql",
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
-    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql", "20261114120000_provider_release_admission_2026_11_14_1.sql", "20261115120000_provider_release_admission_2026_11_15_1.sql", "20261115130000_provider_release_admission_2026_11_15_2.sql", "20261115140000_provider_release_admission_2026_11_15_3.sql"]
+    "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql", "20261114120000_provider_release_admission_2026_11_14_1.sql", "20261115120000_provider_release_admission_2026_11_15_1.sql", "20261115130000_provider_release_admission_2026_11_15_2.sql", "20261115140000_provider_release_admission_2026_11_15_3.sql", "20261115150000_provider_release_admission_2026_11_15_5.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
   for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
@@ -967,7 +968,32 @@ it("ships the agent-app update hold in 2026.11.15.3, keeping 2026.11.15.2 admitt
 it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
   // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
-  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+});
+
+it("ships the lifecycle lock fd fix in 2026.11.15.5, keeping 2026.11.15.3 admitted", () => {
+  expect(lockFdRelease.version).toBe("2026.11.15.5");
+  expect(lockFdRelease.files.map(file => file.path)).toEqual(resilienceRelease.files.map(file => file.path));
+  const changed = lockFdRelease.files.filter(file => file.sha256 !== resilienceRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Only the two start scripts, the worker's release labels and the release documents change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "hivra-provision-on-host.sh", "hivra-start-on-host.sh"]);
+  const start = readFileSync("provisioner/hivra-start-on-host.sh", "utf8");
+  const provision = readFileSync("provisioner/hivra-provision-on-host.sh", "utf8");
+  // The kvm child must not inherit the shared lock fd, or the lock pins open
+  // for the VM's whole lifetime.
+  expect(start).toContain('qm start "$VMID" 8>&-');
+  expect(provision).toContain('qm start "$VMID" 8>&-');
+  for (const version of ["2026.11.15.3", "2026.11.15.5"]) {
+    expect(provisionerSupportsHostCredential(version)).toBe(true);
+    expect(provisionerSupportsWakeProxy(version)).toBe(true);
+    expect(provisionerSupportsWakeDoorbell(version)).toBe(true);
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(version, "nuphos")).toBe(true);
+  }
 });
 
 it("keeps the current bundle inside the file count the provider worker accepts in a manifest", () => {
