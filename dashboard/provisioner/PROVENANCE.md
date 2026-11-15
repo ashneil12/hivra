@@ -545,6 +545,23 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.15.4` builds on `2026.11.15.3` and protects agent surfaces that go
+wedged without failing: a root `hivra-surface-watchdog` service polls each registered
+agent surface through the same gateway path the dashboard uses (Agent Zero's real
+`/agent-zero/api/csrf_token` login path, not only `/healthz`), reports a bounded receipt
+at `GET /api/surface-watchdog`, and restarts only the owning app unit after a continuous
+failure window with cooldown and a per-episode restart cap. The watchdog honours the
+managed update lock so a legitimate self-update reads as updating, not down, and it
+sweeps failed `bux-`/`hivra-` units into ops events instead of silently restarting
+them. Provisioning installs and enables the service, and the guest runtime update
+scripts add it with backup/rollback. The dashboard suppresses stale surface errors on
+running rows and names the responsible surface in warnings. Changed: `hivra-chat/server.js`,
+`hivra-guest-runtime-update.sh`, `hivra-update-guest-runtime.sh`,
+`provision-claude-code-box.sh`, new `hivra-surface-watchdog.py` and
+`hivra-surface-watchdog.service`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable or
+start anything on a host or computer.
+
 Release `2026.11.15.3` builds on `2026.11.15.2` and keeps every agent-app surface reachable
 while the app updates itself outside the managed updater: a proxied agent-app port that
 refuses a connection — a self-update restart, a crash window, a slow boot — now answers
