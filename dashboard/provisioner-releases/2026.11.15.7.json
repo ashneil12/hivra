@@ -9,8 +9,8 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 88910,
-      "sha256": "748a78211ace8a8d63b3612aef359ac4d8e41c6aa99a43df6e3e2f2412aa4192"
+      "bytes": 89374,
+      "sha256": "2a6e70f05bec64c305c6144c9bd3f4b96378ab7a4688908be896801ce93bb3d1"
     },
     {
       "path": "README.md",
@@ -154,8 +154,8 @@
     },
     {
       "path": "hivra-install-agent.py",
-      "bytes": 31225,
-      "sha256": "84fe18fecef3cd4accb6a66ae6426723872fbf48dc7d6d23763f56c4930457b0"
+      "bytes": 32375,
+      "sha256": "56829f86885e70037501501d7b913fd3785d1eba3c492009b4361d52ee623a70"
     },
     {
       "path": "hivra-provider-worker.py",
@@ -284,8 +284,8 @@
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 43525,
-      "sha256": "526a0665840e7c106827fdaa88614b9a72ff8c62cc4819f6e987bff4b25872c9"
+      "bytes": 43993,
+      "sha256": "13e27d34ec9015b5c4a193507234e9db2444883a6b58c6a31819bc298baf3bd3"
     },
     {
       "path": "hivra-tg-apply",
@@ -339,8 +339,8 @@
     },
     {
       "path": "provision-claude-code-box.sh",
-      "bytes": 121223,
-      "sha256": "85f5f2f64b37d48f9bd933af4bb2c32f19546d92eeb9c632a3fc04fe81ea4492"
+      "bytes": 121729,
+      "sha256": "991898da50e34e729575072fd8e1489cd7ae6ec32b0f8142cd0e892d173d43ef"
     },
     {
       "path": "remote-desktop/broker.cjs",

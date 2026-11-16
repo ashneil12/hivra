@@ -569,6 +569,13 @@ the watchdog (root) wrote its state under a root-only directory the bux gateway
 could never read, so `GET /api/surface-watchdog` always answered not_installed;
 receipt files now land group-readable for the agent user and the state
 directory is installed root:agent 0750 at provision and runtime update.
+Two review findings on the key itself are also fixed: because the agent user
+owns `~/.hivra`, a predictable staging path there could be replaced with a
+symlink a root-run writer would follow — the key is instead staged inside a
+root-owned sibling directory and published by atomic rename; and boxes whose
+generated direct-access Caddyfile predates the marker strip are migrated in
+place atomically instead of failing re-enrollment with explicit repair
+required.
 Changed: `hivra-chat/server.js`, `hivra-surface-watchdog.py`,
 `hivra-guest-runtime-update.sh`, `hivra-install-agent.py`,
 `provision-claude-code-box.sh`, `test_hivra_surface_watchdog.py`,

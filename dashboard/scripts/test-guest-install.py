@@ -668,8 +668,37 @@ class DirectAccessFiles(TunnelFiles):
     def test_pristine_guest_precheck_does_not_require_not_yet_installed_caddy(self):
         with patch.object(guest.os, "access", return_value=False) as executable:
             self.assertEqual(guest.check_direct_access("203-0-113-10.sslip.io", self.uid),
-                             guest.direct_config("203-0-113-10.sslip.io"))
+                             (guest.direct_config("203-0-113-10.sslip.io"), False))
             executable.assert_not_called()
+
+    def test_legacy_direct_access_configuration_is_migrated_atomically(self):
+        hostname = "203-0-113-10.sslip.io"
+        self.config.parent.mkdir(parents=True, exist_ok=True)
+        self.config.write_bytes(guest.legacy_direct_config(hostname))
+        self.config.chmod(0o644)
+        self.direct_unit.parent.mkdir(parents=True, exist_ok=True)
+        self.direct_unit.write_bytes(guest.DIRECT_UNIT)
+        self.direct_unit.chmod(0o644)
+        calls = []
+        def service(arguments, capture=False):
+            calls.append(arguments)
+            properties = (b"FragmentPath=" + os.fsencode(self.direct_unit) + b"\nDropInPaths=\nLoadState=loaded\n"
+                          if self.direct_unit.exists() else b"FragmentPath=\nDropInPaths=\nLoadState=not-found\n")
+            return SimpleNamespace(stdout=properties)
+        with patch.object(guest, "service", side_effect=service), patch.object(guest.os, "access", return_value=True):
+            self.assertEqual(guest.check_direct_access(hostname, self.uid),
+                             (guest.direct_config(hostname), True))
+            guest.configure_direct_access(hostname, self.uid)
+        self.assertEqual(self.config.read_bytes(), guest.direct_config(hostname))
+        self.assertIn(("restart", "hivra-direct-access.service"), calls)
+        self.assertEqual(list(self.root.rglob(".hivra-install-*")), [])
+        # A second run is a no-op: nothing left to migrate.
+        self.assertEqual(guest.check_direct_access(hostname, self.uid),
+                         (guest.direct_config(hostname), False))
+        # And unrelated foreign content still demands explicit repair.
+        self.config.write_bytes(hostname.encode() + b" {\n\treverse_proxy 127.0.0.1:9999\n}\n")
+        with self.assertRaisesRegex(guest.InstallError, "differs"):
+            guest.check_direct_access(hostname, self.uid)
 
     def test_direct_configuration_is_exact_and_does_not_shadow_custom_units(self):
         calls = []
