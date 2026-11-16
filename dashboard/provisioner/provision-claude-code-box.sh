@@ -823,10 +823,17 @@ ok "box API token ready: ${AGENT_HOME}/.hivra/api-token"
 # The surface watchdog's shared proof it is the box's own monitor (the gateway
 # exempts only a loopback probe carrying it — proxied remote callers can never
 # know it). Owner-only like the api-token.
-if [ ! -s "${AGENT_HOME}/.hivra/surface-watchdog-key" ]; then
-  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "${AGENT_HOME}/.hivra/surface-watchdog-key"
-  chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}/.hivra/surface-watchdog-key"
-  chmod 600 "${AGENT_HOME}/.hivra/surface-watchdog-key"
+if [ -L "${AGENT_HOME}/.hivra/surface-watchdog-key" ] || [ ! -f "${AGENT_HOME}/.hivra/surface-watchdog-key" ] || [ ! -s "${AGENT_HOME}/.hivra/surface-watchdog-key" ]; then
+  # Stage inside a root-owned sibling directory (same filesystem, so the
+  # publish rename is atomic): the agent user owns .hivra and could plant a
+  # symlink at any predictable sibling path.
+  install -d -o root -g root -m 0700 "${AGENT_HOME}/.hivra/.watchdog-key-stage"
+  KEY_STAGE=$(mktemp "${AGENT_HOME}/.hivra/.watchdog-key-stage/key.XXXXXX")
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$KEY_STAGE"
+  chown "${AGENT_USER}:${AGENT_USER}" "$KEY_STAGE"
+  chmod 600 "$KEY_STAGE"
+  mv -f -- "$KEY_STAGE" "${AGENT_HOME}/.hivra/surface-watchdog-key"
+  rmdir "${AGENT_HOME}/.hivra/.watchdog-key-stage" 2>/dev/null || true
 fi
 
 # Install the chat unit, templated with the chosen port + agent user/home/kind.

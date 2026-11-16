@@ -301,11 +301,17 @@ install -d -o root -g bux -m 0750 /var/lib/hivra/surface-watchdog
 # Proxied remote traffic also arrives on loopback, so the marker must carry
 # it. Created once; the gateway reads it lazily on every check.
 WATCHDOG_KEY=/home/bux/.hivra/surface-watchdog-key
-if [ ! -s "$WATCHDOG_KEY" ]; then
-  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$WATCHDOG_KEY.next"
-  chown bux:bux "$WATCHDOG_KEY.next"
-  chmod 600 "$WATCHDOG_KEY.next"
-  mv -f -- "$WATCHDOG_KEY.next" "$WATCHDOG_KEY"
+# bux owns ~/.hivra and could plant a symlink at any predictable sibling name,
+# so the key is staged inside a root-owned sibling directory (same filesystem,
+# so the publish rename stays atomic) rather than a ${WATCHDOG_KEY}.next path.
+if [ -L "$WATCHDOG_KEY" ] || [ ! -f "$WATCHDOG_KEY" ] || [ ! -s "$WATCHDOG_KEY" ]; then
+  install -d -o root -g root -m 0700 /home/bux/.hivra/.watchdog-key-stage
+  KEY_STAGE=$(mktemp /home/bux/.hivra/.watchdog-key-stage/key.XXXXXX)
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$KEY_STAGE"
+  chown bux:bux "$KEY_STAGE"
+  chmod 600 "$KEY_STAGE"
+  mv -f -- "$KEY_STAGE" "$WATCHDOG_KEY"
+  rmdir /home/bux/.hivra/.watchdog-key-stage 2>/dev/null || true
 fi
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
