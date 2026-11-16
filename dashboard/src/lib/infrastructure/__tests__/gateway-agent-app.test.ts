@@ -46,9 +46,12 @@ describe("gateway agent app reporting and update hold", () => {
     lock: path.join(state, "agent-app-update.lock"),
   });
 
+  const WATCHDOG_KEY = "d".repeat(64);
+
   function boot(kind: string, env: Record<string, string> = {}): Promise<number> {
     fs.mkdirSync(path.join(home, ".hivra"), { recursive: true });
     fs.writeFileSync(path.join(home, ".hivra", "api-token"), TOKEN);
+    fs.writeFileSync(path.join(home, ".hivra", "surface-watchdog-key"), WATCHDOG_KEY);
     fs.writeFileSync(path.join(home, ".hivra", "agent-kind"), `${kind}\n`);
     let server: http.Server | undefined;
     const sockets = new Set<net.Socket>();
@@ -215,29 +218,31 @@ describe("gateway agent app reporting and update hold", () => {
     const port = await boot("aeon", { AEON_DASHBOARD_PORT: String(app.port) });
     const before = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
     await new Promise((r) => setTimeout(r, 15));
-    // The watchdog's marked loopback probe reaches the app but leaves no use:
-    // otherwise it would keep the app "in use" forever and a managed update
-    // could never reach its idle window.
-    const probed = await get(port, "/aeon/", { headers: { "X-Hivra-Surface-Watchdog": "1" } });
+    // The watchdog's loopback probe carries the box-local key and leaves no
+    // use: otherwise it would keep the app "in use" forever and a managed
+    // update could never reach its idle window.
+    const probed = await get(port, "/aeon/", { headers: { "X-Hivra-Surface-Watchdog": WATCHDOG_KEY } });
     expect(probed.text).toBe("app");
     const after = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
     expect(after).toBe(before);
     expect(app.hits).toEqual(["/aeon/"]);
   });
 
-  it("still counts a remote request carrying the watchdog marker as use", async () => {
-    const app = await upstream();
-    const port = await boot("aeon", { AEON_DASHBOARD_PORT: String(app.port) });
-    const before = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
-    await new Promise((r) => setTimeout(r, 15));
-    // The marker only exempts a loopback peer: a remote caller sending it is
-    // ordinary use, so the updater still backs off while they are present.
-    spoofRemote = "203.0.113.7";
-    const probed = await get(port, "/aeon/", { headers: { "X-Hivra-Surface-Watchdog": "1" } });
-    expect(probed.text).toBe("app");
-    const after = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
-    expect(after).toBeGreaterThan(before);
-  });
+  it.each([["1", "a marker without the key"], [WATCHDOG_KEY, "the key from a remote peer"]])(
+    "still counts %s as use", async (key: string, _why: string) => {
+      const app = await upstream();
+      const port = await boot("aeon", { AEON_DASHBOARD_PORT: String(app.port) });
+      const before = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
+      await new Promise((r) => setTimeout(r, 15));
+      // The marker only exempts a loopback peer that knows the key: a bare
+      // header or a key spoofed by a remote caller is ordinary use, so the
+      // updater still backs off while they are present.
+      if (key === WATCHDOG_KEY) spoofRemote = "203.0.113.7";
+      const probed = await get(port, "/aeon/", { headers: { "X-Hivra-Surface-Watchdog": key } });
+      expect(probed.text).toBe("app");
+      const after = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
+      expect(after).toBeGreaterThan(before);
+    });
 
   it("counts an open app WebSocket until it closes, and refuses new ones while an update holds the app", async () => {
     const app = await upstream();

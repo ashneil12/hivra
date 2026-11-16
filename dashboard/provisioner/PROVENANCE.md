@@ -558,11 +558,16 @@ runtime/app update, which keeps the previous image for rollback.
 The release also repairs the managed update's idle gate: the surface watchdog's
 authenticated probe counted as app use, so a box with the watchdog never looked
 idle and every scheduled app update deferred until it gave up. The watchdog now
-marks its probe (`X-Hivra-Surface-Watchdog`), the gateway exempts that marked
-request from use-tracking only when the peer is loopback, and the guest runtime
-update restarts an already-installed watchdog so the new probe takes effect.
+marks its probe with `X-Hivra-Surface-Watchdog` carrying a box-local shared key
+(`~/.hivra/surface-watchdog-key`, owner-only like the api-token — created at
+provision and by the guest runtime update); the gateway exempts that request
+from use-tracking only when a loopback peer presents the key, so proxied remote
+traffic can never claim it, and the direct-access Caddy site strips the marker
+header outright. The guest runtime update also restarts an already-installed
+watchdog so the new probe takes effect.
 Changed: `hivra-chat/server.js`, `hivra-surface-watchdog.py`,
-`hivra-guest-runtime-update.sh`, `test_hivra_surface_watchdog.py`,
+`hivra-guest-runtime-update.sh`, `hivra-install-agent.py`,
+`provision-claude-code-box.sh`, `test_hivra_surface_watchdog.py`,
 `agent-app-versions.json`, plus the documents, the version and the provider
 worker's release labels. This source release does not deploy, install, enable or
 start anything on a host or computer.

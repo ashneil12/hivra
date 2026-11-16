@@ -1011,11 +1011,13 @@ it("serves Agent Zero plugin web UI imports and pins v2.15 in 2026.11.15.7, keep
   const changed = usrPluginsRelease.files.filter(file => watchdogRelease.files.some(entry => entry.path === file.path)
       && file.sha256 !== watchdogRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
-  // Only the gateway, the watchdog probe marker, the runtime updater's
-  // watchdog restart, the app pin file, the worker's release labels and the
-  // release documents change.
+  // Only the gateway, the watchdog probe proof, the runtime updater's
+  // watchdog restart + key, the installer's marker strip, provision's key,
+  // the app pin file, the worker's release labels and the release documents
+  // change.
   expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "agent-app-versions.json",
-      "hivra-chat/server.js", "hivra-guest-runtime-update.sh", "hivra-provider-worker.py", "hivra-surface-watchdog.py"]);
+      "hivra-chat/server.js", "hivra-guest-runtime-update.sh", "hivra-install-agent.py",
+      "hivra-provider-worker.py", "hivra-surface-watchdog.py", "provision-claude-code-box.sh"]);
   const watchdog = readFileSync("provisioner/hivra-surface-watchdog.py", "utf8");
   // The probe marks itself so the gateway does not count it as app use.
   expect(watchdog).toContain("X-Hivra-Surface-Watchdog");

@@ -76,6 +76,10 @@ SURFACES = {
 
 TOKEN_FILE = os.path.join(AGENT_HOME, ".hivra", "api-token")
 KIND_FILE = os.path.join(AGENT_HOME, ".hivra", "agent-kind")
+# The gateway exempts a marked probe from app-use tracking only when the header
+# carries this box-local secret (root reads it; bux's gateway reads it; a
+# proxied remote caller cannot know it). Absent -> probes count as use.
+KEY_FILE = os.path.join(AGENT_HOME, ".hivra", "surface-watchdog-key")
 CSRF_TOKEN = re.compile(r"^.{43}$")
 CSRF_RUNTIME_ID = re.compile(r"^[0-9a-f]{16}$")
 UNIT_NAME = re.compile(r"^[A-Za-z0-9_.@:-]{1,128}\.service$")
@@ -155,15 +159,18 @@ def lock_fresh(now=None):
 
 def http_get(url, token, timeout=HTTP_TIMEOUT_S):
     """(status, body_bytes, error) — error set on transport failure."""
-    request = urllib.request.Request(url, headers={
+    headers = {
         "Accept": "application/json, text/html",
         "Authorization": "Bearer " + token,
         "Cache-Control": "no-store",
-        # The gateway counts authenticated app requests as use; a probe must
-        # not keep the app "in use" and starve a managed update's idle window.
-        # The gateway honours the marker only from a loopback peer.
-        "X-Hivra-Surface-Watchdog": "1",
-    })
+    }
+    # The gateway counts authenticated app requests as use; a probe must not
+    # keep the app "in use" and starve a managed update's idle window. It
+    # exempts the probe only when the marker carries the box-local key.
+    key = read_trimmed(KEY_FILE)
+    if key:
+        headers["X-Hivra-Surface-Watchdog"] = key
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read(65536), None

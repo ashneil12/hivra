@@ -820,6 +820,15 @@ if [ ! -s "${AGENT_HOME}/.hivra/api-token" ]; then
 fi
 ok "box API token ready: ${AGENT_HOME}/.hivra/api-token"
 
+# The surface watchdog's shared proof it is the box's own monitor (the gateway
+# exempts only a loopback probe carrying it — proxied remote callers can never
+# know it). Owner-only like the api-token.
+if [ ! -s "${AGENT_HOME}/.hivra/surface-watchdog-key" ]; then
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "${AGENT_HOME}/.hivra/surface-watchdog-key"
+  chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}/.hivra/surface-watchdog-key"
+  chmod 600 "${AGENT_HOME}/.hivra/surface-watchdog-key"
+fi
+
 # Install the chat unit, templated with the chosen port + agent user/home/kind.
 if [ "$AGENT_KIND" != "deepseek-harness" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
 NODE_BIN="$(command -v node)"
