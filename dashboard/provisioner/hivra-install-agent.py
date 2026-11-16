@@ -357,7 +357,9 @@ def configure_named_tunnel(token, uid):
 
 
 def direct_config(hostname):
-    return (hostname + " {\n\treverse_proxy 127.0.0.1:8080\n}\n").encode("ascii")
+    # The watchdog's exempt probe carries a box-local secret; still strip the
+    # marker on this hop so a remote request can never present it to loopback.
+    return (hostname + " {\n\trequest_header -X-Hivra-Surface-Watchdog\n\treverse_proxy 127.0.0.1:8080\n}\n").encode("ascii")
 
 
 def check_direct_access(hostname, uid):
