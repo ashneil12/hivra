@@ -159,6 +159,10 @@ def http_get(url, token, timeout=HTTP_TIMEOUT_S):
         "Accept": "application/json, text/html",
         "Authorization": "Bearer " + token,
         "Cache-Control": "no-store",
+        # The gateway counts authenticated app requests as use; a probe must
+        # not keep the app "in use" and starve a managed update's idle window.
+        # The gateway honours the marker only from a loopback peer.
+        "X-Hivra-Surface-Watchdog": "1",
     })
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
