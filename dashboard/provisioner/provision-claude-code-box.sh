@@ -876,7 +876,7 @@ esac
 # owning service when the surface stays down past a bounded window, and records
 # crash-looping units. It honours the same managed-update lock the gateway's
 # hold page uses, so it never fights a legitimate app update.
-install -d -o root -g root -m 0700 /var/lib/hivra/surface-watchdog
+install -d -o root -g "${AGENT_USER}" -m 0750 /var/lib/hivra/surface-watchdog
 install -o root -g root -m 0755 "$SRC_DIR/hivra-surface-watchdog.py" /var/lib/hivra/hivra-surface-watchdog.py
 install -o root -g root -m 0644 "$SRC_DIR/hivra-surface-watchdog.service" /etc/systemd/system/hivra-surface-watchdog.service
 ok "surface watchdog installed (probes the real user path, restarts wedged app units)"

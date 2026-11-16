@@ -292,6 +292,10 @@ if systemctl is-active --quiet hivra-surface-watchdog.service; then
 fi
 printf 'HIVRA_SURFACE_WATCHDOG state=%s\n' "$WATCHDOG_STATE"
 
+# Receipts stay owner-only but the gateway runs as bux: the dir must let the
+# agent group read them or GET /api/surface-watchdog answers not_installed.
+install -d -o root -g bux -m 0750 /var/lib/hivra/surface-watchdog
+
 # The watchdog's proof it is the box's own monitor: a shared secret only the
 # agent user (the gateway runs as bux) and root (the watchdog) can read.
 # Proxied remote traffic also arrives on loopback, so the marker must carry

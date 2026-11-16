@@ -588,7 +588,10 @@ update them yet.
   provision and by the runtime update), the gateway exempts that request
   from use-tracking only when a loopback peer presents the key, the
   direct-access site strips the marker outright, and the runtime update
-  restarts an already-installed watchdog.
+  restarts an already-installed watchdog. It also fixes the receipts
+  endpoint: watchdog state was written under a root-only directory the bux
+  gateway could never read, so `GET /api/surface-watchdog` always answered
+  not_installed; receipts now land group-readable for the agent user.
 
 - **Surface watchdog, browser-keeper cleanup and real-path readiness (`2026.11.15.6`).** A new
   `hivra-surface-watchdog` service on each computer checks every registered agent

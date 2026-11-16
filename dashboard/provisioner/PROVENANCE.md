@@ -564,7 +564,11 @@ provision and by the guest runtime update); the gateway exempts that request
 from use-tracking only when a loopback peer presents the key, so proxied remote
 traffic can never claim it, and the direct-access Caddy site strips the marker
 header outright. The guest runtime update also restarts an already-installed
-watchdog so the new probe takes effect.
+watchdog so the new probe takes effect. It also repairs the receipts endpoint:
+the watchdog (root) wrote its state under a root-only directory the bux gateway
+could never read, so `GET /api/surface-watchdog` always answered not_installed;
+receipt files now land group-readable for the agent user and the state
+directory is installed root:agent 0750 at provision and runtime update.
 Changed: `hivra-chat/server.js`, `hivra-surface-watchdog.py`,
 `hivra-guest-runtime-update.sh`, `hivra-install-agent.py`,
 `provision-claude-code-box.sh`, `test_hivra_surface_watchdog.py`,

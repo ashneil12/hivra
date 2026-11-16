@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 88568,
-      "sha256": "badf633447022ecc48d333f51455bacdbb9e9a930c7f5dba4462fb6d74098d03"
+      "bytes": 88910,
+      "sha256": "748a78211ace8a8d63b3612aef359ac4d8e41c6aa99a43df6e3e2f2412aa4192"
     },
     {
       "path": "README.md",
-      "bytes": 52937,
-      "sha256": "bfbc49c14b8717f8e0f980e1c47dd958f5b13a81c49abc3356b415ae8e94d4c4"
+      "bytes": 53184,
+      "sha256": "996b735c2cbdd169794d61baaf95603a3b1717a76dce4fdec58012e189872ebc"
     },
     {
       "path": "VERSION",
@@ -169,8 +169,8 @@
     },
     {
       "path": "hivra-surface-watchdog.py",
-      "bytes": 17521,
-      "sha256": "b3693a7b260d9c30e74ba8b498992a4c316f3926e7b3bd49b761022c5e89ca5d"
+      "bytes": 18127,
+      "sha256": "3a32ea3bca074a792ceba037adb99ad647f619431da36dc5bbace9cf5853a0cd"
     },
     {
       "path": "hivra-surface-watchdog.service",
@@ -284,8 +284,8 @@
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 43305,
-      "sha256": "ba47660b48620f3883eea13871d68d03bf94bfb5645e92682ed1d35522ad63af"
+      "bytes": 43525,
+      "sha256": "526a0665840e7c106827fdaa88614b9a72ff8c62cc4819f6e987bff4b25872c9"
     },
     {
       "path": "hivra-tg-apply",
@@ -339,8 +339,8 @@
     },
     {
       "path": "provision-claude-code-box.sh",
-      "bytes": 121212,
-      "sha256": "95a4a6acb4381daa30455531e9be57e2989244c2a9e98320673d66c5125fd977"
+      "bytes": 121223,
+      "sha256": "85f5f2f64b37d48f9bd933af4bb2c32f19546d92eeb9c632a3fc04fe81ea4492"
     },
     {
       "path": "remote-desktop/broker.cjs",

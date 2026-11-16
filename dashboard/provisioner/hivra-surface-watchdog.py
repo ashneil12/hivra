@@ -102,6 +102,32 @@ def load_state():
         return {}
 
 
+AGENT_GID = None
+
+
+def agent_gid():
+    # The agent user's group: the bux gateway reads these receipts for the
+    # dashboard's GET /api/surface-watchdog.
+    global AGENT_GID
+    if AGENT_GID is None:
+        try:
+            AGENT_GID = os.stat(AGENT_HOME).st_gid
+        except OSError:
+            AGENT_GID = -1
+    return AGENT_GID
+
+
+def share_with_agent(path):
+    """Owner-only receipts must stay unreadable by other users except bux."""
+    try:
+        gid = agent_gid()
+        if gid >= 0:
+            os.chown(path, -1, gid)
+        os.chmod(path, 0o640)
+    except OSError:
+        pass
+
+
 def write_state(state):
     os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix="state.", dir=STATE_DIR)
@@ -109,7 +135,7 @@ def write_state(state):
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(state, handle, sort_keys=True)
             handle.write("\n")
-        os.chmod(tmp, 0o600)
+        share_with_agent(tmp)
         os.replace(tmp, STATE_FILE)
     except BaseException:
         try:
@@ -139,7 +165,7 @@ def append_event(state, kind, detail):
         fd, tmp = tempfile.mkstemp(prefix="events.", dir=STATE_DIR)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines) + "\n")
-        os.chmod(tmp, 0o600)
+        share_with_agent(tmp)
         os.replace(tmp, EVENTS_FILE)
     except OSError:
         pass
