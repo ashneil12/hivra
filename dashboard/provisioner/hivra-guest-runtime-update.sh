@@ -278,10 +278,16 @@ mv -f -- "$WATCHDOG_PY.next" "$WATCHDOG_PY"
 mv -f -- "$WATCHDOG_UNIT.next" "$WATCHDOG_UNIT"
 if ! systemctl daemon-reload; then rollback; exit 1; fi
 # The watchdog is additive: a box that cannot start it keeps its runtime
-# update, and the receipt line says so instead of hiding it.
+# update, and the receipt line says so instead of hiding it. A box that
+# already runs it is moved onto the new code (restart also starts an enabled
+# but inactive unit).
 WATCHDOG_STATE=failed
-if systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 \
-  && systemctl is-active --quiet hivra-surface-watchdog.service; then
+if systemctl is-enabled --quiet hivra-surface-watchdog.service; then
+  systemctl restart hivra-surface-watchdog.service >/dev/null 2>&1 || true
+else
+  systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 || true
+fi
+if systemctl is-active --quiet hivra-surface-watchdog.service; then
   WATCHDOG_STATE=active
 fi
 printf 'HIVRA_SURFACE_WATCHDOG state=%s\n' "$WATCHDOG_STATE"

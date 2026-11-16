@@ -24,10 +24,10 @@ begin
      '''2026.11.15.6'',''2026.11.15.7'''),
     ('public.hivra_provider_native_identity_valid(jsonb,uuid,uuid)',
      '(p_identity->''bundle''->>''bundleSha256''=''3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.6'')',
-     '(p_identity->''bundle''->>''bundleSha256''=''3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.6'') or (p_identity->''bundle''->>''bundleSha256''=''a7e22d13919998dabdf1f80dd545b844b25eabd01f9f91cd624f53b1b2b5f7d3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.7'')'),
+     '(p_identity->''bundle''->>''bundleSha256''=''3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.6'') or (p_identity->''bundle''->>''bundleSha256''=''874c0d9df653f12acb2a0d765333f0c0aa95943e73ff437f8c6fe8df86a8d4d3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.7'')'),
     ('public.hivra_provider_desktop_identity_valid(jsonb,uuid,uuid)',
      '(p_identity->''bundle''->>''bundleSha256''=''3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.6'')',
-     '(p_identity->''bundle''->>''bundleSha256''=''3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.6'') or (p_identity->''bundle''->>''bundleSha256''=''a7e22d13919998dabdf1f80dd545b844b25eabd01f9f91cd624f53b1b2b5f7d3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.7'')')
+     '(p_identity->''bundle''->>''bundleSha256''=''3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.6'') or (p_identity->''bundle''->>''bundleSha256''=''874c0d9df653f12acb2a0d765333f0c0aa95943e73ff437f8c6fe8df86a8d4d3'' and p_identity->''bundle''->>''provisionerVersion''=''2026.11.15.7'')')
   ) as patches(signature, anchor, addition)
   loop
     definition := pg_get_functiondef(signature::regprocedure);

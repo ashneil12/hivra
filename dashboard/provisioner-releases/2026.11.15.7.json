@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 87662,
-      "sha256": "7823420d47bef12b0be143b4aa4e9f3f561c7c6b681efeaf4d3ceff8f5c33d4c"
+      "bytes": 88233,
+      "sha256": "926b84cf2b8000bc7406f8bef0ed059f9602d3abf9b7f55e8b6b0c3af8c3b721"
     },
     {
       "path": "README.md",
-      "bytes": 52359,
-      "sha256": "18e6c596ac0114a43fdbc96137b5968adeca076c138d9bad8851a9ef6438380b"
+      "bytes": 52765,
+      "sha256": "093ae711109122d5bf7071e06636aa15f1ec0f80ac39d676d9a3d7e943f4f045"
     },
     {
       "path": "VERSION",
@@ -169,8 +169,8 @@
     },
     {
       "path": "hivra-surface-watchdog.py",
-      "bytes": 16885,
-      "sha256": "c0532241a8cf8772fb312892eba61f14738040d79f301ae5fd0f2f601e6db027"
+      "bytes": 17150,
+      "sha256": "abdd8aba085c5d1fdae9d553030ebc8e50e89fad3547ca31c3aa1cb2ab39b429"
     },
     {
       "path": "hivra-surface-watchdog.service",
@@ -239,8 +239,8 @@
     },
     {
       "path": "hivra-chat/server.js",
-      "bytes": 281123,
-      "sha256": "1031ea1d377590f7dbbc059e0df124307005a9a4dca41e829d2a4acaa9558a58"
+      "bytes": 281706,
+      "sha256": "606afc71986b8cd077da6285fa654d4f27a07578c20fb37f7ccfcec0fb68a801"
     },
     {
       "path": "hivra-chat/workspace-access-policy.cjs",
@@ -284,8 +284,8 @@
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 42466,
-      "sha256": "61ce7fb85ccc2fbe81d6a6c5a5e34cd45556dfd989f086d24d050f6dccdbd18e"
+      "bytes": 42731,
+      "sha256": "5044ffef1753c11b5b319d9029588c47a32b80c30ae6c38498fe08e782728550"
     },
     {
       "path": "hivra-tg-apply",

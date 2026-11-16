@@ -393,11 +393,20 @@ function agentAppHoldPage(req, res) {
     ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"15\"><title>Updating</title><p style=\"font:15px system-ui;margin:2em\">" + message + "</p>"
     : message);
 }
+// The box's own surface watchdog probes the app through this gate on every
+// tick. Counting it as use keeps the app "in use" forever, so a managed
+// update would never reach its idle window. The marker header only exempts
+// a loopback peer — a remote caller cannot use it to hide real use.
+function surfaceWatchdogProbe(req) {
+  const remote = String((req.socket && req.socket.remoteAddress) || "");
+  return req.headers["x-hivra-surface-watchdog"] === "1"
+    && (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1");
+}
 // Counts an authenticated request to the app as use (a refused one too: the
 // updater then backs off) and answers it while the app is being swapped.
 // Returns true when it answered.
 function agentAppHold(req, res) {
-  agentAppLastUsedAt = Date.now();
+  if (!surfaceWatchdogProbe(req)) agentAppLastUsedAt = Date.now();
   if (!agentAppUpdating()) return false;
   agentAppHoldPage(req, res);
   return true;
