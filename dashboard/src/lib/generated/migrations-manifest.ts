@@ -458,4 +458,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261116000000", name: "running_agents_drop_stale_error" },
   { version: "20261116010000", name: "provider_release_admission_2026_11_15_6" },
   { version: "20261116020000", name: "provider_release_admission_2026_11_15_7" },
+  { version: "20261116030000", name: "provider_release_admission_2026_11_15_7_resealed" },
 ];
