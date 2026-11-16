@@ -820,6 +820,15 @@ if [ ! -s "${AGENT_HOME}/.hivra/api-token" ]; then
 fi
 ok "box API token ready: ${AGENT_HOME}/.hivra/api-token"
 
+# The surface watchdog's shared proof it is the box's own monitor (the gateway
+# exempts only a loopback probe carrying it — proxied remote callers can never
+# know it). Owner-only like the api-token.
+if [ ! -s "${AGENT_HOME}/.hivra/surface-watchdog-key" ]; then
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "${AGENT_HOME}/.hivra/surface-watchdog-key"
+  chown "${AGENT_USER}:${AGENT_USER}" "${AGENT_HOME}/.hivra/surface-watchdog-key"
+  chmod 600 "${AGENT_HOME}/.hivra/surface-watchdog-key"
+fi
+
 # Install the chat unit, templated with the chosen port + agent user/home/kind.
 if [ "$AGENT_KIND" != "deepseek-harness" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
 NODE_BIN="$(command -v node)"
@@ -867,7 +876,7 @@ esac
 # owning service when the surface stays down past a bounded window, and records
 # crash-looping units. It honours the same managed-update lock the gateway's
 # hold page uses, so it never fights a legitimate app update.
-install -d -o root -g root -m 0700 /var/lib/hivra/surface-watchdog
+install -d -o root -g "${AGENT_USER}" -m 0750 /var/lib/hivra/surface-watchdog
 install -o root -g root -m 0755 "$SRC_DIR/hivra-surface-watchdog.py" /var/lib/hivra/hivra-surface-watchdog.py
 install -o root -g root -m 0644 "$SRC_DIR/hivra-surface-watchdog.service" /etc/systemd/system/hivra-surface-watchdog.service
 ok "surface watchdog installed (probes the real user path, restarts wedged app units)"

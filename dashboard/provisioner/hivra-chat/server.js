@@ -395,12 +395,24 @@ function agentAppHoldPage(req, res) {
 }
 // The box's own surface watchdog probes the app through this gate on every
 // tick. Counting it as use keeps the app "in use" forever, so a managed
-// update would never reach its idle window. The marker header only exempts
-// a loopback peer — a remote caller cannot use it to hide real use.
+// update would never reach its idle window. The proof it is the watchdog and
+// not proxied remote traffic (which also arrives on loopback) is a shared
+// secret in the agent home: only root (the watchdog) and bux (this gateway)
+// can read it. Absent key file -> no request is ever exempted.
+let surfaceWatchdogSecret;
+function surfaceWatchdogKey() {
+  if (surfaceWatchdogSecret === undefined || surfaceWatchdogSecret === null) {
+    try { surfaceWatchdogSecret = fs.readFileSync(path.join(HOME, ".hivra", "surface-watchdog-key"), "utf8").trim() || null; }
+    catch { surfaceWatchdogSecret = null; }
+  }
+  return surfaceWatchdogSecret;
+}
 function surfaceWatchdogProbe(req) {
+  const key = surfaceWatchdogKey();
   const remote = String((req.socket && req.socket.remoteAddress) || "");
-  return req.headers["x-hivra-surface-watchdog"] === "1"
-    && (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1");
+  if (!key || (remote !== "127.0.0.1" && remote !== "::1" && remote !== "::ffff:127.0.0.1")) return false;
+  const sent = Buffer.from(String(req.headers["x-hivra-surface-watchdog"] || ""));
+  return sent.length === Buffer.byteLength(key) && crypto.timingSafeEqual(sent, Buffer.from(key));
 }
 // Counts an authenticated request to the app as use (a refused one too: the
 // updater then backs off) and answers it while the app is being swapped.

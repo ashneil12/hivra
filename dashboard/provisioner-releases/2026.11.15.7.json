@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 88233,
-      "sha256": "926b84cf2b8000bc7406f8bef0ed059f9602d3abf9b7f55e8b6b0c3af8c3b721"
+      "bytes": 88910,
+      "sha256": "748a78211ace8a8d63b3612aef359ac4d8e41c6aa99a43df6e3e2f2412aa4192"
     },
     {
       "path": "README.md",
-      "bytes": 52765,
-      "sha256": "093ae711109122d5bf7071e06636aa15f1ec0f80ac39d676d9a3d7e943f4f045"
+      "bytes": 53184,
+      "sha256": "996b735c2cbdd169794d61baaf95603a3b1717a76dce4fdec58012e189872ebc"
     },
     {
       "path": "VERSION",
@@ -154,8 +154,8 @@
     },
     {
       "path": "hivra-install-agent.py",
-      "bytes": 31024,
-      "sha256": "c1e56389d212de35f57dc551dd4945566ae2ef619bad8f282bce1b296bc48f8a"
+      "bytes": 31225,
+      "sha256": "84fe18fecef3cd4accb6a66ae6426723872fbf48dc7d6d23763f56c4930457b0"
     },
     {
       "path": "hivra-provider-worker.py",
@@ -169,8 +169,8 @@
     },
     {
       "path": "hivra-surface-watchdog.py",
-      "bytes": 17150,
-      "sha256": "abdd8aba085c5d1fdae9d553030ebc8e50e89fad3547ca31c3aa1cb2ab39b429"
+      "bytes": 18127,
+      "sha256": "3a32ea3bca074a792ceba037adb99ad647f619431da36dc5bbace9cf5853a0cd"
     },
     {
       "path": "hivra-surface-watchdog.service",
@@ -239,8 +239,8 @@
     },
     {
       "path": "hivra-chat/server.js",
-      "bytes": 281706,
-      "sha256": "606afc71986b8cd077da6285fa654d4f27a07578c20fb37f7ccfcec0fb68a801"
+      "bytes": 282382,
+      "sha256": "5fcd98777f2b4fe459b6742506b3986887db2d358ae86c4443907525e2692706"
     },
     {
       "path": "hivra-chat/workspace-access-policy.cjs",
@@ -284,8 +284,8 @@
     },
     {
       "path": "hivra-guest-runtime-update.sh",
-      "bytes": 42731,
-      "sha256": "5044ffef1753c11b5b319d9029588c47a32b80c30ae6c38498fe08e782728550"
+      "bytes": 43525,
+      "sha256": "526a0665840e7c106827fdaa88614b9a72ff8c62cc4819f6e987bff4b25872c9"
     },
     {
       "path": "hivra-tg-apply",
@@ -339,8 +339,8 @@
     },
     {
       "path": "provision-claude-code-box.sh",
-      "bytes": 120705,
-      "sha256": "9f38cd51e0ddfd316aab47705a17dc0766cd9876bb734e7a2e035e54ca788577"
+      "bytes": 121223,
+      "sha256": "85f5f2f64b37d48f9bd933af4bb2c32f19546d92eeb9c632a3fc04fe81ea4492"
     },
     {
       "path": "remote-desktop/broker.cjs",
