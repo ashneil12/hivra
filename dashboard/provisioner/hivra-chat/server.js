@@ -393,11 +393,32 @@ function agentAppHoldPage(req, res) {
     ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"15\"><title>Updating</title><p style=\"font:15px system-ui;margin:2em\">" + message + "</p>"
     : message);
 }
+// The box's own surface watchdog probes the app through this gate on every
+// tick. Counting it as use keeps the app "in use" forever, so a managed
+// update would never reach its idle window. The proof it is the watchdog and
+// not proxied remote traffic (which also arrives on loopback) is a shared
+// secret in the agent home: only root (the watchdog) and bux (this gateway)
+// can read it. Absent key file -> no request is ever exempted.
+let surfaceWatchdogSecret;
+function surfaceWatchdogKey() {
+  if (surfaceWatchdogSecret === undefined || surfaceWatchdogSecret === null) {
+    try { surfaceWatchdogSecret = fs.readFileSync(path.join(HOME, ".hivra", "surface-watchdog-key"), "utf8").trim() || null; }
+    catch { surfaceWatchdogSecret = null; }
+  }
+  return surfaceWatchdogSecret;
+}
+function surfaceWatchdogProbe(req) {
+  const key = surfaceWatchdogKey();
+  const remote = String((req.socket && req.socket.remoteAddress) || "");
+  if (!key || (remote !== "127.0.0.1" && remote !== "::1" && remote !== "::ffff:127.0.0.1")) return false;
+  const sent = Buffer.from(String(req.headers["x-hivra-surface-watchdog"] || ""));
+  return sent.length === Buffer.byteLength(key) && crypto.timingSafeEqual(sent, Buffer.from(key));
+}
 // Counts an authenticated request to the app as use (a refused one too: the
 // updater then backs off) and answers it while the app is being swapped.
 // Returns true when it answered.
 function agentAppHold(req, res) {
-  agentAppLastUsedAt = Date.now();
+  if (!surfaceWatchdogProbe(req)) agentAppLastUsedAt = Date.now();
   if (!agentAppUpdating()) return false;
   agentAppHoldPage(req, res);
   return true;
@@ -4545,9 +4566,11 @@ const server = http.createServer((req, res) => {
     // Agent Zero's component loader creates blob modules. Their static imports
     // intentionally arrive without Referer; only these explicit static asset
     // namespaces and their exact shared /index.js entry may use that route,
-    // never arbitrary root files, management APIs or writes.
+    // never arbitrary root files, management APIs or writes. Plugin web UIs
+    // (e.g. tailscale_manager) import their modules from the persisted
+    // /usr/plugins/<plugin>/webui/ tree the same way.
     const nativeStatic = (req.method === "GET" || req.method === "HEAD")
-      && (u === "/index.js" || /^\/(components|plugins|vendor|js|extensions\/webui)\//.test(u));
+      && (u === "/index.js" || /^\/(components|plugins|vendor|js|usr\/plugins|extensions\/webui)\//.test(u));
     if (nativeStatic) {
       // Native component/blob loaders resolve imports against location.origin.
       // Keep their URL identity at root, matching the two HTML entry scripts.

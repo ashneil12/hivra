@@ -500,6 +500,11 @@ const recipes = Object.freeze({
     workerSha256: "977d88f7fdcd9d03c9814c5facaf13511e0bc43f0e81642990d4d0d5fb86a2eb",
     workerSize: 45216,
   }),
+  "2026.11.15.7": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Agent Zero plugin web UI module imports under /usr/plugins and moves the pinned Agent Zero image to v2.15. The worker only advances its release labels.
+    workerSha256: "e58572e0b21dc0d1a80dab7fa550a970da6d6d480460c89b6e068493b6cfcbd5",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

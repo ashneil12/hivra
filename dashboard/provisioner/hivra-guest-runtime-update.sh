@@ -278,13 +278,41 @@ mv -f -- "$WATCHDOG_PY.next" "$WATCHDOG_PY"
 mv -f -- "$WATCHDOG_UNIT.next" "$WATCHDOG_UNIT"
 if ! systemctl daemon-reload; then rollback; exit 1; fi
 # The watchdog is additive: a box that cannot start it keeps its runtime
-# update, and the receipt line says so instead of hiding it.
+# update, and the receipt line says so instead of hiding it. A box that
+# already runs it is moved onto the new code (restart also starts an enabled
+# but inactive unit).
 WATCHDOG_STATE=failed
-if systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 \
-  && systemctl is-active --quiet hivra-surface-watchdog.service; then
+if systemctl is-enabled --quiet hivra-surface-watchdog.service; then
+  systemctl restart hivra-surface-watchdog.service >/dev/null 2>&1 || true
+else
+  systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 || true
+fi
+if systemctl is-active --quiet hivra-surface-watchdog.service; then
   WATCHDOG_STATE=active
 fi
 printf 'HIVRA_SURFACE_WATCHDOG state=%s\n' "$WATCHDOG_STATE"
+
+# Receipts stay owner-only but the gateway runs as bux: the dir must let the
+# agent group read them or GET /api/surface-watchdog answers not_installed.
+install -d -o root -g bux -m 0750 /var/lib/hivra/surface-watchdog
+
+# The watchdog's proof it is the box's own monitor: a shared secret only the
+# agent user (the gateway runs as bux) and root (the watchdog) can read.
+# Proxied remote traffic also arrives on loopback, so the marker must carry
+# it. Created once; the gateway reads it lazily on every check.
+WATCHDOG_KEY=/home/bux/.hivra/surface-watchdog-key
+# bux owns ~/.hivra and could plant a symlink at any predictable sibling name,
+# so the key is staged inside a root-owned sibling directory (same filesystem,
+# so the publish rename stays atomic) rather than a ${WATCHDOG_KEY}.next path.
+if [ -L "$WATCHDOG_KEY" ] || [ ! -f "$WATCHDOG_KEY" ] || [ ! -s "$WATCHDOG_KEY" ]; then
+  install -d -o root -g root -m 0700 /home/bux/.hivra/.watchdog-key-stage
+  KEY_STAGE=$(mktemp /home/bux/.hivra/.watchdog-key-stage/key.XXXXXX)
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$KEY_STAGE"
+  chown bux:bux "$KEY_STAGE"
+  chmod 600 "$KEY_STAGE"
+  mv -f -- "$KEY_STAGE" "$WATCHDOG_KEY"
+  rmdir /home/bux/.hivra/.watchdog-key-stage 2>/dev/null || true
+fi
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
 READY=0

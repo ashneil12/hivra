@@ -26,12 +26,14 @@ describe("gateway agent app reporting and update hold", () => {
   let state: string;
   const closers: Array<() => Promise<void>> = [];
   let openclawOutput: string | null;
+  let spoofRemote: string | undefined;
 
   beforeEach(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-agent-app-gateway-"));
     state = path.join(home, "state");
     fs.mkdirSync(state);
     openclawOutput = "OpenClaw 2026.6.10 (abc123)\n";
+    spoofRemote = undefined;
   });
   afterEach(async () => {
     for (const close of closers.splice(0)) await close();
@@ -44,9 +46,12 @@ describe("gateway agent app reporting and update hold", () => {
     lock: path.join(state, "agent-app-update.lock"),
   });
 
+  const WATCHDOG_KEY = "d".repeat(64);
+
   function boot(kind: string, env: Record<string, string> = {}): Promise<number> {
     fs.mkdirSync(path.join(home, ".hivra"), { recursive: true });
     fs.writeFileSync(path.join(home, ".hivra", "api-token"), TOKEN);
+    fs.writeFileSync(path.join(home, ".hivra", "surface-watchdog-key"), WATCHDOG_KEY);
     fs.writeFileSync(path.join(home, ".hivra", "agent-kind"), `${kind}\n`);
     let server: http.Server | undefined;
     const sockets = new Set<net.Socket>();
@@ -56,7 +61,12 @@ describe("gateway agent app reporting and update hold", () => {
     const fakeHttp = {
       ...http,
       createServer: (handler: http.RequestListener) => {
-        server = http.createServer(handler);
+        server = http.createServer((req, res) => {
+          // The gateway binds loopback and sees the real client address on
+          // the socket; tests stand in for a remote peer by spoofing it.
+          if (spoofRemote) Object.defineProperty(req.socket, "remoteAddress", { value: spoofRemote, configurable: true });
+          handler(req, res);
+        });
         server.on("connection", (socket) => sockets.add(socket));
         return server;
       },
@@ -104,11 +114,11 @@ describe("gateway agent app reporting and update hold", () => {
       : once(created, "listening").then(() => (created.address() as AddressInfo).port);
   }
 
-  function get(port: number, pathname: string, { auth = true, accept = "application/json" } = {}): Promise<{ status: number; text: string; json: Record<string, unknown> }> {
+  function get(port: number, pathname: string, { auth = true, accept = "application/json", headers = {} }: { auth?: boolean; accept?: string; headers?: http.OutgoingHttpHeaders } = {}): Promise<{ status: number; text: string; json: Record<string, unknown> }> {
     return new Promise((resolve, reject) => {
       const req = http.request({
         hostname: "127.0.0.1", port, path: pathname, method: "GET", agent: false,
-        headers: { Host: "box.hivra.test", Accept: accept, ...(auth ? { Authorization: `Bearer ${TOKEN}` } : {}) },
+        headers: { Host: "box.hivra.test", Accept: accept, ...(auth ? { Authorization: `Bearer ${TOKEN}` } : {}), ...headers },
       }, (res) => {
         let text = ""; res.setEncoding("utf8"); res.on("data", (c) => { text += c; });
         res.once("end", () => { let json: Record<string, unknown> = {}; try { json = JSON.parse(text); } catch { /* not json */ } resolve({ status: res.statusCode ?? 0, text, json }); });
@@ -202,6 +212,37 @@ describe("gateway agent app reporting and update hold", () => {
     const after = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
     expect(after).toBeGreaterThan(before);
   });
+
+  it("does not count the box's own surface watchdog probe as use", async () => {
+    const app = await upstream();
+    const port = await boot("aeon", { AEON_DASHBOARD_PORT: String(app.port) });
+    const before = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
+    await new Promise((r) => setTimeout(r, 15));
+    // The watchdog's loopback probe carries the box-local key and leaves no
+    // use: otherwise it would keep the app "in use" forever and a managed
+    // update could never reach its idle window.
+    const probed = await get(port, "/aeon/", { headers: { "X-Hivra-Surface-Watchdog": WATCHDOG_KEY } });
+    expect(probed.text).toBe("app");
+    const after = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
+    expect(after).toBe(before);
+    expect(app.hits).toEqual(["/aeon/"]);
+  });
+
+  it.each([["1", "a marker without the key"], [WATCHDOG_KEY, "the key from a remote peer"]])(
+    "still counts %s as use", async (key: string, _why: string) => {
+      const app = await upstream();
+      const port = await boot("aeon", { AEON_DASHBOARD_PORT: String(app.port) });
+      const before = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
+      await new Promise((r) => setTimeout(r, 15));
+      // The marker only exempts a loopback peer that knows the key: a bare
+      // header or a key spoofed by a remote caller is ordinary use, so the
+      // updater still backs off while they are present.
+      if (key === WATCHDOG_KEY) spoofRemote = "203.0.113.7";
+      const probed = await get(port, "/aeon/", { headers: { "X-Hivra-Surface-Watchdog": key } });
+      expect(probed.text).toBe("app");
+      const after = Date.parse(((await get(port, "/api/meta")).json.agentApp as { activity: { lastUsedAt: string } }).activity.lastUsedAt);
+      expect(after).toBeGreaterThan(before);
+    });
 
   it("counts an open app WebSocket until it closes, and refuses new ones while an update holds the app", async () => {
     const app = await upstream();

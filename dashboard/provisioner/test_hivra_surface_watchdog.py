@@ -242,6 +242,50 @@ class WatchdogTest(unittest.TestCase):
         http.set("/aeon/", 503, b"<html>updating</html>")
         self.assertNotEqual(watchdog.probe_surface("aeon", cfg, TOKEN, http=http), "ok")
 
+    def test_probe_marks_itself_so_the_gateway_does_not_count_it_as_use(self):
+        # Real sockets: the gateway exempts the probe from use-tracking only
+        # because this header carries the box-local key from a loopback peer —
+        # without it the watchdog keeps the app "in use" forever and managed
+        # updates starve. No key file -> no marker -> probes count as use.
+        import http.server
+        import threading
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(dict(self.headers))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = os.path.join(tmp, "surface-watchdog-key")
+            with open(key_path, "w") as handle:
+                handle.write("k" * 64 + "\n")
+            original = watchdog.KEY_FILE
+            watchdog.KEY_FILE = key_path
+            try:
+                status, _body, error = watchdog.http_get("http://127.0.0.1:%d/aeon/" % server.server_port, TOKEN)
+                self.assertIsNone(error)
+                self.assertEqual(status, 200)
+                self.assertEqual(seen[0].get("X-Hivra-Surface-Watchdog"), "k" * 64)
+                self.assertEqual(seen[0].get("Authorization"), "Bearer " + TOKEN)
+                watchdog.KEY_FILE = os.path.join(tmp, "absent")
+                status, _body, error = watchdog.http_get("http://127.0.0.1:%d/aeon/" % server.server_port, TOKEN)
+                self.assertIsNone(error)
+                self.assertNotIn("X-Hivra-Surface-Watchdog", seen[1])
+            finally:
+                watchdog.KEY_FILE = original
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
     def test_state_round_trip_and_events_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             original = (watchdog.STATE_DIR, watchdog.STATE_FILE, watchdog.EVENTS_FILE)

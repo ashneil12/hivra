@@ -574,6 +574,25 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Agent Zero plugin web UI imports and the v2.15 pin (`2026.11.15.7`).** The
+  gateway now serves no-Referer static module imports under
+  `/usr/plugins/<plugin>/webui/` (the Tailscale manager and other plugin web
+  interfaces) instead of answering 404. The pinned Agent Zero image moves to
+  `v2.15` (`sha256:05d6ab347bd7…`), with the reviewed `v2.2` image retained in
+  the pin's `previous` list; existing computers move through the managed
+  runtime/app update with rollback. The release also repairs the managed
+  update's idle gate: the surface watchdog's own probe used to count as app
+  use, so a watched box never looked idle and every scheduled app update
+  deferred until it gave up. The watchdog now marks its probe with a
+  box-local shared key (`~/.hivra/surface-watchdog-key`, created at
+  provision and by the runtime update), the gateway exempts that request
+  from use-tracking only when a loopback peer presents the key, the
+  direct-access site strips the marker outright, and the runtime update
+  restarts an already-installed watchdog. It also fixes the receipts
+  endpoint: watchdog state was written under a root-only directory the bux
+  gateway could never read, so `GET /api/surface-watchdog` always answered
+  not_installed; receipts now land group-readable for the agent user.
+
 - **Surface watchdog, browser-keeper cleanup and real-path readiness (`2026.11.15.6`).** A new
   `hivra-surface-watchdog` service on each computer checks every registered agent
   surface through the real gateway path (for Agent Zero, the same

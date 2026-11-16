@@ -76,6 +76,10 @@ SURFACES = {
 
 TOKEN_FILE = os.path.join(AGENT_HOME, ".hivra", "api-token")
 KIND_FILE = os.path.join(AGENT_HOME, ".hivra", "agent-kind")
+# The gateway exempts a marked probe from app-use tracking only when the header
+# carries this box-local secret (root reads it; bux's gateway reads it; a
+# proxied remote caller cannot know it). Absent -> probes count as use.
+KEY_FILE = os.path.join(AGENT_HOME, ".hivra", "surface-watchdog-key")
 CSRF_TOKEN = re.compile(r"^.{43}$")
 CSRF_RUNTIME_ID = re.compile(r"^[0-9a-f]{16}$")
 UNIT_NAME = re.compile(r"^[A-Za-z0-9_.@:-]{1,128}\.service$")
@@ -98,6 +102,32 @@ def load_state():
         return {}
 
 
+AGENT_GID = None
+
+
+def agent_gid():
+    # The agent user's group: the bux gateway reads these receipts for the
+    # dashboard's GET /api/surface-watchdog.
+    global AGENT_GID
+    if AGENT_GID is None:
+        try:
+            AGENT_GID = os.stat(AGENT_HOME).st_gid
+        except OSError:
+            AGENT_GID = -1
+    return AGENT_GID
+
+
+def share_with_agent(path):
+    """Owner-only receipts must stay unreadable by other users except bux."""
+    try:
+        gid = agent_gid()
+        if gid >= 0:
+            os.chown(path, -1, gid)
+        os.chmod(path, 0o640)
+    except OSError:
+        pass
+
+
 def write_state(state):
     os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix="state.", dir=STATE_DIR)
@@ -105,7 +135,7 @@ def write_state(state):
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(state, handle, sort_keys=True)
             handle.write("\n")
-        os.chmod(tmp, 0o600)
+        share_with_agent(tmp)
         os.replace(tmp, STATE_FILE)
     except BaseException:
         try:
@@ -135,7 +165,7 @@ def append_event(state, kind, detail):
         fd, tmp = tempfile.mkstemp(prefix="events.", dir=STATE_DIR)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines) + "\n")
-        os.chmod(tmp, 0o600)
+        share_with_agent(tmp)
         os.replace(tmp, EVENTS_FILE)
     except OSError:
         pass
@@ -155,11 +185,18 @@ def lock_fresh(now=None):
 
 def http_get(url, token, timeout=HTTP_TIMEOUT_S):
     """(status, body_bytes, error) — error set on transport failure."""
-    request = urllib.request.Request(url, headers={
+    headers = {
         "Accept": "application/json, text/html",
         "Authorization": "Bearer " + token,
         "Cache-Control": "no-store",
-    })
+    }
+    # The gateway counts authenticated app requests as use; a probe must not
+    # keep the app "in use" and starve a managed update's idle window. It
+    # exempts the probe only when the marker carries the box-local key.
+    key = read_trimmed(KEY_FILE)
+    if key:
+        headers["X-Hivra-Surface-Watchdog"] = key
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read(65536), None
