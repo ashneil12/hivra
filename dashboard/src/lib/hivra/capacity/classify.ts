@@ -55,6 +55,15 @@ export type CapacityVerdict = {
 /** The cron runs every 5 minutes; a reading that missed two runs is no longer trusted. */
 export const CAPACITY_READING_MAX_AGE_MS = 15 * 60 * 1000;
 
+/**
+ * `HIVRA_HOST_CAPACITY_HOSTS`: a comma list of host ids this deployment reads.
+ * Unset or empty means every active host it can reach. null means no limit.
+ */
+export function hostCapacityHostFilter(env: EnvLike = process.env): Set<string> | null {
+  const ids = (env.HIVRA_HOST_CAPACITY_HOSTS ?? "").split(",").map((id) => id.trim().toLowerCase()).filter(Boolean);
+  return ids.length ? new Set(ids) : null;
+}
+
 /** `on` only when the switch says exactly that. Anything else is off. */
 export function hostCapacityAlertsEnabled(env: EnvLike = process.env): boolean {
   return env.HIVRA_HOST_CAPACITY_ALERTS?.trim().toLowerCase() === "on";

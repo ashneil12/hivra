@@ -250,6 +250,7 @@ close to full. It never changes an agent or a host.
 | `HIVRA_HOST_CAPACITY_DISK_CRITICAL_PERCENT` | server env | default 90 |
 | `HIVRA_HOST_CAPACITY_RAM_MARGIN_MB` | server env | default 2048 |
 | `HIVRA_HOST_CAPACITY_STANDARD_AGENT_RAM_MB` | server env | default 8192 |
+| `HIVRA_HOST_CAPACITY_HOSTS` | server env | comma list of host ids to read; unset reads every active host this deployment can reach. Set it where one registry lists hosts another deployment owns |
 | `proxmox_hosts.wake_headroom_ram_mb` | database, per host | memory kept free for wakes (default 8192) |
 
 Migration: `20261117150000_proxmox_hosts_capacity_reading`. Apply it before

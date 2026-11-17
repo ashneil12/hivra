@@ -218,6 +218,16 @@ describe("runHostCapacitySweep", () => {
     expect(report.mock.calls.map(([event]) => event.source)).toEqual(["hivra.host_capacity_unread"]);
   });
 
+  it("reads only the listed hosts when a list is set", async () => {
+    const db = fakeDb({ proxmox_hosts: [host("nodea"), host("nodeb")] });
+    const runHostScript = jest.fn(async () => out(64_000));
+    const env = { ...ON, HIVRA_HOST_CAPACITY_HOSTS: " NodeB , " };
+    const summary = await runHostCapacitySweep({ db, env, now: () => NOW, report: jest.fn(), runHostScript: runHostScript as never });
+    expect(summary).toMatchObject({ hosts: 1, read: 1 });
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+    expect((runHostScript.mock.calls[0] as unknown[])[1]).toMatchObject({ PROXMOX_NODE: "nodeb" });
+  });
+
   it("starts no host after a minute, so the run ends in time", async () => {
     const db = fakeDb({ proxmox_hosts: ["a", "b", "c", "d", "e", "f"].map((id) => host(`node${id}`)) });
     let clock = NOW;
