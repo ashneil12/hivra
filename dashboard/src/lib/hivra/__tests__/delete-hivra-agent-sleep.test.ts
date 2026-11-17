@@ -83,8 +83,8 @@ function runDestroy(lock: string) {
 describe("destroy script and a hibernated computer", () => {
   it("destroys a hibernated computer, skipping its config lock only after the tag check", () => {
     const result = runDestroy("suspended");
-    expect(result.code).toBe(0);
-    expect(result.stderr).toBe("");
+    // Code and stderr together, so a failure shows why the script exited.
+    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: "" });
     expect(result.stillThere).toBe(false);
     expect(result.calls.find((call) => call.startsWith("destroy"))).toContain("--skiplock 1");
     expect(result.calls.find((call) => call.startsWith("stop"))).toContain("--skiplock 1");
@@ -94,7 +94,7 @@ describe("destroy script and a hibernated computer", () => {
 
   it("does not skip the lock for a computer that is not hibernated", () => {
     const result = runDestroy("");
-    expect(result.code).toBe(0);
+    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: "" });
     expect(result.stillThere).toBe(false);
     expect(result.calls.some((call) => call.includes("--skiplock"))).toBe(false);
   });
