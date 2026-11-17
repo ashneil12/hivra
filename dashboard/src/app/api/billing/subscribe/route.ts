@@ -17,6 +17,19 @@ import {
 } from "@/lib/billing/subscription-status";
 import { log } from "@/lib/logger";
 import { safeReturnPath } from "@/lib/safe-return-path";
+import { loadPlanLadderTag } from "@/lib/billing/plan-ladder-entitlement";
+import {
+  PLAN_LADDER_ID,
+  activePlanLadder,
+  asLadderPlanKey,
+  isPlanLadderEnabled,
+  ladderPriceId,
+  ladderSubscriptionColumns,
+  planLadderConfigProblem,
+  sellsLadderTo,
+  type PlanLadderConfig,
+  type LadderPaidPlanKey,
+} from "@/lib/subscription/plan-ladder";
 
 // First-touch UTM/referrer stash captured client-side (PostHogProvider) and
 // forwarded by the billing client on the first subscribe call. Unknown keys
@@ -58,11 +71,13 @@ function buildPendingSubscriptionRecord({
   stripeCustomerId,
   planKey,
   attribution = null,
+  ladder = null,
 }: {
   clerkUserId: string;
   stripeCustomerId: string;
   planKey: PlanKey;
   attribution?: SignupAttribution | null;
+  ladder?: { config: PlanLadderConfig; planKey: LadderPaidPlanKey } | null;
 }) {
   const plan = PLANS[planKey];
 
@@ -74,6 +89,7 @@ function buildPendingSubscriptionRecord({
     instance_limit: plan.maxAgents,
     total_cpu_budget: plan.totalCpu,
     total_ram_budget: plan.totalRam,
+    ...(ladder ? ladderSubscriptionColumns(ladder.config, ladder.planKey, 0) : {}),
     updated_at: new Date().toISOString(),
     // First-touch only: the key is omitted entirely (not nulled) unless we
     // have fresh attribution AND the existing row has none, so upserts can
@@ -289,9 +305,44 @@ export async function POST(req: NextRequest) {
       return apiSuccess({ activated: true, plan: "free" });
     }
 
+    // Plan ladder (HIVRA_PLAN_LADDER=on): new sign-ups buy the ladder's
+    // prices and limits. Anyone already paying on a plan from before the
+    // ladder never reaches here (they already hold an active subscription).
+    let ladderSale: { config: PlanLadderConfig; planKey: LadderPaidPlanKey } | null = null;
+    if (isPlanLadderEnabled()) {
+      const config = activePlanLadder();
+      const ladderKey = asLadderPlanKey(planKey);
+      if (!config) {
+        log.error("plan ladder is on but its settings are invalid", new Error("plan ladder config invalid"), {
+          source: "billing-subscribe",
+          route: "/api/billing/subscribe",
+          failureType: "plan_ladder_config_invalid",
+          problem: planLadderConfigProblem(),
+        });
+        return apiError("Plans are being updated. Please try again in a few minutes.", 503);
+      }
+      const planLadder = existingSub ? await loadPlanLadderTag(clerkUserId) : null;
+      if (
+        ladderKey &&
+        sellsLadderTo(existingSub ? { plan: existingSub.plan, plan_ladder: planLadder } : null, hasActivePaidSubscription)
+      ) {
+        ladderSale = { config, planKey: ladderKey };
+      }
+    }
+
     let stripePriceId: string;
     try {
-      stripePriceId = getStripePriceId(planKey, cadence);
+      if (ladderSale) {
+        const ladderPrice = ladderPriceId(ladderSale.config, ladderSale.planKey, cadence);
+        if (!ladderPrice) {
+          return apiError(`${ladderSale.config.plans[ladderSale.planKey].name} has no ${cadence} price.`, 400, undefined, {
+            reason: BILLING_SUBSCRIBE_REASON.INVALID_PLAN,
+          });
+        }
+        stripePriceId = ladderPrice;
+      } else {
+        stripePriceId = getStripePriceId(planKey, cadence);
+      }
     } catch (configError) {
       return apiError(
         configError instanceof Error ? configError.message : "Stripe price not configured",
@@ -371,6 +422,7 @@ export async function POST(req: NextRequest) {
             stripeCustomerId: customer.id,
             planKey,
             attribution: attributionToPersist,
+            ladder: ladderSale,
           }),
         { onConflict: "user_id" }
       );
@@ -412,6 +464,7 @@ export async function POST(req: NextRequest) {
           (session) =>
             session.url &&
             session.metadata?.plan === planKey &&
+            (session.metadata?.plan_ladder ?? null) === (ladderSale ? PLAN_LADDER_ID : null) &&
             (session.metadata?.return_to ?? null) === returnTo
         );
 
@@ -478,14 +531,16 @@ export async function POST(req: NextRequest) {
     const expiredKey = expiredSessionIds.length
       ? `_x${keyDigest([...expiredSessionIds].sort().join(","))}`
       : "";
-    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
+    const ladderKeyPart = ladderSale ? `_l${PLAN_LADDER_ID}` : "";
+    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${ladderKeyPart}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
     const returnQuery = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : "";
 
-    const sessionMetadata = {
+    const sessionMetadata: Record<string, string> = {
       user_id: clerkUserId,
       plan: planKey,
       cadence,
       checkout_ip: ip,
+      ...(ladderSale ? { plan_ladder: PLAN_LADDER_ID } : {}),
     };
 
     const session = await stripe.checkout.sessions.create(
@@ -532,6 +587,7 @@ export async function POST(req: NextRequest) {
             stripeCustomerId,
             planKey,
             attribution: attributionToPersist,
+            ladder: ladderSale,
           }),
           { onConflict: "user_id" }
         );
