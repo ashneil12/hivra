@@ -104,6 +104,9 @@ export interface BridgeStore {
   /** A server's free replies on one UTC day (`YYYY-MM-DD`). */
   aiDay(serverId: string, day: string): Promise<{ answered: number; refused: number; failed: number }>;
   countAi(serverId: string, day: string, kind: "answered" | "refused" | "failed"): Promise<void>;
+  /** Until when the server's free AI refuses its address; null: not refused. */
+  aiRefusedUntil(serverId: string): Promise<Date | null>;
+  setAiRefusedUntil(serverId: string, until: Date): Promise<void>;
   /** Workspaces told to wait for a place. */
   waitlist(): Promise<string[]>;
   setWaitlisted(orgId: string, waiting: boolean): Promise<void>;

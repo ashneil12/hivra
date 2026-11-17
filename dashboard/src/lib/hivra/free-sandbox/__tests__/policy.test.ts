@@ -41,13 +41,18 @@ describe("decideFreeSandbox", () => {
 
   it("leaves packed, restoring and flagged sandboxes to their own steps, and never deletes", () => {
     for (const state of ["packed", "restoring", "flagged"] as const) {
-      expect(decideFreeSandbox(signals({ state }), clocks, at(1e6))).toMatchObject({ action: "none", reason: "not_managed_here" });
+      expect(decideFreeSandbox(signals({ state }), clocks, at(1e6))).toMatchObject({
+        action: "none",
+        reason: "not_managed_here",
+      });
     }
   });
 
   it("follows a paid plan's longer storage clock", () => {
     const stopped = signals({ state: "stopped" });
-    expect(decideFreeSandbox(stopped, { sleepAfterIdleMinutes: 10, storeAfterIdleHours: 168 }, at(24 * 60))).toMatchObject({
+    expect(
+      decideFreeSandbox(stopped, { sleepAfterIdleMinutes: 10, storeAfterIdleHours: 168 }, at(24 * 60)),
+    ).toMatchObject({
       action: "none",
     });
   });

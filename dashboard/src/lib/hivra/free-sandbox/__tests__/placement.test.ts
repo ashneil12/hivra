@@ -20,6 +20,8 @@ const settings: FreeSandboxSettings = {
   placesOpenPerServer: 50,
   refusedShareStop: 0.2,
   refusedShareMinReplies: 10,
+  failedBurstWorkspaces: 3,
+  failedBurstMinutes: 10,
 };
 const ok = { freePlaced: 0, paidReserveIntact: true, paidWaiting: false };
 

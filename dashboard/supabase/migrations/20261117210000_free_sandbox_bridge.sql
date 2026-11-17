@@ -13,6 +13,8 @@ create table if not exists public.free_sandbox_pool_servers (
   id          text primary key check (id ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
   cpus        numeric not null check (cpus > 0),
   enabled     boolean not null default false,
+  -- Until when the free AI refuses this server's address (OpenCode counts its free limit per address); null: not.
+  ai_refused_until timestamptz,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );

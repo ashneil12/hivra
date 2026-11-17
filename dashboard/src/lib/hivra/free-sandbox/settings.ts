@@ -39,6 +39,12 @@ export interface FreeSandboxSettings {
   refusedShareStop: number;
   /** Replies a server needs today before its refused share counts (a few early refusals say little). */
   refusedShareMinReplies: number;
+  /**
+   * `opencode_failed` from this many workspaces of one server within `failedBurstMinutes` counts as a refusal. Either
+   * left out (or 0): the burst rule is off.
+   */
+  failedBurstWorkspaces: number;
+  failedBurstMinutes: number;
 }
 
 /** The two clocks every plan has. */
@@ -107,6 +113,8 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     !wholeOrZero(s.placesOpenPerServer) ||
     !(typeof s.refusedShareStop === "number" && s.refusedShareStop >= 0 && s.refusedShareStop <= 1) ||
     !wholeOrZero(s.refusedShareMinReplies) ||
+    !wholeOrZero(s.failedBurstWorkspaces ?? 0) ||
+    !wholeOrZero(s.failedBurstMinutes ?? 0) ||
     !wholeOrZero(s.paidReserveComputers) ||
     !positive(s.cpuOvercommit) ||
     !wholeOrZero(s.maxConcurrentTurns) ||
@@ -132,6 +140,8 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     placesOpenPerServer: s.placesOpenPerServer,
     refusedShareStop: s.refusedShareStop,
     refusedShareMinReplies: s.refusedShareMinReplies,
+    failedBurstWorkspaces: (s.failedBurstWorkspaces as number | undefined) ?? 0,
+    failedBurstMinutes: (s.failedBurstMinutes as number | undefined) ?? 0,
   };
 }
 

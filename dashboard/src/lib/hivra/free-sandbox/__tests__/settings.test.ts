@@ -19,6 +19,8 @@ const free = {
   placesOpenPerServer: 50,
   refusedShareStop: 0.2,
   refusedShareMinReplies: 10,
+  failedBurstWorkspaces: 3,
+  failedBurstMinutes: 10,
 };
 const env = (ladder: unknown) => ({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify(ladder) });
 
@@ -30,7 +32,9 @@ describe("free sandbox settings", () => {
   it("turns the feature off when the ladder or any setting is missing or out of shape", () => {
     expect(freeSandboxSettings(readPlanLadder({}))).toBeNull();
     expect(freeSandboxSettings(readPlanLadder({ HIVRA_PLAN_LADDER_CONFIG: "not json" }))).toBeNull();
-    for (const key of Object.keys(free).filter((k) => k !== "dailyReplySecondsCap" && k !== "hermesPlacesPerServer")) {
+    for (const key of Object.keys(free).filter(
+      (k) => k !== "dailyReplySecondsCap" && k !== "hermesPlacesPerServer" && !k.startsWith("failedBurst"),
+    )) {
       const broken = { ...free, [key]: undefined };
       expect(freeSandboxSettings(readPlanLadder(env({ free: broken })))).toBeNull();
     }

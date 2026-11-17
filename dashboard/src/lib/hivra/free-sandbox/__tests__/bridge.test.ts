@@ -23,6 +23,8 @@ const settings: FreeSandboxSettings = {
   placesOpenPerServer: 50,
   refusedShareStop: 0.2,
   refusedShareMinReplies: 10,
+  failedBurstWorkspaces: 3,
+  failedBurstMinutes: 10,
 };
 
 const MIN = 60_000;
@@ -35,6 +37,13 @@ class MemoryStore implements BridgeStore {
   wakeRows: { orgId: string; wantedAt: Date }[] = [];
   waiting = new Set<string>();
   ai = new Map<string, { answered: number; refused: number; failed: number }>();
+  refused = new Map<string, Date>();
+  async aiRefusedUntil(serverId: string) {
+    return this.refused.get(serverId) ?? null;
+  }
+  async setAiRefusedUntil(serverId: string, until: Date) {
+    this.refused.set(serverId, until);
+  }
   async aiDay(serverId: string, day: string) {
     return this.ai.get(`${serverId}|${day}`) ?? { answered: 0, refused: 0, failed: 0 };
   }
@@ -458,6 +467,75 @@ describe("free sandbox bridge", () => {
     // 3 of 10 refused is past the 20% stop: the second workspace waits.
     expect(sum.waitlisted).toBe(1);
     expect(t.app.org("org-2").provisioning).toMatchObject({ state: "waiting", reason: "capacity" });
+  });
+
+  it("remembers a refused server until the free AI's next UTC day and places nobody new there until then", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    const machineId = (await t.store.placement("org-1"))!.machineId;
+    t.app.event("machine.ai_limit", "org-1", { machineId, kind: "opencode", resetsAt: null }, t.now().toISOString());
+    t.app.addWorkspace("org-2", "b@example.com");
+    const sum = await t.bridge.tick();
+    expect(sum.aiRefused).toBe(1);
+    expect((await t.store.aiRefusedUntil("pool-1"))?.toISOString()).toBe("2026-11-18T00:00:00.000Z");
+    expect(sum.waitlisted).toBe(1);
+    t.advance(12 * HOUR + MIN); // past 00:00 UTC
+    expect((await t.bridge.tick()).placed).toBe(1);
+  });
+
+  it("takes the time OpenCode gives when it gives one, and never shortens a longer refusal", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    const at = t.now().toISOString();
+    t.app.event("machine.ai_limit", "org-1", { kind: "opencode", resetsAt: "2026-11-18T03:00:00.000Z" }, at);
+    t.app.event("machine.ai_limit", "org-1", { kind: "opencode", resetsAt: "2026-11-17T13:00:00.000Z" }, at);
+    await t.bridge.tick();
+    expect((await t.store.aiRefusedUntil("pool-1"))?.toISOString()).toBe("2026-11-18T03:00:00.000Z");
+  });
+
+  it("treats OpenCode failing for many workspaces of a server at once as a refusal, and one or two as failures", async () => {
+    const t = setup();
+    t.store.pool = [{ id: "pool-1", cpus: 8, paidReserveIntact: true, paidWaiting: false }];
+    const s = settings;
+    (t as unknown as { bridge: { deps: { settings: FreeSandboxSettings } } }).bridge.deps.settings = {
+      ...s,
+      freePlacesPerServer: 5,
+      placesOpenPerServer: 5,
+    };
+    for (const id of ["o1", "o2", "o3"]) t.app.addWorkspace(id, `${id}@example.com`);
+    await t.bridge.tick();
+    const failed = { brain: "opencode", status: "failed", failure: { code: "opencode_failed", cause: null } };
+    t.app.event("run.finished", "o1", failed, t.now().toISOString());
+    t.app.event("run.finished", "o2", failed, t.now().toISOString());
+    const two = await t.bridge.tick();
+    expect([two.aiFailed, two.aiRefused]).toEqual([2, 0]);
+    expect(await t.store.aiRefusedUntil("pool-1")).toBeNull();
+    t.advance(5 * MIN);
+    t.app.event("run.finished", "o3", failed, t.now().toISOString());
+    const three = await t.bridge.tick();
+    expect([three.aiFailed, three.aiRefused]).toEqual([1, 1]);
+    expect(await t.store.aiRefusedUntil("pool-1")).not.toBeNull();
+  });
+
+  it("forgets failures older than the burst window", async () => {
+    const t = setup();
+    t.store.pool = [{ id: "pool-1", cpus: 8, paidReserveIntact: true, paidWaiting: false }];
+    (t as unknown as { bridge: { deps: { settings: FreeSandboxSettings } } }).bridge.deps.settings = {
+      ...settings,
+      freePlacesPerServer: 5,
+      placesOpenPerServer: 5,
+    };
+    for (const id of ["o1", "o2", "o3"]) t.app.addWorkspace(id, `${id}@example.com`);
+    await t.bridge.tick();
+    const failed = { brain: "opencode", status: "failed", failure: { code: "opencode_failed", cause: null } };
+    t.app.event("run.finished", "o1", failed, t.now().toISOString());
+    t.app.event("run.finished", "o2", failed, t.now().toISOString());
+    await t.bridge.tick();
+    t.advance(11 * MIN);
+    t.app.event("run.finished", "o3", failed, t.now().toISOString());
+    expect((await t.bridge.tick()).aiRefused).toBe(0);
   });
 
   it("opens places in steps: never more than the open step per server", async () => {

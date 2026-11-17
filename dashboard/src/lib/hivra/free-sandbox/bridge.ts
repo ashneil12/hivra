@@ -116,6 +116,18 @@ const statusOf = (err: unknown) => {
 };
 
 const FAILED_ANOTHER_WAY = new Set(["opencode_failed", "not_logged_in"]);
+
+/**
+ * When a refused server's free AI should answer again: the time OpenCode gave, else the next UTC midnight (its free
+ * allowance is per UTC day: both refusals seen so far named that instant).
+ */
+export function refusedUntil(at: Date, resetsAt: unknown): Date {
+  const given = typeof resetsAt === "string" ? Date.parse(resetsAt) : Number.NaN;
+  if (Number.isFinite(given) && given > at.getTime()) return new Date(given);
+  const next = new Date(at.getTime());
+  next.setUTCHours(24, 0, 0, 0);
+  return next;
+}
 /** The UTC day of an ISO time. */
 const dayOf = (at: string) => new Date(Number.isFinite(Date.parse(at)) ? at : Date.now()).toISOString().slice(0, 10);
 
@@ -125,6 +137,8 @@ const AWAKE = new Set(["placing", "awake"]);
 export class FreeSandboxBridge {
   private readonly now: () => Date;
   private readonly log: NonNullable<BridgeDeps["log"]>;
+  /** Recent `opencode_failed` per server, for the burst rule; in memory, so a restart forgets at most one window. */
+  private readonly recentFailures = new Map<string, { orgId: string; at: number }[]>();
   /** Enroll codes issued and not used yet, by workspace: in memory only, never stored or logged. */
   private readonly codes = new Map<string, IssuedMachine>();
 
@@ -178,6 +192,7 @@ export class FreeSandboxBridge {
     const today = dayOf(this.now().toISOString());
     const admitting: PoolServer[] = [];
     for (const server of servers) {
+      if (await this.refusedNow(server.id)) continue;
       const freePlaced = placed.get(server.id) ?? 0;
       const ai = await this.deps.store.aiDay(server.id, today);
       const admit = freePlacementAdmission(
@@ -227,25 +242,66 @@ export class FreeSandboxBridge {
   private async countAi(event: OperatorEvent, sum: TickSummary) {
     const placement = event.orgId ? await this.deps.store.placement(event.orgId) : null;
     if (!placement?.serverId) return;
+    const serverId = placement.serverId;
     const data = event.data as {
       brain?: unknown;
       status?: unknown;
       kind?: unknown;
+      resetsAt?: unknown;
       failure?: { code?: unknown } | null;
     };
-    let kind: "answered" | "refused" | "failed" | null = null;
+    const at = Number.isFinite(Date.parse(event.at)) ? new Date(event.at) : this.now();
     if (event.type === "machine.ai_limit") {
-      if (data.kind === FREE_BRAIN) kind = "refused";
-    } else if (data.brain === FREE_BRAIN && data.status === "done") {
-      kind = "answered";
-    } else if (data.status === "failed" && FAILED_ANOTHER_WAY.has(String(data.failure?.code ?? ""))) {
-      kind = "failed";
+      if (data.kind !== FREE_BRAIN) return;
+      await this.deps.store.countAi(serverId, dayOf(event.at), "refused");
+      sum.aiRefused++;
+      // OpenCode counts its free limit per network address, and every sandbox on a server shares one: one refusal
+      // means the server's address is out until the limit lifts.
+      await this.refuseUntil(serverId, refusedUntil(at, data.resetsAt));
+      return;
     }
-    if (!kind) return;
-    await this.deps.store.countAi(placement.serverId, dayOf(event.at), kind);
-    if (kind === "answered") sum.aiAnswered++;
-    else if (kind === "refused") sum.aiRefused++;
-    else sum.aiFailed++;
+    if (data.brain === FREE_BRAIN && data.status === "done") {
+      await this.deps.store.countAi(serverId, dayOf(event.at), "answered");
+      sum.aiAnswered++;
+      return;
+    }
+    if (data.status !== "failed" || !FAILED_ANOTHER_WAY.has(String(data.failure?.code ?? ""))) return;
+    await this.deps.store.countAi(serverId, dayOf(event.at), "failed");
+    sum.aiFailed++;
+    if (data.failure?.code === "opencode_failed" && event.orgId && this.failedBurst(serverId, event.orgId, at)) {
+      // OpenCode failing for many workspaces of one server at once is its free AI refusing that address under
+      // another name: counted and remembered as a refusal.
+      await this.deps.store.countAi(serverId, dayOf(event.at), "refused");
+      sum.aiRefused++;
+      await this.refuseUntil(serverId, refusedUntil(at, null));
+    }
+  }
+
+  /** Whether `opencode_failed` has now come from at least the burst's number of workspaces within its minutes. */
+  private failedBurst(serverId: string, orgId: string, at: Date): boolean {
+    const { failedBurstWorkspaces: workspaces, failedBurstMinutes: minutes } = this.deps.settings;
+    if (!workspaces || !minutes) return false;
+    const since = at.getTime() - minutes * 60_000;
+    const recent = (this.recentFailures.get(serverId) ?? []).filter((f) => f.at >= since && f.orgId !== orgId);
+    recent.push({ orgId, at: at.getTime() });
+    this.recentFailures.set(serverId, recent);
+    if (new Set(recent.map((f) => f.orgId)).size < workspaces) return false;
+    this.recentFailures.delete(serverId); // one burst, one refusal
+    return true;
+  }
+
+  /** Remembers that the server's free AI is refused until `until`; a later time wins, an earlier one changes nothing. */
+  private async refuseUntil(serverId: string, until: Date) {
+    const held = await this.deps.store.aiRefusedUntil(serverId);
+    if (held && held.getTime() >= until.getTime()) return;
+    await this.deps.store.setAiRefusedUntil(serverId, until);
+    this.log("free_sandbox.ai_refused", { serverId, until: until.toISOString() });
+  }
+
+  /** Whether the server's free AI is refused now. */
+  private async refusedNow(serverId: string): Promise<boolean> {
+    const until = await this.deps.store.aiRefusedUntil(serverId);
+    return !!until && until.getTime() > this.now().getTime();
   }
 
   // ---- waking -------------------------------------------------------------------------------------------------
@@ -533,6 +589,7 @@ export class FreeSandboxBridge {
     const today = dayOf(this.now().toISOString());
     for (const server of servers) {
       if (server.paidWaiting || !server.paidReserveIntact) continue;
+      if (await this.refusedNow(server.id)) continue;
       const share = refusedShare(await this.deps.store.aiDay(server.id, today), this.deps.settings);
       if (share !== null && share > this.deps.settings.refusedShareStop) continue;
       placesLeft += Math.max(0, openPlaces(this.deps.settings) - (placed.get(server.id) ?? 0));
