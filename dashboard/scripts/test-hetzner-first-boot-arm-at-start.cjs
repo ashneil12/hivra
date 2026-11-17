@@ -169,8 +169,8 @@ async function main() {
     const enrolledGuest = () => value("select public.claim_hetzner_enrolled_guest_operation('owner',$1,7,$2,$3,$4,'42') as result", [connection, order, attempt, quote]);
     const directArm = (minutesAgo = 0) => [
       `select set_config('hivra.first_boot_power_dispatch','${order}',true);`,
-      `update public.infrastructure_first_boot_enrollments set armed_at=clock_timestamp()-interval '${minutesAgo} minutes',`,
-      `armed_expires_at=clock_timestamp()-interval '${minutesAgo} minutes'+interval '17 minutes' where order_id='${order}';`,
+      `update public.infrastructure_first_boot_enrollments e set armed_at=v.t,`,
+      `armed_expires_at=v.t+interval '17 minutes' from (select clock_timestamp()-interval '${minutesAgo} minutes' as t) v where e.order_id='${order}';`,
     ].join("\n");
     async function firewallVerified() {
       const claimed = await claim();
