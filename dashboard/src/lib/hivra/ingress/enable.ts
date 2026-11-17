@@ -36,7 +36,7 @@ import {
   setBoxTunnelOrigin,
   type TunnelConnector,
 } from "@/lib/services/cloudflare-tunnel";
-import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import { readHivraAgentRow, resolveSleepTarget } from "@/lib/hivra/agent-wake";
 import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -167,7 +167,9 @@ export const DEFAULT_INGRESS_DEPS: IngressDeps = {
   readAgent: readHivraAgentRow,
   resolveTarget: resolveTargetFromRow,
   readHostRow: readHostRowFromDb,
-  runHostScript: (script, env, options) => runProxmoxHostScript(script, env, options),
+  // Never `bash -s`: the cutover scripts start with `exec </dev/null` so nothing they
+  // run can read the script itself, and over `bash -s` that line ends the script.
+  runHostScript: (script, env, options) => runProxmoxHostScriptWithStdin(script, "", env, options),
   runHostScriptWithStdin: (script, stdin, env, options) => runProxmoxHostScriptWithStdin(script, stdin, env, options),
   store: {
     read: readAgentIngressRow,
