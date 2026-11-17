@@ -30,14 +30,14 @@ function post(path: string, body: unknown) {
   ip += 1;
   return new NextRequest(`${ORIGIN}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-forwarded-for": `10.0.0.${ip}` },
+    headers: { "content-type": "application/json", "x-forwarded-for": `198.51.100.${ip}` },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
 function get(id: string, value: string | null) {
   ip += 1;
   return new NextRequest(`${ORIGIN}/api/agent-setup/${id}`, {
-    headers: { "x-forwarded-for": `10.0.1.${ip}`, ...(value ? { "x-hivra-setup-token": value } : {}) },
+    headers: { "x-forwarded-for": `203.0.113.${ip}`, ...(value ? { "x-hivra-setup-token": value } : {}) },
   });
 }
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -79,7 +79,7 @@ describe("POST /api/agent-setup", () => {
   });
 
   it("limits one address to 10 requests an hour", async () => {
-    const same = () => new NextRequest(`${ORIGIN}/api/agent-setup`, { method: "POST", headers: { "x-forwarded-for": "10.9.9.9" }, body: "{}" });
+    const same = () => new NextRequest(`${ORIGIN}/api/agent-setup`, { method: "POST", headers: { "x-forwarded-for": "192.0.2.9" }, body: "{}" });
     for (let i = 0; i < 10; i += 1) expect((await create(same())).status).toBe(201);
     expect((await create(same())).status).toBe(429);
   });
