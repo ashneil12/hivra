@@ -2915,7 +2915,17 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 function gateProxy(req, res, port, strip) {
   if (!authed(req)) return denyHtml(res);
   if (isAgentAppPort(port) && agentAppHold(req, res)) return;
-  return proxyHttp(req, res, port, strip);
+  return proxyHttp(req, res, port, strip, false, openclawPort(port) ? OPENCLAW_SET_HEADERS : null);
+}
+// OpenClaw's gateway (2026.11.5 and newer) refuses a loopback request that
+// carries forwarded-client headers unless gateway.trustedProxies names the
+// proxy (proxy_attribution_required). This gate is the only way in and has
+// already authenticated the owner, so OpenClaw sees it as what it is: a local
+// caller. Forwarded headers the tunnel added are dropped, as for Hermes.
+const OPENCLAW_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forwarded-host": null,
+  "x-forwarded-proto": null, "x-forwarded-port": null, "x-forwarded-prefix": null, "x-real-ip": null };
+function openclawPort(port) {
+  return AGENT_KIND === "openclaw" && port === OPENCLAW_PORT;
 }
 // Hermes's web UI behind the same gate. It checks that Host and Origin are its
 // own loopback address and that the peer is loopback, and it builds its links
@@ -4779,6 +4789,7 @@ server.on("upgrade", (req, socket, head) => {
   const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
   const openbotSet = openbotWs ? openbotHeaders(req) : null;
   const nuphosWs = AGENT_KIND === "nuphos" && port === NUPHOS_PORT;
+  const openclawWs = openclawPort(port);
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4796,6 +4807,7 @@ server.on("upgrade", (req, socket, head) => {
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
       if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
+      if (openclawWs && key in OPENCLAW_SET_HEADERS) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;
