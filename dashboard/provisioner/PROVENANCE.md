@@ -547,6 +547,19 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.6` builds on `2026.11.17.5` and gives a managed-Venice
+Agent Zero launch a working model again. Current Agent Zero images choose their
+models from presets (`usr/plugins/_model_config/presets.yaml`, the file its
+own Settings writes) and ignore the `A0_SET_*` model defaults Hivra seeds, so a
+launch with Hivra credits opened with no model connected and never answered.
+On a fresh box with a managed model key, the provisioner now writes Agent
+Zero's Default preset with the same model and gateway (chat and utility; the
+embedding stays Agent Zero's own local default); an existing presets file is
+the owner's and is left alone, and older images ignore the file. Changed:
+`provision-claude-code-box.sh`, plus the documents, the version and the
+provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
 Release `2026.11.17.5` builds on `2026.11.17.4` and hardens `hivra-tg-apply`
 against symlink redirection of its one root-authored write. The chat gateway
 runs the helper as root (scoped NOPASSWD) to write the Telegram bot's env file

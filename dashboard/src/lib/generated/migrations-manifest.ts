@@ -470,4 +470,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261117190000", name: "hivra_agents_sleep_memory_dropped" },
   { version: "20261117200000", name: "provider_release_admission_2026_11_17_5" },
   { version: "20261117210000", name: "plan_ladder" },
+  { version: "20261117220000", name: "provider_release_admission_2026_11_17_6" },
 ];
