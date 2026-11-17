@@ -547,6 +547,16 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.2` builds on `2026.11.17.1` and stops Hivra's own
+background reads from keeping a computer awake: the wake proxy treats a request
+carrying `X-Hivra-Background: 1` as carrying no proof, so it never moves the
+idle signal (`last_authed_at`) and never wakes a napped or hibernated VM (a
+napped VM answers it as asleep); a running guest still serves it. The header
+only takes away, so sending it cannot wake or keep awake anyone's computer.
+Changed: `hivra-wake-proxy.py`, `test_hivra_wake_proxy.py`, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.17.1` builds on `2026.11.15.7` and removes Hivra's agent
 version pins (`agent-cli-versions.json` and `agent-app-versions.json` leave the
 bundle). A new computer installs upstream's newest release of its agent at

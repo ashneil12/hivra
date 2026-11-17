@@ -579,6 +579,13 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Background reads never wake a napped computer (`2026.11.17.2`).** The
+  wake proxy treats a request carrying `X-Hivra-Background: 1` (Hivra's own
+  cron watchdogs, samplers and probes) as no proof: it never moves
+  `last_authed_at` and never wakes a napped or hibernated VM, which answers it
+  as asleep. A running guest still serves it. The dashboard's background
+  readers send the header.
+
 - **Newest agent version at launch, owner-run updates (`2026.11.17.1`).** Hivra
   pins no agent version any more: `agent-cli-versions.json` and
   `agent-app-versions.json` are gone. A launch installs upstream's newest
