@@ -125,6 +125,14 @@ export const PlanLadderConfigSchema = z.object({
       refusedShareStop: z.number().min(0).max(1).optional(),
       /** Replies a server needs in a day before its refused share counts. */
       refusedShareMinReplies: z.number().int().min(0).max(100_000).optional(),
+      /**
+       * A sudden run of failed (not refused) replies on one server is treated
+       * like a refusal: this many different workspaces failing inside
+       * failedBurstMinutes.
+       */
+      failedBurstWorkspaces: z.number().int().min(0).max(10_000).optional(),
+      /** The window for failedBurstWorkspaces, in minutes. */
+      failedBurstMinutes: z.number().int().min(0).max(1440).optional(),
     })
     .optional(),
 });
