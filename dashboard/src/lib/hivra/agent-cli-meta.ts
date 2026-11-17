@@ -8,7 +8,9 @@ import "server-only";
 // returned or logged. The automatic-update sweep also asks, with the bearer,
 // whether a reply is being written or an agent terminal is attached.
 //
-// Every request goes to the computer's own validated origin (the stored
+// Every request is marked as a Hivra background read (./background-read), so
+// a computer behind the host wake proxy neither counts it as use nor wakes for
+// it. Every request goes to the computer's own validated origin (the stored
 // chat_url, bound to its named tunnel hostname) through the SSRF-safe fetch,
 // without redirects or cookies, bounded in time and size.
 
@@ -17,6 +19,7 @@ import { checkOutboundUrlSafety } from "@/lib/url-safety";
 import { validateHivraChatOrigin } from "./agent-host-result";
 import { parseAgentCliMeta, type AgentCliMetaReport, type AgentSoftwareSubject } from "./agent-cli-status";
 import { AGENT_COMPUTER_READ_TIMEOUT_MS } from "./lifecycle-timeouts";
+import { HIVRA_BACKGROUND_HEADERS } from "./background-read";
 
 const DEADLINE_MS = AGENT_COMPUTER_READ_TIMEOUT_MS;
 const MAX_RESPONSE_BYTES = 8_192;
@@ -106,7 +109,9 @@ function client(origin: string, apiToken: string | null, fetcher: Fetcher) {
         cache: "no-store",
         credentials: "omit",
         signal,
-        headers: { Accept: "application/json", ...(authenticated ? { Authorization: `Bearer ${apiToken}` } : {}) },
+        // Every read here is Hivra's own observation, never the owner's use: marked so the host wake
+        // proxy neither keeps the computer from napping for it nor wakes a napped one.
+        headers: { Accept: "application/json", ...HIVRA_BACKGROUND_HEADERS, ...(authenticated ? { Authorization: `Bearer ${apiToken}` } : {}) },
       }), signal);
       if (response.redirected || response.status !== 200) {
         discard(response);

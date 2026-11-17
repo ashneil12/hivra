@@ -906,6 +906,9 @@ def owner_secret_route(h, vmid=VMID, wake_url=WAKE_URL):
     return secret
 
 
+BACKGROUND = b"X-Hivra-Background: 1\r\n"
+
+
 def bearer(secret):
     return b"Authorization: Bearer " + secret.encode() + b"\r\n"
 
@@ -1026,6 +1029,46 @@ class ClientWakeTests(ProxyTestCase):
         self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
         time.sleep(0.2)
         self.assertEqual(self.h.ctl({"cmd": "stats", "vmid": VMID})["last_authed_at"], first)
+
+    def test_background_bearer_on_an_awake_vm_is_forwarded_but_never_moves_the_idle_signal(self):
+        self.set_level("auth")
+        for _ in range(3):
+            self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret) + BACKGROUND)), 200)
+        time.sleep(0.2)
+        stats = self.h.ctl({"cmd": "stats", "vmid": VMID})
+        self.assertIsNone(stats["last_authed_at"])
+        self.assertIsNotNone(stats["last_any_at"])
+        # The same bearer without the header still counts as the owner's use.
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
+        self.assertTrue(wait_until(lambda: self.h.ctl({"cmd": "stats", "vmid": VMID})["last_authed_at"] is not None))
+
+    def test_background_bearer_never_wakes_a_napped_vm(self):
+        self.set_level("auth")
+        self.h.nap(VMID)
+        qemu = self.h.qemu[VMID]
+        before = qemu.conts
+        for extra in (BACKGROUND, b"x-hivra-background:  1 \r\n"):
+            self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret) + extra)), 503)
+        self.assertEqual(qemu.conts, before)
+        self.assertEqual(qemu.status, "paused")
+        self.assertTrue(os.path.exists(self.h.cfg.marker_path(VMID)))
+        stats = self.h.ctl({"cmd": "stats", "vmid": VMID})
+        self.assertEqual(stats["wakes"], [])
+        self.assertIsNone(stats["last_authed_at"])
+        # An ordinary owner bearer still wakes it and moves the idle signal.
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret))), 200)
+        self.assertEqual(qemu.conts, before + 1)
+        stats = self.h.ctl({"cmd": "stats", "vmid": VMID})
+        self.assertEqual(stats["wakes"][-1]["from"], "bearer")
+        self.assertIsNotNone(stats["last_authed_at"])
+
+    def test_background_header_needs_the_exact_value(self):
+        self.set_level("auth")
+        self.h.nap(VMID)
+        before = self.h.qemu[VMID].conts
+        # Any other value is an ordinary request, so the owner bearer still wakes it.
+        self.assertEqual(status_of(self.h.get("/echo", extra=bearer(self.secret) + b"X-Hivra-Background: 0\r\n")), 200)
+        self.assertEqual(self.h.qemu[VMID].conts, before + 1)
 
     def test_browser_on_a_napped_vm_is_sent_to_the_wake_url(self):
         self.h.nap(VMID)
