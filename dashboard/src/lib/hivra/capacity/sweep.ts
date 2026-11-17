@@ -15,6 +15,7 @@ import {
   type CapacityLevel,
   type CapacityReasonCode,
   type CapacityThresholds,
+  hostCapacityHostFilter,
 } from "@/lib/hivra/capacity/classify";
 import { buildHostCapacityScript, parseHostCapacityOutput, type HostCapacityProbe } from "@/lib/hivra/capacity/host-probe";
 
@@ -202,8 +203,10 @@ export async function runHostCapacitySweep(deps: HostCapacitySweepDeps = {}): Pr
     return { ...summary, errors: 1, failed: true, reason: "agents_query_failed" };
   }
 
-  // Only hosts this deployment can reach: a registry row without connection settings is not probed.
+  // Only hosts this deployment is told to read (if a list is set) and can reach: a registry row without connection settings is not probed.
+  const only = hostCapacityHostFilter(env);
   const hosts = ((hostData ?? []) as HostRow[])
+    .filter((row) => !only || only.has(String(row.id).toLowerCase()))
     .map((row) => ({ row, env: resolveProxmoxTargetConfiguration(env, String(row.id)).env }))
     .filter((host) => isProxmoxProvisioningConfigured(host.env));
   summary.hosts = hosts.length;
