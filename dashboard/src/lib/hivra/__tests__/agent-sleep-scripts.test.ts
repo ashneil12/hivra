@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildIdleProbeHostScript, buildSleepHostScript, buildWakeHostScript, idleVerdict, parseIdleProbeOutput,
-  parseIdleProbeRefusal, parseSleepReceipt, parseWakeReceipt, type WakeAdmission,
+  parseIdleProbeRefusal, parseSleepReceipt, parseWakeReceipt, TRIM_GUEST_COMMAND, type WakeAdmission,
 } from "../agent-sleep-scripts";
 import { HOST_VM_CONTROL_PROGRAM, HOST_VM_CONTROL_SOCKETS_PROGRAM } from "../sleep/host-vm-control-program";
 import { IDLE_PROBE_PROGRAM } from "../sleep/idle-probe-program";
@@ -53,6 +53,19 @@ describe("script construction", () => {
       .toBe("ff24aec0040e571da4a5d8acb1d278283b9589bfd9d97c41e04286f59b80c9d6");
     expect(digest(buildWakeHostScript({ ...target, admission })))
       .toBe("8ad925ebfdf85c7142ec9936216d1855b53a7e3fd1fff1cadade0835235abd01");
+  });
+
+  it("trims memory only when asked, and only for a computer that is running", () => {
+    const target = { vmid: VMID, bindingTag: TAG, manual: false };
+    for (const tier of ["nap", "hibernate"] as const) {
+      expect(buildSleepHostScript({ ...target, tier })).not.toContain("drop_caches");
+      const trimmed = buildSleepHostScript({ ...target, tier, trimMemory: true });
+      expect(trimmed).toContain(shellQuote(TRIM_GUEST_COMMAND));
+      expect(spawnSync("bash", ["-n"], { input: trimmed }).status).toBe(0);
+    }
+    // A paused computer cannot answer its guest agent: the hibernate trims only inside the awake branch.
+    const hibernate = buildSleepHostScript({ ...target, tier: "hibernate", trimMemory: true });
+    expect(hibernate).toMatch(/if \[ "\$FROM" = awake \]; then\n[^]*?probe_or_finish\n[^]*?  trim_memory\nfi/);
   });
 
   it("carries the sockets helper only in a wake that asks for it", () => {
@@ -193,6 +206,27 @@ host("sleep script against a stub host", () => {
       expect(run.calls.some((c) => c.startsWith("qm status"))).toBe(false);
       expect(run.calls).toContain("flock -x -n 9");
       expect(run.stdout.split("\n").filter((l) => l.startsWith("HIVRA_SLEEP_RESULT ")).length).toBe(1);
+    });
+
+    it("with trimMemory, drops the guest's file cache after the probe and before the pause", () => {
+      const run = h.run(buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false, trimMemory: true }), withProbe(AWAKE));
+      const r = receipt(run);
+      expect(r).toMatchObject({ ok: true, to: "napping", reason: "napped" });
+      expect(Object.keys(r?.steps ?? {})).toContain("trim");
+      const trim = run.calls.findIndex((c) => c.startsWith("guest ") && c.includes("drop_caches"));
+      expect(trim).toBeGreaterThan(-1);
+      expect(trim).toBeLessThan(run.calls.indexOf("qmp stop"));
+    }, 30_000);
+
+    it("a trim the guest refuses never stops the nap", () => {
+      const run = h.run(
+        buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false, trimMemory: true }),
+        { ...withProbe(AWAKE), execFailMatch: "drop_caches" },
+      );
+      const r = receipt(run);
+      expect(r).toMatchObject({ ok: true, to: "napping", reason: "napped" });
+      expect(Object.keys(r?.steps ?? {})).toContain("trim_failed");
+      expect(run.state.qmp).toBe("paused");
     });
 
     it("aborts as busy when the per-VM lock is held, touching nothing", () => {

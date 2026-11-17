@@ -37,6 +37,7 @@ export const article: BlogArticle = {
       heading: "What's the actual difference?",
       paragraphs: [
         "Cursor is a code editor built around AI agents. You sit in the editor, and the agent edits files, runs commands and opens PRs right there in front of you. Need it to keep going without your laptop? Cursor sends that work to [Cloud Agents](/blog/cursor-cloud-agents) (they used to be called Background Agents), which run on Cursor's own servers.",
+        "The tool matters less than the model behind it for hard work. [Best LLM for coding](/blog/best-llm-for-coding) compares the current models by job, price and benchmark.",
         `Claude Code is Anthropic's coding agent. According to Anthropic's [overview](${CLAUDE_OVERVIEW}), it runs in the terminal, in IDE extensions, in a desktop app and in the browser. The terminal version is the one that suits a computer that stays on. Install it, sign in, start it inside tmux, walk off.`,
         "Same kind of work. Different homes. Cursor wants you in the editor, and Claude Code is perfectly happy in a terminal window.",
       ],
@@ -120,6 +121,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "best-llm-for-coding", title: "Best LLM for coding in November 2026: which model for which job" },
     { slug: "cursor-cloud-agents", title: "Cursor Cloud Agents: what they cost, and what happens when you close your laptop" },
     { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop? (And how to run it 24/7)" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },
