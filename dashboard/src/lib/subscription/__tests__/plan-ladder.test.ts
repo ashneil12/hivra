@@ -126,4 +126,14 @@ describe("free section", () => {
     const notWhole = env({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify({ ...CONFIG, free: { ...free, failedBurstWorkspaces: 2.5 } }) });
     expect(readPlanLadderConfig(notWhole)).toBeNull();
   });
+
+  it("accepts 0 for the per-server checks, where 0 means off, and keeps the paid plans on", () => {
+    // 0 has to stay inside each range: a value outside it would make the whole
+    // settings invalid and switch the paid ladder off with it.
+    const free = { refusedShareStop: 0, refusedShareMinReplies: 0, failedBurstWorkspaces: 0, failedBurstMinutes: 0 };
+    const off = env({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify({ ...CONFIG, free }) });
+    expect(planLadderConfigProblem(off)).toBeNull();
+    expect(readPlanLadderConfig(off)!.free).toEqual(free);
+    expect(activePlanLadder(off)).not.toBeNull();
+  });
 });
