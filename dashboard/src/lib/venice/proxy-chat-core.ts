@@ -157,6 +157,8 @@ export async function authorizeManagedVeniceChat(params: {
    * response never reaches it. Omitted, a reference is generated here.
    */
   referenceId?: string;
+  /** The caller the inference Worker saw, for the key-to-computer binding. Omitted for direct requests. */
+  caller?: import("./key-binding").KeyBindingCaller;
 }): Promise<AuthorizeManagedVeniceChatResult> {
   if (params.referenceId !== undefined && !REFERENCE_ID_PATTERN.test(params.referenceId)) {
     return {
@@ -173,7 +175,7 @@ export async function authorizeManagedVeniceChat(params: {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
 
-  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey });
+  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey, ...(params.caller ? { caller: params.caller } : {}) });
   if (!verifiedKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
