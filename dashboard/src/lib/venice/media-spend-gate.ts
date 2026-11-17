@@ -247,7 +247,7 @@ export async function holdManagedVeniceMediaSpend(
 
   try {
     await assertManagedVeniceWithinSpendCap({ userId: key.userId, addMicroUsd: heldMicroUsd }, db);
-    await assertManagedVeniceAgentWithinSpendCap({ userId: key.userId, proxyKeyId: key.id, addMicroUsd: heldMicroUsd }, db);
+    const agentCapStamp = await assertManagedVeniceAgentWithinSpendCap({ userId: key.userId, proxyKeyId: key.id, addMicroUsd: heldMicroUsd }, db);
     await createManagedVeniceReservation(
       {
         userId: key.userId,
@@ -260,6 +260,7 @@ export async function holdManagedVeniceMediaSpend(
         expiresAt: managedVeniceHoldExpiresAt(MANAGED_VENICE_MEDIA_HOLD_TTL_MS),
         metadata: {
           proxyKeyId: key.id,
+          ...(agentCapStamp ?? {}),
           pricingPolicy: "multimodal_hold_before_forward",
           holdListCostMicroUsd: estimate.listCostMicroUsd,
           holdQuantity: estimate.quantity,

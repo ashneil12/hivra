@@ -1,6 +1,8 @@
 import {
   ManagedVeniceAgentSpendCapError,
+  agentSpendCapErrorFromDb,
   assertManagedVeniceAgentWithinSpendCap,
+  readAgentDailyAllowance,
   dayStartIso,
   managedVeniceSpendCapMessage,
   readAgentSpendCap,
@@ -28,6 +30,7 @@ function fakeDb(tables: Record<string, Row[]>) {
       update: (p: Row) => { patch = p; return chain; },
       eq: (c: string, v: unknown) => { filters.push(r => r[c] === v); return chain; },
       gte: (c: string, v: string) => { filters.push(r => String(r[c]) >= v); return chain; },
+      in: (c: string, vs: unknown[]) => { filters.push(r => vs.includes(r[c])); return chain; },
       maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
         if (patch) {
@@ -79,12 +82,12 @@ describe("config", () => {
 describe("assertManagedVeniceAgentWithinSpendCap", () => {
   it("never touches the database while the flag is off", async () => {
     const db = { from: () => { throw new Error("queried"); } };
-    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 1e12 }, db, {})).resolves.toBeUndefined();
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 1e12 }, db, {})).resolves.toBeNull();
   });
 
   it("allows spend under the agent's limit and ignores yesterday and other agents", async () => {
     const db = world({ capMicroUsd: 1_000_000, spentToday: 400_000, spentYesterday: 5_000_000, otherKeyToday: 5_000_000 });
-    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 500_000, now: NOW }, db, ON)).resolves.toBeUndefined();
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 500_000, now: NOW }, db, ON)).resolves.toEqual({ agentDailyCapMicroUsd: 1_000_000 });
   });
 
   it("refuses over the limit, logs it, and stamps the key once", async () => {
@@ -104,13 +107,50 @@ describe("assertManagedVeniceAgentWithinSpendCap", () => {
     const db = world({ spentToday: 2_000_000 });
     await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 1, now: NOW }, db,
       { ...ON, MANAGED_VENICE_AGENT_DAILY_SPEND_CAP_USD: "2" })).rejects.toBeInstanceOf(ManagedVeniceAgentSpendCapError);
-    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 1, now: NOW }, db, ON)).resolves.toBeUndefined();
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 1, now: NOW }, db, ON)).resolves.toBeNull();
   });
 
   it("does nothing for a key of another user or no key", async () => {
     const db = world({ capMicroUsd: 1, spentToday: 9 });
-    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u2", proxyKeyId: KEY, addMicroUsd: 9, now: NOW }, db, ON)).resolves.toBeUndefined();
-    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: null, addMicroUsd: 9, now: NOW }, db, ON)).resolves.toBeUndefined();
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u2", proxyKeyId: KEY, addMicroUsd: 9, now: NOW }, db, ON)).resolves.toBeNull();
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: null, addMicroUsd: 9, now: NOW }, db, ON)).resolves.toBeNull();
+  });
+});
+
+describe("money not yet settled counts toward the limit", () => {
+  const hold = (ref: string, extra: Row) => ({ user_id: "u1", reference_id: ref, proxy_key_id: null, metadata: { proxyKeyId: KEY }, ...extra });
+
+  it("counts holds of requests still running, so parallel requests cannot all pass", async () => {
+    const db = world({ capMicroUsd: 1_000_000, spentToday: 100_000 });
+    db.tables.managed_venice_reservations = [
+      hold("r1", { status: "active", reserved_micro_usd: 400_000 }),
+      hold("r2", { status: "active", reserved_micro_usd: 400_000, proxy_key_id: KEY, metadata: {} }),
+      hold("r3", { status: "active", reserved_micro_usd: 900_000, metadata: { proxyKeyId: "key-2" } }),
+    ];
+    // 100k spent + 800k held leaves 100k.
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 100_000, now: NOW }, db, ON))
+      .resolves.toEqual({ agentDailyCapMicroUsd: 1_000_000 });
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 100_001, now: NOW }, db, ON))
+      .rejects.toBeInstanceOf(ManagedVeniceAgentSpendCapError);
+  });
+
+  it("counts a hold captured today until its usage row is written, and only once after", async () => {
+    const db = world({ capMicroUsd: 1_000_000 });
+    db.tables.managed_venice_reservations = [
+      hold("settling", { status: "captured", captured_micro_usd: 700_000, captured_at: "2026-11-12T14:00:00.000Z" }),
+      hold("old", { status: "captured", captured_micro_usd: 700_000, captured_at: "2026-11-11T14:00:00.000Z" }),
+    ];
+    const allowance = await readAgentDailyAllowance({ userId: "u1", proxyKeyId: KEY, now: NOW }, db, ON);
+    expect(allowance).toMatchObject({ committedMicroUsd: 700_000, remainingMicroUsd: 300_000 });
+    db.tables.managed_venice_usage_events.push({ user_id: "u1", proxy_key_id: KEY, reference_id: "settling", charged_micro_usd: 700_000, created_at: "2026-11-12T14:00:01.000Z" });
+    expect((await readAgentDailyAllowance({ userId: "u1", proxyKeyId: KEY, now: NOW }, db, ON))?.committedMicroUsd).toBe(700_000);
+  });
+
+  it("turns the database guard's refusal into the agent limit error", () => {
+    const error = agentSpendCapErrorFromDb({ message: "managed_venice_agent_spend_cap: cap=5000000 spent=4900000 requested=200000" }, KEY);
+    expect(error).toBeInstanceOf(ManagedVeniceAgentSpendCapError);
+    expect(error).toMatchObject({ capMicroUsd: 5_000_000, spentMicroUsd: 4_900_000, proxyKeyId: KEY });
+    expect(agentSpendCapErrorFromDb({ message: "something else" }, KEY)).toBeNull();
   });
 });
 
