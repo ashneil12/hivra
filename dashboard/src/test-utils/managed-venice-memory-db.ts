@@ -252,6 +252,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
 
   const calls: MemoryDbCall[] = [];
   const failures: Array<InjectedFailure & { remaining: number }> = [];
+  // BEFORE INSERT triggers, run per row with the live tables (inserts here are
+  // synchronous, so a guard sees every row inserted before it, as a trigger
+  // under an advisory lock does).
+  const insertGuards: Record<string, Array<(row: MemoryRow, live: Record<string, MemoryRow[]>) => MemoryDbError | null>> = {};
   let sequence = 0;
 
   function nextDefaults(tableName: string) {
@@ -364,6 +368,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
       if (error) {
         calls.push({ table: tableName, kind: "insert_23505", payload: row });
         return { data: null, error };
+      }
+      for (const guard of insertGuards[tableName] ?? []) {
+        const refused = guard(row, tables);
+        if (refused) return { data: null, error: refused };
       }
       pending.add(row);
     }
@@ -548,6 +556,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
       const stored = { ...nextDefaults(tableName), ...row };
       requireTable(tableName).push(stored);
       return stored;
+    },
+    /** Add a BEFORE INSERT trigger for `tableName`: return an error to refuse the row. */
+    addInsertGuard(tableName: string, guard: (row: MemoryRow, live: Record<string, MemoryRow[]>) => MemoryDbError | null) {
+      (insertGuards[tableName] ??= []).push(guard);
     },
     /** Make the next matching operation fail with `error` (default a generic DB error). */
     failNext(failure: InjectedFailure) {
