@@ -11,6 +11,7 @@ All of these must allow it before an agent sleeps:
 | Switch | Where | Values |
 |---|---|---|
 | `HIVRA_SLEEP_MODE` | server env | `off` (default), `observe` (log only), `canary` (only agents with a sleep policy), `on` |
+| `HIVRA_SLEEP_TRIM_MEMORY` | server env | `1`: a running computer writes out and drops its file cache just before it sleeps, so the host gets that memory back during a nap and a hibernate saves less. A failed trim never stops the sleep. Unset (default) is off |
 | `proxmox_hosts.sleep_mode` | database, per host | `off` (default), `canary`, `on` |
 | `hivra_agents.sleep_policy` | database, per agent | `off` (default), `t1`, `t3`, `full` |
 | `hivra_agents.always_on` | database, per agent | `true` means never sleep |

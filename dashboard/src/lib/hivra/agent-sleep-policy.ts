@@ -20,6 +20,14 @@ export function parseSleepMode(env: string | undefined | null): SleepMode {
   return SLEEP_MODES.find((mode) => mode === value) ?? "off";
 }
 
+/**
+ * HIVRA_SLEEP_TRIM_MEMORY=1: a computer drops its file cache just before it
+ * sleeps, so the host gets the memory back. Off unless set to exactly 1.
+ */
+export function isSleepMemoryTrimEnabled(env: string | undefined | null = process.env.HIVRA_SLEEP_TRIM_MEMORY): boolean {
+  return env?.trim() === "1";
+}
+
 // Defaults from the design. All durations are seconds.
 export const DEFAULT_NAP_AFTER_SECONDS = 4 * 60;
 /**

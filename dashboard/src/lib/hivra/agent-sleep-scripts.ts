@@ -1125,6 +1125,12 @@ export interface SleepHostScriptInput {
    * runs before the stop is the profile probe. Absent: the probe as before.
    */
   profile?: ProbeProfile | null;
+  /**
+   * Before the computer stops, the guest writes out and drops its file cache,
+   * so the host gets that memory back during a nap and a hibernate saves less.
+   * Never fails a sleep. Off by default.
+   */
+  trimMemory?: boolean;
 }
 
 function coversTelegram(coverage: ScriptCoverage | null): boolean {
@@ -1132,7 +1138,36 @@ function coversTelegram(coverage: ScriptCoverage | null): boolean {
   return coverage.kind === "telegram" || Object.prototype.hasOwnProperty.call(coverage.coverage.fingerprints, "telegram");
 }
 
-function napBody(hostIngress = false, serverDisarm = false): string {
+/** After the guest drops its file cache, the host waits this long for the freed pages to come back to it. */
+export const TRIM_SETTLE_SECONDS = 4;
+/**
+ * What the guest runs before a sleep with trimMemory: write dirty pages out,
+ * drop the clean file cache (pages a running program maps are kept) and pack
+ * free memory together, so free page reporting can hand whole blocks back.
+ */
+export const TRIM_GUEST_COMMAND = "sync; echo 1 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory 2>/dev/null; exit 0";
+
+/** A failed trim never fails the sleep: the computer just sleeps with its cache. */
+function trimShell(enabled: boolean): string {
+  if (!enabled) return "";
+  return `trim_memory() {
+  local start
+  start="$(now_ms)"
+  if qga_lock; then
+    if run_vmid_bound_guest_exec /bin/sh -c ${shellQuote(TRIM_GUEST_COMMAND)} >/dev/null 2>&1; then
+      qga_unlock
+      sleep ${TRIM_SETTLE_SECONDS}
+      mark trim "$start"
+      return 0
+    fi
+    qga_unlock
+  fi
+  mark trim_failed "$start"
+}
+`;
+}
+
+function napBody(hostIngress = false, serverDisarm = false, trimMemory = false): string {
   // Telegram covered: the sweep arms its webhook during the nap, and only Hivra can take it down, so the
   // proxy is told to send a client wake to Hivra instead of resuming the computer itself.
   const napped = serverDisarm ? "napped server-disarm" : "napped";
@@ -1144,7 +1179,7 @@ if [ "$FROM" != awake ]; then finish false not_sleepable "$FROM"; fi
 STEP="$(now_ms)"
 probe_or_finish
 mark probe "$STEP"
-${hostIngress ? `# The host connector must be serving, and the proxy holds new requests back before the computer stops.
+${trimMemory ? "trim_memory\n" : ""}${hostIngress ? `# The host connector must be serving, and the proxy holds new requests back before the computer stops.
 STEP="$(now_ms)"
 systemctl is-active --quiet "hivra-cf@$VMID.service" </dev/null || finish false ingress_down "$FROM"
 ingress_drain || finish false "$INGRESS_ERR" "$FROM"
@@ -1187,7 +1222,7 @@ mark marker "$STEP"
 ` : ""}finish true napped napping`;
 }
 
-function hibernateBody(hostIngress = false): string {
+function hibernateBody(hostIngress = false, trimMemory = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -1197,7 +1232,7 @@ if [ "$FROM" = awake ]; then
   STEP="$(now_ms)"
   probe_or_finish
   mark probe "$STEP"
-fi
+${trimMemory ? "  trim_memory\n" : ""}fi
 VM_CONFIG="$CONFIG"
 POOL_REASON=pool_unknown
 pool_gate() {
@@ -1290,6 +1325,7 @@ export function buildSleepHostScript(
   const channelCoverage = assertChannelCoverage(input.channelCoverage, specs);
   if (telegramCoverage && channelCoverage) throw new Error("Invalid channel wake coverage.");
   const hostIngress = input.hostIngress === true;
+  const trimMemory = input.trimMemory === true;
   const coverage: ScriptCoverage | null = channelCoverage
     ? { kind: "channels", coverage: channelCoverage, specs }
     : telegramCoverage ? { kind: "telegram", coverage: telegramCoverage } : null;
@@ -1306,12 +1342,12 @@ ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
 ${probeShell(input.manual === true, coverage, input.profile ?? null)}
 ${hostIngress ? `${ingressShell()}
-` : ""}install -d -m 0755 /run/lock
+` : ""}${trimShell(trimMemory)}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
 flock -x -n 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${nap ? napBody(hostIngress, hostIngress && coversTelegram(coverage)) : hibernateBody(hostIngress)}
+${nap ? napBody(hostIngress, hostIngress && coversTelegram(coverage), trimMemory) : hibernateBody(hostIngress, trimMemory)}
 `;
 }
 
