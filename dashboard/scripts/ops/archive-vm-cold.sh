@@ -210,7 +210,8 @@ TAR_PATHS="./opt/hermes/instances/$INSTANCE_ID ./var/lib/docker/volumes/agent-${
 echo "  archiving:"
 ssh "${SSH_OPTS[@]}" "hermes@$IP" "sudo du -sh /opt/hermes/instances/$INSTANCE_ID /var/lib/docker/volumes/agent-${INSTANCE_ID}_agent-source /var/lib/docker/volumes/agent-${INSTANCE_ID}_webui-state /var/lib/docker/volumes/agent-${INSTANCE_ID}_webui-workspace 2>/dev/null" | sed 's/^/    /'
 
-SCRATCH=$(mktemp -d /tmp/hermes-archive-$VMID-XXXX)
+# Disk-backed by default: /tmp is RAM on some hosts.
+SCRATCH=$(mktemp -d "${HERMES_ARCHIVE_SCRATCH_ROOT:-/var/tmp}/hermes-archive-$VMID-XXXX")
 LOCAL_ARCHIVE="$SCRATCH/data-$TS.tar.zst"
 
 # ─── stop agent containers, tar+zstd, best-effort restart — one ssh session ───

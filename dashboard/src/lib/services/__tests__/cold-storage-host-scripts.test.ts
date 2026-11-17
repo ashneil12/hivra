@@ -26,6 +26,14 @@ function decodeInstalledScript(name: ColdStorageHostScript): string {
   return Buffer.from(match[1], "base64").toString("utf8");
 }
 
+describe("cold archive scratch space", () => {
+  it("keeps the archive's working copy on disk, not in a RAM-backed /tmp", () => {
+    const installed = decodeInstalledScript("archive-vm-cold.sh");
+    expect(installed).toContain('mktemp -d "${HERMES_ARCHIVE_SCRATCH_ROOT:-/var/tmp}/hermes-archive-');
+    expect(installed).not.toContain("mktemp -d /tmp/hermes-archive-");
+  });
+});
+
 describe("cold-storage host script self-install", () => {
   const scripts: ColdStorageHostScript[] = [
     "archive-vm-cold.sh",

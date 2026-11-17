@@ -21,6 +21,13 @@ describe("daily VM backup host script", () => {
     expect(decodeEmbeddedDailyBackupScript()).toBe(sourceScript);
   });
 
+  it("skips memory-backed scratch roots unless they are named explicitly", () => {
+    const embedded = decodeEmbeddedDailyBackupScript();
+
+    expect(embedded).toContain("skipped=memory_backed");
+    expect(embedded).toContain('[ -z "${HERMES_DAILY_BACKUP_SCRATCH_ROOTS:-}" ] && { [ "$fs" = tmpfs ] || [ "$fs" = ramfs ]; }');
+  });
+
   it("refuses live snapshot backups when host memory headroom is unsafe", () => {
     const sourceScript = readRepoFile("scripts/ops/backup-vm-daily.sh");
 
