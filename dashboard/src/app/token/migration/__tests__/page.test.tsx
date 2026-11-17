@@ -334,7 +334,7 @@ describe("/token/migration", () => {
         [],
       ]);
       expect(within(section).getByRole("link", { name: "Verify official contracts" })).toHaveAttribute("href", "/token");
-      expect(within(section).getByRole("link", { name: "Read the Hivra Litepaper" })).toHaveAttribute("href", "/docs/litepaper");
+      expect(within(section).getByRole("link", { name: "Read the Hivra Litepaper" })).toHaveAttribute("href", "/docs/litepaper/index.html");
     });
   });
 
