@@ -31,7 +31,9 @@
 #
 # How: auditd watches qm, pct, pvesh and ssh for execution (key
 # hivra_guest_access). --collect (a one-minute timer) turns new audit records
-# into lines in a spool, /var/lib/hivra/access-audit/spool.jsonl. Hivra's
+# into lines in a spool, /var/lib/hivra/access-audit/spool.jsonl. It reads
+# /var/log/audit directly and keeps its own cursor (the last event's time and
+# serial), so an event is handed on once. Hivra's
 # dashboard reads the spool with --drain and stores hourly counts per computer.
 #
 # Usage:
@@ -43,7 +45,7 @@
 #   sudo proxmox-host-guest-access-audit.sh --uninstall  remove rules and timer (spool kept)
 #   proxmox-host-guest-access-audit.sh --parse-raw FILE  parse raw audit text, print events (tests; no root)
 #
-# Environment (tests): QEMU_CONF_DIR, LXC_CONF_DIR, ACCESS_STATE_DIR,
+# Environment (tests): QEMU_CONF_DIR, LXC_CONF_DIR, ACCESS_STATE_DIR, ACCESS_AUDIT_LOG_DIR, ACCESS_NOW,
 # ACCESS_ACTORS_CONF, ACCESS_SESSIONS_FIXTURE (JSON {"<ses>": {"addr": ..,
 # "fp": ..}} used instead of the audit and SSH logs).
 # Bash 3.2 compatible.
@@ -408,18 +410,65 @@ def write_atomic(path, text):
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
-def ausearch(args, checkpoint):
-    cmd = ["ausearch", "--raw", "--input-logs", "--checkpoint", checkpoint] + args
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if r.returncode in (10, 11, 12):
-        # The checkpoint no longer matches the logs (rotated): start again from today.
+AUDIT_LOG_DIR = os.environ.get("ACCESS_AUDIT_LOG_DIR", "/var/log/audit")
+CURSOR = os.path.join(STATE, "cursor.json")
+# Records of one event are written together but not atomically: leave the last
+# few seconds for the next run so an event is never read half-written.
+SETTLE_SECONDS = 5
+# With no cursor yet, start this far back instead of reading old history.
+FIRST_RUN_SECONDS = 600
+
+def audit_files():
+    try:
+        names = os.listdir(AUDIT_LOG_DIR)
+    except OSError:
+        return []
+    rotated = sorted((int(m.group(1)), n) for n in names for m in [re.match(r'^audit\.log\.(\d+)$', n)] if m)
+    ordered = [n for _, n in sorted(rotated, reverse=True)]
+    if "audit.log" in names:
+        ordered.append("audit.log")
+    return [os.path.join(AUDIT_LOG_DIR, n) for n in ordered]
+
+def read_new_audit(now):
+    """Raw text of every audit event newer than the cursor and settled, and the new cursor.
+
+    Reads the audit log files directly (oldest rotation first) instead of
+    ausearch --checkpoint, whose checkpoint is lost on busy hosts and made
+    every run re-read the whole day. The cursor is the last (seconds, serial)
+    handed on; an event at or below it is never read twice.
+    """
+    cursor = load_json(CURSOR, None)
+    if isinstance(cursor, dict) and isinstance(cursor.get("sec"), int) and isinstance(cursor.get("serial"), int):
+        last = (cursor["sec"], cursor["serial"])
+    else:
+        last = (int(now) - FIRST_RUN_SECONDS, 0)
+    settled = int(now) - SETTLE_SECONDS
+    keyed, kept = set(), []
+    newest = last
+    for path in audit_files():
         try:
-            os.remove(checkpoint)
+            fh = open(path, encoding="utf-8", errors="replace")
         except OSError:
-            pass
-        r = subprocess.run(["ausearch", "--raw", "--input-logs", "--checkpoint", checkpoint, "-ts", "today"] + args,
-                           capture_output=True, text=True, timeout=120)
-    return r.stdout if r.returncode in (0, 1) else ""
+            continue
+        with fh:
+            for line in fh:
+                m = RECORD.match(line.strip())
+                if not m:
+                    continue
+                stamp = (int(m.group(2)), int(m.group(4)))
+                if stamp <= last or stamp[0] > settled:
+                    continue
+                rtype = m.group(1)
+                if rtype == "SYSCALL" and f'key="{KEY}"' in line:
+                    keyed.add(stamp)
+                    kept.append((stamp, line))
+                elif rtype in ("EXECVE", "USER_START", "USER_LOGIN"):
+                    kept.append((stamp, line))
+                if stamp > newest:
+                    newest = stamp
+    text = "".join(line if line.endswith("\n") else line + "\n" for stamp, line in kept
+                   if stamp in keyed or not line.startswith("type=EXECVE"))
+    return text, {"sec": newest[0], "serial": newest[1]}
 
 def fingerprint_for(pid):
     if not re.match(r'^\d+$', pid or ""):
@@ -435,14 +484,16 @@ def fingerprint_for(pid):
 def collect():
     os.makedirs(STATE, mode=0o700, exist_ok=True)
     sessions = load_json(SESSIONS, {})
-    login_raw = parse_raw(ausearch(["-m", "USER_START,USER_LOGIN"], os.path.join(STATE, "ck_login")))
+    now = float(os.environ.get("ACCESS_NOW") or time.time())
+    text, cursor = read_new_audit(now)
+    raw = parse_raw(text)
+    login_raw = raw
     for ses, info in logins_from(login_raw).items():
         if ses not in sessions or sessions[ses].get("pid") != info["pid"]:
             info["fp"] = fingerprint_for(info["pid"])
             sessions[ses] = info
-    cutoff = time.time() - 14 * 86400
+    cutoff = now - 14 * 86400
     sessions = {k: v for k, v in sessions.items() if v.get("at", 0) >= cutoff}
-    raw = parse_raw(ausearch(["-k", KEY], os.path.join(STATE, "ck_access")))
     keys, nets = load_actors()
     events = events_from(raw, sessions, guest_ips(), keys, nets)
     seq = int(load_json(SEQ, 0) or 0)
@@ -457,6 +508,8 @@ def collect():
         os.chmod(SPOOL, 0o600)
         write_atomic(SEQ, str(seq))
     write_atomic(SESSIONS, json.dumps(sessions))
+    # Only after the spool holds this run's events: a crash before here reads them again.
+    write_atomic(CURSOR, json.dumps(cursor))
     trim_spool()
     print(f"collected {len(lines)} event(s)", file=sys.stderr)
 

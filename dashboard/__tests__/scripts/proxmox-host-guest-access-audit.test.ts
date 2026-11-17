@@ -69,6 +69,44 @@ describe("proxmox-host-guest-access-audit --parse-raw", () => {
   });
 });
 
+describe("proxmox-host-guest-access-audit --collect", () => {
+  it("reads each audit event once, even when run again over the same log", () => {
+    if (process.getuid?.() !== 0) return; // --collect refuses to run without root
+    const f = fixture();
+    const state = path.join(f.root, "state");
+    const logs = path.join(f.root, "audit");
+    mkdirSync(logs);
+    writeFileSync(path.join(logs, "audit.log"), readFileSync(rawFixture, "utf8"));
+    const collect = (now: number) => spawnSync("bash", [scriptPath, "--collect"], {
+      encoding: "utf8",
+      env: {
+        ...process.env, ACCESS_STATE_DIR: state, ACCESS_AUDIT_LOG_DIR: logs, ACCESS_NOW: String(now),
+        QEMU_CONF_DIR: f.qemu, LXC_CONF_DIR: f.lxc, ACCESS_ACTORS_CONF: f.actors, PATH: "/usr/bin:/bin",
+      },
+    });
+    const spool = () => readFileSync(path.join(state, "spool.jsonl"), "utf8").trim().split("\n");
+
+    expect(collect(1763400100).status).toBe(0);
+    expect(spool()).toHaveLength(6);
+    expect(JSON.parse(readFileSync(path.join(state, "cursor.json"), "utf8")).sec).toBeGreaterThanOrEqual(1763400000);
+
+    expect(collect(1763400160).status).toBe(0);
+    expect(spool()).toHaveLength(6);
+
+    writeFileSync(path.join(logs, "audit.log"), readFileSync(rawFixture, "utf8") + [
+      'type=SYSCALL msg=audit(1763400200.100:900): arch=c000003e syscall=59 success=yes exit=0 auid=4294967295 uid=0 ses=4294967295 comm="qm" exe="/usr/bin/perl" key="hivra_guest_access"',
+      'type=EXECVE msg=audit(1763400200.100:900): argc=5 a0="/usr/bin/perl" a1="/usr/sbin/qm" a2="terminal" a3="2104" a4="--iface=serial0"',
+      "",
+    ].join("\n"));
+    expect(collect(1763400202).status).toBe(0);
+    expect(spool()).toHaveLength(6); // not settled yet
+    expect(collect(1763400260).status).toBe(0);
+    const rows = spool().map((line) => JSON.parse(line) as { seq: number; channel: string });
+    expect(rows).toHaveLength(7);
+    expect(rows[6]).toMatchObject({ seq: 7, channel: "console" });
+  });
+});
+
 describe("proxmox-host-guest-access-audit --drain", () => {
   it("drops what Hivra stored and prints the next batch", () => {
     if (process.getuid?.() !== 0) return; // --drain refuses to run without root
