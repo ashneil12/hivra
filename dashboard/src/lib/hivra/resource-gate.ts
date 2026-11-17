@@ -16,6 +16,7 @@ import {
 } from "@/lib/billing/hosted-compute";
 import { BASE_FLOOR, BROWSER_ADD, isPoolExempt } from "@/lib/hivra/agent-catalog";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
+import { loadLadderEntitlement } from "@/lib/billing/plan-ladder-entitlement";
 
 export function isActiveComputeStatus(status: unknown): boolean {
   return status === "provisioning" || status === "running" || status === "stopped";
@@ -133,9 +134,10 @@ export async function resolvePlanAgentSlots(
   const sub = await resolveEffectiveSubscription(userId);
   if (!sub) return null;
   const plan = getPlan(sub.plan);
+  const ladder = await loadLadderEntitlement(userId);
   return {
     agentLimit: Number(sub.instance_limit) || plan.maxAgents,
-    planName: plan.name,
+    planName: ladder?.name ?? plan.name,
     // A Free account has slots but never a Hivra-hosted computer; writers that
     // create hosted compute refuse on this (the launch gate does it earlier).
     freeAccount: isFreeAccountEntitlement(sub),
@@ -188,6 +190,10 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   }
 
   const plan = getPlan(sub.plan);
+  // A plan bought on the plan ladder takes its name and one agent's computer
+  // size from the ladder's settings; every other plan from the plan table.
+  const ladder = await loadLadderEntitlement(params.userId);
+  const planName = ladder?.name ?? plan.name;
   const isFreePlan = sub.plan === "free" || sub.source === "free";
 
   // A Free account never launches a Hivra-hosted computer, and neither does a
@@ -218,8 +224,8 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   const remainingCpu = Math.max(0, totalCpu - usage.usedCpu);
   const remainingRamGb = Math.max(0, totalRamGb - usage.usedRamGb);
   const maxAgents = Number(sub.instance_limit) || plan.maxAgents;
-  const maxCpuPerAgent = plan.maxCpuPerAgent;
-  const maxRamPerAgentGb = plan.maxRamPerAgent / 1024;
+  const maxCpuPerAgent = ladder?.maxCpuPerAgent ?? plan.maxCpuPerAgent;
+  const maxRamPerAgentGb = (ladder?.maxRamPerAgentMb ?? plan.maxRamPerAgent) / 1024;
   const maximumCpu = params.maximumCpu ?? params.cpu;
   const maximumRam = params.maximumRam ?? params.ram;
   const floorCpu = params.floor?.cpu ?? (BASE_FLOOR.cpu + (params.browser ? BROWSER_ADD.cpu : 0));
@@ -249,7 +255,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   if (params.mode === "attach") {
     if (usage.activeCount >= maxAgents) {
       log.warn("hivra resource gate: agent slot limit reached", denialDetail);
-      return { ok: false, status: 403, message: attachPlanAgentLimitMessage(plan.name, maxAgents, usage.activeCount) };
+      return { ok: false, status: 403, message: attachPlanAgentLimitMessage(planName, maxAgents, usage.activeCount) };
     }
     return { ok: true };
   }
@@ -261,7 +267,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
 
   if (params.mode === "launch" && usage.activeCount >= maxAgents) {
     log.warn("hivra resource gate: agent slot limit reached", denialDetail);
-    return { ok: false, status: 403, message: planAgentLimitMessage(plan.name, maxAgents) };
+    return { ok: false, status: 403, message: planAgentLimitMessage(planName, maxAgents) };
   }
 
   if (params.cpu < floorCpu || params.ram < floorRam) {
@@ -284,7 +290,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
       return {
         ok: false,
         status: 403,
-        message: `Your ${plan.name} pool only has ${formatGb(remainingCpu)} CPU / ${formatGb(remainingRamGb)} GB free.`,
+        message: `Your ${planName} pool only has ${formatGb(remainingCpu)} CPU / ${formatGb(remainingRamGb)} GB free.`,
       };
     }
 
@@ -294,7 +300,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
 
     if (maximumCpu > maxCpuPerAgent || maximumRam > maxRamPerAgentGb) {
       log.warn("hivra resource gate: request exceeds per-agent cap", denialDetail);
-      return { ok: false, status: 403, message: `Your ${plan.name} plan allows up to ${formatGb(maxCpuPerAgent)} CPU / ${formatGb(maxRamPerAgentGb)} GB per agent.` };
+      return { ok: false, status: 403, message: `Your ${planName} plan allows up to ${formatGb(maxCpuPerAgent)} CPU / ${formatGb(maxRamPerAgentGb)} GB per agent.` };
     }
   }
 

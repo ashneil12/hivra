@@ -30,6 +30,7 @@ describe("cold-storage host script self-install", () => {
   const scripts: ColdStorageHostScript[] = [
     "archive-vm-cold.sh",
     "restore-vm-cold.sh",
+    "reencrypt-cold-archive.sh",
   ];
 
   // The whole point of the generated module: hosts must never run a stale copy.
@@ -226,5 +227,49 @@ describe("restore script timeout vs caller function budget", () => {
     expect(maxDurationMs - readDefaultRestoreTimeoutMs()).toBeGreaterThanOrEqual(
       120_000
     );
+  });
+});
+
+describe("age encryption in the cold-storage ops scripts", () => {
+  const archive = readOpsScript("archive-vm-cold.sh");
+  const restore = readOpsScript("restore-vm-cold.sh");
+
+  it("archive script refuses before touching the guest when age or the recipient is unusable", () => {
+    expect(archive).toContain("REFUSING_BACKUP_NO_AGE");
+    expect(archive).toContain("REFUSING_BACKUP_BAD_AGE_RECIPIENT");
+    expect(archive).toContain("^age1[0-9a-z]{58}$");
+    expect(archive.indexOf("REFUSING_BACKUP_NO_AGE")).toBeLessThan(archive.indexOf("qm start"));
+    expect(archive.indexOf("REFUSING_BACKUP_NO_AGE")).toBeLessThan(archive.indexOf("docker stop"));
+    // never installs age itself
+    expect(archive).not.toMatch(/apt(-get)? install/);
+  });
+
+  it("archive script encrypts after tar and before upload, then drops the plaintext", () => {
+    const enc = archive.indexOf('age -r "$BACKUP_AGE_RECIPIENT" -o "$LOCAL_ARCHIVE.age" "$LOCAL_ARCHIVE"');
+    expect(enc).toBeGreaterThan(archive.indexOf("zstd -3 -q"));
+    expect(enc).toBeLessThan(archive.indexOf('rsync -a --inplace --partial -e ssh \\\n  "$UPLOAD_FILE"'));
+    expect(archive.indexOf('rm -f "$LOCAL_ARCHIVE"\n')).toBeGreaterThan(enc);
+    expect(archive.indexOf('rm -f "$LOCAL_ARCHIVE"\n')).toBeLessThan(archive.indexOf("rsync -a --inplace"));
+    expect(archive).toContain('"encryption": "age"');
+    expect(archive).toContain('"plain_sha256"');
+    expect(archive).toContain('REMOTE_NAME="$REMOTE_NAME.age"');
+  });
+
+  it("restore script never takes the identity as an argument or env value, only a 0600 file path", () => {
+    expect(restore).toContain("HERMES_BACKUP_AGE_IDENTITY_FILE");
+    expect(restore).not.toMatch(/\$\{?HERMES_BACKUP_AGE_IDENTITY(?!_FILE)/);
+    expect(restore).not.toContain("AGE-SECRET-KEY");
+    expect(restore).toContain('age -d -i "$HERMES_BACKUP_AGE_IDENTITY_FILE"');
+  });
+
+  it("restore script decrypts only after the sha check and before any clone", () => {
+    const sha = restore.indexOf("SHA MISMATCH expected=");
+    const dec = restore.indexOf('age -d -i "$HERMES_BACKUP_AGE_IDENTITY_FILE"');
+    const clone = restore.indexOf('qm clone "$TEMPLATE_VMID"');
+    expect(sha).toBeGreaterThan(-1);
+    expect(dec).toBeGreaterThan(sha);
+    expect(clone).toBeGreaterThan(dec);
+    expect(restore).toContain("REFUSING_RESTORE_NO_AGE_IDENTITY");
+    expect(restore).toContain("PLAIN SHA MISMATCH");
   });
 });

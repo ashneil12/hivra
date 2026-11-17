@@ -1,4 +1,5 @@
 import { holdManagedVeniceMediaSpend, sendManagedVeniceMediaRequest } from "@/lib/venice/media-spend-gate";
+import { _resetVeniceModelPrivacyCacheForTests } from "@/lib/venice/model-privacy-live";
 import {
   createManagedVeniceSpendWorld,
   type ManagedVeniceSpendWorld,
@@ -50,6 +51,57 @@ describe("holdManagedVeniceMediaSpend", () => {
       "managed_venice_spend_cap_reached"
     );
     expect(world.reservations()).toHaveLength(0);
+  });
+
+  describe("private models only", () => {
+    const PRIVATE_ONLY_KEY = { ...KEY, privateModelsOnly: true };
+    const realFetch = global.fetch;
+    // What Venice's model list states for the models these tests use.
+    const veniceStates = (privacy: Record<string, string>) => {
+      const data = Object.entries(privacy).map(([id, value]) => ({ id, model_spec: { privacy: value } }));
+      const fetchMock = jest.fn(async () => new Response(JSON.stringify({ data }), { status: 200 }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      return fetchMock;
+    };
+
+    beforeEach(() => {
+      _resetVeniceModelPrivacyCacheForTests();
+      process.env.MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED = "true";
+      world.fundCard(USER_ID, 1_000_000);
+    });
+    afterEach(() => { global.fetch = realFetch; });
+
+    it("refuses an anonymized media model with a 400, before any hold", async () => {
+      veniceStates({ "qwen-image-2": "private", "nano-banana-2": "anonymized" });
+      const result = await holdManagedVeniceMediaSpend({ key: PRIVATE_ONLY_KEY, operation: NANO, source: "test" }, world.db);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.response.status).toBe(400);
+      expect(((await result.response.json()) as { error: { code: string } }).error.code).toBe("managed_venice_private_models_only");
+      expect(world.reservations()).toHaveLength(0);
+    });
+
+    it("holds as usual for a model Venice marks private", async () => {
+      veniceStates({ "qwen-image-2": "private", "nano-banana-2": "anonymized" });
+      const result = await holdManagedVeniceMediaSpend({ key: PRIVATE_ONLY_KEY, operation: QWEN, source: "test" }, world.db);
+      expect(result.ok).toBe(true);
+      expect(world.reservations()).toHaveLength(1);
+    });
+
+    it("refuses a media model whose privacy nobody states", async () => {
+      veniceStates({ "some-other-model": "private" });
+      const result = await holdManagedVeniceMediaSpend({ key: PRIVATE_ONLY_KEY, operation: QWEN, source: "test" }, world.db);
+      expect(result.ok).toBe(false);
+      expect(world.reservations()).toHaveLength(0);
+    });
+
+    it("does not look anything up for a key without the setting, or with the feature off", async () => {
+      const fetchMock = veniceStates({ "nano-banana-2": "anonymized" });
+      expect((await holdManagedVeniceMediaSpend({ key: KEY, operation: NANO, source: "test" }, world.db)).ok).toBe(true);
+      delete process.env.MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED;
+      expect((await holdManagedVeniceMediaSpend({ key: PRIVATE_ONLY_KEY, operation: NANO, source: "test" }, world.db)).ok).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("fails closed (503, nothing held) when the balance can't be checked", async () => {

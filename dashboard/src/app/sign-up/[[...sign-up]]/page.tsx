@@ -6,6 +6,7 @@ import { authCardAppearance } from "@/components/auth/auth-card-appearance";
 import funnelStyles from "@/components/public-site/public-site.module.css";
 import { HOSTED_COMPUTE_NEEDS_PLAN } from "@/lib/blog/plan-facts";
 import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
+import { isHivraMemoryEnabled } from "@/lib/memory/flag";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import HeardAboutSignUp from "./HeardAboutSignUp";
 import styles from "./sign-up.module.css";
@@ -37,7 +38,8 @@ export default async function SignUpPage({
   // (Launch says so before anything starts, and an agent a link asked for opens
   // its plan). The older reservation links (from=reserve) land here the same way.
   const agentType = typeof resolvedParams?.agentType === "string" ? resolvedParams.agentType : null;
-  const redirectUrl = buildAgentLaunchHref(agentType);
+  // The public /memory page sends people here with next=memory; they land on their memory key, not Launch.
+  const redirectUrl = resolvedParams?.next === "memory" && isHivraMemoryEnabled() ? "/dashboard/memory" : buildAgentLaunchHref(agentType);
 
   // Public "start" links come here whether or not the visitor has an account;
   // one who is already signed in goes on to Launch.

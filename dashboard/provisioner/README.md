@@ -579,6 +579,15 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Agent Zero has a model on a managed launch (`2026.11.17.6`).**
+  Current Agent Zero picks models from presets and ignores the `A0_SET_*`
+  model defaults, so a fresh box with a managed model key also gets Agent
+  Zero's Default preset (`usr/plugins/_model_config/presets.yaml`) set to the
+  same model and gateway. An existing presets file is never touched.
+  The same release fixes DeepSeek Harness launches: its gateway folder now
+  gets `import-state.cjs`, which `server.js` has required at start since
+  `2026.11.15.2`.
+
 - **OpenClaw and Aeon launch on their newest releases (`2026.11.17.4`).**
   The box gateway drops forwarded-client headers on `/openclaw`, which
   OpenClaw 2026.11.5 and later otherwise refuse from a loopback proxy

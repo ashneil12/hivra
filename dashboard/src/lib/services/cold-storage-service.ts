@@ -21,6 +21,13 @@
  */
 
 import {
+  backupEncryptionEnvPrefix,
+  buildAgeIdentityPrelude,
+  isAgeEncryptedPath,
+  resolveAgeIdentity,
+  resolveBackupEncryption,
+} from "@/lib/cold-storage/backup-encryption";
+import {
   isValidColdArchiveUri,
   isValidColdTimestampCompact,
   manifestPathFromArchiveUri,
@@ -399,6 +406,20 @@ export async function archiveInstance(
     };
   }
 
+  // Encryption switch on but unusable: refuse BEFORE the lock, the host script
+  // and the destroy. Never fall through to a plaintext upload. (The cron
+  // refuses earlier still; this guards every other caller.)
+  const encryptionCheck = resolveBackupEncryption(d.env);
+  if (encryptionCheck.enabled && !encryptionCheck.ok) {
+    return {
+      ok: false,
+      reason: "host_script_failed",
+      message: `Cold archive refused: ${encryptionCheck.error}`,
+      instanceId,
+      retryable: false,
+    };
+  }
+
   // 2. CAS: paused → archiving
   const lockedAt = d.now().toISOString();
   const lockResult = await supabase
@@ -507,9 +528,12 @@ async function archiveInstanceAfterLock(
     1_000,
     options?.maxScriptTimeoutMs ?? DEFAULT_ARCHIVE_SCRIPT_TIMEOUT_MS
   );
+  // "" when encryption is off, so the command is unchanged. Only the PUBLIC
+  // recipient is ever put on the command line.
+  const encryptionEnv = backupEncryptionEnvPrefix(resolveBackupEncryption(d.env));
   const scriptResult = await d.runHostScript(
     `${buildColdStorageScriptInstall("archive-vm-cold.sh")}
-/usr/local/sbin/archive-vm-cold.sh ${row.proxmox_vmid} ${shellQuote(instanceId)}`,
+${encryptionEnv}/usr/local/sbin/archive-vm-cold.sh ${row.proxmox_vmid} ${shellQuote(instanceId)}`,
     hostEnv,
     { timeoutMs: scriptTimeoutMs }
   );
@@ -585,7 +609,17 @@ async function archiveInstanceAfterLock(
   }
 
   // 5. Independently re-fetch the manifest from Storage Box (I3).
-  const archiveUri = `free/${instanceId}/data-${tsCompact}.tar.zst`;
+  const encryptedByScript = tokens.get("enc") === "age";
+  if (tokens.has("enc") && !encryptedByScript) {
+    return revertToPaused({
+      ok: false,
+      reason: "manifest_verify_failed",
+      message: `archive-vm-cold.sh reported an unknown enc token: ${JSON.stringify(tokens.get("enc"))}`,
+      instanceId,
+      retryable: false,
+    });
+  }
+  const archiveUri = `free/${instanceId}/data-${tsCompact}.tar.zst${encryptedByScript ? ".age" : ""}`;
   const manifestPath = `meta/${instanceId}/${tsCompact}.json`;
   const manifestFetch = await d.runHostScript(
     `ssh cold "cat ${shellQuote(manifestPath)}"`,
@@ -619,6 +653,27 @@ async function archiveInstanceAfterLock(
     });
   }
 
+  // The manifest must agree with the script about encryption, and a switch that
+  // is on must have produced an encrypted archive: never record (and then
+  // destroy the VM behind) a plaintext archive while encryption is required.
+  if ((parsedManifest.encryption === "age") !== encryptedByScript) {
+    return revertToPaused({
+      ok: false,
+      reason: "manifest_verify_failed",
+      message: `Encryption mismatch: script enc=${encryptedByScript ? "age" : "none"} manifest encryption=${parsedManifest.encryption ?? "none"}`,
+      instanceId,
+      retryable: false,
+    });
+  }
+  if (resolveBackupEncryption(d.env).enabled && !encryptedByScript) {
+    return revertToPaused({
+      ok: false,
+      reason: "manifest_verify_failed",
+      message: `HERMES_BACKUP_ENCRYPTION is on but the archive was produced unencrypted; refusing to record it.`,
+      instanceId,
+      retryable: false,
+    });
+  }
   if (parsedManifest.archiveSha256 !== archiveSha) {
     return revertToPaused({
       ok: false,
@@ -1159,10 +1214,30 @@ async function restoreInstanceAfterLock(
     d.env
   );
 
+  // An age-encrypted archive needs the secret identity. Fail BEFORE touching the
+  // host when it is missing: nothing is cloned, nothing is deleted, the row
+  // reverts to cold_archived with a clear reason.
+  let identityPrelude = "";
+  if (isAgeEncryptedPath(row.archive_uri)) {
+    const identity = resolveAgeIdentity(d.env);
+    if (!identity.present) {
+      return revertToCold({
+        ok: false,
+        reason: "host_script_failed",
+        message: `Cannot restore ${row.archive_uri}: ${identity.error}`,
+        instanceId,
+        retryable: false,
+      });
+    }
+    // Inside the script sent over SSH stdin (quoted heredoc -> 0600 mktemp file
+    // -> EXIT trap), never in argv or env on a command line.
+    identityPrelude = `${buildAgeIdentityPrelude(identity.identity)}\n`;
+  }
+
   const cmd = [
     // Reinstall from this deploy's embedded copy first — the host may still be
     // carrying a hand-copied version from an earlier release.
-    `${buildColdStorageScriptInstall("restore-vm-cold.sh")}\n/usr/local/sbin/restore-vm-cold.sh`,
+    `${identityPrelude}${buildColdStorageScriptInstall("restore-vm-cold.sh")}\n/usr/local/sbin/restore-vm-cold.sh`,
     shellQuote(instanceId),
     shellQuote(row.archive_uri),
     shellQuote(row.archive_sha256),
@@ -1547,8 +1622,14 @@ export async function verifyArchiveIntegrity(
     // Slice verify: peek the first 1 MB through zstd's stream decoder. If
     // the archive header is intact and zstd can decode anything, it's a real
     // archive — not a truncated upload. Full SHA verify is the `full` mode.
+    // An encrypted archive cannot be zstd-decoded without the secret key, so its
+    // slice probe checks the age header (a truncated or replaced file fails it);
+    // the full sha256 of the stored file is the real integrity check.
+    const sliceCommand = isAgeEncryptedPath(row.archive_uri)
+      ? `[ "$(ssh cold "head -c 21 ${shellQuote(row.archive_uri)}")" = "age-encryption.org/v1" ] && echo OK`
+      : `ssh cold "head -c 1048576 ${shellQuote(row.archive_uri)}" | zstd -dc --long=27 2>/dev/null | head -c 1024 >/dev/null && echo OK`;
     const sliceResult = await d.runHostScript(
-      `ssh cold "head -c 1048576 ${shellQuote(row.archive_uri)}" | zstd -dc --long=27 2>/dev/null | head -c 1024 >/dev/null && echo OK`,
+      sliceCommand,
       env,
       { timeoutMs: 60_000 }
     );

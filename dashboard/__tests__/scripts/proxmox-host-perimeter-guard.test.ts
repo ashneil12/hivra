@@ -533,17 +533,42 @@ fi
       };
       stub("id", "#!/usr/bin/env bash\necho 0\n");
       stub("sshd", '#!/usr/bin/env bash\n[ "$1" = "-t" ] && exit "${SSHD_T_EXIT:-0}"\nexit 0\n');
-      stub("systemctl", "#!/usr/bin/env bash\nexit 0\n");
-      // nft: -c validates, -f loads (records the loaded file), list prints the
-      // last loaded file so the post-apply check sees what was applied.
+      // systemctl: the rebuild units are Type=oneshot RemainAfterExit=yes, so a
+      // real host that has already run them reports them "active" and a bare
+      // `start` is a no-op — only `restart` re-runs ExecStart. The stub models
+      // that: `restart <unit>` re-adds the out-of-band table to present-tables
+      // (modelling the unit rebuilding it), while a bare `start` does nothing.
+      // ${UNIT}_RESTORE_FAIL=1 tells the unit to stay broken. All else (e.g. the
+      // sshd reload) is a no-op. This way, reverting the guard to `start` would
+      // fail the restore tests below.
+      stub(
+        "systemctl",
+        `#!/usr/bin/env bash
+echo "$*" >> "${dir}/systemctl.log"
+if [ "\${1:-}" = "restart" ]; then
+  case "\${2:-}" in
+    hivra-vm-antispoof.service) [ "\${ANTISPOOF_RESTORE_FAIL:-0}" = "1" ] || echo "bridge hermes_vm_antispoof" >> "${dir}/present-tables" ;;
+    hivra-ingress-pins.service) [ "\${INGRESS_RESTORE_FAIL:-0}" = "1" ] || echo "bridge hivra_ingress_pin" >> "${dir}/present-tables" ;;
+  esac
+fi
+exit 0
+`,
+      );
+      // nft: -c validates, -f loads (records the loaded file) and, like a real
+      // `flush ruleset`, empties the present-tables model; `list table <fam>
+      // <name>` reports presence from that model; other `list` prints the last
+      // loaded file so the post-apply check sees what was applied.
       stub(
         "nft",
         `#!/usr/bin/env bash
 log="${dir}/nft.log"
+present="${dir}/present-tables"
 case "$1" in
   -c) echo "check $3" >> "$log"; exit "\${NFT_CHECK_EXIT:-0}" ;;
-  -f) echo "load $2" >> "$log"; cp "$2" "${dir}/loaded.conf"; n=$(grep -c '^load' "$log"); [ "$n" = "1" ] && exit "\${NFT_LOAD_EXIT:-0}"; exit 0 ;;
-  list) cat "${dir}/loaded.conf" ;;
+  -f) echo "load $2" >> "$log"; cp "$2" "${dir}/loaded.conf"; : > "$present"; n=$(grep -c '^load' "$log"); [ "$n" = "1" ] && exit "\${NFT_LOAD_EXIT:-0}"; exit 0 ;;
+  list)
+    if [ "$2" = "table" ]; then grep -qxF "$3 $4" "$present" 2>/dev/null; exit $?; fi
+    cat "${dir}/loaded.conf" ;;
 esac
 `,
       );
@@ -652,6 +677,48 @@ esac
       const { nftConf, apply } = setupApply();
       expect(() => apply(CF_ONLY)).toThrow();
       expect(readFileSync(nftConf, "utf8")).toBe(INLINE_CHAIN_NFT);
+    });
+
+    it("restores the antispoof and ingress-pin tables that flush ruleset wiped", () => {
+      const { dir, nftConf, apply } = setupApply();
+      // Both out-of-band tables are live before the apply.
+      writeFileSync(path.join(dir, "present-tables"), "bridge hermes_vm_antispoof\nbridge hivra_ingress_pin\n");
+      const output = apply();
+      expect(readFileSync(nftConf, "utf8")).toContain(VMBR1_NEW_DROP);
+      const systemctlLog = readFileSync(path.join(dir, "systemctl.log"), "utf8");
+      expect(systemctlLog).toContain("restart hivra-vm-antispoof.service");
+      expect(systemctlLog).toContain("restart hivra-ingress-pins.service");
+      // Both tables are back after the apply reports success.
+      const presentAfter = readFileSync(path.join(dir, "present-tables"), "utf8");
+      expect(presentAfter).toContain("bridge hermes_vm_antispoof");
+      expect(presentAfter).toContain("bridge hivra_ingress_pin");
+      expect(output).toContain("restoring it via hivra-vm-antispoof.service");
+    });
+
+    it("fails when a table present before --apply cannot be restored", () => {
+      const { dir, apply } = setupApply();
+      writeFileSync(path.join(dir, "present-tables"), "bridge hermes_vm_antispoof\nbridge hivra_ingress_pin\n");
+      let stderr = "";
+      expect(() => {
+        try {
+          apply([], { ANTISPOOF_RESTORE_FAIL: "1" });
+        } catch (err) {
+          stderr = String((err as { stderr?: string }).stderr);
+          throw err;
+        }
+      }).toThrow();
+      expect(stderr).toContain("hermes_vm_antispoof");
+      expect(stderr).toContain("lacks that guest protection");
+    });
+
+    it("leaves the antispoof and ingress units alone when their tables were not live before", () => {
+      const { dir, nftConf, apply } = setupApply();
+      // No present-tables seed: this host does not run those tables.
+      apply();
+      expect(readFileSync(nftConf, "utf8")).toContain(VMBR1_NEW_DROP);
+      const systemctlLog = readFileSync(path.join(dir, "systemctl.log"), "utf8");
+      expect(systemctlLog).not.toContain("restart hivra-vm-antispoof.service");
+      expect(systemctlLog).not.toContain("restart hivra-ingress-pins.service");
     });
   });
 });

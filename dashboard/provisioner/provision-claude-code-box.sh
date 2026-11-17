@@ -1361,6 +1361,45 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(tmp, dst)
 PY
 chmod 600 "$A0_USR_ENV"
+# Current Agent Zero picks its models from presets (usr/plugins/_model_config/
+# presets.yaml, the file its own Settings writes) and ignores the A0_SET_*
+# model defaults above, so a launch with managed Venice still asked for a
+# model. Seed its Default preset with the same model, only on a fresh box (an
+# existing file is the owner's). Older images ignore this file.
+A0_PRESETS="${A0_ROOT}/usr/plugins/_model_config/presets.yaml"
+if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
+   && [ ! -e "$A0_PRESETS" ] && [ ! -L "$A0_PRESETS" ]; then
+  A0_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
+  printf '%s' "$A0_MODEL" | grep -qE '^[A-Za-z0-9_.:/-]+$' || A0_MODEL="deepseek-v4-pro"
+  A0_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+  printf '%s' "$A0_BASEURL" | grep -qE '^https://[A-Za-z0-9.:/_-]+$' \
+    || A0_BASEURL="https://hivra.cloud/api/managed-venice/v1"
+  for d in "${A0_ROOT}/usr/plugins" "${A0_ROOT}/usr/plugins/_model_config"; do
+    [ ! -L "$d" ] || die "Agent Zero plugin folder must not be a symlink"
+    mkdir -p "$d"
+  done
+  cat > "$A0_PRESETS" <<A0PRESETS
+- name: Default
+  chat:
+    provider: openai
+    name: "${A0_MODEL}"
+    api_base: "${A0_BASEURL}"
+    ctx_length: 128000
+    ctx_history: 0.7
+    vision: false
+  utility:
+    provider: openai
+    name: "${A0_MODEL}"
+    api_base: "${A0_BASEURL}"
+    ctx_length: 128000
+    ctx_input: 0.7
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ""
+A0PRESETS
+  chmod 600 "$A0_PRESETS"
+fi
 if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
   ok "managed-Venice seeded into Agent Zero /opt/a0/.env (model ${HIVRA_HERMES_MODEL:-deepseek-v4-pro})"
 else
