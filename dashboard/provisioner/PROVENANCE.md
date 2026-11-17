@@ -556,8 +556,11 @@ HTTP and WebSocket traffic, as it already does for Hermes. Aeon's own
 `apps/dashboard/next.config.ts` now sets a bundler root its build needs, and
 Hivra's basePath file replaced it, so every Aeon build failed; the provisioner
 and the Update path keep Aeon's file as `next.config.hivra-upstream.ts` and
-only add the `/aeon` mount on top. Changed: `hivra-chat/server.js`,
-`provision-claude-code-box.sh`, `hivra-agent-app-update.sh`, plus the
+only add the `/aeon` mount on top. A guest paused by Hivra's sleep (`qm
+suspend`) made the host capacity check refuse every launch on that host
+(`invalid QEMU status`); it now counts a paused guest as active. Changed:
+`hivra-chat/server.js`, `provision-claude-code-box.sh`,
+`hivra-agent-app-update.sh`, `hivra-host-capacity-admission`, plus the
 documents, the version and the provider worker's release labels. This source
 release does not deploy, install, enable or start anything on a host or
 computer.

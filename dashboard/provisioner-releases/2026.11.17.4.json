@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 93005,
-      "sha256": "43483b2f257ec6a09f55bbce34b704f2620c914686eb36035c1b4e153a55a48d"
+      "bytes": 93212,
+      "sha256": "53d4d50c6f6340ea447d297ef236e9c5494ebf933aadd25227ff61472f28082a"
     },
     {
       "path": "README.md",
-      "bytes": 55209,
-      "sha256": "558190e77737b7a8965987b87fbff9a7920c63349aacbec386bda068de6362d9"
+      "bytes": 55353,
+      "sha256": "dbd8a71c4e880c4e9d4812a3eb5d4565b82b486f11da3bfa4e70688293323807"
     },
     {
       "path": "VERSION",
@@ -139,8 +139,8 @@
     },
     {
       "path": "hivra-host-capacity-admission",
-      "bytes": 8320,
-      "sha256": "bfeeca43d823f65a79907098e46e483d196523e0b183c6743be704fb9e1afedf"
+      "bytes": 8611,
+      "sha256": "f17ff97bf7ebc5d935741e4667cc5d883a271664e8a1dbd42fc4758fbdcbbad2"
     },
     {
       "path": "hivra-install-agent.py",

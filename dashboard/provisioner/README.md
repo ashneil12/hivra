@@ -584,7 +584,9 @@ update them yet.
   OpenClaw 2026.11.5 and later otherwise refuse from a loopback proxy
   (`proxy_attribution_required`). Aeon keeps its own `next.config.ts` (as
   `next.config.hivra-upstream.ts`) with only the `/aeon` mount added, since
-  its build now needs the bundler root that file sets.
+  its build now needs the bundler root that file sets. The host capacity
+  check counts a paused (napping) guest as active instead of refusing every
+  launch on that host with `invalid QEMU status`.
 
 - **Agent Zero settings land where current images read them (`2026.11.17.3`).**
   Agent Zero v2.15 and later read only `/a0/usr/.env` and no longer copy the
