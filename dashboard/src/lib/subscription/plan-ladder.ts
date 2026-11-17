@@ -55,6 +55,12 @@ const LadderPlanSchema = z
     /** Short lines for the plan card. */
     features: z.array(z.string().trim().min(1).max(140)).max(12).default([]),
     popular: z.boolean().optional(),
+    /**
+     * Hours without use before a sleeping agent is packed into storage (deep
+     * sleep). Read by the storage tier once it exists; stored here so every
+     * plan's timing lives in one place.
+     */
+    storeAfterIdleHours: z.number().int().min(1).max(8760).optional(),
   })
   .refine((plan) => !plan.yearlyPriceId === !plan.yearlyCents, {
     message: "yearlyCents and yearlyPriceId go together",
@@ -85,6 +91,7 @@ export const PlanLadderConfigSchema = z.object({
       agents: z.number().int().min(0).max(10).optional(),
       sleepAfterIdleMinutes: z.number().int().min(1).max(1440).optional(),
       storeAfterDaysAway: z.number().int().min(1).max(365).optional(),
+      storeAfterIdleHours: z.number().int().min(1).max(8760).optional(),
       storeWarningDays: z.number().int().min(0).max(30).optional(),
       filesGb: z.number().min(0).max(100).optional(),
       memoryMb: z.number().int().min(128).max(16384).optional(),
