@@ -535,6 +535,11 @@ const recipes = Object.freeze({
     workerSha256: "f7f00f36160d81d77cd13ba82a4ef7df7fa1858952c2b535a91ea7391b36cd0c",
     workerSize: 45216,
   }),
+  "2026.11.17.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release seeds current Agent Zero's model preset so a managed-Venice launch has a model. The worker only advances its release labels.
+    workerSha256: "6592f2d22b8662d25ff01156ae3e4416e025833bfd709744eb791fbb165e475f",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;
