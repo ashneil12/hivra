@@ -6,11 +6,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * run/tool records described in
  * docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md.
  *
- * Policy: the Privacy Policy (section 7) says activity records are kept for as
- * long as the computer exists and are deleted with it. It does not promise a
- * shorter window, and this prune is built but off, so the page is what is
- * promised. If the prune is turned on, update the page's retention wording in
- * the same change.
+ * Policy: the published Privacy Policy (section 7) says activity records are
+ * kept for up to 90 days, that a deleted computer's records are deleted with
+ * it, and that a record that the deletion happened may be kept for up to 90
+ * days. This prune is what keeps the two 90-day statements, and only on an
+ * environment where ACTIVITY_RETENTION_ENABLED=true. Where it is off, records
+ * stay for as long as the computer exists. docs/legal-copy-changes.md (P5
+ * item 6, flag F3) records the owner's decision of 17 November 2026 to switch
+ * it on, and the wording to publish instead if it is ever switched off.
  * - When the prune is on, activity records are kept for ACTIVITY_RETENTION_DAYS
  *   days (default and maximum 90, minimum 30).
  * - A deleted computer's records are deleted with it by the
@@ -30,8 +33,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const DEFAULT_ACTIVITY_RETENTION_DAYS = 90;
 // Guards against a mistyped env value ("0", "1") wiping recent history.
 export const MIN_ACTIVITY_RETENTION_DAYS = 30;
-// The longest window the prune accepts. It is a code limit, not a promise: the
-// Privacy Policy no longer states 90 days.
+// The longest window the prune accepts, so a mistyped setting cannot keep
+// records past the 90 days the Privacy Policy states.
 export const MAX_ACTIVITY_RETENTION_DAYS = 90;
 export const DEFAULT_ACTIVITY_RETENTION_BATCH_SIZE = 5000;
 export const DEFAULT_ACTIVITY_RETENTION_MAX_BATCHES = 20;
