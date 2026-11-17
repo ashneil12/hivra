@@ -10,8 +10,11 @@ import { appendFileSync } from 'node:fs';
 import { readResults, sweepMarkdown, sweepVerdict } from '../e2e/launch-sweep/result';
 
 const outDir = process.env.LAUNCH_SWEEP_OUT_DIR?.trim() || 'e2e/.launch-sweep';
-const runId = process.argv[2] || process.env.LAUNCH_SWEEP_RUN_ID || undefined;
-const results = readResults(outDir, runId);
+const all = readResults(outDir);
+// Default to the newest run, so older runs in the same folder don't mix in.
+const latest = [...all].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]?.runId;
+const runId = process.argv[2] || process.env.LAUNCH_SWEEP_RUN_ID || latest;
+const results = all.filter((row) => !runId || row.runId === runId);
 const markdown = sweepMarkdown(results);
 process.stdout.write(markdown);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);

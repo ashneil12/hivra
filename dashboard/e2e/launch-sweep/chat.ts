@@ -73,8 +73,26 @@ async function findComposer(
   timeoutMs: number,
 ): Promise<{ frame: Frame; composer: Locator; surface: string }> {
   const end = Date.now() + timeoutMs;
+  const navigateAt = Date.now() + 45_000;
+  let navigated = false;
   let lastSeen = '';
   while (Date.now() < end) {
+    // Opening can land on another tab (Codex opened on Settings). A customer
+    // then presses the agent's Chat (or, for a dashboard agent, Dashboard).
+    if (!navigated && Date.now() > navigateAt) {
+      navigated = true;
+      const names = target.proof === 'hivra-chat' ? ['Chat'] : ['Dashboard', 'Chat'];
+      for (const name of names) {
+        const item = page.getByRole('link', { name, exact: true })
+          .or(page.getByRole('button', { name, exact: true }))
+          .or(page.getByRole('tab', { name, exact: true }))
+          .first();
+        if (await item.isVisible().catch(() => false)) {
+          await item.click().catch(() => undefined);
+          break;
+        }
+      }
+    }
     if (target.proof === 'hivra-chat') {
       const region = page.getByRole('region', { name: 'Conversation' });
       if (await region.isVisible().catch(() => false)) {
@@ -158,7 +176,23 @@ export async function proveChat(
 export async function proveComputerOpen(page: Page, timeoutMs: number): Promise<ChatProof> {
   const start = Date.now();
   const end = start + timeoutMs;
+  let navigated = false;
   while (Date.now() < end) {
+    // A computer can open on its settings page; a customer then presses
+    // Desktop (or Terminal for one without a desktop).
+    if (!navigated && Date.now() > start + 30_000) {
+      navigated = true;
+      for (const name of ['Desktop', 'Terminal']) {
+        const item = page.getByRole('link', { name, exact: true })
+          .or(page.getByRole('button', { name, exact: true }))
+          .or(page.getByRole('tab', { name, exact: true }))
+          .first();
+        if (await item.isVisible().catch(() => false)) {
+          await item.click().catch(() => undefined);
+          break;
+        }
+      }
+    }
     const failed = page.getByText(/Provisioning failed|Computer isn.t ready|Couldn.t verify secure access/).first();
     if (await failed.isVisible().catch(() => false)) {
       const why = await page.locator('main').innerText().catch(() => '');

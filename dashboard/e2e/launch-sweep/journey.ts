@@ -121,6 +121,8 @@ export async function launchFromTile(page: Page, target: SweepTarget): Promise<v
   const end = Date.now() + 12 * 60_000;
   while (Date.now() < end) {
     if (await accepted.isVisible().catch(() => false)) return;
+    // A computer launch can go straight to the computer's own page.
+    if (!new URL(page.url()).pathname.startsWith('/dashboard/launch')) return;
     if (await failed.isVisible().catch(() => false)) {
       throw new SweepFailure('launch', 'product', `Launch stopped: ${await journeyProblem(page)}`);
     }
@@ -203,6 +205,8 @@ export async function waitForReady(
 
 /** Press the after-launch screen's primary action (Open my agent / Open X). */
 export async function openFromLaunch(page: Page): Promise<void> {
+  // Already moved on to the thing itself (computers do this on their own).
+  if (!new URL(page.url()).pathname.startsWith('/dashboard/launch')) return;
   await page.getByTestId('launch-primary-action').click();
   await page.waitForURL(/\/dashboard\//, { timeout: 60_000 });
 }
