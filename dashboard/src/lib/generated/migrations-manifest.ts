@@ -464,4 +464,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261117130000", name: "provider_release_admission_2026_11_17_2" },
   { version: "20261117150000", name: "proxmox_hosts_capacity_reading" },
   { version: "20261117170000", name: "hivra_agent_memory_use" },
+  { version: "20261117180000", name: "hivra_agent_memory_floor" },
 ];
