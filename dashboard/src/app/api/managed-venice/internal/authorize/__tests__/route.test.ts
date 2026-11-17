@@ -112,6 +112,8 @@ describe("/api/managed-venice/internal/authorize", () => {
       plaintextKey: "hven_live_x",
       body: { model: "venice-uncensored-1-2" },
       allowBodyRewrite: false,
+      // An older Worker sends no address: the key binding counts it as unknown.
+      caller: { address: null, via: "worker" },
     });
   });
 
