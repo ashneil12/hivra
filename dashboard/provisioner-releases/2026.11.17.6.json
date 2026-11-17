@@ -9,13 +9,13 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 95532,
-      "sha256": "324322a2d83fd7fc335e3c228f01d198b38486eb06c78b51afdc345dea49b044"
+      "bytes": 96005,
+      "sha256": "d912f17f91960c834744f1c509cf8d7bae623ae53fda6054e5656318bdfbc1b6"
     },
     {
       "path": "README.md",
-      "bytes": 55716,
-      "sha256": "b9ee31b5d30458a6c957fbeb2e4ded938204ed68845a18a7e676d2497f782629"
+      "bytes": 55882,
+      "sha256": "aa3e731f2082a1fbd12f4cd08097f6cdb7db990da78e7a44737195bc6b3368c2"
     },
     {
       "path": "VERSION",
@@ -89,8 +89,8 @@
     },
     {
       "path": "deepseek-harness/install-guest.py",
-      "bytes": 18094,
-      "sha256": "eb8fc0f0885decf84451270621f53ec14e16da0b9917afb7d47e76a3b0933c44"
+      "bytes": 18114,
+      "sha256": "91fdbd33182f97bb68b7274b111291db2d655e288486c7380659406f8e9d570f"
     },
     {
       "path": "deepseek-harness/update-guest.py",
@@ -189,8 +189,8 @@
     },
     {
       "path": "hivra-runtime-receipt.py",
-      "bytes": 35600,
-      "sha256": "5dda8d047553a3a2043a017e2f88b78c5eddf49ef697d7c31a1b0980e517b81f"
+      "bytes": 35620,
+      "sha256": "70ac14a57aa0e23de788e102f13245b7e2ce6e62446e3d290c86852d7373dcd8"
     },
     {
       "path": "hivra-chat/app.js",

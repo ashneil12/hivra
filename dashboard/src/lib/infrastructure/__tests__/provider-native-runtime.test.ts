@@ -21,7 +21,7 @@ it("binds the exact native identity/access and emits a fixed retained-service pr
   ]);
   expect(decoded.gatewayRows.map((row: unknown[]) => row[0])).toEqual([
     "agent-zero-editor.cjs", "app.js", "deepseek-harness/gateway-policy.cjs", "deepseek-harness/native-broker.cjs",
-    "deepseek-harness/runtime-process.cjs", "guarded-files.cjs", "index.html", "llm-application.js", "server.js",
+    "deepseek-harness/runtime-process.cjs", "guarded-files.cjs", "import-state.cjs", "index.html", "llm-application.js", "server.js",
   ]);
   expect(plan.script).toContain('sorted(os.listdir(gateway))');
 });

@@ -555,9 +555,15 @@ launch with Hivra credits opened with no model connected and never answered.
 On a fresh box with a managed model key, the provisioner now writes Agent
 Zero's Default preset with the same model and gateway (chat and utility; the
 embedding stays Agent Zero's own local default); an existing presets file is
-the owner's and is left alone, and older images ignore the file. Changed:
-`provision-claude-code-box.sh`, plus the documents, the version and the
-provider worker's release labels. This source release does not deploy,
+the owner's and is left alone, and older images ignore the file. It also
+lets DeepSeek Harness start again: since `2026.11.15.2` the gateway's
+`server.js` requires `import-state.cjs` at start, but the DeepSeek installer
+copied only its own list of gateway files into `/opt/hivra/deepseek-gateway`,
+so the gateway exited on start and every launch hit the native readiness
+deadline. The installer, the runtime receipt and the provider-VM runtime probe
+now include that file. Changed: `provision-claude-code-box.sh`,
+`deepseek-harness/install-guest.py`, `hivra-runtime-receipt.py`, plus the
+documents, the version and the provider worker's release labels. This source release does not deploy,
 install, enable or start anything on a host or computer.
 
 Release `2026.11.17.5` builds on `2026.11.17.4` and hardens `hivra-tg-apply`

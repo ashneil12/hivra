@@ -102,11 +102,16 @@ const gatewayTargets = new Map<string, string>([
   ...["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js"].map(name => [`hivra-chat/${name}`, name] as const),
   ...["native-broker.cjs", "gateway-policy.cjs", "runtime-process.cjs"].map(name => [`deepseek-harness/${name}`, `deepseek-harness/${name}`] as const),
 ]);
+const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6"] as const;
 function releaseRows(release: typeof currentRelease) {
   const rows = release.files.filter(file => closure.has(file.path)).map(file => [file.path, file.sha256, file.bytes,
     file.path.endsWith(".sh") ? 0o700 : 0o600] as const).sort((a, b) => a[0].localeCompare(b[0]));
-  const gatewayRows = release.files.filter(file => gatewayTargets.has(file.path))
-    .map(file => [gatewayTargets.get(file.path)!, file.sha256, file.bytes, 0o644] as const)
+  // server.js has required import-state.cjs at start since 2026.11.15.2, but the
+  // DeepSeek gateway only installs it from 2026.11.17.6 (older gateways never started).
+  const targets = (DEEPSEEK_IMPORT_STATE_VERSIONS as readonly string[]).includes(release.version)
+    ? new Map([...gatewayTargets, ["hivra-chat/import-state.cjs", "import-state.cjs"]]) : gatewayTargets;
+  const gatewayRows = release.files.filter(file => targets.has(file.path))
+    .map(file => [targets.get(file.path)!, file.sha256, file.bytes, 0o644] as const)
     .sort((a, b) => a[0].localeCompare(b[0]));
   return { rows, gatewayRows };
 }

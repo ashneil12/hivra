@@ -584,6 +584,9 @@ update them yet.
   model defaults, so a fresh box with a managed model key also gets Agent
   Zero's Default preset (`usr/plugins/_model_config/presets.yaml`) set to the
   same model and gateway. An existing presets file is never touched.
+  The same release fixes DeepSeek Harness launches: its gateway folder now
+  gets `import-state.cjs`, which `server.js` has required at start since
+  `2026.11.15.2`.
 
 - **OpenClaw and Aeon launch on their newest releases (`2026.11.17.4`).**
   The box gateway drops forwarded-client headers on `/openclaw`, which

@@ -1249,7 +1249,11 @@ it("seeds current Agent Zero's model preset in 2026.11.17.6, keeping 2026.11.17.
   expect(tgApplyHardeningRelease.files.map(file => file.path)).toEqual(paths);
   const changed = agentZeroPresetRelease.files.filter(file => file.sha256 !== tgApplyHardeningRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
-  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "provision-claude-code-box.sh"]);
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "deepseek-harness/install-guest.py", "hivra-provider-worker.py", "hivra-runtime-receipt.py", "provision-claude-code-box.sh"]);
+  // The DeepSeek gateway gets every module server.js requires at start.
+  const server = readFileSync("provisioner/hivra-chat/server.js", "utf8");
+  const guest = readFileSync("provisioner/deepseek-harness/install-guest.py", "utf8");
+  for (const [, name] of server.matchAll(/^const [^\n]*= require\("\.\/([^"/]+)"\);$/gm)) expect(guest).toContain(`"${name}"`);
   const script = readFileSync("provisioner/provision-claude-code-box.sh", "utf8");
   // Written only on a fresh box with a managed key, never over the owner's presets.
   expect(script).toContain('A0_PRESETS="${A0_ROOT}/usr/plugins/_model_config/presets.yaml"');
