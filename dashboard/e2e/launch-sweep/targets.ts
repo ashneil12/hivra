@@ -39,7 +39,13 @@ export const SWEEP_TARGETS: readonly SweepTarget[] = [
   { profileId: 'codex', tile: 'Codex', kind: 'agent', proof: 'hivra-chat' },
   { profileId: 'openclaw', tile: 'OpenClaw', kind: 'agent', proof: 'agent-ui-chat' },
   { profileId: 'agent-zero', tile: 'Agent Zero', kind: 'agent', proof: 'agent-ui-chat' },
-  { profileId: 'openbot', tile: 'OpenBot', kind: 'agent', proof: 'agent-ui-chat' },
+  {
+    profileId: 'openbot',
+    tile: 'OpenBot',
+    kind: 'agent',
+    proof: 'agent-ui-chat',
+    knownBroken: 'By design OpenBot waits for the owner\'s own CopilotKit Intelligence key before it can chat, so a fresh account stops at its setup screen.',
+  },
   { profileId: 'nuphos', tile: 'Nuphos', kind: 'agent', proof: 'agent-ui-chat' },
   { profileId: 'deepseek-harness', tile: 'DeepSeek Harness', kind: 'agent', proof: 'agent-ui-chat' },
   {
