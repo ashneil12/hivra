@@ -55,6 +55,36 @@ are now in `upstreams.json` as `inspiration`, so the weekly check watches them.
 | muster, Muxflow (MIT) | Watched | Phone alerts when an agent needs you and pasting screenshots into remote sessions. Hivra's Needs-you inbox covers the first; the second is a chat attachment idea. |
 | safeagents (Apache-2.0) | Watched | A tool-call checking proxy owners could install themselves. Not wired in. |
 
+## Check of 2026-11-17
+
+Covers 12 to 17 November. No licence changes: every repository checked still
+carries the licence recorded in `upstreams.json`. (huntaway's history was
+rewritten for its 1.0.0 release; its licence file is new in git but still MIT.)
+
+| Repository | Hivra uses | What moved | Decision |
+| --- | --- | --- | --- |
+| hardbeat920/monocode | ported chat UI | nothing | MonoCode Hub fork is already level with upstream main. |
+| anthropics/claude-code | 2.1.292 | 2.1.326 | Take with the next provisioner release (now 2.1.326). Adds Code Mode with agent teams and clearer startup warnings; the rest are fixes, many around sign-in, settings and MCP. No breaking changes. |
+| openai/codex | 0.149.1 | 0.169.0 | Still needs a live test first. `codex exec` now keeps project config and MCP servers off in untrusted folders even with `--sandbox workspace-write`; pass `--trust` to save trust. Check any Hivra use of `codex exec` before a bump. |
+| openclaw/openclaw | 2026.6.10 | 2026.11.4 | Unchanged decision (live test first). A newer CLI now refuses to migrate a database an older gateway still uses, and `FS_SAFE_PYTHON_MODE` must be renamed to `FS_SAFE_NATIVE_MODE` before updating. |
+| NousResearch/hermes-agent | latest (installer) | v0.23.2 | Nothing to do: owners get it with `hermes update`. A roll-up of about 2,000 merged PRs; full notes come with v0.24.0. Re-test `hermes config set model.default` on a computer that has updated. |
+| agent0ai/agent-zero | v2.2 | v2.15 (no new release) | Unchanged decision (live test first). |
+| CopilotKit/openbot | latest image | v1.0.3 | Keep `latest`; v1.0.3 is the release to pin if we pin. A skin rename and an Anthropic key fix. |
+| nuphos/nuphos | latest image | runtime 0.1.62 | Fine as is. Restores a lost agent session instead of failing the prompt; rollback is safe. |
+| aaronjmars/aeon | 8b8d719 | docs and skill-scan hardening | Leave (Ash no longer runs Aeon; customers still can). |
+| deepseek-ai/deepseek-harness | 0.1.2-alpha.2 | 0.2.2-rc.3 | Leave. Still no stable 0.2. |
+| block/buzz, block/buzz-app | desktop 0.5.20 | buzz-app 1.0.4 with search, ownership transfer and plugin sharing | Leave; the move to buzz-app is still open. |
+| hyprwm/aquamarine | 0.14.0 + Hivra patch | renderer fence and DRM format fixes on main | Keep the patch; the rebase onto 0.16.0 is still waiting on a cursor test. |
+| omacom/omarchy, omarchy-iso | latest | hardware support and translations | Nothing for Hivra computers. |
+| selkies-project/selkies | image digest | the desktop now starts in the user's home; CI fixes | Leave the pinned digest. |
+| LizardByte/Sunshine | latest | pre-release v2026.1116.150042 (single-page web UI, pairing fix) | Leave until a stable release. The repository now redirects to SunshineStream/Sunshine; same GPL-3.0 licence. |
+| BankrBot/skills | copied skill text | weekly `bankr` sync, one new trading skill | Hold. Still no root licence. |
+| Inspiration projects | designs only | various (ACP schema 1.32.0, Rakazo and Rowboat busy) | Nothing to merge. |
+
+Nothing was taken into this repository this week: the only safe changes are
+agent pins under `dashboard/provisioner/`, which wait for the next provisioner
+release.
+
 ## Check of 2026-11-12 (second run, evening)
 
 This run came the same day as the first full check, so it covers about half a
