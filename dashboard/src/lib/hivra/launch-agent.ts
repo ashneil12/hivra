@@ -25,6 +25,7 @@ import { getOrCreatePoolId } from "@/lib/pools/pool-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { recommendedResourceEnvelope, validateResourceEnvelope } from "@/lib/launch/resource-envelope";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
+import { selectAvoidingCriticalHosts } from "@/lib/hivra/capacity/placement";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
@@ -1319,7 +1320,9 @@ export async function launchHivraAgentForUser(
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
       const forceTargetId = explicitClaudeHost ?? stickyHost;
-      const placement = await selectAvailableProxmoxProvisionTarget({
+      // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
+      // is critical is tried only when no other host can take the launch.
+      const placement = await selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
         supabase: supabaseAdmin,
         env: process.env,
         hostConfig: null,
@@ -1328,6 +1331,7 @@ export async function launchHivraAgentForUser(
         neededRamMb: ram * 1024,
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
+        ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
         // so their host must carry model-settings support as well as the
@@ -1343,7 +1347,7 @@ export async function launchHivraAgentForUser(
             ? { requireModelSettings: true }
             : {}),
         }),
-      });
+      }), { forced: Boolean(forceTargetId) });
       if (!placement.ok) {
         // error, not warn: a blocked launch is customer-visible and only error
         // level reaches ops_events. The reason (which host, which prerequisite)
