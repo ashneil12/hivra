@@ -38,6 +38,16 @@ class MemoryStore implements BridgeStore {
   waiting = new Set<string>();
   ai = new Map<string, { answered: number; refused: number; failed: number }>();
   refused = new Map<string, Date>();
+  erasures = new Map<string, ArchiveCopy>();
+  async pendingErasures() {
+    return [...this.erasures.values()];
+  }
+  async addPendingErasure(copy: ArchiveCopy) {
+    this.erasures.set(copy.location, copy);
+  }
+  async removePendingErasure(location: string) {
+    this.erasures.delete(location);
+  }
   async aiRefusedUntil(serverId: string) {
     return this.refused.get(serverId) ?? null;
   }
@@ -92,15 +102,26 @@ class MemoryStore implements BridgeStore {
 }
 
 /** The adapter on the pool servers: records calls, and the runner's hello when it enrolls. */
+const capacity = () => Object.assign(new Error("no room"), { code: "capacity" });
+
 class FakeHost implements SandboxHost {
   calls: string[] = [];
   failPack = false;
+  /** Operations that throw: "capacity" (no room now) or "fault". */
+  fail: Record<string, "capacity" | "fault"> = {};
+  private check(op: string) {
+    const f = this.fail[op];
+    if (f === "capacity") throw capacity();
+    if (f === "fault") throw new Error(`${op} failed`);
+  }
   constructor(private readonly app: FakeOperatorApp) {}
   async create(serverId: string, sb: SandboxRef) {
     this.calls.push(`create ${serverId} ${sb.sandboxId}`);
+    this.check("create");
   }
   async start(serverId: string, sb: SandboxRef) {
     this.calls.push(`start ${serverId} ${sb.sandboxId}`);
+    this.check("start");
   }
   async stop(serverId: string, sb: SandboxRef) {
     this.calls.push(`stop ${serverId} ${sb.sandboxId}`);
@@ -116,17 +137,21 @@ class FakeHost implements SandboxHost {
   }
   async release(serverId: string, sb: SandboxRef, sha: string) {
     this.calls.push(`release ${serverId} ${sha.slice(0, 4)}`);
+    this.check("release");
   }
   async restore(serverId: string, sb: SandboxRef, _spec: unknown, sha: string) {
     this.calls.push(`restore ${serverId} ${sha.slice(0, 4)}`);
+    this.check("restore");
   }
   async remove(serverId: string) {
     this.calls.push(`remove ${serverId}`);
+    this.check("remove");
   }
 }
 
 class FakeArchives {
   calls: string[] = [];
+  failErase = false;
   async upload(_s: string, sb: SandboxRef, sha256: string): Promise<ArchiveCopy> {
     this.calls.push("upload");
     return { location: `store/${sb.sandboxId}/${this.calls.length}`, sha256, bytes: 1000 };
@@ -136,6 +161,7 @@ class FakeArchives {
   }
   async erase(copy: ArchiveCopy) {
     this.calls.push(`erase ${copy.location}`);
+    if (this.failErase) throw new Error("box unreachable");
   }
 }
 
@@ -548,6 +574,140 @@ describe("free sandbox bridge", () => {
     t.app.addWorkspace("o2", "o2@example.com");
     const sum = await t.bridge.tick();
     expect([sum.placed, sum.waitlisted]).toEqual([1, 1]);
+  });
+
+  it("waits for room, never flags, when the server refuses a start for lack of room", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    t.advance(11 * MIN);
+    await t.bridge.tick(); // stopped
+    t.host.fail.start = "capacity";
+    t.app.event("machine.wake_wanted", "org-1", { why: "run" });
+    const sum = await t.bridge.tick();
+    expect(sum.queued).toBe(1);
+    expect((await t.store.placement("org-1"))?.state).toBe("stopped");
+    delete t.host.fail.start;
+    t.app.org("org-1").machine!.busy = true;
+    expect((await t.bridge.tick()).woken).toBe(1);
+  });
+
+  it("waitlists a new workspace when the server's own admission refuses it, leaving nothing on the server", async () => {
+    const t = setup();
+    t.host.fail.create = "capacity";
+    t.app.addWorkspace("org-1", "a@example.com");
+    const sum = await t.bridge.tick();
+    expect([sum.waitlisted, sum.failed]).toEqual([1, 0]);
+    expect(t.host.calls.some((c) => c.startsWith("remove pool-1"))).toBe(true);
+    expect(await t.store.placement("org-1")).toBeNull();
+    expect(t.app.org("org-1").provisioning).toMatchObject({ state: "waiting", reason: "capacity" });
+  });
+
+  it("keeps a record on its server when a failed placement can't be taken down", async () => {
+    const t = setup();
+    t.host.fail.create = "fault";
+    t.host.fail.remove = "fault";
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    expect(await t.store.placement("org-1")).toMatchObject({ state: "flagged", serverId: "pool-1" });
+  });
+
+  it("records the verified copy before releasing, and a failed release keeps it and is flagged", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    t.advance(25 * HOUR);
+    await t.bridge.tick(); // stop
+    t.host.fail.release = "fault";
+    await t.bridge.tick(); // pack, release fails
+    const p = (await t.store.placement("org-1"))!;
+    expect(p).toMatchObject({ state: "flagged", serverId: "pool-1" });
+    expect(p.archive?.sha256).toBe("a".repeat(64));
+  });
+
+  it("finishes a pack a pass left half-done", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    const p = (await t.store.placement("org-1"))!;
+    await t.store.save({ ...p, state: "packing", archive: { location: "store/x", sha256: "a".repeat(64), bytes: 1 } });
+    await t.bridge.tick();
+    expect(await t.store.placement("org-1")).toMatchObject({ state: "packed", serverId: null });
+    expect(t.host.calls).toContain("release pool-1 aaaa");
+  });
+
+  it("puts back on its server a restored sandbox the server can't start yet, and undoes a failed restore", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    t.advance(25 * HOUR);
+    await t.bridge.tick();
+    await t.bridge.tick(); // packed
+    t.host.fail.start = "capacity";
+    t.app.event("machine.wake_wanted", "org-1", { why: "run" });
+    t.app.org("org-1").machine!.busy = true; // what wants it keeps it busy, so it is not packed again meanwhile
+    await t.bridge.tick();
+    expect(await t.store.placement("org-1")).toMatchObject({ state: "stopped", serverId: "pool-1" });
+    expect(await t.store.wakes()).toHaveLength(1);
+
+    const u = setup();
+    u.app.addWorkspace("org-1", "a@example.com");
+    await u.bridge.tick();
+    u.advance(25 * HOUR);
+    await u.bridge.tick();
+    await u.bridge.tick(); // packed
+    u.host.fail.restore = "fault";
+    u.app.event("machine.wake_wanted", "org-1", { why: "run" });
+    await u.bridge.tick();
+    expect(u.host.calls.some((c) => c.startsWith("remove pool-1"))).toBe(true);
+    expect(await u.store.placement("org-1")).toMatchObject({ state: "packed", serverId: null });
+  });
+
+  it("keeps a replaced copy for erasure until it is gone", async () => {
+    const t = setup();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    t.advance(25 * HOUR);
+    await t.bridge.tick();
+    await t.bridge.tick(); // packed: copy 1
+    const first = (await t.store.placement("org-1"))!.archive!;
+    t.app.org("org-1").machine!.busy = true;
+    t.app.event("machine.wake_wanted", "org-1", { why: "run" });
+    await t.bridge.tick(); // awake again
+    t.app.org("org-1").machine!.busy = false;
+    t.archives.failErase = true;
+    t.advance(25 * HOUR);
+    await t.bridge.tick();
+    await t.bridge.tick(); // packed: copy 2, copy 1 pending
+    expect((await t.store.pendingErasures()).map((c) => c.location)).toEqual([first.location]);
+    t.archives.failErase = false;
+    await t.bridge.tick();
+    expect(await t.store.pendingErasures()).toEqual([]);
+  });
+
+  it("clears the waiting list for a deleted workspace that never got a place, and retries an erasure that failed", async () => {
+    const t = setup();
+    t.store.pool = [];
+    t.app.addWorkspace("org-w", "w@example.com");
+    await t.bridge.tick();
+    expect(await t.store.waitlist()).toEqual(["org-w"]);
+    t.app.event("organization.deleted", "org-w");
+    t.app.orgs.delete("org-w");
+    await t.bridge.tick();
+    expect(await t.store.waitlist()).toEqual([]);
+
+    const u = setup();
+    u.app.addWorkspace("org-1", "a@example.com");
+    await u.bridge.tick();
+    u.host.fail.remove = "fault";
+    u.app.event("organization.deleted", "org-1");
+    u.app.orgs.delete("org-1");
+    const failed = await u.bridge.tick();
+    expect(failed.failed).toBeGreaterThan(0);
+    expect((await u.store.placement("org-1"))?.state).toBe("erasing");
+    delete u.host.fail.remove;
+    await u.bridge.tick();
+    expect(await u.store.placement("org-1")).toBeNull();
   });
 
   it("reads the person-only clock from the newest member who is still a member", () => {

@@ -24,6 +24,7 @@ import type { SandboxTier } from "./plan";
 import { decideFreeSandbox } from "./policy";
 import type {
   AccountDirectory,
+  ArchiveCopy,
   ArchiveStore,
   BridgeStore,
   Placement,
@@ -115,6 +116,9 @@ const statusOf = (err: unknown) => {
   return typeof status === "number" ? status : null;
 };
 
+/** A host refusal that means "no room on this server now" (the adapter's admission), as opposed to a fault. */
+const isCapacity = (err: unknown) => (err as { code?: unknown } | null)?.code === "capacity";
+
 const FAILED_ANOTHER_WAY = new Set(["opencode_failed", "not_logged_in"]);
 
 /**
@@ -131,7 +135,7 @@ export function refusedUntil(at: Date, resetsAt: unknown): Date {
 /** The UTC day of an ISO time. */
 const dayOf = (at: string) => new Date(Number.isFinite(Date.parse(at)) ? at : Date.now()).toISOString().slice(0, 10);
 
-const ON_SERVER = new Set(["placing", "awake", "stopped", "packing"]);
+const ON_SERVER = new Set(["placing", "awake", "stopped", "packing", "restoring", "flagged", "erasing"]);
 const AWAKE = new Set(["placing", "awake"]);
 
 export class FreeSandboxBridge {
@@ -165,6 +169,7 @@ export class FreeSandboxBridge {
       aiFailed: 0,
     };
     await this.readEvents(sum);
+    await this.drainErasures();
     await this.drainWakes(sum);
     await this.placeWaiting(sum);
     await this.sweep(sum);
@@ -216,12 +221,18 @@ export class FreeSandboxBridge {
       const { events, next } = await this.deps.app.listEvents(cursor ?? undefined);
       for (const event of events) {
         if (!event.orgId) continue;
-        if (event.type === "machine.wake_wanted") {
-          await this.wake(event.orgId, new Date(event.at), sum);
-        } else if (event.type === "run.finished" || event.type === "machine.ai_limit") {
-          await this.countAi(event, sum);
-        } else if (event.type === "organization.deleted") {
-          if (await this.erase(event.orgId)) sum.erased++;
+        try {
+          if (event.type === "machine.wake_wanted") {
+            await this.wake(event.orgId, new Date(event.at), sum);
+          } else if (event.type === "run.finished" || event.type === "machine.ai_limit") {
+            await this.countAi(event, sum);
+          } else if (event.type === "organization.deleted") {
+            if (await this.erase(event.orgId)) sum.erased++;
+          }
+        } catch (err) {
+          // One event's failure never holds the feed: an erasure that could not finish is retried from its record.
+          this.log("free_sandbox.event_failed", { type: event.type, orgId: event.orgId, error: errorName(err) });
+          sum.failed++;
         }
       }
       if (next !== cursor) await this.deps.store.setCursor(next);
@@ -341,6 +352,7 @@ export class FreeSandboxBridge {
       try {
         await this.deps.host.start(server.id, placement.sandbox, spec);
       } catch (err) {
+        if (isCapacity(err)) return false; // the server can't take it now: it waits in line, still stopped
         await this.flag(placement, "start", err, sum);
         return true;
       }
@@ -359,19 +371,40 @@ export class FreeSandboxBridge {
     try {
       await this.deps.archives.fetch(server.id, placement.sandbox, placement.archive);
       await this.deps.host.restore(server.id, placement.sandbox, spec, placement.archive.sha256);
-      await this.deps.host.start(server.id, placement.sandbox, spec);
     } catch (err) {
-      // The stored copy is untouched: it stays packed and is tried again on the next want.
-      await this.save(placement, { state: "packed", serverId: null });
-      if (placement.machineId) await this.deps.app.setStorage(placement.orgId, placement.machineId, "stored");
+      // The stored copy is untouched. Whatever the attempt left on the server goes before it counts as packed again.
       this.problem("restore", placement, err);
       sum.failed++;
+      await this.undoRestore(placement, server.id);
+      return true;
+    }
+    try {
+      await this.deps.host.start(server.id, placement.sandbox, spec);
+    } catch (err) {
+      // Back on the server, whole and stopped: from here it is any stopped sandbox.
+      await this.save(placement, { state: "stopped" });
+      if (placement.machineId) await this.deps.app.setStorage(placement.orgId, placement.machineId, null);
+      if (isCapacity(err)) return false;
+      await this.flag(placement, "start", err, sum);
       return true;
     }
     await this.save(placement, { state: "awake", serverId: server.id });
     if (placement.machineId) await this.deps.app.setStorage(placement.orgId, placement.machineId, null);
     sum.woken++;
     return true;
+  }
+
+  /** A failed restore: its sandbox and fetched copy off the server, then packed again; flagged if they won't go. */
+  private async undoRestore(placement: Placement, serverId: string) {
+    try {
+      await this.deps.host.remove(serverId, placement.sandbox);
+    } catch (err) {
+      this.problem("restore_cleanup", placement, err);
+      await this.save(placement, { state: "flagged", serverId, problem: "restore cleanup failed" });
+      return;
+    }
+    await this.save(placement, { state: "packed", serverId: null });
+    if (placement.machineId) await this.deps.app.setStorage(placement.orgId, placement.machineId, "stored");
   }
 
   // ---- placing ------------------------------------------------------------------------------------------------
@@ -473,11 +506,29 @@ export class FreeSandboxBridge {
         this.codes.delete(request.orgId); // single use, tried or not
       }
     } catch (err) {
-      this.problem("place", placement, err);
-      sum.failed++;
-      // Nothing of the person's is in a sandbox that never connected: take it down so the next pass starts clean.
-      await this.deps.host.remove(server.id, placement.sandbox).catch(() => {});
+      const full = isCapacity(err);
+      if (!full) {
+        this.problem("place", placement, err);
+        sum.failed++;
+      }
+      // Nothing of the person's is in a sandbox that never connected: take it down so the next pass starts clean. If
+      // it won't go, its record stays (flagged, on its server) so nothing is left on a server that no record names.
+      try {
+        await this.deps.host.remove(server.id, placement.sandbox);
+      } catch (removeErr) {
+        this.problem("place_cleanup", placement, removeErr);
+        await this.save(placement, { state: "flagged", problem: "place cleanup failed" });
+        await app.reportProvisioning(request.orgId, { state: "problem" }).catch(() => false);
+        return;
+      }
       await store.remove(request.orgId);
+      if (full) {
+        // The server's own admission refused it: the workspace waits for room like any other.
+        await app.reportProvisioning(request.orgId, { state: "waiting", reason: "capacity" }).catch(() => false);
+        await store.setWaitlisted(request.orgId, true);
+        sum.waitlisted++;
+        return;
+      }
       await app.reportProvisioning(request.orgId, { state: "problem" }).catch(() => false);
       return;
     }
@@ -489,6 +540,14 @@ export class FreeSandboxBridge {
 
   private async sweep(sum: TickSummary) {
     for (const placement of await this.deps.store.placements()) {
+      if (placement.state === "erasing") {
+        await this.erase(placement.orgId).catch((err) => this.problem("erase", placement, err));
+        continue;
+      }
+      if (placement.state === "packing" && placement.archive && placement.serverId) {
+        await this.finishPack(placement, placement.archive, sum).catch((err) => this.problem("pack", placement, err));
+        continue;
+      }
       if (placement.state !== "awake" && placement.state !== "stopped") continue;
       try {
         await this.sweepOne(placement, sum);
@@ -536,47 +595,84 @@ export class FreeSandboxBridge {
     return true;
   }
 
-  /** Into storage: packed, copied off the server and read back there, and only then removed from the server. */
+  /**
+   * Into storage: packed, copied off the server and read back there, the copy recorded, and only then removed from the
+   * server. A pass that stops after the copy is recorded finishes the release on a later pass (`finishPack`).
+   */
   private async pack(placement: Placement, sum: TickSummary): Promise<boolean> {
     const serverId = placement.serverId;
     if (!serverId) return false;
     if (placement.state === "awake" && !(await this.stop(placement, sum))) return false;
     const previous = placement.archive;
     await this.save(placement, { state: "packing" });
-    let copy: Placement["archive"];
+    let copy: ArchiveCopy;
     try {
       const packed = await this.deps.host.pack(serverId, placement.sandbox);
       copy = await this.deps.archives.upload(serverId, placement.sandbox, packed.sha256);
       if (copy.sha256 !== packed.sha256) throw new Error("The stored copy does not match the packed archive");
-      await this.deps.host.release(serverId, placement.sandbox, packed.sha256);
     } catch (err) {
-      // Still whole on the server, stopped: the next pass tries again.
+      // Nothing left the server: still whole there, stopped, and the next pass tries again.
       await this.save(placement, { state: "stopped" });
       this.problem("pack", placement, err);
       sum.failed++;
       return false;
     }
-    await this.save(placement, {
-      state: "packed",
-      serverId: null,
-      archive: copy,
-    });
-    if (previous && previous.location !== copy.location) await this.deps.archives.erase(previous).catch(() => {});
+    // The new copy is recorded before anything is removed, and the one it replaces is kept for erasure.
+    if (previous && previous.location !== copy.location) await this.deps.store.addPendingErasure(previous);
+    await this.save(placement, { state: "packing", archive: copy });
+    return this.finishPack(placement, copy, sum);
+  }
+
+  /** Releases a packed sandbox from its server now that its verified copy is recorded, then marks it packed. */
+  private async finishPack(placement: Placement, copy: ArchiveCopy, sum: TickSummary): Promise<boolean> {
+    const serverId = placement.serverId;
+    if (!serverId) return false;
+    try {
+      await this.deps.host.release(serverId, placement.sandbox, copy.sha256);
+    } catch (err) {
+      // The copy is safe in storage; what is left on the server needs a person to look.
+      await this.flag(placement, "release", err, sum);
+      return false;
+    }
+    await this.save(placement, { state: "packed", serverId: null });
     if (placement.machineId) await this.deps.app.setStorage(placement.orgId, placement.machineId, "stored");
     return true;
   }
 
+  /** Copies a newer verified one replaced, erased once each; one that won't go is tried again next pass. */
+  private async drainErasures() {
+    for (const copy of await this.deps.store.pendingErasures()) {
+      try {
+        await this.deps.archives.erase(copy);
+        await this.deps.store.removePendingErasure(copy.location);
+      } catch (err) {
+        this.log("free_sandbox.erase_failed", { error: errorName(err) });
+      }
+    }
+  }
+
   // ---- erasure --------------------------------------------------------------------------------------------------
 
-  /** The workspace was deleted: its computer, its sandbox and every stored copy go. Nothing else ever deletes. */
+  /**
+   * The workspace was deleted: its computer, its sandbox and every stored copy go. Nothing else ever deletes. The record
+   * is marked `erasing` first, so a step that fails is tried again on later passes until everything is gone.
+   */
   private async erase(orgId: string): Promise<boolean> {
-    const placement = await this.deps.store.placement(orgId);
-    if (!placement) return false;
-    if (placement.machineId) await this.deps.app.removeMachine(orgId, placement.machineId);
-    if (placement.serverId) await this.deps.host.remove(placement.serverId, placement.sandbox);
-    if (placement.archive) await this.deps.archives.erase(placement.archive);
     await this.deps.store.removeWake(orgId);
     await this.deps.store.setWaitlisted(orgId, false);
+    this.codes.delete(orgId);
+    const placement = await this.deps.store.placement(orgId);
+    if (!placement) return false;
+    if (placement.state !== "erasing") await this.save(placement, { state: "erasing" });
+    if (placement.machineId) await this.deps.app.removeMachine(orgId, placement.machineId);
+    if (placement.serverId) {
+      await this.deps.host.remove(placement.serverId, placement.sandbox);
+      await this.save(placement, { serverId: null });
+    }
+    if (placement.archive) {
+      await this.deps.archives.erase(placement.archive);
+      await this.save(placement, { archive: null });
+    }
     await this.deps.store.remove(orgId);
     return true;
   }

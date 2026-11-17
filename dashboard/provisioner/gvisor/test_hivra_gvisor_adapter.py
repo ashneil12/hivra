@@ -513,6 +513,26 @@ class FreeSandboxClassTests(unittest.TestCase):
         self.assertIn(("pull", "--platform", "linux/amd64", self.FREE), [c[:4] for c in fake.calls])
 
 
+class DeleteLeavesNoArchiveTests(unittest.TestCase):
+    def test_delete_removes_a_local_archive_left_by_a_failed_restore(self):
+        req = request("delete")
+        with tempfile.TemporaryDirectory() as d:
+            archive_dir = Path(d)
+            with mock.patch.object(adapter, "ARCHIVE_DIR", archive_dir):
+                archive, manifest = adapter.archive_paths(req)
+                archive.write_bytes(b"x")
+                manifest.write_text("{}")
+                fake = FakeDocker(request("update") | {"hostMemoryReserveMb": 512})
+                fake.containers.clear()
+                fake.volumes.clear()
+                fake.networks.clear()
+                with mock.patch.object(adapter, "docker", fake), mock.patch.object(adapter, "remove_quota"), \
+                        redirect_stdout(io.StringIO()):
+                    adapter.delete(req)
+                self.assertFalse(archive.exists())
+                self.assertFalse(manifest.exists())
+
+
 class CpuOvercommitTests(unittest.TestCase):
     def admit(self, cpu, overcommit):
         with mock.patch.object(adapter, "host_capacity", return_value=(4, 16384, 16000, 4.0, 1024)), \

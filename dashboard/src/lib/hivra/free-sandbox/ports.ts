@@ -30,7 +30,11 @@ export interface SandboxSpec {
   cpuOvercommit: number;
 }
 
-/** The gVisor adapter's operations on one pool server (`hivra-gvisor-adapter.py`, `sandboxClass: "free"`). */
+/**
+ * The gVisor adapter's operations on one pool server (`hivra-gvisor-adapter.py`, `sandboxClass: "free"`). A refusal
+ * because the server has no room now throws an error whose `code` is `"capacity"`; the bridge then waits for room
+ * instead of flagging the sandbox.
+ */
 export interface SandboxHost {
   create(serverId: string, sandbox: SandboxRef, spec: SandboxSpec): Promise<void>;
   start(serverId: string, sandbox: SandboxRef, spec: SandboxSpec): Promise<void>;
@@ -68,7 +72,8 @@ export interface AccountDirectory {
   hivraUserIdForEmail(email: string): Promise<string | null>;
 }
 
-export type PlacementState = "placing" | "awake" | "stopped" | "packing" | "packed" | "restoring" | "flagged";
+export type PlacementState =
+  "placing" | "awake" | "stopped" | "packing" | "packed" | "restoring" | "flagged" | "erasing";
 
 /** One free workspace's sandbox, as the bridge records it. Nothing about the person beyond the workspace id. */
 export interface Placement {
@@ -107,6 +112,10 @@ export interface BridgeStore {
   /** Until when the server's free AI refuses its address; null: not refused. */
   aiRefusedUntil(serverId: string): Promise<Date | null>;
   setAiRefusedUntil(serverId: string, until: Date): Promise<void>;
+  /** Stored copies a newer verified copy replaced, waiting to be erased. */
+  pendingErasures(): Promise<ArchiveCopy[]>;
+  addPendingErasure(copy: ArchiveCopy): Promise<void>;
+  removePendingErasure(location: string): Promise<void>;
   /** Workspaces told to wait for a place. */
   waitlist(): Promise<string[]>;
   setWaitlisted(orgId: string, waiting: boolean): Promise<void>;

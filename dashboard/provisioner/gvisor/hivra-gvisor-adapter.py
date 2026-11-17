@@ -1011,6 +1011,12 @@ def delete(request):
     if volume_exists:
         docker("volume", "rm", volume)
     remove_quota(request)
+    # A packed or half-restored sandbox may have its archive here (a fetch for a restore that failed): it goes too.
+    for path in archive_paths(request):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
     if (inspect_container(name, request, required=False)
             or inspect_helper(request, required=False)
             or inspect_resource("network", network, request)

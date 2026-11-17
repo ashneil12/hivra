@@ -27,15 +27,16 @@ create table if not exists public.free_sandbox_placements (
   owner_hash      text not null check (owner_hash ~ '^[0-9a-f]{64}$'),
   machine_id      uuid,
   server_id       text references public.free_sandbox_pool_servers(id),
-  state           text not null check (state in ('placing', 'awake', 'stopped', 'packing', 'packed', 'restoring', 'flagged')),
+  state           text not null check (state in ('placing', 'awake', 'stopped', 'packing', 'packed', 'restoring', 'flagged', 'erasing')),
   placed_at       timestamptz not null,
   state_at        timestamptz not null,
   archive_location text,
   archive_sha256  text check (archive_sha256 is null or archive_sha256 ~ '^[0-9a-f]{64}$'),
   archive_bytes   bigint check (archive_bytes is null or archive_bytes >= 0),
   problem         text check (problem is null or length(problem) <= 200),
+  -- Packed: on no server. Erasing: on its server until that step is done, then on none. Every other state: on one.
   constraint free_sandbox_placements_server_by_state check (
-    (state = 'packed') = (server_id is null)
+    state = 'erasing' or (state = 'packed') = (server_id is null)
   ),
   constraint free_sandbox_placements_archive_whole check (
     (archive_location is null) = (archive_sha256 is null) and (archive_sha256 is null) = (archive_bytes is null)
@@ -68,6 +69,14 @@ create table if not exists public.free_sandbox_ai_days (
   primary key (server_id, day)
 );
 
+-- Stored copies a newer verified copy replaced, erased by the next passes (never lost track of).
+create table if not exists public.free_sandbox_pending_erasures (
+  location  text primary key,
+  sha256    text not null check (sha256 ~ '^[0-9a-f]{64}$'),
+  bytes     bigint not null check (bytes >= 0),
+  added_at  timestamptz not null default now()
+);
+
 -- The bridge's single row of state: the operator events feed's cursor.
 create table if not exists public.free_sandbox_state (
   id            boolean primary key default true check (id),
@@ -80,7 +89,7 @@ declare t text;
 begin
   foreach t in array array[
     'free_sandbox_pool_servers', 'free_sandbox_placements', 'free_sandbox_wakes',
-    'free_sandbox_waitlist', 'free_sandbox_ai_days', 'free_sandbox_state'
+    'free_sandbox_waitlist', 'free_sandbox_ai_days', 'free_sandbox_state', 'free_sandbox_pending_erasures'
   ] loop
     execute format('alter table public.%I enable row level security', t);
     -- No policies on purpose: only the service role (which bypasses RLS) reads or writes.
