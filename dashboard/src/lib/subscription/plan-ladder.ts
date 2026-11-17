@@ -119,6 +119,12 @@ export const PlanLadderConfigSchema = z.object({
       cpuOvercommit: z.number().min(1).max(64).optional(),
       maxConcurrentTurns: z.number().int().min(0).max(10_000).optional(),
       dailyReplySecondsCap: z.number().int().min(0).max(86_400).optional(),
+      /** Free places a server offers now; the ceiling stays freePlacesPerServer. */
+      placesOpenPerServer: z.number().int().min(0).max(10_000).optional(),
+      /** Share (0 to 1) of free-AI replies refused today above which a server takes no new free people. */
+      refusedShareStop: z.number().min(0).max(1).optional(),
+      /** Replies a server needs in a day before its refused share counts. */
+      refusedShareMinReplies: z.number().int().min(0).max(100_000).optional(),
     })
     .optional(),
 });
