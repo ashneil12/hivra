@@ -918,7 +918,15 @@ wait_for_browser_ready '${envFile}' 9333
 });
 
 describe("per-runtime provisioner minimums", () => {
-  it.each(["aeon", "openclaw", "agent-zero"])("%s needs a release that ships its app updater", (runtime) => {
+  it("agent-zero needs the release that seeds /a0/usr/.env for current images", () => {
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.17.2", "agent-zero")).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.2", "agent-zero")).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.17.3", "agent-zero")).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.17.2" })?.supportedCatalogRuntimeIds)
+      .not.toContain("agent-zero");
+  });
+
+  it.each(["aeon", "openclaw"])("%s needs a release that ships its app updater", (runtime) => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(false);
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.24.4", runtime)).toBe(false);
     expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.2", runtime)).toBe(true);

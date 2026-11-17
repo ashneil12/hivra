@@ -1333,8 +1333,12 @@ for line in lines:
     else:
         out.append(line)
 out += [k + "=" + v for k, v in managed.items() if k not in seen]
-tmp = dst + ".hivra-tmp"
-fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+# Stage beside the root-owned source, never in the world-writable usr/ dir,
+# where another local account could pre-create the staging file.
+tmp = os.path.join(os.path.dirname(src), ".usr-env.hivra-tmp")
+if os.path.lexists(tmp):
+    os.unlink(tmp)
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
 with os.fdopen(fd, "w", encoding="utf-8") as f:
     f.write("\n".join(out) + "\n")
 os.replace(tmp, dst)
