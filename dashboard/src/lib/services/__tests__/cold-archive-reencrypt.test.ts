@@ -71,7 +71,7 @@ function fakeSupabase(rows: Row[], opts: { casError?: string; mutateBeforeCas?: 
     const filters: Record<string, unknown> = {};
     let op = "select";
     let payload: unknown;
-    let after: string | null = null;
+    const after: string | null = null;
     let limit = 1000;
     const matches = (r: Row) =>
       Object.entries(filters).every(([k, v]) => {
