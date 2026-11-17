@@ -87,6 +87,14 @@ export const article: BlogArticle = {
         "Hivra gives each agent a private cloud computer of its own. When you launch Hermes on Hivra, Hivra starts the computer and runs Hermes's own installer on it, so you get the same Hermes the steps above would give you, with its own web app for chat. You update it the same way too, with `hermes update` or the update button in Hermes's app.",
         `There is no server, firewall or service file for you to look after. You pick a model provider with your own key or pay with Hivra credits, and the computer stays on so the gateway and scheduled jobs keep running while you're away. Plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}.`,
         "Two honest limits. Hermes on Hivra runs on Hivra Cloud only, so you can't point Hivra at your own server for Hermes (you can for OpenClaw, Claude Code, Codex and Agent Zero). And Hivra is not affiliated with Nous Research: Hermes is Nous's open-source project, and Hivra hosts it.",
+      ],
+    },
+    {
+      heading: "Why pick Hivra over Nous Hermes Cloud",
+      paragraphs: [
+        "Nous Hermes Cloud is a good product from the people who make Hermes, and if Hermes is the only agent you will ever run, it is a sensible choice. Hivra is built for people who don't want to bet everything on one agent.",
+        "- **You aren't locked into Hermes.** Nous Hermes Cloud runs Hermes and nothing else. The same Hivra account launches [OpenClaw](/agents/openclaw), [Claude Code](/agents/claude-code), [Codex](/agents/codex) and [Agent Zero](/agents/agent-zero) too, each on a computer of its own, and more agents are being added. Try a new agent next to Hermes without a new account, a new server or a new bill to work out.\n- **It's still the official Hermes.** Hivra doesn't fork or repackage Hermes. It runs Nous's own installer and leaves updates to you, and Hermes's own import command brings an agent you already run elsewhere across with its memory and skills.\n- **A whole computer, not just an agent process.** Hermes gets a full Linux machine with a terminal, so it can install tools, run long jobs and keep files between sessions, and you can open that terminal yourself.\n- **A flat monthly price.** You know the bill before the month starts, and the price doesn't climb because the agent ran every day. Nous's per-second billing is the better deal if you only switch Hermes on now and then.\n- **Any model provider.** Bring your own key from the provider you already pay, or use Hivra credits, and change it later from the agent's settings.",
+        "Our [full side-by-side with Nous Hermes Cloud](/compare/vs-nous-hermes-cloud) goes through price, sizes and terms line by line.",
         "[Launch Hermes on Hivra](/agents/hermes) if you'd rather spend the evening on what the agent does than on the server it runs on.",
       ],
     },
@@ -125,7 +133,7 @@ export const article: BlogArticle = {
         "Pick a **VPS with the install script** if you like Linux and want the cheapest always-on setup with full control.",
         "Pick **Docker** if your server already runs other containers and you want upgrades to be a pull.",
         "Pick **Nous Hermes Cloud** if you're already on Nous Portal or only run the agent part of the time.",
-        "Pick **a Hivra computer** if you want Hermes running on its own computer today without becoming its sysadmin.",
+        "Pick **a Hivra computer** if you want Hermes running on its own computer today without becoming its sysadmin, and the option to run OpenClaw, Claude Code, Codex or Agent Zero beside it from the same account.",
         "Whichever you choose, the agent you get is the same open-source Hermes. The choice is only about who looks after the computer it lives on.",
       ],
     },

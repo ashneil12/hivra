@@ -71,7 +71,12 @@ Drop a target when:
 - metaTitle at most 55 characters, metaDescription 70 to 155, shortAnswer 40 to 60 words that stand alone.
 - 2,000 to 3,000 words of substance: a direct answer first, a comparison table, real steps or commands, honest
   caveats and when Hivra is not the right choice, 6 to 9 FAQs. No padding, no em-dashes, plain English.
-- Hivra appears in one honest section and the close. Use plan-facts constants for prices (price and size together).
+- Every guide makes a real case for Hivra (Ash, 2026-11-17: "always be promoting our setups"). Give Hivra its own
+  section that names concrete reasons to pick it for this reader, not just a price line. Against a single-agent rival
+  (such as Nous Hermes Cloud), lead with not being locked into one agent: one account launches the agents that have
+  pages under `/agents` (check `lib/hivra/agent-seo-catalog.ts`), each on a computer of its own. Never state agent
+  counts or agents that aren't launchable, and still say plainly when another option fits better.
+- Hivra appears in that section and the close. Use plan-facts constants for prices (price and size together).
   The claim scanners in `lib/blog/claim-rules.ts` list what may never be said.
 
 ## 5. Fact check with a second agent
