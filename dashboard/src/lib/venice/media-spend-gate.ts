@@ -54,6 +54,7 @@ import {
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { checkManagedVeniceAgentPrivateOnly, managedVenicePrivateOnlyResponse } from "./agent-private-only";
 import {
   VENICE_MULTIMODAL_PRICING_CATALOG_UPDATED_AT,
   applyVeniceMultimodalMarkup,
@@ -79,6 +80,8 @@ export interface ManagedVeniceMediaKey {
   id: string;
   userId: string;
   defaultWalletType?: ManagedVeniceWalletType | null;
+  /** The owner's "private models only" setting, from the verified key. */
+  privateModelsOnly?: boolean;
 }
 
 export interface ManagedVeniceMediaOperation {
@@ -154,6 +157,19 @@ export async function holdManagedVeniceMediaSpend(
     model: operation.model,
     referenceId,
   };
+
+  // "Private models only" (agent-private-only.ts): a key with the setting on
+  // may send media only to a model Venice marks private. Refused before
+  // pricing and before any hold. A no-op while the feature is off.
+  const privateOnly = await checkManagedVeniceAgentPrivateOnly({
+    key,
+    model: operation.model,
+    endpoint: operation.endpoint,
+    source,
+  });
+  if (!privateOnly.allowed) {
+    return { ok: false, response: managedVenicePrivateOnlyResponse(privateOnly) };
+  }
 
   const estimate = computeVeniceMultimodalHoldCost({
     endpoint: operation.endpoint,

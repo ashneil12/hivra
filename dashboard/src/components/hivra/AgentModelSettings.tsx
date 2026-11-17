@@ -7,6 +7,7 @@ import { AgentModelSettingsError, cancelAgentLaunchModel, continueAgentLaunchMod
   type AgentModelSettings as Settings } from "@/lib/hivra/agent-model-settings-api";
 import { VeniceModelList } from "./VeniceModelList";
 import { AgentSpendLimit } from "./AgentSpendLimit";
+import { AgentPrivateModelsOnly } from "./AgentPrivateModelsOnly";
 import { VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import styles from "./AgentModelSettings.module.css";
 import { useReportManageFeedback, type ManageFeedback } from "./ManageLayout";
@@ -36,6 +37,8 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [wallet, setWallet] = useState<"hermesos" | "card">("hermesos");
+  // The owner's saved "private models only" setting; false while the feature is off.
+  const [privateOnly, setPrivateOnly] = useState(false);
   const modelSeeded = useRef(false);
   const lifetime = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
@@ -169,6 +172,9 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
         }} aria-label="Refresh model settings"><RefreshCw size={14} aria-hidden="true" />Refresh</button>
       </div>
       {settings?.llm?.mode === "managed" ? <AgentSpendLimit agentId={agentId} refreshKey={settings.llm.enabledAt} /> : null}
+      {settings?.llm?.mode === "managed"
+        ? <AgentPrivateModelsOnly agentId={agentId} refreshKey={`${settings.llm.enabledAt}:${settings.llm.model ?? ""}`} onChange={setPrivateOnly} />
+        : null}
       {error ? <p role="alert" className={styles.warning}>{error}</p> : null}
       {notice ? <p role="status" className={styles.notice}>{notice}</p> : null}
       <p className={styles.help}>These settings connect Hivra Chat. The native {agentName} interface keeps its own sign-in and configuration.</p>
@@ -219,7 +225,8 @@ export function AgentModelSettings({ agentId, agentName, ready, disabled, onChan
           </select>
         </label>}
         <div className={styles.field}><span>Model <span className={styles.help}>(optional)</span></span>
-          <VeniceModelList label="Model" value={model || VENICE_DEFAULT_MODEL} current={settings?.llm?.model ?? null} onChange={setModel} />
+          <VeniceModelList label="Model" value={model || VENICE_DEFAULT_MODEL} current={settings?.llm?.model ?? null} onChange={setModel}
+            privateOnly={privateOnly && mode === "managed" && settings?.llm?.mode === "managed"} />
         </div>
         <p className={styles.help}>{mode === "byok"
           ? "Stored encrypted and delivered by Hivra directly to this computer. Your infrastructure key and model API key are separate."
