@@ -228,6 +228,15 @@ describe("runHostCapacitySweep", () => {
     expect((runHostScript.mock.calls[0] as unknown[])[1]).toMatchObject({ PROXMOX_NODE: "nodeb" });
   });
 
+  it("asks for per-VM memory only with sampling on, and a host with no VM lines records nothing", async () => {
+    const off = setup({ proxmox_hosts: [host("nodea")] }, { nodea: out(64_000) });
+    expect((await off.run()).memorySamples).toBeUndefined();
+    expect(off.runHostScript.mock.calls[0][0]).not.toContain("guest-stats");
+    const on = setup({ proxmox_hosts: [host("nodea")] }, { nodea: out(64_000) });
+    expect(await on.run({ ...ON, HIVRA_AGENT_MEMORY_SAMPLING: "1" })).toMatchObject({ read: 1, errors: 0, memorySamples: 0 });
+    expect(on.runHostScript.mock.calls[0][0]).toContain("guest-stats");
+  });
+
   it("starts no host after a minute, so the run ends in time", async () => {
     const db = fakeDb({ proxmox_hosts: ["a", "b", "c", "d", "e", "f"].map((id) => host(`node${id}`)) });
     let clock = NOW;

@@ -6,7 +6,80 @@
  * parser reports that part as null.
  */
 
+import { shellQuote } from "@/lib/hivra/proxmox-target";
+
 const MARKER = "HIVRA_CAPACITY";
+
+/** One running VM's memory as its own kernel reports it to the host, without its file cache. */
+export type VmMemorySample = { vmid: number; totalMb: number; usedMb: number };
+
+/** The per-VM memory read gets this long on the host, and stops asking new VMs a little earlier. */
+const VM_MEMORY_TIMEOUT_SECONDS = 8;
+const VM_MEMORY_DEADLINE_SECONDS = 6;
+/** Balloon statistics older than this are not a reading of now (a paused VM keeps its last ones). */
+const VM_MEMORY_MAX_AGE_SECONDS = 120;
+
+/**
+ * Asks every running VM's monitor socket for the balloon driver's statistics
+ * (the guest refreshes them every few seconds). Read only: three queries per
+ * VM, no guest command. Used memory is total minus available, which is what
+ * the guest itself calls used without cache. A VM that is paused, has stale
+ * statistics, or does not answer in time prints nothing.
+ */
+export const VM_MEMORY_PROGRAM = String.raw`import glob, json, os, socket, time
+DEADLINE = time.time() + ${VM_MEMORY_DEADLINE_SECONDS}
+def call(sock, stream, command, arguments=None):
+    message = {"execute": command}
+    if arguments:
+        message["arguments"] = arguments
+    sock.sendall((json.dumps(message) + "\n").encode())
+    while True:
+        line = stream.readline()
+        if not line:
+            raise OSError("closed")
+        answer = json.loads(line)
+        if "return" in answer or "error" in answer:
+            return answer.get("return") or {}
+def whole(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 2 ** 50 else None
+for path in sorted(glob.glob(os.environ.get("HIVRA_QEMU_RUN_DIR", "/var/run/qemu-server") + "/*.qmp")):
+    if time.time() > DEADLINE:
+        break
+    vmid = os.path.basename(path)[:-4]
+    if not vmid.isdigit() or len(vmid) > 9:
+        continue
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(1.5)
+        sock.connect(path)
+        stream = sock.makefile("r")
+        stream.readline()
+        call(sock, stream, "qmp_capabilities")
+        if call(sock, stream, "query-status").get("status") != "running":
+            continue
+        answer = call(sock, stream, "qom-get", {"path": "/machine/peripheral/balloon0", "property": "guest-stats"})
+        stats = answer.get("stats") if isinstance(answer, dict) else None
+        if not isinstance(stats, dict):
+            continue
+        total = whole(stats.get("stat-total-memory"))
+        available = whole(stats.get("stat-available-memory"))
+        updated = whole(answer.get("last-update"))
+        if total is None or available is None or updated is None or available > total:
+            continue
+        age = time.time() - updated
+        if age < -${VM_MEMORY_MAX_AGE_SECONDS} or age > ${VM_MEMORY_MAX_AGE_SECONDS}:
+            continue
+        print("${MARKER} vm id=%s total_mb=%d available_mb=%d" % (vmid, total // 1048576, available // 1048576))
+    except Exception:
+        pass
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+`;
 
 export type HostCapacityProbe = {
   memTotalMb: number;
@@ -16,13 +89,13 @@ export type HostCapacityProbe = {
 };
 
 /**
- * The timeouts add up to 42 seconds, under the sweep's limit for one host.
+ * The timeouts add up to 42 seconds (50 with vmMemory), under the sweep's limit for one host.
  *
  * The disk pool is the thin pool that holds the most VM volumes, read the way
  * the hibernate gate reads it (`lvs` size and data_percent). A host without
  * thin volumes falls back to its largest active `pvesm` image storage.
  */
-export function buildHostCapacityScript(): string {
+export function buildHostCapacityScript(options: { vmMemory?: boolean } = {}): string {
   return `set -u
 export LC_ALL=C
 awk '$1=="MemTotal:" {t=int($2/1024)} $1=="MemAvailable:" {a=int($2/1024)} END {if (t > 0 && a != "") printf "${MARKER} mem total_mb=%d available_mb=%d\\n", t, a}' /proc/meminfo
@@ -50,7 +123,9 @@ VMS="$(command timeout 12 qm list --full 1 </dev/null 2>/dev/null)"
 [ -n "$VMS" ] || VMS="$(command timeout 6 qm list </dev/null 2>/dev/null)"
 printf '%s\\n' "$VMS" \\
   | awk 'NR > 1 && $1 ~ /^[0-9]+$/ { n[$3]++; seen = 1 } END { if (seen) printf "${MARKER} vms running=%d paused=%d stopped=%d\\n", n["running"], n["paused"], n["stopped"] }'
-exit 0
+${options.vmMemory === true ? `# Each running VM's own view of its memory. A host without python3 simply prints none.
+command timeout -k 2 ${VM_MEMORY_TIMEOUT_SECONDS} python3 -I -B -c ${shellQuote(VM_MEMORY_PROGRAM)} </dev/null 2>/dev/null || true
+` : ""}exit 0
 `;
 }
 
@@ -93,4 +168,25 @@ export function parseHostCapacityOutput(stdout: string): HostCapacityProbe | nul
   if (running !== null && paused !== null && stopped !== null) vms = { running, paused, stopped };
 
   return { memTotalMb, memAvailableMb, pool, vms };
+}
+
+/** Every valid per-VM line. A VM printed twice, or with numbers that cannot be right, is left out. */
+export function parseVmMemoryLines(stdout: string): VmMemorySample[] {
+  const byVmid = new Map<number, VmMemorySample | null>();
+  for (const raw of (stdout ?? "").split("\n")) {
+    const line = raw.trim();
+    if (!line.startsWith(`${MARKER} vm `)) continue;
+    const f = fields(line, "vm");
+    const vmid = count(f?.id);
+    const totalMb = count(f?.total_mb);
+    const availableMb = count(f?.available_mb);
+    if (vmid === null || vmid < 100 || vmid > 999_999_999) continue;
+    if (byVmid.has(vmid)) { byVmid.set(vmid, null); continue; }
+    if (totalMb === null || availableMb === null || totalMb <= 0 || totalMb > 4_194_304 || availableMb > totalMb) {
+      byVmid.set(vmid, null);
+      continue;
+    }
+    byVmid.set(vmid, { vmid, totalMb, usedMb: totalMb - availableMb });
+  }
+  return [...byVmid.values()].filter((sample): sample is VmMemorySample => sample !== null);
 }

@@ -17,7 +17,10 @@ import {
   type CapacityThresholds,
   hostCapacityHostFilter,
 } from "@/lib/hivra/capacity/classify";
-import { buildHostCapacityScript, parseHostCapacityOutput, type HostCapacityProbe } from "@/lib/hivra/capacity/host-probe";
+import {
+  buildHostCapacityScript, parseHostCapacityOutput, parseVmMemoryLines, type HostCapacityProbe, type VmMemorySample,
+} from "@/lib/hivra/capacity/host-probe";
+import { agentMemorySamplingEnabled, recordHostMemorySamples } from "@/lib/hivra/capacity/memory-use";
 
 /**
  * Host capacity sweep: one read-only script per active host, the agents on it
@@ -34,9 +37,11 @@ type Db = any;
 
 const LOG_SOURCE = "hivra-host-capacity";
 const ROUTE = "/api/cron/hivra-host-capacity";
-// The route may run for 120 seconds. One host gets 45 (its script's own timeouts add up to 42), and no
-// host is started after 60, so the fleet check always runs. A host that was not started counts as unread.
+// The route may run for 120 seconds. One host gets 45 (its script's own timeouts add up to 42), or 53 when
+// the script also reads each VM's memory (50), and no host is started after 60, so the fleet check always
+// runs. A host that was not started counts as unread.
 const HOST_SCRIPT_TIMEOUT_MS = 45_000;
+const HOST_SCRIPT_WITH_VM_MEMORY_TIMEOUT_MS = 53_000;
 const START_NO_HOST_AFTER_MS = 60_000;
 const HOSTS_IN_PARALLEL = 4;
 const AGENT_PAGE = 1000;
@@ -80,6 +85,8 @@ export type HostCapacitySweepSummary = {
   levels: Record<CapacityLevel, number>;
   fleetFull: boolean;
   errors: number;
+  /** Agents whose memory use was recorded (HIVRA_AGENT_MEMORY_SAMPLING=1). Absent when sampling is off. */
+  memorySamples?: number;
 };
 
 export type HostCapacitySweepDeps = {
@@ -213,7 +220,10 @@ export async function runHostCapacitySweep(deps: HostCapacitySweepDeps = {}): Pr
 
   const readings = new Map<string, StoredCapacityReading>();
   const unread: string[] = [];
-  const script = buildHostCapacityScript();
+  const sampling = agentMemorySamplingEnabled(env);
+  if (sampling) summary.memorySamples = 0;
+  const script = buildHostCapacityScript(sampling ? { vmMemory: true } : {});
+  const scriptTimeoutMs = sampling ? HOST_SCRIPT_WITH_VM_MEMORY_TIMEOUT_MS : HOST_SCRIPT_TIMEOUT_MS;
   const startedAt = now();
   const isFresh = (at: string | null | undefined) => {
     const age = now() - Date.parse(at ?? "");
@@ -224,13 +234,26 @@ export async function runHostCapacitySweep(deps: HostCapacitySweepDeps = {}): Pr
     const hostId = String(row.id);
     const previous = readStoredCapacity(row.capacity_reading);
     let probe: HostCapacityProbe | null = null;
+    let vmMemory: VmMemorySample[] = [];
     try {
       if (now() - startedAt <= START_NO_HOST_AFTER_MS) {
-        const run = await runHostScript(script, hostEnv, { timeoutMs: HOST_SCRIPT_TIMEOUT_MS });
+        const run = await runHostScript(script, hostEnv, { timeoutMs: scriptTimeoutMs });
         probe = parseHostCapacityOutput(run?.stdout ?? "");
+        if (sampling && probe) vmMemory = parseVmMemoryLines(run?.stdout ?? "");
       }
     } catch {
       probe = null;
+    }
+    if (sampling && vmMemory.length > 0) {
+      // Recording is beside the point of the sweep: a failure is counted and logged, and the reading goes on.
+      const recorded = await recordHostMemorySamples(db, hostId, vmMemory, now());
+      summary.memorySamples = (summary.memorySamples ?? 0) + recorded.recorded;
+      if (recorded.failed) {
+        summary.errors += 1;
+        log.warn("host capacity: failed to record agent memory use", {
+          source: LOG_SOURCE, failureType: "agent_memory_use_store_failed", proxmoxHost: hostId,
+        });
+      }
     }
     if (!probe) {
       // No reading: the stored one ages out and placement goes back to its usual behaviour.
