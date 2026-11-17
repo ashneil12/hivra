@@ -9,6 +9,7 @@ import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.j
 import agentZeroSettingsRelease from "../../../provisioner-releases/2026.11.17.2.json";
 import latestAgentsRelease from "../../../provisioner-releases/2026.11.17.1.json";
 import usrPluginsRelease from "../../../provisioner-releases/2026.11.15.7.json";
+import productionAgentZeroHotfixRelease from "../../../provisioner-releases/2026.11.15.8.json";
 import watchdogRelease from "../../../provisioner-releases/2026.11.15.6.json";
 import lockFdRelease from "../../../provisioner-releases/2026.11.15.5.json";
 import resilienceRelease from "../../../provisioner-releases/2026.11.15.3.json";
@@ -140,6 +141,8 @@ function checked(input: ProviderNativeRuntimeProbe) {
     ? agentZeroSettingsRelease
     : identity.bundle.provisionerVersion === "2026.11.17.1"
     ? latestAgentsRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.8"
+    ? productionAgentZeroHotfixRelease
     : identity.bundle.provisionerVersion === "2026.11.15.7"
     ? usrPluginsRelease
     : identity.bundle.provisionerVersion === "2026.11.15.6"

@@ -557,6 +557,21 @@ async function main() {
     });
     await db.exec(RESEALED_2_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedResealed2, "re-applying the second resealed 2026.11.15.7 admission changes nothing");
+    // Production applied the 2026.11.15.8 Agent Zero hotfix (cut from 2026.11.15.7)
+    // before any 2026.11.17.x admission, so replay that order: every later
+    // admission must still find its anchor once and keep 2026.11.15.8 admitted.
+    const PRODUCTION_HOTFIX_ADMISSION = migration("20261116050000_provider_release_admission_2026_11_15_8.sql");
+    await db.exec(PRODUCTION_HOTFIX_ADMISSION);
+    const PRODUCTION_HOTFIX_DIGEST = "697c6313094ef71186f966402e32524d8ae9f49c0f1b86d4d9d918dac8e0d499";
+    const assertProductionHotfixAdmitted = async (stage) => {
+      (await admissionDefinitions()).forEach((definition, index) => {
+        assert.equal(occurrences(definition, "'2026.11.15.8'"), 1, `${admissionFunctions[index]} admits 2026.11.15.8 once ${stage}`);
+        if (admissionFunctions[index].includes("identity_valid")) {
+          assert.equal(occurrences(definition, PRODUCTION_HOTFIX_DIGEST), 1, `${admissionFunctions[index]} admits the 2026.11.15.8 digest once ${stage}`);
+        }
+      });
+    };
+    await assertProductionHotfixAdmitted("after its admission");
     // 2026.11.17.1 anchors on the final 2026.11.15.7 entry; idempotent too.
     const LATEST_AGENTS_ADMISSION = migration("20261117120000_provider_release_admission_2026_11_17_1.sql");
     await db.exec(LATEST_AGENTS_ADMISSION);
@@ -659,6 +674,7 @@ async function main() {
     });
     await db.exec(AGENT_ZERO_PRESET_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedAgentZeroPreset, "re-applying the 2026.11.17.6 admission changes nothing");
+    await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";
