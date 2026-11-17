@@ -19,9 +19,8 @@ VERSION = "2026.11.17.1"
 IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
 # Sandboxes this adapter manages, by the adapter release that created each
 # resource (a volume or network keeps the label it was created with) and the
-# image its container runs. Update moves a container to this release's IMAGE.
+# image its container runs (`admitted_images`). Update moves a container to this release's image of its class.
 ADMITTED_VERSIONS = ("2026.09.15.1", "2026.10.20.1", VERSION)
-ADMITTED_IMAGES = (IMAGE,)
 PREFIX = "hivra-gvisor-"
 LABEL = "cloud.hivra"
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
@@ -159,7 +158,7 @@ def docker(*args, check=True, timeout=120, capture_limit=None):
 def valid_input(document):
     if not isinstance(document, dict) or set(document) - {
         "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv",
-        "cpuOvercommit", "storageMb", "archiveSha256", "enrollCode", "serverUrl",
+        "cpuOvercommit", "storageMb", "archiveSha256", "enrollCode", "serverUrl", "sandboxClass",
     }:
         fail("Invalid gVisor computer request")
     operation = document.get("operation")
@@ -204,6 +203,8 @@ def valid_input(document):
             fail("Invalid gVisor archive digest")
     elif "archiveSha256" in document:
         fail("Invalid gVisor computer request")
+    if "sandboxClass" in document and (operation not in {"create", "restore"} or document["sandboxClass"] != "free"):
+        fail("Invalid gVisor sandbox class")
     if operation == "enroll":
         if not isinstance(document.get("enrollCode"), str) or not ENROLL_CODE.fullmatch(document["enrollCode"]):
             fail("Invalid gVisor enroll code")
@@ -306,7 +307,7 @@ def inspect_container(name, request, *, required=True):
                 or host.get("PidMode") not in {"", None} or host.get("UsernsMode") not in {"", None}
                 or host.get("IpcMode") not in {"", "private", None} or host.get("UTSMode") not in {"", None}
                 or host.get("CgroupnsMode") not in {"", "private", None}
-                or item["Config"].get("User") != "65534:65534" or item["Config"].get("Image") not in ADMITTED_IMAGES
+                or item["Config"].get("User") != "65534:65534" or item["Config"].get("Image") not in admitted_images()
                 or float(host.get("NanoCpus", 0)) <= 0 or int(host.get("Memory", 0)) <= 0
                 or int(host.get("MemorySwap", 0)) != int(host.get("Memory", 0))
                 or int(host.get("PidsLimit", 0)) != 256
@@ -448,9 +449,29 @@ def initialize_workspace(request, volume):
     require_helper_absent(request)
 
 
-def create_container(request, cpu, memory, name=None):
-    """The sandbox container: this release's labels and IMAGE, the owned
-    network and the existing workspace volume, never copied into."""
+def admitted_images():
+    """The images a managed sandbox may run: IMAGE, and FREE_IMAGE once one is pinned."""
+    return (IMAGE, FREE_IMAGE) if FREE_IMAGE else (IMAGE,)
+
+
+def is_free(request):
+    return request.get("sandboxClass") == "free"
+
+
+def image_for(free):
+    """A free sandbox runs FREE_IMAGE (its runner is the image's own command); every other one runs IMAGE."""
+    if free and not FREE_IMAGE:
+        fail("No free sandbox image is pinned on this adapter")
+    return FREE_IMAGE if free else IMAGE
+
+
+def create_container(request, cpu, memory, name=None, free=None):
+    """The sandbox container: this release's labels and image, the owned
+    network and the existing workspace volume, never copied into. A free
+    sandbox keeps its image's command (it starts the runner once enrolled)."""
+    free = is_free(request) if free is None else free
+    image = image_for(free)
+    command = [] if free else ["/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done"]
     default_name, volume, network = names(request)
     labels = expected_labels(request)
     label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
@@ -460,8 +481,7 @@ def create_container(request, cpu, memory, name=None):
            "--memory-swap", f"{memory}m", "--network", network,
            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=128m",
            "--mount", f"type=volume,src={volume},dst=/workspace,volume-nocopy",
-           "--workdir", "/workspace", *label_args, IMAGE,
-           "/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done")
+           "--workdir", "/workspace", *label_args, image, *command)
 
 
 def recover_update(request):
@@ -493,16 +513,17 @@ def update(request):
     inspect_resource("volume", volume, request, required=True)
     inspect_resource("network", network, request, required=True)
     running = bool(item["State"].get("Running"))
+    free = bool(FREE_IMAGE) and item["Config"].get("Image") == FREE_IMAGE
     cpu = float(item["HostConfig"]["NanoCpus"]) / 1_000_000_000
     memory = int(item["HostConfig"]["Memory"]) // (1024 * 1024)
     if running:
         admit(name, cpu, memory, int(request["hostMemoryReserveMb"]), overcommit_of(request))
-    docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+    docker("pull", "--platform", "linux/amd64", image_for(free), timeout=300)
     if running:
         docker("stop", "--time", "20", name)
     docker("rename", name, previous_name(request))
     try:
-        create_container(request, cpu, memory)
+        create_container(request, cpu, memory, free=free)
         if running:
             docker("start", name)
         inspect_container(name, request)
@@ -518,6 +539,7 @@ def update(request):
 
 def create(request):
     name, volume, network = names(request)
+    image_for(is_free(request))
     if inspect_container(name, request, required=False):
         return status(request)
     stale_helper = inspect_helper(request, required=False)
@@ -531,7 +553,7 @@ def create(request):
     created_volume = False
     created_network = False
     try:
-        docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+        docker("pull", "--platform", "linux/amd64", image_for(is_free(request)), timeout=300)
         if not inspect_resource("volume", volume, request):
             if "storageMb" in request:
                 create_quota_volume(request, volume, int(request["storageMb"]), label_args)
@@ -832,6 +854,7 @@ def restore(request):
     """A packed sandbox back on this host from the archive the controller fetched, checked against `archiveSha256`
     before anything is unpacked. It comes back stopped; `start` wakes it."""
     name, volume, network = names(request)
+    image_for(is_free(request))
     archive = verified_archive(request, request["archiveSha256"])
     require_helper_absent(request)
     image, mountpoint = quota_paths(request)
@@ -846,7 +869,7 @@ def restore(request):
     limit = int(request["storageMb"]) * 1024 * 1024 if "storageMb" in request else None
     created_volume = created_network = False
     try:
-        docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+        docker("pull", "--platform", "linux/amd64", image_for(is_free(request)), timeout=300)
         if "storageMb" in request:
             create_quota_volume(request, volume, int(request["storageMb"]), label_args)
         else:

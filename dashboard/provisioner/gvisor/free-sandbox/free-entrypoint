@@ -1,0 +1,14 @@
+#!/bin/sh
+# The free sandbox's one process (under the container's init): waits until the enroll shim has paired the runner, then
+# runs it in the foreground. A restored sandbox finds its pairing in the workspace and starts at once. When the runner
+# ends (stopped, replaced, revoked or outdated) the container ends with it; the adapter decides what happens next.
+set -eu
+export HOME=/workspace
+config="$HOME/.agentes-runner/config.json"
+trap 'exit 0' TERM INT
+while [ ! -s "$config" ]; do
+  sleep 1 &
+  wait $! || true
+done
+trap - TERM INT
+exec /usr/local/bin/agentes-runner start

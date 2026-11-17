@@ -319,6 +319,11 @@ class FakeDocker:
             cpu = float(args[args.index("--cpus") + 1])
             memory = int(args[args.index("--memory") + 1].rstrip("m"))
             self.containers[name] = self.container(name, labels, cpu, memory, False)
+            at = args.index("--workdir") + 2
+            while args[at] == "--label":
+                at += 2
+            self.containers[name]["Config"]["Image"] = args[at]
+            self.containers[name]["Config"]["Cmd"] = list(args[at + 1:])
             return ok()
         if args[0] == "rm":
             self.containers.pop(args[-1], None)
@@ -449,6 +454,63 @@ class FreeSandboxInputTests(unittest.TestCase):
         self.refused(base | {"cpuOvercommit": True})
         self.refused(base | {"storageMb": 100})
         self.refused(request("stop") | {"storageMb": 1024})
+
+
+class FreeSandboxClassTests(unittest.TestCase):
+    """A free sandbox runs the pinned free image with the image's own command (the runner), never the base image."""
+
+    FREE = "free@sha256:" + "f" * 64
+
+    def test_the_class_is_free_only_and_only_where_a_container_is_made(self):
+        base = request("create") | {"cpu": 0.5, "memoryMb": 1024, "hostMemoryReserveMb": 512}
+        with redirect_stderr(io.StringIO()):
+            adapter.valid_input(base | {"sandboxClass": "free"})
+            adapter.valid_input(request("restore") | {"archiveSha256": "b" * 64, "cpu": 0.5, "memoryMb": 1024,
+                                                      "hostMemoryReserveMb": 512, "sandboxClass": "free"})
+            for bad in (base | {"sandboxClass": "paid"}, request("start") | {"hostMemoryReserveMb": 512,
+                                                                              "sandboxClass": "free"}):
+                with self.assertRaises(SystemExit):
+                    adapter.valid_input(bad)
+
+    def test_refuses_a_free_sandbox_until_a_free_image_is_pinned_before_touching_docker(self):
+        docker = mock.Mock()
+        req = request("create") | {"cpu": 0.5, "memoryMb": 1024, "hostMemoryReserveMb": 512, "sandboxClass": "free"}
+        with mock.patch.object(adapter, "FREE_IMAGE", ""), mock.patch.object(adapter, "docker", docker), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.create(req)
+        docker.assert_not_called()
+
+    def test_creates_on_the_free_image_with_its_own_command(self):
+        req = request("create") | {"cpu": 0.5, "memoryMb": 1024, "hostMemoryReserveMb": 512, "sandboxClass": "free"}
+        docker = mock.Mock()
+        with mock.patch.object(adapter, "FREE_IMAGE", self.FREE), mock.patch.object(adapter, "docker", docker):
+            adapter.create_container(req, 0.5, 1024)
+        args = docker.call_args.args
+        self.assertEqual(args[-1], self.FREE)
+        self.assertNotIn("/bin/sh", args)
+        self.assertIn("65534:65534", args)
+        self.assertIn("--read-only", args)
+
+    def test_a_paid_sandbox_still_runs_the_base_image(self):
+        docker = mock.Mock()
+        with mock.patch.object(adapter, "FREE_IMAGE", self.FREE), mock.patch.object(adapter, "docker", docker):
+            adapter.create_container(request("create"), 1, 1024)
+        args = docker.call_args.args
+        self.assertIn(adapter.IMAGE, args)
+        self.assertNotIn(self.FREE, args)
+
+    def test_update_keeps_a_free_sandbox_on_the_free_image(self):
+        req = request("update") | {"hostMemoryReserveMb": 512}
+        name, _, _ = adapter.names(req)
+        fake = FakeDocker(req)
+        fake.containers[name]["Config"]["Image"] = self.FREE
+        with mock.patch.object(adapter, "FREE_IMAGE", self.FREE), mock.patch.object(adapter, "docker", fake), \
+                mock.patch.object(adapter, "host_capacity", return_value=(8, 8192, 7168, 0, 0)), \
+                redirect_stdout(io.StringIO()):
+            adapter.update(req)
+        self.assertEqual(fake.containers[name]["Config"]["Image"], self.FREE)
+        self.assertEqual(fake.containers[name]["Config"]["Cmd"], [])
+        self.assertIn(("pull", "--platform", "linux/amd64", self.FREE), [c[:4] for c in fake.calls])
 
 
 class CpuOvercommitTests(unittest.TestCase):
