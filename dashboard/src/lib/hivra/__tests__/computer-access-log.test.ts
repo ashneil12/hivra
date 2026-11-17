@@ -110,7 +110,7 @@ describe("runAccessLogCollection", () => {
 
   it("stores new events, then moves the host's cursor", async () => {
     const fake = fakeDb(1);
-    const runHostScript = jest.fn(async () => ({ ok: true, stdout: out([event(1), event(2), event(3)], { installed: true, last_seq: 3, more: false, head_seq: 3 }), stderr: "" }));
+    const runHostScript = jest.fn(async (_script: string, _env?: unknown, _opts?: unknown) => ({ ok: true, stdout: out([event(1), event(2), event(3)], { installed: true, last_seq: 3, more: false, head_seq: 3 }), stderr: "" }));
     const summary = await runAccessLogCollection({ env: { HIVRA_ACCESS_LOG_COLLECTION: "on" }, db: fake.db, runHostScript: runHostScript as never });
     expect(runHostScript.mock.calls[0][0]).toContain("--drain 1 2000");
     expect(summary).toMatchObject({ hosts: 1, events: 2, buckets: 1, errors: 0 });
@@ -121,7 +121,7 @@ describe("runAccessLogCollection", () => {
   it("keeps the cursor when storing fails, so the same lines are read again", async () => {
     const fake = fakeDb(0);
     fake.rpc.mockResolvedValueOnce({ error: { message: "boom" } } as never);
-    const runHostScript = jest.fn(async () => ({ ok: true, stdout: out([event(1)], { installed: true, last_seq: 1, head_seq: 1 }), stderr: "" }));
+    const runHostScript = jest.fn(async (_script: string, _env?: unknown, _opts?: unknown) => ({ ok: true, stdout: out([event(1)], { installed: true, last_seq: 1, head_seq: 1 }), stderr: "" }));
     const summary = await runAccessLogCollection({ env: { HIVRA_ACCESS_LOG_COLLECTION: "on" }, db: fake.db, runHostScript: runHostScript as never });
     expect(summary.errors).toBe(1);
     expect(fake.calls.filter((c) => c.table === "hivra_access_log_cursors")).toEqual([]);
@@ -129,7 +129,7 @@ describe("runAccessLogCollection", () => {
 
   it("lists hosts without the recorder", async () => {
     const fake = fakeDb(null);
-    const runHostScript = jest.fn(async () => ({ ok: true, stdout: 'HIVRA_ACCESS_END {"installed":false}', stderr: "" }));
+    const runHostScript = jest.fn(async (_script: string, _env?: unknown, _opts?: unknown) => ({ ok: true, stdout: 'HIVRA_ACCESS_END {"installed":false}', stderr: "" }));
     const summary = await runAccessLogCollection({ env: { HIVRA_ACCESS_LOG_COLLECTION: "on" }, db: fake.db, runHostScript: runHostScript as never });
     expect(summary.notInstalled).toEqual(["host-a"]);
     expect(fake.calls.filter((c) => c.table === "hivra_access_log_cursors")).toEqual([]);
