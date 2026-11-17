@@ -42,7 +42,7 @@ const stubQm = `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$ROOT/calls"
 case "$1" in
   status) [ -f "$ROOT/exists" ] || exit 2; echo "status: $(cat "$ROOT/status")" ;;
-  config) echo "tags: ${OP_TAG};${BINDING}"; [ -s "$ROOT/lock" ] && echo "lock: $(cat "$ROOT/lock")"; exit 0 ;;
+  config) echo "tags: $(cat "$ROOT/tags" 2>/dev/null || echo "${OP_TAG};${BINDING}")"; [ -s "$ROOT/lock" ] && echo "lock: $(cat "$ROOT/lock")"; exit 0 ;;
   stop|destroy)
     case "$*" in *--skiplock*) SKIP=1 ;; *) SKIP= ;; esac
     if [ -s "$ROOT/lock" ] && [ -z "$SKIP" ]; then echo "VM is locked" >&2; exit 25; fi
@@ -51,7 +51,7 @@ case "$1" in
 esac
 `;
 
-function runDestroy(lock: string) {
+function runDestroy(lock: string, options: { tags?: string; operation?: string | null; bindingOnly?: boolean } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "delete-sleep-"));
   try {
     mkdirSync(path.join(root, "bin"));
@@ -63,9 +63,12 @@ function runDestroy(lock: string) {
     writeFileSync(path.join(root, "status"), lock ? "stopped" : "running");
     writeFileSync(path.join(root, "lock"), lock);
     writeFileSync(path.join(root, "calls"), "");
+    if (options.tags !== undefined) writeFileSync(path.join(root, "tags"), options.tags);
     const script = verifiedDestroyHivraVmScript({
-      vmid: 123, storage: "local-lvm", expectedAllocationOperationId: OPERATION,
-      expectedInfrastructureBindingTag: BINDING, allowManagedLegacyAuthority: false, cleanupPaths: [path.join(root, "log")],
+      vmid: 123, storage: "local-lvm",
+      expectedAllocationOperationId: options.operation === undefined ? OPERATION : options.operation,
+      expectedInfrastructureBindingTag: BINDING, allowManagedLegacyAuthority: false,
+      allowBindingOnlyAuthority: options.bindingOnly, cleanupPaths: [path.join(root, "log")],
     }).replaceAll("/run/lock", path.join(root, "lock-dir")).replaceAll("/run/hivra-provision", path.join(root, "prov"))
       .replaceAll("/var/lib/hivra/provision-results", path.join(root, "results"));
     const result = spawnSync("bash", [], {
@@ -105,6 +108,28 @@ describe("destroy script and a hibernated computer", () => {
       expectedInfrastructureBindingTag: BINDING, allowManagedLegacyAuthority: false, cleanupPaths: [],
     });
     expect(script.indexOf("ownership changed before deletion")).toBeLessThan(script.indexOf("--skiplock 1"));
+  });
+});
+
+describe("destroy script and a prepared-pool computer (no allocation operation)", () => {
+  it("destroys it on its binding tag alone when binding-only authority is allowed", () => {
+    const result = runDestroy("", { operation: null, bindingOnly: true, tags: BINDING });
+    expect(result.code).toBe(0);
+    expect(result.stillThere).toBe(false);
+  });
+
+  it("refuses when the VM does not carry the row's binding tag", () => {
+    const result = runDestroy("", { operation: null, bindingOnly: true, tags: `hivra-bind-${"b".repeat(32)}` });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("ownership changed before deletion");
+    expect(result.stillThere).toBe(true);
+  });
+
+  it("still refuses without an operation tag when binding-only authority is not allowed", () => {
+    const result = runDestroy("", { operation: null, tags: BINDING });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("without complete provider ownership evidence");
+    expect(result.stillThere).toBe(true);
   });
 });
 

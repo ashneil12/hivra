@@ -42,6 +42,13 @@ export function verifiedDestroyHivraVmScript(input: {
   expectedAllocationOperationId: string | null;
   expectedInfrastructureBindingTag: string | null;
   allowManagedLegacyAuthority: boolean;
+  /**
+   * A Hivra Cloud computer handed out from the prepared pool (Omarchy, Windows)
+   * never had an allocation operation, so it carries only its binding tag. That
+   * tag is derived from the row's own binding token, so it alone proves the VM is
+   * this row's. Only meaningful with an expected binding tag.
+   */
+  allowBindingOnlyAuthority?: boolean;
   cleanupPaths: string[];
 }): string {
   const expectedTag = input.expectedAllocationOperationId
@@ -54,6 +61,7 @@ STORAGE=${shellQuote(input.storage)}
 ${expectedTag ? `EXPECTED_TAG=${shellQuote(expectedTag)}` : "EXPECTED_TAG='' # pre-operation-tag managed VM"}
 ${input.expectedInfrastructureBindingTag ? `EXPECTED_BINDING_TAG=${shellQuote(input.expectedInfrastructureBindingTag)}` : "EXPECTED_BINDING_TAG='' # legacy managed VM pending guarded adoption"}
 ALLOW_MANAGED_LEGACY=${input.allowManagedLegacyAuthority ? "1" : "0"}
+ALLOW_BINDING_ONLY=${input.allowBindingOnlyAuthority && input.expectedInfrastructureBindingTag ? "1" : "0"}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for Hivra deletion lock" >&2; exit 1; }
@@ -91,7 +99,7 @@ if [ -r "$PIDFILE" ]; then
 fi
 rm -f -- "$PIDFILE"
 if qm status "$VMID" >/dev/null 2>&1; then
-  if [ "$ALLOW_MANAGED_LEGACY" != 1 ] && { [ -z "$EXPECTED_TAG" ] || [ -z "$EXPECTED_BINDING_TAG" ]; }; then
+  if [ "$ALLOW_MANAGED_LEGACY" != 1 ] && { [ -z "$EXPECTED_BINDING_TAG" ] || { [ -z "$EXPECTED_TAG" ] && [ "$ALLOW_BINDING_ONLY" != 1 ]; }; }; then
     echo "Refusing to destroy VMID $VMID without complete provider ownership evidence" >&2
     exit 1
   fi
@@ -99,7 +107,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
     qm status "$VMID" >/dev/null 2>&1 || break
     if [ "$ALLOW_MANAGED_LEGACY" != 1 ]; then
       TAGS="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')"
-      printf '%s' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_TAG" \
+      { [ -z "$EXPECTED_TAG" ] || printf '%s' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_TAG"; } \
         && printf '%s' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG" \
         || { echo "VMID $VMID ownership changed before deletion" >&2; exit 1; }
     fi
@@ -274,6 +282,12 @@ export async function deleteProxmoxHivraAgent(
           allowManagedLegacyAuthority:
             agent.deployment_mode === "hivra-managed" &&
             !context.infrastructureBindingTagEnforced,
+          // A prepared-pool computer (Omarchy, Windows) has no allocation
+          // operation; its enforced binding tag is the ownership evidence.
+          allowBindingOnlyAuthority:
+            agent.deployment_mode === "hivra-managed" &&
+            context.infrastructureBindingTagEnforced &&
+            !allocationOperationId,
           cleanupPaths,
         }),
         context.env,
