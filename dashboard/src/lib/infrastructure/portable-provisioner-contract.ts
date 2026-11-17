@@ -124,7 +124,11 @@ export function isCompatibleProxmoxProvisionerVersion(version: unknown): version
 export const PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS: Readonly<Record<string, string>> = {
   aeon: "2026.10.20.2",
   openclaw: "2026.10.20.2",
-  "agent-zero": "2026.10.20.2",
+  // Agent Zero: 2026.11.15.7 pins v2.15, which reads its settings only from
+  // /a0/usr/.env; that release's installer wrote them elsewhere, so every launch
+  // failed readiness. 2026.11.15.8 seeds the file v2.15 reads, so place Agent
+  // Zero only there (a host still on .7 is skipped until its bundle syncs).
+  "agent-zero": "2026.11.15.8",
   // Hermes: the guest installer runs Hermes's own official installer and serves
   // its web UI from 2026.11.11.4 on (an older host rejects the kind in the guest),
   // but only 2026.11.11.6 adds the libatomic1 the installer's Node.js needs on the

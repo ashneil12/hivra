@@ -566,7 +566,7 @@ async function main() {
         assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
       }
       if (admissionFunctions[index].includes("identity_valid")) {
-        assert.equal(occurrences(definition, "e91d8e656f52f2df7b1c51ad910bfc5403b92c20fb62a4f4f0d05a7750bdd29e"), 1,
+        assert.equal(occurrences(definition, "697c6313094ef71186f966402e32524d8ae9f49c0f1b86d4d9d918dac8e0d499"), 1,
           `${admissionFunctions[index]} admits the 2026.11.15.8 digest once`);
         assert.equal(occurrences(definition, "28ae48475970fd17617292ae3a3b9823769ed3c9c8fc9d9a6774d32199a510ff"), 1,
           `${admissionFunctions[index]} keeps the 2026.11.15.7 digest`);

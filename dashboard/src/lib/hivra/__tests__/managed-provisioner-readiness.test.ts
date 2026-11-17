@@ -187,7 +187,15 @@ describe("managed readiness per runtime", () => {
     return [...script.slice(start, script.indexOf("\nesac", start)).matchAll(/'(\d{4}\.\d\d\.\d\d\.\d+)'/g)].map(m => m[1]);
   };
 
-  it.each(["aeon", "openclaw", "agent-zero"])("excludes releases before agent-app-versions.json for %s", (runtime) => {
+  it("places Agent Zero only on 2026.11.15.8, whose installer writes the settings file v2.15 reads", () => {
+    const versions = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "agent-zero"));
+    expect(versions).not.toContain("2026.11.15.7");
+    expect(versions).not.toContain("2026.10.20.2");
+    expect(versions).toContain("2026.11.15.8");
+    expect(versions).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  });
+
+  it.each(["aeon", "openclaw"])("excludes releases before agent-app-versions.json for %s", (runtime) => {
     const versions = versionsIn(managedHivraHostReadinessScript("default", "provision", false, runtime));
     expect(versions).not.toContain("2026.10.20.1");
     expect(versions).not.toContain("2026.09.24.4");

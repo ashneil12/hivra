@@ -339,8 +339,8 @@
     },
     {
       "path": "provision-claude-code-box.sh",
-      "bytes": 123335,
-      "sha256": "f546407adc6d9d9f0ffe2dcfb0396bbaeff0f674ad22c28e3084d15b804ba416"
+      "bytes": 123557,
+      "sha256": "2d544789d61abf1f11a5fe640b39792628ded4a848c29bb7462384525e86ccc8"
     },
     {
       "path": "remote-desktop/broker.cjs",
