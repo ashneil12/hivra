@@ -57,7 +57,13 @@ export const SWEEP_TARGETS: readonly SweepTarget[] = [
   },
   { profileId: 'ubuntu-server', tile: 'Linux computer', kind: 'computer', proof: 'computer-open' },
   { profileId: 'ubuntu-desktop', tile: 'Ubuntu Desktop', kind: 'computer', proof: 'computer-open' },
-  { profileId: 'omarchy', tile: 'Omarchy', kind: 'computer', proof: 'computer-open' },
+  {
+    profileId: 'omarchy',
+    tile: 'Omarchy',
+    kind: 'computer',
+    proof: 'computer-open',
+    knownBroken: 'Canary has a single prepared Omarchy computer and a real owner holds it, so a fresh account is always told it is already claimed.',
+  },
 ];
 
 /**

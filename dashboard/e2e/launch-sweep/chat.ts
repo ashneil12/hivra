@@ -67,6 +67,28 @@ function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
 
+/**
+ * Some agents ask their owner to set a password for their own console before
+ * the chat appears (Nuphos: "Choose the password that protects this console",
+ * then Connect). A customer does that once; so does the sweep, with a random
+ * password it never reuses.
+ */
+async function completeConsolePassword(frame: Frame): Promise<boolean> {
+  const fields = frame.locator('input[type="password"]:not([readonly]):not([disabled])');
+  const count = await fields.count().catch(() => 0);
+  if (count === 0 || !(await fields.first().isVisible().catch(() => false))) return false;
+  if (!/password/i.test(await bodyText(frame))) return false;
+  const password = `Sweep-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}!`;
+  for (let index = 0; index < count; index++) {
+    const field = fields.nth(index);
+    if (await field.isVisible().catch(() => false)) await field.fill(password).catch(() => undefined);
+  }
+  const submit = frame.getByRole('button', { name: /connect|continue|save|set password|sign in|unlock|start/i }).first();
+  if (await submit.isVisible().catch(() => false)) await submit.click().catch(() => undefined);
+  else await fields.last().press('Enter').catch(() => undefined);
+  return true;
+}
+
 /** Wait for the place to type, in Hivra's chat or inside the agent's own UI. */
 async function findComposer(
   page: Page,
@@ -76,6 +98,7 @@ async function findComposer(
   const end = Date.now() + timeoutMs;
   const navigateAt = Date.now() + 45_000;
   let navigated = false;
+  let passwordAttempts = 0;
   let lastSeen = '';
   while (Date.now() < end) {
     // Opening can land on another tab (Codex opened on Settings). A customer
@@ -102,6 +125,11 @@ async function findComposer(
       }
     } else {
       for (const frame of await agentFrames(page)) {
+        if (passwordAttempts < 3 && await completeConsolePassword(frame)) {
+          passwordAttempts++;
+          await sleep(5_000);
+          continue;
+        }
         const composer = await visibleComposer(frame);
         if (composer) return { frame, composer, surface: `${target.tile} web UI` };
         lastSeen = (await bodyText(frame)).replace(/\s+/g, ' ').trim().slice(0, 300) || lastSeen;
