@@ -120,6 +120,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "best-llm-for-coding", title: "Best LLM for coding in November 2026: which model for which job" },
     { slug: "cursor-cloud-agents", title: "Cursor Cloud Agents: what they cost, and what happens when you close your laptop" },
     { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop? (And how to run it 24/7)" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },

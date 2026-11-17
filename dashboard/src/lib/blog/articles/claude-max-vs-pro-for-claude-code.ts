@@ -259,6 +259,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "best-llm-for-coding", title: "Best LLM for coding in November 2026: which model for which job" },
     { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop? (And how to run it 24/7)" },
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent in 2026" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },

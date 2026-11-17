@@ -85,6 +85,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "openrouter-free-models", title: "OpenRouter free models: the current list, real limits and how to use them" },
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
     { slug: "byo-api-key-explained", title: "BYO API key: what it means and why it matters" },
     { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },

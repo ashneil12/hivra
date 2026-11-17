@@ -109,6 +109,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "hermes-agent-cloud", title: "How to run Hermes Agent in the cloud: VPS, Docker, Nous Hermes Cloud or a computer of its own" },
     { slug: "how-to-self-host-hermes-agent", title: "How to self-host Hermes Agent on a VPS" },
     { slug: "how-to-self-host-openclaw", title: "How to self-host OpenClaw" },
     { slug: "hermes-agent-telegram-discord-setup", title: "Hermes Agent gateway setup: Telegram, Discord, and 13 more" },
