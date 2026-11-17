@@ -24,6 +24,7 @@ function docCopy(doc: DocPage): string {
     doc.metaDescription,
     doc.summary,
     ...doc.blocks.flatMap((block) => [block.heading, ...block.paragraphs]),
+    ...(doc.faqs ?? []).flatMap(({ q, a }) => [q, a]),
   ].join("\n");
 }
 
@@ -33,8 +34,11 @@ function staticRouteExists(pathname: string): boolean {
   return fs.existsSync(path.join(dir, "page.tsx")) || fs.existsSync(path.join(dir, "route.ts"));
 }
 
+const PUBLIC_ROOT = path.join(__dirname, "..", "..", "..", "..", "public");
+
 function resolves(href: string): boolean {
   const [pathname] = href.split(/[?#]/);
+  if (pathname.startsWith("/images/docs/")) return fs.existsSync(path.join(PUBLIC_ROOT, pathname));
   const segments = pathname.split("/").filter(Boolean);
   if (pathname === "/docs" || pathname === "/sign-up" || pathname === "/sign-in") return true;
   if (segments[0] === "docs" && segments.length === 2) return segments[1] in DOCS;
@@ -87,6 +91,25 @@ describe("docs hub", () => {
       for (const slug of doc.next ?? []) if (!(slug in DOCS)) broken.push(`${doc.slug}: next ${slug}`);
     }
     expect(broken).toEqual([]);
+  });
+
+  it("gives every image alt text and a caption, and keeps each under 400 KB", () => {
+    const wrong: string[] = [];
+    for (const doc of Object.values(DOCS)) {
+      for (const [, alt, src, title] of docCopy(doc).matchAll(/!\[([^\]]*)\]\((\/[^)\s]+)(?:\s+"([^"]*)")?\)/g)) {
+        if (alt.trim().length < 10) wrong.push(`${doc.slug}: ${src} alt text too short`);
+        if (!title || title.trim().length < 10) wrong.push(`${doc.slug}: ${src} has no caption`);
+        const file = path.join(PUBLIC_ROOT, src);
+        if (!src.startsWith("/images/docs/")) wrong.push(`${doc.slug}: ${src} is not under /images/docs/`);
+        else if (fs.existsSync(file) && fs.statSync(file).size > 400 * 1024) wrong.push(`${doc.slug}: ${src} over 400 KB`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("answers every question in plain text, with no links or markdown", () => {
+    const wrong = Object.values(DOCS).flatMap((doc) => (doc.faqs ?? []).filter(({ a }) => /\]\(|[`*_]{2}|^\s*[-*] /m.test(a)).map(({ q }) => `${doc.slug}: ${q}`));
+    expect(wrong).toEqual([]);
   });
 
   it("makes none of the claims the blog may not make", () => {
