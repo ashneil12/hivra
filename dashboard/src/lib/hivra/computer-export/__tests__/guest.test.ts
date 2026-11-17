@@ -16,8 +16,8 @@ describe("computer export guest program", () => {
 import io
 def run(req):
     sys.stdin = io.StringIO(json.dumps(req)); main()
-run({'action': 'start', 'exportId': '11111111-2222-4333-8444-555555555555', 'partSize': 64 << 20, 'passphrase': 'long enough phrase', 'partUrls': ['https://evil.example/x?a=b']})
-run({'action': 'start', 'exportId': '11111111-2222-4333-8444-555555555555', 'partSize': 64 << 20, 'passphrase': 'short', 'partUrls': ['https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/b/k?a=b']})
+run({'action': 'start', 'exportId': '00000000-0000-4000-8000-000000000001', 'partSize': 64 << 20, 'passphrase': 'long enough phrase', 'partUrls': ['https://evil.example/x?a=b']})
+run({'action': 'start', 'exportId': '00000000-0000-4000-8000-000000000001', 'partSize': 64 << 20, 'passphrase': 'short', 'partUrls': ['https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/b/k?a=b']})
 run({'action': 'status', 'exportId': '../etc'})
 `);
     const answers = out.trim().split("\n").map((line) => parseComputerExportResult(line));
@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory() as t:
 
 describe("computer export host script", () => {
   it("never puts the request into the script and checks the VM identity first", () => {
-    const script = buildComputerExportHostScript({ vmid: 123, ip: "10.0.0.5", bindingTag: `hivra-bind-${"a".repeat(32)}`, vmSshKeyPath: "/etc/hivra/vm" });
+    const script = buildComputerExportHostScript({ vmid: 123, ip: "192.0.2.5", bindingTag: `hivra-bind-${"a".repeat(32)}`, vmSshKeyPath: "/etc/hivra/vm" });
     expect(script).toContain("EXPECTED_BINDING_TAG='hivra-bind-");
     expect(script).toContain("qm guest exec");
     expect(script).not.toContain("passphrase\"");

@@ -18,7 +18,7 @@ describe("computer export service", () => {
   });
 
   it("accepts only bound Proxmox computers", () => {
-    const row = { computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, vmid: 101, ip: "10.0.0.2" };
+    const row = { computer_substrate: "proxmox-kvm", infrastructure_binding_token_enforced: true, vmid: 101, ip: "192.0.2.2" };
     expect(computerExportEligible(row)).toBe(true);
     expect(computerExportEligible({ ...row, infrastructure_binding_token_enforced: false })).toBe(false);
     expect(computerExportEligible({ ...row, computer_substrate: "gvisor" })).toBe(false);
