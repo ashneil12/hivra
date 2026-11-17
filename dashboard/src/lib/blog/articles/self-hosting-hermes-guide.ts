@@ -84,6 +84,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "hermes-agent-cloud", title: "How to run Hermes Agent in the cloud: VPS, Docker, Nous Hermes Cloud or a computer of its own" },
     { slug: "what-is-hermes-agent", title: "What is Hermes Agent? A plain-English explanation" },
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent in 2026" },
     { slug: "byo-api-key-explained", title: "BYO API key: what it means and why it saves you money" },

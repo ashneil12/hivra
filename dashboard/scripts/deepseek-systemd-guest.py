@@ -119,7 +119,7 @@ def provider_cancellation(receipt, lifecycle_lock, native):
         time.sleep(0.25)
     checked(observed["state"] == "failed" and observed["nativeCleanup"] == {"state": "pending"}, "worker_failure_not_separate")
     checked(worker.decode(worker.read_file(worker.ROOT / "result.json")) == {"identity": identity, "exitCode": 1}
-            and worker.read_file(worker.ROOT / "installer.log") == b"Hivra guest installation failed; inspect the private provisioning log.\n",
+            and worker.read_file(worker.ROOT / "installer.log").startswith(b"Hivra guest installation failed; inspect the private provisioning log.\n"),
             "actual_installer_failure_unverified")
     native.owner.verify_running()
     native_html(session())  # Worker absence demonstrably is not native absence.

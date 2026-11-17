@@ -517,9 +517,10 @@ if [ "$HAS_QM" = "1" ]; then
     config="$(qm config "$candidate" 2>/dev/null)" || { CAPACITY_EVIDENCE=0; continue; }
     [ "$(printf '%s\\n' "$config" | awk '$1=="template:" {print $2; exit}')" = "1" ] && continue
     status_output="$(qm status "$candidate" 2>/dev/null)" || { CAPACITY_EVIDENCE=0; continue; }
-    status="$(printf '%s\\n' "$status_output" | awk 'NF==2 && $1=="status:" && ($2=="running" || $2=="stopped") {print $2}')"
+    # Only a stopped guest frees its resources; a paused (napping) or transient one still holds them.
+    status="$(printf '%s\\n' "$status_output" | awk 'NF==2 && $1=="status:" && $2 ~ /^[a-z-]+$/ {print $2; exit}')"
     [ -n "$status" ] || { CAPACITY_EVIDENCE=0; continue; }
-    [ "$status" = "running" ] || continue
+    [ "$status" != "stopped" ] || continue
     floor="$(printf '%s\\n' "$config" | awk '$1=="balloon:" {print $2; exit}')"
     case "$floor" in ''|*[!0-9]*|0) floor="$(printf '%s\\n' "$config" | awk '$1=="memory:" {print $2; exit}')" ;; esac
     maximum="$(printf '%s\\n' "$config" | awk '$1=="memory:" {print $2; exit}')"

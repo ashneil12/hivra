@@ -83,9 +83,13 @@ while IFS= read -r candidate; do
   template="$(printf '%s\n' "$config" | awk '$1=="template:" {print $2; exit}')"
   [ "${template:-0}" = "1" ] && continue
   status_output="$(qm status "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU status" >&2; exit 1; }
-  status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && ($2=="running" || $2=="stopped") {print $2}')"
+  # Only a stopped guest frees its resources. A paused one (an agent napping
+  # through Hivra's sleep, `qm suspend`; PVE prints the QMP status) and any
+  # transient state (prelaunch, suspended) still hold theirs, so they count
+  # as active. A status that cannot be read at all still fails closed.
+  status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && $2 ~ /^[a-z-]+$/ {print $2; exit}')"
   [ -n "$status" ] || { echo "invalid QEMU status" >&2; exit 1; }
-  [ "$status" = "running" ] || continue
+  [ "$status" != "stopped" ] || continue
   floor="$(qemu_floor_mb "$config")" || { echo "invalid QEMU memory floor" >&2; exit 1; }
   maximum="$(qemu_max_mb "$config")" || { echo "invalid QEMU memory maximum" >&2; exit 1; }
   cpu="$(qemu_max_cpu_milli "$config")" || { echo "invalid QEMU CPU maximum" >&2; exit 1; }

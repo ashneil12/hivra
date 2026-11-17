@@ -616,11 +616,36 @@ def main():
         os.close(fd)
 
 
+def install_failure_reason(error):
+    """A fixed, payload-free reason for the host log, or None.
+
+    Only Hivra's own install errors (fixed code strings, never launch data) and
+    the exit status of a failed step are named; any other exception text could
+    carry payload and stays unprinted.
+    """
+    if type(error).__name__ == "InstallError":
+        text = str(error)
+        if re.fullmatch(r"[A-Za-z0-9 .,:;()_/-]{1,200}", text):
+            return text
+        return None
+    if isinstance(error, subprocess.CalledProcessError):
+        argv = error.cmd if isinstance(error.cmd, (list, tuple)) else []
+        names = [os.path.basename(str(part)) for part in argv[:3]]
+        step = next((name for name in names if re.fullmatch(r"[A-Za-z0-9._-]{1,60}\.(?:sh|py)", name)), None)
+        return "step %s exited with status %d" % (step or "command", error.returncode)
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "a step ran past its deadline"
+    return None
+
+
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception as error:
         # Inner package/service diagnostics remain available through the
         # existing private provisioning log; do not print payload/exception data.
         print("Hivra guest installation failed; inspect the private provisioning log.", file=sys.stderr)
+        reason = install_failure_reason(error)
+        if reason:
+            print("Hivra guest installation failure: " + reason, file=sys.stderr)
         sys.exit(1)

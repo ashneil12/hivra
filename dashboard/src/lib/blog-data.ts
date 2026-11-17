@@ -51,6 +51,9 @@ import { article as cursorCloudAgents } from "./blog/articles/cursor-cloud-agent
 import { article as cursorVsClaudeCode } from "./blog/articles/cursor-vs-claude-code";
 import { article as isOpenclawFree } from "./blog/articles/is-openclaw-free-what-it-costs-to-run";
 import { article as runManagedAgentsOnYourOwnComputer } from "./blog/articles/run-managed-agents-on-your-own-computer";
+import { article as hermesAgentCloud } from "./blog/articles/hermes-agent-cloud";
+import { article as openrouterFreeModels } from "./blog/articles/openrouter-free-models";
+import { article as bestLlmForCoding } from "./blog/articles/best-llm-for-coding";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -106,6 +109,9 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "what-is-aeon-agent": whatIsAeonAgent,
   "what-is-agent-zero": whatIsAgentZero,
   "ubuntu-desktop-in-the-cloud": ubuntuDesktopInTheCloud,
+  "hermes-agent-cloud": hermesAgentCloud,
+  "openrouter-free-models": openrouterFreeModels,
+  "best-llm-for-coding": bestLlmForCoding,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

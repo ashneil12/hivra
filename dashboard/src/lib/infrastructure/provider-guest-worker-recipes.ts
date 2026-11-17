@@ -515,6 +515,16 @@ const recipes = Object.freeze({
     workerSha256: "e3462616c9faff5c9abe3675dc87132bb5e3ccfa9c124e027b71a8b1be4aeb1d",
     workerSize: 45216,
   }),
+  "2026.11.17.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release seeds Agent Zero's login and managed model into the settings file current images read (/a0/usr/.env). The worker only advances its release labels.
+    workerSha256: "fb33441ca6bf84fc44b02deed696d00be20aed89818522125fa5f9713659ad74",
+    workerSize: 45216,
+  }),
+  "2026.11.17.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets OpenClaw 2026.11.5+ and current Aeon launch (the gateway drops forwarded headers on /openclaw; Aeon keeps its own Next config). The worker only advances its release labels.
+    workerSha256: "99ca7ca23efc42959b52b1fc68b79356b64b4339891984c1832bb5553c8b0b7d",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

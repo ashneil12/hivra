@@ -58,6 +58,9 @@ export const COMPARE_DIRECTORY: ComparePage = {
           kind: "providers",
           items: [
             { slug: "vs-agent-37", label: "Agent 37", text: "metered raw compute, a free tier and external assurance claims worth examining." },
+            { slug: "vs-lobsterland", label: "Lobsterland", text: "managed OpenClaw and Hermes hosting from a low monthly price, with a trial." },
+            { slug: "vs-kiloclaw", label: "KiloClaw", text: "hosted OpenClaw from Kilo, with no markup on model tokens." },
+            { slug: "vs-construct-computer", label: "Construct Computer", text: "a crew of named agents, each with its own computer, sold by plan." },
             { slug: "vs-hostinger", label: "Hostinger", text: "attractive long-term prepaid offers and general VPS control." },
             { slug: "vs-xcloud", label: "xCloud", text: "a dedicated managed server with a larger entry disk, Paperclip hosting and a control-panel workflow." },
             { slug: "vs-nous-hermes-cloud", label: "Nous Hermes Cloud", text: "usage-based hosting from Hermes' own developers." },
@@ -93,6 +96,10 @@ export const COMPARE_DIRECTORY: ComparePage = {
           kind: "providers",
           items: [
             { slug: "vs-e2b", label: "E2B sandboxes", text: "a sandbox API billed per second, strong for generated code run at scale." },
+            { slug: "vs-orgo", label: "Orgo", text: "Linux, Windows and Mac cloud desktops for agents, driven by SDK or MCP." },
+            { slug: "vs-machine0", label: "machine0", text: "persistent per-minute VMs for agents driven by CLI or MCP." },
+            { slug: "vs-simular-box", label: "Simular box", text: "a cloud desktop per user that Claude, ChatGPT or Codex drive over MCP." },
+            { slug: "vs-cubicles", label: "Cubicles", text: "an Ubuntu desktop with agents preinstalled, free in beta." },
             { slug: "vs-fly-sprites", label: "Fly.io Sprites", text: "programmable machines billed for the hours they run, that sleep when idle." },
             { slug: "vs-github-codespaces", label: "GitHub Codespaces", text: "a repository-centred developer workspace that stops when idle." },
           ],

@@ -299,6 +299,14 @@
     {
       "path": "/api/cron/sleep-idle-agents",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/hivra-host-capacity",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/hivra-memory-floors",
+      "schedule": "23 4 * * *"
     }
   ]
 }

@@ -128,7 +128,7 @@ describe("seo urls", () => {
   it("dates the /features and /compare pages from the registry, and the host and product comparisons from the day their figures were read", () => {
     const urls = getSiteUrls();
     const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
-    // 2 hubs + 6 feature pages + 15 comparison pages.
+    // 2 hubs + 6 feature pages + 22 comparison pages.
     expect(rewritten.map((u) => u.url.slice(SITE_URL.length)).sort()).toEqual(
       [
         "/compare",
@@ -136,16 +136,23 @@ describe("seo urls", () => {
         "/compare/openclaw-to-hermes",
         "/compare/vs-agent-37",
         "/compare/vs-claude-code-on-the-web",
+        "/compare/vs-construct-computer",
+        "/compare/vs-cubicles",
         "/compare/vs-cursor-cloud-agents",
         "/compare/vs-e2b",
         "/compare/vs-fly-sprites",
         "/compare/vs-github-codespaces",
         "/compare/vs-hostinger",
+        "/compare/vs-kiloclaw",
+        "/compare/vs-lobsterland",
+        "/compare/vs-machine0",
         "/compare/vs-nous-hermes-cloud",
         "/compare/vs-openai-codex-cloud",
+        "/compare/vs-orgo",
         "/compare/vs-railway",
         "/compare/vs-render",
         "/compare/vs-self-hosted",
+        "/compare/vs-simular-box",
         "/compare/vs-xcloud",
         "/features",
         "/features/browser-automation",
@@ -168,6 +175,13 @@ describe("seo urls", () => {
       "/compare/vs-github-codespaces",
       "/compare/vs-fly-sprites",
       "/compare/vs-e2b",
+      "/compare/vs-lobsterland",
+      "/compare/vs-kiloclaw",
+      "/compare/vs-construct-computer",
+      "/compare/vs-orgo",
+      "/compare/vs-machine0",
+      "/compare/vs-simular-box",
+      "/compare/vs-cubicles",
     ]);
     for (const entry of rewritten) {
       const path = entry.url.slice(SITE_URL.length);
