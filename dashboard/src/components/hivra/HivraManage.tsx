@@ -32,6 +32,7 @@ import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
+import { OffSiteBackupCard } from "./OffSiteBackupCard";
 import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome, type SoftwareRecovery } from "./AgentSoftwarePanel";
 import { HivraLogin } from "./HivraLogin";
 import { HivraGitHubConnect } from "./HivraGitHubConnect";
@@ -1610,6 +1611,7 @@ function HivraManageContent({
       {sections.includes("recovery") ? (
         <ManagePanel id="recovery" selected={selected}>
           <div style={{ display: "grid", gap: 20 }}>
+            <OffSiteBackupCard agentId={agent.id} cardStyle={card} labelStyle={label} />
             {restorePointsListed ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div className="mono" style={label}>Restore points</div>
