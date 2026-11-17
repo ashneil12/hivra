@@ -1183,7 +1183,7 @@ it("lets OpenClaw 2026.11.5+ and current Aeon launch in 2026.11.17.4, keeping 20
   const changed = openclawAeonRelease.files.filter(file => file.sha256 !== agentZeroSettingsRelease.files.find(entry => entry.path === file.path)!.sha256)
     .map(file => file.path).sort();
   // Only the gateway, the guest installer, the app updater, the host capacity check, the worker's release labels and the documents change.
-  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-agent-app-update.sh", "hivra-chat/server.js", "hivra-host-capacity-admission", "hivra-provider-worker.py", "provision-claude-code-box.sh"]);
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-agent-app-update.sh", "hivra-chat/server.js", "hivra-host-capacity-admission", "hivra-install-agent.py", "hivra-provider-worker.py", "provision-claude-code-box.sh"]);
   // Regression: OpenClaw 2026.11.5 refuses loopback traffic that carries
   // forwarded-client headers (proxy_attribution_required), so /openclaw drops them.
   const gateway = readFileSync("provisioner/hivra-chat/server.js", "utf8");

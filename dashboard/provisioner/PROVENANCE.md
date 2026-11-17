@@ -558,9 +558,12 @@ Hivra's basePath file replaced it, so every Aeon build failed; the provisioner
 and the Update path keep Aeon's file as `next.config.hivra-upstream.ts` and
 only add the `/aeon` mount on top. A guest paused by Hivra's sleep (`qm
 suspend`) made the host capacity check refuse every launch on that host
-(`invalid QEMU status`); it now counts a paused guest as active. Changed:
-`hivra-chat/server.js`, `provision-claude-code-box.sh`,
-`hivra-agent-app-update.sh`, `hivra-host-capacity-admission`, plus the
+(`invalid QEMU status`); it now counts a paused guest as active. A failed
+guest install now also names its fixed reason (Hivra's own install error code,
+or which step exited with which status) in the host log, never launch data.
+Changed: `hivra-chat/server.js`, `provision-claude-code-box.sh`,
+`hivra-agent-app-update.sh`, `hivra-host-capacity-admission`,
+`hivra-install-agent.py`, plus the
 documents, the version and the provider worker's release labels. This source
 release does not deploy, install, enable or start anything on a host or
 computer.

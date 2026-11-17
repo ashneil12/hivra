@@ -9,8 +9,8 @@
     },
     {
       "path": "PROVENANCE.md",
-      "bytes": 93212,
-      "sha256": "53d4d50c6f6340ea447d297ef236e9c5494ebf933aadd25227ff61472f28082a"
+      "bytes": 93402,
+      "sha256": "aba7d17dac1240040f8aaeeb8857215249f3593f4d8b8e889394831f50c93a86"
     },
     {
       "path": "README.md",
@@ -144,8 +144,8 @@
     },
     {
       "path": "hivra-install-agent.py",
-      "bytes": 32375,
-      "sha256": "56829f86885e70037501501d7b913fd3785d1eba3c492009b4361d52ee623a70"
+      "bytes": 33529,
+      "sha256": "234bb5baf4f13a2203111d1446b2e2a67d4b80d53dc8fab216d05665e23954ea"
     },
     {
       "path": "hivra-provider-worker.py",
