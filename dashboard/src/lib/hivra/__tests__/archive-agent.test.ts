@@ -141,3 +141,50 @@ describe("storage-box restricted-shell compatibility", () => {
     }
   });
 });
+
+describe("hivra archive encryption", () => {
+  const FAKE_RECIPIENT = `age1${"q".repeat(58)}`;
+  const FAKE_IDENTITY = ["AGE-SECRET-KEY-1", "Q".repeat(58)].join("");
+
+  it("archive builder without a recipient never encrypts", () => {
+    expect(buildHivraArchiveScript(2100, "fixturenode21", AGENT)).not.toMatch(/age -r|command -v age|plain_sha256/);
+  });
+
+  it("archive builder encrypts after vzdump, before upload, and removes the plaintext", () => {
+    const s = buildHivraArchiveScript(2100, "fixturenode21", AGENT, { ageRecipient: FAKE_RECIPIENT });
+    expect(s).toContain(`age -r ${FAKE_RECIPIENT} -o "$__f.age" "$__f"`);
+    expect(s.indexOf("vzdump 2100")).toBeLessThan(s.indexOf("age -r"));
+    expect(s.indexOf("age -r")).toBeLessThan(s.indexOf("rsync -a --partial"));
+    expect(s).toContain('"encryption":"age","plain_sha256":"%s"');
+    expect(s).toContain("NOT destroying vmid 2100");
+    // idempotence check must also see an .age archive
+    expect(s).toContain("(\\.age)?$");
+  });
+
+  it("rejects an invalid recipient", () => {
+    expect(() => buildHivraArchiveScript(2100, "fixturenode21", AGENT, { ageRecipient: "age1nope" })).toThrow();
+  });
+
+  it("restore without an identity recognises an encrypted archive and fails closed before qmrestore", () => {
+    const s = buildHivraRestoreIfMissingScript(2100, "fixturenode21", AGENT);
+    expect(s).toContain("(\\.age)?$");
+    expect(s).toContain("HERMES_BACKUP_AGE_IDENTITY is not configured");
+    expect(s).not.toContain("age -d");
+    expect(s.indexOf("HERMES_BACKUP_AGE_IDENTITY is not configured")).toBeLessThan(s.indexOf("qmrestore"));
+  });
+
+  it("restore with an identity decrypts via a 0600 file from a quoted heredoc, once, before qmrestore", () => {
+    const s = buildHivraRestoreIfMissingScript(2100, "fixturenode21", AGENT, { ageIdentity: FAKE_IDENTITY });
+    expect(s).toContain(`<<'HERMES_HIVRA_AGE_IDENTITY_EOF'\n${FAKE_IDENTITY}\nHERMES_HIVRA_AGE_IDENTITY_EOF`);
+    expect(s.split(FAKE_IDENTITY)).toHaveLength(2);
+    expect(s).toContain('chmod 0600 "$__idf"');
+    expect(s).toContain('age -d -i "$__idf"');
+    expect(s.indexOf("SHA MISMATCH")).toBeLessThan(s.indexOf("age -d"));
+    expect(s.indexOf("age -d")).toBeLessThan(s.indexOf("qmrestore"));
+    expect(s).toContain("PLAIN SHA MISMATCH");
+  });
+
+  it("restore rejects a malformed identity", () => {
+    expect(() => buildHivraRestoreIfMissingScript(2100, "fixturenode21", AGENT, { ageIdentity: "x\nrm -rf /" })).toThrow();
+  });
+});
