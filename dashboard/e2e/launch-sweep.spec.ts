@@ -63,6 +63,8 @@ interface SweepEnv {
   replyTimeoutMs: number;
   keepFailed: boolean;
   idleMinutes: number;
+  /** Profile ids to keep running after a pass, to read inside them (reap later). */
+  keepPassed: string[];
 }
 
 function sweepEnv(): SweepEnv {
@@ -93,6 +95,7 @@ function sweepEnv(): SweepEnv {
     keepFailed: process.env.LAUNCH_SWEEP_KEEP_FAILED === '1',
     // How long to watch each working agent sit idle (0 skips).
     idleMinutes: envMinutes('LAUNCH_SWEEP_IDLE_MINUTES', 10),
+    keepPassed: (process.env.LAUNCH_SWEEP_KEEP_PASSED ?? '').split(',').map((value) => value.trim()).filter(Boolean),
   };
 }
 
@@ -220,13 +223,14 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
 
     if (env.idleMinutes > 0) {
       stage = 'idle';
-      // Walk away like a customer: nothing left open on the agent.
-      await page.goto('about:blank').catch(() => undefined);
+      // Walk away like a customer: leave the agent for the dashboard home,
+      // which keeps the sign-in fresh for the usage reads.
+      await page.goto('/dashboard', { waitUntil: 'domcontentloaded' }).catch(() => undefined);
       const idleId = recorder.result.agentId
         ?? (await listHivraAgents(context.request, env.baseUrl).catch(() => []))[0]?.id
         ?? null;
       if (idleId) {
-        recorder.result.idle = await measureIdle(context.request, env.baseUrl, idleId, env.idleMinutes);
+        recorder.result.idle = await measureIdle(page, idleId, env.idleMinutes);
       }
       recorder.done('idle');
     }
@@ -242,7 +246,8 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     if (!recorder.result.passed && recorder.result.agentId) {
       recorder.result.evidence = await agentEvidence(env.supabaseUrl, env.serviceRoleKey, recorder.result.agentId);
     }
-    const keep = env.keepFailed && !recorder.result.passed && recorder.result.failure?.category === 'product';
+    const keep = (env.keepFailed && !recorder.result.passed && recorder.result.failure?.category === 'product')
+      || (recorder.result.passed && env.keepPassed.includes(target.profileId));
     if (userId && !keep) {
       await teardown(context, env, userId, recorder);
       recorder.done('teardown');
