@@ -172,7 +172,10 @@ jobs:
           echo "HERMES_CONFIG_TEST_PYTHON=$HERMES_CONFIG_TEST_VENV/bin/python" >> "$GITHUB_ENV"
 
       # The smoke-contract and hot-path suites are part of every shard's
-      # selection, so they are not run a second time here.
+      # selection, so they are not run a second time here. test:ci runs four
+      # jest workers (the runner has four CPUs): a shard took about 5.5 minutes
+      # serially (--runInBand) and about half that in parallel (2026-11-17).
+      # The 4-shard split above still uses the same duration weights.
       - name: Run jest shard
         run: npm run test:ci -- --shard=${{ matrix.shard }}/4
 
