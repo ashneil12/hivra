@@ -10,6 +10,7 @@ import {
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
 import { requireDb } from "@/lib/billing/db-utils";
+import { readAgentPrivateOnly } from "@/lib/venice/agent-private-only";
 
 export type ManagedVeniceProxyKeyStatus = "active" | "revoked" | "paused";
 
@@ -115,6 +116,10 @@ function asVerifiedKey(row: ProxyKeyRow) {
   return {
     ...asPublicKey(row),
     keyHash: row.key_hash,
+    // The owner's "private models only" setting for this key. It is enforced
+    // only while MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED is on
+    // (agent-private-only.ts).
+    privateModelsOnly: readAgentPrivateOnly(row.metadata).enabled,
   };
 }
 
