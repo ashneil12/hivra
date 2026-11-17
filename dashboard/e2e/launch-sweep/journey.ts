@@ -1,0 +1,236 @@
+/**
+ * Drives the real Launch page the way a customer does: click the tile, review,
+ * pick Hivra credits, press Launch, wait on the ready screen, open the agent.
+ *
+ * Everything here goes through what a customer sees. The only API reads are
+ * to name WHY something failed (the agent row's error), never to decide that
+ * it passed.
+ */
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
+
+import { listHivraAgents, sleep } from '../first-run-audit/instances';
+import { SweepFailure } from './result';
+import type { SweepTarget } from './targets';
+
+const CHOOSE_HEADING = 'What do you want to launch?';
+
+function exactName(name: string): RegExp {
+  return new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
+}
+
+/** The tile button for one launchable thing, matched on its visible name. */
+export function tileButton(page: Page, tile: string): Locator {
+  return page
+    .getByTestId('launch-journey')
+    .locator('button')
+    .filter({ has: page.locator('strong', { hasText: exactName(tile) }) })
+    .first();
+}
+
+/** Every tile name the Choose step offers right now. */
+export async function offeredTileNames(page: Page): Promise<string[]> {
+  await openChoose(page);
+  const names = await page
+    .getByTestId('launch-journey')
+    .locator('button strong')
+    .allInnerTexts();
+  return [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+}
+
+export async function openChoose(page: Page): Promise<void> {
+  const response = await page.goto('/dashboard/launch', { waitUntil: 'domcontentloaded' });
+  if (!response || response.status() >= 400) {
+    throw new SweepFailure('choose', 'product', `Launch page answered HTTP ${response?.status() ?? 'none'}`);
+  }
+  try {
+    await page.getByRole('heading', { name: CHOOSE_HEADING }).waitFor({ timeout: 60_000 });
+  } catch {
+    throw new SweepFailure('choose', 'product', 'Launch never showed "What do you want to launch?"');
+  }
+  // Tiles render before the plan and capacity checks land; their fit badges
+  // say "Checking fit…" until then. Wait for those to settle.
+  await page
+    .getByText('Checking fit…')
+    .first()
+    .waitFor({ state: 'detached', timeout: 60_000 })
+    .catch(() => undefined);
+  if (await page.getByTestId('launch-free-notice').isVisible().catch(() => false)) {
+    throw new SweepFailure(
+      'choose',
+      'harness_environment',
+      'Launch shows the Free plan notice: the test account\'s paid plan did not take.',
+    );
+  }
+}
+
+/** Visible error or blocker text inside the Launch journey, for failure reports. */
+async function journeyProblem(page: Page): Promise<string> {
+  const texts = await page
+    .getByTestId('launch-journey')
+    .locator('[role="alert"], [role="status"]')
+    .allInnerTexts()
+    .catch(() => [] as string[]);
+  return texts.map((text) => text.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | ').slice(0, 600);
+}
+
+/**
+ * Choose → Review → Launch. Returns once Hivra accepted the launch and shows
+ * the after-launch screen.
+ */
+export async function launchFromTile(page: Page, target: SweepTarget): Promise<void> {
+  await openChoose(page);
+
+  const tile = tileButton(page, target.tile);
+  if ((await tile.count()) === 0) {
+    throw new SweepFailure('choose', 'not_offered', `Launch does not offer a "${target.tile}" tile on this deployment.`);
+  }
+  await tile.click();
+
+  // With the catalog switched on a tile opens its About page first.
+  const review = page.getByTestId('launch-catalog-review');
+  const reviewHeading = page.getByRole('heading', { name: /^Review and launch / });
+  await Promise.race([
+    review.waitFor({ timeout: 30_000 }).then(() => review.click()),
+    reviewHeading.waitFor({ timeout: 30_000 }),
+  ]).catch(() => undefined);
+  try {
+    await reviewHeading.waitFor({ timeout: 30_000 });
+  } catch {
+    throw new SweepFailure('review', 'product', `Review never opened. ${await journeyProblem(page)}`);
+  }
+
+  await chooseHivraCredits(page);
+
+  const launch = page.getByTestId('launch-primary-action');
+  const deadline = Date.now() + 90_000;
+  while (!(await launch.isEnabled().catch(() => false))) {
+    if (Date.now() > deadline) {
+      throw new SweepFailure('review', 'product', `Launch button stayed disabled. ${await journeyProblem(page)}`);
+    }
+    await sleep(1_000);
+  }
+  await launch.click();
+
+  // Submitting can take minutes: Hivra answers once the computer is created.
+  const accepted = page.getByRole('heading', {
+    name: /is setting up\.|computer is ready\.|is being created\.|couldn.t start\./,
+  });
+  const failed = page.locator('#launch-failed-heading');
+  const uncertain = page.locator('#launch-uncertain-heading');
+  const reviewError = page.getByTestId('launch-journey').locator('[role="alert"]');
+  const end = Date.now() + 12 * 60_000;
+  while (Date.now() < end) {
+    if (await accepted.isVisible().catch(() => false)) return;
+    if (await failed.isVisible().catch(() => false)) {
+      throw new SweepFailure('launch', 'product', `Launch stopped: ${await journeyProblem(page)}`);
+    }
+    if (await uncertain.isVisible().catch(() => false)) {
+      // The page offers a safe "Check again"; a customer would press it.
+      await page.getByTestId('launch-primary-action').click().catch(() => undefined);
+    }
+    if (await reviewHeading.isVisible().catch(() => false) && await reviewError.count() > 0) {
+      const problem = await journeyProblem(page);
+      if (problem) throw new SweepFailure('launch', 'product', `Launch was refused on Review: ${problem}`);
+    }
+    await sleep(2_000);
+  }
+  throw new SweepFailure('launch', 'product', `Launch was not confirmed within 12 minutes. ${await journeyProblem(page)}`);
+}
+
+/** Pick "Hivra credits" for model access when Review offers it. */
+async function chooseHivraCredits(page: Page): Promise<void> {
+  const group = page.getByRole('group', { name: 'Model access' });
+  if (!(await group.isVisible().catch(() => false))) return;
+  const credits = group.getByRole('button', { name: /Hivra credits/ });
+  if ((await credits.count()) === 0) return;
+  // The balance loads after Review opens; the button stays disabled until then.
+  await page
+    .getByText('Checking your Hivra credits…')
+    .first()
+    .waitFor({ state: 'detached', timeout: 60_000 })
+    .catch(() => undefined);
+  if ((await credits.getAttribute('aria-pressed')) === 'true') return;
+  if (!(await credits.isEnabled())) {
+    const why = (await credits.innerText()).replace(/\s+/g, ' ');
+    throw new SweepFailure('review', 'harness_environment', `Hivra credits can't be picked: ${why}`);
+  }
+  await credits.click();
+}
+
+export interface ReadyOutcome {
+  agentId: string | null;
+  /** The ready screen said so (agents), or the launch was accepted (computers). */
+  ready: boolean;
+}
+
+/**
+ * Wait on the after-launch screen until it says ready, like a customer who
+ * keeps the tab open. Presses "Check again" when Hivra stops checking.
+ */
+export async function waitForReady(
+  page: Page,
+  request: APIRequestContext,
+  baseUrl: string,
+  target: SweepTarget,
+  timeoutMs: number,
+): Promise<ReadyOutcome> {
+  const agentId = await currentAgentId(request, baseUrl);
+  if (target.kind === 'computer') {
+    // Computers don't hold on the Launch page: it says "is being created" and
+    // offers Open. Readiness is proven on the computer's own page.
+    return { agentId, ready: false };
+  }
+
+  const ready = page.getByRole('heading', { name: "Your agent's computer is ready." });
+  const failed = page.getByRole('heading', { name: /couldn.t start\./ });
+  const checkAgain = page.getByRole('button', { name: 'Check again' });
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    if (await ready.isVisible().catch(() => false)) return { agentId, ready: true };
+    if (await failed.isVisible().catch(() => false)) {
+      throw new SweepFailure('ready', 'product', `Launch says it couldn't start. ${await agentError(request, baseUrl, agentId)}`);
+    }
+    if (await checkAgain.isVisible().catch(() => false)) await checkAgain.click().catch(() => undefined);
+    await sleep(5_000);
+  }
+  throw new SweepFailure(
+    'ready',
+    'product',
+    `Not ready after ${Math.round(timeoutMs / 60_000)} minutes. ${await agentError(request, baseUrl, agentId)}`,
+  );
+}
+
+/** Press the after-launch screen's primary action (Open my agent / Open X). */
+export async function openFromLaunch(page: Page): Promise<void> {
+  await page.getByTestId('launch-primary-action').click();
+  await page.waitForURL(/\/dashboard\//, { timeout: 60_000 });
+}
+
+/** The throwaway account owns exactly what the sweep launched. */
+async function currentAgentId(request: APIRequestContext, baseUrl: string): Promise<string | null> {
+  const agents = await listHivraAgents(request, baseUrl).catch(() => []);
+  return agents[0]?.id ?? null;
+}
+
+/** The agent row's own error text, to say why a launch failed. */
+export async function agentError(
+  request: APIRequestContext,
+  baseUrl: string,
+  agentId: string | null,
+): Promise<string> {
+  if (!agentId) return 'No agent record was found for this account.';
+  try {
+    const res = await request.get(`${baseUrl}/api/hivra/agents/${encodeURIComponent(agentId)}`, { timeout: 60_000 });
+    if (!res.ok()) return `Agent record answered HTTP ${res.status()}.`;
+    const body = (await res.json()) as { data?: { agent?: Record<string, unknown> } & Record<string, unknown> };
+    const row = (body.data?.agent ?? body.data ?? {}) as Record<string, unknown>;
+    const parts = [
+      row.status ? `status=${String(row.status)}` : '',
+      row.error ? `error="${String(row.error).slice(0, 300)}"` : '',
+      row.readiness_stage ? `readiness=${String(row.readiness_stage)}` : '',
+    ].filter(Boolean);
+    return parts.length ? `Agent record: ${parts.join(', ')}.` : '';
+  } catch (err) {
+    return `Agent record unreadable: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
