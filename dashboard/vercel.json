@@ -213,6 +213,14 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/hivra-computer-backups",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/managed-venice-spend-guarantee",
+      "schedule": "40 0 * * *"
+    },
+    {
       "path": "/api/cron/daily-config-snapshot",
       "schedule": "0 7 * * *"
     },
@@ -275,6 +283,10 @@
     {
       "path": "/api/cron/venice-promo-expiry",
       "schedule": "35 * * * *"
+    },
+    {
+      "path": "/api/cron/plan-ai-allowance",
+      "schedule": "47 * * * *"
     },
     {
       "path": "/api/cron/purge-bridge-results",

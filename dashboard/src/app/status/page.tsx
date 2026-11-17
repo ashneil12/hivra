@@ -10,6 +10,9 @@ import { OG_IMAGE } from "@/lib/og-meta";
 import { SITE_URL } from "@/lib/seo-urls";
 import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
 
+import StatusBoard from "@/components/status/StatusBoard";
+import { loadPublicStatus } from "@/lib/status/load-status";
+import { statusPageEnabled } from "@/lib/status/status-switch";
 import StatusPageContent from "@/components/status/StatusPageContent.client";
 
 const PATH = "/status";
@@ -58,6 +61,23 @@ async function getLandingLocale() {
 // No auth/Clerk, no DB, no schema.
 export default async function StatusPage() {
   const locale = await getLandingLocale();
+
+  // Switch on: the status board reads the platform's own signals. Switch off:
+  // the existing public-page check below stays exactly as it was, so the
+  // footer link to /status does not break.
+  if (statusPageEnabled()) {
+    const status = await loadPublicStatus();
+    return (
+      <LocaleProvider initialLocale={locale}>
+        <PublicSite className={styles.livePage} data-page="status">
+          <StructuredData schema={schema} />
+          <div className={styles.liveContent}>
+            <StatusBoard status={status} />
+          </div>
+        </PublicSite>
+      </LocaleProvider>
+    );
+  }
 
   return (
     <LocaleProvider initialLocale={locale}>

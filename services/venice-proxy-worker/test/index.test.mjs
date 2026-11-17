@@ -25,8 +25,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // The Worker chooses each hold's reference (a fresh UUID) before authorizing,
 // and declares that it forwards `{ ...body, ...bodyPatch }` (acceptsBodyPatch).
 function assertAuthorizeBody(call, expectedBody) {
-  const { referenceId, ...rest } = JSON.parse(call.body);
+  const { referenceId, clientAddress, ...rest } = JSON.parse(call.body);
   assert.match(referenceId, UUID);
+  // The address Cloudflare saw, for the key-to-computer binding (null in the test runtime).
+  assert.ok(clientAddress === null || typeof clientAddress === 'string');
   assert.deepEqual(rest, { plaintextKey: 'test-client-key', body: expectedBody, acceptsBodyPatch: true });
   return referenceId;
 }

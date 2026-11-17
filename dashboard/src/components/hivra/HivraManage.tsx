@@ -34,6 +34,7 @@ import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
+import { OffSiteBackupCard } from "./OffSiteBackupCard";
 import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome, type SoftwareRecovery } from "./AgentSoftwarePanel";
 import { HivraLogin } from "./HivraLogin";
 import { HivraGitHubConnect } from "./HivraGitHubConnect";
@@ -409,6 +410,29 @@ function HivraManageContent({
       .catch(() => {});
     return () => { alive = false; };
   }, [def?.cliKind, agent.type, agent.id]);
+
+  // "Always allow" rules made from Needs you (empty unless the owner made any).
+  const [allowRules, setAllowRules] = useState<{ id: string; tool: string; command: string | null }[]>([]);
+  useEffect(() => {
+    if (!askFirst?.available) return;
+    let alive = true;
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/inbox-allow-rules`, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as { data?: { rules?: { id: string; tool: string; command: string | null }[] } }).data?.rules : null))
+      .then((rules) => { if (alive && Array.isArray(rules)) setAllowRules(rules); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [askFirst?.available, agent.id]);
+
+  const revokeAllowRule = useCallback(async (ruleId: string) => {
+    if (acting) return;
+    setActing("allow-rule"); setErr(null);
+    try {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/inbox-allow-rules?rule=${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Couldn't remove that rule");
+      setAllowRules((rules) => rules.filter((rule) => rule.id !== ruleId));
+    } catch (e) { setErr({ slot: "permissions", message: (e as Error).message }); }
+    finally { setActing(null); }
+  }, [agent.id, acting]);
 
   const applyAskFirst = useCallback(async (next: boolean) => {
     if (acting) return;
@@ -1387,6 +1411,22 @@ function HivraManageContent({
                       </div>
                     </div>
                   ) : null}
+                  {askFirst?.available && allowRules.length > 0 ? (
+                    <div style={{ display: "grid", gap: 6, borderTop: "1px solid var(--etched-border)", paddingTop: 10 }}>
+                      <div style={{ fontSize: 12.5, color: "var(--text-primary)" }}>Always allowed</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                        Claude Code won&apos;t ask again for these exact requests. Remove one to be asked again.
+                      </div>
+                      {allowRules.map((rule) => (
+                        <div key={rule.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <code style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--text-secondary)", overflowWrap: "anywhere", whiteSpace: "pre-wrap", maxHeight: 60, overflow: "hidden" }}>
+                            {rule.command || rule.tool}
+                          </code>
+                          <button type="button" style={btnGhost} disabled={acting !== null} onClick={() => void revokeAllowRule(rule.id)}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1612,6 +1652,7 @@ function HivraManageContent({
       {sections.includes("recovery") ? (
         <ManagePanel id="recovery" selected={selected}>
           <div style={{ display: "grid", gap: 20 }}>
+            <OffSiteBackupCard agentId={agent.id} cardStyle={card} labelStyle={label} />
             {restorePointsListed ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div className="mono" style={label}>Restore points</div>
@@ -1897,6 +1938,14 @@ function HivraManageContent({
               {capAvailable(manage.export)
                 ? <div><a href={`/api/hivra/agents/${encodeURIComponent(agent.id)}/export`} style={{ ...btnGhost, textDecoration: "none" }}>Export data</a></div>
                 : <CapReasonLine cap={manage.export} />}
+            </div>
+          ) : null}
+
+          {process.env.NEXT_PUBLIC_HIVRA_COMPUTER_EXPORT === "true" && agent.computer_substrate === "proxmox-kvm" ? (
+            <div style={card}>
+              <div className="serif" style={{ fontSize: 16, color: "var(--ink-black)" }}>Export the whole computer</div>
+              <div style={manageMuted}>One encrypted file with your home folders and every agent&apos;s data and settings, to keep or to move elsewhere.</div>
+              <div><a href={`/dashboard/computers/export?source=${encodeURIComponent(agent.id)}`} style={{ ...btnGhost, textDecoration: "none" }}>Export computer</a></div>
             </div>
           ) : null}
 
